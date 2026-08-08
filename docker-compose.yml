@@ -11,16 +11,22 @@
 ###############################################################################
 
 ###############################################################################
-#  DOCKER COMPOSE PROFILES
+#  DOCKER COMPOSE PROFILES (mutually exclusive - each service lives in exactly one
+#  profile; combine profiles to build the stack you need)
 #
-#  Default (no profile):  Gateway + Postgres + Redis + Nginx (HTTP only)
-#  --profile sso:         Adds Keycloak + testing + inspector (full dev SSO stack, via docker-compose.sso.yml)
-#  --profile monitoring:  Adds Prometheus, Grafana, Loki, exporters
-#  --profile testing:     Adds Locust (web UI), A2A echo agent, fast_test_server + auto-registration
+#  Default (no profile):  Gateway + Postgres + PgBouncer + Redis + Nginx (HTTP only) + fast_time_server
+#  --profile sso:         Adds Keycloak SSO provider (combine with testing/inspector for the full dev SSO stack,
+#                          e.g. make compose-sso-testing; gateway SSO env comes from docker-compose.sso.yml)
+#  --profile monitoring:  Adds Prometheus, Grafana, Loki, Tempo (OTLP traces), Promtail, exporters, pgAdmin, Redis Commander
+#  --profile testing:     Adds Locust (web UI), A2A echo agents, fast_test_server + auto-registration
+#                          (TESTING_MONITORING=1 make testing-up also activates the monitoring profile)
+#  Portal (starts with testing + monitoring profiles): single-entry reverse proxy + service index
+#                          page at http://localhost:9200 - services reachable as http://<name>.localhost:9200
 #  --profile resilience:  Adds slow_time_server for timeout, circuit breaker, and resilience testing
 #  --profile benchmark:   Adds benchmark MCP servers for load testing
 #  --profile tls:         Enables HTTPS via nginx_tls (auto-generates certs)
 #  --profile inspector:   Adds MCP Inspector client (http://localhost:6274)
+#  --profile dast:        Adds OWASP ZAP for security scanning (make testing-zap-up)
 #
 #  Compose overlays (separate files):
 #  docker-compose.with-phoenix.yml:   Phoenix observability (OTEL traces)
@@ -689,6 +695,10 @@ services:
       - OTEL_EXPORTER_OTLP_PROTOCOL=${OTEL_EXPORTER_OTLP_PROTOCOL:-grpc}
       - OTEL_SERVICE_NAME=${OTEL_SERVICE_NAME:-mcp-gateway}
       - OTEL_RESOURCE_ATTRIBUTES=${OTEL_RESOURCE_ATTRIBUTES:-deployment.environment=docker,service.namespace=mcp}
+      # Auto-instrumentation: outbound httpx client spans (incl. internal affinity hop)
+      - OTEL_HTTPX_INSTRUMENTATION_ENABLED=${OTEL_HTTPX_INSTRUMENTATION_ENABLED:-true}
+      # SQL query spans (high volume under load; enabled here for the observability stack)
+      - OTEL_SQLALCHEMY_INSTRUMENTATION_ENABLED=${OTEL_SQLALCHEMY_INSTRUMENTATION_ENABLED:-true}
 
     # TCP kernel tuning for high-concurrency MCP tool invocations
     # Each tool call creates a new connection → many TIME_WAIT sockets
@@ -1160,8 +1170,6 @@ services:
     image: quay.io/prometheuscommunity/postgres-exporter:latest
     restart: unless-stopped
     networks: [mcpnet]
-    ports:
-      - "${POSTGRES_EXPORTER_PORT:-9187}:9187"    # http://localhost:${POSTGRES_EXPORTER_PORT:-9187}/metrics
     environment:
       - DATA_SOURCE_NAME=postgresql://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@postgres:5432/mcp?sslmode=disable
       - PG_EXPORTER_AUTO_DISCOVER_DATABASES=true
@@ -1178,8 +1186,6 @@ services:
     image: oliver006/redis_exporter:latest
     restart: unless-stopped
     networks: [mcpnet]
-    ports:
-      - "${REDIS_EXPORTER_PORT:-9121}:9121"    # http://localhost:${REDIS_EXPORTER_PORT:-9121}/metrics
     environment:
       - REDIS_ADDR=redis://redis:6379
     depends_on:
@@ -1195,8 +1201,6 @@ services:
     image: prometheuscommunity/pgbouncer-exporter:latest
     restart: unless-stopped
     networks: [mcpnet]
-    ports:
-      - "${PGBOUNCER_EXPORTER_PORT:-9127}:9127"    # http://localhost:${PGBOUNCER_EXPORTER_PORT:-9127}/metrics
     environment:
       - PGBOUNCER_EXPORTER_CONNECTION_STRING=postgres://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@pgbouncer:6432/pgbouncer?sslmode=disable
     depends_on:
@@ -1213,8 +1217,6 @@ services:
     image: nginx/nginx-prometheus-exporter:latest
     restart: unless-stopped
     networks: [mcpnet]
-    ports:
-      - "${NGINX_EXPORTER_PORT:-9113}:9113"    # http://localhost:${NGINX_EXPORTER_PORT:-9113}/metrics
     command:
       - '-nginx.scrape-uri=http://nginx:80/nginx_status'
     depends_on:
@@ -1231,8 +1233,6 @@ services:
     image: gcr.io/cadvisor/cadvisor:latest
     restart: unless-stopped
     networks: [mcpnet]
-    ports:
-      - "${CADVISOR_PORT:-8085}:8080"    # http://localhost:${CADVISOR_PORT:-8085}/metrics
     privileged: true
     volumes:
       - /:/rootfs:ro
@@ -1278,8 +1278,6 @@ services:
     image: prom/prometheus:latest
     restart: unless-stopped
     networks: [mcpnet]
-    ports:
-      - "${PROMETHEUS_PORT:-9090}:9090"    # http://localhost:${PROMETHEUS_PORT:-9090}
     volumes:
       - ./infra/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
       - prometheusdata:/prometheus
@@ -1310,8 +1308,6 @@ services:
     restart: unless-stopped
     networks: [mcpnet]
     user: "0"  # Run as root to avoid permission issues
-    ports:
-      - "${LOKI_PORT:-3101}:3100"    # http://localhost:${LOKI_PORT:-3101}/ready
     volumes:
       - ./infra/monitoring/loki/loki-config.yaml:/etc/loki/local-config.yaml:ro
       - lokidata:/loki
@@ -1328,7 +1324,6 @@ services:
     restart: unless-stopped
     networks: [mcpnet]
     ports:
-      - "${TEMPO_PORT:-3200}:3200"      # Tempo HTTP API / query frontend
       - "${TEMPO_OTLP_GRPC_PORT:-4317}:4317"      # OTLP gRPC receiver
       - "${TEMPO_OTLP_HTTP_PORT:-4318}:4318"      # OTLP HTTP receiver
     command: ["-config.file=/etc/tempo.yaml"]
@@ -1368,8 +1363,6 @@ services:
     restart: unless-stopped
     networks: [mcpnet]
     user: "0"  # Run as root to avoid permission issues with provisioning
-    ports:
-      - "${GRAFANA_PORT:-3000}:3000"    # http://localhost:${GRAFANA_PORT:-3000}
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=changeme
       - GF_USERS_ALLOW_SIGN_UP=false
@@ -1391,14 +1384,43 @@ services:
     environment:
       - PGADMIN_DEFAULT_EMAIL=admin@example.com
       - PGADMIN_DEFAULT_PASSWORD=changeme
-    ports:
-      - "${PGADMIN_PORT:-5050}:80"      # http://localhost:${PGADMIN_PORT:-5050}
+      # Pre-configured server connections (infra/pgadmin/servers.json) and no
+      # master-password prompt so the stored dev credentials are used transparently
+      - PGADMIN_SERVER_JSON_FILE=/pgadmin4/servers.json
+      - PGADMIN_MASTER_PASSWORD_REQUIRED=false
+      - PGADMIN_DEFAULT_EMAIL=admin@example.com
+      - PGADMIN_DEFAULT_PASSWORD=changeme
     volumes:
       - pgadmindata:/var/lib/pgadmin
+      - ./infra/pgadmin/servers.json:/pgadmin4/servers.json:ro
     networks: [mcpnet]
     depends_on:
       postgres:
         condition: service_healthy
+    profiles: ["monitoring"]
+
+  # ──────────────────────────────────────────────────────────────────────
+  # pgAdmin seed - one-shot: registers ContextForge server connections and
+  # stores the dev DB password (encrypted with the pgAdmin login password),
+  # so pgAdmin opens a working connection with zero manual setup.
+  # ──────────────────────────────────────────────────────────────────────
+  pgadmin_seed:
+    image: dpage/pgadmin4:9.11.0
+    user: "0"
+    networks: [mcpnet]
+    restart: "no"
+    environment:
+      - PGADMIN_DEFAULT_EMAIL=admin@example.com
+      - PGADMIN_DEFAULT_PASSWORD=changeme
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-mysecretpassword}
+    volumes:
+      - pgadmindata:/var/lib/pgadmin
+      - ./infra/pgadmin/servers.json:/pgadmin4/servers.json:ro
+      - ./infra/pgadmin/seed.sh:/seed.sh:ro
+    entrypoint: ["/bin/sh", "/seed.sh"]
+    depends_on:
+      pgadmin:
+        condition: service_started
     profiles: ["monitoring"]
 
   # ──────────────────────────────────────────────────────────────────────
@@ -1411,13 +1433,32 @@ services:
     depends_on:
       redis:
         condition: service_started
-    ports:
-      - "${REDIS_COMMANDER_PORT:-8081}:8081"    # http://localhost:${REDIS_COMMANDER_PORT:-8081}
     environment:
       - REDIS_HOSTS=local:redis:6379
       - HTTP_USER=admin
       - HTTP_PASSWORD=changeme
     profiles: ["monitoring"]
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Portal - single-entry reverse proxy for the testing & monitoring stack.
+  # One host port (default 9200) fronts every UI/API service via virtual hosts:
+  #   http://grafana.localhost:9200, http://locust.localhost:9200, ...
+  # (*.localhost resolves to 127.0.0.1 on macOS and most Linux resolvers.)
+  # The root page enumerates the services and live-probes their availability.
+  # ──────────────────────────────────────────────────────────────────────
+  portal:
+    image: nginx:alpine
+    restart: unless-stopped
+    networks: [mcpnet]
+    ports:
+      - "${PORTAL_PORT:-9200}:80"
+    volumes:
+      - ./infra/portal/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./infra/portal/index.html:/usr/share/nginx/html/index.html:ro
+      - ./reports/profiles:/usr/share/nginx/html/profiles:ro  # py-spy artifacts (make profile-gateway)
+      - ./infra/portal/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./infra/portal/index.html:/usr/share/nginx/html/index.html:ro
+    profiles: ["testing", "monitoring", "monitoring-lite"]
 
   # # ──────────────────────────────────────────────────────────────────────
   # # Redis Insight - a powerful Redis GUI (recently updated)
@@ -1478,8 +1519,6 @@ services:
     image: ${FAST_TIME_IMAGE:-ghcr.io/ibm/cfex-mcp-fast-time-server:latest}
     restart: unless-stopped
     networks: [mcpnet]
-    ports:
-      - "8888:9080"    # Map host port 8888 to container port 9080
     # Configured via environment variables (Streamable HTTP at /mcp)
     environment:
       - BIND_ADDRESS=0.0.0.0:9080
@@ -1771,8 +1810,6 @@ services:
     image: ghcr.io/ibm/cfex-mcp-slow-time-server:latest
     restart: unless-stopped
     networks: [mcpnet]
-    ports:
-      - "8889:8081"    # Map host port 8889 to container port 8081
     environment:
       - DEFAULT_LATENCY=${SLOW_TIME_LATENCY:-5s}
       - FAILURE_RATE=${SLOW_TIME_FAILURE_RATE:-0.0}
@@ -1868,8 +1905,6 @@ services:
     image: ghcr.io/ibm/cfex-mcp-fast-time-server:latest
     restart: unless-stopped
     networks: [mcpnet]
-    ports:
-      - "8880:8880"    # Port 8880 (avoids conflict with benchmark servers on 9000+)
     environment:
       - BIND_ADDRESS=0.0.0.0:8880
       - RUST_LOG=info
@@ -1899,7 +1934,7 @@ services:
         reservations:
           cpus: '1'
           memory: 512M
-    profiles: ["testing", "monitoring", "sso"]
+    profiles: ["testing"]
 
   ###############################################################################
   # Auto-registration service - registers fast_test_server with gateway
@@ -2054,7 +2089,7 @@ services:
             exit(1)
         "
         echo "✅ Registration complete!"
-    profiles: ["testing", "monitoring", "sso"]
+    profiles: ["testing"]
 
   ###############################################################################
   # A2A Echo Agent - Lightweight A2A-compatible agent for end-to-end testing
@@ -2065,8 +2100,6 @@ services:
     image: ghcr.io/ibm/cfex-a2a-echo-agent:latest
     restart: unless-stopped
     networks: [mcpnet]
-    ports:
-      - "9100:9100"
     environment:
       - A2A_ECHO_ADDR=0.0.0.0:9100
       - A2A_ECHO_NAME=a2a-echo-agent
@@ -2081,7 +2114,7 @@ services:
         reservations:
           cpus: '0.25'
           memory: 64M
-    profiles: ["testing", "sso"]
+    profiles: ["testing"]
 
   ###############################################################################
   # A2A echo agent v0.3.0 overlay — same image as a2a_echo_agent, different
@@ -2091,8 +2124,6 @@ services:
     image: ghcr.io/ibm/cfex-a2a-echo-agent:latest
     restart: unless-stopped
     networks: [mcpnet]
-    ports:
-      - "9101:9100"
     environment:
       - A2A_ECHO_ADDR=0.0.0.0:9100
       - A2A_ECHO_NAME=a2a-echo-agent-v0-3-0
@@ -2107,7 +2138,7 @@ services:
         reservations:
           cpus: '0.25'
           memory: 64M
-    profiles: ["testing", "sso"]
+    profiles: ["testing"]
 
   ###############################################################################
   # Auto-registration service - registers a2a_echo_agent with gateway
@@ -2177,7 +2208,7 @@ services:
         print(f'✅ Registered a2a_echo_agent: {result.get(\"id\", \"unknown\")}')
         "
         echo "✅ Registration complete!"
-    profiles: ["testing", "sso"]
+    profiles: ["testing"]
 
   ###############################################################################
   # Locust JWT token generator - produces a gateway JWT for containerized load tests
@@ -2204,7 +2235,7 @@ services:
         printf "%s" "$$TOKEN" > /tokens/gateway.jwt
         echo ""
         echo "✅ Token written to /tokens/gateway.jwt"
-    profiles: ["testing", "sso"]
+    profiles: ["testing"]
 
   ###############################################################################
   # Locust - Containerized load testing with web UI (master + optional workers)
@@ -2218,8 +2249,6 @@ services:
     # Run as the host UID/GID (set by Makefile) so reports written to ./reports
     # don't end up root-owned and so non-1000 host users don't hit EACCES.
     user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
-    ports:
-      - "8089:8089"
     working_dir: /mnt/locust
     volumes:
       - ./tests/loadtest:/mnt/locust:ro
@@ -2265,6 +2294,10 @@ services:
       - LOCUST_SPAWN_RATE=${LOCUST_SPAWN_RATE:-10}
       - LOCUST_RUN_TIME=${LOCUST_RUN_TIME:-5m}
       - LOCUST_WXO_AUTH_ENABLED=${LOCUST_WXO_AUTH_ENABLED:-false}
+      - ECHO_DELAY_MS=${ECHO_DELAY_MS:-0}
+      - ECHO_DELAY_STDDEV_MS=${ECHO_DELAY_STDDEV_MS:-0}
+      - NUM_TENANTS=${NUM_TENANTS:-10}
+      - "JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
     deploy:
       resources:
         limits:
@@ -2273,7 +2306,7 @@ services:
         reservations:
           cpus: '0.5'
           memory: 128M
-    profiles: ["testing", "sso"]
+    profiles: ["testing"]
 
   locust_worker:
     image: locustio/locust:latest
@@ -2310,7 +2343,7 @@ services:
         reservations:
           cpus: '0.5'
           memory: 128M
-    profiles: ["testing", "sso"]
+    profiles: ["testing"]
 
   ###############################################################################
   # Benchmark Server - Multi-server MCP benchmark tool
@@ -2617,7 +2650,7 @@ services:
         reservations:
           cpus: '0.25'
           memory: 128M
-    profiles: ["inspector", "sso"]
+    profiles: ["inspector"]
 
 ###############################################################################
 #  OWASP ZAP DAST - Dynamic Application Security Testing daemon
@@ -2637,8 +2670,6 @@ services:
     image: ghcr.io/zaproxy/zaproxy:stable
     restart: unless-stopped
     networks: [mcpnet]
-    ports:
-      - "8090:8090"    # ZAP API daemon + UI (http://localhost:8090/UI)
     command:
       - zap.sh
       - -daemon

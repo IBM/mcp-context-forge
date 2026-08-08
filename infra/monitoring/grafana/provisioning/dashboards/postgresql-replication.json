@@ -429,12 +429,12 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "pg_stat_database_blks_hit{role=\"primary\", datname=\"mcp\"} / (pg_stat_database_blks_read{role=\"primary\", datname=\"mcp\"} + pg_stat_database_blks_hit{role=\"primary\", datname=\"mcp\"})",
+          "expr": "sum(rate(pg_stat_database_blks_hit{role=\"primary\", datname=\"mcp\"}[5m])) / (sum(rate(pg_stat_database_blks_read{role=\"primary\", datname=\"mcp\"}[5m])) + sum(rate(pg_stat_database_blks_hit{role=\"primary\", datname=\"mcp\"}[5m])))",
           "legendFormat": "Primary Cache Hit",
           "refId": "A"
         },
         {
-          "expr": "pg_stat_database_blks_hit{role=\"replica\", datname=\"mcp\"} / (pg_stat_database_blks_read{role=\"replica\", datname=\"mcp\"} + pg_stat_database_blks_hit{role=\"replica\", datname=\"mcp\"})",
+          "expr": "sum(rate(pg_stat_database_blks_hit{role=\"replica\", datname=\"mcp\"}[5m])) / (sum(rate(pg_stat_database_blks_read{role=\"replica\", datname=\"mcp\"}[5m])) + sum(rate(pg_stat_database_blks_hit{role=\"replica\", datname=\"mcp\"}[5m])))",
           "legendFormat": "Replica Cache Hit",
           "refId": "B"
         }
