@@ -160,6 +160,10 @@ try:
     HTTPX2_INSTRUMENTOR = getattr(_im("opentelemetry.instrumentation.httpx"), "HTTPX2ClientInstrumentor")
 except Exception:
     HTTPX2_INSTRUMENTOR = None
+try:
+    REDIS_INSTRUMENTOR = getattr(_im("opentelemetry.instrumentation.redis"), "RedisInstrumentor")
+except Exception:
+    REDIS_INSTRUMENTOR = None
 
 
 logger = logging.getLogger(__name__)
@@ -1237,7 +1241,19 @@ def init_telemetry() -> Optional[Any]:
                     except Exception as exc:  # pylint: disable=broad-exception-caught
                         logger.warning("Failed to instrument %s clients: %s", _label, exc)
                 else:
-                    logger.info("   %s instrumentation unavailable (install opentelemetry-instrumentation-httpx)", _label)
+                    logger.warning("%s instrumentation enabled but package unavailable (install opentelemetry-instrumentation-httpx)", _label)
+        # Auto-instrument redis/redis.asyncio clients: per-command CLIENT spans
+        # (owner lookups, envelope publishes) nested under the active trace. The
+        # pub/sub receive loop is not instrumented, so listeners produce no noise.
+        if cfg.otel_redis_instrumentation_enabled:
+            if REDIS_INSTRUMENTOR is not None:
+                try:
+                    REDIS_INSTRUMENTOR().instrument()
+                    logger.info("   redis client auto-instrumentation enabled")
+                except Exception as exc:  # pylint: disable=broad-exception-caught
+                    logger.warning("Failed to instrument redis clients: %s", exc)
+            else:
+                logger.warning("redis instrumentation enabled but package unavailable (install opentelemetry-instrumentation-redis)")
 
         return _TRACER
 
