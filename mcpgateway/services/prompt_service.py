@@ -1467,6 +1467,9 @@ class PromptService(BaseService):
 
             query = await self._apply_access_control(query, db, user_email, token_teams, team_id)
 
+            if team_id:
+                query = query.where(DbPrompt.team_id == team_id)
+
             if visibility:
                 query = query.where(DbPrompt.visibility == visibility)
 
