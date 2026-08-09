@@ -1408,6 +1408,7 @@ populate-report:                           ## Show latest population report
 # help: monitoring-logs        - Show monitoring stack logs
 # help: monitoring-lite-up    - Start lite monitoring (excludes pgAdmin, Redis CLI)
 # help: monitoring-lite-down  - Stop lite monitoring stack
+# help: profile-gateway       - Record py-spy CPU profiles of gateway replicas (PROFILE_DURATION=60)
 
 # Compose command for monitoring (requires --profile support)
 # podman-compose < 1.1.0 doesn't support --profile, so prefer docker compose or podman compose
@@ -1522,6 +1523,31 @@ monitoring-clean:                          ## Stop and remove all monitoring dat
 	@echo "📊 Stopping and cleaning monitoring stack..."
 	$(COMPOSE_CMD_MONITOR) --profile monitoring down -v --remove-orphans
 	@echo "✅ Monitoring stack stopped and volumes removed."
+
+# CPU profiling (py-spy sidecars; no gateway changes needed)
+PROFILE_DURATION ?= 60
+PROFILE_RATE ?= 99
+PROFILE_FORMAT ?= flamegraph
+
+.PHONY: profile-gateway
+profile-gateway:                           ## Record py-spy CPU profiles of all gateway replicas (PROFILE_DURATION=60, PROFILE_FORMAT=flamegraph|speedscope)
+	@command -v docker >/dev/null || { echo "❌ docker is required for py-spy sidecars"; exit 1; }
+	@mkdir -p reports/profiles
+	@docker build -q -t mcpgateway/py-spy:0.4.2 infra/profiler
+	@TS=$$(date +%Y%m%d-%H%M%S); \
+	EXT=$$([ "$(PROFILE_FORMAT)" = "flamegraph" ] && echo "svg" || echo "speedscope.json"); \
+	REPLICAS=$$($(COMPOSE_CMD_MONITOR) ps gateway --format '{{.Names}}' 2>/dev/null); \
+	if [ -z "$$REPLICAS" ]; then echo "❌ No gateway containers running. Start the stack first (make testing-up / monitoring-up)."; exit 1; fi; \
+	echo "🔥 Profiling for $(PROFILE_DURATION)s @ $(PROFILE_RATE)Hz: $$REPLICAS"; \
+	for c in $$REPLICAS; do \
+		( docker run --rm --pid="container:$$c" --cap-add SYS_PTRACE \
+			-v "$(CURDIR)/reports/profiles:/profiles" mcpgateway/py-spy:0.4.2 \
+			record --pid 1 --subprocesses -d $(PROFILE_DURATION) -r $(PROFILE_RATE) \
+			-f $(PROFILE_FORMAT) -o "/profiles/$$TS-$$c.$$EXT" >/dev/null 2>&1 ) & \
+	done; \
+	wait; \
+	echo "✅ Profiles:"; ls -la reports/profiles/$$TS-*; \
+	echo "   🌐 View flamegraphs at http://localhost:$${PORTAL_PORT:-9200}/profiles/"
 
 # =============================================================================
 # help: 🔭 LANGFUSE LLM OBSERVABILITY
