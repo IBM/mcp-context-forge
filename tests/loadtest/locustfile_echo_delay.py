@@ -128,7 +128,10 @@ def _generate_jwt_token(user_email: str, tenant_id: str) -> str | None:
     """Generate a JWT token with per-user identity and tenant claims.
 
     The woTenantId claim is read by the WXO auth plugin to map the user
-    to the correct team.
+    to the correct team. The auth_provider claim marks the token as an
+    interactive (local) login token — without it, the gateway's
+    _set_auth_method_from_payload falls back to a per-request legacy JTI
+    database lookup on every call.
     """
     now = int(time.time())
     payload = {
@@ -139,6 +142,10 @@ def _generate_jwt_token(user_email: str, tenant_id: str) -> str | None:
         "sub": user_email,
         "exp": now + 86400,
         "jti": uuid.uuid4().hex,
+        # Interactive-login marker (local email user). Not token_use="session":
+        # these users don't exist in the DB, and the session path resolves
+        # teams from the DB (would yield public-only visibility).
+        "auth_provider": "local",
         "woTenantId": tenant_id,
     }
     try:
