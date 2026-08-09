@@ -23,7 +23,14 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.db import Gateway
 from mcpgateway.middleware.token_scoping import ResourceOwnershipResult
-from mcpgateway.routers.oauth_router import ADMIN_CSRF_COOKIE_NAME, enforce_fetch_tools_csrf
+from mcpgateway.routers.oauth_router import (
+    ADMIN_CSRF_COOKIE_NAME,
+    _require_admin_user,
+    delete_registered_client,
+    enforce_fetch_tools_csrf,
+    get_registered_client_for_gateway,
+    list_registered_oauth_clients,
+)
 from mcpgateway.schemas import EmailUserResponse
 from mcpgateway.services.oauth_manager import OAuthError
 from mcpgateway.utils.oauth_resource import derive_resource_origin
@@ -2104,8 +2111,6 @@ class TestOAuthRouterAdditionalCoverage:
         mock_db.execute.return_value.scalar_one_or_none.return_value = client
         mock_db.commit.side_effect = Exception("boom")
 
-        from mcpgateway.routers.oauth_router import delete_registered_client
-
         with pytest.raises(HTTPException) as exc_info:
             await delete_registered_client("c1", mock_admin_request, {"email": "admin", "is_admin": True}, mock_db)
 
@@ -2115,8 +2120,6 @@ class TestOAuthRouterAdditionalCoverage:
     @pytest.mark.asyncio
     async def test_registered_oauth_client_endpoints_require_admin(self, mock_db, mock_admin_request):
         """Non-admin callers are rejected with 403 on all three DCR management routes."""
-        from mcpgateway.routers.oauth_router import delete_registered_client, get_registered_client_for_gateway, list_registered_oauth_clients
-
         with pytest.raises(HTTPException) as exc_info:
             await list_registered_oauth_clients(mock_admin_request, current_user={"email": "user@example.com", "is_admin": False}, db=mock_db)
         assert exc_info.value.status_code == 403
@@ -2128,6 +2131,153 @@ class TestOAuthRouterAdditionalCoverage:
         with pytest.raises(HTTPException) as exc_info:
             await delete_registered_client("client123", mock_admin_request, {"email": "user@example.com", "is_admin": False}, mock_db)
         assert exc_info.value.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_registered_oauth_client_endpoints_reject_narrowed_admin(self, mock_db, mock_admin_request):
+        """Narrowed admin tokens (token_teams is not None) must be denied on all DCR management routes."""
+        narrowed_admin = {"email": "admin@example.com", "is_admin": True, "token_teams": ["team-a"]}
+
+        with pytest.raises(HTTPException) as exc_info:
+            await list_registered_oauth_clients(mock_admin_request, current_user=narrowed_admin, db=mock_db)
+        assert exc_info.value.status_code == 403
+
+        with pytest.raises(HTTPException) as exc_info:
+            await get_registered_client_for_gateway("gateway123", mock_admin_request, narrowed_admin, mock_db)
+        assert exc_info.value.status_code == 403
+
+        with pytest.raises(HTTPException) as exc_info:
+            await delete_registered_client("client123", mock_admin_request, narrowed_admin, mock_db)
+        assert exc_info.value.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_registered_oauth_client_endpoints_reject_public_only_admin(self, mock_db, mock_admin_request):
+        """Public-only admin token (token_teams=[]) is also rejected — not just narrowed tokens."""
+        public_only_admin = {"email": "admin@example.com", "is_admin": True, "token_teams": []}
+
+        with pytest.raises(HTTPException) as exc_info:
+            await list_registered_oauth_clients(mock_admin_request, current_user=public_only_admin, db=mock_db)
+        assert exc_info.value.status_code == 403
+
+        with pytest.raises(HTTPException) as exc_info:
+            await get_registered_client_for_gateway("gateway123", mock_admin_request, public_only_admin, mock_db)
+        assert exc_info.value.status_code == 403
+
+        with pytest.raises(HTTPException) as exc_info:
+            await delete_registered_client("client123", mock_admin_request, public_only_admin, mock_db)
+        assert exc_info.value.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_registered_oauth_client_endpoints_allow_unnarrowed_admin_explicit_none(self, mock_db, mock_admin_request):
+        """Explicit token_teams=None is the un-narrowed admin bypass — all three routes must pass the guard."""
+        unnarrowed_admin = {"email": "admin@example.com", "is_admin": True, "token_teams": None}
+
+        # list — needs DB to return something
+        mock_db.execute.return_value.scalars.return_value.all.return_value = []
+        result = await list_registered_oauth_clients(mock_admin_request, current_user=unnarrowed_admin, db=mock_db)
+        assert result["total"] == 0
+
+        # get — not found is still a valid pass-through of the auth guard
+        mock_db.execute.return_value.scalar_one_or_none.return_value = None
+        with pytest.raises(HTTPException) as exc_info:
+            await get_registered_client_for_gateway("gw1", mock_admin_request, unnarrowed_admin, mock_db)
+        assert exc_info.value.status_code == 404
+
+        # delete — not found likewise
+        with pytest.raises(HTTPException) as exc_info:
+            await delete_registered_client("c1", mock_admin_request, unnarrowed_admin, mock_db)
+        assert exc_info.value.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_require_admin_user_typed_object_non_admin(self):
+        """_require_admin_user rejects typed objects (hasattr branch) when is_admin is falsy."""
+        class _FakeUser:
+            is_admin = False
+            token_teams = None
+
+        with pytest.raises(HTTPException) as exc_info:
+            _require_admin_user(_FakeUser())
+        assert exc_info.value.status_code == 403
+        assert "Admin" in exc_info.value.detail
+
+    @pytest.mark.asyncio
+    async def test_require_admin_user_typed_object_narrowed(self):
+        """_require_admin_user rejects typed objects (hasattr branch) when token_teams is not None."""
+        class _FakeUser:
+            is_admin = True
+            token_teams = ["team-x"]
+
+        with pytest.raises(HTTPException) as exc_info:
+            _require_admin_user(_FakeUser())
+        assert exc_info.value.status_code == 403
+        assert "un-narrowed" in exc_info.value.detail
+
+    def test_require_admin_user_typed_object_unnarrowed_passes(self):
+        """_require_admin_user allows typed objects with is_admin=True and token_teams=None."""
+        class _FakeUser:
+            is_admin = True
+            token_teams = None
+
+        _require_admin_user(_FakeUser())  # must not raise
+
+    @pytest.mark.asyncio
+    async def test_list_registered_oauth_clients_grant_types_as_csv(self, mock_db, mock_admin_request):
+        """grant_types stored as a CSV string must be split into a list in the response."""
+        class _Client:
+            id = "c2"
+            gateway_id = "g2"
+            issuer = "https://issuer"
+            client_id = "cid"
+            redirect_uris = ["https://cb"]
+            grant_types = "authorization_code,client_credentials"
+            scope = "openid"
+            token_endpoint_auth_method = "client_secret_basic"
+            created_at = datetime.now(timezone.utc)
+            expires_at = None
+            is_active = True
+
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [_Client()]
+
+        # No token_teams key → .get("token_teams") returns None → un-narrowed admin bypass (auth guard passes).
+        result = await list_registered_oauth_clients(mock_admin_request, current_user={"email": "admin", "is_admin": True}, db=mock_db)
+        assert result["clients"][0]["grant_types"] == ["authorization_code", "client_credentials"]
+
+    @pytest.mark.asyncio
+    async def test_delete_registered_client_response_shape(self, mock_db, mock_admin_request):
+        """DELETE response must include gateway_id and issuer alongside the success flag."""
+        client = Mock()
+        client.id = "c1"
+        client.issuer = "https://issuer.example.com"
+        client.gateway_id = "gw-99"
+        mock_db.execute.return_value.scalar_one_or_none.return_value = client
+
+        # No token_teams key → .get("token_teams") returns None → un-narrowed admin bypass (auth guard passes).
+        result = await delete_registered_client("c1", mock_admin_request, {"email": "admin", "is_admin": True}, mock_db)
+        assert result["gateway_id"] == "gw-99"
+        assert result["issuer"] == "https://issuer.example.com"
+        assert "c1" in result["message"]
+
+    @pytest.mark.asyncio
+    async def test_get_registered_client_includes_registration_client_uri(self, mock_db, mock_admin_request):
+        """GET /{gateway_id} response must expose registration_client_uri."""
+        class _Client:
+            id = "c1"
+            gateway_id = "g1"
+            issuer = "https://issuer"
+            client_id = "cid"
+            redirect_uris = ["https://cb"]
+            grant_types = ["authorization_code"]
+            scope = "openid"
+            token_endpoint_auth_method = "client_secret_basic"
+            registration_client_uri = "https://issuer/register/c1"
+            created_at = datetime.now(timezone.utc)
+            expires_at = None
+            is_active = True
+
+        mock_db.execute.return_value.scalar_one_or_none.return_value = _Client()
+
+        # No token_teams key → .get("token_teams") returns None → un-narrowed admin bypass (auth guard passes).
+        result = await get_registered_client_for_gateway("g1", mock_admin_request, {"email": "admin", "is_admin": True}, mock_db)
+        assert result["registration_client_uri"] == "https://issuer/register/c1"
 
     @pytest.mark.asyncio
     async def test_oauth_callback_gateway_id_with_quotes_escaped(self, mock_db, mock_request):

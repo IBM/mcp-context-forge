@@ -232,6 +232,19 @@ class TestPluginBindingsRoutePrefixes:
         assert not any(p.startswith("/v1") for p in paths), "Legacy mount must not contain /v1 paths"
 
 
+def test_teams_list_route_is_dual_mounted(monkeypatch):
+    """The teams list handler is served under canonical /v1 and legacy aliases."""
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    v1_router = build_v1_router(settings, **_empty_router_kwargs())
+    legacy_router = build_legacy_router(settings, **_empty_router_kwargs())
+
+    v1_paths = [p for p, *_ in collect_routes(v1_router)]
+    legacy_paths = [p for p, *_ in collect_routes(legacy_router)]
+
+    assert "/v1/teams/" in v1_paths
+    assert "/teams/" in legacy_paths
+
+
 def test_llm_admin_router_csrf_dependency():
     """Verify llm_admin_router is mounted with enforce_admin_csrf dependency.
 

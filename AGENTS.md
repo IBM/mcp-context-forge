@@ -173,6 +173,16 @@ ContextForge implements a **two-layer security model**:
 - **Layer 1 only**: Token scoping controls visibility (what you can see). RBAC (Layer 2) is evaluated independently — session-token narrowing does not restrict which team roles are checked for permissions.
 - **External IdP tokens**: identities provisioned from trusted external SSO providers (see `SSO_API_TOKEN_AUTH_ENABLED`) are dispatched through the session-token table above (`resolve_session_teams()`), not the API/legacy table — `is_admin`/`teams` come from the persisted local user record, never from the external token's claims.
 
+### Implementation Helpers
+
+Layer-1 derivation is centralized in `mcpgateway/auth_context.py`. Route handlers must call these rather than re-deriving the rule inline:
+
+- `get_scoped_resource_access_context(request, user)` → `(user_email, token_teams)` — the visibility scope to pass into service fetch/list/read calls. Admin bypass is signalled by `token_teams=None` while `user_email` is **kept**, so the service can still owner-match the admin's own private rows. Public-only is `(email, [])`.
+- `get_request_identity(request, user)` → `(user_email, is_admin)` — the requester's own identity, for audit capture and header masking. Use when you need the identity independent of the visibility scope.
+- `get_rpc_filter_context(request, user)` → `(user_email, token_teams, is_admin)` — the raw pre-rule triple. Reserved for the few sites that genuinely need `is_admin` or the un-normalized teams (auth-context forwarding, run-ownership capture, tool-execution authorization); these carry a `Layer-1 exception` comment naming the reason.
+
+The derived triple is memoized on `request.state` per principal, so calling the scope and identity helpers together costs one derivation rather than two.
+
 ### Security Invariants (Required)
 
 - Treat `public` as platform-public scope, not internet-anonymous scope.
