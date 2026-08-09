@@ -1462,6 +1462,9 @@ services:
     volumes:
       - ./infra/portal/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./infra/portal/index.html:/usr/share/nginx/html/index.html:ro
+      - ./reports/profiles:/usr/share/nginx/html/profiles:ro  # py-spy artifacts (make profile-gateway)
+      - ./infra/portal/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./infra/portal/index.html:/usr/share/nginx/html/index.html:ro
     profiles: ["testing", "monitoring", "monitoring-lite"]
 
   # # ──────────────────────────────────────────────────────────────────────
@@ -2299,6 +2302,7 @@ services:
       - LOCUST_RUN_TIME=${LOCUST_RUN_TIME:-5m}
       - LOCUST_WXO_AUTH_ENABLED=${LOCUST_WXO_AUTH_ENABLED:-false}
       - ECHO_DELAY_MS=${ECHO_DELAY_MS:-0}
+      - ECHO_DELAY_STDDEV_MS=${ECHO_DELAY_STDDEV_MS:-0}
       - NUM_TENANTS=${NUM_TENANTS:-10}
       - "JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
     deploy:

@@ -52,6 +52,13 @@ main{flex:1;width:100%;max-width:1200px;margin:0 auto;padding:2rem}
 .api-list .purpose{margin:0 0 0 auto;font-size:.8rem}
 .api-list .icon{width:16px;height:16px;flex:none;align-self:center;color:var(--muted);display:inline-flex}
 .api-list .icon svg{width:100%;height:100%}
+.artifacts{width:100%;max-width:1200px;margin:0 auto;padding:0 2rem 1.6rem;color:var(--muted);font-size:.8rem}
+.artifacts a{display:inline-flex;align-items:center;gap:.4rem;color:var(--muted);text-decoration:none;border-radius:4px}
+.artifacts a:hover,.artifacts a:focus-visible{color:var(--accent);outline:none}
+.artifacts a:focus-visible{box-shadow:0 0 0 2px var(--selection)}
+.artifacts .flame{width:11px;height:11px;flex:none;color:var(--selection)}
+.artifacts code{font-family:var(--mono);font-size:.76rem;color:var(--accent)}
+.artifacts .hint{opacity:.7}
 footer{border-top:1px solid var(--border);padding:1.2rem 2rem;color:var(--muted);font-size:.82rem}
 footer p+p{margin-top:.35rem}
 footer code{font-family:var(--mono);font-size:.78rem;color:var(--text);
@@ -70,6 +77,7 @@ footer code{font-family:var(--mono);font-size:.78rem;color:var(--text);
   <span id="summary" role="status" aria-live="polite"></span>
 </header>
 <main id="groups"></main>
+<p class="artifacts"><a href="/profiles/"><svg class="flame" viewBox="0 0 16 16" fill="currentColor" xmlns="http://www.w3.org/2000/svg" aria-hidden="true"><path d="M8 16c3.314 0 6-2 6-5.5 0-1.5-.5-4-2.5-6 .25 1.5-1.25 2-1.25 2C11 4 9 .5 6 0c.357 2 .5 4-2 6-1.25 1-2 2.729-2 4.5C2 14 4.686 16 8 16z"/></svg> CPU profiles <code>/profiles/</code></a><span class="hint"> — <code>make profile-gateway</code> records new ones</span></p>
 <footer>
   <p>Services reflect the active compose profiles — offline entries aren't running.</p>
 </footer>
