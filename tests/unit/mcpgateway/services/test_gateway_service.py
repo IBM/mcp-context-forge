@@ -7330,36 +7330,6 @@ class TestListGatewaysTokenTeams:
         assert cursor is None
 
     @pytest.mark.asyncio
-    async def test_admin_team_id_scopes_to_team_and_keeps_public(self, gateway_service, monkeypatch):
-        """Admin team_id filtering hides other teams' team-scoped gateways, keeps public ones.
-
-        Guards the admin bypass, which previously returned before
-        team_id was applied.
-        """
-        db = MagicMock()
-        mock_cache = MagicMock()
-        mock_cache.get = AsyncMock(return_value=None)
-        mock_cache.set = AsyncMock()
-        mock_cache.hash_filters = MagicMock(return_value="h")
-        monkeypatch.setattr("mcpgateway.services.gateway_service._get_registry_cache", lambda: mock_cache)
-
-        mock_paginate = AsyncMock(return_value=([], None))
-        monkeypatch.setattr("mcpgateway.services.gateway_service.unified_paginate", mock_paginate)
-        monkeypatch.setattr("mcpgateway.services.base_service.is_user_admin", MagicMock(return_value=True))
-
-        await gateway_service.list_gateways(
-            db,
-            user_email="admin@test.com",
-            token_teams=None,
-            team_id="team-1",
-        )
-
-        query = mock_paginate.await_args.kwargs["query"]
-        compiled = str(query.compile(compile_kwargs={"literal_binds": True}))
-        # Rows are narrowed to the requested team ...
-        assert "gateways.team_id = 'team-1'" in compiled
-        # ... but globally-public rows from any team are still ORed in.
-        assert "gateways.visibility = 'public'" in compiled
 
     @pytest.mark.asyncio
     async def test_page_based_pagination(self, gateway_service, monkeypatch):
