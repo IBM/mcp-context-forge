@@ -7330,8 +7330,12 @@ class TestListGatewaysTokenTeams:
         assert cursor is None
 
     @pytest.mark.asyncio
-    async def test_admin_specific_team_is_an_exact_filter(self, gateway_service, monkeypatch):
-        """Admin team_id filtering excludes public gateways assigned to other teams."""
+    async def test_admin_team_id_scopes_to_team_and_keeps_public(self, gateway_service, monkeypatch):
+        """Admin team_id filtering hides other teams' team-scoped gateways, keeps public ones.
+
+        Guards the admin bypass, which previously returned before
+        team_id was applied.
+        """
         db = MagicMock()
         mock_cache = MagicMock()
         mock_cache.get = AsyncMock(return_value=None)
@@ -7352,7 +7356,10 @@ class TestListGatewaysTokenTeams:
 
         query = mock_paginate.await_args.kwargs["query"]
         compiled = str(query.compile(compile_kwargs={"literal_binds": True}))
-        assert "AND gateways.team_id = 'team-1'" in compiled
+        # Rows are narrowed to the requested team ...
+        assert "gateways.team_id = 'team-1'" in compiled
+        # ... but globally-public rows from any team are still ORed in.
+        assert "gateways.visibility = 'public'" in compiled
 
     @pytest.mark.asyncio
     async def test_page_based_pagination(self, gateway_service, monkeypatch):

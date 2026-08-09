@@ -11302,3 +11302,36 @@ class TestGrpcToolInvocation:
 #   converts cancellation into TimeoutError in some Python event-loop states. Since the
 #   pattern is structurally identical in all three branches, protecting it in one branch
 #   (gRPC) is sufficient to detect a regression that would affect all three.
+
+
+@pytest.mark.asyncio
+async def test_admin_team_id_scopes_to_team_and_keeps_public(tool_service, monkeypatch):
+    """Admin team_id filtering hides other teams' team-scoped rows, keeps public ones.
+
+    Guards the admin bypass, which previously returned before
+    team_id was applied.
+    """
+    db = MagicMock()
+    mock_cache = MagicMock()
+    mock_cache.get = AsyncMock(return_value=None)
+    mock_cache.set = AsyncMock()
+    mock_cache.hash_filters = MagicMock(return_value="h")
+    monkeypatch.setattr("mcpgateway.services.tool_service._get_registry_cache", lambda: mock_cache)
+
+    mock_paginate = AsyncMock(return_value=([], None))
+    monkeypatch.setattr("mcpgateway.services.tool_service.unified_paginate", mock_paginate)
+    monkeypatch.setattr("mcpgateway.services.base_service.is_user_admin", MagicMock(return_value=True))
+
+    await tool_service.list_tools(
+        db,
+        user_email="admin@test.com",
+        token_teams=None,
+        team_id="team-1",
+    )
+
+    query = mock_paginate.await_args.kwargs["query"]
+    compiled = str(query.compile(compile_kwargs={"literal_binds": True}))
+    # Rows are narrowed to the requested team ...
+    assert "tools.team_id = 'team-1'" in compiled
+    # ... but globally-public rows from any team are still ORed in.
+    assert "tools.visibility = 'public'" in compiled

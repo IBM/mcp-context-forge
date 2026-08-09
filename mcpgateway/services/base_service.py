@@ -93,7 +93,9 @@ class BaseService(ABC):
                 ``None`` = admin bypass (API token) or no auth context.
                 ``[]`` = public-only token.
                 ``[...]`` = team-scoped token (API or session token).
-            team_id: Optional specific team filter.
+            team_id: Optional specific team filter. When supplied, every caller
+                shape - including the admin bypasses - is narrowed to that team
+                plus globally-public rows from any team.
 
         Returns:
             Query with visibility WHERE clauses applied. Admin bypass excludes
@@ -107,6 +109,13 @@ class BaseService(ABC):
         # Matches the pattern in a2a_service._visible_agent_ids.
         model_cls = self._visibility_model_cls
         if user_email is None and token_teams is None:
+            if team_id:
+                return query.where(
+                    or_(
+                        and_(model_cls.team_id == team_id, model_cls.visibility != "private"),
+                        model_cls.visibility == "public",
+                    )
+                )
             return query.where(model_cls.visibility != "private")
 
         # Admin bypass path: only check DB for users with token_teams=None
@@ -115,6 +124,14 @@ class BaseService(ABC):
         if token_teams is None:
             user_is_admin = user_email and is_user_admin(db, user_email)
             if user_is_admin:
+                if team_id:
+                    return query.where(
+                        or_(
+                            and_(model_cls.team_id == team_id, model_cls.visibility != "private"),
+                            model_cls.visibility == "public",
+                            and_(model_cls.team_id == team_id, model_cls.visibility == "private", model_cls.owner_email == user_email),
+                        )
+                    )
                 return query.where(
                     or_(
                         model_cls.visibility != "private",
