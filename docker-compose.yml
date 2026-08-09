@@ -2238,7 +2238,9 @@ services:
       - |
         set -eu
         echo "Generating JWT token for Locust..."
-        TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret $$JWT_SECRET_KEY --algo HS256 2>/dev/null)
+        # --admin produces a rich token whose user.auth_provider="cli" claim lets the
+        # gateway classify it without the legacy per-request JTI database lookup.
+        TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret $$JWT_SECRET_KEY --algo HS256 --admin 2>/dev/null)
         printf "%s" "$$TOKEN" > /tokens/gateway.jwt
         echo ""
         echo "✅ Token written to /tokens/gateway.jwt"
