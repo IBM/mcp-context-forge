@@ -58,13 +58,15 @@ describe("UserActionsMenu", () => {
     expect(onDelete).toHaveBeenCalledWith(mockUser.email);
   });
 
-  it("delete menu item has red text class", async () => {
+  it("delete menu item shares the default (non-destructive) text color of edit", async () => {
     const user = userEvent.setup();
     renderWithProviders(
       <UserActionsMenu user={mockUser} displayName="Alice" onEdit={vi.fn()} onDelete={vi.fn()} />,
     );
     await user.click(screen.getByRole("button"));
+    const editItem = await screen.findByRole("menuitem", { name: /edit/i });
     const deleteItem = await screen.findByRole("menuitem", { name: /delete/i });
-    expect(deleteItem.className).toContain("text-red");
+    expect(deleteItem.className).not.toContain("text-red");
+    expect(deleteItem.className).toBe(editItem.className);
   });
 });

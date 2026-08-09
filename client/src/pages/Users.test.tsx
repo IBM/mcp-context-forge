@@ -893,7 +893,7 @@ describe("Users", () => {
       expect(header).toBeInTheDocument();
       expect(header).toHaveClass("flex");
       expect(header).toHaveClass("items-center");
-      expect(header).toHaveClass("justify-between");
+      expect(header).toHaveClass("justify-end");
     });
   });
 

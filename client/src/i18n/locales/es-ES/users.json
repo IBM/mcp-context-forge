@@ -1,5 +1,5 @@
 {
-  "users.createUser": "Crear Usuario",
+  "users.createUser": "Crear usuario",
   "users.date.never": "Nunca",
   "users.empty.title": "No se encontraron usuarios",
   "users.emptyState.description": "Cree cuentas de usuario con autenticación por correo electrónico y contraseña.",
@@ -13,6 +13,7 @@
   "users.form.confirmPassword": "Confirmar Contraseña",
   "users.form.description": "Cree una nueva cuenta de usuario con autenticación por correo electrónico y contraseña.",
   "users.form.email.placeholder": "usuario@ejemplo.com",
+  "users.form.email.readonly": "El correo electrónico no se puede cambiar",
   "users.form.email": "Correo Electrónico",
   "users.form.error.createFailed": "Error al crear usuario. Por favor, inténtelo de nuevo.",
   "users.form.error.emailInvalid": "Correo electrónico inválido",

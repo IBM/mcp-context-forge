@@ -4,6 +4,7 @@ import { useIntl } from "react-intl";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { ListSearch } from "@/components/ui/list-search";
+import { SettingsToolbar, useHideSettingsTabs } from "@/components/settings/settings-toolbar";
 import { UserForm } from "@/components/users/UserForm";
 import { UsersTable } from "@/components/users/UsersTable";
 import { ConfirmDialog } from "@/components/servers/ConfirmDialog";
@@ -174,6 +175,10 @@ export function Users() {
   const getUserText = useCallback((user: User) => `${user.full_name ?? ""} ${user.email}`, []);
   const { query, setQuery, results } = useLocalSearch(allUsers, getUserText);
 
+  // While the create/edit form is open it takes over the whole area, so hide
+  // the Settings tab strip + toolbar.
+  useHideSettingsTabs(isFormOpen);
+
   return (
     <div>
       {isFormOpen ? (
@@ -205,29 +210,35 @@ export function Users() {
         />
       ) : (
         <div className="space-y-6">
-          <header className="flex items-center justify-between">
-            <h2 className="text-xl font-semibold text-foreground">
-              {intl.formatMessage({ id: "users.title" })}
-            </h2>
-            <div className="flex items-center gap-3">
-              <ListSearch
-                value={query}
-                onChange={setQuery}
-                ariaLabel={intl.formatMessage(
-                  { id: "common.searchLabel" },
-                  { entity: intl.formatMessage({ id: "navigation.users" }) },
+          <header className="flex items-center justify-end">
+            {/* The Settings tab already labels this section, so the visible
+                title is dropped per design; kept sr-only for accessibility. */}
+            <h2 className="sr-only">{intl.formatMessage({ id: "users.title" })}</h2>
+            {/* Hosted inside the Settings tabs, these actions render on the tab
+                row (via the toolbar slot); standalone they fall back inline. */}
+            <SettingsToolbar>
+              <div className="flex items-center gap-3">
+                {allUsers.length > 0 && (
+                  <ListSearch
+                    value={query}
+                    onChange={setQuery}
+                    ariaLabel={intl.formatMessage(
+                      { id: "common.searchLabel" },
+                      { entity: intl.formatMessage({ id: "navigation.users" }) },
+                    )}
+                    placeholder={intl.formatMessage({ id: "common.search" })}
+                  />
                 )}
-                placeholder={intl.formatMessage({ id: "common.search" })}
-              />
-              <Button
-                onClick={() => setIsFormOpen(true)}
-                className="gap-2"
-                aria-label={intl.formatMessage({ id: "users.createUser" })}
-              >
-                <Plus className="h-4 w-4" aria-hidden="true" />
-                {intl.formatMessage({ id: "users.createUser" })}
-              </Button>
-            </div>
+                <Button
+                  variant="default"
+                  className="h-7 rounded-sm px-4"
+                  onClick={() => setIsFormOpen(true)}
+                >
+                  <Plus className="h-4 w-4" aria-hidden="true" />
+                  {intl.formatMessage({ id: "users.createUser" })}
+                </Button>
+              </div>
+            </SettingsToolbar>
           </header>
           {isLoading ? (
             <div
@@ -284,7 +295,7 @@ export function Users() {
                           id="users-limit-select"
                           value={limit}
                           onChange={(event) => handleLimitChange(Number(event.target.value))}
-                          className="rounded-md border border-input bg-background px-2 py-1 text-sm"
+                          className="rounded-md border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 px-2 py-1 text-sm"
                         >
                           <option value={10}>10</option>
                           <option value={25}>25</option>
