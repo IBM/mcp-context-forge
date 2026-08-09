@@ -11343,6 +11343,56 @@ class TestGrpcToolInvocation:
             with pytest.raises(ToolTimeoutError):
                 await tool_service.invoke_tool(test_db, "test.Svc.DoStuff", {}, request_headers=None)
 
+    @pytest.mark.asyncio
+    async def test_invoke_grpc_tool_populates_structured_content(self, tool_service, test_db, mock_grpc_tool, mock_global_config_obj):
+        """A schema-declaring gRPC tool must attach structured_content from the JSON body.
+
+        Without this, the MCP egress validator rejects the response with
+        "outputSchema defined but no structured output returned".
+        """
+        output_schema = {
+            "type": "object",
+            "properties": {"status": {"type": "string"}},
+            "required": ["status"],
+        }
+        mock_grpc_tool.output_schema = output_schema
+        setup_db_execute_mock(test_db, mock_grpc_tool, mock_global_config_obj)
+
+        with patch("mcpgateway.services.tool_service.fresh_db_session") as mock_fresh_db, patch("mcpgateway.services.grpc_service.GrpcService") as mock_grpc_cls:
+            mock_grpc_manager = AsyncMock()
+            mock_grpc_manager.invoke_method = AsyncMock(return_value={"status": "SERVING"})
+            mock_grpc_cls.return_value = mock_grpc_manager
+            mock_fresh_db.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_fresh_db.return_value.__exit__ = MagicMock(return_value=False)
+
+            response = await tool_service.invoke_tool(test_db, "test.Svc.DoStuff", {}, request_headers=None)
+
+        assert response.is_error is not True
+        assert response.structured_content == {"status": "SERVING"}
+
+    @pytest.mark.asyncio
+    async def test_invoke_grpc_tool_schema_mismatch_marks_error(self, tool_service, test_db, mock_grpc_tool, mock_global_config_obj):
+        """A gRPC response that violates the tool's output schema must be flagged is_error."""
+        mock_grpc_tool.output_schema = {
+            "type": "object",
+            "properties": {"status": {"type": "string"}},
+            "required": ["status"],
+            "additionalProperties": False,
+        }
+        setup_db_execute_mock(test_db, mock_grpc_tool, mock_global_config_obj)
+
+        with patch("mcpgateway.services.tool_service.fresh_db_session") as mock_fresh_db, patch("mcpgateway.services.grpc_service.GrpcService") as mock_grpc_cls:
+            mock_grpc_manager = AsyncMock()
+            # Missing required "status" and has an extra key -> must fail validation
+            mock_grpc_manager.invoke_method = AsyncMock(return_value={"unexpected": True})
+            mock_grpc_cls.return_value = mock_grpc_manager
+            mock_fresh_db.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_fresh_db.return_value.__exit__ = MagicMock(return_value=False)
+
+            response = await tool_service.invoke_tool(test_db, "test.Svc.DoStuff", {}, request_headers=None)
+
+        assert response.is_error is True
+
 
 # Coverage decision-record (B7 anti-regression):
 #   ``invoke_tool`` has three byte-identical ``except asyncio.CancelledError: raise``

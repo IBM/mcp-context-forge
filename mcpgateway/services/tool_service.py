@@ -6581,7 +6581,14 @@ class ToolService(BaseService):
                             grpc_status_context.reset(grpc_status_token)
                         serialized = orjson.dumps(response, option=orjson.OPT_INDENT_2)
                         tool_result = ToolResult(content=[TextContent(type="text", text=serialized.decode())])
-                        success = True
+                        # Mirror the REST success path: when the tool declares an output
+                        # schema, extract/validate structured content so the MCP egress
+                        # validator does not reject the response for missing structured
+                        # output. The validator skips for isError=true and, on failure,
+                        # flips tool_result to is_error=True (per #4202).
+                        if tool_output_schema:
+                            self._extract_and_validate_structured_content(tool_for_validation, tool_result)
+                        success = not getattr(tool_result, "is_error", False)
                     except asyncio.CancelledError:  # pylint: disable=try-except-raise
                         # Re-raise so the LATER ``except Exception`` below cannot swallow cancellation.
                         # Removing this clause would re-introduce the swallowed-cancellation bug from
