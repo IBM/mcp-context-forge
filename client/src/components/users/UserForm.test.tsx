@@ -312,6 +312,9 @@ describe("UserForm", () => {
       });
       vi.mocked(useUserFormModule.useUserForm).mockReturnValue({
         ...defaultFormState,
+        email: "user@example.com",
+        password: "securepassword", // pragma: allowlist secret
+        confirmPassword: "securepassword", // pragma: allowlist secret
         handleSubmit,
         isValid: true,
       });
@@ -334,6 +337,9 @@ describe("UserForm", () => {
       });
       vi.mocked(useUserFormModule.useUserForm).mockReturnValue({
         ...defaultFormState,
+        email: "user@example.com",
+        password: "securepassword", // pragma: allowlist secret
+        confirmPassword: "securepassword", // pragma: allowlist secret
         handleSubmit,
         isValid: true,
       });
@@ -356,6 +362,9 @@ describe("UserForm", () => {
       });
       vi.mocked(useUserFormModule.useUserForm).mockReturnValue({
         ...defaultFormState,
+        email: "user@example.com",
+        password: "securepassword", // pragma: allowlist secret
+        confirmPassword: "securepassword", // pragma: allowlist secret
         handleSubmit,
         isValid: true,
       });
@@ -371,16 +380,27 @@ describe("UserForm", () => {
       });
     });
 
-    it("should keep submit button enabled when form is invalid", () => {
+    it("disables submit button when required fields are empty (create mode)", () => {
       vi.mocked(useUserFormModule.useUserForm).mockReturnValue({
         ...defaultFormState,
-        isValid: false,
       });
 
       render(<UserForm isOpen={true} onToggle={vi.fn()} />, { wrapper });
 
-      const submitButton = screen.getByText("Create User");
-      expect(submitButton).toBeEnabled();
+      expect(screen.getByText("Create User")).toBeDisabled();
+    });
+
+    it("enables submit button once required fields are filled", () => {
+      vi.mocked(useUserFormModule.useUserForm).mockReturnValue({
+        ...defaultFormState,
+        email: "user@example.com",
+        password: "securepassword", // pragma: allowlist secret
+        confirmPassword: "securepassword", // pragma: allowlist secret
+      });
+
+      render(<UserForm isOpen={true} onToggle={vi.fn()} />, { wrapper });
+
+      expect(screen.getByText("Create User")).toBeEnabled();
     });
 
     it("should disable submit button when submitting", () => {

@@ -1,4 +1,4 @@
-import { Edit, MoreVertical, Trash2 } from "lucide-react";
+import { MoreVertical } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -38,15 +38,9 @@ export function UserActionsMenu({ user, displayName, onEdit, onDelete }: UserAct
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" role="menu">
         <DropdownMenuItem onClick={() => onEdit(user)} role="menuitem">
-          <Edit className="mr-2 h-4 w-4" aria-hidden="true" />
           {intl.formatMessage({ id: "users.table.actions.edit" })}
         </DropdownMenuItem>
-        <DropdownMenuItem
-          onClick={() => onDelete(user.email)}
-          className="text-red-600 dark:text-red-400"
-          role="menuitem"
-        >
-          <Trash2 className="mr-2 h-4 w-4" aria-hidden="true" />
+        <DropdownMenuItem onClick={() => onDelete(user.email)} role="menuitem">
           {intl.formatMessage({ id: "users.table.actions.delete" })}
         </DropdownMenuItem>
       </DropdownMenuContent>
