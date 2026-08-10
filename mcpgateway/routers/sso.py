@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 from mcpgateway.common.query_params import QueryErrorCodeSso
 from mcpgateway.config import settings
 from mcpgateway.db import get_db
-from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
+from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_global_admin_permission, require_permission
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.sso_service import invalidate_trusted_provider_cache, SSOService
 from mcpgateway.services.team_management_service import TeamManagementService
@@ -509,11 +509,13 @@ async def handle_sso_callback(
 
 # Admin endpoints for SSO provider management
 @sso_router.post("/admin/providers", response_model=Dict)
+@require_global_admin_permission()
 @require_permission("admin.sso_providers:create")
 async def create_sso_provider(
     provider_data: SSOProviderCreateRequest,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
+    request: Request = None,  # pylint: disable=unused-argument
 ) -> Dict:
     """Create new SSO provider configuration (Admin only).
 
@@ -521,6 +523,7 @@ async def create_sso_provider(
         provider_data: SSO provider configuration
         db: Database session
         user: Current authenticated user
+        request: Incoming request, used to resolve Layer-1 token scope.
 
     Returns:
         Created provider information.
@@ -557,16 +560,19 @@ async def create_sso_provider(
 
 
 @sso_router.get("/admin/providers", response_model=List[Dict])
+@require_global_admin_permission()
 @require_permission("admin.sso_providers:read")
 async def list_all_sso_providers(
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
+    request: Request = None,  # pylint: disable=unused-argument
 ) -> List[Dict]:
     """List all SSO providers including disabled ones (Admin only).
 
     Args:
         db: Database session
         user: Current authenticated user
+        request: Incoming request, used to resolve Layer-1 token scope.
 
     Returns:
         List of all SSO providers with configuration details.
@@ -603,11 +609,13 @@ async def list_all_sso_providers(
 
 
 @sso_router.get("/admin/providers/{provider_id}", response_model=Dict)
+@require_global_admin_permission()
 @require_permission("admin.sso_providers:read")
 async def get_sso_provider(
     provider_id: str,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
+    request: Request = None,  # pylint: disable=unused-argument
 ) -> Dict:
     """Get SSO provider details (Admin only).
 
@@ -615,6 +623,7 @@ async def get_sso_provider(
         provider_id: Provider identifier
         db: Database session
         user: Current authenticated user
+        request: Incoming request, used to resolve Layer-1 token scope.
 
     Returns:
         Provider configuration details.
@@ -656,12 +665,14 @@ async def get_sso_provider(
 
 
 @sso_router.put("/admin/providers/{provider_id}", response_model=Dict)
+@require_global_admin_permission()
 @require_permission("admin.sso_providers:update")
 async def update_sso_provider(
     provider_id: str,
     provider_data: SSOProviderUpdateRequest,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
+    request: Request = None,  # pylint: disable=unused-argument
 ) -> Dict:
     """Update SSO provider configuration (Admin only).
 
@@ -670,6 +681,7 @@ async def update_sso_provider(
         provider_data: Updated provider configuration
         db: Database session
         user: Current authenticated user
+        request: Incoming request, used to resolve Layer-1 token scope.
 
     Returns:
         Updated provider information.
@@ -709,11 +721,13 @@ async def update_sso_provider(
 
 
 @sso_router.delete("/admin/providers/{provider_id}")
+@require_global_admin_permission()
 @require_permission("admin.sso_providers:delete")
 async def delete_sso_provider(
     provider_id: str,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
+    request: Request = None,  # pylint: disable=unused-argument
 ) -> Dict:
     """Delete SSO provider configuration (Admin only).
 
@@ -721,6 +735,7 @@ async def delete_sso_provider(
         provider_id: Provider identifier
         db: Database session
         user: Current authenticated user
+        request: Incoming request, used to resolve Layer-1 token scope.
 
     Returns:
         Deletion confirmation.
@@ -767,11 +782,13 @@ class ApprovalActionRequest(BaseModel):
 
 
 @sso_router.get("/pending-approvals", response_model=List[PendingUserApprovalResponse])
+@require_global_admin_permission()
 @require_permission("admin.user_management")
 async def list_pending_approvals(
     include_expired: bool = Query(False, description="Include expired approval requests"),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
+    request: Request = None,  # pylint: disable=unused-argument
 ) -> List[PendingUserApprovalResponse]:
     """List pending SSO user approval requests (Admin only).
 
@@ -779,6 +796,7 @@ async def list_pending_approvals(
         include_expired: Whether to include expired requests
         db: Database session
         user: Current authenticated admin user
+        request: Incoming request, used to resolve Layer-1 token scope.
 
     Returns:
         List of pending approval requests
@@ -820,20 +838,23 @@ async def list_pending_approvals(
 
 
 @sso_router.post("/pending-approvals/{approval_id}/action")
+@require_global_admin_permission()
 @require_permission("admin.user_management")
 async def handle_approval_request(
     approval_id: str,
-    request: ApprovalActionRequest,
+    approval_request: ApprovalActionRequest,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
+    request: Request = None,  # pylint: disable=unused-argument
 ) -> Dict:
     """Approve or reject a pending SSO user registration (Admin only).
 
     Args:
         approval_id: ID of the approval request
-        request: Approval action (approve/reject) with optional reason/notes
+        approval_request: Approval action (approve/reject) with optional reason/notes
         db: Database session
         user: Current authenticated admin user
+        request: Incoming request, used to resolve Layer-1 token scope.
 
     Returns:
         Action confirmation message
@@ -863,15 +884,15 @@ async def handle_approval_request(
 
     admin_email = user["email"]
 
-    if request.action == "approve":
-        approval.approve(admin_email, request.notes)
+    if approval_request.action == "approve":
+        approval.approve(admin_email, approval_request.notes)
         db.commit()
         return {"message": f"User {approval.email} approved successfully"}
 
-    elif request.action == "reject":
-        if not request.reason:
+    elif approval_request.action == "reject":
+        if not approval_request.reason:
             raise HTTPException(status_code=400, detail="Rejection reason is required")
-        approval.reject(admin_email, request.reason, request.notes)
+        approval.reject(admin_email, approval_request.reason, approval_request.notes)
         db.commit()
         return {"message": f"User {approval.email} rejected"}
 
