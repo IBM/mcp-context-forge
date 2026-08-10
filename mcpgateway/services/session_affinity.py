@@ -48,6 +48,7 @@ from mcpgateway.services.upstream_session_registry import (  # re-exported as th
     MessageHandlerFactory,
 )
 from mcpgateway.utils.internal_http import (
+    internal_loopback_base_url,
     post_rpc_in_process,
 )
 
@@ -854,11 +855,6 @@ class SessionAffinity:
                 try:
                     # First-Party
                     from mcpgateway.auth_context import FORWARD_SIG_FIELD, sign_redis_forward_envelope  # pylint: disable=import-outside-toplevel
-                    from mcpgateway.observability import inject_trace_context_headers  # pylint: disable=import-outside-toplevel
-
-                    # Propagate the active W3C trace context across the Redis hop so the
-                    # owner-side dispatch continues this trace instead of rooting a new one.
-                    request_data = {**request_data, "headers": inject_trace_context_headers(request_data.get("headers") or {})}
 
                     # Prepare request with response channel and the edge auth context.
                     forward_data = {
@@ -1161,20 +1157,24 @@ class SessionAffinity:
 
             # First-Party - lazy imports avoid a circular dependency with main/transport.
             # The forwarded envelope was already verified above, before any field was decoded.
+            # First-Party
+            from mcpgateway.auth_context import _expected_internal_mcp_runtime_auth_header  # pylint: disable=import-outside-toplevel,protected-access
+            from mcpgateway.main import app  # pylint: disable=import-outside-toplevel,cyclic-import
             from mcpgateway.utils.passthrough_headers import safe_extract_and_filter_for_loopback  # pylint: disable=import-outside-toplevel
             from mcpgateway.utils.verify_credentials import _resolve_auth_header_name  # pylint: disable=import-outside-toplevel,protected-access
 
-            # Trust headers (runtime marker, shared-secret HMAC, auth context) are
-            # attached by post_rpc_in_process. Carry the W3C trace context from the
-            # envelope explicitly: the passthrough allowlist rightly strips it, and
-            # this listener task has no active OTel context to inject from.
+            # Trust headers for the internal /_internal/mcp/rpc endpoint:
+            # - x-contextforge-mcp-runtime: "affinity" caller marker
+            # - x-contextforge-mcp-runtime-auth: shared-secret HMAC
+            # - x-contextforge-auth-context: the encoded edge auth context, so the
+            #   endpoint reconstructs the same user without re-authenticating.
             rpc_headers = {
                 "content-type": "application/json",
                 "x-mcp-session-id": mcp_session_id or "",
+                "x-contextforge-mcp-runtime": "affinity",
+                "x-contextforge-mcp-runtime-auth": _expected_internal_mcp_runtime_auth_header(),
+                "x-contextforge-auth-context": auth_context_header,
             }
-            for _trace_header in ("traceparent", "tracestate"):
-                if headers.get(_trace_header):
-                    rpc_headers[_trace_header] = headers[_trace_header]
             # Preserve the bearer under the configured auth header (AUTH_HEADER_NAME),
             # not a hardcoded "authorization": the CSRF bearer short-circuit keys on
             # the configured header, so a custom header would otherwise be dropped.
@@ -1186,13 +1186,17 @@ class SessionAffinity:
             # Preserve passthrough headers destined for upstream MCP servers (#3640).
             rpc_headers.update(safe_extract_and_filter_for_loopback(headers))
 
-            # Dispatch IN-PROCESS to the trusted internal endpoint via the shared helper.
-            response = await post_rpc_in_process(
-                content=body,
-                headers=rpc_headers,
-                timeout=settings.mcpgateway_pool_rpc_forward_timeout,
-                auth_context=auth_context_header,
-            )
+            # Dispatch IN-PROCESS to the trusted internal endpoint. The explicit
+            # client=("127.0.0.1", 0) tells ASGITransport to set scope["client"]
+            # to a loopback address so the trust check accepts the request.
+            transport = httpx.ASGITransport(app=app, client=("127.0.0.1", 0))
+            async with httpx.AsyncClient(transport=transport, base_url=internal_loopback_base_url()) as client:
+                response = await client.post(
+                    "/_internal/mcp/rpc",
+                    content=body,
+                    headers=rpc_headers,
+                    timeout=settings.mcpgateway_pool_rpc_forward_timeout,
+                )
 
             logger.debug("[HTTP_AFFINITY] Worker %s | Session %s... | Executed in-process via /_internal/mcp/rpc: %s", WORKER_ID, session_short, response.status_code)
 

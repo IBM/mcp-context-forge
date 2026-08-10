@@ -103,12 +103,6 @@ async def post_rpc_in_process(*, content: bytes, headers: dict, timeout: float, 
     rpc_headers["x-contextforge-mcp-runtime"] = "affinity"
     rpc_headers["x-contextforge-mcp-runtime-auth"] = _expected_internal_mcp_runtime_auth_header()
     rpc_headers["x-contextforge-auth-context"] = auth_context
-    # Propagate the active W3C trace context so the trusted-internal dispatch
-    # joins the caller's trace instead of starting a detached one. No-op when no
-    # OTel context is active (Redis-forwarded envelopes already carry it).
-    from mcpgateway.observability import inject_trace_context_headers  # pylint: disable=import-outside-toplevel
-
-    rpc_headers = inject_trace_context_headers(rpc_headers)
 
     # client=("127.0.0.1", 0) sets scope["client"] to a loopback address so the
     # trust gate's defense-in-depth loopback check accepts the in-process call.
