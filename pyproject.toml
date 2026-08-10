@@ -16,61 +16,15 @@ exclude-newer = "10 days"
 
 [tool.uv.exclude-newer-package]
 cpex = "2026-08-09T23:59:59Z"
-# cpex 0.1.2 (2026-07-30T03:08:24Z) is the minimum required version for
-# ControlExecutionRecord support (issue #5785 / consume-cpex-executions).
-# Pinned past its publish timestamp so uv resolves it on Python 3.13 as well.
-# cpex-url-reputation pinned past its normal soak cutoff: 0.3.5 (2026-07-14) is the first
-# release that emits result.metadata["url_reputation"] for resource_pre_fetch, which
-# tests/integration/plugins/test_plugin_metrics_consumer_integration.py and
-# tests/e2e/test_otel_plugin_metadata_e2e.py depend on. Vetted ahead of the usual window for
-# this reason.
 cpex-url-reputation = "2026-08-09T23:59:59Z"
-# cpex-rate-limiter pinned past its normal soak cutoff: 0.1.7 (2026-07-14) is the first
-# release that emits result.metadata["rate_limiter"] for prompt_pre_fetch/tool_pre_invoke, which
-# tests/integration/plugins/test_plugin_metrics_consumer_integration.py and
-# tests/e2e/test_otel_plugin_metadata_e2e.py depend on. Vetted ahead of the usual window for
-# this reason.
 cpex-rate-limiter = "2026-08-09T23:59:59Z"
-# cpex-encoded-exfil-detection pinned past its normal soak cutoff: 0.3.6 (2026-07-14) is the
-# first release that emits result.metadata["encoded_exfil_detection"] for
-# tool_post_invoke/tool_pre_invoke/resource hooks, which
-# tests/integration/plugins/test_plugin_metrics_consumer_integration.py and
-# tests/e2e/test_otel_plugin_metadata_e2e.py depend on. Vetted ahead of the usual window for
-# this reason.
 cpex-encoded-exfil-detection = "2026-08-09T23:59:59Z"
-# cpex-pii-filter pinned past its normal soak cutoff: 0.3.6 (2026-07-07) is the first
-# release that emits result.metadata for tool_post_invoke, which tests/e2e/test_otel_plugin_metadata_e2e.py
-# depends on. Vetted ahead of the usual window for this reason.
 cpex-pii-filter = "2026-08-09T23:59:59Z"
-# cpex-retry-with-backoff pinned past its normal soak cutoff: 0.3.7 (2026-07-15) is required.
-# 0.3.6 first emitted result.metadata["retry_with_backoff"] for tool_post_invoke (which
-# tests/integration/plugins/test_plugin_metrics_consumer_integration.py and
-# tests/e2e/test_otel_plugin_metadata_e2e.py depend on) but shipped a retry-detection
-# regression: is_failure read the tool_post_invoke result via PyDict::get_item (C-level dict
-# storage), which silently misses every key on the gateway's CopyOnWriteDict payload-isolation
-# wrapper (its data lives in a Python-level overlay) -- every retryable failure looked like a
-# success and the plugin never retried. 0.3.7 fixes this by reading through the Python mapping
-# protocol instead. See IBM/cpex-plugins#124 / #137. Vetted ahead of the usual window for both
-# reasons.
 cpex-retry-with-backoff = "2026-08-09T23:59:59Z"
-# cpex-secrets-detection pinned past its normal soak cutoff: 0.3.10 (2026-07-21)
-# preserves secret field names during redaction. 0.3.9 adds field_allowlist and
-# field_denylist support for gateway plugin config.
-# 0.3.7 is the first release that emits result.metadata["secrets_detection"] for
-# tool_post_invoke, which tests/integration/plugins/test_plugin_metrics_consumer_integration.py
-# and tests/e2e/test_otel_plugin_metadata_e2e.py depend on. Vetted ahead of the usual window
-# for these reasons.
 cpex-secrets-detection = "2026-08-09T23:59:59Z"
-# cpex-sql-sanitizer pinned past its normal soak cutoff: 0.1.0 (2026-07-21) is the only
-# release. Without this pin the `exclude-newer = "10 days"` default would resolve the
-# [plugins] extra to nothing and the gateway would fail to load SQLSanitizer at boot.
-# Vetted ahead of the usual window for this reason.
 cpex-sql-sanitizer = "2026-08-09T23:59:59Z"
-# cryptography>=50.0.0 is required but 50.0.0 published 2026-07-31T14:23Z falls outside the
-# rolling 10-day exclude-newer window. Pinned to today so uv can resolve it on all platforms.
+# additional packages below this: remove before next upgrade cycle starts
 cryptography = "2026-08-09T23:59:59Z"
-# h2>=4.4.1 is a transitive pin (httpx[http2]); CVE-2026-71554 fixed in 4.4.1 (2026-08-03).
-# Falls outside the rolling 10-day exclude-newer window.
 h2 = "2026-08-09T23:59:59Z"
 
 
