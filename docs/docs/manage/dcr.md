@@ -216,6 +216,103 @@ Note: No `client_secret` - PKCE provides security.
 
 ---
 
+## Per-Gateway Control (`use_dcr`)
+
+DCR is normally governed by two **deployment-global** environment variables
+(`MCPGATEWAY_DCR_ENABLED`, `MCPGATEWAY_DCR_AUTO_REGISTER_ON_MISSING_CREDENTIALS`).
+For fleets where different authorization servers need different behavior, set
+`oauth_config.use_dcr` **per gateway** to override the global auto-register
+setting for that gateway alone:
+
+| `oauth_config.use_dcr` | `MCPGATEWAY_DCR_ENABLED` | `MCPGATEWAY_DCR_AUTO_REGISTER_ON_MISSING_CREDENTIALS` | Result when gateway has `issuer` but no `client_id` |
+|------------------------|--------------------------|--------------------------------------------------------|-----------------------------------------------------|
+| absent                 | `true`                   | `true`                                                 | DCR (default behavior)                              |
+| absent                 | any                      | `false`                                                | 400 - provide credentials manually                  |
+| `true`                 | `true`                   | any                                                    | DCR (forces registration)                           |
+| `true`                 | `false`                  | any                                                    | 400 - DCR disabled globally                         |
+| `false`                | any                      | any                                                    | never DCR - 400 - provide credentials manually      |
+| invalid value          | any                      | any                                                    | rejected at create/update (400); treated as absent at runtime |
+
+- `use_dcr` accepts native booleans or the strings `"true"`/`"false"`
+  (case-insensitive) for interop with clients that serialize booleans to strings.
+- `None`, `""`, or whitespace-only values are treated as **absent**
+  (same empty-means-unset convention as every other `oauth_config` field).
+- `use_dcr: true` cannot re-enable DCR when the deployment master switch
+  `MCPGATEWAY_DCR_ENABLED=false` - the global flag always wins.
+- The flag is read only when a gateway has an `issuer` and no `client_id`.
+  Gateways with full credentials are unaffected.
+
+### Example: force DCR for one gateway while the global auto-register is off
+
+```json
+{
+  "name": "Force-DCR Gateway",
+  "url": "https://mcp.example.com/sse",
+  "auth_type": "oauth",
+  "oauth_config": {
+    "grant_type": "authorization_code",
+    "issuer": "https://keycloak.example.com/realms/mcp",
+    "redirect_uri": "https://gateway.example.com/oauth/callback",
+    "use_dcr": true
+  }
+}
+```
+
+### Example: explicit opt-out - never auto-register this gateway
+
+```json
+{
+  "name": "Manual-Only Gateway",
+  "url": "https://mcp.example.com/sse",
+  "auth_type": "oauth",
+  "oauth_config": {
+    "grant_type": "authorization_code",
+    "issuer": "https://auth.saas-provider.com",
+    "client_id": "pre-provisioned-client",
+    "client_secret": "pre-provisioned-secret",
+    "authorization_url": "https://auth.saas-provider.com/authorize",
+    "token_url": "https://auth.saas-provider.com/token",
+    "redirect_uri": "https://gateway.example.com/oauth/callback",
+    "use_dcr": false
+  }
+}
+```
+
+### Example: absent - defer to global settings (default)
+
+Omit `use_dcr` entirely; behavior matches the global environment variables
+exactly (see the [Automatic Registration](#automatic-registration-recommended)
+and [Manual Client Credentials](#manual-client-credentials-fallback) examples).
+
+### Migrating from global-only to per-gateway control
+
+1. Audit existing gateways that would be affected by DCR:
+
+   ```sql
+   SELECT id, name, oauth_config
+   FROM gateways
+   WHERE oauth_config->>'issuer' IS NOT NULL
+     AND oauth_config->>'client_id' IS NULL;
+   ```
+
+2. For each gateway, decide and set `use_dcr`:
+
+   - `true` if the authorization server supports RFC 7591 and the gateway
+     should keep auto-registering;
+   - `false` if credentials are provisioned out-of-band and registration must
+     never happen.
+
+3. Flip the global default:
+
+   ```bash
+   MCPGATEWAY_DCR_AUTO_REGISTER_ON_MISSING_CREDENTIALS=false
+   ```
+
+4. Update each gateway via the admin API (`PUT /gateways/{id}`) and verify
+   first-use registration works for the `use_dcr: true` gateways.
+
+---
+
 ## Database Schema
 
 DCR uses three tables:
