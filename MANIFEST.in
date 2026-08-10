@@ -80,6 +80,7 @@ recursive-include infra *.sh
 recursive-include infra *.yaml
 recursive-include infra *.yml
 include infra/nginx/Dockerfile
+include infra/profiler/Dockerfile
 include infra/wheels/Containerfile
 recursive-include infra *.dockerignore
 

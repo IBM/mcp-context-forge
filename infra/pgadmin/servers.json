@@ -1,0 +1,27 @@
+{
+  "Servers": {
+    "1": {
+      "Name": "ContextForge (postgres)",
+      "Group": "Servers",
+      "Host": "postgres",
+      "Port": 5432,
+      "MaintenanceDB": "mcp",
+      "Username": "postgres",
+      "Password": "mysecretpassword",
+      "SSLMode": "disable",
+      "Comment": "Direct PostgreSQL connection (compose default dev password; keep in sync with POSTGRES_PASSWORD)"
+    },
+    "2": {
+      "Name": "ContextForge (via pgbouncer)",
+      "Group": "Servers",
+      "Host": "pgbouncer",
+      "Port": 6432,
+      "MaintenanceDB": "mcp",
+      "Username": "postgres",
+      "Password": "mysecretpassword",
+      "SavePassword": true,
+      "SSLMode": "disable",
+      "Comment": "Through the PgBouncer pooler (transaction mode) — same path the gateway uses"
+    }
+  }
+}

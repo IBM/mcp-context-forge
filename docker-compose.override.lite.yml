@@ -139,6 +139,11 @@ services:
           memory: 256M
     profiles: ["monitoring", "monitoring-lite"]
 
+  # No lite-specific resource overrides, but prometheus_token must carry the
+  # monitoring-lite profile or prometheus's depends_on fails compose validation.
+  prometheus_token:
+    profiles: ["monitoring", "monitoring-lite"]
+
   loki:
     deploy:
       resources:
