@@ -1628,6 +1628,84 @@ async def test_execute_forwarded_request_success_returns_result():
 
 
 @pytest.mark.asyncio
+async def test_execute_forwarded_request_carries_trace_context_headers():
+    """traceparent/tracestate from the envelope ride the internal dispatch past the passthrough allowlist."""
+    # First-Party
+    from mcpgateway.services.session_affinity import SessionAffinity
+
+    affinity = SessionAffinity()
+    client = _FakeHttpxClient(response=_FakeHttpResponse(200, json_body={"jsonrpc": "2.0", "result": {}, "id": 1}))
+    trace_headers = {
+        "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+        "tracestate": "congo=t61rcWkgMzE",
+    }
+
+    with (
+        patch("mcpgateway.services.session_affinity.settings") as mock_settings,
+        patch("mcpgateway.services.session_affinity.post_rpc_in_process", new=client.as_post_rpc),
+    ):
+        mock_settings.mcpgateway_pool_rpc_forward_timeout = 5.0
+        result = await affinity._execute_forwarded_request(  # pylint: disable=protected-access
+            _sign_forward({"method": "tools/list", "params": {}, "headers": trace_headers, "req_id": 1, "mcp_session_id": "sess-trace"})
+        )
+
+    assert result == {"result": {}}
+    assert client.last_post_kwargs["headers"]["traceparent"] == trace_headers["traceparent"]  # type: ignore[index]
+    assert client.last_post_kwargs["headers"]["tracestate"] == trace_headers["tracestate"]  # type: ignore[index]
+
+
+@pytest.mark.asyncio
+async def test_execute_forwarded_http_request_carries_trace_context_headers():
+    """traceparent/tracestate from an http_forward envelope are carried explicitly past the passthrough allowlist."""
+    # Third-Party
+    import orjson
+
+    # First-Party
+    from mcpgateway.services.session_affinity import SessionAffinity
+
+    affinity = SessionAffinity()
+    body = orjson.dumps({"jsonrpc": "2.0", "method": "tools/list", "id": 1})
+    client = _FakeHttpxClient(response=_FakeHttpResponse(200, text_body='{"jsonrpc":"2.0","result":{},"id":1}'))
+    trace_headers = {
+        "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+        "tracestate": "congo=t61rcWkgMzE",
+    }
+
+    class _Redis:
+        def __init__(self):
+            self.published: list[tuple[str, bytes]] = []
+
+        async def publish(self, channel, payload):
+            self.published.append((channel, payload))
+            return 1
+
+    redis = _Redis()
+    envelope = _sign_forward(
+        {
+            "type": "http_forward",
+            "response_channel": "resp-trace",
+            "method": "POST",
+            "path": "/mcp",
+            "headers": trace_headers,
+            "body": body.hex(),
+            "mcp_session_id": "sess-trace",
+            "req_id": 1,
+        }
+    )
+
+    with (
+        patch("mcpgateway.services.session_affinity.settings") as mock_settings,
+        patch("mcpgateway.services.session_affinity.post_rpc_in_process", new=client.as_post_rpc),
+    ):
+        mock_settings.mcpgateway_pool_rpc_forward_timeout = 5.0
+        await affinity._execute_forwarded_http_request(envelope, redis)  # pylint: disable=protected-access
+
+    assert client.last_post_kwargs["headers"]["traceparent"] == trace_headers["traceparent"]  # type: ignore[index]
+    assert client.last_post_kwargs["headers"]["tracestate"] == trace_headers["tracestate"]  # type: ignore[index]
+    assert redis.published and redis.published[0][0] == "resp-trace"
+
+
+@pytest.mark.asyncio
 async def test_execute_forwarded_request_rejects_forged_signature():
     """An rpc forward with an invalid envelope signature is rejected, never dispatched."""
     # First-Party
