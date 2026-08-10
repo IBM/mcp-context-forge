@@ -9,7 +9,7 @@ Tests for SSO router endpoints and helpers.
 # Standard
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 import pytest
@@ -19,6 +19,13 @@ from pydantic import HttpUrl
 
 # First-Party
 from mcpgateway.routers import sso as sso_router
+
+
+@pytest.fixture(autouse=True)
+def _unrestricted_scope():
+    """Grant unrestricted Layer-1 scope; this suite calls handlers directly with no request."""
+    with patch("mcpgateway.middleware.rbac._global_scope_denied", AsyncMock(return_value=False)):
+        yield
 
 
 @pytest.mark.asyncio
