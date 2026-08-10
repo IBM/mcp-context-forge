@@ -134,7 +134,7 @@ except Exception:  # noqa: BLE001 - best-effort cache clear
 
 # Third-Party
 from cpex.framework import PluginError, PluginViolationError, ResourceHookType, ToolHookType  # noqa: E402
-from fastapi import FastAPI  # noqa: E402
+from fastapi import FastAPI, Request  # noqa: E402
 from fastapi.exceptions import RequestValidationError  # noqa: E402
 from httpx import ASGITransport, AsyncClient  # noqa: E402
 import httpx  # noqa: E402
@@ -348,6 +348,28 @@ async def traced_app(monkeypatch, tmp_path):
     # instance hosting them is dedicated to this test.
     observability_service = ObservabilityService()
     test_app = FastAPI(title="otel-plugin-metadata-e2e")
+
+    @test_app.middleware("http")
+    async def _grant_unrestricted_admin_scope(request: Request, call_next):
+        """Simulate real auth middleware's Layer-1 scope resolution, absent from this bare test app.
+
+        This fixture builds a dependency-override-only FastAPI() instance with no
+        auth middleware registered, so request.state.token_teams is never set from
+        the Authorization header -- it silently falls back to [] (public-only), and
+        the admin routes this suite exercises now correctly deny that (issue #6134).
+        These E2E fixtures intend a genuinely unrestricted admin caller; set that
+        explicitly rather than relying on parsing a header nothing here parses.
+
+        Args:
+            request: Incoming request.
+            call_next: Next handler in the middleware chain.
+
+        Returns:
+            The downstream response.
+        """
+        request.state.token_teams = None
+        return await call_next(request)
+
     test_app.add_middleware(ObservabilityMiddleware, enabled=True, service=observability_service)
     test_app.include_router(tool_router)  # real POST /tools (tool registration)
     test_app.include_router(utility_router)  # real POST /rpc (tools/call dispatch)
@@ -372,7 +394,7 @@ async def traced_app(monkeypatch, tmp_path):
         return ADMIN_EMAIL
 
     async def mock_get_jwt_token():
-        return make_test_jwt(ADMIN_EMAIL, is_admin=True)
+        return make_test_jwt(ADMIN_EMAIL, is_admin=True, teams=None)
 
     async def mock_require_auth():
         return ADMIN_EMAIL
@@ -501,6 +523,28 @@ async def traced_app_secrets_detection(monkeypatch, tmp_path):
     # --- Dedicated FastAPI app instance (NOT mcpgateway.main.app) ---
     observability_service = ObservabilityService()
     test_app = FastAPI(title="otel-secrets-detection-metadata-e2e")
+
+    @test_app.middleware("http")
+    async def _grant_unrestricted_admin_scope(request: Request, call_next):
+        """Simulate real auth middleware's Layer-1 scope resolution, absent from this bare test app.
+
+        This fixture builds a dependency-override-only FastAPI() instance with no
+        auth middleware registered, so request.state.token_teams is never set from
+        the Authorization header -- it silently falls back to [] (public-only), and
+        the admin routes this suite exercises now correctly deny that (issue #6134).
+        These E2E fixtures intend a genuinely unrestricted admin caller; set that
+        explicitly rather than relying on parsing a header nothing here parses.
+
+        Args:
+            request: Incoming request.
+            call_next: Next handler in the middleware chain.
+
+        Returns:
+            The downstream response.
+        """
+        request.state.token_teams = None
+        return await call_next(request)
+
     test_app.add_middleware(ObservabilityMiddleware, enabled=True, service=observability_service)
     test_app.include_router(tool_router)  # real POST /tools (tool registration)
     test_app.include_router(utility_router)  # real POST /rpc (tools/call dispatch)
@@ -525,7 +569,7 @@ async def traced_app_secrets_detection(monkeypatch, tmp_path):
         return ADMIN_EMAIL
 
     async def mock_get_jwt_token():
-        return make_test_jwt(ADMIN_EMAIL, is_admin=True)
+        return make_test_jwt(ADMIN_EMAIL, is_admin=True, teams=None)
 
     async def mock_require_auth():
         return ADMIN_EMAIL
@@ -651,6 +695,28 @@ async def _build_traced_app(monkeypatch, tmp_path, *, app_title: str, plugin_nam
     # --- Dedicated FastAPI app instance (NOT mcpgateway.main.app) ---
     observability_service = ObservabilityService()
     test_app = FastAPI(title=app_title)
+
+    @test_app.middleware("http")
+    async def _grant_unrestricted_admin_scope(request: Request, call_next):
+        """Simulate real auth middleware's Layer-1 scope resolution, absent from this bare test app.
+
+        This fixture builds a dependency-override-only FastAPI() instance with no
+        auth middleware registered, so request.state.token_teams is never set from
+        the Authorization header -- it silently falls back to [] (public-only), and
+        the admin routes this suite exercises now correctly deny that (issue #6134).
+        These E2E fixtures intend a genuinely unrestricted admin caller; set that
+        explicitly rather than relying on parsing a header nothing here parses.
+
+        Args:
+            request: Incoming request.
+            call_next: Next handler in the middleware chain.
+
+        Returns:
+            The downstream response.
+        """
+        request.state.token_teams = None
+        return await call_next(request)
+
     test_app.add_middleware(ObservabilityMiddleware, enabled=True, service=observability_service)
     test_app.include_router(tool_router)  # real POST /tools (tool registration)
     test_app.include_router(utility_router)  # real POST /rpc (tools/call dispatch)
@@ -675,7 +741,7 @@ async def _build_traced_app(monkeypatch, tmp_path, *, app_title: str, plugin_nam
         return ADMIN_EMAIL
 
     async def mock_get_jwt_token():
-        return make_test_jwt(ADMIN_EMAIL, is_admin=True)
+        return make_test_jwt(ADMIN_EMAIL, is_admin=True, teams=None)
 
     async def mock_require_auth():
         return ADMIN_EMAIL
@@ -857,6 +923,28 @@ async def traced_app_url_reputation(monkeypatch, tmp_path):
 
     observability_service = ObservabilityService()
     test_app = FastAPI(title="otel-url-reputation-metadata-e2e")
+
+    @test_app.middleware("http")
+    async def _grant_unrestricted_admin_scope(request: Request, call_next):
+        """Simulate real auth middleware's Layer-1 scope resolution, absent from this bare test app.
+
+        This fixture builds a dependency-override-only FastAPI() instance with no
+        auth middleware registered, so request.state.token_teams is never set from
+        the Authorization header -- it silently falls back to [] (public-only), and
+        the admin routes this suite exercises now correctly deny that (issue #6134).
+        These E2E fixtures intend a genuinely unrestricted admin caller; set that
+        explicitly rather than relying on parsing a header nothing here parses.
+
+        Args:
+            request: Incoming request.
+            call_next: Next handler in the middleware chain.
+
+        Returns:
+            The downstream response.
+        """
+        request.state.token_teams = None
+        return await call_next(request)
+
     test_app.add_middleware(ObservabilityMiddleware, enabled=True, service=observability_service)
     test_app.include_router(resource_router)  # real POST /resources, GET /resources/{resource_id}
     test_app.include_router(observability_router)  # real GET /observability/traces/{trace_id}
@@ -879,7 +967,7 @@ async def traced_app_url_reputation(monkeypatch, tmp_path):
         return ADMIN_EMAIL
 
     async def mock_get_jwt_token():
-        return make_test_jwt(ADMIN_EMAIL, is_admin=True)
+        return make_test_jwt(ADMIN_EMAIL, is_admin=True, teams=None)
 
     async def mock_require_auth():
         return ADMIN_EMAIL
@@ -910,7 +998,7 @@ async def traced_app_url_reputation(monkeypatch, tmp_path):
 
 def _auth_headers() -> dict:
     """Mint a real admin JWT via tests/helpers/auth.make_test_jwt and build a Bearer header."""
-    token = make_test_jwt(ADMIN_EMAIL, is_admin=True)
+    token = make_test_jwt(ADMIN_EMAIL, is_admin=True, teams=None)
     return make_auth_headers(token)
 
 
