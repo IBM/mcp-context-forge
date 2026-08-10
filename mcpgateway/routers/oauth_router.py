@@ -1147,8 +1147,7 @@ async def fetch_tools_after_oauth(
                 raise HTTPException(status_code=409, detail="Refresh already in progress for this gateway")
             if refresh_result.get("success") is False:
                 logger.error(
-                    f"Token-exchange tool fetch failed for gateway {SecurityValidator.sanitize_log_message(gateway_id)}: "
-                    f"{SecurityValidator.sanitize_log_message(str(refresh_result.get('error')))}"
+                    f"Token-exchange tool fetch failed for gateway {SecurityValidator.sanitize_log_message(gateway_id)}: {SecurityValidator.sanitize_log_message(str(refresh_result.get('error')))}"
                 )
                 raise HTTPException(status_code=400, detail="Failed to fetch tools")
             fetched = int(refresh_result.get("tools_added", 0)) + int(refresh_result.get("tools_updated", 0))

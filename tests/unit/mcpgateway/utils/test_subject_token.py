@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Tests for mcpgateway.utils.subject_token."""
+"""Location: ./tests/unit/mcpgateway/utils/test_subject_token.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+
+Tests for mcpgateway.utils.subject_token.
+"""
 
 # First-Party
 from mcpgateway.utils.subject_token import extract_subject_jwt
