@@ -429,7 +429,7 @@ def test_client(app_with_temp_db):
         except jwt_lib.InvalidTokenError:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
 
-    patcher = patch("mcpgateway.main.require_docs_auth_override", mock_require_auth_override)
+    patcher = patch("mcpgateway.middleware.ui_auth.require_docs_auth_override", mock_require_auth_override)
     patcher.start()
 
     # Override the core auth function used by RBAC system
