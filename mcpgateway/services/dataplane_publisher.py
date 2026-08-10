@@ -62,7 +62,6 @@ class BackendConfig(TypedDict):
 
     name: str
     url: str
-    transport: str
     passthrough_headers: list[str]
     add_headers: dict[str, str]
     remove_headers: list[str]
@@ -229,14 +228,13 @@ class DataplanePublisherService:
 
             prompt_map = {prompt["id"]: prompt["name"] for prompt in prompts}
 
-            # The dataplane proxies streamable-HTTP upstreams only. Legacy
-            # HTTP+SSE gateways are excluded so the published config never
-            # advertises a backend the dataplane cannot serve.
+            # The dataplane proxies streamable-HTTP upstreams only. Exclude
+            # every other transport before building its transport-agnostic
+            # backend config.
             gateway_base = {
                 gateway["id"]: {
                     "name": gateway["name"],
                     "url": gateway["url"],
-                    "transport": gateway["transport"],
                     "passthrough_headers": gateway["passthrough_headers"] or [],
                     "add_headers": gateway.get("add_headers") or {},
                     "remove_headers": gateway.get("remove_headers") or [],
