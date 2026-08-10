@@ -42,10 +42,16 @@ reachable through the shipped Admin UI today. Both are masked:
 **CSRF header is injected by a template-level `fetch` monkey patch.**
 `mcpgateway/templates/admin.html:88-116` wraps `window.fetch` and, for unsafe
 same-origin methods, sets `X-CSRF-Token` from the `mcpgateway_csrf_token` cookie
-(non-httponly, so JS-readable). All three call sites use relative URLs and
-`method: "POST"`, so the wrapper fires and the header lands. The wrapper only
-sets `Authorization` when the header is *not already present* — so it does not
-repair the malformed value, but it does supply the CSRF header.
+(non-httponly, so JS-readable — `admin.py:1840`). All three call sites use
+relative URLs and `method: "POST"`, so the wrapper fires and the header lands.
+The wrapper only sets `Authorization` when the header is *not already present* —
+so it does not repair the malformed value, but it does supply the CSRF header.
+
+The Admin UI bundle is loaded from exactly one template —
+`admin.html:163` (`<script type="module" src=".../{{ bundle_js }}">`) — the same
+file that installs the wrapper, and the inline wrapper script runs before the
+deferred module bundle. So today every execution of these three call sites is
+covered.
 
 **The empty bearer token is guarded at every layer on this route's path.**
 
@@ -116,25 +122,67 @@ scope), so its import stays.
 `llmRequestHeaders()` (`mcpgateway/admin_ui/llmModels.js:18-32`) is a
 byte-equivalent reimplementation of `getAuthHeaders`, differing only in the
 option shape (`{ json = true }` vs a positional boolean). Replace its body with a
-delegation to `getAuthHeaders`, keeping the existing call signature so the
-module's internal call sites and `tests/unit/js/admin-llm-csrf.test.js` are
+delegation to `getAuthHeaders`, keeping the existing `{ json = true }` signature
+so all 16 internal call sites and `tests/unit/js/admin-llm-csrf.test.js` are
 unaffected. This leaves one canonical implementation, which is what the issue
 actually asks for.
 
-### 4. Tests — JS unit only
+### 4. Extend the vitest module mocks (prerequisite, not optional)
+
+Adding an `auth.js` import to a module drags `auth.js`'s own imports into that
+module's test graph. `auth.js:1-8` imports `MASKED_AUTH_VALUE` from
+`constants.js`, `getAuthToken` from `tokens.js`, and `getCookie`,
+`safeGetElement`, `showSuccessMessage`, `showErrorMessage` from `utils.js`.
+
+Every affected test file mocks `utils.js` with a *partial* factory that omits
+some of those names, so vitest will throw
+`No "showSuccessMessage" export is defined on the mock` at module-load time —
+before any assertion runs:
+
+| Test file | utils.js mock currently provides |
+|-----------|----------------------------------|
+| `tests/unit/js/fileTransfer.test.js:52` | `showNotification`, `safeGetElement` |
+| `tests/unit/js/selectiveImport.test.js:33` | `safeGetElement`, `showNotification` |
+| `tests/unit/js/llmModels.test.js:59` | `safeGetElement`, `showToast`, `getCookie` |
+
+Fix by spreading the real module into each factory:
+
+```js
+vi.mock("../../../mcpgateway/admin_ui/utils.js", async (importOriginal) => ({
+  ...(await importOriginal()),
+  showNotification: vi.fn(),
+  safeGetElement: vi.fn((id) => document.getElementById(id)),
+}));
+```
+
+That also gives the real `getCookie`, which reads jsdom's `document.cookie` —
+the mechanism the CSRF assertions need. This mirrors the deliberate choice in
+`admin-llm-csrf.test.js:69-71`, which leaves `utils.js` unmocked for exactly
+this reason.
+
+`tokens.js` stays mocked, so the `auth.js ↔ tokens.js` cycle never materializes
+in the test graph.
+
+### 5. Tests — JS unit only
 
 Home: `tests/unit/js/`, following `admin-llm-csrf.test.js`.
 
-Existing tests assert the exact header object and will fail:
+Existing header assertions, and what happens to them:
 
-- `tests/unit/js/fileTransfer.test.js` — `previewImport` (~line 803) and
-  `handleImport` header assertions
-- `tests/unit/js/selectiveImport.test.js` — `handleSelectiveImport` assertions
+| Location | Site | Effect |
+|----------|------|--------|
+| `fileTransfer.test.js:809` | `previewImport` | In scope. Uses `expect.objectContaining` with `getAuthToken` mocked to `"test-token"`, so it keeps passing unchanged. |
+| `fileTransfer.test.js:150` | `handleExportAll` (GET) | Out of scope, untouched. |
+| `fileTransfer.test.js:1365` | `loadRecentImports` (GET) | Out of scope, untouched. |
+| `selectiveImport.test.js` | `handleSelectiveImport` | Asserts URL and body only — no header assertions exist. |
 
-Update those, and add per-site coverage:
+So no existing assertion needs rewriting; the mock-factory change in §4 is the
+only edit existing tests require. Add new per-site coverage for all three
+converted sites:
 
 - `X-CSRF-Token` equals the `mcpgateway_csrf_token` cookie value when the cookie
-  is set
+  is set via `document.cookie`
+- `X-CSRF-Token` is **absent** when no cookie is set
 - `Authorization` is **absent** from the header object when `getAuthToken()`
   resolves to `""`
 - `Authorization` is `Bearer <token>` when a token is available
@@ -146,12 +194,18 @@ this change touches no Python.
 
 ## Scope
 
-**In scope:** the three call sites named in the issue, plus the
-`llmRequestHeaders` deduplication, plus the JS unit tests above.
+**In scope:** the three call sites named in the issue, the `llmRequestHeaders`
+deduplication, the vitest mock-factory changes those two require, and the new JS
+unit tests above.
 
-**Out of scope** (same manual-header pattern, deserves a follow-up issue):
+**Out of scope** (same unconditional-`Authorization` pattern, deserves a
+follow-up issue):
 
-- `mcpgateway/admin_ui/teams.js` — 5 POST sites (222, 358, 414, 468, 524)
+- `mcpgateway/admin_ui/teams.js:222,358,414,468,524` — five state-changing sites
+  (POST and DELETE). These already get `X-CSRF-Token` from a second mechanism:
+  they call `fetchWithTimeout` (`teams.js:218,353,409,463,519`), which injects
+  the header at `utils.js:152-157`. Only the unconditional `Authorization`
+  remains.
 - `mcpgateway/admin_ui/tokens.js:462`
 - `mcpgateway/admin_ui/llmChat.js`
 - `mcpgateway/admin_ui/fileTransfer.js:41,558` — GET requests; CSRF is not
