@@ -10,6 +10,16 @@ for ContextForge requests. It validates request parameters, JSON payloads, and
 resource paths to prevent security vulnerabilities like path traversal, XSS,
 and injection attacks.
 
+Implemented as pure ASGI middleware (no BaseHTTPMiddleware): JSON request bodies
+read during validation are replayed downstream via a fresh receive callable
+(mirroring what BaseHTTPMiddleware's _CachedRequest did), and responses stream
+unbuffered. Output sanitization intentionally does not run on the ASGI path:
+under BaseHTTPMiddleware ``call_next`` always returned ``_StreamingResponse``
+(which carries no ``body`` attribute), so ``_sanitize_response`` was unreachable
+for real responses. It remains available through ``dispatch`` for direct
+callers. A ``dispatch`` shim is retained for tests.
+
+
 Examples:
     >>> from mcpgateway.middleware.validation_middleware import ValidationMiddleware  # doctest: +SKIP
     >>> app.add_middleware(ValidationMiddleware)  # doctest: +SKIP
@@ -19,13 +29,13 @@ Examples:
 import logging
 from pathlib import Path
 import re
-from typing import Any
+from typing import Any, List
 import warnings
 
 # Third-Party
 from fastapi import HTTPException, Request, Response
 import orjson
-from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 # First-Party
 from mcpgateway.config import settings
@@ -47,7 +57,7 @@ def is_path_traversal(uri: str) -> bool:
     return ".." in uri or uri.startswith("/") or "\\" in uri
 
 
-class ValidationMiddleware(BaseHTTPMiddleware):
+class ValidationMiddleware:
     """Middleware for validating inputs and sanitizing outputs.
 
     This middleware validates request parameters, JSON data, and resource paths
@@ -55,14 +65,14 @@ class ValidationMiddleware(BaseHTTPMiddleware):
     and optionally sanitizes response content.
     """
 
-    def __init__(self, app):
+    def __init__(self, app: ASGIApp):
         """Initialize validation middleware with configuration settings.
 
         Args:
-            app: FastAPI application instance
+            app: ASGI application instance
         """
         global _VALIDATION_MIDDLEWARE_DEPRECATION_LOGGED  # pylint: disable=global-statement
-        super().__init__(app)
+        self.app = app
         warnings.warn(VALIDATION_MIDDLEWARE_DEPRECATION_MESSAGE, DeprecationWarning, stacklevel=2)
         if not _VALIDATION_MIDDLEWARE_DEPRECATION_LOGGED:
             logger.warning(VALIDATION_MIDDLEWARE_DEPRECATION_MESSAGE)
@@ -73,8 +83,78 @@ class ValidationMiddleware(BaseHTTPMiddleware):
         self.allowed_roots = [Path(root).resolve() for root in settings.allowed_roots]
         self.dangerous_patterns = [re.compile(pattern) for pattern in settings.dangerous_patterns]
 
+    async def _run_validation(self, request: Request) -> None:
+        """Validate the request, honoring log-only mode in dev/staging.
+
+        Args:
+            request: Incoming HTTP request
+
+        Raises:
+            HTTPException: If validation fails outside log-only mode
+        """
+        # Log-only mode in dev/staging
+        warn_only = settings.environment in ("development", "staging") and not self.strict
+
+        # Validate input
+        try:
+            await self._validate_request(request)
+        except HTTPException as e:
+            if warn_only:
+                logger.warning("[VALIDATION] Input validation failed (log-only mode): %s", e.detail)
+            else:
+                logger.error("[VALIDATION] Input validation failed: %s", e.detail)
+                raise
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """Pure ASGI entry point with request-body replay for JSON validation.
+
+        Args:
+            scope: ASGI connection scope.
+            receive: ASGI receive callable.
+            send: ASGI send callable.
+
+        Raises:
+            HTTPException: If validation fails outside log-only mode
+        """
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+
+        # Feature disabled - skip entirely
+        if not self.enabled:
+            await self.app(scope, receive, send)
+            return
+
+        # Record any request-stream messages consumed during validation so the
+        # body can be replayed downstream exactly as BaseHTTPMiddleware's
+        # _CachedRequest replayed dispatch-read bodies.
+        consumed: List[Message] = []
+
+        async def recording_receive() -> Message:
+            """Forward receive messages while recording them for replay."""
+            message = await receive()
+            consumed.append(message)
+            return message
+
+        request = Request(scope, recording_receive)
+        await self._run_validation(request)
+
+        if not consumed:
+            await self.app(scope, receive, send)
+            return
+
+        replay_queue = list(consumed)
+
+        async def replay_receive() -> Message:
+            """Replay recorded request messages, then defer to the real receive."""
+            if replay_queue:
+                return replay_queue.pop(0)
+            return await receive()
+
+        await self.app(scope, replay_receive, send)
+
     async def dispatch(self, request: Request, call_next):
-        """Process request with validation and response sanitization.
+        """BaseHTTPMiddleware-compatible entry point retained for tests.
 
         Args:
             request: Incoming HTTP request
@@ -91,18 +171,7 @@ class ValidationMiddleware(BaseHTTPMiddleware):
             response = await call_next(request)
             return response
 
-        # Phase 1: Log-only mode in dev/staging
-        warn_only = settings.environment in ("development", "staging") and not self.strict
-
-        # Validate input
-        try:
-            await self._validate_request(request)
-        except HTTPException as e:
-            if warn_only:
-                logger.warning("[VALIDATION] Input validation failed (log-only mode): %s", e.detail)
-            else:
-                logger.error("[VALIDATION] Input validation failed: %s", e.detail)
-                raise
+        await self._run_validation(request)
 
         response = await call_next(request)
 

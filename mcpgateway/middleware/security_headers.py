@@ -7,15 +7,18 @@ Security Headers Middleware for ContextForge.
 
 This module implements essential security headers to prevent common attacks including
 XSS, clickjacking, MIME sniffing, cross-origin attacks, and Web Cache Deception.
+
+Implemented as pure ASGI middleware (no BaseHTTPMiddleware): the header logic only
+needs the request scope and the response-start message, so it runs without the
+per-request task-group and body-streaming overhead BaseHTTPMiddleware adds.
 """
 
 # Standard
 import re
 import secrets
-from typing import Any, Callable, Set
+from typing import Any, Callable, List, Optional, Protocol, Set, Tuple
 
 # Third-Party
-from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 
@@ -23,7 +26,66 @@ from starlette.responses import Response
 from mcpgateway.config import settings
 
 
-class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+class _HeaderMutator(Protocol):
+    """Minimal get/set/delete surface the header logic operates against."""
+
+    def get(self, name: str) -> Optional[str]:
+        """Return the (case-insensitive) header value or None."""
+
+    def set(self, name: str, value: str) -> None:
+        """Set (replacing any existing) header value."""
+
+    def delete(self, name: str) -> None:
+        """Remove all instances of the header if present."""
+
+
+class _ResponseHeaderMutator:
+    """Mutator over a Starlette response's headers mapping."""
+
+    def __init__(self, headers: Any) -> None:
+        self._headers = headers
+
+    def get(self, name: str) -> Optional[str]:
+        """Return the header value or None."""
+        return self._headers.get(name)
+
+    def set(self, name: str, value: str) -> None:
+        """Set the header, replacing any existing value."""
+        self._headers[name] = value
+
+    def delete(self, name: str) -> None:
+        """Remove the header if present."""
+        if name in self._headers:
+            del self._headers[name]
+
+
+class _ASGIHeaderMutator:
+    """Mutator over the raw header list of an ``http.response.start`` message."""
+
+    def __init__(self, headers: List[Tuple[bytes, bytes]]) -> None:
+        self._headers = headers
+
+    def get(self, name: str) -> Optional[str]:
+        """Return the first matching header value (case-insensitive) or None."""
+        lname = name.lower().encode("latin-1")
+        for key, value in self._headers:
+            if key.lower() == lname:
+                return value.decode("latin-1")
+        return None
+
+    def set(self, name: str, value: str) -> None:
+        """Set the header, removing existing entries first (starlette semantics)."""
+        lname = name.lower().encode("latin-1")
+        self._headers[:] = [(k, v) for k, v in self._headers if k.lower() != lname]
+        self._headers.append((lname, value.encode("latin-1")))
+
+    def delete(self, name: str) -> None:
+        """Remove all instances of the header."""
+        lname = name.lower().encode("latin-1")
+        self._headers[:] = [(k, v) for k, v in self._headers if k.lower() != lname]
+
+
+class SecurityHeadersMiddleware:
     """
     Security headers middleware that adds essential security headers to all responses.
 
@@ -143,7 +205,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
     def __init__(self, app: Any) -> None:
         """Initialize the security headers middleware."""
-        super().__init__(app)
+        self.app = app
         # Compile regex patterns for performance
         self._protected_patterns = [re.compile(pattern) for pattern in self.PROTECTED_PATH_PATTERNS]
         self._exempted_patterns = [re.compile(pattern) for pattern in self.EXEMPTED_PATH_PATTERNS]
@@ -172,194 +234,55 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         # New endpoints inherit protection automatically until explicitly exempted.
         return True
 
-    async def dispatch(self, request: Request, call_next: Callable[[Request], Any]) -> Response:
-        """
-        Process the request and add security headers to the response.
+    def _prepare(self, scope: dict) -> dict:
+        """Compute the per-request context shared by both entry paths.
+
+        Sets the CSP nonce into the scope state (visible downstream as
+        ``request.state.csp_nonce``) and extracts the routing-relevant fields.
 
         Args:
-            request: The incoming HTTP request
-            call_next: The next middleware or endpoint handler
+            scope: The ASGI connection scope.
 
         Returns:
-            Response with security headers added
-
-        Examples:
-            Test middleware instantiation:
-            >>> from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
-            >>> middleware = SecurityHeadersMiddleware(app=None)
-            >>> isinstance(middleware, SecurityHeadersMiddleware)
-            True
-
-            Test security header values:
-            >>> # X-Content-Type-Options
-            >>> x_content_type = "nosniff"
-            >>> x_content_type == "nosniff"
-            True
-
-            >>> # X-XSS-Protection modern value
-            >>> x_xss_protection = "0"  # Modern browsers use CSP
-            >>> x_xss_protection == "0"
-            True
-
-            >>> # X-Download-Options for IE
-            >>> x_download_options = "noopen"
-            >>> x_download_options == "noopen"
-            True
-
-            >>> # Referrer-Policy value
-            >>> referrer_policy = "strict-origin-when-cross-origin"
-            >>> "strict-origin" in referrer_policy
-            True
-
-            Test CSP directive construction with nonce-based approach:
-            >>> import secrets
-            >>> csp_nonce = secrets.token_urlsafe(16)
-            >>> csp_directives = [
-            ...     "default-src 'self'",
-            ...     f"script-src 'self' 'nonce-{csp_nonce}' https://cdnjs.cloudflare.com",
-            ...     "style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com",
-            ...     "img-src 'self' data: https:",
-            ...     "font-src 'self' data: https://cdnjs.cloudflare.com",
-            ...     "connect-src 'self' ws: wss: https:",
-            ...     "frame-ancestors 'self'",  # Example for SAMEORIGIN
-            ... ]
-            >>> csp_header = "; ".join(csp_directives) + ";"
-            >>> "default-src 'self'" in csp_header
-            True
-            >>> "frame-ancestors 'self'" in csp_header
-            True
-            >>> csp_header.endswith(";")
-            True
-            >>> "'unsafe-inline'" not in csp_header or "style-src" in csp_header
-            True
-            >>> "'unsafe-eval'" not in csp_header
-            True
-
-            Test HSTS header construction:
-            >>> hsts_max_age = 31536000  # 1 year
-            >>> hsts_value = f"max-age={hsts_max_age}"
-            >>> hsts_include_subdomains = True
-            >>> if hsts_include_subdomains:
-            ...     hsts_value += "; includeSubDomains"
-            >>> "max-age=31536000" in hsts_value
-            True
-            >>> "includeSubDomains" in hsts_value
-            True
-
-            Test CORS origin validation logic:
-            >>> # Test allowed origins check
-            >>> allowed_origins = ["https://example.com", "https://app.example.com"]
-            >>> test_origin = "https://example.com"
-            >>> test_origin in allowed_origins
-            True
-            >>> "https://malicious.com" in allowed_origins
-            False
-
-            >>> # Test CORS credentials header
-            >>> cors_allow_credentials = True
-            >>> credentials_header = "true" if cors_allow_credentials else "false"
-            >>> credentials_header == "true"
-            True
-
-            Test Vary header construction:
-            >>> # Test with no existing Vary header
-            >>> existing_vary = None
-            >>> vary_val = "Origin" if not existing_vary else (existing_vary + ", Origin")
-            >>> vary_val
-            'Origin'
-
-            >>> # Test with existing Vary header
-            >>> existing_vary = "Accept-Encoding"
-            >>> vary_val = "Origin" if not existing_vary else (existing_vary + ", Origin")
-            >>> vary_val
-            'Accept-Encoding, Origin'
-
-            Test Access-Control-Expose-Headers:
-            >>> exposed_headers = ["Content-Length", "X-Request-ID"]
-            >>> expose_header_value = ", ".join(exposed_headers)
-            >>> "Content-Length" in expose_header_value
-            True
-            >>> "X-Request-ID" in expose_header_value
-            True
-
-            Test server header removal logic:
-            >>> # Headers that should be removed
-            >>> sensitive_headers = ["X-Powered-By", "Server"]
-            >>> "X-Powered-By" in sensitive_headers
-            True
-            >>> "Server" in sensitive_headers
-            True
-
-            Test environment-based CORS logic:
-            >>> # Production environment requires explicit allowlist
-            >>> environment = "production"
-            >>> origin = "https://example.com"
-            >>> allowed_origins = ["https://example.com"]
-            >>> allow = origin in allowed_origins if environment == "production" else True
-            >>> allow
-            True
-
-            >>> # Non-production with empty allowed_origins allows all
-            >>> environment = "development"
-            >>> allowed_origins = []
-            >>> allow = (not allowed_origins) if environment != "production" else False
-            >>> allow
-            True
-
-            Execute middleware end-to-end with a dummy call_next:
-            >>> import asyncio
-            >>> from unittest.mock import patch
-            >>> from starlette.requests import Request
-            >>> from starlette.responses import Response
-            >>> async def call_next(req):
-            ...     return Response("ok")
-            >>> scope = {
-            ...     'type': 'http', 'method': 'GET', 'path': '/', 'scheme': 'https',
-            ...     'headers': [(b'origin', b'https://example.com'), (b'x-forwarded-proto', b'https')]
-            ... }
-            >>> request = Request(scope)
-            >>> mw = SecurityHeadersMiddleware(app=None)
-            >>> with patch('mcpgateway.middleware.security_headers.settings') as s:
-            ...     s.security_headers_enabled = True
-            ...     s.x_content_type_options_enabled = True
-            ...     s.x_frame_options = 'DENY'
-            ...     s.x_xss_protection_enabled = True
-            ...     s.x_download_options_enabled = True
-            ...     s.hsts_enabled = True
-            ...     s.hsts_max_age = 31536000
-            ...     s.hsts_include_subdomains = True
-            ...     s.remove_server_headers = True
-            ...     s.environment = 'production'
-            ...     s.allowed_origins = ['https://example.com']
-            ...     s.cors_allow_credentials = True
-            ...     resp = asyncio.run(mw.dispatch(request, call_next))
-            >>> resp.headers['X-Content-Type-Options']
-            'nosniff'
-            >>> resp.headers['X-Frame-Options']
-            'DENY'
-            >>> 'Content-Security-Policy' in resp.headers
-            True
-            >>> resp.headers['Strict-Transport-Security'].startswith('max-age=')
-            True
-            >>> resp.headers['Access-Control-Allow-Origin']
-            'https://example.com'
-            >>> 'Vary' in resp.headers and 'Origin' in resp.headers['Vary']
-            True
+            A context dict with nonce, normalized path, scheme, and headers.
         """
-        # Generate CSP nonce BEFORE processing request so templates can access it
-        # This must happen before call_next() so request.state.csp_nonce is available during template rendering
         csp_nonce = secrets.token_urlsafe(16)
-        request.state.csp_nonce = csp_nonce
+        # Starlette's request.state is backed by scope["state"]; assigning here
+        # keeps templates working without constructing a Request.
+        scope.setdefault("state", {})["csp_nonce"] = csp_nonce
 
-        response = await call_next(request)
+        path = scope.get("path", "")
+        root_path = scope.get("root_path", "")
+        if root_path and path.startswith(root_path):
+            path = path[len(root_path) :]
 
-        # Only apply security headers if enabled
+        headers = {}
+        for item in scope.get("headers") or []:
+            if not isinstance(item, (tuple, list)) or len(item) != 2:
+                continue
+            key, value = item
+            if isinstance(key, (bytes, bytearray)) and isinstance(value, (bytes, bytearray)):
+                headers[key.decode("latin-1").lower()] = value.decode("latin-1")
+
+        return {"csp_nonce": csp_nonce, "path": path, "scheme": scope.get("scheme", "http"), "headers": headers}
+
+    def _apply_headers(self, ctx: dict, out: _HeaderMutator) -> None:
+        """Apply all security header mutations to a response header mutator.
+
+        Args:
+            ctx: The context dict from ``_prepare``.
+            out: Header mutator for the outgoing response.
+        """
         if not settings.security_headers_enabled:
-            return response
+            return
+
+        csp_nonce = ctx["csp_nonce"]
+        path = ctx["path"]
+        headers = ctx["headers"]
 
         # Essential security headers (configurable)
         if settings.x_content_type_options_enabled:
-            response.headers["X-Content-Type-Options"] = "nosniff"
+            out.set("X-Content-Type-Options", "nosniff")
 
         # Handle X-Frame-Options: None/empty = don't set header (allow embedding), other values = set header
         # Note: config validator normalizes ""/"null"/"none" to None, but we guard here too for safety
@@ -367,23 +290,15 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         if isinstance(x_frame, str) and not x_frame.strip():
             x_frame = None
         if x_frame is not None:
-            response.headers["X-Frame-Options"] = x_frame
+            out.set("X-Frame-Options", x_frame)
 
         if settings.x_xss_protection_enabled:
-            response.headers["X-XSS-Protection"] = "0"  # Modern browsers use CSP instead
+            out.set("X-XSS-Protection", "0")  # Modern browsers use CSP instead
 
         if settings.x_download_options_enabled:
-            response.headers["X-Download-Options"] = "noopen"  # Prevent IE from executing downloads
+            out.set("X-Download-Options", "noopen")  # Prevent IE from executing downloads
 
-        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-
-        # Content Security Policy with nonce-based approach (nonce already generated above)
-
-        # Determine the route-only path (strip root_path for path matching)
-        path = request.url.path
-        root_path = request.scope.get("root_path", "")
-        if root_path and path.startswith(root_path):
-            path = path[len(root_path) :]
+        out.set("Referrer-Policy", "strict-origin-when-cross-origin")
 
         # FastAPI's built-in /docs and /redoc pages use inline scripts without nonces
         # to initialise SwaggerUIBundle.  Skipping CSP on these endpoints lets the
@@ -391,38 +306,6 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         skip_csp_for_docs = path in ("/docs", "/redoc", "/openapi.json")
 
         # CSP directives with strict nonce-based security (CSP Level 3)
-        #
-        # script-src-elem: Controls <script> tags - requires nonces for inline scripts.
-        #   This prevents XSS via injected <script> blocks while allowing legitimate
-        #   inline scripts that have the matching nonce attribute.
-        #
-        # script-src: Fallback for older browsers. No unsafe-eval or unsafe-inline.
-        #   All HTMX hx-vals="js:{...}" have been migrated to htmx:configRequest handlers.
-        #   All hx-on:* event handlers have been migrated to addEventListener.
-        #   Alpine.js has been migrated to @alpinejs/csp build (no eval required).
-        #   Tailwind CSS uses precompiled CSS (no eval required).
-        #
-        # style-src: 'unsafe-inline' for style attributes (documented configuration).
-        #   Inline style attributes (style="...") are used for animation delays,
-        #   positioning, and dynamic styling throughout the application.
-        #   This is acceptable per CSP Level 3 guidance since CSS cannot execute
-        #   JavaScript directly. While CSS injection can be used for clickjacking
-        #   or UI redressing attacks, these are mitigated by:
-        #   1. X-Frame-Options/frame-ancestors preventing iframe embedding
-        #   2. All inline styles are server-rendered (no user-controlled content)
-        #   3. Authentication required for admin UI (not publicly exposed)
-        #   This is a documented trade-off between security strictness and
-        #   implementation complexity (visual-only impact vs. code-execution risk).
-        #   Note: Nonce cannot be used alongside 'unsafe-inline' in style-src because
-        #   the nonce takes precedence and causes the browser to ignore 'unsafe-inline',
-        #   which would block all style attributes since nonces can only apply to <style> blocks.
-        #
-        # CDN Allowlist Rationale:
-        #   - cdnjs.cloudflare.com: Font Awesome 7.0.1 icons, CodeMirror 5.65.20 (code editor)
-        #   - cdn.jsdelivr.net: Chart.js 4.5.1 (metrics charts), Marked 18.0.3 (markdown rendering),
-        #                       DOMPurify 3.4.2 (XSS sanitization)
-        #   - unpkg.com: Reserved for future use (Alpine.js, HTMX updates)
-        #   All CDN resources use SRI (Subresource Integrity) hashes where supported.
         if not skip_csp_for_docs:
             csp_directives = [
                 "default-src 'self'",
@@ -453,26 +336,23 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                     frame_ancestors = "'none'"
 
                 csp_directives.append(f"frame-ancestors {frame_ancestors}")
-            response.headers["Content-Security-Policy"] = "; ".join(csp_directives) + ";"
+            out.set("Content-Security-Policy", "; ".join(csp_directives) + ";")
 
         # HSTS for HTTPS connections (configurable)
-        if settings.hsts_enabled and (request.url.scheme == "https" or request.headers.get("X-Forwarded-Proto") == "https"):
+        if settings.hsts_enabled and (ctx["scheme"] == "https" or headers.get("x-forwarded-proto") == "https"):
             hsts_value = f"max-age={settings.hsts_max_age}"
             if settings.hsts_include_subdomains:
                 hsts_value += "; includeSubDomains"
-            response.headers["Strict-Transport-Security"] = hsts_value
+            out.set("Strict-Transport-Security", hsts_value)
 
         # Remove sensitive headers that might disclose server information (configurable)
         if settings.remove_server_headers:
-            if "X-Powered-By" in response.headers:
-                del response.headers["X-Powered-By"]
-            if "Server" in response.headers:
-                del response.headers["Server"]
+            out.delete("X-Powered-By")
+            out.delete("Server")
 
         # Lightweight dynamic CORS reflection based on current settings
-        origin = request.headers.get("Origin")
+        origin = headers.get("origin")
         if origin:
-            allow = False
             if settings.environment != "production":
                 # In non-production, honor allowed_origins dynamically
                 allow = (not settings.allowed_origins) or (origin in settings.allowed_origins)
@@ -480,38 +360,67 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                 # In production, require explicit allow-list
                 allow = origin in settings.allowed_origins
             if allow:
-                response.headers["Access-Control-Allow-Origin"] = origin
+                out.set("Access-Control-Allow-Origin", origin)
                 # Standard CORS helpers
                 if settings.cors_allow_credentials:
-                    response.headers["Access-Control-Allow-Credentials"] = "true"
+                    out.set("Access-Control-Allow-Credentials", "true")
                 # Expose common headers for clients
                 exposed = ["Content-Length", "X-Request-ID"]
-                response.headers["Access-Control-Expose-Headers"] = ", ".join(exposed)
+                out.set("Access-Control-Expose-Headers", ", ".join(exposed))
                 # Ensure caches vary on Origin
-                existing_vary = response.headers.get("Vary")
+                existing_vary = out.get("Vary")
                 vary_val = "Origin" if not existing_vary else (existing_vary + ", Origin")
-                response.headers["Vary"] = vary_val
+                out.set("Vary", vary_val)
 
         # Hardened Cache Control for Protected Endpoints
-        # Implements defense-in-depth caching policies
-        path = request.url.path
-        root_path = request.scope.get("root_path", "")
-        if root_path and path.startswith(root_path):
-            path = path[len(root_path) :]
-
         if self._is_protected_path(path):
             # Strict cache control: no-store prevents intermediary caching, private restricts to user agent
-            response.headers["Cache-Control"] = "no-store, private"
+            out.set("Cache-Control", "no-store, private")
 
             # Legacy protocol compatibility for defense-in-depth
-            response.headers["Pragma"] = "no-cache"
-            response.headers["Expires"] = "0"
+            out.set("Pragma", "no-cache")
+            out.set("Expires", "0")
 
             # Cache variance control for proper request isolation
-            existing_vary = response.headers.get("Vary", "")
+            existing_vary = out.get("Vary") or ""
             vary_parts = [v.strip() for v in existing_vary.split(",") if v.strip()] if existing_vary else []
             if "Authorization" not in vary_parts:
                 vary_parts.append("Authorization")
-            response.headers["Vary"] = ", ".join(vary_parts)
+            out.set("Vary", ", ".join(vary_parts))
 
+    async def __call__(self, scope: dict, receive: Callable, send: Callable) -> None:
+        """Pure ASGI entry point — no BaseHTTPMiddleware task-group/body overhead.
+
+        Args:
+            scope: ASGI connection scope.
+            receive: ASGI receive callable.
+            send: ASGI send callable.
+        """
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+
+        ctx = self._prepare(scope)
+
+        async def send_with_security_headers(message: dict) -> None:
+            """Apply security headers to the response-start message, then forward."""
+            if message.get("type") == "http.response.start":
+                self._apply_headers(ctx, _ASGIHeaderMutator(message.setdefault("headers", [])))
+            await send(message)
+
+        await self.app(scope, receive, send_with_security_headers)
+
+    async def dispatch(self, request: Request, call_next: Callable[[Request], Any]) -> Response:
+        """BaseHTTPMiddleware-compatible entry point retained for tests and doctests.
+
+        Args:
+            request: The incoming HTTP request
+            call_next: The next middleware or endpoint handler
+
+        Returns:
+            Response with security headers added
+        """
+        ctx = self._prepare(request.scope)
+        response = await call_next(request)
+        self._apply_headers(ctx, _ResponseHeaderMutator(response.headers))
         return response

@@ -15,15 +15,17 @@ stores them in context variables for async-safe propagation across services, and
 injects them back into response headers for client-side correlation.
 
 This enables end-to-end tracing: HTTP → Middleware → Services → Plugins → Logs (all with same request_id)
+
+Implemented as pure ASGI middleware (no BaseHTTPMiddleware): the correlation ID only
+needs the request headers and the response-start message, so responses stream
+unbuffered without BaseHTTPMiddleware's per-request task-group overhead.
 """
 
 # Standard
 import logging
-from typing import Callable
 
 # Third-Party
-from fastapi import Request, Response
-from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 # First-Party
 from mcpgateway.config import settings
@@ -37,7 +39,7 @@ from mcpgateway.utils.correlation_id import (
 logger = logging.getLogger(__name__)
 
 
-class CorrelationIDMiddleware(BaseHTTPMiddleware):
+class CorrelationIDMiddleware:
     """Middleware for automatic request ID (correlation ID) handling.
 
     This middleware:
@@ -60,35 +62,37 @@ class CorrelationIDMiddleware(BaseHTTPMiddleware):
     - correlation_id_response_header: Whether to add ID to responses (default: True)
     """
 
-    def __init__(self, app):
+    def __init__(self, app: ASGIApp):
         """Initialize the correlation ID (request ID) middleware.
 
         Args:
-            app: The FastAPI application instance
+            app: The ASGI application instance
         """
-        super().__init__(app)
+        self.app = app
         self.header_name = getattr(settings, "correlation_id_header", "X-Correlation-ID")
         self.preserve_incoming = getattr(settings, "correlation_id_preserve", True)
         self.add_to_response = getattr(settings, "correlation_id_response_header", True)
 
-    async def dispatch(self, request: Request, call_next: Callable) -> Response:
-        """Process the request and manage request ID (correlation ID) lifecycle.
-
-        Extracts or generates a request ID, stores it in context variables for use throughout
-        the request lifecycle (becomes request_id in logs, services, plugins), and injects
-        it back into the X-Correlation-ID response header.
+    def _resolve_correlation_id(self, scope: Scope) -> str:
+        """Extract the incoming correlation ID from scope headers or generate one.
 
         Args:
-            request: The incoming HTTP request
-            call_next: The next middleware or route handler
+            scope: The ASGI connection scope.
 
         Returns:
-            Response: The HTTP response with correlation ID header added
+            The correlation ID to use for this request.
         """
         # Extract correlation ID from incoming request headers
         correlation_id = None
         if self.preserve_incoming:
-            correlation_id = extract_correlation_id_from_headers(dict(request.headers), self.header_name)
+            headers = {}
+            for item in scope.get("headers") or []:
+                if not isinstance(item, (tuple, list)) or len(item) != 2:
+                    continue
+                key, value = item
+                if isinstance(key, (bytes, bytearray)) and isinstance(value, (bytes, bytearray)):
+                    headers[key.decode("latin-1").lower()] = value.decode("latin-1")
+            correlation_id = extract_correlation_id_from_headers(headers, self.header_name)
 
         # Generate new correlation ID if none was provided
         if not correlation_id:
@@ -97,20 +101,47 @@ class CorrelationIDMiddleware(BaseHTTPMiddleware):
         else:
             logger.debug(f"Using client-provided correlation ID: {correlation_id}")
 
+        return correlation_id
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """Pure ASGI entry point — no BaseHTTPMiddleware task-group/body overhead.
+
+        Resolves the correlation ID, stores it in the context variable for the
+        request lifecycle, and injects it into the response-start headers.
+
+        Args:
+            scope: ASGI connection scope.
+            receive: ASGI receive callable.
+            send: ASGI send callable.
+        """
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+
+        correlation_id = self._resolve_correlation_id(scope)
+
         # Store correlation ID in context variable for this request
         # This makes it available to all downstream code (auth, services, plugins, logs)
         set_correlation_id(correlation_id)
 
         try:
-            # Process the request
-            response = await call_next(request)
+            if not self.add_to_response:
+                await self.app(scope, receive, send)
+                return
 
-            # Add correlation ID to response headers if enabled
-            if self.add_to_response:
-                response.headers[self.header_name] = correlation_id
+            header_name = self.header_name.lower().encode("latin-1")
+            header_value = correlation_id.encode("latin-1")
 
-            return response
+            async def send_with_correlation_id(message: Message) -> None:
+                """Inject the correlation ID header into the response start, then forward."""
+                if message.get("type") == "http.response.start":
+                    headers = message.setdefault("headers", [])
+                    # Starlette "set" semantics: replace any existing header of the same name
+                    headers[:] = [(k, v) for k, v in headers if k.lower() != header_name]
+                    headers.append((header_name, header_value))
+                await send(message)
 
+            await self.app(scope, receive, send_with_correlation_id)
         finally:
             # Clean up context after request completes
             # Note: ContextVar automatically cleans up, but explicit cleanup is good practice

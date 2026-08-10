@@ -485,6 +485,8 @@ services:
       # Logging configuration
       # NOTE: LOG_LEVEL=INFO/DEBUG is required for SQLALCHEMY_ECHO output.
       - LOG_LEVEL=${LOG_LEVEL:-ERROR}  # Required for SQLALCHEMY_ECHO output during load testing
+      # Boundary request-logging middleware off in this stack (its INFO logs are suppressed at ERROR anyway); set true to re-enable
+      - LOG_BOUNDARY_ENABLED=${LOG_BOUNDARY_ENABLED:-false}
       - DISABLE_ACCESS_LOG=true  # Disable uvicorn access logs for performance (massive I/O overhead)
       # Template auto-reload disabled for performance (prevents re-parsing templates on each request)
       - TEMPLATES_AUTO_RELOAD=false
@@ -2200,7 +2202,9 @@ services:
       - |
         set -eu
         echo "Generating JWT token for Locust..."
-        TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret $$JWT_SECRET_KEY --algo HS256 2>/dev/null)
+        # --admin produces a rich token whose user.auth_provider="cli" claim lets the
+        # gateway classify it without the legacy per-request JTI database lookup.
+        TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret $$JWT_SECRET_KEY --algo HS256 --admin 2>/dev/null)
         printf "%s" "$$TOKEN" > /tokens/gateway.jwt
         echo ""
         echo "✅ Token written to /tokens/gateway.jwt"
