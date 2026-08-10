@@ -300,10 +300,17 @@ function.
 
 Run: `npx vitest run tests/unit/js/fileTransfer.test.js -t "import request headers"`
 
-Expected: the four `X-CSRF-Token` / `Authorization`-absent assertions FAIL —
-`expected undefined to be 'test-csrf-value'` and
+Expected: **exactly 4 of the 6 FAIL** — `expected undefined to be
+'test-csrf-value'` and
 `expected { ... Authorization: 'Bearer ' } not to have property "Authorization"`.
-The `Content-Type` and `Bearer test-token` assertions already pass.
+
+The other two pass in the red state, correctly: "omits X-CSRF-Token when no
+cookie is set" is vacuously true when no CSRF header is sent at all, and "sends
+Authorization when a bearer token is available" already held before the change.
+Both still earn their place — they pin the behavior once the conversion lands.
+
+Verified: this exact red state was reproduced by applying the test block to the
+unconverted source.
 
 - [ ] **Step 4: Add the `auth.js` import**
 
@@ -404,7 +411,7 @@ Expected: all 6 tests PASS.
 
 Run: `npx vitest run tests/unit/js/fileTransfer.test.js`
 
-Expected: every test PASSES, including the pre-existing
+Expected: 49 tests PASS (43 pre-existing + 6 new), including the pre-existing
 `expect.objectContaining` header assertions at lines 150, 809, and 1365 — the
 first and last cover GET sites that were not touched, and the middle one still
 sees `Authorization: "Bearer test-token"` because `getAuthToken` is mocked to
@@ -596,10 +603,16 @@ true` is mandatory or `fetch` is never reached.
 
 Run: `npx vitest run tests/unit/js/selectiveImport.test.js -t "selective import request headers"`
 
-Expected: the `X-CSRF-Token` and `Authorization`-absent assertions FAIL. If
-instead every test errors with "fetch was not called", fix the checkbox setup
+Expected: **exactly 2 of the 4 FAIL** — "sends X-CSRF-Token from the cookie" and
+"omits Authorization when no bearer token is available". The other two pass in
+the red state for the same reasons given in Task 1 Step 3.
+
+If instead every test errors with "fetch was not called", fix the checkbox setup
 per the note in Step 3 before continuing — a test that never reaches `fetch`
 proves nothing.
+
+Verified: this exact red state was reproduced by applying the test block to the
+unconverted source.
 
 - [ ] **Step 5: Swap the import**
 
@@ -659,7 +672,8 @@ Expected: all 4 tests PASS.
 
 Run: `npx vitest run tests/unit/js/selectiveImport.test.js tests/unit/js/fileTransfer.test.js`
 
-Expected: every test PASSES. `fileTransfer.test.js` is included because
+Expected: 90 tests PASS across the two files (49 in `fileTransfer.test.js`, 41
+in `selectiveImport.test.js`). `fileTransfer.test.js` is included because
 `selectiveImport.js` and `fileTransfer.js` import each other, so a broken mock
 graph in one surfaces in the other.
 
