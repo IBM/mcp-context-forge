@@ -493,7 +493,7 @@ The definitive, up-to-date manifest of all admin routes and their classification
 
 | Class | Migrated | Deferred (retired) | Exempt (A.3) | Total |
 |-------|---|---|---|---|
-| **global-only** | 72 routes (+ 26 root call sites) | 0 — retired by issue #6134, see [Global-record routes](#global-record-routes) | — | 72 |
+| **global-only** | 72 routes (spanning 26 conditional call sites within routers) | 0 — retired by issue #6134, see [Global-record routes](#global-record-routes) | — | 72 |
 | **filtered-read** | 2 routes | — | — | 2 |
 | **team-scopable** | 3 routes | — | — | 3 |
 | **exempt** | — | — | 7 surfaces | 7 |
@@ -527,8 +527,9 @@ Do not re-implement the global-record admin scope check. Shared helpers in `mcpg
 
 - `require_global_admin_permission()` — Decorator for whole-endpoint guards. Rejects narrowed and public-only tokens with 403 and structured logging.
 - `require_unrestricted_platform_admin()` — Callable for conditional guards inside handlers (e.g., `export_includes_roots()` conditions). Checks the same rule; intended for callers that must guard only specific code paths.
+- `require_global_admin_scope_dep` — FastAPI dependency for router-level guards via `dependencies=[...]`. Used when a router guards all its endpoints at declaration time rather than per-endpoint (e.g., `metrics_maintenance.py`).
 
-Both helpers read Layer-1 narrowing from `request.state.token_teams`, so decorated endpoints need a `request` parameter.
+All three helpers enforce the identical scope rule. Helpers reading `request.state.token_teams` (first two) require endpoints to have a `request` parameter.
 
 ### Related Tests and Docs
 
