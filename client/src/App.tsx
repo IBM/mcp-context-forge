@@ -18,7 +18,6 @@ import { Prompts } from "./pages/Prompts";
 import { Agents } from "./pages/Agents";
 import { RestApi } from "./pages/RestApi";
 import { Grpc } from "./pages/Grpc";
-import { Tokens } from "./pages/Tokens";
 import { LLMProviders } from "./pages/LLMProviders";
 import { LLMModels } from "./pages/LLMModels";
 import { Metrics } from "./pages/Metrics";
@@ -29,13 +28,14 @@ import { Maintenance } from "./pages/Maintenance";
 import { Settings } from "./pages/Settings";
 import { NotFound } from "./pages/NotFound";
 
-function LegacyRedirect({ to }: { to: string }) {
+function SettingsTabRedirect({ to }: { to: string }) {
   const { path } = useRouter();
   const query = path.split("?")[1];
   return <Redirect to={query ? `${to}?${query}` : to} />;
 }
-const UsersRedirect = () => <LegacyRedirect to="/app/settings/users" />;
-const TeamsRedirect = () => <LegacyRedirect to="/app/settings/teams" />;
+const UsersRedirect = () => <SettingsTabRedirect to="/app/settings/users" />;
+const TeamsRedirect = () => <SettingsTabRedirect to="/app/settings/teams" />;
+const TokensRedirect = () => <SettingsTabRedirect to="/app/settings/tokens" />;
 
 // ---------------------------------------------------------------------------
 // Unauthenticated shell (full-page, no sidebar/header)
@@ -70,7 +70,7 @@ function PrivateRoutes() {
         <Route path="/app/grpc" component={Grpc} />
         <Route path="/app/users" component={UsersRedirect} />
         <Route path="/app/teams" component={TeamsRedirect} />
-        <Route path="/app/tokens" component={Tokens} />
+        <Route path="/app/tokens" component={TokensRedirect} />
         <Route path="/app/llm/providers" component={LLMProviders} />
         <Route path="/app/llm/models" component={LLMModels} />
         <Route path="/app/metrics" component={Metrics} />

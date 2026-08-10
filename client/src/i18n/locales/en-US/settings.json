@@ -1,5 +1,6 @@
 {
   "settings.title": "Settings",
+  "settings.tabs.apiTokens": "API tokens",
   "settings.tabs.users": "Users",
   "settings.tabs.teams": "Teams"
 }

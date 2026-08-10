@@ -12,6 +12,10 @@ vi.mock("@/auth/AuthContext", () => ({
   useAuthContext: () => mockUseAuthContext(),
 }));
 
+vi.mock("@/pages/Tokens", () => ({
+  Tokens: () => <div>Tokens tab content</div>,
+}));
+
 vi.mock("@/pages/Users", () => ({
   Users: () => <div>Users tab content</div>,
 }));
@@ -54,12 +58,13 @@ describe("Settings", () => {
     mockUseAuthContext.mockReturnValue(makeAuth(true));
   });
 
-  it("renders Users and Teams tabs with Users content by default for admins", () => {
+  it("renders all tabs with API tokens content by default for admins", () => {
     renderWithRouter(<Settings />);
 
+    expect(screen.getByRole("tab", { name: "API tokens" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Users" })).toBeInTheDocument();
     expect(screen.getByRole("tab", { name: "Teams" })).toBeInTheDocument();
-    expect(screen.getByText("Users tab content")).toBeInTheDocument();
+    expect(screen.getByText("Tokens tab content")).toBeInTheDocument();
   });
 
   it("shows the Teams content when the teams tab is active", () => {
@@ -79,15 +84,25 @@ describe("Settings", () => {
     });
   });
 
-  it("renders no tabs for non-admin users", () => {
+  it("shows only the API tokens tab for non-admin users", () => {
     mockUseAuthContext.mockReturnValue(makeAuth(false));
     renderWithRouter(<Settings />);
 
-    expect(screen.queryByRole("tab")).not.toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Settings" })).toBeInTheDocument();
+    expect(screen.getByRole("tab", { name: "API tokens" })).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "Users" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: "Teams" })).not.toBeInTheDocument();
+    expect(screen.getByText("Tokens tab content")).toBeInTheDocument();
   });
 
-  it("redirects a non-admin away from a tab route", async () => {
+  it("lets a non-admin open the tokens tab route", () => {
+    mockUseAuthContext.mockReturnValue(makeAuth(false));
+    renderWithRouter(<Settings tab="tokens" />, "/app/settings/tokens");
+
+    expect(window.location.pathname).toBe("/app/settings/tokens");
+    expect(screen.getByText("Tokens tab content")).toBeInTheDocument();
+  });
+
+  it("redirects a non-admin away from an admin-only tab route", async () => {
     mockUseAuthContext.mockReturnValue(makeAuth(false));
     renderWithRouter(<Settings tab="users" />, "/app/settings/users");
 

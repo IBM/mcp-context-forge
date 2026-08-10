@@ -12,6 +12,7 @@ import resources from "./resources.json";
 import prompts from "./prompts.json";
 import mcpServer from "./mcpServer.json";
 import settings from "./settings.json";
+import tokens from "./tokens.json";
 
 export default {
   ...common,
@@ -28,4 +29,5 @@ export default {
   ...prompts,
   ...mcpServer,
   ...settings,
+  ...tokens,
 };
