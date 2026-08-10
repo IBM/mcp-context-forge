@@ -1,6 +1,6 @@
 import type { ReactElement } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import type { CatalogListResponse, CatalogServer } from "@/generated/types";
@@ -131,6 +131,43 @@ describe("ServerCatalog", () => {
     await waitFor(() => expect(viewButton).toHaveFocus());
   });
 
+  it("shows a not-connected status in the details dialog for an unregistered server", async () => {
+    const user = userEvent.setup();
+    renderWithRouter(<ServerCatalog />);
+
+    await user.click(screen.getByRole("button", { name: "View Public Notes" }));
+
+    expect(within(screen.getByRole("dialog")).getByText("Not connected")).toBeInTheDocument();
+  });
+
+  it("renders the catalog logo image and falls back to the default icon on load error", () => {
+    mockUseQuery.mockReturnValue(
+      queryResult({
+        data: {
+          ...response,
+          servers: [
+            { ...openConnected, logo_url: "https://cdn.example/globalping-logo.png" },
+            openAvailable,
+            apiKeyServer,
+          ],
+        },
+      }),
+    );
+
+    const { container } = renderWithRouter(<ServerCatalog />);
+
+    const logoImg = container.querySelector('img[src="https://cdn.example/globalping-logo.png"]');
+    expect(logoImg).toBeInTheDocument();
+    expect(container.querySelector('[aria-label="Globalping icon"]')).not.toBeInTheDocument();
+
+    fireEvent.error(logoImg as HTMLImageElement);
+
+    expect(
+      container.querySelector('img[src="https://cdn.example/globalping-logo.png"]'),
+    ).not.toBeInTheDocument();
+    expect(container.querySelector('[aria-label="Globalping icon"]')).toBeInTheDocument();
+  });
+
   it("uses a labelled pressed-button group for catalog views", () => {
     renderWithRouter(<ServerCatalog />);
 
@@ -190,6 +227,45 @@ describe("ServerCatalog", () => {
     expect(screen.queryByRole("heading", { name: "Globalping" })).not.toBeInTheDocument();
   });
 
+  it("filters by provider and reflects it in the URL", async () => {
+    const user = userEvent.setup();
+    renderWithRouter(<ServerCatalog />);
+
+    await user.click(screen.getByRole("button", { name: /^Filters$/ }));
+    await user.click(screen.getByRole("combobox", { name: "Provider" }));
+    await user.click(screen.getByRole("option", { name: "jsDelivr" }));
+
+    await waitFor(() => expect(window.location.search).toContain("provider=jsDelivr"));
+    expect(screen.getByRole("heading", { name: "Globalping" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Public Notes" })).not.toBeInTheDocument();
+  });
+
+  it("sets the auth type filter via the Authentication select", async () => {
+    const user = userEvent.setup();
+    renderWithRouter(<ServerCatalog />);
+
+    await user.click(screen.getByRole("button", { name: /^Filters$/ }));
+    await user.click(screen.getByRole("combobox", { name: "Authentication" }));
+    await user.click(screen.getByRole("option", { name: "Open" }));
+
+    await waitFor(() => expect(window.location.search).toContain("auth_type=Open"));
+    expect(screen.getByRole("heading", { name: "Globalping" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Public Notes" })).toBeInTheDocument();
+  });
+
+  it("clears active filters via the Clear button", async () => {
+    const user = userEvent.setup();
+    renderWithRouter(<ServerCatalog />, "/app/server-catalog?category=Productivity");
+
+    expect(screen.queryByRole("heading", { name: "Globalping" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Filters, 1 active" }));
+    await user.click(screen.getByRole("button", { name: "Clear" }));
+
+    await waitFor(() => expect(window.location.search).not.toContain("category"));
+    expect(screen.getByRole("heading", { name: "Globalping" })).toBeInTheDocument();
+  });
+
   it("supports repeatable OR tag filters", async () => {
     const user = userEvent.setup();
     renderWithRouter(<ServerCatalog />);
@@ -244,9 +320,7 @@ describe("ServerCatalog", () => {
     renderWithRouter(<ServerCatalog />);
     await user.click(screen.getByRole("button", { name: "Connected" }));
 
-    expect(
-      screen.getByText("No MCP server catalog options are connected."),
-    ).toBeInTheDocument();
+    expect(screen.getByText("No MCP server catalog options are connected.")).toBeInTheDocument();
     expect(
       screen.queryByText("No MCP servers match the active search and filters."),
     ).not.toBeInTheDocument();
