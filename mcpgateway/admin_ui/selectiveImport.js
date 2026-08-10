@@ -1,9 +1,9 @@
+import { getAuthHeaders } from "./auth.js";
 import {
   displayImportResults,
   refreshCurrentTabData,
   showImportProgress,
 } from "./fileTransfer.js";
-import { getAuthHeaders } from "./auth.js";
 
 // ===================================================================
 // SELECTIVE IMPORT FUNCTIONS

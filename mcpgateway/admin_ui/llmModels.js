@@ -11,8 +11,8 @@ import { safeGetElement, showToast } from "./utils.js";
 /**
  * Build headers for state-changing LLM settings requests.
  *
- * Thin adapter over the shared getAuthHeaders() helper, kept so the 16 call
- * sites below can keep their `{ json: false }` option shape:
+ * Thin adapter over the shared getAuthHeaders() helper, kept so the call
+ * sites below can keep their `{ json }` option shape:
  * - Authorization is only attached when a real bearer token is available
  *   (session logins use an httponly cookie, so getAuthToken() returns "").
  * - X-CSRF-Token satisfies both CSRFMiddleware (/llm/*) and

@@ -1540,6 +1540,7 @@ describe("import request headers", () => {
     const headers = fetchSpy.mock.calls[0][1].headers;
     expect(headers).not.toHaveProperty("Authorization");
     expect(headers["X-CSRF-Token"]).toBe(CSRF_COOKIE_VALUE);
+    getAuthToken.mockResolvedValue("test-token");
   });
 
   test("previewImport sends Authorization when a bearer token is available", async () => {
@@ -1569,5 +1570,6 @@ describe("import request headers", () => {
 
     const headers = fetchSpy.mock.calls[0][1].headers;
     expect(headers).not.toHaveProperty("Authorization");
+    getAuthToken.mockResolvedValue("test-token");
   });
 });
