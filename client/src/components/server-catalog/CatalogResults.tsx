@@ -59,7 +59,7 @@ function CatalogCard({
 
   return (
     <li className="min-w-0">
-      <Card className="h-full min-h-[200px] gap-0 rounded-xl border border-border bg-card p-0 py-0 shadow-none ring-0">
+      <Card className="h-full min-h-[200px] gap-0 rounded-xl border border-border bg-card p-0 py-0 shadow-none ring-0 transition-colors hover:border-ring dark:hover:border-muted-foreground">
         <article className="flex h-full flex-col" aria-labelledby={headingId}>
           <CardContent className="flex flex-1 flex-col px-5 py-5">
             <div className="flex items-start justify-between gap-3">
