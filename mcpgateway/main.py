@@ -73,7 +73,8 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 # Import the admin routes from the new module
 from mcpgateway import __version__
 from mcpgateway import version as version_module
-from mcpgateway.auth import get_current_user, get_user_team_roles, TokenValidationError, validate_token_user  # noqa: F401  # re-exported: tests patch these in main's namespace
+from mcpgateway.auth import get_current_user, get_user_team_roles
+from mcpgateway.auth import validate_token_user  # noqa: F401  # pylint: disable=unused-import  # re-exported: lifecycle tests patch this in main's namespace
 from mcpgateway.auth_context import (
     configuration_export_includes_roots,
     decode_internal_mcp_auth_context,
@@ -178,7 +179,6 @@ from mcpgateway.services.cancellation_service import cancellation_service
 from mcpgateway.services.completion_service import CompletionError, CompletionService
 from mcpgateway.services.content_security import ContentPatternError, ContentSizeError, ContentTypeError, TemplateValidationError
 from mcpgateway.services.dataplane_publisher import DataplanePublisherService
-from mcpgateway.services.email_auth_service import EmailAuthService  # noqa: F401  # re-exported for test patching
 from mcpgateway.services.export_service import ExportError, ExportService
 from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayDuplicateConflictError, GatewayError, GatewayLookupConflictError, GatewayNameConflictError, GatewayNotFoundError
 from mcpgateway.services.import_service import ConflictStrategy, ImportConflictError
@@ -198,7 +198,7 @@ from mcpgateway.services.mcp_apps import (
 )
 from mcpgateway.services.mcp_method_registry import mcp_method_registry
 from mcpgateway.services.metrics import setup_metrics
-from mcpgateway.services.permission_service import PermissionService  # noqa: F401  # re-exported for test patching
+from mcpgateway.services.permission_service import PermissionService  # noqa: F401  # pylint: disable=unused-import  # re-exported for lifecycle test patching
 from mcpgateway.services.prompt_service import PromptError, PromptLockConflictError, PromptNameConflictError, PromptNotFoundError
 from mcpgateway.services.resource_service import ResourceError, ResourceLockConflictError, ResourceNotFoundError, ResourceURIConflictError, ResourceValidationError
 from mcpgateway.services.server_service import ServerError, ServerLockConflictError, ServerNameConflictError, ServerNotFoundError
@@ -222,7 +222,7 @@ from mcpgateway.utils.internal_http import internal_loopback_base_url, internal_
 from mcpgateway.utils.metadata_capture import MetadataCapture
 from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.passthrough_headers import set_global_passthrough_headers
-from mcpgateway.utils.paths import _normalize_scope_path, resolve_root_path  # noqa: F401  # resolve_root_path re-exported for test patching
+from mcpgateway.utils.paths import _normalize_scope_path
 from mcpgateway.utils.redis_client import close_redis_client, get_redis_client, is_redis_available
 from mcpgateway.utils.redis_isready import wait_for_redis_ready
 from mcpgateway.utils.retry_manager import ResilientHttpClient
@@ -235,8 +235,8 @@ from mcpgateway.utils.verify_credentials import (
     get_auth_header_value,
     is_proxy_auth_trust_active,
     require_admin_auth,
-    require_docs_auth_override,  # noqa: F401  # re-exported for test patching
 )
+from mcpgateway.utils.verify_credentials import require_docs_auth_override  # noqa: F401  # pylint: disable=unused-import  # re-exported for test patching
 from mcpgateway.validation.jsonrpc import JSONRPCError
 
 # Initialize logging service first
