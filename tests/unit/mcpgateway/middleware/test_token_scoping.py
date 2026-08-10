@@ -2349,3 +2349,86 @@ class TestUnifiedSearchPathScoping:
 
         assert client.get("/v1/search", headers=headers).status_code == 200  # middleware lets it through
         assert client.get("/v1/other", headers=headers).status_code == 403  # control: default-deny still enforced
+
+
+class TestTokenScopingASGIAdapter:
+    """Deny-path and pass-through coverage for the pure-ASGI adapter (#perf middleware series)."""
+
+    @pytest.mark.asyncio
+    async def test_adapter_passes_through_when_logic_allows(self):
+        """Allowed request: downstream app runs and its response is sent verbatim."""
+        # First-Party
+        from mcpgateway.middleware.token_scoping import TokenScopingASGIMiddleware
+
+        sent = []
+
+        async def app(scope, receive, send):
+            await send({"type": "http.response.start", "status": 200, "headers": [(b"content-type", b"application/json")]})
+            await send({"type": "http.response.body", "body": b"{}"})
+
+        adapter = TokenScopingASGIMiddleware(app)
+        scope = {"type": "http", "method": "GET", "path": "/health", "headers": [], "state": {}}
+
+        async def receive():
+            return {"type": "http.request", "body": b""}
+
+        async def send(message):
+            sent.append(message)
+
+        async def _allow(request, call_next):
+            """Mimic the singleton's allow path: invoke call_next, return its result."""
+            return await call_next(request)
+
+        with patch("mcpgateway.middleware.token_scoping.token_scoping_middleware", new=_allow):
+            await adapter(scope, receive, send)
+            await adapter(scope, receive, send)
+
+        assert sent[0]["status"] == 200
+
+    @pytest.mark.asyncio
+    async def test_adapter_emits_deny_response_and_never_calls_downstream(self):
+        """Deny path: the logic's response is sent and the downstream app never runs."""
+        # First-Party
+        from mcpgateway.middleware.token_scoping import TokenScopingASGIMiddleware
+
+        downstream_called = False
+
+        async def app(scope, receive, send):
+            nonlocal downstream_called
+            downstream_called = True
+
+        deny = Response("access denied", status_code=403)
+        sent = []
+        adapter = TokenScopingASGIMiddleware(app)
+        scope = {"type": "http", "method": "GET", "path": "/tools", "headers": [], "state": {}}
+
+        async def receive():
+            return {"type": "http.request", "body": b""}
+
+        async def send(message):
+            sent.append(message)
+
+        with patch("mcpgateway.middleware.token_scoping.token_scoping_middleware", new=AsyncMock(return_value=deny)):
+            await adapter(scope, receive, send)
+
+        assert downstream_called is False
+        assert sent[0]["status"] == 403
+
+    @pytest.mark.asyncio
+    async def test_adapter_ignores_non_http_scopes(self):
+        """Lifespan/websocket scopes pass straight through untouched."""
+        # First-Party
+        from mcpgateway.middleware.token_scoping import TokenScopingASGIMiddleware
+
+        called = []
+
+        async def app(scope, receive, send):
+            called.append(scope["type"])
+
+        adapter = TokenScopingASGIMiddleware(app)
+
+        async def noop(*_args):
+            return None
+
+        await adapter({"type": "lifespan"}, noop, noop)
+        assert called == ["lifespan"]

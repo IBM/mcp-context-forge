@@ -117,7 +117,7 @@ from mcpgateway.middleware.rate_limit_middleware import RateLimitMiddleware
 from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, get_current_user_with_permissions, PermissionChecker, require_permission
 from mcpgateway.middleware.request_logging_middleware import RequestLoggingMiddleware
 from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
-from mcpgateway.middleware.token_scoping import ResourceOwnershipResult, token_scoping_middleware
+from mcpgateway.middleware.token_scoping import ResourceOwnershipResult, TokenScopingASGIMiddleware, token_scoping_middleware
 from mcpgateway.middleware.validation_middleware import ValidationMiddleware
 from mcpgateway.observability import configure_baggage_span_attribute_policy, extract_baggage_span_attribute_policy, init_telemetry, OpenTelemetryRequestMiddleware, otel_tracing_enabled
 from mcpgateway.plugins import (
@@ -3330,7 +3330,7 @@ app.add_middleware(MCPProtocolVersionMiddleware)
 
 # Add token scoping middleware (only when email auth is enabled)
 if settings.email_auth_enabled:
-    app.add_middleware(BaseHTTPMiddleware, dispatch=token_scoping_middleware)
+    app.add_middleware(TokenScopingASGIMiddleware)
     # Add streamable HTTP middleware for /mcp routes with token scoping
     app.add_middleware(MCPPathRewriteMiddleware, dispatch=token_scoping_middleware)
 else:
