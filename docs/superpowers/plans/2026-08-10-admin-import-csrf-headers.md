@@ -69,6 +69,20 @@ That also restores the real `getCookie`, which reads jsdom's `document.cookie` �
 
 `tokens.js` stays mocked in all three test files, so the pre-existing `auth.js ↔ tokens.js` import cycle never materializes in the test graph.
 
+## Prerequisite: work on a feature branch
+
+The spec and this plan were committed on `main`. Before Task 1, confirm the
+implementation work is on its own branch — the repo convention is a `fix/`
+prefix (e.g. the recent `fix/global-record-admin-scope`):
+
+```bash
+git rev-parse --abbrev-ref HEAD          # if this prints "main", branch first
+git switch -c fix/admin-import-csrf-headers
+```
+
+Task 4 Step 5 compares against `main...HEAD`, which is empty and therefore
+useless if the work itself lands on `main`.
+
 ## File Structure
 
 | File | Change | Responsibility after the change |
@@ -812,7 +826,20 @@ this pattern (it interpolates a local `jwtToken` variable, not
 Run: `make pre-commit`
 
 Expected: PASS. This normalizes whitespace and trailing newlines across the
-touched JS files. If it rewrites files, amend the affected commit rather than
+touched JS files.
+
+Watch for one false positive: the `detect-secrets` hook raises `Secret Keyword`
+on an assignment whose left-hand side is a credential-ish word (`credentials`,
+`token`, `secret`, `password`) and whose right-hand side is a quoted string
+literal. The new tests can trip this if a header value is written that way. Per
+the repo convention in
+`CLAUDE.md`, Python files take an inline `# pragma: allowlist secret` and every
+other file type is handled by regenerating the baseline with
+`make detect-secrets-scan`. For a JS test, prefer rewording the literal (e.g.
+assert on a constant named `CSRF_COOKIE_VALUE`, which the plan's tests already
+do) over adding a baseline entry.
+
+If `make pre-commit` rewrites files, amend the affected commit rather than
 adding a fixup:
 
 ```bash

@@ -57,7 +57,8 @@ covered.
 
 - `ConfigurableHTTPBearer` is constructed with `auto_error=False`
   (`mcpgateway/utils/verify_credentials.py:223`, `mcpgateway/middleware/rbac.py:139`),
-  so `Bearer ` yields `HTTPAuthorizationCredentials(credentials="")` rather than a 403.
+  so `Bearer ` yields an `HTTPAuthorizationCredentials` object whose credential
+  attribute is the empty string, rather than a 403.
 - `get_current_user_with_permissions` gates on truthiness:
   `if credentials and credentials.credentials` (`mcpgateway/middleware/rbac.py:424`),
   so it falls through to the `jwt_token` cookie.
