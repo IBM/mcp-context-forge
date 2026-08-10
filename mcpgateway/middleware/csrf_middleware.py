@@ -7,16 +7,20 @@ CSRF Protection Middleware for ContextForge.
 
 This middleware validates CSRF tokens on state-changing requests to prevent
 Cross-Site Request Forgery attacks.
+
+Implemented as pure ASGI middleware (no BaseHTTPMiddleware): validation only
+needs request headers, cookies, and scope state — the body is never consumed,
+so there is nothing to replay downstream, and pass-through responses stream
+unbuffered.
 """
 
 # Standard
 import hmac
 import logging
-from typing import Callable
+from typing import Any, Callable, Optional
 from urllib.parse import urlparse
 
 # Third-Party
-from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
@@ -40,7 +44,7 @@ def _extract_bearer_token(auth_header: str) -> str | None:
     return None
 
 
-class CSRFMiddleware(BaseHTTPMiddleware):
+class CSRFMiddleware:
     """Middleware for CSRF token validation on state-changing requests.
 
     This middleware protects against Cross-Site Request Forgery attacks by:
@@ -64,8 +68,37 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         True
     """
 
+    def __init__(self, app: Any) -> None:
+        """Initialize the CSRF middleware.
+
+        Args:
+            app: The ASGI application to wrap.
+        """
+        self.app = app
+
+    async def __call__(self, scope: dict, receive: Callable, send: Callable) -> None:
+        """Pure ASGI entry point — no BaseHTTPMiddleware task-group/body overhead.
+
+        Args:
+            scope: ASGI connection scope.
+            receive: ASGI receive callable.
+            send: ASGI send callable.
+        """
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+
+        # Request(scope) is a thin wrapper (no body read); request.state reads
+        # scope["state"], populated by upstream middleware as usual.
+        rejection = await self._validate_request(Request(scope))
+        if rejection is not None:
+            await rejection(scope, receive, send)
+            return
+
+        await self.app(scope, receive, send)
+
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
-        """Process request and validate CSRF token if required.
+        """BaseHTTPMiddleware-compatible entry point retained for tests and doctests.
 
         Args:
             request: Incoming HTTP request
@@ -92,28 +125,43 @@ class CSRFMiddleware(BaseHTTPMiddleware):
             >>> parsed.netloc
             'example.com'
         """
+        rejection = await self._validate_request(request)
+        if rejection is not None:
+            return rejection
+        return await call_next(request)
+
+    async def _validate_request(self, request: Request) -> Optional[Response]:
+        """Validate the CSRF token when the request requires protection.
+
+        Args:
+            request: Incoming HTTP request.
+
+        Returns:
+            A 403 JSON response when validation fails, or None to let the
+            request continue through the stack.
+        """
         # 1. Skip if CSRF protection is disabled
         if not settings.csrf_enabled:
-            return await call_next(request)
+            return None
 
         # 1b. Skip if auth is disabled (dev mode)
         if not getattr(settings, "auth_required", True):
-            return await call_next(request)
+            return None
 
         # 2. Skip safe methods (GET, HEAD, OPTIONS, TRACE)
         if request.method in SAFE_METHODS:
-            return await call_next(request)
+            return None
 
         # 3. Skip exempt paths (exact or prefix match)
         request_path = request.url.path
         for exempt_path in settings.csrf_exempt_paths:
             if request_path == exempt_path or request_path.startswith(exempt_path.rstrip("/") + "/"):
-                return await call_next(request)
+                return None
 
         # 4. Skip Bearer token requests (not vulnerable to CSRF)
         auth_header = get_auth_header_value(request.headers) or ""
         if _extract_bearer_token(auth_header):
-            return await call_next(request)
+            return None
 
         # 4b. Skip requests that carry no credentials at all. CSRF only defends against
         # ambient cookie-borne credentials; a request with no Authorization header and no
@@ -126,10 +174,10 @@ class CSRFMiddleware(BaseHTTPMiddleware):
         has_auth_cookie = bool(request.cookies.get("jwt_token") or request.cookies.get("access_token"))
         has_proxy_identity = is_proxy_auth_trust_active(settings) and bool(request.headers.get(settings.proxy_user_header))
         if not auth_header and not has_auth_cookie and not has_proxy_identity:
-            return await call_next(request)
+            return None
 
-        # 5. Extract CSRF token from header. Do not consume form bodies here:
-        # BaseHTTPMiddleware cannot safely replay request bodies for downstream handlers.
+        # 5. Extract CSRF token from header. The request body is never consumed
+        # (pure ASGI: no BaseHTTPMiddleware replay problem to work around).
         csrf_token = request.headers.get(settings.csrf_token_name)
 
         if not csrf_token:
@@ -224,4 +272,4 @@ class CSRFMiddleware(BaseHTTPMiddleware):
                 return JSONResponse(status_code=403, content={"detail": "CSRF validation failed", "code": "CSRF_TOKEN_INVALID"})
 
         # 10. All checks passed, continue with request
-        return await call_next(request)
+        return None
