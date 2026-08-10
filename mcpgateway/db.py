@@ -246,19 +246,6 @@ if settings.observability_enabled:
     except ImportError:
         logger.warning("Failed to import SQLAlchemy instrumentation")
 
-# Emit OTel spans for SQL queries when OTLP tracing is enabled. This is separate
-# from the instrumentation above (which writes DB observability records): these
-# spans parent to the active request trace and are exported to the OTLP backend.
-if settings.otel_enable_observability and settings.otel_sqlalchemy_instrumentation_enabled:
-    try:
-        # Third-Party
-        from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
-
-        SQLAlchemyInstrumentor().instrument(engine=engine)
-        logger.info("SQLAlchemy OTel instrumentation enabled")
-    except ImportError:
-        logger.warning("opentelemetry-instrumentation-sqlalchemy not installed; SQL OTel spans disabled")
-
 
 # ---------------------------------------------------------------------------
 # 6. Function to return UTC timestamp
