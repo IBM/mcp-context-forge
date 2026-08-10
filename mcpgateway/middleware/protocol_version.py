@@ -17,8 +17,8 @@ from typing import Any, Callable, Dict, Optional
 
 # Third-Party
 from fastapi import Request, Response
-from mcp_types.version import LATEST_PROTOCOL_VERSION
-from mcp_types.version import SUPPORTED_PROTOCOL_VERSIONS as MCP_SUPPORTED_PROTOCOL_VERSIONS
+from mcp.shared.version import SUPPORTED_PROTOCOL_VERSIONS as MCP_SUPPORTED_PROTOCOL_VERSIONS
+from mcp.types import LATEST_PROTOCOL_VERSION
 from starlette.datastructures import Headers
 
 # First-Party
