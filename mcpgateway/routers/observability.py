@@ -114,6 +114,7 @@ async def list_traces(
         limit: Maximum results
         offset: Result offset
         db: Database session
+        request: Incoming request, used to resolve Layer-1 token scope.
 
     Returns:
         List[ObservabilityTraceRead]: List of traces matching filters
@@ -199,6 +200,7 @@ async def query_traces_advanced(
     Args:
         request_body: JSON request body with filter criteria
         db: Database session
+        request: Incoming request, used to resolve Layer-1 token scope.
 
     Returns:
         List[ObservabilityTraceRead]: List of traces matching filters
@@ -296,6 +298,7 @@ async def get_trace(
     Args:
         trace_id: UUID of the trace to retrieve
         db: Database session
+        request: Incoming request, used to resolve Layer-1 token scope.
 
     Returns:
         ObservabilityTraceWithSpans: Complete trace with all spans and events
@@ -364,6 +367,7 @@ async def list_spans(
         limit: Maximum results
         offset: Result offset
         db: Database session
+        request: Incoming request, used to resolve Layer-1 token scope.
 
     Returns:
         List[ObservabilitySpanRead]: List of spans matching filters
@@ -418,6 +422,7 @@ async def cleanup_old_traces(
     Args:
         days: Delete traces older than this many days
         db: Database session
+        request: Incoming request, used to resolve Layer-1 token scope.
 
     Returns:
         dict: Number of deleted traces and cutoff time
@@ -462,6 +467,7 @@ async def get_stats(
     Args:
         hours: Time window in hours
         db: Database session
+        request: Incoming request, used to resolve Layer-1 token scope.
 
     Returns:
         dict: Statistics including counts, error rate, and slowest endpoints
@@ -529,6 +535,7 @@ async def export_traces(
         request_body: JSON request body with filter criteria (same as /traces/query)
         format: Export format (json, csv, ndjson)
         db: Database session
+        request: Incoming request, used to resolve Layer-1 token scope.
 
     Returns:
         StreamingResponse or JSONResponse with exported data
@@ -712,6 +719,7 @@ async def get_query_performance(
     Args:
         hours: Time window in hours
         db: Database session
+        request: Incoming request, used to resolve Layer-1 token scope.
 
     Returns:
         dict: Performance analytics
