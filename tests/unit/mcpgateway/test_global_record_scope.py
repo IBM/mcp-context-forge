@@ -33,14 +33,6 @@ GLOBAL_ONLY = {
     ("POST", "/rbac/roles"),
     ("PUT", "/rbac/roles/{role_id}"),
     ("DELETE", "/rbac/roles/{role_id}"),
-}
-
-# Same class, guard NOT yet migrated — spec Appendix A.2 and A.4, follow-up issue 1.
-# This set may only shrink. Adding a new route here to dodge the guard assertion
-# is exactly what test_deferred_bucket_only_shrinks prevents.
-# Populated from the mounted app with every optional router flag enabled (see
-# task-9-report.md); 64 entries, matching spec Appendix A.2 (60) + A.4 (4).
-GLOBAL_ONLY_DEFERRED = {
     # --- llm_config_router (prefix /llm) — 13, admin.system_config ---
     ("GET", "/llm/models"),
     ("POST", "/llm/models"),
@@ -117,6 +109,12 @@ GLOBAL_ONLY_DEFERRED = {
     ("GET", "/api/metrics/config"),
 }
 
+# Retired by issue #6134 — every route formerly listed here now carries the
+# canonical rule and has moved into GLOBAL_ONLY above. This set is kept as an
+# empty named set so the disjointness and classification tests still reference
+# it, and so test_deferred_bucket_is_retired can assert it never refills.
+GLOBAL_ONLY_DEFERRED = set()
+
 # Global records read with Layer-1 filtering instead of a hard deny — spec §3.4.
 FILTERED_READ = {
     ("GET", "/rbac/roles"),
@@ -182,16 +180,32 @@ def _routes():
             yield method, _normalize(full_path), route, include_deps
 
 
-def _scope_class(route):
-    """Return the scope-class marker set by require_global_admin_permission.
+def _scope_class(route, include_deps=()):
+    """Return the scope-class marker for a route, from decorator or dependency.
+
+    Routers that guard at router level (metrics_maintenance) mount
+    ``require_global_admin_scope_dep`` instead of applying the decorator, so no
+    ``__mcpgateway_scope_class__`` attribute exists on the endpoint. Matching is
+    by function identity, not name, so a same-named decoy cannot satisfy it.
 
     Args:
         route: A leaf route.
+        include_deps: Dependencies accumulated from enclosing routers.
 
     Returns:
-        Optional[str]: The marker, or ``None`` when the guard is absent.
+        Optional[str]: The marker, or ``None`` when no guard applies.
     """
-    return getattr(getattr(route, "endpoint", None), "__mcpgateway_scope_class__", None)
+    marker = getattr(getattr(route, "endpoint", None), "__mcpgateway_scope_class__", None)
+    if marker is not None:
+        return marker
+
+    # First-Party
+    from mcpgateway.middleware.rbac import require_global_admin_scope_dep  # pylint: disable=import-outside-toplevel
+
+    for dep in list(getattr(route, "dependencies", []) or []) + list(include_deps or []):
+        if getattr(dep, "dependency", None) is require_global_admin_scope_dep:
+            return "global_only"
+    return None
 
 
 def _has_admin_guard(route, include_deps) -> bool:
@@ -217,7 +231,7 @@ def _has_admin_guard(route, include_deps) -> bool:
     Returns:
         bool: ``True`` when any admin guard applies.
     """
-    if _scope_class(route) is not None:
+    if _scope_class(route, include_deps) is not None:
         return True
     deps = list(getattr(route, "dependencies", []) or []) + list(include_deps or [])
     for dep in deps:
@@ -233,13 +247,27 @@ def test_collect_routes_actually_finds_routes():
     assert len(list(_routes())) > 100, "collect_routes found almost no routes — the drift guard is not actually inspecting the app"
 
 
+# Routers mounted only when an optional feature flag is on (see the gating
+# conditions in mcpgateway/api/v1/__init__.py and mcpgateway/main.py). Their
+# manifest entries are legitimately absent from a default test run, so they are
+# exempt from the stale-entry check rather than being deleted from the manifest.
+#   /compliance        -> mcpgateway_admin_api_enabled
+#   /admin/runtime     -> mcpgateway_admin_api_enabled
+#   /admin/siem        -> mcpgateway_admin_api_enabled and siem_export_enabled
+#   /llm/, /admin/llm/ -> llmchat_enabled
+#   /observability     -> observability_enabled
+#   /toolops           -> toolops_enabled
+#   /auth/sso          -> email_auth_enabled and sso_enabled
+FLAG_GATED_PREFIXES = ("/compliance", "/admin/runtime", "/admin/siem", "/admin/llm/", "/llm/", "/observability", "/toolops", "/auth/sso")
+
+
 def test_global_only_routes_carry_the_guard():
     """Every migrated route must actually carry the decorator, not just be listed."""
     seen = {(m, p) for m, p, _route, _deps in _routes()}
-    missing = {(m, p) for m, p, route, _deps in _routes() if (m, p) in GLOBAL_ONLY and _scope_class(route) != "global_only"}
+    missing = {(m, p) for m, p, route, deps in _routes() if (m, p) in GLOBAL_ONLY and _scope_class(route, deps) != "global_only"}
     assert not missing, f"GLOBAL_ONLY routes missing @require_global_admin_permission: {sorted(missing)}\nSee docs/docs/manage/rbac.md"
     # A manifest entry that matches no mounted route is stale, not passing.
-    stale = {entry for entry in GLOBAL_ONLY if entry not in seen and not entry[1].startswith("/compliance")}
+    stale = {entry for entry in GLOBAL_ONLY if entry not in seen and not entry[1].startswith(FLAG_GATED_PREFIXES)}
     assert not stale, f"GLOBAL_ONLY entries match no mounted route: {sorted(stale)}"
 
 
@@ -261,9 +289,14 @@ def test_manifests_are_disjoint():
         seen |= bucket
 
 
-def test_deferred_bucket_only_shrinks():
-    """Deferral records existing debt; it is not an escape hatch for new routes."""
-    assert len(GLOBAL_ONLY_DEFERRED) <= 64, "GLOBAL_ONLY_DEFERRED grew. New global-record routes must use the canonical rule, not join the deferred set. See docs/docs/manage/rbac.md"
+def test_deferred_bucket_is_retired():
+    """The deferred tier is closed; new global-record routes use the canonical rule."""
+    assert GLOBAL_ONLY_DEFERRED == set(), (
+        "GLOBAL_ONLY_DEFERRED was retired by issue #6134. A new admin route over a "
+        "team-less record must carry @require_global_admin_permission() (or "
+        "Depends(require_global_admin_scope_dep) for router-level guards) and be "
+        "listed in GLOBAL_ONLY. See docs/docs/manage/rbac.md"
+    )
 
 
 def test_every_admin_route_is_classified():
@@ -271,3 +304,39 @@ def test_every_admin_route_is_classified():
     classified = GLOBAL_ONLY | GLOBAL_ONLY_DEFERRED | FILTERED_READ | TEAM_SCOPABLE | set(EXEMPT)
     unclassified = {(m, p) for m, p, route, deps in _routes() if (m, p) not in classified and _has_admin_guard(route, deps)}
     assert not unclassified, f"Unclassified admin routes: {sorted(unclassified)}\nClassify each in tests/unit/mcpgateway/test_global_record_scope.py per docs/docs/manage/rbac.md"
+
+
+def test_scope_class_detects_dependency_form():
+    """Router-level dependency guards must count as carrying the canonical rule.
+
+    metrics_maintenance guards via Depends(require_global_admin_scope_dep) rather
+    than the decorator, so _scope_class must inspect dependencies too. Without
+    this, those four routes look unguarded to the drift check.
+    """
+    metrics_routes = [(route, deps) for _m, path, route, deps in _routes() if path.startswith("/api/metrics")]
+    assert metrics_routes, "metrics_maintenance routes are not mounted"
+    for route, deps in metrics_routes:
+        assert _scope_class(route, deps) == "global_only"
+
+
+def test_dependency_guard_is_matched_by_identity_not_only_name():
+    """Guard against a same-named decoy satisfying the drift check."""
+    # Third-Party
+    from fastapi import Depends
+
+    # First-Party
+    from mcpgateway.middleware.rbac import require_global_admin_scope_dep
+
+    async def require_global_admin_scope_dep_decoy():  # pragma: no cover - never invoked
+        return None
+
+    require_global_admin_scope_dep_decoy.__name__ = "require_global_admin_scope_dep"
+
+    assert _scope_class(_StubRoute(), [Depends(require_global_admin_scope_dep)]) == "global_only"
+    assert _scope_class(_StubRoute(), [Depends(require_global_admin_scope_dep_decoy)]) is None
+
+
+class _StubRoute:
+    """Minimal route stand-in with no endpoint marker."""
+
+    endpoint = None

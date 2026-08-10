@@ -498,7 +498,28 @@ The definitive, up-to-date manifest of all admin routes and their classification
 | **team-scopable** | 3 routes | — | — | 3 |
 | **exempt** | — | — | 7 surfaces | 7 |
 
-**Migrated routes** (A.1) use the canonical shared helpers and are covered by per-context deny tests. **Deferred routes** (A.2/A.4) are identified and classified but keep their own guards pending follow-up issue 1 — the drift guard ensures none regress unclassified. **Exempt surfaces** (A.3) are documented with a rationale.
+### Global-record routes
+
+Admin routes that manage records with no team association require an
+**unrestricted platform-admin token** — one whose JWT `teams` claim is `null`.
+A token narrowed to one or more teams, or a public-only token (`teams: []`),
+receives `403` on these routes even when the backing identity is a platform
+admin.
+
+Two guards enforce the identical rule and share one evaluation point:
+
+- `@require_global_admin_permission()` — for endpoints that accept `request`
+  and a user kwarg. Stack it **above** any existing `@require_permission(...)`
+  so the fine-grained grant is preserved.
+- `Depends(require_global_admin_scope_dep)` — for routers that guard at router
+  level and whose endpoints take neither kwarg.
+
+Every such route is inventoried in `tests/unit/mcpgateway/test_global_record_scope.py`.
+A route that carries a guard but is absent from a manifest — or vice versa —
+fails the build.
+
+**Remediation for callers seeing a new 403:** reissue the token with `--admin`,
+or create it via the Admin UI without selecting a team.
 
 ### Implementation Helpers
 
