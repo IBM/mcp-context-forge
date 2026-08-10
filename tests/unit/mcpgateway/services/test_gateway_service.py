@@ -7330,8 +7330,6 @@ class TestListGatewaysTokenTeams:
         assert cursor is None
 
     @pytest.mark.asyncio
-
-    @pytest.mark.asyncio
     async def test_page_based_pagination(self, gateway_service, monkeypatch):
         """Page-based pagination returns dict format."""
         db = MagicMock()
