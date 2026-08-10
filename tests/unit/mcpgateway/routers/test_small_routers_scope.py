@@ -86,4 +86,4 @@ def test_only_the_two_in_scope_rbac_routes_are_changed():
         endpoint = getattr(rbac_router, name, None)
         if endpoint is None:
             continue
-        assert getattr(endpoint, "_required_permission", None) != "admin.security_audit" or name not in RBAC_IN_SCOPE
+        assert getattr(endpoint, "__mcpgateway_scope_class__", None) != "global_only", f"{name} was wrongly guarded by this task"
