@@ -323,13 +323,14 @@ class PerformanceMetricResponse(BaseModel):
 @router.post("/search", response_model=LogSearchResponse)
 @require_global_admin_permission()
 @require_permission("logs:read")
-async def search_logs(request: LogSearchRequest, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> LogSearchResponse:
+async def search_logs(body: LogSearchRequest, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db), request: Request = None) -> LogSearchResponse:  # pylint: disable=unused-argument
     """Search structured logs with filters and pagination.
 
     Args:
-        request: Search parameters
+        body: Search parameters
         user: Current authenticated user
         db: Database session
+        request: Incoming request, used to resolve Layer-1 token scope.
 
     Returns:
         Search results with pagination
@@ -344,40 +345,40 @@ async def search_logs(request: LogSearchRequest, user=Depends(get_current_user_w
         # Apply filters
         conditions = []
 
-        if request.search_text:
-            conditions.append(or_(StructuredLogEntry.message.ilike(f"%{request.search_text}%"), StructuredLogEntry.component.ilike(f"%{request.search_text}%")))
+        if body.search_text:
+            conditions.append(or_(StructuredLogEntry.message.ilike(f"%{body.search_text}%"), StructuredLogEntry.component.ilike(f"%{body.search_text}%")))
 
-        if request.level:
-            conditions.append(StructuredLogEntry.level.in_(request.level))
+        if body.level:
+            conditions.append(StructuredLogEntry.level.in_(body.level))
 
-        if request.component:
-            components = _expand_component_filters(request.component)
+        if body.component:
+            components = _expand_component_filters(body.component)
             conditions.append(StructuredLogEntry.component.in_(components))
 
         # Note: category field doesn't exist in StructuredLogEntry
-        # if request.category:
-        #     conditions.append(StructuredLogEntry.category.in_(request.category))
+        # if body.category:
+        #     conditions.append(StructuredLogEntry.category.in_(body.category))
 
-        if request.correlation_id:
-            conditions.append(StructuredLogEntry.correlation_id == request.correlation_id)
+        if body.correlation_id:
+            conditions.append(StructuredLogEntry.correlation_id == body.correlation_id)
 
-        if request.user_id:
-            conditions.append(StructuredLogEntry.user_id == request.user_id)
+        if body.user_id:
+            conditions.append(StructuredLogEntry.user_id == body.user_id)
 
-        if request.start_time:
-            conditions.append(StructuredLogEntry.timestamp >= request.start_time)
+        if body.start_time:
+            conditions.append(StructuredLogEntry.timestamp >= body.start_time)
 
-        if request.end_time:
-            conditions.append(StructuredLogEntry.timestamp <= request.end_time)
+        if body.end_time:
+            conditions.append(StructuredLogEntry.timestamp <= body.end_time)
 
-        if request.min_duration_ms is not None:
-            conditions.append(StructuredLogEntry.duration_ms >= request.min_duration_ms)
+        if body.min_duration_ms is not None:
+            conditions.append(StructuredLogEntry.duration_ms >= body.min_duration_ms)
 
-        if request.max_duration_ms is not None:
-            conditions.append(StructuredLogEntry.duration_ms <= request.max_duration_ms)
+        if body.max_duration_ms is not None:
+            conditions.append(StructuredLogEntry.duration_ms <= body.max_duration_ms)
 
-        if request.has_error is not None:
-            if request.has_error:
+        if body.has_error is not None:
+            if body.has_error:
                 conditions.append(StructuredLogEntry.error_details.isnot(None))
             else:
                 conditions.append(StructuredLogEntry.error_details.is_(None))
@@ -390,14 +391,14 @@ async def search_logs(request: LogSearchRequest, user=Depends(get_current_user_w
         total = db.execute(count_stmt).scalar() or 0
 
         # Apply sorting
-        sort_column = getattr(StructuredLogEntry, request.sort_by, StructuredLogEntry.timestamp)
-        if request.sort_order == "desc":
+        sort_column = getattr(StructuredLogEntry, body.sort_by, StructuredLogEntry.timestamp)
+        if body.sort_order == "desc":
             stmt = stmt.order_by(desc(sort_column))
         else:
             stmt = stmt.order_by(sort_column)
 
         # Apply pagination
-        stmt = stmt.limit(request.limit).offset(request.offset)
+        stmt = stmt.limit(body.limit).offset(body.offset)
 
         # Execute query
         results = db.execute(stmt).scalars().all()

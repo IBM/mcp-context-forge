@@ -33,7 +33,21 @@ GUARDED = {
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("token_teams", [["team-a"], []])
-async def test_narrowed_and_public_only_are_denied(token_teams):
+async def test_narrowed_and_public_only_are_denied_on_search_logs(token_teams):
+    """A narrowed admin token cannot search logs (POST body decorator works)."""
+    with pytest.raises(HTTPException) as exc:
+        await log_search.search_logs(
+            body=log_search.LogSearchRequest(),
+            user=admin_user_context(token_teams),
+            db=MagicMock(),
+            request=scoped_request(token_teams, path="/api/logs/search"),
+        )
+    assert exc.value.status_code == 403
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("token_teams", [["team-a"], []])
+async def test_narrowed_and_public_only_are_denied_on_audit_trails(token_teams):
     """A narrowed admin token cannot read the platform-wide audit trail."""
     with pytest.raises(HTTPException) as exc:
         await log_search.get_audit_trails(
