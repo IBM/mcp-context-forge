@@ -576,14 +576,16 @@ async def revoke_user_role(
 
 
 @router.post("/permissions/check", response_model=PermissionCheckResponse)
+@require_global_admin_permission()
 @require_permission("admin.security_audit")
-async def check_permission(check_data: PermissionCheckRequest, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
+async def check_permission(check_data: PermissionCheckRequest, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db), request: Request = None):  # pylint: disable=unused-argument
     """Check if a user has specific permission.
 
     Args:
         check_data: Permission check request
         user: Current authenticated user
         db: Database session
+        request: Incoming request, used to resolve Layer-1 token scope.
 
     Returns:
         PermissionCheckResponse: Permission check result
@@ -618,12 +620,14 @@ async def check_permission(check_data: PermissionCheckRequest, user=Depends(get_
 
 
 @router.get("/permissions/user/{user_email}", response_model=List[str])
+@require_global_admin_permission()
 @require_permission("admin.security_audit")
 async def get_user_permissions(
     user_email: str,
     team_id: QueryTeamContext = None,
     user=Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
+    request: Request = None,  # pylint: disable=unused-argument
 ):
     """Get all effective permissions for a user.
 
@@ -632,6 +636,7 @@ async def get_user_permissions(
         team_id: Optional team context
         user: Current authenticated user
         db: Database session
+        request: Incoming request, used to resolve Layer-1 token scope.
 
     Returns:
         List[str]: User's effective permissions

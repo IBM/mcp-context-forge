@@ -13,7 +13,7 @@ desired allow/deny outcome and exercise the endpoint functions directly.
 
 # Standard
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 from fastapi import HTTPException
@@ -25,6 +25,13 @@ from mcpgateway.runtime_state import (
     reset_runtime_state_coordinator_for_tests,
     reset_runtime_state_for_tests,
 )
+
+
+@pytest.fixture(autouse=True)
+def _unrestricted_scope():
+    """Grant unrestricted Layer-1 scope; this suite calls handlers directly with no request."""
+    with patch("mcpgateway.middleware.rbac._global_scope_denied", AsyncMock(return_value=False)):
+        yield
 
 
 @pytest.fixture(autouse=True)
