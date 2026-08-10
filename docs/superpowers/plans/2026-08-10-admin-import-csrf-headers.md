@@ -49,11 +49,26 @@ export async function getAuthHeaders(includeJsonContentType = false) {
 
 `auth.js` imports `MASKED_AUTH_VALUE` from `./constants.js`, `getAuthToken` from `./tokens.js`, and `getCookie, safeGetElement, showSuccessMessage, showErrorMessage` from `./utils.js`.
 
-**This is the trap in every task below.** Each test file mocks `utils.js` with a partial factory listing only the two or three names the module under test used to need. The moment the module under test imports `auth.js`, Vitest resolves `auth.js`'s own `utils.js` imports against that same partial mock and throws at module-load time:
+**This is the trap in every task below**, and it is wider than `utils.js` alone. `auth.js` also imports `constants.js`, whose own imports (`constants.js:1-4`) are:
+
+```js
+import { initPromptSelect } from "./prompts";
+import { initResourceSelect } from "./resources";
+import { updatePromptMapping, updateResourceMapping, updateToolMapping } from "./servers";
+import { initToolSelect } from "./tools";
+```
+
+So a converted module drags in the transitive graph `auth.js → { constants.js → { prompts, resources, servers, tools }, tokens.js, utils.js }`. Any module in that set which the test file mocks with a *partial* factory throws at module-load time, before a single assertion runs:
 
 ```
-Error: [vitest] No "showSuccessMessage" export is defined on the "../../../mcpgateway/admin_ui/utils.js" mock.
+Error: [vitest] No "initToolSelect" export is defined on the "../../../mcpgateway/admin_ui/tools.js" mock.
+  ❯ mcpgateway/admin_ui/constants.js:167:19
+  ❯ mcpgateway/admin_ui/auth.js:1:1
 ```
+
+That is the *actual* first failure in `fileTransfer.test.js`, which mocks both `utils.js` and `tools.js` partially — so both need widening there. `selectiveImport.test.js` and `llmModels.test.js` mock only `utils.js` from that set, so widening `utils.js` is sufficient in those two.
+
+Each task states exactly which mocks its file needs. This was established empirically: the conversions in Tasks 1-3 were applied to a scratch copy of the tree and the full Vitest suite was run (52 files, 2324 passed, 3 skipped) before being reverted. Do not "simplify" by widening fewer mocks than a task lists.
 
 The fix in every case is to spread the real module into the mock factory:
 
@@ -90,7 +105,7 @@ useless if the work itself lands on `main`.
 | `mcpgateway/admin_ui/fileTransfer.js` | Modify (imports, `:342-352`, `:398-408`) | Export/import UI actions. Two POST sites use `getAuthHeaders(true)`; the two GET sites at `:41` and `:558` keep `getAuthToken` untouched, so the `tokens.js` import stays. |
 | `mcpgateway/admin_ui/selectiveImport.js` | Modify (imports, `:288-298`) | Selective-import UI actions. Its single POST site uses `getAuthHeaders(true)`; the now-unused `getAuthToken` import is removed. |
 | `mcpgateway/admin_ui/llmModels.js` | Modify (imports, `:18-32`) | LLM settings UI. `llmRequestHeaders({ json })` keeps its signature and all 16 call sites, but delegates to `getAuthHeaders`; the now-unused `getAuthToken` and `getCookie` imports are removed. |
-| `tests/unit/js/fileTransfer.test.js` | Modify (mock factory + new describe block) | Covers header shape for `previewImport` and `handleImport`. |
+| `tests/unit/js/fileTransfer.test.js` | Modify (two mock factories + new describe block) | Covers header shape for `previewImport` and `handleImport`. Needs both the `tools.js` and `utils.js` factories widened. |
 | `tests/unit/js/selectiveImport.test.js` | Modify (mock factory + new describe block) | Covers header shape for `handleSelectiveImport`. |
 | `tests/unit/js/llmModels.test.js` | Modify (mock factory only) | Existing behavior coverage; only needs to survive the new `auth.js` edge. |
 
@@ -102,15 +117,35 @@ No files are created. No files are deleted.
 
 **Files:**
 - Modify: `mcpgateway/admin_ui/fileTransfer.js:1-5` (imports), `:342-352` (`previewImport`), `:398-408` (`handleImport`)
-- Test: `tests/unit/js/fileTransfer.test.js:52-55` (mock factory), plus a new describe block appended to the end of the file
+- Test: `tests/unit/js/fileTransfer.test.js:48-50` (`tools.js` mock factory), `:52-55` (`utils.js` mock factory), plus a new describe block appended to the end of the file
 
 **Interfaces:**
 - Consumes: `getAuthHeaders(includeJsonContentType?: boolean): Promise<Record<string, string>>` from `mcpgateway/admin_ui/auth.js`
 - Produces: nothing new. `previewImport()` and `handleImport(dryRun)` keep their existing exported signatures.
 
-- [ ] **Step 1: Widen the `utils.js` mock factory so `auth.js` can load**
+- [ ] **Step 1: Widen the `utils.js` AND `tools.js` mock factories so `auth.js` can load**
 
-In `tests/unit/js/fileTransfer.test.js`, replace this block (currently at lines 52-55):
+Both are required in this file. `tools.js` is the one that fails *first*, via
+`auth.js → constants.js:167 → tools.js`.
+
+In `tests/unit/js/fileTransfer.test.js`, replace this block (currently at lines 48-50):
+
+```js
+vi.mock("../../../mcpgateway/admin_ui/tools.js", () => ({
+  loadTools: vi.fn(),
+}));
+```
+
+with:
+
+```js
+vi.mock("../../../mcpgateway/admin_ui/tools.js", async (importOriginal) => ({
+  ...(await importOriginal()),
+  loadTools: vi.fn(),
+}));
+```
+
+Then replace this block (currently at lines 52-55):
 
 ```js
 vi.mock("../../../mcpgateway/admin_ui/utils.js", () => ({
@@ -128,6 +163,11 @@ vi.mock("../../../mcpgateway/admin_ui/utils.js", async (importOriginal) => ({
   safeGetElement: vi.fn((id) => document.getElementById(id)),
 }));
 ```
+
+Leave the `security.js`, `selectiveImport.js`, and `tokens.js` mocks alone —
+none of them is in `auth.js`'s import graph as a partially-mocked dependency
+(`tokens.js` is mocked, but `auth.js` imports only `getAuthToken` from it, which
+the factory provides).
 
 This keeps the two stubs the existing tests assert against while exposing the
 real `getCookie`, `showSuccessMessage`, and `showErrorMessage` that `auth.js`
@@ -400,6 +440,9 @@ Refs #5964"
 
 - [ ] **Step 1: Widen the `utils.js` mock factory so `auth.js` can load**
 
+Only `utils.js` needs widening in this file — verified by running the suite.
+`tools.js` is not mocked here, so `constants.js` resolves it for real.
+
 In `tests/unit/js/selectiveImport.test.js`, replace this block (currently at
 lines 33-36):
 
@@ -647,6 +690,9 @@ Refs #5964"
 - Produces: `llmRequestHeaders({ json = true } = {}): Promise<Record<string, string>>` — unchanged private signature, still called from 16 sites inside `llmModels.js` (lines 101, 208, 375, 417, 455, 571, 614, 643, 667, 737, 813, 855, 933, 968, 996, 1111). Do not change the option shape; changing it would touch all 16 sites for no benefit.
 
 - [ ] **Step 1: Widen the `utils.js` mock factory so `auth.js` can load**
+
+Only `utils.js` needs widening in this file — verified by running the suite.
+`tools.js` is not mocked here, so `constants.js` resolves it for real.
 
 In `tests/unit/js/llmModels.test.js`, replace this block (currently at lines
 59-63):
