@@ -31,15 +31,12 @@ class _HeaderMutator(Protocol):
 
     def get(self, name: str) -> Optional[str]:
         """Return the (case-insensitive) header value or None."""
-        ...
 
     def set(self, name: str, value: str) -> None:
         """Set (replacing any existing) header value."""
-        ...
 
     def delete(self, name: str) -> None:
         """Remove all instances of the header if present."""
-        ...
 
 
 class _ResponseHeaderMutator:
