@@ -1237,6 +1237,35 @@ def require_global_admin_permission():
     return decorator
 
 
+async def require_global_admin_scope_dep(
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> None:
+    """Dependency form of the canonical global-record scope rule.
+
+    Use this on routers that guard at router level and whose endpoints take no
+    ``request``/``user`` kwargs, where :func:`require_global_admin_permission`
+    cannot be applied. Both forms delegate to :func:`_global_scope_denied`, so
+    they can never disagree about who is rejected.
+
+    Args:
+        request: Incoming request context.
+        db: Database session for the platform-admin lookup.
+        user: Authenticated user context.
+
+    Raises:
+        HTTPException: 403 when the caller is narrowed, public-only, or not a platform admin.
+    """
+    if await _global_scope_denied(request, user, db):
+        # First-Party
+        from mcpgateway.auth_context import get_token_teams_from_request  # pylint: disable=import-outside-toplevel
+
+        resolved = get_token_teams_from_request(request) if request is not None else None
+        _log_global_scope_denial(user.get("email") if isinstance(user, dict) else user, request, resolved)
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_GLOBAL_SCOPE_DENIED_MSG)
+
+
 def require_any_permission(permissions: List[str], resource_type: Optional[str] = None, allow_admin_bypass: bool = True):
     """Decorator to require any of the specified permissions for accessing an endpoint.
 

@@ -8,7 +8,7 @@ Shared global-record scope helper tests.
 
 # Standard
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 from fastapi import HTTPException
@@ -154,3 +154,47 @@ async def test_patch_rbac_decorators_covers_the_global_guard():
 
     # Restoration must put the real guard back, or later suites silently lose coverage.
     assert rbac_module.require_global_admin_permission.__module__ == "mcpgateway.middleware.rbac"
+
+
+@pytest.mark.asyncio
+async def test_scope_dep_allows_unrestricted_admin():
+    """An unrestricted admin token passes the dependency form."""
+    from mcpgateway.middleware.rbac import require_global_admin_scope_dep
+
+    request = scoped_request(None, path="/api/metrics/stats")
+    user = admin_user_context(None)
+    with patch("mcpgateway.middleware.rbac._global_scope_denied", AsyncMock(return_value=False)):
+        assert await require_global_admin_scope_dep(request=request, db=MagicMock(), user=user) is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("token_teams", [["team-a"], []])
+async def test_scope_dep_denies_narrowed_and_public_only(token_teams):
+    """Narrowed and public-only tokens are rejected with 403."""
+    from mcpgateway.middleware.rbac import require_global_admin_scope_dep
+
+    request = scoped_request(token_teams, path="/api/metrics/stats")
+    user = admin_user_context(token_teams)
+    with patch("mcpgateway.middleware.rbac._global_scope_denied", AsyncMock(return_value=True)):
+        with pytest.raises(HTTPException) as exc:
+            await require_global_admin_scope_dep(request=request, db=MagicMock(), user=user)
+    assert exc.value.status_code == 403
+    assert "unrestricted platform-admin token" in exc.value.detail
+
+
+@pytest.mark.asyncio
+async def test_scope_dep_and_decorator_share_one_evaluation_point():
+    """The dependency form must not re-implement the rule the decorator uses."""
+    from mcpgateway.middleware.rbac import require_global_admin_scope_dep
+
+    calls = []
+
+    async def spy(request, user, db):
+        calls.append("evaluated")
+        return True
+
+    request = scoped_request(["team-a"], path="/api/metrics/stats")
+    with patch("mcpgateway.middleware.rbac._global_scope_denied", spy):
+        with pytest.raises(HTTPException):
+            await require_global_admin_scope_dep(request=request, db=MagicMock(), user=admin_user_context(["team-a"]))
+    assert calls == ["evaluated"], "dependency form bypassed _global_scope_denied"
