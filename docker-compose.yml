@@ -500,8 +500,6 @@ services:
       # NOTE: Keep compression enabled when running without nginx that already has compression
       # Disabling causes throughput drop due to larger payloads
       - COMPRESSION_ENABLED=false
-      # Disable deprecated optional middleware for maximum throughput
-      - VALIDATION_MIDDLEWARE_ENABLED=false
       - JSON_SCHEMA_VALIDATION_STRICT=true
       - TOOL_DESCRIPTION_FORBIDDEN_PATTERNS_ENABLED=${TOOL_DESCRIPTION_FORBIDDEN_PATTERNS_ENABLED:-true}
       - TOOL_DESCRIPTION_FORBIDDEN_PATTERNS=${TOOL_DESCRIPTION_FORBIDDEN_PATTERNS:-["&&", ";", "||", "$(", "> ", "< "]}

@@ -18,20 +18,11 @@ ContextForge provides comprehensive input validation and output sanitization to 
 # Enable experimental validation (default: false)
 EXPERIMENTAL_VALIDATE_IO=true
 
-# Deprecated global validation middleware (default: false)
-VALIDATION_MIDDLEWARE_ENABLED=true
-
 # Strict mode - reject on violations (default: true)
 VALIDATION_STRICT=true
 
-# Sanitize output responses (default: true)
-SANITIZE_OUTPUT=true
-
 # Allowed root paths for resource access (JSON array or comma-separated)
 ALLOWED_ROOTS='["/srv/data", "/var/app"]'
-
-# Maximum path depth (default: 10)
-MAX_PATH_DEPTH=10
 
 # Maximum parameter length (default: 10000)
 MAX_PARAM_LENGTH=10000
@@ -65,7 +56,6 @@ VALIDATION_STRICT=true  # Block violations
 ```bash
 EXPERIMENTAL_VALIDATE_IO=true
 VALIDATION_STRICT=true
-SANITIZE_OUTPUT=true
 ```
 
 ## Validation Rules
@@ -90,7 +80,6 @@ uri = "/srv/data/../../secret.txt"
 - Normalizes paths using `Path.resolve()`
 - Checks for `..` sequences
 - Validates against `ALLOWED_ROOTS`
-- Enforces `MAX_PATH_DEPTH` limit
 
 ### Command Injection Prevention
 
@@ -245,23 +234,6 @@ clean_data = SecurityValidator.sanitize_json_response({
 })
 ```
 
-### ValidationMiddleware
-
-!!! warning "Deprecated as of 2026-06-11; sunsets on 2026-07-07"
-    `ValidationMiddleware` is deprecated. Prefer endpoint-level Pydantic
-    validation, `SecurityValidator` helpers, and protocol-specific validation
-    middleware. See [Deprecations](../deprecations.md).
-
-The middleware automatically validates all incoming requests when enabled:
-
-```python
-# In main.py
-from mcpgateway.middleware.validation_middleware import ValidationMiddleware
-
-if settings.validation_middleware_enabled:
-    app.add_middleware(ValidationMiddleware)
-```
-
 ## Testing
 
 ### Unit Tests
@@ -328,14 +300,11 @@ mcpgateway_sanitization_operations_total{type="output"} 1234
 
 ### 1. Enable Endpoint and Protocol Validation in Production
 
-Use endpoint-level Pydantic validation and protocol-specific validation in production.
-Keep the deprecated global validation middleware disabled unless an existing deployment depends on it:
+Use endpoint-level Pydantic validation and protocol-specific validation in production:
 
 ```bash
 EXPERIMENTAL_VALIDATE_IO=true
-VALIDATION_MIDDLEWARE_ENABLED=false
 VALIDATION_STRICT=true
-SANITIZE_OUTPUT=true
 ```
 
 ### 2. Configure Allowed Roots

@@ -685,7 +685,6 @@ These settings were tested and found to have less than ~3% effect on MCP through
 
 | Setting | Why Negligible |
 |---------|---------------|
-| `VALIDATION_MIDDLEWARE_ENABLED` | Deprecated as of 2026-06-11; sunsets on 2026-07-07. MCP requests bypass most validation. See [Deprecations](../deprecations.md). |
 | `DB_METRICS_RECORDING_ENABLED` | Writes are buffered, minimal per-request overhead |
 | `REGISTRY_CACHE_ENABLED` | MCP handlers use their own DB queries, not the registry cache |
 | `PERFORMANCE_TRACKING_ENABLED` | Lightweight in-memory tracking |
