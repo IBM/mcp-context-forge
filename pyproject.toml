@@ -15,7 +15,7 @@ build_py = "mcpgateway.tools.builder.build_hooks.BuildPyWithUI"
 exclude-newer = "10 days"
 
 [tool.uv.exclude-newer-package]
-cpex = "2026-07-30T23:59:59Z"
+cpex = "2026-08-09T23:59:59Z"
 # cpex 0.1.2 (2026-07-30T03:08:24Z) is the minimum required version for
 # ControlExecutionRecord support (issue #5785 / consume-cpex-executions).
 # Pinned past its publish timestamp so uv resolves it on Python 3.13 as well.
@@ -24,24 +24,24 @@ cpex = "2026-07-30T23:59:59Z"
 # tests/integration/plugins/test_plugin_metrics_consumer_integration.py and
 # tests/e2e/test_otel_plugin_metadata_e2e.py depend on. Vetted ahead of the usual window for
 # this reason.
-cpex-url-reputation = "2026-07-27T23:59:59Z"
+cpex-url-reputation = "2026-08-09T23:59:59Z"
 # cpex-rate-limiter pinned past its normal soak cutoff: 0.1.7 (2026-07-14) is the first
 # release that emits result.metadata["rate_limiter"] for prompt_pre_fetch/tool_pre_invoke, which
 # tests/integration/plugins/test_plugin_metrics_consumer_integration.py and
 # tests/e2e/test_otel_plugin_metadata_e2e.py depend on. Vetted ahead of the usual window for
 # this reason.
-cpex-rate-limiter = "2026-07-27T23:59:59Z"
+cpex-rate-limiter = "2026-08-09T23:59:59Z"
 # cpex-encoded-exfil-detection pinned past its normal soak cutoff: 0.3.6 (2026-07-14) is the
 # first release that emits result.metadata["encoded_exfil_detection"] for
 # tool_post_invoke/tool_pre_invoke/resource hooks, which
 # tests/integration/plugins/test_plugin_metrics_consumer_integration.py and
 # tests/e2e/test_otel_plugin_metadata_e2e.py depend on. Vetted ahead of the usual window for
 # this reason.
-cpex-encoded-exfil-detection = "2026-07-27T23:59:59Z"
+cpex-encoded-exfil-detection = "2026-08-09T23:59:59Z"
 # cpex-pii-filter pinned past its normal soak cutoff: 0.3.6 (2026-07-07) is the first
 # release that emits result.metadata for tool_post_invoke, which tests/e2e/test_otel_plugin_metadata_e2e.py
 # depends on. Vetted ahead of the usual window for this reason.
-cpex-pii-filter = "2026-07-27T23:59:59Z"
+cpex-pii-filter = "2026-08-09T23:59:59Z"
 # cpex-retry-with-backoff pinned past its normal soak cutoff: 0.3.7 (2026-07-15) is required.
 # 0.3.6 first emitted result.metadata["retry_with_backoff"] for tool_post_invoke (which
 # tests/integration/plugins/test_plugin_metrics_consumer_integration.py and
@@ -52,7 +52,7 @@ cpex-pii-filter = "2026-07-27T23:59:59Z"
 # success and the plugin never retried. 0.3.7 fixes this by reading through the Python mapping
 # protocol instead. See IBM/cpex-plugins#124 / #137. Vetted ahead of the usual window for both
 # reasons.
-cpex-retry-with-backoff = "2026-07-27T23:59:59Z"
+cpex-retry-with-backoff = "2026-08-09T23:59:59Z"
 # cpex-secrets-detection pinned past its normal soak cutoff: 0.3.10 (2026-07-21)
 # preserves secret field names during redaction. 0.3.9 adds field_allowlist and
 # field_denylist support for gateway plugin config.
@@ -60,26 +60,18 @@ cpex-retry-with-backoff = "2026-07-27T23:59:59Z"
 # tool_post_invoke, which tests/integration/plugins/test_plugin_metrics_consumer_integration.py
 # and tests/e2e/test_otel_plugin_metadata_e2e.py depend on. Vetted ahead of the usual window
 # for these reasons.
-cpex-secrets-detection = "2026-07-27T23:59:59Z"
+cpex-secrets-detection = "2026-08-09T23:59:59Z"
 # cpex-sql-sanitizer pinned past its normal soak cutoff: 0.1.0 (2026-07-21) is the only
 # release. Without this pin the `exclude-newer = "10 days"` default would resolve the
 # [plugins] extra to nothing and the gateway would fail to load SQLSanitizer at boot.
 # Vetted ahead of the usual window for this reason.
-cpex-sql-sanitizer = "2026-07-21T23:59:59Z"
-cryptography = "2026-08-01T23:59:59Z"
-langgraph = "2026-05-12T23:59:59Z"
-fastapi = "2026-07-27T23:59:59Z"
-filelock = "2026-07-27T23:59:59Z"
-grpcio = "2026-07-27T23:59:59Z"
-grpcio-reflection = "2026-07-27T23:59:59Z"
-grpcio-tools = "2026-07-27T23:59:59Z"
-langchain-core = "2026-07-27T23:59:59Z"
-langchain-openai = "2026-07-27T23:59:59Z"
-langsmith = "2026-07-27T23:59:59Z"
-prometheus-client = "2026-07-27T23:59:59Z"
-prometheus-fastapi-instrumentator = "2026-07-27T23:59:59Z"
-sse-starlette = "2026-07-27T23:59:59Z"
-starlette-compress = "2026-07-27T23:59:59Z"
+cpex-sql-sanitizer = "2026-08-09T23:59:59Z"
+# cryptography>=50.0.0 is required but 50.0.0 published 2026-07-31T14:23Z falls outside the
+# rolling 10-day exclude-newer window. Pinned to today so uv can resolve it on all platforms.
+cryptography = "2026-08-09T23:59:59Z"
+# h2>=4.4.1 is a transitive pin (httpx[http2]); CVE-2026-71554 fixed in 4.4.1 (2026-08-03).
+# Falls outside the rolling 10-day exclude-newer window.
+h2 = "2026-08-09T23:59:59Z"
 
 
 [tool.uv.sources]
@@ -110,7 +102,7 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Application Frameworks"
 ]
 readme = "README.md"
-requires-python = ">=3.11,<3.14"
+requires-python = ">=3.12,<3.14"
 
 # SPDX licence expression + explicit licence file (PEP 639)
 license = "Apache-2.0"
@@ -135,6 +127,7 @@ dependencies = [
     "fastapi>=0.140.0",
     "filelock>=3.32.0,<3.33.0", # 3.30.0 added fork-safety guard that raises on pre-fork lock reuse; gateway_service.py:5351 rebuilds per-PID (fix from #5654). primary_worker.py and bootstrap_db.py create FileLock post-fork so are unaffected. Ceiling bumped to 3.32.x: 3.30.x–3.32.x have zero runtime changes (CI matrix, packaging, platform support only). Advance ceiling after verifying next minor release.
     "gunicorn>=26.0.0",
+    "h2>=4.4.1", # Transitive pin (httpx[http2]); CVE-2026-71554 fixed in 4.4.1
     "httpx>=0.28.1",
     "httpx[http2]>=0.28.1",
     "idna>=3.18",
@@ -413,7 +406,7 @@ mcpgateway = [
 [tool.pytype]
 # Directory-specific options:
 inputs = ["mcpgateway"]
-python_version = "3.11"          # match default runtime
+python_version = "3.12"          # match default runtime
 
 [tool.pyright]
 typeCheckingMode = "standard"
@@ -436,7 +429,7 @@ ignore = [
 
 [tool.black]
 line-length = 200
-target-version = ["py310", "py311", "py312"]
+target-version = ["py312"]
 include = "\\.pyi?$"
 exclude = '''
 /(
@@ -488,8 +481,8 @@ exclude = [
 line-length = 200
 indent-width = 4
 
-# Assume Python 3.11
-target-version = "py311"
+# Assume Python 3.12
+target-version = "py312"
 
 
 [tool.ruff.lint]
@@ -684,7 +677,7 @@ skip_glob                  = ["**/__init__.py"]  # leave namespace init files al
 
 [tool.mypy]
 # Target Python version
-python_version = "3.11"
+python_version = "3.12"
 
 # Full strictness and individual checks
 strict = true                           # Enable all strict checks

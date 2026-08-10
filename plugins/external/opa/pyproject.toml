@@ -60,6 +60,11 @@ Changelog = "https://github.com/IBM/mcp-context-forge/blob/main/CHANGELOG.md"
 [tool.uv.sources]
 mcp-contextforge-gateway = { git = "https://github.com/IBM/mcp-context-forge.git", rev = "main" }
 
+[tool.uv.exclude-newer-package]
+# cryptography>=50.0.0 is a transitive requirement via mcp-contextforge-gateway.
+# 50.0.0 published 2026-07-31T14:23Z falls outside the rolling 10-day exclude-newer window.
+cryptography = "2026-08-09T23:59:59Z"
+
 # ----------------------------------------------------------------
 # Optional dependency groups (extras)
 # ----------------------------------------------------------------
