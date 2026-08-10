@@ -526,24 +526,20 @@ class TestBuildV1RouterGroupF:
         admin_mod.validate_section_permissions = MagicMock()
 
         # _assemble_routers imports enforce_admin_csrf from mcpgateway.admin to guard
-        # the runtime-admin mount. It must be a real callable, not a MagicMock:
+        # the llm-admin mount. It must be a real callable, not a MagicMock:
         # FastAPI inspects a dependency's signature when the router is included, and
         # omitting it entirely makes the whole admin `try` block raise ImportError,
-        # silently dropping the runtime-admin and well-known includes that follow it.
+        # silently dropping the admin and well-known includes that follow it.
         async def _noop_enforce_admin_csrf() -> None:
             return None
 
         admin_mod.enforce_admin_csrf = _noop_enforce_admin_csrf
-
-        runtime_admin_mod = ModuleType("_mock_runtime_admin")
-        runtime_admin_mod.runtime_admin_router = _sentinel_router("/sentinel-runtime-admin")
 
         well_known_mod = ModuleType("_mock_well_known")
         well_known_mod.admin_router = _sentinel_router("/sentinel-well-known")
 
         return {
             "mcpgateway.admin": admin_mod,
-            "mcpgateway.routers.runtime_admin_router": runtime_admin_mod,
             "mcpgateway.routers.well_known": well_known_mod,
         }
 
@@ -552,12 +548,6 @@ class TestBuildV1RouterGroupF:
         with patch.dict(sys.modules, self._admin_modules()):
             v1 = build_v1_router(settings, **_required_kwargs())
         assert "/v1/sentinel-admin" in _route_paths(v1)
-
-    def test_runtime_admin_router_included_when_admin_api_enabled(self):
-        settings = _settings(mcpgateway_admin_api_enabled=True)
-        with patch.dict(sys.modules, self._admin_modules()):
-            v1 = build_v1_router(settings, **_required_kwargs())
-        assert "/v1/admin/runtime/sentinel-runtime-admin" in _route_paths(v1)
 
     def test_well_known_included_in_v1_when_admin_api_enabled(self):
         settings = _settings(mcpgateway_admin_api_enabled=True)
@@ -576,7 +566,6 @@ class TestBuildV1RouterGroupF:
         settings = _settings(mcpgateway_admin_api_enabled=True)
         with patch.dict(sys.modules, {
             "mcpgateway.admin": None,
-            "mcpgateway.routers.runtime_admin_router": None,
             "mcpgateway.routers.well_known": None,
         }):
             v1 = build_v1_router(settings, **_required_kwargs())
