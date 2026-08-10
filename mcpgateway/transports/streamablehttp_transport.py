@@ -73,7 +73,7 @@ from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Server as DbServer
 from mcpgateway.db import SessionLocal
 from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG
-from mcpgateway.observability import create_span, inject_trace_context_headers
+from mcpgateway.observability import create_span, inject_trace_context_headers, set_span_attribute
 from mcpgateway.services.completion_service import CompletionService
 from mcpgateway.services.http_client_service import get_http_client, get_http_limits
 from mcpgateway.services.logging_service import LoggingService
@@ -1895,7 +1895,6 @@ async def call_tool(
 
             # First-Party
             from mcpgateway.auth_context import encode_internal_mcp_auth_context  # pylint: disable=import-outside-toplevel
-            from mcpgateway.observability import create_span  # pylint: disable=import-outside-toplevel
 
             # Carry the verified edge identity so the owner dispatches to the trusted internal
             # endpoint without re-authenticating (OAuth / public-only survive the rpc forward).
@@ -4214,8 +4213,6 @@ class SessionManagerWrapper:
         # Entry marker: zero-duration span so traces reveal how much time passed
         # between the request root span and the transport handler actually
         # beginning execution (event-loop / middleware scheduling delay).
-        from mcpgateway.observability import create_span  # pylint: disable=import-outside-toplevel
-
         with create_span("mcp.transport.enter", {"http.route": scope.get("path", "")}):
             pass
 
@@ -4518,7 +4515,6 @@ class SessionManagerWrapper:
             try:
                 # First-Party - lazy import to avoid circular dependencies
                 # First-Party
-                from mcpgateway.observability import create_span, set_span_attribute  # pylint: disable=import-outside-toplevel
                 from mcpgateway.services.session_affinity import get_session_affinity, WORKER_ID  # pylint: disable=import-outside-toplevel
 
                 pool = get_session_affinity()
