@@ -40,8 +40,13 @@ LIST_ENDPOINTS = [
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("module, service_cls, method, table", LIST_ENDPOINTS, ids=[e[3] for e in LIST_ENDPOINTS])
-async def test_admin_team_id_scopes_to_team_and_keeps_public(module, service_cls, method, table, monkeypatch):
-    """Admin team_id filtering hides other teams' team-scoped rows, keeps public ones."""
+@pytest.mark.parametrize("user_email", ["admin@test.com", None], ids=["db_admin", "anonymous"])
+async def test_admin_team_id_scopes_to_team_and_keeps_public(module, service_cls, method, table, user_email, monkeypatch):
+    """Admin team_id filtering hides other teams' team-scoped rows, keeps public ones.
+
+    Covers both bypass shapes: a DB-resolved admin, and the anonymous bypass
+    where no user context is present.
+    """
     cache = MagicMock()
     cache.get = AsyncMock(return_value=None)
     cache.set = AsyncMock()
@@ -56,7 +61,7 @@ async def test_admin_team_id_scopes_to_team_and_keeps_public(module, service_cls
     try:
         await getattr(service, method)(
             MagicMock(),
-            user_email="admin@test.com",
+            user_email=user_email,
             token_teams=None,
             team_id=TEAM_ID,
         )
