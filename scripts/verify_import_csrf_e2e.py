@@ -43,7 +43,7 @@ import json
 import os
 import secrets
 import socket
-import subprocess  # nosec B404 -- spawns the local uvicorn dev server under a controlled, fixed argv
+import subprocess
 import sys
 import tempfile
 import time
@@ -54,7 +54,7 @@ import requests
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 ADMIN_EMAIL = "admin@example.com"
-ADMIN_PASSWORD = "changeme"  # nosec B105 pragma: allowlist secret -- default PLATFORM_ADMIN_PASSWORD, isolated ephemeral DB only
+ADMIN_PASSWORD = "changeme"  # pragma: allowlist secret -- default PLATFORM_ADMIN_PASSWORD, isolated ephemeral DB only
 
 CHECKS = []  # (description, passed: bool, detail: str)
 
@@ -110,12 +110,12 @@ def main():
                 # then serves /admin/change-password-required (still HTTP 200)
                 # for every other request. Disabled here so the script can drive
                 # the actual endpoints under test -- not a CSRF-relevant setting.
-                "ADMIN_REQUIRE_PASSWORD_CHANGE_ON_BOOTSTRAP": "false",  # nosec B105 -- feature flag value, not a secret
+                "ADMIN_REQUIRE_PASSWORD_CHANGE_ON_BOOTSTRAP": "false",
                 # CSRF must be genuinely on -- this whole script exists to prove
                 # the Admin UI's writes survive it, not to route around it.
                 "CSRF_ENABLED": "true",
                 "CSRF_COOKIE_NAME": "mcpgateway_csrf_token",
-                "CSRF_TOKEN_NAME": "X-CSRF-Token",  # nosec B105 -- header name, not a secret
+                "CSRF_TOKEN_NAME": "X-CSRF-Token",
                 # Plain HTTP on localhost: Secure-flagged cookies are silently
                 # dropped by cookie jars on non-TLS requests (this exact
                 # footgun broke PR #5780's own e2e regression test the first
@@ -128,7 +128,7 @@ def main():
             }
         )
 
-        proc = subprocess.Popen(  # nosec B603 -- fixed argv list, shell=False, no untrusted input
+        proc = subprocess.Popen(
             [
                 os.path.join(REPO_ROOT, ".venv", "bin", "uvicorn"),
                 "mcpgateway.main:app",
