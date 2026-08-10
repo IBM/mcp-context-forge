@@ -12,6 +12,8 @@ build-backend = "setuptools.build_meta"
 build_py = "mcpgateway.tools.builder.build_hooks.BuildPyWithUI"
 
 [tool.uv]
+# 0.6.9 is the minimum version that understands relative exclude-newer durations ("10 days").
+required-version = ">=0.6.9"
 exclude-newer = "10 days"
 
 [tool.uv.exclude-newer-package]
@@ -25,6 +27,7 @@ cpex-secrets-detection = "2026-08-09T23:59:59Z"
 cpex-sql-sanitizer = "2026-08-09T23:59:59Z"
 # additional packages below this: remove before next upgrade cycle starts
 cryptography = "2026-08-09T23:59:59Z"
+greenlet = "2026-07-22T13:00:00Z"
 h2 = "2026-08-09T23:59:59Z"
 
 
