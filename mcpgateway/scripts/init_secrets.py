@@ -31,6 +31,9 @@ import os
 import secrets
 import sys
 
+# Third-Party
+from dotenv import dotenv_values as _dotenv_values
+
 # First-Party
 from mcpgateway._security_constants import MIN_ENTROPY as _MIN_ENTROPY
 from mcpgateway._security_constants import MIN_SECRET_LENGTH as _MIN_SECRET_LENGTH
@@ -112,39 +115,6 @@ def _is_strong_value(val: str, weak_values: frozenset[str]) -> bool:
     return True
 
 
-def _read_env_file(path: str) -> dict[str, str]:
-    """Parse KEY=VALUE pairs from an env file, skipping comments and blank lines.
-
-    Handles: quoted values, ``export KEY=val`` prefix, inline ``# comments``,
-    and spaces around ``=``.  Matches python-dotenv parsing semantics so that
-    weak-value detection fires on the same string pydantic-settings would see.
-    """
-    result: dict[str, str] = {}
-    try:
-        with open(path, encoding="utf-8") as fh:
-            for line in fh:
-                line = line.strip()
-                if not line or line.startswith("#"):
-                    continue
-                if line.startswith("export "):
-                    line = line[len("export ") :]
-                if "=" not in line:
-                    continue
-                key, _, val = line.partition("=")
-                key = key.strip()
-                val = val.strip()
-                # Strip inline comment (space + #)
-                if " #" in val:
-                    val = val[: val.index(" #")].strip()
-                # Strip matching surrounding quotes
-                if len(val) >= 2 and val[0] == val[-1] and val[0] in ('"', "'"):
-                    val = val[1:-1]
-                result[key] = val
-    except FileNotFoundError:
-        pass
-    return result
-
-
 def _merge_env_file(path: str, updates: dict[str, str]) -> None:
     """Merge key=value pairs into an env file.
 
@@ -212,7 +182,10 @@ def ensure_env_file_secrets(
     if weak_values is None:
         weak_values = _WEAK_VALUES
 
-    env_file_values = _read_env_file(env_file)
+    env_file_values = dict(_dotenv_values(env_file))  # expands ${VAR} refs, matches pydantic-settings semantics
+    # Normalize keys for case-insensitive lookups — mirrors Settings case_sensitive=False so that
+    # 'auth_encryption_secret' and 'AUTH_ENCRYPTION_SECRET' in .env are treated as the same key.
+    _env_file_ci: dict[str, str] = {k.lower(): v for k, v in env_file_values.items()}
     # Keys whose weak value came from os.environ only — patch environ, skip disk write.
     env_only: dict[str, str] = {}
     # Keys whose weak value came from .env (or was absent) — write to disk + environ.
@@ -221,7 +194,7 @@ def ensure_env_file_secrets(
     for field, nbytes in _SECRET_FIELDS.items():
         # os.environ takes priority over .env (mirrors pydantic-settings behaviour)
         env_val = os.environ.get(field)
-        current = env_val if env_val is not None else env_file_values.get(field, "changeme")
+        current = env_val if env_val is not None else _env_file_ci.get(field.lower(), "changeme")
         # Base checks apply to all fields: empty, known-weak name, placeholder.
         is_non_compliant = not current.strip() or current.lower() in weak_values or current.lower().startswith("__replace_me__")
         # Length and entropy checks apply only to secrets that Settings hard-fails on startup.
@@ -229,11 +202,11 @@ def ensure_env_file_secrets(
             is_non_compliant = len(current) < _MIN_SECRET_LENGTH or calculate_entropy(current) < _MIN_ENTROPY
         if is_non_compliant:
             new_val = generate_token(nbytes)
-            if env_val is not None and field not in env_file_values:
+            if env_val is not None and field.lower() not in _env_file_ci:
                 # Weak value came from os.environ; patching environ is enough.
                 # Writing to .env would shadow subsequent env-var injections (Docker/K8s).
                 env_only[field] = new_val
-            elif env_val is not None and field in _ROTATION_GUARDED_FIELDS and _is_strong_value(env_file_values.get(field, ""), weak_values):
+            elif env_val is not None and field in _ROTATION_GUARDED_FIELDS and _is_strong_value(_env_file_ci.get(field.lower(), ""), weak_values):
                 # The shell environment holds a weak value, but .env already contains a
                 # strong value for a rotation-guarded key (AUTH_ENCRYPTION_SECRET).
                 # Overwriting the .env value would silently rotate the AES encryption key
