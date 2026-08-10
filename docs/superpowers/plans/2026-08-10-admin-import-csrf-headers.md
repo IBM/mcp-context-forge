@@ -143,16 +143,34 @@ describe("import request headers", () => {
 
   beforeEach(() => {
     window.ROOT_PATH = "";
-    window.currentImportData = { entities: {} };
+    window.currentImportData = { version: "1.0", entities: {} };
+    // updateImportCounts() (fileTransfer.js:464-467) dereferences these four
+    // elements WITHOUT a null guard, so handleImport's success path throws
+    // into its own catch block without them. Every other DOM lookup on this
+    // path is guarded.
+    document.body.innerHTML = `
+      <span id="import-total"></span>
+      <span id="import-created"></span>
+      <span id="import-updated"></span>
+      <span id="import-failed"></span>
+    `;
     fetchSpy = vi.spyOn(globalThis, "fetch").mockResolvedValue({
       ok: true,
-      json: () => Promise.resolve({ preview: {}, status: "ok" }),
+      json: () =>
+        Promise.resolve({
+          preview: {},
+          status: "completed",
+          progress: { total: 0, processed: 0, created: 0, updated: 0, failed: 0 },
+          errors: [],
+          warnings: [],
+        }),
     });
   });
 
   afterEach(() => {
     clearCsrfCookie();
     fetchSpy.mockRestore();
+    document.body.innerHTML = "";
     delete window.ROOT_PATH;
     delete window.currentImportData;
     vi.clearAllMocks();
@@ -388,10 +406,21 @@ vi.mock("../../../mcpgateway/admin_ui/utils.js", async (importOriginal) => ({
 }));
 ```
 
-- [ ] **Step 2: Expose the mocked `getAuthToken` to the test scope**
+- [ ] **Step 2: Import `beforeEach` and expose the mocked `getAuthToken`**
 
-The `tokens.js` mock at lines 30-32 is never imported into the test body, so
-there is no handle to override it per-test. Replace:
+Line 7 of this file imports `{ describe, test, expect, vi, afterEach }` — no
+`beforeEach`. `vitest.config.js` sets `globals: true`, so the bare identifier
+would resolve anyway, but the file's style is explicit imports. Change line 7
+to:
+
+```js
+import { describe, test, expect, vi, beforeEach, afterEach } from "vitest";
+```
+
+
+Then handle the `getAuthToken` override. The `tokens.js` mock at lines 30-32 is
+never imported into the test body, so there is no handle to override it
+per-test. Replace:
 
 ```js
 vi.mock("../../../mcpgateway/admin_ui/tokens.js", () => ({
