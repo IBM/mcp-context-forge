@@ -16,13 +16,12 @@ Examples:
 
 # Standard
 import logging
-from typing import Callable
+from typing import Any, Callable, Optional
 
 # Third-Party
 from fastapi import HTTPException
 from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
-from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import JSONResponse, Response
 
@@ -114,7 +113,7 @@ def _get_or_create_session(request: Request) -> tuple[Session, bool]:
     return db, True
 
 
-class AuthContextMiddleware(BaseHTTPMiddleware):
+class AuthContextMiddleware:
     """Middleware for extracting user authentication context early in request lifecycle.
 
     This middleware attempts to authenticate requests using JWT tokens from cookies
@@ -124,13 +123,47 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
     Unlike route-level authentication dependencies, this runs for ALL requests,
     allowing middleware like ObservabilityMiddleware to access user context.
 
+    Implemented as pure ASGI middleware (no BaseHTTPMiddleware): the auth-context
+    logic only needs request scope state and headers, and security-critical
+    rejections short-circuit with a hard JSON deny sent directly, so pass-through
+    responses stream unbuffered.
+
     Note:
         Authentication failures are silent - requests continue as unauthenticated.
         Route-level dependencies should still enforce authentication requirements.
     """
 
+    def __init__(self, app: Any) -> None:
+        """Initialize the auth context middleware.
+
+        Args:
+            app: The ASGI application to wrap.
+        """
+        self.app = app
+
+    async def __call__(self, scope: dict, receive: Callable, send: Callable) -> None:
+        """Pure ASGI entry point — no BaseHTTPMiddleware task-group/body overhead.
+
+        Args:
+            scope: ASGI connection scope.
+            receive: ASGI receive callable.
+            send: ASGI send callable.
+        """
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+
+        # Request(scope) is a thin wrapper (no body read); request.state writes
+        # land in scope["state"] and stay visible to downstream handlers.
+        response = await self._authenticate_request(Request(scope))
+        if response is not None:
+            await response(scope, receive, send)
+            return
+
+        await self.app(scope, receive, send)
+
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
-        """Process request and populate user context if authenticated.
+        """BaseHTTPMiddleware-compatible entry point retained for tests and doctests.
 
         Args:
             request: Incoming HTTP request
@@ -139,9 +172,25 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
         Returns:
             HTTP response
         """
+        response = await self._authenticate_request(request)
+        if response is not None:
+            return response
+        return await call_next(request)
+
+    async def _authenticate_request(self, request: Request) -> Optional[Response]:
+        """Process request and populate user context if authenticated.
+
+        Args:
+            request: Incoming HTTP request
+
+        Returns:
+            A hard-deny JSON response for security-critical rejections (revoked
+            token, disabled account, fail-secure validation error), or None to
+            continue the request through the rest of the stack.
+        """
         # Skip for health checks and static files
         if should_skip_auth_context(request.url.path):
-            return await call_next(request)
+            return None
 
         # Try to extract token from multiple sources
         token = None
@@ -160,7 +209,7 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
 
         # If no token found, continue without user context
         if not token:
-            return await call_next(request)
+            return None
 
         # Store bearer token in request.state for downstream use (e.g., cross-gateway auth forwarding)
         # This prevents duplicate token extraction and ensures consistent token handling
@@ -294,7 +343,7 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
                 is_browser = "text/html" in accept_header or is_htmx or is_same_origin_referer
                 if is_browser:
                     logger.debug("Browser request with rejected auth — continuing without user for redirect")
-                    return await call_next(request)
+                    return None
 
                 # Include essential security headers since this response bypasses
                 # SecurityHeadersMiddleware (it returns before call_next).
@@ -353,4 +402,4 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
                             logger.warning(f"Failed to close auth session: {close_error}")
 
         # Continue with request
-        return await call_next(request)
+        return None

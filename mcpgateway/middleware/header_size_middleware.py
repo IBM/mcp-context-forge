@@ -5,8 +5,13 @@ SPDX-License-Identifier: Apache-2.0
 
 RFC 6585 compliant header size validation middleware.
 
-This middleware enforces RFC 6585 5 (431 Request Header Fields Too Large)
+This middleware enforces RFC 6585 § 5 (431 Request Header Fields Too Large)
 by validating total header size and individual header field sizes.
+
+Implemented as pure ASGI middleware (no BaseHTTPMiddleware): validation only
+needs the request headers, so accepted requests stream through without the
+task-group and body-buffering overhead BaseHTTPMiddleware adds, and the 431
+short-circuit response is sent directly.
 
 Examples:
     >>> from mcpgateway.middleware.header_size_middleware import HeaderSizeMiddleware  # doctest: +SKIP
@@ -15,12 +20,12 @@ Examples:
 
 # Standard
 import logging
-from typing import Optional
+from typing import Any, Callable, Dict, Optional
 
 # Third-Party
 from fastapi import Request
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.responses import JSONResponse
+from starlette.datastructures import Headers
+from starlette.responses import JSONResponse, Response
 
 # First-Party
 from mcpgateway.config import settings
@@ -28,7 +33,7 @@ from mcpgateway.config import settings
 logger = logging.getLogger(__name__)
 
 
-class HeaderSizeMiddleware(BaseHTTPMiddleware):
+class HeaderSizeMiddleware:
     """RFC 6585 compliant header size validation middleware.
 
     Enforces limits on:
@@ -40,13 +45,13 @@ class HeaderSizeMiddleware(BaseHTTPMiddleware):
     per RFC 6585 § 5.
     """
 
-    def __init__(self, app):
+    def __init__(self, app: Any):
         """Initialize header size middleware.
 
         Args:
             app: The ASGI application to wrap
         """
-        super().__init__(app)
+        self.app = app
         self.enabled = getattr(settings, "header_size_validation_enabled", True)
         self.max_total_size = getattr(settings, "max_header_total_size_bytes", 16384)  # 16KB default
         self.max_field_size = getattr(settings, "max_header_field_size_bytes", 8192)  # 8KB default
@@ -55,8 +60,90 @@ class HeaderSizeMiddleware(BaseHTTPMiddleware):
         if self.enabled:
             logger.info(f"HeaderSizeMiddleware initialized: max_total={self.max_total_size}B, max_field={self.max_field_size}B, max_count={self.max_header_count}")
 
-    async def dispatch(self, request: Request, call_next):
-        """Validate header sizes before processing request.
+    def _validate_headers(self, headers: Headers, client_ip: str) -> Optional[JSONResponse]:
+        """Validate header count and field sizes against the configured limits.
+
+        Args:
+            headers: The request headers to validate.
+            client_ip: Client IP address for rejection log lines.
+
+        Returns:
+            None when the headers are within limits, or a 431 response
+            describing the violation.
+        """
+        # Check header count
+        header_count = len(headers)
+        if header_count > self.max_header_count:
+            logger.warning(f"Request rejected: too many headers ({header_count} > {self.max_header_count}) from {client_ip}")
+            return self._create_431_response(f"Too many header fields ({header_count} > {self.max_header_count})", "header_count")
+
+        # Calculate total header size and check individual field sizes
+        total_size = 0
+        for name, value in headers.items():
+            # RFC 9110: header field = field-name ":" OWS field-value OWS
+            field_size = len(name) + len(value) + 2  # +2 for ": "
+            total_size += field_size
+
+            if field_size > self.max_field_size:
+                logger.warning(f"Request rejected: header field '{name}' too large ({field_size}B > {self.max_field_size}B) from {client_ip}")
+                return self._create_431_response(f"Header field '{name}' exceeds maximum size ({field_size} > {self.max_field_size} bytes)", "field_size", field_name=name)
+
+        # Check total header size
+        if total_size > self.max_total_size:
+            logger.warning(f"Request rejected: total header size too large ({total_size}B > {self.max_total_size}B) from {client_ip}")
+            return self._create_431_response(f"Total header size exceeds maximum ({total_size} > {self.max_total_size} bytes)", "total_size")
+
+        return None
+
+    def _client_ip_from(self, headers: Headers, scope: Dict[str, Any]) -> str:
+        """Extract client IP from headers and scope.
+
+        Args:
+            headers: The request headers (case-insensitive lookups).
+            scope: The ASGI connection scope.
+
+        Returns:
+            Client IP address as string
+        """
+        if settings.trust_proxy_auth:
+            forwarded = headers.get("X-Forwarded-For")
+            if forwarded:
+                return forwarded.split(",")[0].strip()
+
+            real_ip = headers.get("X-Real-IP")
+            if real_ip:
+                return real_ip
+
+        client = scope.get("client")
+        if client:
+            return client[0]
+
+        return "unknown"
+
+    async def __call__(self, scope: Dict[str, Any], receive: Callable, send: Callable) -> None:
+        """Pure ASGI entry point — no BaseHTTPMiddleware task-group/body overhead.
+
+        Args:
+            scope: ASGI connection scope.
+            receive: ASGI receive callable.
+            send: ASGI send callable.
+        """
+        if scope.get("type") != "http" or not self.enabled:
+            await self.app(scope, receive, send)
+            return
+
+        headers = Headers(raw=scope.get("headers") or [])
+        rejection = self._validate_headers(headers, self._client_ip_from(headers, scope))
+        if rejection is not None:
+            await rejection(scope, receive, send)
+            return
+
+        await self.app(scope, receive, send)
+
+    async def dispatch(self, request: Request, call_next: Callable) -> Response:
+        """BaseHTTPMiddleware-compatible entry point retained for tests.
+
+        Shares its validation logic with ``__call__`` via ``_validate_headers``.
 
         Args:
             request: The incoming HTTP request
@@ -68,27 +155,9 @@ class HeaderSizeMiddleware(BaseHTTPMiddleware):
         if not self.enabled:
             return await call_next(request)
 
-        # Check header count
-        header_count = len(request.headers)
-        if header_count > self.max_header_count:
-            logger.warning(f"Request rejected: too many headers ({header_count} > {self.max_header_count}) from {self._get_client_ip(request)}")
-            return self._create_431_response(f"Too many header fields ({header_count} > {self.max_header_count})", "header_count")
-
-        # Calculate total header size and check individual field sizes
-        total_size = 0
-        for name, value in request.headers.items():
-            # RFC 9110: header field = field-name ":" OWS field-value OWS
-            field_size = len(name) + len(value) + 2  # +2 for ": "
-            total_size += field_size
-
-            if field_size > self.max_field_size:
-                logger.warning(f"Request rejected: header field '{name}' too large ({field_size}B > {self.max_field_size}B) from {self._get_client_ip(request)}")
-                return self._create_431_response(f"Header field '{name}' exceeds maximum size ({field_size} > {self.max_field_size} bytes)", "field_size", field_name=name)
-
-        # Check total header size
-        if total_size > self.max_total_size:
-            logger.warning(f"Request rejected: total header size too large ({total_size}B > {self.max_total_size}B) from {self._get_client_ip(request)}")
-            return self._create_431_response(f"Total header size exceeds maximum ({total_size} > {self.max_total_size} bytes)", "total_size")
+        rejection = self._validate_headers(request.headers, self._get_client_ip(request))
+        if rejection is not None:
+            return rejection
 
         return await call_next(request)
 
@@ -134,17 +203,4 @@ class HeaderSizeMiddleware(BaseHTTPMiddleware):
         Returns:
             Client IP address as string
         """
-        if settings.trust_proxy_auth:
-            forwarded = request.headers.get("X-Forwarded-For")
-            if forwarded:
-                return forwarded.split(",")[0].strip()
-
-            real_ip = request.headers.get("X-Real-IP")
-            if real_ip:
-                return real_ip
-
-        client = request.scope.get("client")
-        if client:
-            return client[0]
-
-        return "unknown"
+        return self._client_ip_from(request.headers, request.scope)

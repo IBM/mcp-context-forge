@@ -1222,3 +1222,126 @@ async def test_auth_middleware_close_failure_in_hard_deny_path():
     # Warning should be logged
     mock_logger.warning.assert_called()
     assert any("Failed to close auth session" in str(call) for call in mock_logger.warning.call_args_list)
+
+
+class TestAuthContextASGIEntry:
+    """Deny-path and pass-through coverage for the pure-ASGI ``__call__`` entry."""
+
+    @pytest.mark.asyncio
+    async def test_call_ignores_non_http_scopes(self):
+        """Lifespan/websocket scopes pass straight through untouched."""
+        called = []
+
+        async def app(scope, receive, send):
+            called.append(scope["type"])
+
+        middleware = AuthContextMiddleware(app)
+
+        async def noop(*_args):
+            return None
+
+        await middleware({"type": "lifespan"}, noop, noop)
+        assert called == ["lifespan"]
+
+    @pytest.mark.asyncio
+    async def test_call_passes_through_when_no_token(self):
+        """No credentials: downstream app runs and its response is sent verbatim."""
+        sent = []
+
+        async def app(scope, receive, send):
+            await send({"type": "http.response.start", "status": 200, "headers": []})
+            await send({"type": "http.response.body", "body": b"ok"})
+
+        middleware = AuthContextMiddleware(app)
+        scope = {"type": "http", "method": "GET", "path": "/api/data", "headers": [], "state": {}}
+
+        async def receive():
+            return {"type": "http.request", "body": b""}
+
+        async def send(message):
+            sent.append(message)
+
+        await middleware(scope, receive, send)
+
+        assert sent[0]["status"] == 200
+        assert "user" not in scope["state"]
+        assert "bearer_token" not in scope["state"]
+
+    @pytest.mark.asyncio
+    async def test_call_emits_hard_deny_and_never_calls_downstream(self):
+        """Revoked token on an API request: JSON 401 is sent directly and downstream never runs."""
+        from fastapi import HTTPException
+
+        downstream_called = False
+
+        async def app(scope, receive, send):
+            nonlocal downstream_called
+            downstream_called = True
+
+        middleware = AuthContextMiddleware(app)
+        scope = {
+            "type": "http",
+            "method": "GET",
+            "path": "/api/tools",
+            "headers": [(b"cookie", b"jwt_token=revoked"), (b"accept", b"application/json")],
+            "state": {},
+        }
+
+        async def receive():
+            return {"type": "http.request", "body": b""}
+
+        sent = []
+
+        async def send(message):
+            sent.append(message)
+
+        with (
+            patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False),
+            patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=False),
+            patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(side_effect=HTTPException(status_code=401, detail="Token has been revoked"))),
+        ):
+            await middleware(scope, receive, send)
+
+        assert downstream_called is False
+        assert sent[0]["status"] == 401
+        headers = {k.decode("latin-1"): v.decode("latin-1") for k, v in sent[0]["headers"]}
+        assert headers["x-content-type-options"] == "nosniff"
+        assert headers["referrer-policy"] == "strict-origin-when-cross-origin"
+
+    @pytest.mark.asyncio
+    async def test_call_populates_scope_state_on_success(self):
+        """Valid bearer token: user and bearer_token land in scope['state'] for downstream."""
+        sent = []
+
+        async def app(scope, receive, send):
+            await send({"type": "http.response.start", "status": 200, "headers": []})
+            await send({"type": "http.response.body", "body": b"ok"})
+
+        middleware = AuthContextMiddleware(app)
+        scope = {
+            "type": "http",
+            "method": "GET",
+            "path": "/api/data",
+            "headers": [(b"authorization", b"Bearer good_token")],
+            "state": {},
+        }
+
+        async def receive():
+            return {"type": "http.request", "body": b""}
+
+        async def send(message):
+            sent.append(message)
+
+        mock_user = MagicMock()
+        mock_user.email = "user@example.com"
+
+        with (
+            patch("mcpgateway.middleware.auth_middleware._should_log_auth_success", return_value=False),
+            patch("mcpgateway.middleware.auth_middleware._should_log_auth_failure", return_value=False),
+            patch("mcpgateway.middleware.auth_middleware.get_current_user", AsyncMock(return_value=mock_user)),
+        ):
+            await middleware(scope, receive, send)
+
+        assert sent[0]["status"] == 200
+        assert scope["state"]["user"] is mock_user
+        assert scope["state"]["bearer_token"] == "good_token"

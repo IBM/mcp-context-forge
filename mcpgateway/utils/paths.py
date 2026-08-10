@@ -93,3 +93,30 @@ def resolve_root_path(request: Request, *, fallback: str | None = None) -> str:
     if root_path:
         root_path = "/" + root_path.lstrip("/")
     return root_path.rstrip("/")
+
+
+def _normalize_scope_path(scope_path: str, root_path: str) -> str:
+    """Strip ``root_path`` prefix from *scope_path* when a reverse proxy forwards the full path.
+
+    Returns the route-only path (e.g. ``"/qa/gateway/docs"`` -> ``"/docs"``).
+    A ``root_path`` of ``"/"`` is ignored to avoid stripping the leading slash
+    from every path.  Trailing slashes on *root_path* are stripped before
+    comparison so that ``"/qa/gateway/"`` is handled identically to
+    ``"/qa/gateway"``.
+
+    Args:
+        scope_path: The full path from the request scope.
+        root_path: The root path prefix to be stripped.
+
+    Returns:
+        The normalized path with the root_path prefix removed.
+    """
+    if root_path and len(root_path) > 1:
+        root_path = root_path.rstrip("/")
+    if root_path and len(root_path) > 1 and scope_path.startswith(root_path):
+        rest = scope_path[len(root_path) :]
+        # Ensure we matched a full path segment, not a partial prefix
+        # e.g. root_path="/app" must not strip from "/application/admin"
+        if not rest or rest[0] == "/":
+            return rest or "/"
+    return scope_path

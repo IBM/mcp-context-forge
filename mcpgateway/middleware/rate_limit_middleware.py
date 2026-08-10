@@ -15,6 +15,11 @@ Features:
 - SecurityLogger integration
 - Lockout after excessive violations
 
+Implemented as pure ASGI middleware (no BaseHTTPMiddleware): the limit checks
+only need the request scope, the 429 short-circuit is sent directly, and the
+X-RateLimit-* headers ride on the response-start message, so pass-through
+responses stream unbuffered. A ``dispatch`` shim is retained for tests.
+
 Examples:
     >>> from mcpgateway.middleware.rate_limit_middleware import RateLimitMiddleware  # doctest: +SKIP
     >>> app.add_middleware(RateLimitMiddleware)  # doctest: +SKIP
@@ -27,13 +32,13 @@ import logging
 import re
 import threading
 import time
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 import uuid
 
 # Third-Party
 from fastapi import Request
-from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.responses import JSONResponse
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 # First-Party
 from mcpgateway import auth
@@ -68,7 +73,7 @@ return 1
 """
 
 
-class RateLimitMiddleware(BaseHTTPMiddleware):
+class RateLimitMiddleware:
     """Redis-backed rate limiting middleware.
 
     Uses sliding window algorithm with Redis sorted sets.
@@ -78,9 +83,9 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     Block if ANY dimension exceeds limit.
     """
 
-    def __init__(self, app):
+    def __init__(self, app: ASGIApp):
         """Initialize rate limit middleware."""
-        super().__init__(app)
+        self.app = app
         self.enabled = settings.rate_limiting_enabled
         self.redis_enabled = settings.rate_limiting_redis_enabled
         self.use_redis = False
@@ -200,15 +205,21 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
         return dimensions
 
-    async def dispatch(self, request: Request, call_next):
-        """Process request with rate limiting."""
-        if not self.enabled:
-            return await call_next(request)
+    async def _evaluate_request(self, request: Request) -> Tuple[Optional[JSONResponse], Dict[str, Any], int]:
+        """Run lockout and sliding-window checks for the request.
 
-        # Skip rate limiting for the trusted-internal dispatch; the edge request was already counted.
-        if is_trusted_internal_mcp_request(request):
-            return await call_next(request)
+        Checks every dimension (IP → User → Team) and blocks when ANY dimension
+        is locked out or over its limit, logging a security event (and
+        incrementing the violation counter) for each offending dimension.
 
+        Args:
+            request: Incoming HTTP request
+
+        Returns:
+            Tuple of (blocked response or None, tier config, remaining quota for
+            the first dimension). When the response is not None the request must
+            be short-circuited with it.
+        """
         tier = self.get_endpoint_tier(request.url.path)
         dimensions = self._get_client_dimensions(request)
 
@@ -231,12 +242,16 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                     is_lockout=True,
                 )
 
-            return self._create_rate_limit_response(
-                request=request,
-                dimensions=locked_out_dims,
-                tier=tier,
-                tier_name=tier_name,
-                is_lockout=True,
+            return (
+                self._create_rate_limit_response(
+                    request=request,
+                    dimensions=locked_out_dims,
+                    tier=tier,
+                    tier_name=tier_name,
+                    is_lockout=True,
+                ),
+                tier,
+                0,
             )
 
         violation_dims = []
@@ -259,19 +274,95 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 )
                 await self._increment_violation(dim, tier_name)
 
-            return self._create_rate_limit_response(
-                request=request,
-                dimensions=violation_dims,
-                tier=tier,
-                tier_name=tier_name,
-                is_lockout=False,
+            return (
+                self._create_rate_limit_response(
+                    request=request,
+                    dimensions=violation_dims,
+                    tier=tier,
+                    tier_name=tier_name,
+                    is_lockout=False,
+                ),
+                tier,
+                0,
             )
-
-        response = await call_next(request)
 
         # Use the pre-check result for the first dimension to avoid double-counting.
         first_dim = dimensions[0] if dimensions else "ip:unknown"
         _, remaining = pre_check_results.get(first_dim, (True, 0))
+        return None, tier, remaining
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        """Pure ASGI entry point — no BaseHTTPMiddleware task-group/body overhead.
+
+        Rate-limit rejections are sent directly as ASGI responses; allowed
+        requests stream through unbuffered with X-RateLimit-* headers attached
+        to the response-start message.
+
+        Args:
+            scope: ASGI connection scope.
+            receive: ASGI receive callable.
+            send: ASGI send callable.
+        """
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+
+        if not self.enabled:
+            await self.app(scope, receive, send)
+            return
+
+        # The request object is only used for scope-backed attribute access
+        # (url, headers, state); the body is never read here.
+        request = Request(scope)
+
+        # Skip rate limiting for the trusted-internal dispatch; the edge request was already counted.
+        if is_trusted_internal_mcp_request(request):
+            await self.app(scope, receive, send)
+            return
+
+        blocked, tier, remaining = await self._evaluate_request(request)
+        if blocked is not None:
+            await blocked(scope, receive, send)
+            return
+
+        limit_value = str(tier["limit"]).encode("latin-1")
+        remaining_value = str(max(0, remaining)).encode("latin-1")
+
+        async def send_with_rate_limit_headers(message: Message) -> None:
+            """Attach X-RateLimit-* headers to the response start, then forward."""
+            if message.get("type") == "http.response.start":
+                headers = message.setdefault("headers", [])
+                # Starlette "set" semantics: replace any existing headers of the same name
+                headers[:] = [(k, v) for k, v in headers if k.lower() not in (b"x-ratelimit-limit", b"x-ratelimit-remaining")]
+                headers.append((b"x-ratelimit-limit", limit_value))
+                headers.append((b"x-ratelimit-remaining", remaining_value))
+            await send(message)
+
+        await self.app(scope, receive, send_with_rate_limit_headers)
+
+    async def dispatch(self, request: Request, call_next):
+        """BaseHTTPMiddleware-compatible entry point retained for tests.
+
+        Args:
+            request: Incoming HTTP request
+            call_next: Next middleware/handler in chain
+
+        Returns:
+            The 429 response when limited, otherwise the downstream response
+            with X-RateLimit-* headers attached
+        """
+        if not self.enabled:
+            return await call_next(request)
+
+        # Skip rate limiting for the trusted-internal dispatch; the edge request was already counted.
+        if is_trusted_internal_mcp_request(request):
+            return await call_next(request)
+
+        blocked, tier, remaining = await self._evaluate_request(request)
+        if blocked is not None:
+            return blocked
+
+        response = await call_next(request)
         response.headers["X-RateLimit-Limit"] = str(tier["limit"])
         response.headers["X-RateLimit-Remaining"] = str(max(0, remaining))
 
