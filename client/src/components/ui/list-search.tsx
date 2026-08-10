@@ -11,6 +11,8 @@ interface ListSearchProps {
   ariaLabel: string;
   placeholder?: string;
   className?: string;
+  /** Width class applied to the input while expanded (e.g. "w-48", "w-full sm:w-[432px]"). */
+  expandedWidthClassName?: string;
 }
 
 /** Expandable list-table search box; collapses to an icon, filtering owned by the caller. */
@@ -20,6 +22,7 @@ export function ListSearch({
   ariaLabel,
   placeholder,
   className,
+  expandedWidthClassName = "w-48",
 }: ListSearchProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [isExpanded, setIsExpanded] = useState(false);
@@ -50,8 +53,8 @@ export function ListSearch({
         className={cn(
           "h-8 rounded-md border-border bg-muted/50 text-sm shadow-none transition-[width,padding,color,background-color,border-color] duration-200 ease-out placeholder:text-muted-foreground focus-visible:bg-background",
           open
-            ? "w-48 px-3 text-foreground"
-            : "w-0 px-0 text-transparent caret-foreground border-transparent",
+            ? cn(expandedWidthClassName, "px-3 text-foreground")
+            : "w-0 overflow-hidden border-0 bg-transparent px-0 text-transparent caret-foreground",
         )}
       />
     </div>

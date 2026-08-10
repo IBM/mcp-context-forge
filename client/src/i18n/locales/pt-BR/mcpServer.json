@@ -5,7 +5,6 @@
   "mcpServer.neverUsed": "Nunca usado",
   "mcpServer.catalog.title": "Catálogo de servidores",
   "mcpServer.catalog.all": "Todos",
-  "mcpServer.catalog.installed": "Instalados",
   "mcpServer.catalog.searchPlaceholder": "Pesquisar servidores MCP...",
   "mcpServer.catalog.searchLabel": "Pesquisar servidores MCP",
   "mcpServer.catalog.filters": "Filtros",
@@ -29,6 +28,7 @@
   "mcpServer.catalog.resultsLabel": "Servidores do catálogo",
   "mcpServer.catalog.empty": "Nenhum servidor MCP aberto está disponível.",
   "mcpServer.catalog.noResults": "Nenhum servidor MCP corresponde à pesquisa e aos filtros ativos.",
+  "mcpServer.catalog.noneConnected": "Nenhuma opção do catálogo de servidores MCP está conectada.",
   "mcpServer.catalog.disabled": "O catálogo de servidores está desabilitado para este gateway.",
   "mcpServer.catalog.error": "Não foi possível carregar o catálogo de servidores. Tente novamente."
 }

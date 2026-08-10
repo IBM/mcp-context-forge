@@ -59,22 +59,22 @@ function CatalogCard({
 
   return (
     <li className="min-w-0">
-      <Card className="h-full min-h-[200px] gap-0 rounded-xl border border-border bg-card p-0 py-0 shadow-none ring-0">
+      <Card className="h-full min-h-[200px] gap-0 rounded-xl border border-border bg-card p-0 py-0 shadow-none ring-0 transition-colors hover:border-ring dark:hover:border-muted-foreground">
         <article className="flex h-full flex-col" aria-labelledby={headingId}>
           <CardContent className="flex flex-1 flex-col px-5 py-5">
             <div className="flex items-start justify-between gap-3">
               <CatalogLogo server={server} />
               {server.is_registered && (
-                <StatusDot tone="success" className="text-xs text-muted-foreground">
+                <StatusDot tone="success" className="text-sm text-muted-foreground">
                   {intl.formatMessage({ id: "mcpServer.catalog.connected" })}
                 </StatusDot>
               )}
             </div>
 
-            <h2 id={headingId} className="mt-4 truncate text-sm font-semibold text-foreground">
+            <h2 id={headingId} className="mt-4 truncate text-sm font-medium text-foreground">
               {server.name}
             </h2>
-            <p className="mt-3 line-clamp-2 min-h-8 text-[13px] leading-4 text-muted-foreground">
+            <p className="mt-3 line-clamp-2 min-h-10 text-sm text-muted-foreground">
               {server.description}
             </p>
 
@@ -174,11 +174,11 @@ export function CatalogServerDetailsDialog({
 
 export function CatalogResults({
   servers,
-  hasOpenServers,
+  emptyStateMessageId,
   onView,
 }: {
   servers: CatalogServer[];
-  hasOpenServers: boolean;
+  emptyStateMessageId: string;
   onView: (server: CatalogServer, trigger: HTMLButtonElement) => void;
 }) {
   const intl = useIntl();
@@ -203,9 +203,7 @@ export function CatalogResults({
           ))}
         </ul>
       ) : (
-        <EmptyStatePlaceholder
-          messageId={hasOpenServers ? "mcpServer.catalog.noResults" : "mcpServer.catalog.empty"}
-        />
+        <EmptyStatePlaceholder messageId={emptyStateMessageId} />
       )}
     </>
   );

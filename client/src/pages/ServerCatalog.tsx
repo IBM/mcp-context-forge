@@ -97,12 +97,15 @@ function useCatalogFilters() {
   return { filters, updateQuery, setSingleFilter, toggleTag, clearFilters };
 }
 
-function filterOpenServers(servers: CatalogServer[], filters: CatalogFilters): CatalogServer[] {
+function getOpenServers(servers: CatalogServer[]): CatalogServer[] {
+  // Catalog MVP is intentionally fail-closed: only the exact Open value is visible.
+  return servers.filter((server) => server.auth_type === OPEN_AUTH_TYPE);
+}
+
+function filterOpenServers(openServers: CatalogServer[], filters: CatalogFilters): CatalogServer[] {
   const search = filters.search.trim().toLocaleLowerCase();
 
-  return servers.filter((server) => {
-    // Catalog MVP is intentionally fail-closed: only the exact Open value is visible.
-    if (server.auth_type !== OPEN_AUTH_TYPE) return false;
+  return openServers.filter((server) => {
     if (filters.authType && server.auth_type !== filters.authType) return false;
     if (filters.category && server.category !== filters.category) return false;
     if (filters.provider && server.provider !== filters.provider) return false;
@@ -114,6 +117,10 @@ function filterOpenServers(servers: CatalogServer[], filters: CatalogFilters): C
     if (!search) return true;
     return `${server.name} ${server.description}`.toLocaleLowerCase().includes(search);
   });
+}
+
+function sortedUnique(values: Array<string | undefined>): string[] {
+  return [...new Set(values.filter((value): value is string => Boolean(value)))].sort();
 }
 
 function CatalogPageLayout({ children }: { children: ReactNode }) {
@@ -136,13 +143,29 @@ export function ServerCatalog() {
   const { data, error, isLoading } = useQuery<CatalogListResponse>(CATALOG_PATH);
   const { filters, updateQuery, setSingleFilter, toggleTag, clearFilters } = useCatalogFilters();
 
-  const servers = useMemo(
-    () => filterOpenServers(data?.servers ?? [], filters),
-    [data?.servers, filters],
+  const openServers = useMemo(() => getOpenServers(data?.servers ?? []), [data?.servers]);
+  const servers = useMemo(() => filterOpenServers(openServers, filters), [openServers, filters]);
+  // Scoped to the servers actually visible in this auth-type view, so the dropdowns never
+  // offer a category/provider/tag that would filter the list down to zero results.
+  const categoryOptions = useMemo(
+    () => sortedUnique(openServers.map((server) => server.category)),
+    [openServers],
   );
-  const hasOpenServers = Boolean(
-    data?.servers.some((server) => server.auth_type === OPEN_AUTH_TYPE),
+  const providerOptions = useMemo(
+    () => sortedUnique(openServers.map((server) => server.provider)),
+    [openServers],
   );
+  const tagOptions = useMemo(
+    () => sortedUnique(openServers.flatMap((server) => server.tags ?? [])),
+    [openServers],
+  );
+  const hasOpenServers = openServers.length > 0;
+  const hasConnectedServers = openServers.some((server) => server.is_registered);
+  const emptyStateMessageId = !hasOpenServers
+    ? "mcpServer.catalog.empty"
+    : filters.installedOnly && !hasConnectedServers
+      ? "mcpServer.catalog.noneConnected"
+      : "mcpServer.catalog.noResults";
   const activeFilterCount =
     Number(Boolean(filters.category)) +
     Number(Boolean(filters.provider)) +
@@ -202,9 +225,9 @@ export function ServerCatalog() {
         provider={filters.provider}
         authType={filters.authType}
         selectedTags={filters.tags}
-        categories={data?.categories ?? []}
-        providers={data?.providers ?? []}
-        availableTags={data?.all_tags ?? []}
+        categories={categoryOptions}
+        providers={providerOptions}
+        availableTags={tagOptions}
         activeFilterCount={activeFilterCount}
         onSearchChange={(search) => updateQuery({ search: search || null })}
         onInstalledChange={(installedOnly) => updateQuery({ show_registered_only: installedOnly })}
@@ -213,7 +236,11 @@ export function ServerCatalog() {
         onClear={clearFilters}
       />
 
-      <CatalogResults servers={servers} hasOpenServers={hasOpenServers} onView={handleView} />
+      <CatalogResults
+        servers={servers}
+        emptyStateMessageId={emptyStateMessageId}
+        onView={handleView}
+      />
 
       <CatalogServerDetailsDialog server={selectedServer} onOpenChange={handleDetailsOpenChange} />
     </CatalogPageLayout>
