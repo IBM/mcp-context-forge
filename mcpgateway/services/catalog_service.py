@@ -41,6 +41,10 @@ from mcpgateway.validation.tags import validate_tags_field
 
 logger = logging.getLogger(__name__)
 
+# Business-failure messages the v1 router maps to HTTP 404/409.
+CATALOG_REGISTER_NOT_FOUND_MSG = "Server not found in catalog"
+CATALOG_REGISTER_ALREADY_REGISTERED_MSG = "Server already registered"
+
 
 class CatalogService:
     """Service for managing MCP server catalog."""
@@ -278,13 +282,24 @@ class CatalogService:
 
         return False
 
-    async def register_catalog_server(self, catalog_id: str, request: Optional[CatalogServerRegisterRequest], db: Session) -> CatalogServerRegisterResponse:
+    async def register_catalog_server(
+        self,
+        catalog_id: str,
+        request: Optional[CatalogServerRegisterRequest],
+        db: Session,
+        created_by: Optional[str] = None,
+        owner_email: Optional[str] = None,
+        team_id: Optional[str] = None,
+    ) -> CatalogServerRegisterResponse:
         """Register a catalog server as a gateway.
 
         Args:
             catalog_id: Catalog server ID
             request: Registration request with optional overrides
             db: Database session
+            created_by: Identity of the caller creating the gateway
+            owner_email: Email of the gateway owner
+            team_id: Team the gateway belongs to
 
         Returns:
             Registration response
@@ -302,7 +317,7 @@ class CatalogService:
                     break
 
             if not server_data:
-                return CatalogServerRegisterResponse(success=False, server_id="", message="Server not found in catalog", error="Invalid catalog server ID")
+                return CatalogServerRegisterResponse(success=False, server_id="", message=CATALOG_REGISTER_NOT_FOUND_MSG, error="Invalid catalog server ID")
 
             # Check if already registered
             try:
@@ -317,7 +332,9 @@ class CatalogService:
                 existing = None
 
             if existing:
-                return CatalogServerRegisterResponse(success=False, server_id=str(existing.id), message="Server already registered", error="This server is already registered in the system")
+                return CatalogServerRegisterResponse(
+                    success=False, server_id=str(existing.id), message=CATALOG_REGISTER_ALREADY_REGISTERED_MSG, error="This server is already registered in the system"
+                )
 
             # Prepare gateway creation request using proper schema
             # First-Party
@@ -401,6 +418,9 @@ class CatalogService:
                     enabled=False,  # Disabled until OAuth is configured
                     created_via="catalog",
                     visibility="public",
+                    created_by=created_by,
+                    owner_email=owner_email,
+                    team_id=team_id,
                     version=1,
                 )
 
@@ -468,6 +488,9 @@ class CatalogService:
                 gateway=gateway_create,
                 created_via="catalog",
                 visibility="public",  # Catalog servers should be public
+                created_by=created_by,
+                owner_email=owner_email,
+                team_id=team_id,
                 initialize_timeout=settings.httpx_admin_read_timeout,
             )
 

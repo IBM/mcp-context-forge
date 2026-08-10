@@ -8165,6 +8165,32 @@ class CatalogServerRegisterRequest(BaseModel):
     oauth_credentials: Optional[Dict[str, Any]] = Field(None, description="OAuth credentials if required")
 
 
+class CatalogServerRegisterBody(BaseModel):
+    """Body for the v1 catalog register endpoint.
+
+    The catalog server id comes from the path; this body carries only the
+    optional overrides. OAuth configuration is out of scope here (#5967).
+    """
+
+    name: Optional[str] = Field(None, description="Optional custom name for the server")
+    api_key: Optional[str] = Field(None, max_length=4096, description="API key if the catalog entry requires one")
+
+    @field_validator("name")
+    @classmethod
+    def validate_name_field(cls, v: Optional[str]) -> Optional[str]:
+        """Ensure the override name is safe to render and store.
+
+        Args:
+            v: Server name override to validate.
+
+        Returns:
+            The validated name or None.
+        """
+        if v is None:
+            return v
+        return SecurityValidator.validate_name(v, "Server name")
+
+
 class CatalogServerRegisterResponse(BaseModel):
     """Response after registering a catalog server."""
 
