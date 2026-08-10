@@ -493,7 +493,7 @@ The definitive, up-to-date manifest of all admin routes and their classification
 
 | Class | Migrated | Deferred (retired) | Exempt (A.3) | Total |
 |-------|---|---|---|---|
-| **global-only** | 72 routes (spanning 26 conditional call sites within routers) | 0 — retired by issue #6134, see [Global-record routes](#global-record-routes) | — | 72 |
+| **global-only** | 72 routes | 0 — retired by issue #6134, see [Global-record routes](#global-record-routes) | — | 72 |
 | **filtered-read** | 2 routes | — | — | 2 |
 | **team-scopable** | 3 routes | — | — | 3 |
 | **exempt** | — | — | 7 surfaces | 7 |
