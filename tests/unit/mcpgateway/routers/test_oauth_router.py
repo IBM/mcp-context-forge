@@ -1251,6 +1251,99 @@ class TestOAuthRouter:
         result = _resolve_token_teams_for_scope_check(request, current_user)
         assert result is None
 
+    @pytest.mark.asyncio
+    async def test_fetch_tools_token_exchange_delegates_to_manual_refresh(self, mock_db, mock_current_user):
+        """token-exchange gateways route through refresh_gateway_manually, not fetch_tools_after_oauth."""
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(token_teams=["team-1"])
+        request.headers = {"cookie": "jwt_token=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1In0.c2ln"}
+        gateway = Mock(spec=Gateway)
+        gateway.visibility = "public"
+        gateway.team_id = None
+        gateway.owner_email = None
+        gateway.oauth_config = {"grant_type": "token-exchange", "token_url": "https://as.example.com/token", "target_audience": "aud"}
+        mock_db.execute.return_value.scalar_one_or_none.return_value = gateway
+
+        refresh_result = {"success": True, "tools_added": 2, "tools_updated": 1, "tools_removed": 0}
+        with patch("mcpgateway.services.gateway_service.GatewayService") as mock_service_class:
+            mock_service = Mock()
+            mock_service.refresh_gateway_manually = AsyncMock(return_value=refresh_result)
+            mock_service.fetch_tools_after_oauth = AsyncMock()
+            mock_service_class.return_value = mock_service
+
+            # First-Party
+            from mcpgateway.routers.oauth_router import fetch_tools_after_oauth
+
+            with patch("mcpgateway.routers.oauth_router.token_scoping_middleware._check_resource_team_ownership", return_value=ResourceOwnershipResult.ALLOWED):
+                result = await fetch_tools_after_oauth(gateway_id="gw-te", request=request, current_user={"email": "admin@example.com", "is_admin": True}, db=mock_db)
+
+        assert result["success"] is True
+        assert "Successfully fetched and created 3 tools" in result["message"]
+        mock_service.fetch_tools_after_oauth.assert_not_called()
+        kwargs = mock_service.refresh_gateway_manually.await_args.kwargs
+        assert kwargs["gateway_id"] == "gw-te"
+        assert kwargs["user_email"] == "admin@example.com"
+        assert kwargs["request_headers"]["cookie"].startswith("jwt_token=")
+
+    @pytest.mark.asyncio
+    async def test_fetch_tools_token_exchange_failure_maps_to_400(self, mock_db, mock_current_user):
+        """success=False from refresh_gateway_manually must surface as HTTP 400, not 200."""
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(token_teams=["team-1"])
+        request.headers = {}
+        gateway = Mock(spec=Gateway)
+        gateway.visibility = "public"
+        gateway.team_id = None
+        gateway.owner_email = None
+        gateway.oauth_config = {"grant_type": "token-exchange", "token_url": "https://as.example.com/token", "target_audience": "aud"}
+        mock_db.execute.return_value.scalar_one_or_none.return_value = gateway
+
+        refresh_result = {"success": False, "error": "User authentication required for token-exchange gateway 'gw'."}
+        with patch("mcpgateway.services.gateway_service.GatewayService") as mock_service_class:
+            mock_service = Mock()
+            mock_service.refresh_gateway_manually = AsyncMock(return_value=refresh_result)
+            mock_service_class.return_value = mock_service
+
+            # First-Party
+            from mcpgateway.routers.oauth_router import fetch_tools_after_oauth
+
+            with patch("mcpgateway.routers.oauth_router.token_scoping_middleware._check_resource_team_ownership", return_value=ResourceOwnershipResult.ALLOWED):
+                with pytest.raises(HTTPException) as exc_info:
+                    await fetch_tools_after_oauth(gateway_id="gw-te", request=request, current_user={"email": "admin@example.com", "is_admin": True}, db=mock_db)
+
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.detail == "Failed to fetch tools"
+
+    @pytest.mark.asyncio
+    async def test_fetch_tools_token_exchange_concurrent_refresh_maps_to_409(self, mock_db, mock_current_user):
+        """GatewayError (refresh already in progress) must map to HTTP 409."""
+        # First-Party
+        from mcpgateway.services.gateway_service import GatewayError
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(token_teams=["team-1"])
+        request.headers = {}
+        gateway = Mock(spec=Gateway)
+        gateway.visibility = "public"
+        gateway.team_id = None
+        gateway.owner_email = None
+        gateway.oauth_config = {"grant_type": "token-exchange", "token_url": "https://as.example.com/token", "target_audience": "aud"}
+        mock_db.execute.return_value.scalar_one_or_none.return_value = gateway
+
+        with patch("mcpgateway.services.gateway_service.GatewayService") as mock_service_class:
+            mock_service = Mock()
+            mock_service.refresh_gateway_manually = AsyncMock(side_effect=GatewayError("Refresh already in progress for gateway gw"))
+            mock_service_class.return_value = mock_service
+
+            # First-Party
+            from mcpgateway.routers.oauth_router import fetch_tools_after_oauth
+
+            with patch("mcpgateway.routers.oauth_router.token_scoping_middleware._check_resource_team_ownership", return_value=ResourceOwnershipResult.ALLOWED):
+                with pytest.raises(HTTPException) as exc_info:
+                    await fetch_tools_after_oauth(gateway_id="gw-te", request=request, current_user={"email": "admin@example.com", "is_admin": True}, db=mock_db)
+
+        assert exc_info.value.status_code == 409
+
 
 class TestOAuthAccessHelpers:
     def test_resolve_token_teams_for_scope_check_invalid_state_value_fails_closed(self):

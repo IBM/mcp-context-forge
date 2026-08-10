@@ -1092,7 +1092,7 @@ async def fetch_tools_after_oauth(
     current_user: EmailUserResponse = Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
-    """Fetch tools from MCP server after OAuth completion for Authorization Code flow.
+    """Fetch tools from the MCP server after OAuth completion (authorization_code) or via on-demand token exchange (token-exchange).
 
     Args:
         gateway_id: ID of the gateway to fetch tools for
@@ -1118,9 +1118,41 @@ async def fetch_tools_after_oauth(
         await _enforce_gateway_access(gateway_id, gateway, current_user, db, request=request)
 
         # First-Party
-        from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayService
+        from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayError, GatewayNotFoundError, GatewayService
 
         gateway_service = GatewayService()
+
+        grant_type = gateway.oauth_config.get("grant_type") if isinstance(gateway.oauth_config, dict) else None
+        if grant_type == "token-exchange":
+            # Token-exchange has no consent step: delegate to the manual-refresh
+            # pipeline, which exchanges the caller's inbound JWT (bearer header or
+            # jwt_token cookie) via _resolve_token_exchange_header (issue #5382).
+            # Exception order matters: GatewayNotFoundError and GatewayConnectionError
+            # both subclass GatewayError — a bare GatewayError clause first would turn
+            # not-found into 409 and connection failures into 409 instead of 400.
+            try:
+                refresh_result = await gateway_service.refresh_gateway_manually(
+                    gateway_id=gateway_id,
+                    include_resources=True,
+                    include_prompts=True,
+                    user_email=requester_email,
+                    request_headers=dict(request.headers),
+                )
+            except GatewayNotFoundError:
+                raise HTTPException(status_code=404, detail=f"Gateway not found: {gateway_id}")
+            except GatewayConnectionError:
+                raise  # outer handler maps to 400
+            except GatewayError as ge:
+                raise HTTPException(status_code=409, detail=str(ge))
+            if refresh_result.get("success") is False:
+                logger.error(
+                    f"Token-exchange tool fetch failed for gateway {SecurityValidator.sanitize_log_message(gateway_id)}: "
+                    f"{SecurityValidator.sanitize_log_message(str(refresh_result.get('error')))}"
+                )
+                raise HTTPException(status_code=400, detail="Failed to fetch tools")
+            fetched = int(refresh_result.get("tools_added", 0)) + int(refresh_result.get("tools_updated", 0))
+            return {"success": True, "message": f"Successfully fetched and created {fetched} tools"}
+
         result = await gateway_service.fetch_tools_after_oauth(db, gateway_id, requester_email)
         tools_count = len(result.get("tools", []))
 
