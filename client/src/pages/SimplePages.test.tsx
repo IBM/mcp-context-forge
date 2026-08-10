@@ -130,7 +130,11 @@ describe("Simple Page Components", () => {
   });
 
   it("renders ServerCatalog page", () => {
-    renderWithProviders(<ServerCatalog />);
+    renderWithProviders(
+      <RouterProvider>
+        <ServerCatalog />
+      </RouterProvider>,
+    );
     expect(document.body).toBeTruthy();
   });
 
