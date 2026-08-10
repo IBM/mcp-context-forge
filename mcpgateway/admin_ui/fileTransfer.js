@@ -331,7 +331,8 @@ export const resetImportFile = function () {
 export const previewImport = async function () {
   console.log("🔍 Generating import preview...");
 
-  if (!window.currentImportData) {
+  const importData = window.Admin?.currentImportData;
+  if (!importData) {
     showNotification("❌ Please select an import file first", "error");
     return;
   }
@@ -347,7 +348,7 @@ export const previewImport = async function () {
           "Content-Type": "application/json",
           Authorization: `Bearer ${await getAuthToken()}`,
         },
-        body: JSON.stringify({ data: window.currentImportData }),
+        body: JSON.stringify({ data: importData }),
       },
     );
 
@@ -376,7 +377,8 @@ export const previewImport = async function () {
 export const handleImport = async function (dryRun = false) {
   console.log(`🔄 Starting import (dry_run=${dryRun})`);
 
-  if (!window.currentImportData) {
+  const importData = window.Admin?.currentImportData;
+  if (!importData) {
     showNotification("❌ Please select an import file first", "error");
     return;
   }
@@ -389,7 +391,7 @@ export const handleImport = async function (dryRun = false) {
     const rekeySecret = safeGetElement("import-rekey-secret")?.value || null;
 
     const requestData = {
-      import_data: window.currentImportData,
+      import_data: importData,
       conflict_strategy: conflictStrategy,
       dry_run: dryRun,
       rekey_secret: rekeySecret,
