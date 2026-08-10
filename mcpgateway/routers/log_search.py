@@ -15,7 +15,7 @@ import logging
 from typing import Any, Dict, List, Optional, Tuple
 
 # Third-Party
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import and_, delete, desc, or_, select
 from sqlalchemy.orm import Session
@@ -31,7 +31,7 @@ from mcpgateway.db import (
     SecurityEvent,
     StructuredLogEntry,
 )
-from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
+from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_global_admin_permission, require_permission
 from mcpgateway.services.log_aggregator import get_log_aggregator
 
 logger = logging.getLogger(__name__)
@@ -321,6 +321,7 @@ class PerformanceMetricResponse(BaseModel):
 
 # API Endpoints
 @router.post("/search", response_model=LogSearchResponse)
+@require_global_admin_permission()
 @require_permission("logs:read")
 async def search_logs(request: LogSearchRequest, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> LogSearchResponse:
     """Search structured logs with filters and pagination.
@@ -430,14 +431,16 @@ async def search_logs(request: LogSearchRequest, user=Depends(get_current_user_w
 
 
 @router.get("/trace/{correlation_id}", response_model=CorrelationTraceResponse)
+@require_global_admin_permission()
 @require_permission("logs:read")
-async def trace_correlation_id(correlation_id: str, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> CorrelationTraceResponse:
+async def trace_correlation_id(correlation_id: str, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db), request: Request = None) -> CorrelationTraceResponse:  # pylint: disable=unused-argument
     """Get all logs and events for a correlation ID.
 
     Args:
         correlation_id: Correlation ID to trace
         user: Current authenticated user
         db: Database session
+        request: Incoming request, used to resolve Layer-1 token scope.
 
     Returns:
         Complete trace of all related logs and events
@@ -543,6 +546,7 @@ async def trace_correlation_id(correlation_id: str, user=Depends(get_current_use
 
 
 @router.get("/security-events", response_model=List[SecurityEventResponse])
+@require_global_admin_permission()
 @require_permission("security:read")
 async def get_security_events(
     severity: Optional[List[str]] = Query(None),
@@ -554,6 +558,7 @@ async def get_security_events(
     offset: int = Query(0, ge=0),
     user=Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
+    request: Request = None,  # pylint: disable=unused-argument
 ) -> List[SecurityEventResponse]:
     """Get security events with filters.
 
@@ -567,6 +572,7 @@ async def get_security_events(
         offset: Result offset
         user: Current authenticated user
         db: Database session
+        request: Incoming request, used to resolve Layer-1 token scope.
 
     Returns:
         List of security events
@@ -619,6 +625,7 @@ async def get_security_events(
 
 
 @router.get("/audit-trails", response_model=List[AuditTrailResponse])
+@require_global_admin_permission()
 @require_permission("audit:read")
 async def get_audit_trails(
     action: Optional[List[str]] = Query(None),
@@ -635,6 +642,7 @@ async def get_audit_trails(
     offset: int = Query(0, ge=0),
     user=Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
+    request: Request = None,  # pylint: disable=unused-argument
 ) -> List[AuditTrailResponse]:
     """Get audit trails with filters.
 
@@ -649,6 +657,7 @@ async def get_audit_trails(
         offset: Result offset
         user: Current authenticated user
         db: Database session
+        request: Incoming request, used to resolve Layer-1 token scope.
 
     Returns:
         List of audit trail entries
@@ -704,6 +713,7 @@ async def get_audit_trails(
 
 
 @router.get("/performance-metrics", response_model=List[PerformanceMetricResponse])
+@require_global_admin_permission()
 @require_permission("metrics:read")
 async def get_performance_metrics(
     component: QueryIdentifierDottedComponent = None,
@@ -712,6 +722,7 @@ async def get_performance_metrics(
     aggregation: QueryAggregation = _DEFAULT_AGGREGATION_KEY,
     user=Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
+    request: Request = None,  # pylint: disable=unused-argument
 ) -> List[PerformanceMetricResponse]:
     """Get performance metrics.
 
@@ -722,6 +733,7 @@ async def get_performance_metrics(
         hours: Hours of history
         user: Current authenticated user
         db: Database session
+        request: Incoming request, used to resolve Layer-1 token scope.
 
     Returns:
         List of performance metrics
