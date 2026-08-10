@@ -11,7 +11,7 @@ This module provides FastAPI routes for LLM provider and model management.
 from typing import Optional
 
 # Third-Party
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -31,7 +31,7 @@ from mcpgateway.llm_schemas import (
     LLMProviderUpdate,
     ProviderHealthCheck,
 )
-from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
+from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_global_admin_permission, require_permission
 from mcpgateway.services.llm_provider_service import (
     LLMModelConflictError,
     LLMModelNotFoundError,
@@ -65,11 +65,13 @@ llm_provider_service = LLMProviderService()
     summary="Create LLM Provider",
     description="Create a new LLM provider configuration.",
 )
+@require_global_admin_permission()
 @require_permission("admin.system_config")
 async def create_provider(
     provider_data: LLMProviderCreate,
     current_user_ctx: dict = Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
+    request: Request = None,  # pylint: disable=unused-argument
 ) -> LLMProviderResponse:
     """Create a new LLM provider.
 
@@ -77,6 +79,7 @@ async def create_provider(
         provider_data: Provider configuration data.
         current_user_ctx: Authenticated user context.
         db: Database session.
+        request: Incoming request, used to resolve Layer-1 token scope.
 
     Returns:
         Created provider response.
@@ -113,6 +116,7 @@ async def create_provider(
     summary="List LLM Providers",
     description="List all configured LLM providers.",
 )
+@require_global_admin_permission()
 @require_permission("admin.system_config")
 async def list_providers(
     enabled_only: bool = Query(False, description="Only return enabled providers"),
@@ -120,6 +124,7 @@ async def list_providers(
     page_size: int = Query(50, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     current_user_ctx: dict = Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
+    request: Request = None,  # pylint: disable=unused-argument
 ) -> LLMProviderListResponse:
     """List all LLM providers.
 
@@ -129,6 +134,7 @@ async def list_providers(
         page_size: Items per page.
         current_user_ctx: Authenticated user context.
         db: Database session.
+        request: Incoming request, used to resolve Layer-1 token scope.
 
     Returns:
         Paginated list of providers.
@@ -159,11 +165,13 @@ async def list_providers(
     summary="Get LLM Provider",
     description="Get a specific LLM provider by ID.",
 )
+@require_global_admin_permission()
 @require_permission("admin.system_config")
 async def get_provider(
     provider_id: str,
     current_user_ctx: dict = Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
+    request: Request = None,  # pylint: disable=unused-argument
 ) -> LLMProviderResponse:
     """Get an LLM provider by ID.
 
@@ -171,6 +179,7 @@ async def get_provider(
         provider_id: Provider ID.
         current_user_ctx: Authenticated user context.
         db: Database session.
+        request: Incoming request, used to resolve Layer-1 token scope.
 
     Returns:
         Provider response.
@@ -195,12 +204,14 @@ async def get_provider(
     summary="Update LLM Provider",
     description="Update an existing LLM provider.",
 )
+@require_global_admin_permission()
 @require_permission("admin.system_config")
 async def update_provider(
     provider_id: str,
     provider_data: LLMProviderUpdate,
     current_user_ctx: dict = Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
+    request: Request = None,  # pylint: disable=unused-argument
 ) -> LLMProviderResponse:
     """Update an LLM provider.
 
@@ -209,6 +220,7 @@ async def update_provider(
         provider_data: Updated provider data.
         current_user_ctx: Authenticated user context.
         db: Database session.
+        request: Incoming request, used to resolve Layer-1 token scope.
 
     Returns:
         Updated provider response.
@@ -242,11 +254,13 @@ async def update_provider(
     summary="Delete LLM Provider",
     description="Delete an LLM provider and all its models.",
 )
+@require_global_admin_permission()
 @require_permission("admin.system_config")
 async def delete_provider(
     provider_id: str,
     current_user_ctx: dict = Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
+    request: Request = None,  # pylint: disable=unused-argument
 ) -> None:
     """Delete an LLM provider.
 
@@ -254,6 +268,7 @@ async def delete_provider(
         provider_id: Provider ID.
         current_user_ctx: Authenticated user context.
         db: Database session.
+        request: Incoming request, used to resolve Layer-1 token scope.
 
     Raises:
         HTTPException: If provider is not found.
@@ -272,12 +287,14 @@ async def delete_provider(
     summary="Set LLM Provider State",
     description="Set the enabled status of an LLM provider.",
 )
+@require_global_admin_permission()
 @require_permission("admin.system_config")
 async def set_provider_state(
     provider_id: str,
     activate: Optional[bool] = Query(None, description="Set enabled state. If not provided, inverts current state."),
     current_user_ctx: dict = Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
+    request: Request = None,  # pylint: disable=unused-argument
 ) -> LLMProviderResponse:
     """Set provider enabled state.
 
@@ -286,6 +303,7 @@ async def set_provider_state(
         activate: If provided, sets enabled to this value. If None, inverts current state.
         current_user_ctx: Authenticated user context.
         db: Database session.
+        request: Incoming request, used to resolve Layer-1 token scope.
 
     Returns:
         Updated provider response.
@@ -310,11 +328,13 @@ async def set_provider_state(
     summary="Check Provider Health",
     description="Perform a health check on an LLM provider.",
 )
+@require_global_admin_permission()
 @require_permission("admin.system_config")
 async def check_provider_health(
     provider_id: str,
     current_user_ctx: dict = Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
+    request: Request = None,  # pylint: disable=unused-argument
 ) -> ProviderHealthCheck:
     """Check health of an LLM provider.
 
@@ -322,6 +342,7 @@ async def check_provider_health(
         provider_id: Provider ID.
         current_user_ctx: Authenticated user context.
         db: Database session.
+        request: Incoming request, used to resolve Layer-1 token scope.
 
     Returns:
         Health check result.
@@ -350,11 +371,13 @@ async def check_provider_health(
     summary="Create LLM Model",
     description="Create a new LLM model for a provider.",
 )
+@require_global_admin_permission()
 @require_permission("admin.system_config")
 async def create_model(
     model_data: LLMModelCreate,
     current_user_ctx: dict = Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
+    request: Request = None,  # pylint: disable=unused-argument
 ) -> LLMModelResponse:
     """Create a new LLM model.
 
@@ -362,6 +385,7 @@ async def create_model(
         model_data: Model configuration data.
         current_user_ctx: Authenticated user context.
         db: Database session.
+        request: Incoming request, used to resolve Layer-1 token scope.
 
     Returns:
         Created model response.
@@ -388,6 +412,7 @@ async def create_model(
     summary="List LLM Models",
     description="List all configured LLM models.",
 )
+@require_global_admin_permission()
 @require_permission("admin.system_config")
 async def list_models(
     provider_id: QueryProviderId = None,
@@ -396,6 +421,7 @@ async def list_models(
     page_size: int = Query(50, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     current_user_ctx: dict = Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
+    request: Request = None,  # pylint: disable=unused-argument
 ) -> LLMModelListResponse:
     """List all LLM models.
 
@@ -406,6 +432,7 @@ async def list_models(
         page_size: Items per page.
         current_user_ctx: Authenticated user context.
         db: Database session.
+        request: Incoming request, used to resolve Layer-1 token scope.
 
     Returns:
         Paginated list of models.
@@ -443,11 +470,13 @@ async def list_models(
     summary="Get LLM Model",
     description="Get a specific LLM model by ID.",
 )
+@require_global_admin_permission()
 @require_permission("admin.system_config")
 async def get_model(
     model_id: str,
     current_user_ctx: dict = Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
+    request: Request = None,  # pylint: disable=unused-argument
 ) -> LLMModelResponse:
     """Get an LLM model by ID.
 
@@ -455,6 +484,7 @@ async def get_model(
         model_id: Model ID.
         current_user_ctx: Authenticated user context.
         db: Database session.
+        request: Incoming request, used to resolve Layer-1 token scope.
 
     Returns:
         Model response.
@@ -482,12 +512,14 @@ async def get_model(
     summary="Update LLM Model",
     description="Update an existing LLM model.",
 )
+@require_global_admin_permission()
 @require_permission("admin.system_config")
 async def update_model(
     model_id: str,
     model_data: LLMModelUpdate,
     current_user_ctx: dict = Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
+    request: Request = None,  # pylint: disable=unused-argument
 ) -> LLMModelResponse:
     """Update an LLM model.
 
@@ -496,6 +528,7 @@ async def update_model(
         model_data: Updated model data.
         current_user_ctx: Authenticated user context.
         db: Database session.
+        request: Incoming request, used to resolve Layer-1 token scope.
 
     Returns:
         Updated model response.
@@ -523,11 +556,13 @@ async def update_model(
     summary="Delete LLM Model",
     description="Delete an LLM model.",
 )
+@require_global_admin_permission()
 @require_permission("admin.system_config")
 async def delete_model(
     model_id: str,
     current_user_ctx: dict = Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
+    request: Request = None,  # pylint: disable=unused-argument
 ) -> None:
     """Delete an LLM model.
 
@@ -535,6 +570,7 @@ async def delete_model(
         model_id: Model ID.
         current_user_ctx: Authenticated user context.
         db: Database session.
+        request: Incoming request, used to resolve Layer-1 token scope.
 
     Raises:
         HTTPException: If model is not found.
@@ -553,12 +589,14 @@ async def delete_model(
     summary="Set LLM Model State",
     description="Set the enabled status of an LLM model.",
 )
+@require_global_admin_permission()
 @require_permission("admin.system_config")
 async def set_model_state(
     model_id: str,
     activate: Optional[bool] = Query(None, description="Set enabled state. If not provided, inverts current state."),
     current_user_ctx: dict = Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
+    request: Request = None,  # pylint: disable=unused-argument
 ) -> LLMModelResponse:
     """Set model enabled state.
 
@@ -567,6 +605,7 @@ async def set_model_state(
         activate: If provided, sets enabled to this value. If None, inverts current state.
         current_user_ctx: Authenticated user context.
         db: Database session.
+        request: Incoming request, used to resolve Layer-1 token scope.
 
     Returns:
         Updated model response.
