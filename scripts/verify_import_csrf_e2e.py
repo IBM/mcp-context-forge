@@ -23,8 +23,10 @@ with 403 CSRF errors.
 
 Negative controls prove the fix did not weaken CSRF enforcement generally:
     - the same three calls WITHOUT X-CSRF-Token must still 403
-    - a completely unrelated protected write (/admin/llm/providers, the
-      #5780 fix's own area) must still require CSRF
+    - a sibling read (/admin/llm/providers/html) and a sibling write
+      (/admin/llm/providers/{id}/fetch-models) -- the #5780 fix's own area,
+      and the code path Task 3's llmRequestHeaders delegation touches --
+      must remain reachable, proving no collateral damage
 
 Usage:
     .venv/bin/python scripts/verify_import_csrf_e2e.py
