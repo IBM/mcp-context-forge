@@ -361,9 +361,3 @@ tools_rust/mcp_runtime/perf.data*
 
 # Git worktrees
 .worktrees/
-
-# Local-only superpowers spec/plan docs (kept on disk, not tracked)
-docs/superpowers/
-
-# Local-only e2e verification script (kept on disk, not tracked)
-scripts/verify_import_csrf_e2e.py
