@@ -1143,7 +1143,8 @@ async def fetch_tools_after_oauth(
             except GatewayConnectionError:
                 raise  # outer handler maps to 400
             except GatewayError as ge:
-                raise HTTPException(status_code=409, detail=str(ge))
+                logger.warning(f"Token-exchange tool refresh conflict for gateway {SecurityValidator.sanitize_log_message(gateway_id)}: {SecurityValidator.sanitize_log_message(str(ge))}")
+                raise HTTPException(status_code=409, detail="Refresh already in progress for this gateway")
             if refresh_result.get("success") is False:
                 logger.error(
                     f"Token-exchange tool fetch failed for gateway {SecurityValidator.sanitize_log_message(gateway_id)}: "

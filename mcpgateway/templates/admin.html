@@ -5089,7 +5089,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       </button>
 
                       {% if gateway.authType == 'oauth' %}
-                      {% if not (gateway.oauth_config and gateway.oauth_config.grant_type == 'token-exchange') %}
+                      {% if not (gateway.oauthConfig and gateway.oauthConfig.grant_type == 'token-exchange') %}
                       <!-- Row 2: OAuth Authorize | Fetch Tools -->
                       <a
                         href="{{ root_path }}/oauth/authorize/{{ gateway.id }}"
