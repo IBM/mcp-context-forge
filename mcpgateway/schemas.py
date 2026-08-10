@@ -38,7 +38,7 @@ from mcpgateway.common.models import Resource as MCPResource
 from mcpgateway.common.models import ResourceContent, TextContent
 from mcpgateway.common.models import Tool as MCPTool
 from mcpgateway.common.oauth import OAUTH_SENSITIVE_KEYS
-from mcpgateway.common.validators import SecurityValidator, validate_core_url
+from mcpgateway.common.validators import SecurityValidator, parse_use_dcr_flag, validate_core_url
 from mcpgateway.config import settings
 from mcpgateway.utils.base_models import BaseModelWithConfigDict
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
@@ -161,6 +161,28 @@ def _validate_oauth_config_urls(v: Optional[Dict[str, Any]]) -> Optional[Dict[st
         if not isinstance(server, str):
             raise ValueError(f"oauth_config.authorization_servers[{idx}] must be a string URL")
         validate_core_url(server, f"OAuth config authorization_servers[{idx}]")
+    return v
+
+
+def _validate_oauth_config_flags(v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """Validate boolean-flag entries in OAuth config dicts.
+
+    Currently validates ``use_dcr`` (per-gateway Dynamic Client Registration
+    control) via [`parse_use_dcr_flag`](mcpgateway/common/validators.py).
+
+    Args:
+        v: OAuth configuration dict or ``None``.
+
+    Returns:
+        The original dict when valid.
+
+    Raises:
+        ValueError: If a flag field has an invalid value.
+    """
+    if v is None or not isinstance(v, dict):
+        return v
+    if "use_dcr" in v:
+        parse_use_dcr_flag(v["use_dcr"])
     return v
 
 
@@ -3207,8 +3229,9 @@ class GatewayCreate(BaseModelWithConfigDict):
     @field_validator("oauth_config", mode="before")
     @classmethod
     def validate_oauth_config(cls, v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-        """Validate URL-bearing OAuth configuration entries."""
-        return _validate_oauth_config_urls(v)
+        """Validate URL-bearing and boolean-flag OAuth configuration entries."""
+        v = _validate_oauth_config_urls(v)
+        return _validate_oauth_config_flags(v)
 
     @field_validator("description")
     @classmethod
@@ -3571,8 +3594,9 @@ class GatewayUpdate(BaseModelWithConfigDict):
     @field_validator("oauth_config", mode="before")
     @classmethod
     def validate_oauth_config(cls, v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-        """Validate URL-bearing OAuth configuration entries."""
-        return _validate_oauth_config_urls(v)
+        """Validate URL-bearing and boolean-flag OAuth configuration entries."""
+        v = _validate_oauth_config_urls(v)
+        return _validate_oauth_config_flags(v)
 
     @field_validator("description", mode="before")
     @classmethod

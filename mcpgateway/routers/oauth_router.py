@@ -30,7 +30,7 @@ from sqlalchemy.orm import Session
 from mcpgateway.auth import normalize_token_teams
 from mcpgateway.auth_context import get_user_email
 from mcpgateway.common.query_params import QueryErrorCode
-from mcpgateway.common.validators import SecurityValidator
+from mcpgateway.common.validators import SecurityValidator, parse_use_dcr_flag
 from mcpgateway.config import settings
 from mcpgateway.db import Gateway, get_db, Permissions
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
@@ -526,8 +526,46 @@ async def initiate_oauth_flow(
         client_id = oauth_config.get("client_id")
 
         if issuer and not client_id:
-            if settings.dcr_enabled and settings.dcr_auto_register_on_missing_credentials:
-                logger.info(f"Gateway {SecurityValidator.sanitize_log_message(gateway_id)} has issuer but no client_id. Attempting DCR...")
+            # Per-gateway use_dcr flag with a read-time safety net: invalid
+            # values (e.g. legacy rows written before validation) are logged
+            # and treated as absent.
+            try:
+                use_dcr_flag = parse_use_dcr_flag(oauth_config.get("use_dcr"))
+            except ValueError as use_dcr_err:
+                use_dcr_flag = None
+                logger.warning(f"Gateway {SecurityValidator.sanitize_log_message(gateway_id)} has invalid use_dcr value ({use_dcr_err}); treating as absent")
+
+            if use_dcr_flag is False:
+                # Explicit per-gateway opt-out: never auto-register.
+                logger.warning(f"Gateway {SecurityValidator.sanitize_log_message(gateway_id)} has issuer but no client_id, and use_dcr=false")
+                raise HTTPException(
+                    status_code=400,
+                    detail="Gateway OAuth configuration is incomplete. use_dcr=false prevents Dynamic Client Registration; please provide client_id and client_secret manually.",
+                )
+
+            if not settings.dcr_enabled:
+                if use_dcr_flag is True:
+                    logger.warning(f"Gateway {SecurityValidator.sanitize_log_message(gateway_id)} requested DCR (use_dcr=true) but DCR is disabled globally")
+                    raise HTTPException(
+                        status_code=400,
+                        detail="DCR is disabled globally (MCPGATEWAY_DCR_ENABLED=false). Cannot honor use_dcr=true. Please enable DCR deployment-wide or provide client_id and client_secret manually.",
+                    )
+                # Absent flag, DCR disabled globally - existing behavior
+                logger.warning(f"Gateway {SecurityValidator.sanitize_log_message(gateway_id)} has issuer but no client_id, and DCR is disabled globally")
+                raise HTTPException(
+                    status_code=400,
+                    detail="Gateway OAuth configuration is incomplete. Please provide client_id and client_secret, or enable DCR (Dynamic Client Registration) by setting MCPGATEWAY_DCR_ENABLED=true.",
+                )
+
+            # dcr_enabled is true at this point; registration happens when the
+            # per-gateway flag forces it or the global auto-register is on.
+            should_register = use_dcr_flag is True or settings.dcr_auto_register_on_missing_credentials
+
+            if should_register:
+                logger.info(
+                    f"Gateway {SecurityValidator.sanitize_log_message(gateway_id)} has issuer but no client_id. Attempting DCR "
+                    f"(use_dcr={use_dcr_flag}, global auto-register={settings.dcr_auto_register_on_missing_credentials})..."
+                )
 
                 try:
                     # Initialize DCR service
@@ -600,11 +638,11 @@ async def initiate_oauth_flow(
                     logger.error(f"Unexpected error during DCR for gateway {SecurityValidator.sanitize_log_message(gateway_id)}: {dcr_ex}")
                     raise HTTPException(status_code=500, detail="Failed to register OAuth client")
             else:
-                # DCR is disabled or auto-register is off
+                # Absent flag + global auto-register off - existing behavior
                 logger.warning(f"Gateway {SecurityValidator.sanitize_log_message(gateway_id)} has issuer but no client_id, and DCR auto-registration is disabled")
                 raise HTTPException(
                     status_code=400,
-                    detail="Gateway OAuth configuration is incomplete. Please provide client_id and client_secret, or enable DCR (Dynamic Client Registration) by setting MCPGATEWAY_DCR_ENABLED=true and MCPGATEWAY_DCR_AUTO_REGISTER_ON_MISSING_CREDENTIALS=true",
+                    detail="Gateway OAuth configuration is incomplete. Please provide client_id and client_secret, or set use_dcr=true for this gateway, or enable global auto-registration with MCPGATEWAY_DCR_AUTO_REGISTER_ON_MISSING_CREDENTIALS=true",
                 )
 
         # Validate required fields for OAuth flow

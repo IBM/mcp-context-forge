@@ -19,7 +19,7 @@ import pytest
 
 # First-Party
 from mcpgateway.common.models import ResourceContent
-from mcpgateway.common.validators import SecurityValidator
+from mcpgateway.common.validators import SecurityValidator, parse_use_dcr_flag
 from mcpgateway.config import settings
 from mcpgateway.schemas import (
     _coerce_visibility,
@@ -1534,3 +1534,59 @@ class TestToolNameLengthValidation:
         with pytest.raises(ValidationError) as exc_info:
             ToolCreate(name=name, inputSchema={})
         assert "Tool name exceeds MCP spec limit of 128 characters (got 129)" in str(exc_info.value)
+
+
+class TestParseUseDcrFlag:
+    """Unit tests for parse_use_dcr_flag() in common/validators."""
+
+    @pytest.mark.parametrize(
+        "value,expected",
+        [
+            (None, None),
+            (True, True),
+            (False, False),
+            ("true", True),
+            ("false", False),
+            ("TRUE", True),
+            ("False", False),
+            (" tRuE ", True),
+            ("", None),
+            ("   ", None),
+        ],
+    )
+    def test_valid_values(self, value, expected):
+        assert parse_use_dcr_flag(value) is expected
+
+    @pytest.mark.parametrize("value", [1, 0, 3.14, "tru", "yes", [], {}, {"a": 1}])
+    def test_invalid_values_raise(self, value):
+        with pytest.raises(ValueError):
+            parse_use_dcr_flag(value)
+
+
+class TestUseDcrSchemaValidation:
+    """Write-time validation of oauth_config.use_dcr on GatewayCreate/GatewayUpdate."""
+
+    def _gateway(self, oauth_config):
+        return GatewayCreate(
+            name="test-gateway",
+            url="https://mcp.example.com",
+            oauth_config=oauth_config,
+        )
+
+    @pytest.mark.parametrize("value", ["tru", 1, 0, [], {"a": 1}])
+    def test_invalid_use_dcr_rejected(self, value):
+        with pytest.raises(ValidationError):
+            self._gateway({"use_dcr": value})
+
+    @pytest.mark.parametrize("value", [True, False, "true", "false", "TRUE", "", "   "])
+    def test_valid_use_dcr_accepted(self, value):
+        gateway = self._gateway({"use_dcr": value})
+        assert gateway.oauth_config["use_dcr"] == value
+
+    def test_gateway_update_accepts_use_dcr_string(self):
+        update = GatewayUpdate(oauth_config={"use_dcr": "false"})
+        assert update.oauth_config["use_dcr"] == "false"
+
+    def test_gateway_update_rejects_invalid_use_dcr(self):
+        with pytest.raises(ValidationError):
+            GatewayUpdate(oauth_config={"use_dcr": "tru"})

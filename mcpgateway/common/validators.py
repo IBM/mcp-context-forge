@@ -2410,6 +2410,41 @@ def validate_core_url(value: str, field_name: str = "URL") -> str:
     return SecurityValidator.validate_url(value, field_name)
 
 
+def parse_use_dcr_flag(value: Any) -> Optional[bool]:
+    """Parse the per-gateway ``use_dcr`` flag from an oauth_config value.
+
+    Accepts native booleans and case-insensitive ``"true"``/``"false"`` strings
+    (whitespace-stripped). ``None`` and empty/whitespace-only strings are treated
+    as absent, matching the empty-means-unset convention used for other
+    oauth_config fields (see ``_validate_oauth_config_urls`` in schemas.py).
+
+    Args:
+        value: Raw ``oauth_config["use_dcr"]`` value.
+
+    Returns:
+        ``None`` when absent, ``True`` or ``False`` when valid.
+
+    Raises:
+        ValueError: If the value is not a boolean, an empty/parseable string, or
+            ``None`` (e.g. integers, lists, malformed strings).
+    """
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return None
+        lowered = stripped.lower()
+        if lowered == "true":
+            return True
+        if lowered == "false":
+            return False
+        raise ValueError(f"oauth_config.use_dcr must be a boolean or 'true'/'false' string, got: {value!r}")
+    raise ValueError(f"oauth_config.use_dcr must be a boolean or 'true'/'false' string, got type {type(value).__name__}")
+
+
 # CWE-400: Limits for user-supplied meta_data forwarded to upstream MCP servers.
 # Keeps arbitrarily large dicts from amplifying into downstream network/DB load.
 # These are now read from config (settings.meta_max_keys, etc.) but kept as
