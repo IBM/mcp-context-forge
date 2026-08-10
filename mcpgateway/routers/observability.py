@@ -31,7 +31,7 @@ from mcpgateway.common.query_params import (
 )
 from mcpgateway.config import settings
 from mcpgateway.db import SessionLocal
-from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
+from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_global_admin_permission, require_permission
 from mcpgateway.schemas import ObservabilitySpanRead, ObservabilityTraceRead, ObservabilityTraceWithSpans
 from mcpgateway.services.observability_service import ObservabilityService
 
@@ -75,6 +75,7 @@ def get_db():
 
 
 @router.get("/traces", response_model=List[ObservabilityTraceRead])
+@require_global_admin_permission()
 @require_permission("admin.system_config")
 async def list_traces(
     start_time: Optional[datetime] = Query(None, description="Filter traces after this time"),
@@ -90,6 +91,7 @@ async def list_traces(
     offset: int = Query(0, ge=0, description="Result offset"),
     db: Session = Depends(get_db),
     _user=Depends(get_current_user_with_permissions),
+    request: Request = None,  # pylint: disable=unused-argument
 ):
     """List traces with optional filtering.
 
@@ -161,12 +163,14 @@ async def list_traces(
 
 
 @router.post("/traces/query", response_model=List[ObservabilityTraceRead])
+@require_global_admin_permission()
 @require_permission("admin.system_config")
 async def query_traces_advanced(
     # Third-Party
     request_body: dict,
     db: Session = Depends(get_db),
     _user=Depends(get_current_user_with_permissions),
+    request: Request = None,  # pylint: disable=unused-argument
 ):
     """Advanced trace querying with attribute filtering.
 
@@ -276,8 +280,14 @@ async def query_traces_advanced(
 
 
 @router.get("/traces/{trace_id}", response_model=ObservabilityTraceWithSpans)
+@require_global_admin_permission()
 @require_permission("admin.system_config")
-async def get_trace(trace_id: str, db: Session = Depends(get_db), _user=Depends(get_current_user_with_permissions)):
+async def get_trace(
+    trace_id: str,
+    db: Session = Depends(get_db),
+    _user=Depends(get_current_user_with_permissions),
+    request: Request = None,  # pylint: disable=unused-argument
+):
     """Get a trace by ID with all its spans and events.
 
     Returns a complete trace with all nested spans and their events,
@@ -326,6 +336,7 @@ async def get_trace(trace_id: str, db: Session = Depends(get_db), _user=Depends(
 
 
 @router.get("/spans", response_model=List[ObservabilitySpanRead])
+@require_global_admin_permission()
 @require_permission("admin.system_config")
 async def list_spans(
     trace_id: QueryTraceId = None,
@@ -337,6 +348,7 @@ async def list_spans(
     offset: int = Query(0, ge=0, description="Result offset"),
     db: Session = Depends(get_db),
     _user=Depends(get_current_user_with_permissions),
+    request: Request = None,  # pylint: disable=unused-argument
 ):
     """List spans with optional filtering.
 
@@ -390,11 +402,13 @@ async def list_spans(
 
 
 @router.delete("/traces/cleanup")
+@require_global_admin_permission()
 @require_permission("admin.system_config")
 async def cleanup_old_traces(
     days: int = Query(7, ge=1, description="Delete traces older than this many days"),
     db: Session = Depends(get_db),
     _user=Depends(get_current_user_with_permissions),
+    request: Request = None,  # pylint: disable=unused-argument
 ):
     """Delete traces older than a specified number of days.
 
@@ -429,11 +443,13 @@ async def cleanup_old_traces(
 
 
 @router.get("/stats")
+@require_global_admin_permission()
 @require_permission("admin.system_config")
 async def get_stats(
     hours: int = Query(24, ge=1, le=168, description="Time window in hours"),
     db: Session = Depends(get_db),
     _user=Depends(get_current_user_with_permissions),
+    request: Request = None,  # pylint: disable=unused-argument
 ):
     """Get observability statistics.
 
@@ -490,12 +506,14 @@ async def get_stats(
 
 
 @router.post("/traces/export")
+@require_global_admin_permission()
 @require_permission("admin.system_config")
 async def export_traces(
     request_body: dict,
     format: QueryExportFormat = "json",
     db: Session = Depends(get_db),
     _user=Depends(get_current_user_with_permissions),
+    request: Request = None,  # pylint: disable=unused-argument
 ):
     """Export traces in various formats.
 
@@ -676,11 +694,13 @@ async def export_traces(
 
 
 @router.get("/analytics/query-performance")
+@require_global_admin_permission()
 @require_permission("admin.system_config")
 async def get_query_performance(
     hours: int = Query(24, ge=1, le=168, description="Time window in hours"),
     db: Session = Depends(get_db),
     _user=Depends(get_current_user_with_permissions),
+    request: Request = None,  # pylint: disable=unused-argument
 ):
     """Get query performance analytics.
 
