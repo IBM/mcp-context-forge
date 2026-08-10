@@ -7,7 +7,7 @@ Tests for SIEM admin router.
 """
 
 # Standard
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 import pytest
@@ -15,6 +15,13 @@ from fastapi import HTTPException
 
 # First-Party
 from mcpgateway.routers import siem
+
+
+@pytest.fixture(autouse=True)
+def _unrestricted_scope():
+    """Grant unrestricted Layer-1 scope; this suite calls handlers directly with no request."""
+    with patch("mcpgateway.middleware.rbac._global_scope_denied", AsyncMock(return_value=False)):
+        yield
 
 
 @pytest.mark.asyncio
