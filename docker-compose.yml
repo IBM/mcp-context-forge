@@ -1471,11 +1471,19 @@ services:
 
   ###############################################################################
   # Fast Time Server - High-performance time/timezone service for MCP
-  # Defaults to the published GHCR image. Override FAST_TIME_IMAGE when building locally:
-  #   FAST_TIME_IMAGE=mcpgateway/fast-time-server:local docker compose build fast_time_server
+  # Pinned by digest so `docker compose pull` cannot change the tool inventory
+  # under the benchmarks. Digest resolved 2026-08-07 (== commit tag
+  # 9b97731fab3cce083d09fe48b4d4760a38d17248); 8 tools exposed:
+  #   echo, flaky, get_system_time, convert_time, schema_error, schema_success,
+  #   get_stats, verify-protocol
+  # When bumping this digest: re-run `tools/list` against the new image and
+  # update MCP_BENCHMARK_TOOL_DENYLIST in the Makefile if new failure fixtures
+  # were added (see tests/loadtest/locustfile_mcp_protocol.py).
+  # Override for local builds:
+  #   FAST_TIME_IMAGE=mcpgateway/fast-time-server:local docker compose up fast_time_server
   ###############################################################################
   fast_time_server:
-    image: ${FAST_TIME_IMAGE:-ghcr.io/ibm/cfex-mcp-fast-time-server:latest}
+    image: ${FAST_TIME_IMAGE:-ghcr.io/ibm/cfex-mcp-fast-time-server@sha256:2f095509d535a0769449f3b9417858f5c233dc74b1e09de335b48b7591d995a1}
     restart: unless-stopped
     networks: [mcpnet]
     ports:
@@ -1865,7 +1873,7 @@ services:
   # Usage: docker compose --profile testing up -d
   ###############################################################################
   fast_test_server:
-    image: ghcr.io/ibm/cfex-mcp-fast-time-server:latest
+    image: ${FAST_TIME_IMAGE:-ghcr.io/ibm/cfex-mcp-fast-time-server@sha256:2f095509d535a0769449f3b9417858f5c233dc74b1e09de335b48b7591d995a1}
     restart: unless-stopped
     networks: [mcpnet]
     ports:

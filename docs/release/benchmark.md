@@ -28,3 +28,9 @@ This file tracks benchmark results by release for local performance runs for dev
 | p90 (ms) | 21000.00 | 3500.00 |
 | p95 (ms) | 30000.00 | 5800.00 |
 | p99 (ms) | 30000.00 | 13000.00 |
+
+> **Note:** The 31.56% failure rate recorded for `benchmark-mcp-tools` predates the
+> fix for #6082. Tool arguments were guessed from tool names, and gateway-prefixed
+> names (`fast-time-echo`) matched the timezone branch, so most `tools/call`
+> requests were rejected with JSON-RPC `-32602`. Arguments are now synthesized
+> from each tool's `inputSchema`; re-measure before comparing against these numbers.

@@ -2722,6 +2722,8 @@ MCP_BENCHMARK_WORKERS ?= 4
 MCP_BENCHMARK_MIXED_MASTER_PORT ?= 5567
 MCP_BENCHMARK_TOOLS_MASTER_PORT ?= 5569
 MCP_BENCHMARK_LOCUST_LOG_LEVEL ?= ERROR
+MCP_BENCHMARK_TOOL_POOL_SIZE ?= 0
+MCP_BENCHMARK_TOOL_DENYLIST ?= schema_error,flaky
 MCP_BENCHMARK_WORKER_LOG_DIR ?= reports/mcp_benchmark_workers
 RL_LIMIT_PER_MIN ?= 30
 
@@ -2774,6 +2776,8 @@ benchmark-mcp-mixed:                        ## Quick mixed MCP benchmark against
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -eu -o pipefail -c 'source $(VENV_DIR)/bin/activate && \
 		LOCUST_LOG_LEVEL=$(MCP_BENCHMARK_LOCUST_LOG_LEVEL) MCP_SERVER_ID=$(MCP_BENCHMARK_SERVER_ID) \
+		MCP_BENCHMARK_TOOL_POOL_SIZE=$(MCP_BENCHMARK_TOOL_POOL_SIZE) \
+		MCP_BENCHMARK_TOOL_DENYLIST=$(MCP_BENCHMARK_TOOL_DENYLIST) \
 		locust -f $(MCP_PROTOCOL_LOCUSTFILE) \
 			--host=$(MCP_BENCHMARK_HOST) \
 			--users=$(MCP_BENCHMARK_USERS) \
@@ -2791,6 +2795,8 @@ benchmark-mcp-tools:                        ## Quick tools-only MCP benchmark ag
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -eu -o pipefail -c 'source $(VENV_DIR)/bin/activate && \
 		LOCUST_LOG_LEVEL=$(MCP_BENCHMARK_LOCUST_LOG_LEVEL) MCP_SERVER_ID=$(MCP_BENCHMARK_SERVER_ID) \
+		MCP_BENCHMARK_TOOL_POOL_SIZE=$(MCP_BENCHMARK_TOOL_POOL_SIZE) \
+		MCP_BENCHMARK_TOOL_DENYLIST=$(MCP_BENCHMARK_TOOL_DENYLIST) \
 		locust -f $(MCP_PROTOCOL_LOCUSTFILE) \
 			--host=$(MCP_BENCHMARK_HOST) \
 			--users=$(MCP_BENCHMARK_USERS) \
@@ -2917,6 +2923,8 @@ benchmark-mcp-mixed-300:                    ## Distributed 300-user mixed MCP be
 		trap cleanup EXIT INT TERM; \
 		for i in $$(seq 1 $(MCP_BENCHMARK_WORKERS)); do \
 			LOCUST_LOG_LEVEL=$(MCP_BENCHMARK_LOCUST_LOG_LEVEL) MCP_SERVER_ID=$(MCP_BENCHMARK_SERVER_ID) \
+			MCP_BENCHMARK_TOOL_POOL_SIZE=$(MCP_BENCHMARK_TOOL_POOL_SIZE) \
+			MCP_BENCHMARK_TOOL_DENYLIST=$(MCP_BENCHMARK_TOOL_DENYLIST) \
 			locust -f $(MCP_PROTOCOL_LOCUSTFILE) \
 				--worker \
 				--master-host=127.0.0.1 \
@@ -2925,6 +2933,8 @@ benchmark-mcp-mixed-300:                    ## Distributed 300-user mixed MCP be
 			pids="$$pids $$!"; \
 		done; \
 		LOCUST_LOG_LEVEL=$(MCP_BENCHMARK_LOCUST_LOG_LEVEL) MCP_SERVER_ID=$(MCP_BENCHMARK_SERVER_ID) \
+		MCP_BENCHMARK_TOOL_POOL_SIZE=$(MCP_BENCHMARK_TOOL_POOL_SIZE) \
+		MCP_BENCHMARK_TOOL_DENYLIST=$(MCP_BENCHMARK_TOOL_DENYLIST) \
 		locust -f $(MCP_PROTOCOL_LOCUSTFILE) \
 			--host=$(MCP_BENCHMARK_HOST) \
 			--master \
@@ -2953,6 +2963,8 @@ benchmark-mcp-tools-300:                    ## Distributed 300-user tools-only M
 		trap cleanup EXIT INT TERM; \
 		for i in $$(seq 1 $(MCP_BENCHMARK_WORKERS)); do \
 			LOCUST_LOG_LEVEL=$(MCP_BENCHMARK_LOCUST_LOG_LEVEL) MCP_SERVER_ID=$(MCP_BENCHMARK_SERVER_ID) \
+			MCP_BENCHMARK_TOOL_POOL_SIZE=$(MCP_BENCHMARK_TOOL_POOL_SIZE) \
+			MCP_BENCHMARK_TOOL_DENYLIST=$(MCP_BENCHMARK_TOOL_DENYLIST) \
 			locust -f $(MCP_PROTOCOL_LOCUSTFILE) \
 				--worker \
 				--master-host=127.0.0.1 \
@@ -2961,6 +2973,8 @@ benchmark-mcp-tools-300:                    ## Distributed 300-user tools-only M
 			pids="$$pids $$!"; \
 		done; \
 		LOCUST_LOG_LEVEL=$(MCP_BENCHMARK_LOCUST_LOG_LEVEL) MCP_SERVER_ID=$(MCP_BENCHMARK_SERVER_ID) \
+		MCP_BENCHMARK_TOOL_POOL_SIZE=$(MCP_BENCHMARK_TOOL_POOL_SIZE) \
+		MCP_BENCHMARK_TOOL_DENYLIST=$(MCP_BENCHMARK_TOOL_DENYLIST) \
 		locust -f $(MCP_PROTOCOL_LOCUSTFILE) \
 			--host=$(MCP_BENCHMARK_HOST) \
 			--master \

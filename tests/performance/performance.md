@@ -509,7 +509,7 @@ The MCP protocol load test (`locustfile_mcp_protocol.py`) sends JSON-RPC request
 
 | User Class | Weight | Simulates |
 |------------|--------|-----------|
-| `MCPAgentUser` | 10 | Realistic AI agent with up to 6 tools — init, discover, call 1-3 tools per turn |
+| `MCPAgentUser` | 10 | Realistic AI agent — init, discover, call 1-3 tools per turn from the full discovered pool (cap with MCP_BENCHMARK_TOOL_POOL_SIZE) |
 | `MCPToolCallerUser` | 5 | Heavy `tools/call` in tight loop |
 | `MCPDiscoveryUser` | 3 | Discovery-heavy — `tools/list`, `resources/list`, `prompts/list`, templates |
 | `MCPSessionChurnUser` | 2 | New MCP session every cycle (serverless worst-case) |
