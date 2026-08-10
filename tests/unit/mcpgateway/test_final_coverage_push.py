@@ -35,6 +35,11 @@ async def _call_toolops(handler, monkeypatch, **kwargs):
 
     monkeypatch.setattr(rbac_module, "PermissionService", DummyPermissionService)
     monkeypatch.setattr(plugins_framework, "get_plugin_manager", AsyncMock(return_value=None))
+    # toolops_router endpoints now carry require_global_admin_permission() (issue #6134),
+    # which reads request.state before this helper's DummyPermissionService is ever
+    # consulted; these calls pass no request kwarg. Grant unrestricted Layer-1 scope the
+    # same way the router migration's own suites do (Pattern A).
+    monkeypatch.setattr(rbac_module, "_global_scope_denied", AsyncMock(return_value=False))
     return await handler(**kwargs)
 
 
