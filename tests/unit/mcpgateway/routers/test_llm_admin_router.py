@@ -8,7 +8,7 @@ Tests for LLM admin router.
 
 # Standard
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 import pytest
@@ -23,6 +23,13 @@ from mcpgateway.llm_schemas import ChatChoice, ChatCompletionResponse, ChatMessa
 from mcpgateway.llm_schemas import HealthStatus, ProviderHealthCheck
 from mcpgateway.routers import llm_admin_router
 from mcpgateway.services.llm_provider_service import LLMProviderNotFoundError
+
+
+@pytest.fixture(autouse=True)
+def _unrestricted_scope():
+    """Grant unrestricted Layer-1 scope; this suite's mock requests carry no usable token_teams."""
+    with patch("mcpgateway.middleware.rbac._global_scope_denied", AsyncMock(return_value=False)):
+        yield
 
 
 @pytest.fixture
