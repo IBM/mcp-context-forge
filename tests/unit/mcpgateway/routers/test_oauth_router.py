@@ -2142,11 +2142,11 @@ class TestOAuthRouterAdditionalCoverage:
         assert exc_info.value.status_code == 403
 
         with pytest.raises(HTTPException) as exc_info:
-            await get_registered_client_for_gateway("gateway123", mock_admin_request, narrowed_admin, mock_db)
+            await get_registered_client_for_gateway("gateway123", mock_admin_request, current_user=narrowed_admin, db=mock_db)
         assert exc_info.value.status_code == 403
 
         with pytest.raises(HTTPException) as exc_info:
-            await delete_registered_client("client123", mock_admin_request, narrowed_admin, mock_db)
+            await delete_registered_client("client123", mock_admin_request, current_user=narrowed_admin, db=mock_db)
         assert exc_info.value.status_code == 403
 
     @pytest.mark.asyncio
@@ -2159,11 +2159,11 @@ class TestOAuthRouterAdditionalCoverage:
         assert exc_info.value.status_code == 403
 
         with pytest.raises(HTTPException) as exc_info:
-            await get_registered_client_for_gateway("gateway123", mock_admin_request, public_only_admin, mock_db)
+            await get_registered_client_for_gateway("gateway123", mock_admin_request, current_user=public_only_admin, db=mock_db)
         assert exc_info.value.status_code == 403
 
         with pytest.raises(HTTPException) as exc_info:
-            await delete_registered_client("client123", mock_admin_request, public_only_admin, mock_db)
+            await delete_registered_client("client123", mock_admin_request, current_user=public_only_admin, db=mock_db)
         assert exc_info.value.status_code == 403
 
     @pytest.mark.asyncio
@@ -2179,12 +2179,12 @@ class TestOAuthRouterAdditionalCoverage:
         # get — not found is still a valid pass-through of the auth guard
         mock_db.execute.return_value.scalar_one_or_none.return_value = None
         with pytest.raises(HTTPException) as exc_info:
-            await get_registered_client_for_gateway("gw1", mock_admin_request, unnarrowed_admin, mock_db)
+            await get_registered_client_for_gateway("gw1", mock_admin_request, current_user=unnarrowed_admin, db=mock_db)
         assert exc_info.value.status_code == 404
 
         # delete — not found likewise
         with pytest.raises(HTTPException) as exc_info:
-            await delete_registered_client("c1", mock_admin_request, unnarrowed_admin, mock_db)
+            await delete_registered_client("c1", mock_admin_request, current_user=unnarrowed_admin, db=mock_db)
         assert exc_info.value.status_code == 404
 
     @pytest.mark.asyncio
@@ -2251,7 +2251,7 @@ class TestOAuthRouterAdditionalCoverage:
         mock_db.execute.return_value.scalar_one_or_none.return_value = client
 
         # No token_teams key → .get("token_teams") returns None → un-narrowed admin bypass (auth guard passes).
-        result = await delete_registered_client("c1", mock_admin_request, {"email": "admin", "is_admin": True}, mock_db)
+        result = await delete_registered_client("c1", mock_admin_request, current_user={"email": "admin", "is_admin": True}, db=mock_db)
         assert result["gateway_id"] == "gw-99"
         assert result["issuer"] == "https://issuer.example.com"
         assert "c1" in result["message"]
@@ -2276,7 +2276,7 @@ class TestOAuthRouterAdditionalCoverage:
         mock_db.execute.return_value.scalar_one_or_none.return_value = _Client()
 
         # No token_teams key → .get("token_teams") returns None → un-narrowed admin bypass (auth guard passes).
-        result = await get_registered_client_for_gateway("g1", mock_admin_request, {"email": "admin", "is_admin": True}, mock_db)
+        result = await get_registered_client_for_gateway("g1", mock_admin_request, current_user={"email": "admin", "is_admin": True}, db=mock_db)
         assert result["registration_client_uri"] == "https://issuer/register/c1"
 
     @pytest.mark.asyncio
