@@ -1970,6 +1970,7 @@ class Settings(BaseSettings):
     # Logging
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = Field(default="ERROR")
     log_requests: bool = Field(default=False, description="Enable request payload logging with sensitive data masking")
+    log_boundary_enabled: bool = Field(default=True, description="Register the request-logging middleware (gateway boundary logs). When false the middleware is not added to the stack at all")
     log_format: Literal["json", "text"] = "json"  # json or text
     log_to_file: bool = False  # Enable file logging (default: stdout/stderr only)
     log_filemode: str = "a+"  # append or overwrite

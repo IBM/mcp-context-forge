@@ -8,16 +8,20 @@ HTTP Authentication Middleware.
 This middleware allows plugins to:
 1. Transform request headers before authentication (HTTP_PRE_REQUEST)
 2. Inspect responses after request completion (HTTP_POST_REQUEST)
+
+Implemented as pure ASGI middleware (no BaseHTTPMiddleware): every request used to
+pay BaseHTTPMiddleware's task-group + response-buffering cost even though this
+middleware almost always exits early (no HTTP hooks registered). The no-hooks exit
+is now a cached verdict check, and responses stream unbuffered.
 """
 
 # Standard
+import asyncio
 import logging
-from typing import Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 # Third-Party
 from cpex.framework import GlobalContext, HttpHeaderPayload, HttpHookType, HttpPostRequestPayload, HttpPreRequestPayload, PluginManager
-from fastapi import Request
-from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
 # First-Party
@@ -29,6 +33,10 @@ from mcpgateway.utils.correlation_id import generate_correlation_id, get_correla
 from mcpgateway.utils.verify_credentials import _resolve_auth_header_name
 
 logger = logging.getLogger(__name__)
+
+# How long a (has_pre, has_post) verdict stays valid before re-checking the plugin
+# manager. Matches the codebase's existing hot-path toggle caching pattern.
+_HOOKS_VERDICT_TTL_SECONDS = 1.0
 
 
 async def run_pre_request_hooks(
@@ -133,7 +141,26 @@ async def run_pre_request_hooks(
         return headers, global_context, None
 
 
-class HttpAuthMiddleware(BaseHTTPMiddleware):
+def _scope_headers_to_dict(scope: Dict[str, Any]) -> Dict[str, str]:
+    """Decode ASGI scope headers into a lowercase-keyed dict.
+
+    Args:
+        scope: The ASGI connection scope.
+
+    Returns:
+        Dict of header name (lowercase) to value; later duplicates win.
+    """
+    headers: Dict[str, str] = {}
+    for item in scope.get("headers") or []:
+        if not isinstance(item, (tuple, list)) or len(item) != 2:
+            continue
+        key, value = item
+        if isinstance(key, (bytes, bytearray)) and isinstance(value, (bytes, bytearray)):
+            headers[key.decode("latin-1").lower()] = value.decode("latin-1")
+    return headers
+
+
+class HttpAuthMiddleware:
     """Middleware for HTTP authentication hooks.
 
     This middleware invokes plugin hooks for HTTP request processing:
@@ -146,6 +173,10 @@ class HttpAuthMiddleware(BaseHTTPMiddleware):
     - Implement custom authentication schemes
     - Audit authentication attempts
     - Log response status and headers
+
+    Pure ASGI implementation: the no-hooks path costs one cached verdict check,
+    and responses are never buffered (the post hook runs on the response-start
+    message, whose payload only carries status + headers).
     """
 
     def __init__(self, app: ASGIApp):
@@ -154,35 +185,53 @@ class HttpAuthMiddleware(BaseHTTPMiddleware):
         Args:
             app: The ASGI application
         """
-        super().__init__(app)
+        self.app = app
+        # (manager identity, has_pre, has_post, monotonic timestamp)
+        self._hooks_verdict: Optional[Tuple[int, bool, bool, float]] = None
 
-    async def dispatch(self, request: Request, call_next):
-        """Process request through plugin hooks.
+    async def _http_hooks_verdict(self) -> Tuple[Optional[PluginManager], bool, bool]:
+        """Return the plugin manager plus (has_pre, has_post), cached briefly.
 
-        Args:
-            request: The incoming request
-            call_next: The next middleware/handler in the chain
+        The verdict is keyed on the manager's identity so a manager replacement
+        (plugin reload) takes effect immediately, while repeated calls within
+        the TTL window skip even the hook-registry lookups.
 
         Returns:
-            The response from the application
+            Tuple of (plugin_manager or None, has_pre, has_post).
         """
+        plugin_manager = await get_plugin_manager()
+        if not plugin_manager:
+            return None, False, False
+        now = asyncio.get_running_loop().time()
+        verdict = self._hooks_verdict
+        if verdict is not None and verdict[0] == id(plugin_manager) and (now - verdict[3]) < _HOOKS_VERDICT_TTL_SECONDS:
+            return plugin_manager, verdict[1], verdict[2]
+        has_pre = plugin_manager.has_hooks_for(HttpHookType.HTTP_PRE_REQUEST)
+        has_post = plugin_manager.has_hooks_for(HttpHookType.HTTP_POST_REQUEST)
+        self._hooks_verdict = (id(plugin_manager), has_pre, has_post, now)
+        return plugin_manager, has_pre, has_post
+
+    async def __call__(self, scope: Dict[str, Any], receive: Callable, send: Callable) -> None:
+        """ASGI entry point: fast-path past the hooks whenever none are registered.
+
+        Args:
+            scope: ASGI connection scope.
+            receive: ASGI receive callable.
+            send: ASGI send callable.
+        """
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+
+        plugin_manager, has_pre, has_post = await self._http_hooks_verdict()
+        if plugin_manager is None or (not has_pre and not has_post):
+            await self.app(scope, receive, send)
+            return
+
         # Note: HTTP hooks always use global config (__global__ context) because
         # this middleware runs before virtual server routing. Per-tenant HTTP hooks
         # would require extracting server_id from the request path, which is not
         # currently implemented. This is acceptable for auth-layer middleware.
-        plugin_manager = await get_plugin_manager()
-        if not plugin_manager:
-            logger.debug("HttpAuthMiddleware: no plugin_manager, skipping hooks")
-            return await call_next(request)
-        logger.debug("HTTP authentication hooks enabled for plugins")
-
-        # Skip payload creation if no HTTP hooks registered
-        has_pre = plugin_manager.has_hooks_for(HttpHookType.HTTP_PRE_REQUEST)
-        has_post = plugin_manager.has_hooks_for(HttpHookType.HTTP_POST_REQUEST)
-
-        if not has_pre and not has_post:
-            logger.debug("HttpAuthMiddleware: has_pre=%s has_post=%s, skipping hooks", has_pre, has_post)
-            return await call_next(request)
 
         # Use correlation ID from CorrelationIDMiddleware if available
         request_id = get_correlation_id()
@@ -190,22 +239,20 @@ class HttpAuthMiddleware(BaseHTTPMiddleware):
             request_id = generate_correlation_id()
             logger.debug("Correlation ID not found, generated fallback: %s", request_id)
 
-        request.state.request_id = request_id
+        state = scope.setdefault("state", {})
+        state["request_id"] = request_id
 
-        # Extract content type from request headers for plugin context
-        content_type = request.headers.get("content-type") if request and hasattr(request, "headers") else None
+        headers = _scope_headers_to_dict(scope)
         global_context = GlobalContext(
             request_id=request_id,
             server_id=None,
             tenant_id=None,
-            content_type=content_type,
+            content_type=headers.get("content-type"),
         )
 
-        client_host = None
-        client_port = None
-        if request.client:
-            client_host = request.client.host
-            client_port = request.client.port
+        client = scope.get("client")
+        client_host = client[0] if client else None
+        client_port = client[1] if client else None
 
         context_table = None
 
@@ -213,55 +260,62 @@ class HttpAuthMiddleware(BaseHTTPMiddleware):
         if has_pre:
             merged_headers, global_context, context_table = await run_pre_request_hooks(
                 plugin_manager=plugin_manager,
-                headers=dict(request.headers),
-                path=str(request.url.path),
-                method=request.method,
+                headers=headers,
+                path=str(scope.get("path", "")),
+                method=str(scope.get("method", "")),
                 client_host=client_host,
                 client_port=client_port,
                 global_context=global_context,
             )
 
             if context_table:
-                request.state.plugin_context_table = context_table
+                state["plugin_context_table"] = context_table
             if global_context:
-                request.state.plugin_global_context = global_context
+                state["plugin_global_context"] = global_context
 
             # Apply modified headers to the request scope
-            request.scope["headers"] = [(name.lower().encode(), value.encode()) for name, value in merged_headers.items()]
+            scope["headers"] = [(name.lower().encode(), value.encode()) for name, value in merged_headers.items()]
+            headers = dict(merged_headers)
 
-        # Process the request through the rest of the application
-        response = await call_next(request)
+        # POST-REQUEST HOOK: run on the response-start message (payload carries
+        # status + headers only), so responses stream unbuffered and modified
+        # headers are applied before anything reaches the client.
+        async def send_with_post_hook(message: Dict[str, Any]) -> None:
+            """Run the post-request hook on response start, then forward."""
+            if has_post and message.get("type") == "http.response.start":
+                try:
+                    start_headers: List[Tuple[bytes, bytes]] = message.setdefault("headers", [])
+                    response_headers = HttpHeaderPayload(root={k.decode("latin-1"): v.decode("latin-1") for k, v in start_headers})
 
-        # POST-REQUEST HOOK: Allow plugins to inspect and modify response
-        if has_post:
-            try:
-                response_headers = HttpHeaderPayload(root=dict(response.headers))
+                    post_result, _ = await plugin_manager.invoke_hook(
+                        HttpHookType.HTTP_POST_REQUEST,
+                        payload=HttpPostRequestPayload(
+                            path=str(scope.get("path", "")),
+                            method=str(scope.get("method", "")),
+                            headers=HttpHeaderPayload(root=headers),
+                            client_host=client_host,
+                            client_port=client_port,
+                            response_headers=response_headers,
+                            status_code=message.get("status", 0),
+                        ),
+                        global_context=global_context,
+                        local_contexts=context_table,
+                        violations_as_exceptions=False,
+                        extensions=build_request_extensions(),
+                    )
+                    record_plugin_metrics(current_trace_id.get(), post_result.metadata)
 
-                post_result, _ = await plugin_manager.invoke_hook(
-                    HttpHookType.HTTP_POST_REQUEST,
-                    payload=HttpPostRequestPayload(
-                        path=str(request.url.path),
-                        method=request.method,
-                        headers=HttpHeaderPayload(root=dict(request.headers)),
-                        client_host=client_host,
-                        client_port=client_port,
-                        response_headers=response_headers,
-                        status_code=response.status_code,
-                    ),
-                    global_context=global_context,
-                    local_contexts=context_table,
-                    violations_as_exceptions=False,
-                    extensions=build_request_extensions(),
-                )
-                record_plugin_metrics(current_trace_id.get(), post_result.metadata)
+                    if post_result.modified_payload:
+                        modified_response_headers = post_result.modified_payload.root
+                        for header_name, header_value in modified_response_headers.items():
+                            lname = header_name.lower().encode("latin-1")
+                            start_headers[:] = [(k, v) for k, v in start_headers if k.lower() != lname]
+                            start_headers.append((lname, header_value.encode("latin-1")))
+                        logger.debug("Post-request hook modified response headers: %s", list(modified_response_headers.keys()))
 
-                if post_result.modified_payload:
-                    modified_response_headers = post_result.modified_payload.root
-                    for header_name, header_value in modified_response_headers.items():
-                        response.headers[header_name] = header_value
-                    logger.debug("Post-request hook modified response headers: %s", list(modified_response_headers.keys()))
+                except Exception as e:
+                    logger.warning(f"HTTP_POST_REQUEST hook failed: {e}", exc_info=True)
 
-            except Exception as e:
-                logger.warning(f"HTTP_POST_REQUEST hook failed: {e}", exc_info=True)
+            await send(message)
 
-        return response
+        await self.app(scope, receive, send_with_post_hook)

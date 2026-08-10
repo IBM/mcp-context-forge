@@ -16,7 +16,7 @@ from enum import auto, Enum
 from functools import lru_cache
 import ipaddress
 import re
-from typing import List, Optional, Pattern, Tuple
+from typing import Any, Callable, List, Optional, Pattern, Tuple
 
 # Third-Party
 from fastapi import HTTPException, Request, status
@@ -1482,4 +1482,46 @@ class TokenScopingMiddleware:
 
 
 # Create middleware instance
+# Create middleware instance
 token_scoping_middleware = TokenScopingMiddleware()
+
+
+class TokenScopingASGIMiddleware:
+    """Pure-ASGI adapter around the TokenScopingMiddleware singleton.
+
+    BaseHTTPMiddleware charges every request a task group plus a buffered
+    response; the scoping logic only ever passes the request through unchanged
+    or returns a deny response, so neither is needed. The singleton keeps its
+    ``(request, call_next)`` interface for direct callers (route handlers in
+    main.py) and the existing test-suite.
+    """
+
+    def __init__(self, app: Any) -> None:
+        """Store the downstream ASGI app.
+
+        Args:
+            app: The next ASGI application in the stack.
+        """
+        self.app = app
+
+    async def __call__(self, scope: dict, receive: Callable, send: Callable) -> None:
+        """Run token scoping, then pass through or emit the deny response.
+
+        Args:
+            scope: ASGI connection scope.
+            receive: ASGI receive callable.
+            send: ASGI send callable.
+        """
+        if scope.get("type") != "http":
+            await self.app(scope, receive, send)
+            return
+
+        request = Request(scope, receive)
+
+        async def call_next(_request: Request) -> None:
+            """Invoke the downstream app; its response is already sent."""
+            await self.app(scope, receive, send)
+
+        response = await token_scoping_middleware(request, call_next)
+        if response is not None:
+            await response(scope, receive, send)
