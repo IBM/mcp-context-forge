@@ -11,11 +11,11 @@ import logging
 from typing import Any, Dict, List, Optional
 
 # Third-Party
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
 # First-Party
-from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
+from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_global_admin_permission, require_permission
 from mcpgateway.services.siem_export_service import get_siem_export_service
 
 logger = logging.getLogger(__name__)
@@ -53,8 +53,9 @@ class DestinationBulkReplaceRequest(BaseModel):
 
 
 @router.get("/health")
+@require_global_admin_permission()
 @require_permission("admin.security_audit")
-async def get_siem_health(_user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+async def get_siem_health(_user=Depends(get_current_user_with_permissions), request: Request = None) -> Dict[str, Any]:  # pylint: disable=unused-argument
     """Get SIEM exporter health and per-destination delivery stats.
 
     Returns:
@@ -65,8 +66,9 @@ async def get_siem_health(_user=Depends(get_current_user_with_permissions)) -> D
 
 
 @router.get("/destinations")
+@require_global_admin_permission()
 @require_permission("admin.security_audit")
-async def get_siem_destinations(_user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+async def get_siem_destinations(_user=Depends(get_current_user_with_permissions), request: Request = None) -> Dict[str, Any]:  # pylint: disable=unused-argument
     """List current SIEM destination configuration (sensitive fields redacted).
 
     Returns:
@@ -80,12 +82,14 @@ async def get_siem_destinations(_user=Depends(get_current_user_with_permissions)
 
 
 @router.post("/destinations")
+@require_global_admin_permission()
 @require_permission("admin.security_audit")
-async def add_siem_destination(payload: DestinationUpsertRequest, _user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+async def add_siem_destination(payload: DestinationUpsertRequest, _user=Depends(get_current_user_with_permissions), request: Request = None) -> Dict[str, Any]:  # pylint: disable=unused-argument
     """Add one SIEM destination at runtime (no restart required).
 
     Args:
         payload: Destination configuration payload.
+        request: Incoming request, used to resolve Layer-1 token scope.
 
     Returns:
         Dict[str, Any]: Operation result with sanitized destination.
@@ -110,12 +114,14 @@ async def add_siem_destination(payload: DestinationUpsertRequest, _user=Depends(
 
 
 @router.put("/destinations")
+@require_global_admin_permission()
 @require_permission("admin.security_audit")
-async def replace_siem_destinations(payload: DestinationBulkReplaceRequest, _user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+async def replace_siem_destinations(payload: DestinationBulkReplaceRequest, _user=Depends(get_current_user_with_permissions), request: Request = None) -> Dict[str, Any]:  # pylint: disable=unused-argument
     """Replace full SIEM destination set at runtime.
 
     Args:
         payload: Replacement destination list payload.
+        request: Incoming request, used to resolve Layer-1 token scope.
 
     Returns:
         Dict[str, Any]: Operation result with sanitized destinations.
@@ -140,12 +146,14 @@ async def replace_siem_destinations(payload: DestinationBulkReplaceRequest, _use
 
 
 @router.post("/test/{destination_name}")
+@require_global_admin_permission()
 @require_permission("admin.security_audit")
-async def test_siem_destination(destination_name: str, _user=Depends(get_current_user_with_permissions)) -> Dict[str, Any]:
+async def test_siem_destination(destination_name: str, _user=Depends(get_current_user_with_permissions), request: Request = None) -> Dict[str, Any]:  # pylint: disable=unused-argument
     """Send a test event to one destination.
 
     Args:
         destination_name: Destination identifier to test.
+        request: Incoming request, used to resolve Layer-1 token scope.
 
     Returns:
         Dict[str, Any]: Delivery test result.
