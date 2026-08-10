@@ -910,6 +910,11 @@ class SessionAffinity:
                 try:
                     # First-Party
                     from mcpgateway.auth_context import FORWARD_SIG_FIELD, sign_redis_forward_envelope  # pylint: disable=import-outside-toplevel
+                    from mcpgateway.observability import inject_trace_context_headers  # pylint: disable=import-outside-toplevel
+
+                    # Propagate the active W3C trace context across the Redis hop so the
+                    # owner-side dispatch continues this trace instead of rooting a new one.
+                    request_data = {**request_data, "headers": inject_trace_context_headers(request_data.get("headers") or {})}
 
                     # Prepare request with response channel and the edge auth context.
                     forward_data = {
@@ -972,7 +977,6 @@ class SessionAffinity:
             # Bounded concurrency for forwarded-request dispatch (created here,
             # inside the running loop, rather than __init__).
             self._forward_semaphore = asyncio.Semaphore(settings.mcpgateway_affinity_forward_concurrency)
-            http_channel = f"mcpgw:pool_http:{WORKER_ID}"
             async with redis.pubsub() as pubsub:
                 await pubsub.subscribe(rpc_channel, http_channel)
                 logger.info("RPC/HTTP listener started for worker %s on channels: %s, %s", WORKER_ID, rpc_channel, http_channel)
@@ -1318,22 +1322,19 @@ class SessionAffinity:
             # First-Party - lazy imports avoid a circular dependency with main/transport.
             # The forwarded envelope was already verified above, before any field was decoded.
             # First-Party
-            from mcpgateway.auth_context import _expected_internal_mcp_runtime_auth_header  # pylint: disable=import-outside-toplevel,protected-access
             from mcpgateway.utils.passthrough_headers import safe_extract_and_filter_for_loopback  # pylint: disable=import-outside-toplevel
             from mcpgateway.utils.verify_credentials import _resolve_auth_header_name  # pylint: disable=import-outside-toplevel,protected-access
 
-            # Trust headers for the internal /_internal/mcp/rpc endpoint:
-            # - x-contextforge-mcp-runtime: "affinity" caller marker
-            # - x-contextforge-mcp-runtime-auth: shared-secret HMAC
-            # - x-contextforge-auth-context: the encoded edge auth context, so the
-            #   endpoint reconstructs the same user without re-authenticating.
+            # Trust headers (runtime marker, shared-secret HMAC, auth context) are
+            # attached by post_rpc_in_process. Carry the W3C trace context from the
+            # envelope explicitly: the passthrough allowlist rightly strips it.
             rpc_headers = {
                 "content-type": "application/json",
                 "x-mcp-session-id": mcp_session_id or "",
-                "x-contextforge-mcp-runtime": "affinity",
-                "x-contextforge-mcp-runtime-auth": _expected_internal_mcp_runtime_auth_header(),
-                "x-contextforge-auth-context": auth_context_header,
             }
+            for _trace_header in ("traceparent", "tracestate"):
+                if headers.get(_trace_header):
+                    rpc_headers[_trace_header] = headers[_trace_header]
             # Preserve the bearer under the configured auth header (AUTH_HEADER_NAME),
             # not a hardcoded "authorization": the CSRF bearer short-circuit keys on
             # the configured header, so a custom header would otherwise be dropped.
