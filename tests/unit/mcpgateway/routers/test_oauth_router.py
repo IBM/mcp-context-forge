@@ -1344,6 +1344,75 @@ class TestOAuthRouter:
 
         assert exc_info.value.status_code == 409
 
+    @pytest.mark.asyncio
+    async def test_fetch_tools_token_exchange_gateway_not_found_maps_to_404(self, mock_db, mock_current_user):
+        """GatewayNotFoundError raised mid-refresh (gateway deleted concurrently) must map to HTTP 404.
+
+        Distinct from the earlier `if not gateway` check in the handler: that guards the
+        gateway row not existing at request start, this guards it disappearing during the
+        manual-refresh call itself.
+        """
+        # First-Party
+        from mcpgateway.services.gateway_service import GatewayNotFoundError
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(token_teams=["team-1"])
+        request.headers = {}
+        gateway = Mock(spec=Gateway)
+        gateway.visibility = "public"
+        gateway.team_id = None
+        gateway.owner_email = None
+        gateway.oauth_config = {"grant_type": "token-exchange", "token_url": "https://as.example.com/token", "target_audience": "aud"}
+        mock_db.execute.return_value.scalar_one_or_none.return_value = gateway
+
+        with patch("mcpgateway.services.gateway_service.GatewayService") as mock_service_class:
+            mock_service = Mock()
+            mock_service.refresh_gateway_manually = AsyncMock(side_effect=GatewayNotFoundError("Gateway with ID 'gw-te' not found"))
+            mock_service_class.return_value = mock_service
+
+            # First-Party
+            from mcpgateway.routers.oauth_router import fetch_tools_after_oauth
+
+            with patch("mcpgateway.routers.oauth_router.token_scoping_middleware._check_resource_team_ownership", return_value=ResourceOwnershipResult.ALLOWED):
+                with pytest.raises(HTTPException) as exc_info:
+                    await fetch_tools_after_oauth(gateway_id="gw-te", request=request, current_user={"email": "admin@example.com", "is_admin": True}, db=mock_db)
+
+        assert exc_info.value.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_fetch_tools_token_exchange_connection_error_maps_to_400(self, mock_db, mock_current_user):
+        """GatewayConnectionError must be re-raised past the inner handler and mapped to HTTP 400
+        by the endpoint's outer `except GatewayConnectionError` clause (not swallowed as 409 by
+        the inner bare `except GatewayError` clause).
+        """
+        # First-Party
+        from mcpgateway.services.gateway_service import GatewayConnectionError
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(token_teams=["team-1"])
+        request.headers = {}
+        gateway = Mock(spec=Gateway)
+        gateway.visibility = "public"
+        gateway.team_id = None
+        gateway.owner_email = None
+        gateway.oauth_config = {"grant_type": "token-exchange", "token_url": "https://as.example.com/token", "target_audience": "aud"}
+        mock_db.execute.return_value.scalar_one_or_none.return_value = gateway
+
+        with patch("mcpgateway.services.gateway_service.GatewayService") as mock_service_class:
+            mock_service = Mock()
+            mock_service.refresh_gateway_manually = AsyncMock(side_effect=GatewayConnectionError("some connection failure"))
+            mock_service_class.return_value = mock_service
+
+            # First-Party
+            from mcpgateway.routers.oauth_router import fetch_tools_after_oauth
+
+            with patch("mcpgateway.routers.oauth_router.token_scoping_middleware._check_resource_team_ownership", return_value=ResourceOwnershipResult.ALLOWED):
+                with pytest.raises(HTTPException) as exc_info:
+                    await fetch_tools_after_oauth(gateway_id="gw-te", request=request, current_user={"email": "admin@example.com", "is_admin": True}, db=mock_db)
+
+        assert exc_info.value.status_code == 400
+        assert exc_info.value.detail == "Failed to fetch tools"
+
 
 class TestOAuthAccessHelpers:
     def test_resolve_token_teams_for_scope_check_invalid_state_value_fails_closed(self):
