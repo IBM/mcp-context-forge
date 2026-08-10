@@ -7,6 +7,7 @@ Extract the inbound user bearer to use as RFC 8693 subject_token.
 """
 
 # Standard
+from http.cookies import CookieError, SimpleCookie
 from typing import Dict, Optional
 
 
@@ -50,3 +51,44 @@ def looks_like_jwt(token: Optional[str]) -> bool:
         return False
     parts = token.split(".")
     return len(parts) == 3 and all(parts)
+
+
+def extract_subject_jwt(request_headers: Optional[Dict[str, str]]) -> Optional[str]:
+    """Resolve the RFC 8693 subject token from a bearer header or the ``jwt_token`` cookie.
+
+    Resolution order: ``Authorization: Bearer`` header first, then the
+    ``jwt_token`` cookie parsed from the raw ``Cookie`` header. Admin UI
+    sessions authenticate with an HttpOnly ``jwt_token`` cookie and cannot
+    attach a bearer header, so the cookie path is the primary UI route.
+    Each candidate must structurally be a compact-serialization JWT (H2:
+    an opaque CF session/API token is never forwarded to an external AS).
+
+    Args:
+        request_headers: Inbound request headers, or None.
+
+    Returns:
+        The JWT string to use as ``subject_token``, or None if no
+        structurally valid JWT is present.
+    """
+    token = extract_inbound_bearer(request_headers)
+    if token and looks_like_jwt(token):
+        return token
+    if not request_headers:
+        return None
+    raw_cookie = None
+    for k, v in request_headers.items():
+        if k.lower() == "cookie" and isinstance(v, str):
+            raw_cookie = v
+            break
+    if not raw_cookie:
+        return None
+    jar = SimpleCookie()
+    try:
+        jar.load(raw_cookie)
+    except (CookieError, AttributeError, TypeError):
+        return None
+    morsel = jar.get("jwt_token")
+    cookie_token = morsel.value if morsel is not None else None
+    if cookie_token and looks_like_jwt(cookie_token):
+        return cookie_token
+    return None
