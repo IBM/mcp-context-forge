@@ -1,6 +1,6 @@
 matplotlib>=3.11.1
-mcp>=1.28.1,<2
-numpy>=2.5.1
+mcp>=2.0.0
+numpy>=2.5.2
 openpyxl>=3.1.5
 pandas>=3.0.5
 plotly>=6.9.0
