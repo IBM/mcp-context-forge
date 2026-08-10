@@ -491,9 +491,9 @@ Admin-only routes that manage records with no team association are classified in
 
 The definitive, up-to-date manifest of all admin routes and their classifications is maintained in `tests/unit/mcpgateway/test_global_record_scope.py`. This test file contains five manifests (`GLOBAL_ONLY`, `GLOBAL_ONLY_DEFERRED`, `FILTERED_READ`, `TEAM_SCOPABLE`, `EXEMPT`) that drift-guard every admin endpoint — a new unclassified route causes CI to fail with a pointer to this documentation.
 
-| Class | Migrated (A.1) | Deferred (A.2/A.4) | Exempt (A.3) | Total |
+| Class | Migrated | Deferred (retired) | Exempt (A.3) | Total |
 |-------|---|---|---|---|
-| **global-only** | 13 routes (+ 26 root call sites) | 64 routes | — | 103 |
+| **global-only** | 72 routes (+ 26 root call sites) | 0 — retired by issue #6134, see [Global-record routes](#global-record-routes) | — | 72 |
 | **filtered-read** | 2 routes | — | — | 2 |
 | **team-scopable** | 3 routes | — | — | 3 |
 | **exempt** | — | — | 7 surfaces | 7 |
