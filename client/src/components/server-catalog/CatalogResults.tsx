@@ -65,16 +65,16 @@ function CatalogCard({
             <div className="flex items-start justify-between gap-3">
               <CatalogLogo server={server} />
               {server.is_registered && (
-                <StatusDot tone="success" className="text-xs text-muted-foreground">
+                <StatusDot tone="success" className="text-sm text-muted-foreground">
                   {intl.formatMessage({ id: "mcpServer.catalog.connected" })}
                 </StatusDot>
               )}
             </div>
 
-            <h2 id={headingId} className="mt-4 truncate text-sm font-semibold text-foreground">
+            <h2 id={headingId} className="mt-4 truncate text-sm font-medium text-foreground">
               {server.name}
             </h2>
-            <p className="mt-3 line-clamp-2 min-h-8 text-[13px] leading-4 text-muted-foreground">
+            <p className="mt-3 line-clamp-2 min-h-10 text-sm text-muted-foreground">
               {server.description}
             </p>
 
