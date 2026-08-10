@@ -17,19 +17,6 @@ required-version = ">=0.6.9"
 exclude-newer = "10 days"
 
 [tool.uv.exclude-newer-package]
-cpex = "2026-08-09T23:59:59Z"
-cpex-url-reputation = "2026-08-09T23:59:59Z"
-cpex-rate-limiter = "2026-08-09T23:59:59Z"
-cpex-encoded-exfil-detection = "2026-08-09T23:59:59Z"
-cpex-pii-filter = "2026-08-09T23:59:59Z"
-cpex-retry-with-backoff = "2026-08-09T23:59:59Z"
-cpex-secrets-detection = "2026-08-09T23:59:59Z"
-cpex-sql-sanitizer = "2026-08-09T23:59:59Z"
-# additional packages below this: remove before next upgrade cycle starts
-cryptography = "2026-08-09T23:59:59Z"
-greenlet = "2026-07-22T13:00:00Z"
-h2 = "2026-08-09T23:59:59Z"
-
 
 # ----------------------------------------------------------------
 # 📦 Core project metadata (PEP 621)
@@ -124,6 +111,7 @@ dev = [
     "a2a-sdk[http-server]",
     "aiohttp>=3.14.3",
     "argparse-manpage>=4.7",
+    "authlib>=1.7.2", # Transitive pin via fastmcp (dev-only test client); 1.7.0 ships security fixes
     "autoflake>=2.3.3",
     "bandit>=1.9.4",
     "bump2version>=1.0.1",
