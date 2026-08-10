@@ -309,5 +309,3 @@ class TestEmailExtractionConsistency:
         # When neither present, return unknown
         token_neither = {"is_admin": False}
         assert get_user_email(token_neither) == "unknown"
-
-
