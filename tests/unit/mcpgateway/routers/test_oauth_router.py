@@ -2384,6 +2384,33 @@ class TestOAuthRouterAdditionalCoverage:
         mock_db.execute.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_registered_client_routes_check_global_scope_only(self, mock_db, mock_admin_request, mock_permission_service):
+        """RBAC permission check on all three routes is global-only: it never resolves a
+        team_id (not from the ``gateway_id`` resource, not from user context) and never
+        aggregates across the caller's team-scoped roles. Otherwise a role granted on a
+        single team could authorize these globally-scoped operations."""
+        # First-Party
+        from mcpgateway.routers.oauth_router import delete_registered_client, get_registered_client_for_gateway, list_registered_oauth_clients
+
+        mock_db.execute.return_value.scalars.return_value.all.return_value = []
+        await list_registered_oauth_clients(mock_admin_request, current_user={"email": "admin", "is_admin": True}, db=mock_db)
+        assert mock_permission_service.check_permission.await_args.kwargs["team_id"] is None
+        assert mock_permission_service.check_permission.await_args.kwargs["check_any_team"] is False
+
+        client = Mock()
+        client.id = "c1"
+        client.issuer = "https://issuer"
+        client.gateway_id = "g1"
+        mock_db.execute.return_value.scalar_one_or_none.return_value = client
+        await get_registered_client_for_gateway("gateway123", mock_admin_request, current_user={"email": "admin", "is_admin": True, "team_id": "team-1"}, db=mock_db)
+        assert mock_permission_service.check_permission.await_args.kwargs["team_id"] is None
+        assert mock_permission_service.check_permission.await_args.kwargs["check_any_team"] is False
+
+        await delete_registered_client("c1", mock_admin_request, current_user={"email": "admin", "is_admin": True, "team_id": "team-1"}, db=mock_db)
+        assert mock_permission_service.check_permission.await_args.kwargs["team_id"] is None
+        assert mock_permission_service.check_permission.await_args.kwargs["check_any_team"] is False
+
+    @pytest.mark.asyncio
     async def test_oauth_callback_gateway_id_with_quotes_escaped(self, mock_db, mock_request):
         """Verify gateway_id containing quotes is escaped with quote=True in the fetch-tools URL (XSS fix)."""
         import base64

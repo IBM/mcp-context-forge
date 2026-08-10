@@ -1143,7 +1143,7 @@ async def fetch_tools_after_oauth(
 
 
 @oauth_router.get("/registered-clients")
-@require_permission(Permissions.ADMIN_OAUTH_CLIENTS_READ, allow_admin_bypass=False)
+@require_permission(Permissions.ADMIN_OAUTH_CLIENTS_READ, allow_admin_bypass=False, global_only=True)
 async def list_registered_oauth_clients(request: Request, current_user: EmailUserResponse = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> Dict[str, Any]:  # noqa: ARG001
     """List all registered OAuth clients (created via DCR).
 
@@ -1197,7 +1197,7 @@ async def list_registered_oauth_clients(request: Request, current_user: EmailUse
 
 
 @oauth_router.get("/registered-clients/{gateway_id}")
-@require_permission(Permissions.ADMIN_OAUTH_CLIENTS_READ, allow_admin_bypass=False)
+@require_permission(Permissions.ADMIN_OAUTH_CLIENTS_READ, allow_admin_bypass=False, global_only=True)
 async def get_registered_client_for_gateway(
     gateway_id: str,
     request: Request,
@@ -1253,7 +1253,7 @@ async def get_registered_client_for_gateway(
 
 
 @oauth_router.delete("/registered-clients/{client_id}")
-@require_permission(Permissions.ADMIN_OAUTH_CLIENTS_DELETE, allow_admin_bypass=False)
+@require_permission(Permissions.ADMIN_OAUTH_CLIENTS_DELETE, allow_admin_bypass=False, global_only=True)
 async def delete_registered_client(client_id: str, request: Request, current_user: EmailUserResponse = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> Dict[str, Any]:  # noqa: ARG001
     """Delete a registered OAuth client.
 
