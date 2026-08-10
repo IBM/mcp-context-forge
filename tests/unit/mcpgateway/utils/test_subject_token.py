@@ -4,7 +4,7 @@
 # First-Party
 from mcpgateway.utils.subject_token import extract_subject_jwt
 
-JWT = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhIn0.sig"  # three non-empty segments
+JWT = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJhIn0.sig"  # pragma: allowlist secret
 
 
 def test_bearer_header_wins():

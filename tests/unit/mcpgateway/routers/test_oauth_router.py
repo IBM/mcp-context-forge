@@ -1256,7 +1256,7 @@ class TestOAuthRouter:
         """token-exchange gateways route through refresh_gateway_manually, not fetch_tools_after_oauth."""
         request = Mock(spec=Request)
         request.state = SimpleNamespace(token_teams=["team-1"])
-        request.headers = {"cookie": "jwt_token=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1In0.c2ln"}
+        request.headers = {"cookie": "jwt_token=eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ1In0.c2ln"}  # pragma: allowlist secret
         gateway = Mock(spec=Gateway)
         gateway.visibility = "public"
         gateway.team_id = None
