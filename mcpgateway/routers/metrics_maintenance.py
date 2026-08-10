@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 
 # First-Party
 from mcpgateway.config import settings
+from mcpgateway.middleware.rbac import require_global_admin_scope_dep
 from mcpgateway.utils.verify_credentials import require_admin_auth
 
 logger = logging.getLogger(__name__)
@@ -24,7 +25,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(
     prefix="/api/metrics",
     tags=["Metrics Maintenance"],
-    dependencies=[Depends(require_admin_auth)],
+    dependencies=[Depends(require_admin_auth), Depends(require_global_admin_scope_dep)],
 )
 
 
