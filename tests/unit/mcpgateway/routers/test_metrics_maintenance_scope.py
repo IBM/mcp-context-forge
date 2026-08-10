@@ -9,9 +9,6 @@ This router guards at router level, so the guard is a dependency rather than
 a decorator and carries no ``__mcpgateway_scope_class__`` marker.
 """
 
-# Third-Party
-import pytest
-
 # First-Party
 from mcpgateway.routers.metrics_maintenance import router
 
