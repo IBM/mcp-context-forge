@@ -361,3 +361,6 @@ tools_rust/mcp_runtime/perf.data*
 
 # Git worktrees
 .worktrees/
+
+# Local-only superpowers spec/plan docs (kept on disk, not tracked)
+docs/superpowers/
