@@ -5,7 +5,6 @@
   "mcpServer.neverUsed": "Never used",
   "mcpServer.catalog.title": "Server catalog",
   "mcpServer.catalog.all": "All",
-  "mcpServer.catalog.installed": "Installed",
   "mcpServer.catalog.searchPlaceholder": "Search MCP servers...",
   "mcpServer.catalog.searchLabel": "Search MCP servers",
   "mcpServer.catalog.filters": "Filters",
@@ -29,6 +28,7 @@
   "mcpServer.catalog.resultsLabel": "Catalog servers",
   "mcpServer.catalog.empty": "No open MCP servers are available.",
   "mcpServer.catalog.noResults": "No MCP servers match the active search and filters.",
+  "mcpServer.catalog.noneConnected": "No MCP server catalog options are connected.",
   "mcpServer.catalog.disabled": "Server catalog is disabled for this gateway.",
   "mcpServer.catalog.error": "Unable to load server catalog. Try again."
 }

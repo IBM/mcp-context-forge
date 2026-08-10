@@ -143,6 +143,14 @@ export function ServerCatalog() {
   const hasOpenServers = Boolean(
     data?.servers.some((server) => server.auth_type === OPEN_AUTH_TYPE),
   );
+  const hasConnectedServers = Boolean(
+    data?.servers.some((server) => server.auth_type === OPEN_AUTH_TYPE && server.is_registered),
+  );
+  const emptyStateMessageId = !hasOpenServers
+    ? "mcpServer.catalog.empty"
+    : filters.installedOnly && !hasConnectedServers
+      ? "mcpServer.catalog.noneConnected"
+      : "mcpServer.catalog.noResults";
   const activeFilterCount =
     Number(Boolean(filters.category)) +
     Number(Boolean(filters.provider)) +
@@ -213,7 +221,11 @@ export function ServerCatalog() {
         onClear={clearFilters}
       />
 
-      <CatalogResults servers={servers} hasOpenServers={hasOpenServers} onView={handleView} />
+      <CatalogResults
+        servers={servers}
+        emptyStateMessageId={emptyStateMessageId}
+        onView={handleView}
+      />
 
       <CatalogServerDetailsDialog server={selectedServer} onOpenChange={handleDetailsOpenChange} />
     </CatalogPageLayout>

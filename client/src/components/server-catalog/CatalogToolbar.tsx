@@ -1,12 +1,12 @@
 import { useId } from "react";
-import { Filter, Search } from "lucide-react";
+import { Filter } from "lucide-react";
 import { useIntl } from "react-intl";
 
 import { Button } from "@/components/ui/button";
 import { CardTag } from "@/components/ui/card-tag";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { ListSearch } from "@/components/ui/list-search";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import {
   Select,
@@ -70,7 +70,7 @@ function CatalogViewToggle({
         className="h-8 flex-1 rounded-md font-medium aria-pressed:bg-background aria-pressed:text-foreground aria-pressed:shadow-xs"
         onClick={() => onChange(true)}
       >
-        {intl.formatMessage({ id: "mcpServer.catalog.installed" })}
+        {intl.formatMessage({ id: "mcpServer.catalog.connected" })}
       </Button>
     </div>
   );
@@ -102,13 +102,14 @@ function CatalogFiltersPopover({
         <Button
           type="button"
           variant="ghost"
-          className="h-10 justify-start sm:justify-center"
+          size="sm"
+          className="w-fit gap-2 self-center text-xs text-secondary-foreground"
           aria-label={intl.formatMessage(
             { id: "mcpServer.catalog.filtersActive" },
             { count: activeFilterCount },
           )}
         >
-          <Filter className="size-4" aria-hidden="true" />
+          <Filter className="size-3.5" aria-hidden="true" />
           {intl.formatMessage({ id: "mcpServer.catalog.filters" })}
           {activeFilterCount > 0 && (
             <CardTag variant="neutral" className="rounded-full" aria-hidden="true">
@@ -245,21 +246,14 @@ export function CatalogToolbar({
     <div className="flex flex-col gap-4 py-6 lg:flex-row lg:items-center lg:justify-between">
       <CatalogViewToggle installedOnly={installedOnly} onChange={onInstalledChange} />
 
-      <div className="flex w-full flex-col gap-3 sm:flex-row lg:w-auto">
-        <div className="relative w-full sm:w-[432px]">
-          <Search
-            className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
-            aria-hidden="true"
-          />
-          <Input
-            type="search"
-            value={search}
-            onChange={(event) => onSearchChange(event.target.value)}
-            placeholder={intl.formatMessage({ id: "mcpServer.catalog.searchPlaceholder" })}
-            aria-label={intl.formatMessage({ id: "mcpServer.catalog.searchLabel" })}
-            className="h-10 pl-9"
-          />
-        </div>
+      <div className="flex w-full flex-col gap-2 sm:flex-row lg:w-auto">
+        <ListSearch
+          value={search}
+          onChange={onSearchChange}
+          ariaLabel={intl.formatMessage({ id: "mcpServer.catalog.searchLabel" })}
+          placeholder={intl.formatMessage({ id: "mcpServer.catalog.searchPlaceholder" })}
+          expandedWidthClassName="w-full sm:w-[432px]"
+        />
 
         <CatalogFiltersPopover {...filterProps} />
       </div>

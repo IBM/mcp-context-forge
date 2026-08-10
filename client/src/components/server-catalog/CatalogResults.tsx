@@ -174,11 +174,11 @@ export function CatalogServerDetailsDialog({
 
 export function CatalogResults({
   servers,
-  hasOpenServers,
+  emptyStateMessageId,
   onView,
 }: {
   servers: CatalogServer[];
-  hasOpenServers: boolean;
+  emptyStateMessageId: string;
   onView: (server: CatalogServer, trigger: HTMLButtonElement) => void;
 }) {
   const intl = useIntl();
@@ -203,9 +203,7 @@ export function CatalogResults({
           ))}
         </ul>
       ) : (
-        <EmptyStatePlaceholder
-          messageId={hasOpenServers ? "mcpServer.catalog.noResults" : "mcpServer.catalog.empty"}
-        />
+        <EmptyStatePlaceholder messageId={emptyStateMessageId} />
       )}
     </>
   );
