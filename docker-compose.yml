@@ -491,6 +491,8 @@ services:
       # Logging configuration
       # NOTE: LOG_LEVEL=INFO/DEBUG is required for SQLALCHEMY_ECHO output.
       - LOG_LEVEL=${LOG_LEVEL:-ERROR}  # Required for SQLALCHEMY_ECHO output during load testing
+      # Boundary request-logging middleware off in this stack (its INFO logs are suppressed at ERROR anyway); set true to re-enable
+      - LOG_BOUNDARY_ENABLED=${LOG_BOUNDARY_ENABLED:-false}
       - DISABLE_ACCESS_LOG=true  # Disable uvicorn access logs for performance (massive I/O overhead)
       # Template auto-reload disabled for performance (prevents re-parsing templates on each request)
       - TEMPLATES_AUTO_RELOAD=false

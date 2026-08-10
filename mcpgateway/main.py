@@ -2980,20 +2980,24 @@ else:
 # Middleware will get the global plugin manager at request time if factory exists
 app.add_middleware(HttpAuthMiddleware)
 
-# Add request logging middleware FIRST (always enabled for gateway boundary logging)
+# Request logging middleware: registered FIRST when LOG_BOUNDARY_ENABLED=true (default).
 # IMPORTANT: Must be registered BEFORE CorrelationIDMiddleware so it executes AFTER correlation ID is set
-# Gateway boundary logging (request_started/completed) runs regardless of log_requests setting
+# Gateway boundary logging (request_started/completed) runs when the middleware is registered.
 # Detailed payload logging only runs if log_detailed_requests=True
-app.add_middleware(
-    RequestLoggingMiddleware,
-    enable_gateway_logging=True,
-    log_detailed_requests=settings.log_requests,
-    log_level=settings.log_level,
-    max_body_size=settings.log_detailed_max_body_size,
-    log_resolve_user_identity=settings.log_resolve_user_identity,
-    log_detailed_skip_endpoints=settings.log_detailed_skip_endpoints,
-    log_detailed_sample_rate=settings.log_detailed_sample_rate,
-)
+# LOG_BOUNDARY_ENABLED=false removes the middleware from the stack entirely (perf stacks).
+if settings.log_boundary_enabled:
+    app.add_middleware(
+        RequestLoggingMiddleware,
+        enable_gateway_logging=True,
+        log_detailed_requests=settings.log_requests,
+        log_level=settings.log_level,
+        max_body_size=settings.log_detailed_max_body_size,
+        log_resolve_user_identity=settings.log_resolve_user_identity,
+        log_detailed_skip_endpoints=settings.log_detailed_skip_endpoints,
+        log_detailed_sample_rate=settings.log_detailed_sample_rate,
+    )
+else:
+    logger.info("Request logging middleware disabled (LOG_BOUNDARY_ENABLED=false)")
 
 # Add custom DocsAuthMiddleware
 app.add_middleware(DocsAuthMiddleware)
