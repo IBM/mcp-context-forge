@@ -15,12 +15,14 @@ from fastapi.testclient import TestClient
 import pytest
 
 # First-Party
+from mcpgateway.middleware.rbac import require_global_admin_scope_dep
 from mcpgateway.utils.verify_credentials import require_admin_auth
 
 
 def test_metrics_config_includes_delete_raw_after_rollup_hours(app):
     """Test config endpoint includes delete_raw_after_rollup_hours."""
     app.dependency_overrides[require_admin_auth] = lambda: "test_admin"
+    app.dependency_overrides[require_global_admin_scope_dep] = lambda: None
     client = TestClient(app)
 
     response = client.get("/api/metrics/config")
@@ -31,11 +33,13 @@ def test_metrics_config_includes_delete_raw_after_rollup_hours(app):
     assert "delete_raw_after_rollup_hours" in payload["rollup"]
 
     app.dependency_overrides.pop(require_admin_auth, None)
+    app.dependency_overrides.pop(require_global_admin_scope_dep, None)
 
 
 def test_metrics_config_includes_all_settings(app):
     """Test config endpoint returns all expected settings."""
     app.dependency_overrides[require_admin_auth] = lambda: "test_admin"
+    app.dependency_overrides[require_global_admin_scope_dep] = lambda: None
     client = TestClient(app)
 
     response = client.get("/api/metrics/config")
@@ -57,11 +61,13 @@ def test_metrics_config_includes_all_settings(app):
     assert "delete_raw_after_rollup" in payload["rollup"]
 
     app.dependency_overrides.pop(require_admin_auth, None)
+    app.dependency_overrides.pop(require_global_admin_scope_dep, None)
 
 
 def test_metrics_cleanup_disabled(app):
     """Test cleanup endpoint returns 400 when disabled."""
     app.dependency_overrides[require_admin_auth] = lambda: "test_admin"
+    app.dependency_overrides[require_global_admin_scope_dep] = lambda: None
     client = TestClient(app)
 
     with patch("mcpgateway.config.settings.csrf_enabled", False):
@@ -74,11 +80,13 @@ def test_metrics_cleanup_disabled(app):
             assert "disabled" in response.json()["detail"].lower()
 
     app.dependency_overrides.pop(require_admin_auth, None)
+    app.dependency_overrides.pop(require_global_admin_scope_dep, None)
 
 
 def test_metrics_cleanup_all_tables(app):
     """Test cleanup endpoint cleans all tables when enabled."""
     app.dependency_overrides[require_admin_auth] = lambda: "test_admin"
+    app.dependency_overrides[require_global_admin_scope_dep] = lambda: None
     client = TestClient(app)
 
     with patch("mcpgateway.config.settings.csrf_enabled", False):
@@ -114,11 +122,13 @@ def test_metrics_cleanup_all_tables(app):
                 assert "tool_metric" in data["tables"]
 
     app.dependency_overrides.pop(require_admin_auth, None)
+    app.dependency_overrides.pop(require_global_admin_scope_dep, None)
 
 
 def test_metrics_cleanup_specific_table(app):
     """Test cleanup endpoint for specific table."""
     app.dependency_overrides[require_admin_auth] = lambda: "test_admin"
+    app.dependency_overrides[require_global_admin_scope_dep] = lambda: None
     client = TestClient(app)
 
     with patch("mcpgateway.config.settings.csrf_enabled", False):
@@ -146,11 +156,13 @@ def test_metrics_cleanup_specific_table(app):
                 assert "prompt_metric" in data["tables"]
 
     app.dependency_overrides.pop(require_admin_auth, None)
+    app.dependency_overrides.pop(require_global_admin_scope_dep, None)
 
 
 def test_metrics_cleanup_invalid_table_type(app):
     """Test cleanup endpoint returns 400 for invalid table type."""
     app.dependency_overrides[require_admin_auth] = lambda: "test_admin"
+    app.dependency_overrides[require_global_admin_scope_dep] = lambda: None
     client = TestClient(app)
 
     with patch("mcpgateway.config.settings.csrf_enabled", False):
@@ -168,11 +180,13 @@ def test_metrics_cleanup_invalid_table_type(app):
                 assert "Invalid table type" in response.json()["detail"]
 
     app.dependency_overrides.pop(require_admin_auth, None)
+    app.dependency_overrides.pop(require_global_admin_scope_dep, None)
 
 
 def test_metrics_rollup_disabled(app):
     """Test rollup endpoint returns 400 when disabled."""
     app.dependency_overrides[require_admin_auth] = lambda: "test_admin"
+    app.dependency_overrides[require_global_admin_scope_dep] = lambda: None
     client = TestClient(app)
 
     with patch("mcpgateway.config.settings.csrf_enabled", False):
@@ -185,11 +199,13 @@ def test_metrics_rollup_disabled(app):
             assert "disabled" in response.json()["detail"].lower()
 
     app.dependency_overrides.pop(require_admin_auth, None)
+    app.dependency_overrides.pop(require_global_admin_scope_dep, None)
 
 
 def test_metrics_rollup_success(app):
     """Test rollup endpoint success."""
     app.dependency_overrides[require_admin_auth] = lambda: "test_admin"
+    app.dependency_overrides[require_global_admin_scope_dep] = lambda: None
     client = TestClient(app)
 
     with patch("mcpgateway.config.settings.csrf_enabled", False):
@@ -230,11 +246,13 @@ def test_metrics_rollup_success(app):
                 assert "tool_metric" in data["tables"]
 
     app.dependency_overrides.pop(require_admin_auth, None)
+    app.dependency_overrides.pop(require_global_admin_scope_dep, None)
 
 
 def test_metrics_stats_disabled(app):
     """Test stats endpoint when services are disabled."""
     app.dependency_overrides[require_admin_auth] = lambda: "test_admin"
+    app.dependency_overrides[require_global_admin_scope_dep] = lambda: None
     client = TestClient(app)
 
     with patch("mcpgateway.routers.metrics_maintenance.settings") as mock_settings:
@@ -250,11 +268,13 @@ def test_metrics_stats_disabled(app):
         assert data["table_sizes"] == {}
 
     app.dependency_overrides.pop(require_admin_auth, None)
+    app.dependency_overrides.pop(require_global_admin_scope_dep, None)
 
 
 def test_metrics_stats_enabled(app):
     """Test stats endpoint when services are enabled."""
     app.dependency_overrides[require_admin_auth] = lambda: "test_admin"
+    app.dependency_overrides[require_global_admin_scope_dep] = lambda: None
     client = TestClient(app)
 
     with patch("mcpgateway.routers.metrics_maintenance.settings") as mock_settings:
@@ -283,3 +303,4 @@ def test_metrics_stats_enabled(app):
             assert data["table_sizes"]["tool_metric"] == 100
 
     app.dependency_overrides.pop(require_admin_auth, None)
+    app.dependency_overrides.pop(require_global_admin_scope_dep, None)
