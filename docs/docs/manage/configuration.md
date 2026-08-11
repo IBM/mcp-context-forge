@@ -794,11 +794,10 @@ ContextForge includes **Server-Side Request Forgery (SSRF) protection** to preve
 
 #### Helm/Kubernetes registration examples
 
-When deployed with the Helm chart, the testing registration jobs create gateways pointing to
-in-cluster Service DNS names:
+When deployed with the Helm chart, the Fast Time testing registration job creates
+a gateway pointing to the in-cluster Service DNS name:
 
 - Fast-time: `http://<release>-mcp-fast-time-server:80/http`
-- Fast-test: `http://<release>-fast-test-server:8880/mcp`
 
 Under strict defaults (`SSRF_ALLOW_PRIVATE_NETWORKS=false`, `SSRF_ALLOWED_NETWORKS=[]`), these private
 destinations are rejected with `422` during `/gateways` creation.
