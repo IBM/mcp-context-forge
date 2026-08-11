@@ -7323,7 +7323,7 @@ class TokenScopeRequest(BaseModel):
     def validate_permissions(cls, v: List[str]) -> List[str]:
         """Validate permission scope format.
 
-        Permissions must be in format 'resource.action' or wildcard '*'.
+        Permissions must be in format 'resource.action' (or the legacy colon form 'resource:action') or wildcard '*'.
 
         Args:
             v: List of permission strings to validate.
@@ -7339,12 +7339,16 @@ class TokenScopeRequest(BaseModel):
             ['tools.read', 'resources.write']
             >>> TokenScopeRequest.validate_permissions(["*"])
             ['*']
+            >>> TokenScopeRequest.validate_permissions(["audit:read", "security:read"])
+            ['audit:read', 'security:read']
         """
         if not v:
             return v
 
-        # Permission pattern: resource.action (alphanumeric with underscores)
-        permission_pattern = re.compile(r"^[a-zA-Z][a-zA-Z0-9_]*\.[a-zA-Z][a-zA-Z0-9_]*$")
+        # Permission pattern: resource.action or resource:action (alphanumeric with underscores).
+        # Colon form covers the handful of Permissions constants (audit:read, security:read,
+        # logs:read, metrics:read) that predate the dot-form convention.
+        permission_pattern = re.compile(r"^[a-zA-Z][a-zA-Z0-9_]*[.:][a-zA-Z][a-zA-Z0-9_]*$")
 
         validated = []
         for perm in v:
