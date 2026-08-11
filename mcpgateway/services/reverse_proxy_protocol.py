@@ -44,7 +44,7 @@ class _JsonRpcCall(_JsonRpcModel):
 
     @field_validator("params")
     @classmethod
-    def require_structured_params(_cls, value: JsonParams | None) -> JsonParams | None:
+    def require_structured_params(cls, value: JsonParams | None) -> JsonParams | None:
         """Reject explicit null while permitting an omitted params member."""
         if value is None:
             raise PydanticCustomError("json_rpc_params", "params must be an object or array")
