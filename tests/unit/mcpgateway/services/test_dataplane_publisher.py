@@ -281,17 +281,18 @@ async def test_full_payload_generation_with_mock_db():
         assert "g1" in server1["backends"]
 
         backend = server1["backends"]["g1"]
-        assert backend["name"] == "Gateway 1"
-        assert backend["url"] == "http://localhost:9000"
-        assert backend["transport"] == "STREAMABLEHTTP"
-        assert backend["passthrough_headers"] == ["Authorization"]
-        assert backend["add_headers"] == {"X-Tenant": "acme"}
-        assert backend["remove_headers"] == ["Cookie"]
-        assert backend["capabilities"] == {"resources": {"subscribe": True}}
-        assert backend["allowed_tool_names"] == ["public_tool", "private_tool"]
-        assert backend["allowed_resource_names"] == ["Resource 1"]
-        assert backend["allowed_resource_uris"] == ["resource://one"]
-        assert backend["allowed_prompt_names"] == ["Prompt 1"]
+        assert backend == {
+            "name": "Gateway 1",
+            "url": "http://localhost:9000",
+            "passthrough_headers": ["Authorization"],
+            "add_headers": {"X-Tenant": "acme"},
+            "remove_headers": ["Cookie"],
+            "capabilities": {"resources": {"subscribe": True}},
+            "allowed_tool_names": ["public_tool", "private_tool"],
+            "allowed_resource_names": ["Resource 1"],
+            "allowed_resource_uris": ["resource://one"],
+            "allowed_prompt_names": ["Prompt 1"],
+        }
 
         # Verify the gateway SELECT projection actually includes the new columns
         # (guards against getattr-on-Row silently returning None when columns are missing from SELECT)
@@ -410,7 +411,8 @@ def test_create_payload_filters_empty_backends():
     assert "server1" not in result[USER1_ID]["virtual_hosts"]
 
 
-def test_create_payload_excludes_non_streamable_gateways():
+@pytest.mark.parametrize("transport", ["SSE", "STDIO"])
+def test_create_payload_excludes_non_streamable_gateways(transport: str):
     """create_payload() drops backends whose transport the dataplane cannot serve."""
     from mcpgateway.services.dataplane_publisher import DataplanePublisherService
 
@@ -421,11 +423,11 @@ def test_create_payload_excludes_non_streamable_gateways():
                 {
                     "id": "server1",
                     "backend_items": {
-                        "gateway_sse": {"tools": ["tool1"], "resources": [], "prompts": []},
+                        "gateway_non_streamable": {"tools": ["tool1"], "resources": [], "prompts": []},
                     },
                 }
             ],
-            "gateways": [{"id": "gateway_sse", "name": "SSE Gateway", "url": "http://localhost:9000/sse", "transport": "SSE", "passthrough_headers": None}],
+            "gateways": [{"id": "gateway_non_streamable", "name": "Unsupported Gateway", "url": "http://localhost:9000/mcp", "transport": transport, "passthrough_headers": None}],
             "prompts": [],
             "resources": [],
         }
@@ -433,7 +435,7 @@ def test_create_payload_excludes_non_streamable_gateways():
 
     result = service.create_payload(data)
 
-    # The SSE backend is excluded and the now-backendless server is omitted.
+    # The unsupported backend is excluded and the now-backendless server is omitted.
     assert result[USER1_ID]["virtual_hosts"] == {}
 
 
