@@ -352,6 +352,8 @@ async def test_cleanup_all_retention_zero_includes_rollup(monkeypatch: pytest.Mo
     """Test cleanup_all uses rollup tables and retention=0 branch."""
     service = MetricsCleanupService()
     monkeypatch.setattr(service, "METRIC_TABLES", [("tool_metrics", ToolMetric, ToolMetric, "tool_id")])
+    monkeypatch.setattr(service, "DAILY_METRIC_TABLES", [])  # isolate daily path
+    monkeypatch.setattr(service, "DAILY_METRIC_TABLES", [])  # isolate daily path
 
     def fake_cleanup(model_class, table_name, cutoff, timestamp_column="timestamp"):
         return CleanupResult(table_name=table_name, deleted_count=1, remaining_count=0, cutoff_date=cutoff, duration_seconds=0.01)
@@ -375,6 +377,7 @@ async def test_cleanup_all_retention_nonzero_includes_rollup(monkeypatch: pytest
     """Test cleanup_all uses hour-aligned cutoff and rollup retention cutoff."""
     service = MetricsCleanupService()
     monkeypatch.setattr(service, "METRIC_TABLES", [("tool_metrics", ToolMetric, ToolMetric, "tool_id")])
+    monkeypatch.setattr(service, "DAILY_METRIC_TABLES", [])  # isolate daily path
 
     async def fake_to_thread(fn, *args, **kwargs):
         return fn(*args, **kwargs)
@@ -518,6 +521,7 @@ async def test_get_table_sizes(monkeypatch: pytest.MonkeyPatch):
     """Test get_table_sizes returns counts for raw and hourly tables."""
     service = MetricsCleanupService()
     monkeypatch.setattr(service, "METRIC_TABLES", [("tool_metrics", ToolMetric, ToolMetric, "tool_id")])
+    monkeypatch.setattr(service, "DAILY_METRIC_TABLES", [])  # isolate daily path
 
     db = MagicMock()
     db.execute.side_effect = [MagicMock(scalar=MagicMock(return_value=5)), MagicMock(scalar=MagicMock(return_value=2))]
