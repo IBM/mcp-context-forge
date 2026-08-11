@@ -23,16 +23,20 @@ Contract under test (issue #5496, semantics per issue #4732 / PR #4773):
 from __future__ import annotations
 
 # Standard
-import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List
+from unittest.mock import AsyncMock, MagicMock
+import uuid
 
 # Third-Party
 import pytest
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
 # First-Party
 from mcpgateway.db import A2AAgent as DbA2AAgent
-from mcpgateway.db import EmailTeam
+from mcpgateway.db import Base, EmailTeam
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
@@ -127,15 +131,7 @@ def rows_db():
     Yields:
         A SQLAlchemy session bound to a fresh in-memory database.
     """
-    # Third-Party
-    from sqlalchemy import create_engine
-    from sqlalchemy.orm import sessionmaker
-    from sqlalchemy.pool import StaticPool
-
-    # First-Party
-    from mcpgateway.db import Base
-
-    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     Base.metadata.create_all(engine)
     session = sessionmaker(autocommit=False, autoflush=False, expire_on_commit=False, bind=engine)()
     try:
@@ -152,9 +148,6 @@ def _no_registry_cache(monkeypatch):
     Args:
         monkeypatch: pytest monkeypatch fixture.
     """
-    # Standard
-    from unittest.mock import AsyncMock, MagicMock
-
     cache = MagicMock()
     cache.get = AsyncMock(return_value=None)
     cache.set = AsyncMock()
