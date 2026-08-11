@@ -8914,14 +8914,26 @@ class TestInvokeToolDirect:
             mock_settings.mcpgateway_direct_proxy_enabled = True
             mock_settings.mcpgateway_direct_proxy_timeout = 30
 
-            with pytest.raises(ToolInvocationError, match="Direct proxy tool invocation failed"):
-                await tool_service.invoke_tool_direct(
-                    gateway_id="gw-direct-1",
-                    name="remote_tool",
-                    arguments={},
-                    user_email="user@example.com",
-                    token_teams=["team-1"],
-                )
+            # After the MCP protocol fix, connection errors return structured error responses
+            # instead of raising ToolInvocationError
+            result = await tool_service.invoke_tool_direct(
+                gateway_id="gw-direct-1",
+                name="remote_tool",
+                arguments={},
+                user_email="user@example.com",
+                token_teams=["team-1"],
+            )
+
+            # Verify the result is a proper MCP error response
+            assert result is not None
+            assert hasattr(result, "isError")
+            assert result.isError is True
+            assert hasattr(result, "content")
+            assert len(result.content) > 0
+            # Error message should contain connection failure details
+            content_text = str(result.content[0])
+            assert "MCP server error" in content_text
+            assert "Connection refused" in content_text
 
     @pytest.mark.asyncio
     async def test_invoke_tool_direct_passthrough_headers(self, tool_service, mock_direct_gateway):

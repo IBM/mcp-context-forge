@@ -3814,7 +3814,12 @@ class ToolService(BaseService):
                         return tool_result
         except Exception as e:
             logger.exception("Direct proxy tool invocation failed for %s: %s", name, e)
-            raise ToolInvocationError(f"Direct proxy tool invocation failed: {str(e)}")
+            # Return a properly structured MCP error response instead of raising an exception.
+            # This ensures the response conforms to the MCP protocol specification, which requires
+            # all tool results to have a 'content' field. Raising ToolInvocationError would result
+            # in a JSON-RPC error response, violating the MCP spec.
+            error_message = f"MCP server error: {str(e)}"
+            return types.CallToolResult(content=[types.TextContent(type="text", text=error_message)], isError=True)
 
     # Conservative TTL when the AS omits expires_in (RFC 8693 makes it optional, L1).
     # pylint: disable=duplicate-code
@@ -6088,7 +6093,7 @@ class ToolService(BaseService):
 
                             return tool_call_result
                         except (asyncio.TimeoutError, httpx.TimeoutException):
-                            # Handle timeout specifically - log and raise ToolInvocationError
+                            # Handle timeout specifically - log and return MCP-compliant error
                             mcp_duration_ms = (time.time() - mcp_start_time) * 1000
                             structured_logger.log(
                                 level="WARNING",
@@ -6116,7 +6121,11 @@ class ToolService(BaseService):
                             if plugin_manager:
                                 await self._run_timeout_post_invoke(name, effective_timeout, global_context, context_table, plugin_manager, ctl_acc=_ctl_acc)
 
-                            raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s")
+                            # Return a properly structured MCP error response for timeouts.
+                            # Timeouts are runtime failures and should be returned as MCP ToolResult
+                            # with isError=True, not raised as exceptions.
+                            error_message = f"Tool invocation timed out after {effective_timeout}s"
+                            return types.CallToolResult(content=[types.TextContent(type="text", text=error_message)], isError=True)
                         except asyncio.CancelledError:
                             # Cancellation must propagate; do not wrap it as a tool failure.
                             raise
@@ -6140,7 +6149,11 @@ class ToolService(BaseService):
                                 error_details={"error_type": type(root_cause).__name__, "error_message": sanitized_error},
                                 metadata={"event": "mcp_call_failed", "tool_name": tool_name_original, "tool_id": tool_id, "transport": "sse"},
                             )
-                            raise
+                            # Return a properly structured MCP error response instead of re-raising.
+                            # This ensures the response conforms to the MCP protocol specification, which requires
+                            # all tool results to have a 'content' field with 'isError' flag for runtime failures.
+                            error_message = f"MCP server error: {sanitized_error}"
+                            return types.CallToolResult(content=[types.TextContent(type="text", text=error_message)], isError=True)
 
                     async def connect_to_streamablehttp_server(server_url: str, headers: dict = headers):
                         """Connect to an MCP server running with Streamable HTTP transport.
@@ -6275,7 +6288,7 @@ class ToolService(BaseService):
 
                             return tool_call_result
                         except (asyncio.TimeoutError, httpx.TimeoutException):
-                            # Handle timeout specifically - log and raise ToolInvocationError
+                            # Handle timeout specifically - log and return MCP-compliant error
                             mcp_duration_ms = (time.time() - mcp_start_time) * 1000
                             structured_logger.log(
                                 level="WARNING",
@@ -6303,7 +6316,11 @@ class ToolService(BaseService):
                             if plugin_manager:
                                 await self._run_timeout_post_invoke(name, effective_timeout, global_context, context_table, plugin_manager, ctl_acc=_ctl_acc)
 
-                            raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s")
+                            # Return a properly structured MCP error response for timeouts.
+                            # Timeouts are runtime failures and should be returned as MCP ToolResult
+                            # with isError=True, not raised as exceptions.
+                            error_message = f"Tool invocation timed out after {effective_timeout}s"
+                            return types.CallToolResult(content=[types.TextContent(type="text", text=error_message)], isError=True)
                         except asyncio.CancelledError:
                             # Cancellation must propagate; do not wrap it as a tool failure.
                             raise
@@ -6327,7 +6344,11 @@ class ToolService(BaseService):
                                 error_details={"error_type": type(root_cause).__name__, "error_message": sanitized_error},
                                 metadata={"event": "mcp_call_failed", "tool_name": tool_name_original, "tool_id": tool_id, "transport": "streamablehttp"},
                             )
-                            raise
+                            # Return a properly structured MCP error response instead of re-raising.
+                            # This ensures the response conforms to the MCP protocol specification, which requires
+                            # all tool results to have a 'content' field with 'isError' flag for runtime failures.
+                            error_message = f"MCP server error: {sanitized_error}"
+                            return types.CallToolResult(content=[types.TextContent(type="text", text=error_message)], isError=True)
 
                     # REMOVED: Redundant gateway query - gateway already eager-loaded via joinedload
                     # tool_gateway = db.execute(select(DbGateway).where(DbGateway.id == tool_gateway_id)...)
