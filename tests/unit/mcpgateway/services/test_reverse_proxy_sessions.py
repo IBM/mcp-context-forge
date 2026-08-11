@@ -14,10 +14,12 @@ from mcpgateway.services.reverse_proxy_sessions import (
     ConnectionClosedError,
     ConnectionId,
     ConnectionNotFoundError,
-    DuplicatePendingRequestError,
     DuplicateLocalSessionError,
+    DuplicatePendingRequestError,
     LocalSessionId,
     ReverseProxySessionManager,
+    StableGatewayId,
+    get_reverse_proxy_session_manager,
 )
 
 
@@ -170,9 +172,7 @@ async def test_send_notification_delivers_exact_envelope_without_pending_respons
 
     await manager.send_notification(session.connection_id, _notification_payload(), timeout_seconds=1)
 
-    assert websocket.frames == [
-        f'{{"sessionId":"{session.connection_id}","type":"request","payload":{{"jsonrpc":"2.0","method":"notifications/initialized"}}}}'
-    ]
+    assert websocket.frames == [f'{{"sessionId":"{session.connection_id}","type":"request","payload":{{"jsonrpc":"2.0","method":"notifications/initialized"}}}}']
     assert manager.pending_count(session.connection_id) == 0
 
 
@@ -346,3 +346,109 @@ async def test_disconnect_allows_local_id_to_reconnect() -> None:
     replacement = await manager.connect(RecordingWebSocket(), local_id)
 
     assert replacement.connection_id != session.connection_id
+
+
+@pytest.mark.asyncio
+async def test_attach_stable_id_then_resolve_returns_connection_id() -> None:
+    """Given an active connection, when a stable ID is attached, then resolve returns the connection ID."""
+    manager = ReverseProxySessionManager()
+    session = await manager.connect(RecordingWebSocket(), LocalSessionId("local-1"))
+    stable_id = StableGatewayId("stable-1")
+
+    await manager.attach_stable_id(stable_id, session.connection_id)
+
+    assert manager.resolve_connection_id(stable_id) == session.connection_id
+
+
+@pytest.mark.asyncio
+async def test_resolve_unknown_stable_id_returns_none() -> None:
+    """Given no attachment, when an unknown stable ID is resolved, then None is returned without raising."""
+    manager = ReverseProxySessionManager()
+
+    assert manager.resolve_connection_id(StableGatewayId("unknown")) is None
+
+
+@pytest.mark.asyncio
+async def test_disconnect_clears_stable_mapping() -> None:
+    """Given an attached stable ID, when the connection disconnects, then the stable ID resolves to None."""
+    manager = ReverseProxySessionManager()
+    session = await manager.connect(RecordingWebSocket(), LocalSessionId("local-1"))
+    stable_id = StableGatewayId("stable-1")
+    await manager.attach_stable_id(stable_id, session.connection_id)
+
+    await manager.disconnect(session.connection_id)
+
+    assert manager.resolve_connection_id(stable_id) is None
+
+
+@pytest.mark.asyncio
+async def test_reattach_stable_id_replaces_mapping() -> None:
+    """Given a stable ID attached to connection A, when re-attached to connection B, then resolve returns B."""
+    manager = ReverseProxySessionManager()
+    first = await manager.connect(RecordingWebSocket(), LocalSessionId("local-1"))
+    second = await manager.connect(RecordingWebSocket(), LocalSessionId("local-2"))
+    stable_id = StableGatewayId("stable-1")
+    await manager.attach_stable_id(stable_id, first.connection_id)
+
+    await manager.attach_stable_id(stable_id, second.connection_id)
+
+    assert manager.resolve_connection_id(stable_id) == second.connection_id
+    assert first.connection_id != second.connection_id
+
+
+@pytest.mark.asyncio
+async def test_stable_mapping_is_isolated_per_connection() -> None:
+    """Given two connections with distinct stable IDs, when resolving each, then the correct connection ID is returned."""
+    manager = ReverseProxySessionManager()
+    first = await manager.connect(RecordingWebSocket(), LocalSessionId("local-1"))
+    second = await manager.connect(RecordingWebSocket(), LocalSessionId("local-2"))
+    stable_a = StableGatewayId("stable-a")
+    stable_b = StableGatewayId("stable-b")
+    await manager.attach_stable_id(stable_a, first.connection_id)
+    await manager.attach_stable_id(stable_b, second.connection_id)
+
+    assert manager.resolve_connection_id(stable_a) == first.connection_id
+    assert manager.resolve_connection_id(stable_b) == second.connection_id
+
+
+@pytest.mark.asyncio
+async def test_disconnect_still_raises_connection_closed_for_pending_calls() -> None:
+    """Given a pending request and an attached stable ID, when disconnect occurs, then callers get ConnectionClosedError and the mapping clears."""
+    manager = ReverseProxySessionManager()
+    websocket = BlockingWebSocket()
+    session = await manager.connect(websocket, LocalSessionId("local-1"))
+    stable_id = StableGatewayId("stable-1")
+    await manager.attach_stable_id(stable_id, session.connection_id)
+    disconnected = anyio.Event()
+
+    async def send() -> None:
+        with pytest.raises(ConnectionClosedError):
+            await manager.send_request(session.connection_id, _request_payload("request-1"), timeout_seconds=10)
+        disconnected.set()
+
+    async with anyio.create_task_group() as task_group:
+        task_group.start_soon(send)
+        await websocket.entered.wait()
+        await manager.disconnect(session.connection_id)
+        await disconnected.wait()
+
+    assert manager.resolve_connection_id(stable_id) is None
+    assert manager.pending_count(session.connection_id) == 0
+
+
+@pytest.mark.asyncio
+async def test_attach_stable_id_rejects_inactive_connection() -> None:
+    """Given no active connection, when attaching a stable ID to it, then ConnectionNotFoundError is raised."""
+    manager = ReverseProxySessionManager()
+
+    with pytest.raises(ConnectionNotFoundError):
+        await manager.attach_stable_id(StableGatewayId("stable-1"), ConnectionId("inactive"))
+
+
+@pytest.mark.asyncio
+async def test_get_reverse_proxy_session_manager_returns_singleton() -> None:
+    """Given repeated calls, when the lazy accessor is invoked, then the same manager instance is returned."""
+    first = await get_reverse_proxy_session_manager()
+    second = await get_reverse_proxy_session_manager()
+
+    assert first is second
