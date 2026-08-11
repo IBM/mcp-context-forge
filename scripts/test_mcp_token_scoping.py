@@ -3,12 +3,9 @@
 """
 Comprehensive MCP Client Test for Token Scoping RBAC.
 
-Current tool state (5 tools total):
+Current tool state (2 tools total):
 - fast-time-get-system-time: visibility=team, team_id=12c794d92318414fbc6829bd455bee6d
 - fast-time-convert-time: visibility=public
-- fast-test-get-system-time: visibility=public
-- fast-test-get-stats: visibility=public
-- fast-test-echo: visibility=public
 
 Security Model Notes:
 - Users must exist in the database for non-admin token validation
@@ -17,14 +14,14 @@ Security Model Notes:
 - admin@example.com is pre-seeded as the platform admin and member of the default team
 
 Test Cases:
-1. Admin with no teams key -> should see ALL 5 tools (unrestricted)
-2. Admin with teams: null -> should see ALL 5 tools (unrestricted)
-3. Admin with teams: [] -> should see only 4 PUBLIC tools (public-only scope)
-4. Admin with matching team -> should see all 5 tools (team + public)
+1. Admin with no teams key -> should see ALL 2 tools (unrestricted)
+2. Admin with teams: null -> should see ALL 2 tools (unrestricted)
+3. Admin with teams: [] -> should see only 1 PUBLIC tool (public-only scope)
+4. Admin with matching team -> should see all 2 tools (team + public)
 5. Admin with wrong team -> token REJECTED (team membership validation fails)
-6. Non-admin with no teams -> should see only 4 PUBLIC tools (secure default)
-7. Non-admin with matching team -> should see all 5 tools (team + public)
-8. Non-admin with teams: [] -> should see 4 PUBLIC tools (explicit public-only)
+6. Non-admin with no teams -> should see only 1 PUBLIC tool (secure default)
+7. Non-admin with matching team -> should see all 2 tools (team + public)
+8. Non-admin with teams: [] -> should see 1 PUBLIC tool (explicit public-only)
 """
 
 import asyncio
@@ -151,38 +148,37 @@ async def run_tests(base_url: str, team_id: str):
     print(f"{CYAN}{'='*70}{NC}")
     print(f"\nBase URL: {base_url}")
     print(f"Team ID: {team_id}")
-    print(f"\nCurrent tool state (5 tools):")
+    print(f"\nCurrent tool state (2 tools):")
     print(f"  - fast-time-get-system-time: visibility=TEAM")
     print(f"  - fast-time-convert-time: visibility=public")
-    print(f"  - fast-test-*: 3 tools, visibility=public")
 
     results = []
 
     # Test 1: Admin with no teams key (UNRESTRICTED)
     print(f"\n{YELLOW}Test 1: Admin with NO teams key{NC}")
     token = generate_token("admin@example.com", is_admin=True, teams="OMIT")
-    result = await test_with_http_rpc(base_url, token, "Admin no teams", 4, 1)
+    result = await test_with_http_rpc(base_url, token, "Admin no teams", 1, 1)
     results.append(result)
     print_result(result)
 
     # Test 2: Admin with teams: null (UNRESTRICTED)
     print(f"\n{YELLOW}Test 2: Admin with teams: null{NC}")
     token = generate_token("admin@example.com", is_admin=True, teams=None)
-    result = await test_with_http_rpc(base_url, token, "Admin teams:null", 4, 1)
+    result = await test_with_http_rpc(base_url, token, "Admin teams:null", 1, 1)
     results.append(result)
     print_result(result)
 
     # Test 3: Admin with teams: [] (PUBLIC-ONLY)
     print(f"\n{YELLOW}Test 3: Admin with teams: []{NC}")
     token = generate_token("admin@example.com", is_admin=True, teams=[])
-    result = await test_with_http_rpc(base_url, token, "Admin teams:[]", 4, 0)
+    result = await test_with_http_rpc(base_url, token, "Admin teams:[]", 1, 0)
     results.append(result)
     print_result(result)
 
     # Test 4: Admin with matching team
     print(f"\n{YELLOW}Test 4: Admin with matching team{NC}")
     token = generate_token("admin@example.com", is_admin=True, teams=[team_id])
-    result = await test_with_http_rpc(base_url, token, "Admin + team", 4, 1)
+    result = await test_with_http_rpc(base_url, token, "Admin + team", 1, 1)
     results.append(result)
     print_result(result)
 
@@ -199,21 +195,21 @@ async def run_tests(base_url: str, team_id: str):
     # Test 6: Non-admin with no teams (secure default) - uses admin email as it exists in DB
     print(f"\n{YELLOW}Test 6: Non-admin with NO teams{NC}")
     token = generate_token("admin@example.com", is_admin=False, teams="OMIT")
-    result = await test_with_http_rpc(base_url, token, "Non-admin no teams", 4, 0)
+    result = await test_with_http_rpc(base_url, token, "Non-admin no teams", 1, 0)
     results.append(result)
     print_result(result)
 
     # Test 7: Non-admin with matching team - uses admin email as it exists in DB
     print(f"\n{YELLOW}Test 7: Non-admin with matching team{NC}")
     token = generate_token("admin@example.com", is_admin=False, teams=[team_id])
-    result = await test_with_http_rpc(base_url, token, "Non-admin + team", 4, 1)
+    result = await test_with_http_rpc(base_url, token, "Non-admin + team", 1, 1)
     results.append(result)
     print_result(result)
 
     # Test 8: Non-admin with teams: [] - uses admin email as it exists in DB
     print(f"\n{YELLOW}Test 8: Non-admin with teams: []{NC}")
     token = generate_token("admin@example.com", is_admin=False, teams=[])
-    result = await test_with_http_rpc(base_url, token, "Non-admin teams:[]", 4, 0)
+    result = await test_with_http_rpc(base_url, token, "Non-admin teams:[]", 1, 0)
     results.append(result)
     print_result(result)
 
@@ -302,17 +298,17 @@ async def main():
     print(f"{CYAN}MCP TRANSPORT TESTS{NC}")
     print(f"{CYAN}{'='*70}{NC}")
 
-    # Admin unrestricted - should see 5 tools
+    # Admin unrestricted - should see 2 tools
     token = generate_token("admin@example.com", is_admin=True, teams="OMIT")
-    t1 = await test_mcp_transport(f"{base_url}/mcp/", token, "Admin (unrestricted)", 5)
+    t1 = await test_mcp_transport(f"{base_url}/mcp/", token, "Admin (unrestricted)", 2)
 
-    # Admin public-only - should see 4 tools
+    # Admin public-only - should see 1 tool
     token = generate_token("admin@example.com", is_admin=True, teams=[])
-    t2 = await test_mcp_transport(f"{base_url}/mcp/", token, "Admin (public-only)", 4)
+    t2 = await test_mcp_transport(f"{base_url}/mcp/", token, "Admin (public-only)", 1)
 
-    # Non-admin with team - should see 5 tools (uses admin email as it exists in DB)
+    # Non-admin with team - should see 2 tools (uses admin email as it exists in DB)
     token = generate_token("admin@example.com", is_admin=False, teams=[team_id])
-    t3 = await test_mcp_transport(f"{base_url}/mcp/", token, "Non-admin + team", 5)
+    t3 = await test_mcp_transport(f"{base_url}/mcp/", token, "Non-admin + team", 2)
 
     # Virtual server test
     server_id = "9779b6698cbd4b4995ee04a4fab38737"  # pragma: allowlist secret
