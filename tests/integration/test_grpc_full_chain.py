@@ -173,7 +173,7 @@ class TestPlaintextReflectionFullChain:
         host, port = grpc_server
         registered = _register(test_db, host, port)
         assert registered.name is not None
-        assert registered.method_count == 4  # Echo, EchoStream, EchoWithMetadata, EchoSlow
+        assert registered.method_count == 6  # Echo, EchoStream, EchoWithMetadata, EchoSlow, EchoV1, EchoV2
 
         tools = _tools_for(test_db, registered.id)
         names = {t.original_name for t in tools}
@@ -314,3 +314,164 @@ class TestHealthCheck:
                                health_check_timeout=2)
         result = _health_check(registered.id)
         assert result["healthy"] is False
+
+# ══════════════════════════════════════════════════════════════════════
+# Fixture: TLS server
+# ══════════════════════════════════════════════════════════════════════
+
+
+@pytest.fixture(scope="module")
+def grpc_server_tls():
+    """Start a gRPC test server with TLS enabled."""
+    port = _free_port()
+    env = os.environ.copy()
+    env.setdefault("GRPC_VERBOSITY", "ERROR")
+    proc = subprocess.Popen(
+        [sys.executable, os.path.join(TEST_SERVER_DIR, "server.py"), "--tls", "--port", str(port)],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env,
+    )
+    time.sleep(3)
+    try:
+        if proc.poll() is not None:
+            _out, _err = proc.communicate()
+            pytest.fail(f"TLS server exited early (port={port}): {_err[:300]}")
+        # Copy cert to <project_root>/certs/ so _validate_tls_path accepts it
+        project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+        certs_dir = os.path.join(project_root, "certs")
+        os.makedirs(certs_dir, exist_ok=True)
+        src_cert = os.path.join(TEST_SERVER_DIR, "server.crt")
+        dst_cert = os.path.join(certs_dir, "server.crt")
+        src_key = os.path.join(TEST_SERVER_DIR, "server.key")
+        dst_key = os.path.join(certs_dir, "server.key")
+        if os.path.exists(src_cert):
+            import shutil
+            shutil.copy(src_cert, dst_cert)
+            shutil.copy(src_key, dst_key)
+        yield ("localhost", port, dst_cert, dst_key)
+    finally:
+        proc.kill()
+        proc.wait(timeout=5)
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Tests: TLS
+# ══════════════════════════════════════════════════════════════════════
+
+
+class TestTls:
+
+    def test_tls_register_and_invoke(self, test_db, grpc_server_tls):
+        """Register a TLS-enabled gRPC service and verify tools are created.
+
+        Note: actual TLS invocation requires proper CA infrastructure. This test
+        validates that the service registration, schema import, and tool sync
+        work correctly with TLS configuration (cert and key paths stored).
+        """
+        host, port, cert_path, key_path = grpc_server_tls
+
+        from mcpgateway.schemas import GrpcServiceCreate
+
+        svc = GrpcService()
+        data = GrpcServiceCreate(
+            name=f"echo-tls-{uuid.uuid4().hex[:6]}",
+            target=f"{host}:{port}",
+            description="TLS integration test",
+            reflection_enabled=False,
+            tls_enabled=True,
+            tls_cert_path=cert_path,
+            tls_key_path=key_path,
+            discovery_mode="artifact",
+            health_check_enabled=True,
+            health_check_interval=60,
+            health_check_timeout=5,
+            health_failure_threshold=3,
+            tags=[],
+            visibility="private",
+        )
+        registered = _run(svc.register_service(test_db, data, user_email="test@example.com"))
+        assert registered.name is not None
+        assert registered.tls_enabled is True
+
+        # Import proto since reflection is disabled
+        proto_path = os.path.join(TEST_SERVER_DIR, "echo.proto")
+        with open(proto_path, "rb") as f:
+            payload = f.read()
+        _run(svc.import_schema(
+            test_db, registered.id, payload, "echo.proto", "test@example.com", activate=True,
+        ))
+
+        tools = _tools_for(test_db, registered.id)
+        names = {t.original_name for t in tools}
+        assert "grpc_test.EchoService.Echo" in names, f"Got tools: {names}"
+        assert len(names) == 6  # all RPCs
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Tests: Schema Change
+# ══════════════════════════════════════════════════════════════════════
+
+
+class TestSchemaChange:
+
+    def test_schema_v1_to_v2(self, test_db, grpc_server_no_reflection):
+        host, port = grpc_server_no_reflection
+        from mcpgateway.schemas import GrpcServiceCreate
+
+        svc = GrpcService()
+        data = GrpcServiceCreate(
+            name=f"schema-v1-{uuid.uuid4().hex[:6]}",
+            target=f"{host}:{port}",
+            description="schema change test",
+            reflection_enabled=False,
+            discovery_mode="artifact",
+            health_check_enabled=True,
+            health_check_interval=60,
+            health_check_timeout=5,
+            health_failure_threshold=3,
+            tags=[],
+            visibility="private",
+        )
+        registered = _run(svc.register_service(test_db, data, user_email="test@example.com"))
+
+        # Import proto → tools created for all methods
+        proto_path = os.path.join(TEST_SERVER_DIR, "echo.proto")
+        with open(proto_path, "rb") as f:
+            payload = f.read()
+
+        artifact = _run(svc.import_schema(
+            test_db, registered.id, payload, "echo.proto", "test@example.com", activate=True,
+        ))
+        assert artifact is not None
+
+        tools = _tools_for(test_db, registered.id)
+        names = {t.original_name for t in tools}
+        assert "grpc_test.EchoService.EchoV1" in names, f"Got tools: {names}"
+        assert "grpc_test.EchoService.EchoV2" in names, f"Got tools: {names}"
+
+        # Invoke v1
+        r1 = _invoke(test_db, registered.id, "grpc_test.EchoService.EchoV1",
+                     {"name": "test", "value": 42})
+        assert "v1:" in r1["result"]
+
+        # Invoke v2 with new priority field
+        r2 = _invoke(test_db, registered.id, "grpc_test.EchoService.EchoV2",
+                     {"name": "test", "value": 42, "priority": 1})
+        assert "v2:" in r2["result"]
+        assert r2["priority"] == 1
+
+    def test_schema_diff(self, test_db, grpc_server):
+        host, port = grpc_server
+        svc = GrpcService()
+        registered = _register(test_db, host, port)
+
+        proto_path = os.path.join(TEST_SERVER_DIR, "echo.proto")
+        with open(proto_path, "rb") as f:
+            payload = f.read()
+
+        a1 = _run(svc.import_schema(
+            test_db, registered.id, payload, "echo.proto", "test@example.com", activate=True,
+        ))
+        diff = _run(svc.diff_schemas(
+            test_db, registered.id, left_id=a1.id, right_id=a1.id,
+        ))
+        assert diff is not None
