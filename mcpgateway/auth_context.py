@@ -56,9 +56,6 @@ Public surface
 The names below are the **module's public API**. Callers in ``main.py``,
 ``admin.py``, routers, and transports should use these names.
 
-    Constants (HTTP header names used by the Rust -> Python MCP bridge)
-        INTERNAL_MCP_SESSION_VALIDATED_HEADER
-
     Identity resolution
         get_user_email(user) -> str
         jwt_subject_is_uuid(payload) -> bool
@@ -138,11 +135,8 @@ from mcpgateway.db import EmailUser
 # Module-level logger
 logger = logging.getLogger(__name__)
 
-# Trust-layer header names. ``INTERNAL_MCP_SESSION_VALIDATED_HEADER`` is part
-# of the module's public constant API (main.py's middleware compares against
-# it). The other two are implementation details of the header-derivation chain
-# and are not exported.
-INTERNAL_MCP_SESSION_VALIDATED_HEADER = "x-contextforge-session-validated"
+# Trust-layer header names. These are implementation details of the
+# header-derivation chain and are not exported.
 _INTERNAL_MCP_RUNTIME_AUTH_HEADER = "x-contextforge-mcp-runtime-auth"
 _INTERNAL_MCP_RUNTIME_AUTH_CONTEXT = "contextforge-internal-mcp-runtime-v1"
 

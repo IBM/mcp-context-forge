@@ -555,8 +555,7 @@ class TestHealthAndInfrastructure:
 
         session = DummySession()
         with patch("mcpgateway.main.SessionLocal", return_value=session):
-            response_obj = FastAPIResponse()
-            result = mcpgateway_main.healthcheck(response_obj)
+            result = mcpgateway_main.healthcheck()
         assert result["status"] == "unhealthy"
         assert "error" in result
         assert session.invalidate_called is True

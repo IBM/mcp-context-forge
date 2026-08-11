@@ -73,7 +73,6 @@ from uvicorn.middleware.proxy_headers import ProxyHeadersMiddleware
 # First-Party
 # Import the admin routes from the new module
 from mcpgateway import __version__
-from mcpgateway import version as version_module
 from mcpgateway.auth import get_current_user, get_user_team_roles, TokenValidationError, validate_token_user
 from mcpgateway.auth_context import (
     configuration_export_includes_roots,
@@ -86,7 +85,6 @@ from mcpgateway.auth_context import (
     get_token_teams_from_request,
     get_user_email,
     import_envelope_includes_roots,
-    INTERNAL_MCP_SESSION_VALIDATED_HEADER,
     is_unrestricted_platform_admin,
     is_trusted_internal_mcp_request,
     selective_selection_includes_roots,
@@ -103,7 +101,7 @@ from mcpgateway.db import A2APushNotificationConfig
 from mcpgateway.db import A2ATask as DbA2ATask
 from mcpgateway.db import refresh_slugs_on_startup, SessionLocal
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.deprecations import RUST_MCP_RUNTIME_DEPRECATION_MESSAGE, VALIDATION_MIDDLEWARE_DEPRECATION_MESSAGE
+from mcpgateway.deprecations import VALIDATION_MIDDLEWARE_DEPRECATION_MESSAGE
 from mcpgateway.handlers.sampling import SamplingError, SamplingHandler
 from mcpgateway.middleware.auth_context_stack import register_auth_context_middleware
 from mcpgateway.middleware.client_disconnect import ClientDisconnectMiddleware
@@ -227,7 +225,7 @@ from mcpgateway.utils.redis_client import close_redis_client, get_redis_client, 
 from mcpgateway.utils.redis_isready import wait_for_redis_ready
 from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.token_scoping import validate_server_access
-from mcpgateway.utils.trace_context import clear_trace_context, set_trace_context_from_teams, set_trace_session_id
+from mcpgateway.utils.trace_context import set_trace_context_from_teams, set_trace_session_id
 from mcpgateway.utils.trace_redaction import safe_log_user
 from mcpgateway.utils.verify_credentials import (
     _resolve_auth_header_name,
@@ -426,9 +424,6 @@ def _build_internal_mcp_forwarded_user(request: Request) -> Dict[str, Any]:
 
     if "teams" in auth_context and (auth_context["teams"] is None or isinstance(auth_context["teams"], list)):
         request.state.token_teams = auth_context["teams"]
-
-    if request.headers.get(INTERNAL_MCP_SESSION_VALIDATED_HEADER) == "rust":
-        auth_context["_rust_session_validated"] = True
 
     forwarded_auth_method = auth_context.get("auth_method") or "mcp_internal_forward"
 
@@ -1046,147 +1041,6 @@ async def _authorize_run_cancellation(request: Request, user, request_id: str, *
 
 # Initialize cache
 resource_cache = ResourceCache(max_size=settings.resource_cache_size, ttl=settings.resource_cache_ttl)
-
-
-def _rust_build_included() -> bool:
-    """Return whether the current image includes Rust MCP artifacts.
-
-    Returns:
-        ``True`` when the current image contains the Rust MCP binaries/plugins.
-    """
-    return version_module.rust_build_included()
-
-
-def _rust_runtime_managed() -> bool:
-    """Return whether the gateway expects to manage the Rust MCP sidecar locally.
-
-    Returns:
-        ``True`` when the gateway should launch and supervise the Rust sidecar.
-    """
-    return version_module.rust_runtime_managed()
-
-
-def _current_mcp_transport_mount() -> str:
-    """Return which public /mcp transport is currently mounted.
-
-    Returns:
-        Runtime label identifying the currently mounted public MCP transport.
-    """
-    return version_module.current_mcp_transport_mount()
-
-
-def _should_mount_public_rust_transport() -> bool:
-    """Return whether the public ``/mcp`` path should be served directly by Rust.
-
-    Returns:
-        ``True`` only when the Rust runtime is enabled and the session-auth reuse
-        path is enabled, allowing Rust to safely own steady-state public MCP
-        session traffic. Otherwise returns ``False`` and leaves public MCP on
-        the Python ingress path.
-    """
-    return version_module.should_mount_public_rust_transport()
-
-
-def _should_use_rust_public_session_stack() -> bool:
-    """Return whether Rust should own the effective public MCP session stack.
-
-    Returns:
-        ``True`` only when the Rust runtime is enabled and session-auth reuse is
-        enabled, allowing the public transport, session metadata, replay/resume,
-        live-stream, and affinity behavior to stay on a consistent Rust-backed
-        path. Otherwise returns ``False`` so the public MCP session stack falls
-        back to Python semantics.
-    """
-    return version_module.should_use_rust_public_session_stack()
-
-
-def _current_mcp_runtime_mode() -> str:
-    """Return a compact runtime-mode label for observability.
-
-    Returns:
-        Human-readable runtime mode label for health/readiness reporting.
-    """
-    return version_module.current_mcp_runtime_mode()
-
-
-def _current_mcp_session_core_mode() -> str:
-    """Return which session core currently owns MCP session metadata.
-
-    Returns:
-        ``"rust"`` when the Rust session core is enabled, otherwise ``"python"``.
-    """
-    return version_module.current_mcp_session_core_mode()
-
-
-def _current_mcp_event_store_mode() -> str:
-    """Return which runtime currently owns MCP resumable event-store semantics.
-
-    Returns:
-        ``"rust"`` when the Rust event store is enabled, otherwise ``"python"``.
-    """
-    return version_module.current_mcp_event_store_mode()
-
-
-def _current_mcp_resume_core_mode() -> str:
-    """Return which runtime currently owns public MCP replay/resume behavior.
-
-    Returns:
-        ``"rust"`` when Rust owns replay/resume, otherwise ``"python"``.
-    """
-    return version_module.current_mcp_resume_core_mode()
-
-
-def _current_mcp_live_stream_core_mode() -> str:
-    """Return which runtime currently owns non-resume public GET /mcp SSE behavior.
-
-    Returns:
-        ``"rust"`` when Rust owns live GET /mcp streaming, otherwise ``"python"``.
-    """
-    return version_module.current_mcp_live_stream_core_mode()
-
-
-def _current_mcp_affinity_core_mode() -> str:
-    """Return which runtime currently owns MCP multi-worker session-affinity forwarding.
-
-    Returns:
-        ``"rust"`` when Rust owns session-affinity forwarding, otherwise ``"python"``.
-    """
-    return version_module.current_mcp_affinity_core_mode()
-
-
-def _current_mcp_session_auth_reuse_mode() -> str:
-    """Return which runtime currently owns MCP session-bound auth-context reuse.
-
-    Returns:
-        ``"rust"`` when Rust session auth reuse is enabled, otherwise ``"python"``.
-    """
-    return version_module.current_mcp_session_auth_reuse_mode()
-
-
-def _mcp_runtime_status_payload() -> Dict[str, Any]:
-    """Return MCP runtime diagnostics for health/readiness endpoints.
-
-    Returns:
-        Diagnostic payload describing the active MCP runtime configuration.
-    """
-    return version_module.mcp_runtime_status_payload()
-
-
-def _apply_runtime_mode_headers(response: Response) -> None:
-    """Attach MCP runtime mode headers to a response.
-
-    Args:
-        response: Response object to annotate.
-    """
-    response.headers["x-contextforge-mcp-runtime-mode"] = _current_mcp_runtime_mode()
-    response.headers["x-contextforge-mcp-transport-mounted"] = _current_mcp_transport_mount()
-    response.headers["x-contextforge-rust-build-included"] = "true" if _rust_build_included() else "false"
-    response.headers["x-contextforge-mcp-session-core-mode"] = _current_mcp_session_core_mode()
-    response.headers["x-contextforge-mcp-event-store-mode"] = _current_mcp_event_store_mode()
-    response.headers["x-contextforge-mcp-resume-core-mode"] = _current_mcp_resume_core_mode()
-    response.headers["x-contextforge-mcp-live-stream-core-mode"] = _current_mcp_live_stream_core_mode()
-    response.headers["x-contextforge-mcp-affinity-core-mode"] = _current_mcp_affinity_core_mode()
-    response.headers["x-contextforge-mcp-session-auth-reuse-mode"] = _current_mcp_session_auth_reuse_mode()
 
 
 # Type aliases for improved readability
@@ -1824,13 +1678,6 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         cache_invalidation_subscriber = get_cache_invalidation_subscriber()
         await cache_invalidation_subscriber.start()
 
-        # Start runtime-mode coordinator for cluster-wide override propagation
-        # First-Party
-        from mcpgateway.runtime_state import get_runtime_state_coordinator  # pylint: disable=import-outside-toplevel
-
-        runtime_state_coordinator = get_runtime_state_coordinator()
-        await runtime_state_coordinator.start()
-
         # Reconfigure uvicorn loggers after startup to capture access logs in dual output
         logging_service.configure_uvicorn_after_startup()
 
@@ -1929,15 +1776,6 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             await cache_invalidation_subscriber.stop()
         except Exception as e:
             logger.debug(f"Error stopping cache invalidation subscriber: {e}")
-
-        # Stop runtime-mode coordinator
-        try:
-            # First-Party
-            from mcpgateway.runtime_state import get_runtime_state_coordinator  # pylint: disable=import-outside-toplevel
-
-            await get_runtime_state_coordinator().stop()
-        except Exception as e:
-            logger.debug(f"Error stopping runtime-mode coordinator: {e}")
 
         logger.info("Shutting down ContextForge services")
         # await stop_streamablehttp()
@@ -8075,13 +7913,12 @@ async def handle_internal_mcp_session_delete(request: Request):
     if not mcp_session_id:
         return ORJSONResponse(status_code=400, content={"detail": "mcp-session-id header is required"})
 
-    if auth_context.get("_rust_session_validated") is not True:
-        session_allowed, deny_status, deny_detail = await _validate_streamable_session_access(
-            mcp_session_id=mcp_session_id,
-            user_context=auth_context,
-        )
-        if not session_allowed:
-            return ORJSONResponse(status_code=deny_status, content={"detail": deny_detail})
+    session_allowed, deny_status, deny_detail = await _validate_streamable_session_access(
+        mcp_session_id=mcp_session_id,
+        user_context=auth_context,
+    )
+    if not session_allowed:
+        return ORJSONResponse(status_code=deny_status, content={"detail": deny_detail})
 
     server_id = request.headers.get("x-contextforge-server-id") if request.headers.get("x-contextforge-mcp-runtime") == "rust" else None
     if server_id:
@@ -12198,16 +12035,13 @@ async def reset_metrics(entity: Optional[str] = None, entity_id: Optional[int] =
 # Healthcheck      #
 ####################
 @app.get("/health")
-def healthcheck(response: Response = None):
+def healthcheck():
     """
     Perform a basic health check to verify database connectivity.
 
     Sync function so FastAPI runs it in a threadpool, avoiding event loop blocking.
     Uses a dedicated session to avoid cross-thread issues and double-commit
     from get_db dependency. All DB operations happen in the same thread.
-
-    Args:
-        response: Optional response object used to attach runtime-mode headers.
 
     Returns:
         A dictionary with the health status and optional error message.
@@ -12217,9 +12051,7 @@ def healthcheck(response: Response = None):
         db.execute(text("SELECT 1"))
         # Explicitly commit to release PgBouncer backend connection in transaction mode.
         db.commit()
-        if response is not None:
-            _apply_runtime_mode_headers(response)
-        return {"status": "healthy", "mcp_runtime": _mcp_runtime_status_payload()}
+        return {"status": "healthy"}
     except Exception as e:
         # Rollback, then invalidate if rollback fails (mirrors get_db cleanup).
         try:
@@ -12231,9 +12063,7 @@ def healthcheck(response: Response = None):
                 pass  # nosec B110 - Best effort cleanup on connection failure
         error_message = f"Database connection error: {str(e)}"
         logger.error(error_message)
-        if response is not None:
-            _apply_runtime_mode_headers(response)
-        return {"status": "unhealthy", "error": error_message, "mcp_runtime": _mcp_runtime_status_payload()}
+        return {"status": "unhealthy", "error": error_message}
     finally:
         db.close()
 
@@ -12327,8 +12157,7 @@ async def readiness_check(response: Response):
     # Set HTTP status code: 200 for ready, 503 for unready
     response.status_code = status.HTTP_200_OK if is_ready else status.HTTP_503_SERVICE_UNAVAILABLE
 
-    _apply_runtime_mode_headers(response)
-    return HealthCheckResponse(status=overall_status, status_items=status_items, mcp_runtime=_mcp_runtime_status_payload())
+    return HealthCheckResponse(status=overall_status, status_items=status_items)
 
 
 @app.get("/health/security", tags=["health"])
@@ -12987,24 +12816,6 @@ class MCPRuntimeHeaderTransportWrapper:
                 headers = list(message.get("headers") or [])
                 if not any(isinstance(item, (tuple, list)) and len(item) == 2 and isinstance(item[0], (bytes, bytearray)) and item[0].lower() == b"x-contextforge-mcp-runtime" for item in headers):
                     headers.append((b"x-contextforge-mcp-runtime", self.runtime_name))
-                if not any(
-                    isinstance(item, (tuple, list)) and len(item) == 2 and isinstance(item[0], (bytes, bytearray)) and item[0].lower() == b"x-contextforge-mcp-session-core" for item in headers
-                ):
-                    headers.append((b"x-contextforge-mcp-session-core", _current_mcp_session_core_mode().encode("ascii")))
-                if not any(isinstance(item, (tuple, list)) and len(item) == 2 and isinstance(item[0], (bytes, bytearray)) and item[0].lower() == b"x-contextforge-mcp-resume-core" for item in headers):
-                    headers.append((b"x-contextforge-mcp-resume-core", _current_mcp_resume_core_mode().encode("ascii")))
-                if not any(
-                    isinstance(item, (tuple, list)) and len(item) == 2 and isinstance(item[0], (bytes, bytearray)) and item[0].lower() == b"x-contextforge-mcp-live-stream-core" for item in headers
-                ):
-                    headers.append((b"x-contextforge-mcp-live-stream-core", _current_mcp_live_stream_core_mode().encode("ascii")))
-                if not any(
-                    isinstance(item, (tuple, list)) and len(item) == 2 and isinstance(item[0], (bytes, bytearray)) and item[0].lower() == b"x-contextforge-mcp-affinity-core" for item in headers
-                ):
-                    headers.append((b"x-contextforge-mcp-affinity-core", _current_mcp_affinity_core_mode().encode("ascii")))
-                if not any(
-                    isinstance(item, (tuple, list)) and len(item) == 2 and isinstance(item[0], (bytes, bytearray)) and item[0].lower() == b"x-contextforge-mcp-session-auth-reuse" for item in headers
-                ):
-                    headers.append((b"x-contextforge-mcp-session-auth-reuse", _current_mcp_session_auth_reuse_mode().encode("ascii")))
                 message = dict(message)
                 message["headers"] = headers
             await send(message)
@@ -13015,25 +12826,6 @@ class MCPRuntimeHeaderTransportWrapper:
 def _select_mcp_ingress(_scope: dict) -> str:
     """Pick the registered MCPIngressMount ingress to serve a request.
 
-    Single source of truth for the dispatch policy:
-
-    - Boot ``off`` / ``full`` (no dispatcher today): the mount isn't used;
-      the Python transport or the plain Rust proxy is mounted directly
-      from ``_build_mcp_transport_app``.
-    - Boot ``shadow`` / ``edge`` with no override OR an ``edge`` override
-      that satisfies the safety invariant: route to the Rust ingress
-      shape selected by ``settings.mcp_rust_ingress`` (``"public"`` for
-      nginx-style or ``"internal"`` for trusted Python→Rust forwarding).
-    - Override forces ``shadow``, OR safety invariant is unmet: route to
-      the Python transport (the always-safe fallback).
-
-    The ``"rust-public"`` ingress is only registered on ``boot=edge``
-    (the public listener isn't bound on shadow boot per the entrypoint
-    flow). On any other boot mode the selector transparently downgrades
-    a configured ``"public"`` choice to ``"rust-internal"`` to avoid
-    routing to an unregistered name; the misconfig itself is surfaced
-    as a boot-time error in ``_build_mcp_transport_app``.
-
     Args:
         _scope: ASGI scope (unused today; reserved so future selectors
             can route by method/path/headers without changing the
@@ -13042,172 +12834,38 @@ def _select_mcp_ingress(_scope: dict) -> str:
     Returns:
         The ingress name to look up in the mount's registry.
     """
-    if not _should_mount_public_rust_transport():
-        return "python"
-    if settings.mcp_rust_ingress == "public" and version_module.boot_mcp_runtime_mode() == "edge":
-        return "rust-public"
-    return "rust-internal"
+    return "python"
 
 
 def _build_mcp_transport_app():
     """Build the ASGI app to mount at public ``/mcp``.
 
     Returns:
-        For boot modes ``shadow``/``edge``: an :class:`MCPIngressMount`
-        with the Python transport, the trusted-internal Rust proxy, and
-        (when supported) the nginx-style Rust public proxy registered.
-        For boot ``full``: the plain trusted-internal Rust proxy mounted
-        directly (no dispatcher — flipping ``full`` would orphan
-        Rust-held session/event-store state). For boot ``off``: the
-        Python transport. The ``/mcp`` mount calls
-        ``returned_app.handle_streamable_http`` (legacy interface kept
-        for backward compatibility with the existing mount line).
+        An :class:`MCPIngressMount` with the Python transport registered.
+        The ``/mcp`` mount calls ``returned_app.handle_streamable_http``
+        (legacy interface kept for backward compatibility with the
+        existing mount line).
     """
     # First-Party
     from mcpgateway.transports.mcp_ingress_mount import MCPIngressMount  # pylint: disable=import-outside-toplevel
 
-    boot_mode = version_module.boot_mcp_runtime_mode()
     python_transport = MCPRuntimeHeaderTransportWrapper(streamable_http_session, runtime_name="python")
 
-    if boot_mode in ("shadow", "edge"):
-        # First-Party
-        from mcpgateway.transports.rust_mcp_runtime_proxy import RustMCPRuntimeProxy  # pylint: disable=import-outside-toplevel
+    ingress = MCPIngressMount(selector=_select_mcp_ingress, fallback=python_transport.handle_streamable_http)
+    ingress.register("python", python_transport.handle_streamable_http)
 
-        rust_internal = RustMCPRuntimeProxy(streamable_http_session.handle_streamable_http)
-        ingress = MCPIngressMount(selector=_select_mcp_ingress, fallback=python_transport.handle_streamable_http)
-        ingress.register("python", python_transport.handle_streamable_http)
-        ingress.register("rust-internal", rust_internal.handle_streamable_http)
-
-        # Public-listener proxy is only meaningful when the safety invariant
-        # is met (i.e. boot=edge); shadow boot doesn't bind the public
-        # listener. Register it on edge so an operator can flip
-        # `settings.mcp_rust_ingress = "public"` without a restart.
-        if boot_mode == "edge":
-            # First-Party
-            from mcpgateway.transports.rust_mcp_public_proxy import build_rust_public_proxy_app  # pylint: disable=import-outside-toplevel
-
-            ingress.register("rust-public", build_rust_public_proxy_app())
-        elif settings.mcp_rust_ingress == "public":
-            # boot=shadow with mcp_rust_ingress=public is a misconfig: the
-            # Rust public listener isn't bound on shadow boot, so the
-            # selector deliberately downgrades to "rust-internal". Logged
-            # at error severity so it survives the default LOG_LEVEL=ERROR
-            # — a warning here would be invisible in most production
-            # deployments and the operator would never know their setting
-            # is being silently overridden.
-            logger.error(
-                "mcp_rust_ingress=public is set on boot=shadow; the Rust public listener isn't bound on shadow boot. "
-                "Selector will route to rust-internal instead. Switch boot mode to edge to honor the public ingress.",
-            )
-
-        logger.warning(
-            "%s MCP runtime mode: %s (boot=%s). Public /mcp dispatches via MCPIngressMount; ingresses=%s; current=%s. Runtime override may flip via PATCH /admin/runtime/mcp-mode.",
-            RUST_MCP_RUNTIME_DEPRECATION_MESSAGE,
-            _current_mcp_runtime_mode(),
-            boot_mode,
-            ingress.names(),
-            _select_mcp_ingress({}),
-        )
-        # The legacy mount line calls .handle_streamable_http on the returned
-        # app; expose that name on a tiny shim so the mount line can stay
-        # unchanged. (.dispatch is the modern ASGI 3.0 callable.)
-        ingress.handle_streamable_http = ingress.dispatch  # type: ignore[attr-defined]
-        return ingress
-
-    if _should_mount_public_rust_transport():
-        logger.warning(
-            "%s MCP runtime mode: %s. GET/POST/DELETE /mcp requests will be proxied to %s. MCP session core mode: %s. MCP replay/resume core mode: %s. MCP live stream core mode: %s. MCP affinity core mode: %s. MCP session auth reuse mode: %s.",
-            RUST_MCP_RUNTIME_DEPRECATION_MESSAGE,
-            _current_mcp_runtime_mode(),
-            settings.experimental_rust_mcp_runtime_uds or settings.experimental_rust_mcp_runtime_url,
-            _current_mcp_session_core_mode(),
-            _current_mcp_resume_core_mode(),
-            _current_mcp_live_stream_core_mode(),
-            _current_mcp_affinity_core_mode(),
-            _current_mcp_session_auth_reuse_mode(),
-        )
-        # First-Party
-        from mcpgateway.transports.rust_mcp_runtime_proxy import RustMCPRuntimeProxy  # pylint: disable=import-outside-toplevel
-
-        return RustMCPRuntimeProxy(streamable_http_session.handle_streamable_http)
-
-    if _rust_build_included():
-        logger.warning(
-            "MCP runtime mode: %s. Rust MCP artifacts are present in this image, but EXPERIMENTAL_RUST_MCP_RUNTIME_ENABLED=false so /mcp remains on the Python transport. Set RUST_MCP_MODE=edge or RUST_MCP_MODE=full to activate the Rust runtime with the simple env flow.",
-            _current_mcp_runtime_mode(),
-        )
-    else:
-        logger.info("MCP runtime mode: %s. /mcp is mounted on the Python transport.", _current_mcp_runtime_mode())
-
-    return python_transport
-
-
-class InternalTrustedMCPTransportBridge:
-    """Trusted internal bridge from Rust MCP transport requests to the Python session manager."""
-
-    def __init__(self, transport_app) -> None:
-        """Store the underlying Python transport app used for trusted forwarding.
-
-        Args:
-            transport_app: Python transport app that ultimately owns session handling.
-        """
-        self.transport_app = transport_app
-
-    async def handle_streamable_http(self, scope, receive, send):
-        """Translate trusted Rust transport requests into Python session-manager calls.
-
-        Args:
-            scope: Incoming ASGI scope.
-            receive: ASGI receive callable.
-            send: ASGI send callable.
-        """
-        if scope.get("type") != "http":
-            response = ORJSONResponse(status_code=404, content={"detail": "Not found"})
-            await response(scope, receive, send)
-            return
-
-        method = str(scope.get("method", "GET")).upper()
-        if method not in {"GET", "POST", "DELETE"}:
-            response = ORJSONResponse(status_code=405, content={"detail": "Method not allowed"})
-            await response(scope, receive, send)
-            return
-
-        request = Request(scope, receive=receive)
-        try:
-            _build_internal_mcp_forwarded_user(request)
-        except HTTPException as exc:
-            response = ORJSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
-            await response(scope, receive, send)
-            return
-
-        auth_context = get_internal_mcp_auth_context(request) or {}
-        server_id = request.headers.get("x-contextforge-server-id")
-        forwarded_scope = dict(scope)
-        forwarded_scope["path"] = "/mcp/"
-        forwarded_scope["modified_path"] = f"/servers/{server_id}/mcp" if server_id else "/mcp/"
-        forwarded_auth_method = auth_context.get("auth_method") or "mcp_internal_forward"
-
-        token = user_context_var.set(auth_context)
-        try:
-            set_trace_context_from_teams(
-                auth_context.get("teams"),
-                user_email=auth_context.get("email"),
-                is_admin=bool(auth_context.get("permission_is_admin", auth_context.get("is_admin", False))),
-                auth_method=forwarded_auth_method,
-                team_name=auth_context.get("team_name"),
-            )
-            await self.transport_app.handle_streamable_http(forwarded_scope, receive, send)
-        finally:
-            user_context_var.reset(token)
-            clear_trace_context()
+    logger.info("/mcp is mounted on the Python transport.")
+    # The legacy mount line calls .handle_streamable_http on the returned
+    # app; expose that name on a tiny shim so the mount line can stay
+    # unchanged. (.dispatch is the modern ASGI 3.0 callable.)
+    ingress.handle_streamable_http = ingress.dispatch  # type: ignore[attr-defined]
+    return ingress
 
 
 mcp_transport_app = _build_mcp_transport_app()
-internal_trusted_mcp_transport = InternalTrustedMCPTransportBridge(streamable_http_session)
 
 # Streamable http Mount
 app.mount("/mcp", app=mcp_transport_app.handle_streamable_http)
-app.mount("/_internal/mcp/transport", app=internal_trusted_mcp_transport.handle_streamable_http)
 
 # Conditional static files mounting and root redirect
 if UI_ENABLED:
