@@ -11,8 +11,9 @@ to connect and tunnel their local MCP servers through the gateway.
 
 # Standard
 import asyncio
+from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Final, Optional
 import uuid
 
 # Third-Party
@@ -24,12 +25,12 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.auth import get_current_user
-from mcpgateway.auth_context import get_jwt_user_email_from_payload
-from mcpgateway.config import settings
-from mcpgateway.db import get_db
-from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, PermissionChecker
+from mcpgateway.auth_context import get_jwt_user_email_from_payload, get_user_email
+from mcpgateway.db import get_db, Permissions
+from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, PermissionChecker, token_scope_grants
+from mcpgateway.middleware.token_scoping import token_scoping_middleware
 from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.utils.verify_credentials import extract_websocket_bearer_token, is_proxy_auth_trust_active, require_auth
+from mcpgateway.utils.verify_credentials import require_auth, verify_jwt_token_cached
 
 # Initialize logging
 logging_service = LoggingService()
@@ -154,15 +155,19 @@ class ReverseProxyManager:
 # Global manager instance
 manager = ReverseProxyManager()
 
-_REVERSE_PROXY_CONNECT_PERMISSIONS = [
-    "servers.create",
-    "servers.update",
-    "servers.manage",
-]
+_REVERSE_PROXY_CONNECT_PERMISSIONS: Final = (Permissions.GATEWAYS_CREATE, Permissions.SERVERS_CREATE)
+
+
+@dataclass(frozen=True, slots=True)
+class ReverseProxyAuthenticatedContext:
+    """Canonical authority retained for an admitted reverse-proxy connection."""
+
+    owner_email: str
+    team_id: str | None
 
 
 def _get_websocket_bearer_token(websocket: WebSocket) -> Optional[str]:
-    """Extract bearer token from WebSocket Authorization headers.
+    """Extract a bearer token only from the WebSocket Authorization header.
 
     Args:
         websocket: Incoming WebSocket connection.
@@ -170,70 +175,80 @@ def _get_websocket_bearer_token(websocket: WebSocket) -> Optional[str]:
     Returns:
         Bearer token value when present, otherwise None.
     """
-    return extract_websocket_bearer_token(
-        getattr(websocket, "query_params", {}),
-        getattr(websocket, "headers", {}),
-        query_param_warning="Reverse proxy WebSocket token passed via query parameter",
-    )
+    authorization = websocket.headers.get("authorization") or websocket.headers.get("Authorization")
+    if not authorization:
+        return None
+    scheme, separator, credentials = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not separator or not credentials.strip():
+        return None
+    return credentials.strip()
 
 
-async def _authenticate_reverse_proxy_websocket(websocket: WebSocket) -> Optional[str]:
+async def _authenticate_reverse_proxy_websocket(websocket: WebSocket) -> ReverseProxyAuthenticatedContext:
     """Authenticate and authorize a reverse-proxy WebSocket connection.
 
     Args:
         websocket: Incoming WebSocket connection.
 
     Returns:
-        Authenticated user email when available, otherwise None.
+        Canonical authenticated owner and server-derived team context.
 
     Raises:
         HTTPException: If authentication fails or required permissions are missing.
     """
-    auth_required = settings.auth_required or settings.mcp_client_auth_enabled
     auth_token = _get_websocket_bearer_token(websocket)
-    user_context: Optional[dict[str, Any]] = None
-
-    if auth_token:
-        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=auth_token)
-        try:
-            user = await get_current_user(credentials, request=websocket)
-        except HTTPException:
-            raise
-        except Exception as exc:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication failed") from exc
-        user_context = {
-            "email": user.email,
-            "full_name": user.full_name,
-            "is_admin": user.is_admin,
-            "ip_address": websocket.client.host if websocket.client else None,
-            "user_agent": websocket.headers.get("user-agent"),
-            "team_id": getattr(websocket.state, "team_id", None),
-            "token_teams": getattr(websocket.state, "token_teams", None),
-            "token_use": getattr(websocket.state, "token_use", None),
-        }
-    elif is_proxy_auth_trust_active(settings):
-        proxy_user = websocket.headers.get(settings.proxy_user_header)
-        if proxy_user:
-            user_context = {
-                "email": proxy_user,
-                "full_name": proxy_user,
-                "is_admin": False,
-                "ip_address": websocket.client.host if websocket.client else None,
-                "user_agent": websocket.headers.get("user-agent"),
-            }
-        elif auth_required:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
-    elif auth_required:
+    if auth_token is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
 
-    if user_context:
-        checker = PermissionChecker(user_context)
-        if not await checker.has_any_permission(_REVERSE_PROXY_CONNECT_PERMISSIONS):
-            LOGGER.warning("Reverse proxy permission denied: user=%s", user_context.get("email"))
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
-        return user_context["email"]
+    credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials=auth_token)
+    auth_scope = dict(websocket.scope)
+    auth_scope["type"] = "http"
+    auth_request = Request(auth_scope)
+    user = await get_current_user(credentials, request=auth_request)
+    owner_email = get_user_email(user)
+    team_id: str | None = getattr(websocket.state, "team_id", None)
+    token_teams: list[str] | None = getattr(websocket.state, "token_teams", None)
+    token_scopes: list[str] | None = getattr(websocket.state, "token_scopes", None)
 
-    return None
+    cached_payload = getattr(auth_request.state, "_jwt_verified_payload", None)
+    if isinstance(cached_payload, tuple) and len(cached_payload) == 2 and cached_payload[0] == auth_token and isinstance(cached_payload[1], dict):
+        token_payload = await verify_jwt_token_cached(auth_token, auth_request)
+    elif getattr(auth_request.state, "auth_method", None) == "jwt":
+        token_payload = await verify_jwt_token_cached(auth_token, auth_request)
+    else:
+        token_payload = {"scopes": {}}
+    request_path = str(websocket.scope.get("path") or "/reverse-proxy/ws")
+    client_ip = websocket.client.host if websocket.client else "unknown"
+    token_scoping_middleware.enforce_non_permission_restrictions(token_payload, request_path, client_ip)
+
+    for permission in _REVERSE_PROXY_CONNECT_PERMISSIONS:
+        if not token_scope_grants(token_scopes, permission):
+            LOGGER.warning(
+                "Reverse proxy WebSocket permission denied",
+                extra={"event": "reverse_proxy.websocket.permission_denied", "owner_email": owner_email, "permission": permission, "layer": "token_scope"},
+            )
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
+
+    user_context: dict[str, Any] = {
+        "email": owner_email,
+        "full_name": user.full_name,
+        "is_admin": user.is_admin,
+        "ip_address": websocket.client.host if websocket.client else None,
+        "user_agent": websocket.headers.get("user-agent"),
+        "team_id": team_id,
+        "token_teams": token_teams,
+        "token_use": getattr(websocket.state, "token_use", None),
+    }
+    checker = PermissionChecker(user_context)
+    for permission in _REVERSE_PROXY_CONNECT_PERMISSIONS:
+        if not await checker.has_permission(permission, team_id=team_id):
+            LOGGER.warning(
+                "Reverse proxy WebSocket permission denied",
+                extra={"event": "reverse_proxy.websocket.permission_denied", "owner_email": owner_email, "permission": permission, "layer": "rbac"},
+            )
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
+
+    return ReverseProxyAuthenticatedContext(owner_email=owner_email, team_id=team_id)
 
 
 @router.websocket("/ws")
@@ -243,13 +258,7 @@ async def websocket_endpoint(
 ):
     """WebSocket endpoint for reverse proxy connections.
 
-    Authentication is REQUIRED when:
-    - settings.auth_required is True, OR
-    - settings.mcp_client_auth_enabled is True
-
-    Supports:
-    - Bearer token in Authorization header
-    - Proxy authentication (when trust_proxy_auth is True and mcp_client_auth_enabled is False)
+    Authentication always requires a Bearer token in the Authorization header.
 
     Args:
         websocket: WebSocket connection.
@@ -259,13 +268,16 @@ async def websocket_endpoint(
         ValueError: If token is missing required subject claim.
     """
     try:
-        user = await _authenticate_reverse_proxy_websocket(websocket)
-    except HTTPException as e:
-        LOGGER.warning(f"Reverse proxy WebSocket authentication failed: {e.detail}")
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason=str(e.detail))
+        authenticated_context = await _authenticate_reverse_proxy_websocket(websocket)
+    except HTTPException as exc:
+        LOGGER.warning(
+            "Reverse proxy WebSocket admission rejected",
+            extra={"event": "reverse_proxy.websocket.rejected", "status_code": exc.status_code, "reason": str(exc.detail)},
+        )
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason=str(exc.detail))
         return
 
-    # Accept connection only after successful authentication (or when auth not required)
+    # Accept only after authentication and both authorization layers succeed.
     await websocket.accept()
 
     # Generate session ID server-side to prevent session hijacking
@@ -273,7 +285,7 @@ async def websocket_endpoint(
     session_id = uuid.uuid4().hex
 
     # Create session with authenticated user
-    session = ReverseProxySession(session_id, websocket, user)
+    session = ReverseProxySession(session_id, websocket, authenticated_context.owner_email)
     await manager.add_session(session)
 
     try:
