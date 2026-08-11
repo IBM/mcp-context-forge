@@ -241,6 +241,9 @@ class SQLDataService:
         seen: set[tuple[str, str]] = set()
         foreign_keys: list[tuple[str, str, dict[str, Any]]] = []
         discovered_records: list[DbSQLTable] = []
+        # Snapshot the active catalog before reflecting, so candidate validation
+        # compares against what was there before this discovery started.
+        existing_before = list(db.execute(select(DbSQLTable).where(DbSQLTable.source_id == source.id)).scalars())
         try:
             engine = cls._engine(source)
             inspector = inspect(engine)
@@ -302,6 +305,16 @@ class SQLDataService:
                             for foreign_key in cls._safe_inspector_call(lambda table=table_name, schema=schema_name: inspector.get_foreign_keys(table, schema=schema), []):
                                 foreign_keys.append((normalized_schema, table_name, foreign_key))
 
+            disappearing = [record for record in existing_before if (record.schema_name, record.table_name) not in seen]
+            # Validate the candidate catalog before replacing the active one. If the
+            # candidate is empty or would drop every pre-existing table, the
+            # connection is likely pointing at the wrong/empty database — refuse to
+            # replace so the last-known-good catalog and its tools stay intact.
+            if existing_before:
+                if not discovered_records:
+                    raise SQLDataError(f"discovery would replace {len(existing_before)} table(s) with an empty catalog")
+                if len(disappearing) == len(existing_before):
+                    raise SQLDataError("discovery would drop every existing table; refusing to replace the active catalog")
             existing_records = list(db.execute(select(DbSQLTable).where(DbSQLTable.source_id == source.id)).scalars())
             for record in existing_records:
                 if (record.schema_name, record.table_name) not in seen:
@@ -349,16 +362,28 @@ class SQLDataService:
             source.last_discovered_at = datetime.now(timezone.utc)
             db.commit()
             return list(db.execute(select(DbSQLTable).where(DbSQLTable.source_id == source.id).order_by(DbSQLTable.schema_name, DbSQLTable.table_name)).scalars())
-        except Exception as exc:
+        except SQLDataError as exc:
+            # Candidate validation rejected the replacement (empty catalog / all
+            # tables disappearing), or connection validation failed before
+            # reflection. Roll back so the active catalog is untouched, record the
+            # failure for observability, and surface the specific reason.
             db.rollback()
             source = db.get(SQLDataSource, source_id)
             if source is not None:
-                source.reachable = False
                 source.last_error = SecurityValidator.sanitize_display_text(str(exc), "SQL discovery error")[:1000]
-                tables = list(db.execute(select(DbSQLTable).where(DbSQLTable.source_id == source.id)).scalars())
-                for table in tables:
-                    table.stale = True
-                    db.execute(update(DbTool).where(DbTool.sql_table_id == table.id).values(enabled=False, deprecated=True, reachable=False))
+                source.last_discovered_at = datetime.now(timezone.utc)
+                db.commit()
+            raise exc
+        except Exception as exc:
+            # A failed discovery is a transient connectivity problem, not a catalog
+            # change. Preserve the last-known-good state: leave reachable, stale,
+            # and generated tools untouched so a temporary outage does not disable
+            # the whole SQL tool set. Only record the failure for observability.
+            db.rollback()
+            source = db.get(SQLDataSource, source_id)
+            if source is not None:
+                source.last_error = SecurityValidator.sanitize_display_text(str(exc), "SQL discovery error")[:1000]
+                source.last_discovered_at = datetime.now(timezone.utc)
                 db.commit()
             raise SQLDataError("SQL discovery failed") from exc
         finally:
@@ -555,7 +580,7 @@ class SQLDataService:
             "update": catalog.allow_update and catalog.object_type == "table",
             "delete": catalog.allow_delete and catalog.object_type == "table",
         }
-        if not settings.mcpgateway_sql_api_enabled or not source.enabled or not source.reachable or not catalog.exposed or catalog.stale or not allowed.get(operation, False):
+        if not settings.mcpgateway_sql_api_enabled or not source.enabled or not catalog.exposed or catalog.stale or not allowed.get(operation, False):
             raise SQLDataForbiddenError("SQL operation is not enabled")
 
         effective_timeout = float(timeout if timeout is not None else settings.mcpgateway_sql_timeout)

@@ -46,7 +46,7 @@ authors = [
 dependencies = [
     "httpx>=0.28.1",
     "mcp>=1.28.1,<2",
-    "mcp-contextforge-gateway>=1.0.6",
+    "mcp-contextforge-gateway>=1.0.7",
 ]
 
 # URLs
@@ -70,13 +70,13 @@ dev = [
     "pytest-asyncio>=1.4.0",
     "pytest-cov>=7.1.0",
     "pytest-dotenv>=0.5.2",
-    "pytest-env>=1.6.0",
+    "pytest-env>=1.7.0",
     "pytest-examples>=0.0.18",
     "pytest-rerunfailures>=16.4",
     "pytest-trio>=0.8.0",
     "pytest-xdist>=3.8.0",
-    "ruff>=0.15.21",
-    "uv>=0.11.28",
+    "ruff>=0.16.0",
+    "uv>=0.11.32",
 ]
 
 # --------------------------------------------------------------------

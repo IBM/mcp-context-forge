@@ -34,7 +34,7 @@ except ImportError:
 # Third-Party
 from google.protobuf.descriptor_pb2 import FileDescriptorSet
 from pydantic import ValidationError
-from sqlalchemy import and_, delete, desc, select, update
+from sqlalchemy import and_, delete, desc, false, or_, select, update
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -49,6 +49,7 @@ from mcpgateway.db import ToolMetric
 from mcpgateway.observability import create_child_span
 from mcpgateway.schemas import GrpcSchemaDiff, GrpcServiceCreate, GrpcServiceRead, GrpcServiceUpdate
 from mcpgateway.services.encryption_service import get_encryption_service
+from mcpgateway.services.grpc_runtime_cache import runtime_cache
 from mcpgateway.services.grpc_schema_service import GrpcSchemaService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.metrics import grpc_client_calls_counter, grpc_client_duration_histogram, grpc_reflection_counter
@@ -147,6 +148,32 @@ def _validate_reflected_tool_name(tool_name: str) -> None:
         raise GrpcServiceError(f"Reflected tool name '{tool_name}' rejected: {exc}") from exc
 
 
+def _expected_input_schema(method: Dict[str, Any]) -> Dict[str, Any]:
+    """Build the input schema a reflected method would produce as an MCP tool.
+
+    Merges the protobuf-derived JSON schema with the ``x-grpc-*`` transport hints
+    so the Tool Sync Preview matches what ``_sync_tools_from_reflection`` writes.
+
+    Args:
+        method: A catalog method entry (``input_type``, ``output_type``,
+            streaming flags, ``input_schema``, ``request_example``).
+
+    Returns:
+        The normalized input schema dict.
+    """
+    schema = dict(method.get("input_schema") or {"type": "object", "properties": {}})
+    schema.update(
+        {
+            "x-grpc-input-type": method.get("input_type", ""),
+            "x-grpc-output-type": method.get("output_type", ""),
+            "x-grpc-client-streaming": method.get("client_streaming", False),
+            "x-grpc-server-streaming": method.get("server_streaming", False),
+            "examples": [method.get("request_example", {})],
+        }
+    )
+    return schema
+
+
 class GrpcServiceNotFoundError(GrpcServiceError):
     """Raised when a requested gRPC service is not found."""
 
@@ -178,6 +205,68 @@ class GrpcService:
 
     def __init__(self):
         """Initialize the gRPC service manager."""
+
+    async def _build_team_visibility_clause(
+        self,
+        db: Session,
+        user_email: Optional[str],
+        team_id: Optional[str],
+    ) -> Any:
+        """Build an access-control WHERE clause for gRPC services.
+
+        Mirrors :meth:`BaseService._apply_visibility_filter` semantics using the
+        visibility/team_id/owner_email columns on :class:`GrpcService`.
+
+        Args:
+            db: Database session
+            user_email: Caller email, or None for no identity
+            team_id: Optional team filter
+
+        Returns:
+            SQLAlchemy clause, or None when no restriction applies
+        """
+        if team_id:
+            user_teams = await TeamManagementService(db).get_user_teams(user_email) if user_email else []
+            if not any(team.id == team_id for team in user_teams):
+                return false()  # no access: deny everything
+
+            access_conditions = [
+                and_(
+                    DbGrpcService.team_id == team_id,
+                    DbGrpcService.visibility.in_(["team", "public"]),
+                ),
+                DbGrpcService.visibility == "public",  # globally public items are always visible
+            ]
+            if user_email:
+                access_conditions.append(
+                    and_(
+                        DbGrpcService.team_id == team_id,
+                        DbGrpcService.owner_email == user_email,
+                        DbGrpcService.visibility == "private",
+                    )
+                )
+            return or_(*access_conditions)
+
+        if not user_email:
+            return None
+
+        user_teams = await TeamManagementService(db).get_user_teams(user_email)
+        team_ids = [team.id for team in user_teams]
+        clauses = [DbGrpcService.visibility == "public"]
+        clauses.append(
+            and_(
+                DbGrpcService.visibility == "private",
+                DbGrpcService.owner_email == user_email,
+            )
+        )
+        if team_ids:
+            clauses.append(
+                and_(
+                    DbGrpcService.team_id.in_(team_ids),
+                    DbGrpcService.visibility.in_(["team", "public"]),
+                )
+            )
+        return or_(*clauses)
 
     async def register_service(
         self,
@@ -282,13 +371,10 @@ class GrpcService:
         query = select(DbGrpcService).order_by(desc(DbGrpcService.created_at), desc(DbGrpcService.id))
 
         # Apply team filtering
-        if user_email and team_id:
-            team_service = TeamManagementService(db)
-            team_filter = await team_service.build_team_filter_clause(DbGrpcService, user_email, team_id)  # pylint: disable=no-member
+        if user_email or team_id:
+            team_filter = await self._build_team_visibility_clause(db, user_email, team_id)
             if team_filter is not None:
                 query = query.where(team_filter)
-        elif team_id:
-            query = query.where(DbGrpcService.team_id == team_id)
 
         # Apply active filter
         if not include_inactive:
@@ -368,8 +454,7 @@ class GrpcService:
 
         # Apply team access control
         if user_email:
-            team_service = TeamManagementService(db)
-            team_filter = await team_service.build_team_filter_clause(DbGrpcService, user_email, None)  # pylint: disable=no-member
+            team_filter = await self._build_team_visibility_clause(db, user_email, None)
             if team_filter is not None:
                 query = query.where(team_filter)
 
@@ -559,6 +644,8 @@ class GrpcService:
         except Exception as e:
             logger.error("Reflection failed for %s: %s", service.name, e)
             service.reachable = False
+            if not getattr(service, "last_reflection_error", None):
+                service.last_reflection_error = str(e)[:1000]
             db.commit()
             raise GrpcServiceError(f"Reflection failed: {str(e)}")
 
@@ -701,35 +788,58 @@ class GrpcService:
             discovery_mode = getattr(service, "discovery_mode", None) or "auto"
             active_source_type = getattr(active_artifact, "source_type", None) if active_artifact is not None else None
             activate_reflection = discovery_mode == "reflection" or active_artifact is None or active_source_type in {"reflection", "legacy"}
-            if file_descriptor_bytes_set:
-                GrpcSchemaService.import_artifact(
+            now = datetime.now(timezone.utc)
+            if not file_descriptor_bytes_set:
+                # Empty/partial reflection must never disable published tools.
+                service.last_reflection = now
+                if active_artifact is None:
+                    service.discovered_services = {}
+                    service.service_count = 0
+                    service.method_count = 0
+                    service.reachable = True
+                    service.last_reflection_error = None
+                else:
+                    service.reachable = True  # transport worked; schema empty/partial
+                    service.last_reflection_error = "Reflection returned empty descriptor set; keeping active schema"
+            else:
+                # Always land a candidate first; promote only when activation
+                # policy allows and the catalog is non-empty.
+                artifact = GrpcSchemaService.import_artifact(
                     db,
                     service,
                     descriptor_set.SerializeToString(),
                     "reflection.protoset",
                     created_by="system",
-                    activate=activate_reflection,
+                    activate=False,
                     source_type="reflection",
                 )
-            elif active_artifact is None:
-                service.discovered_services = {}
-                service.service_count = 0
-                service.method_count = 0
-            service.last_reflection = datetime.now(timezone.utc)
-            service.reachable = True
-
-            # Only an activated artifact changes the executable catalog. A
-            # conflicting uploaded artifact remains authoritative and drift is
-            # displayed for an administrator to resolve.
-            if activate_reflection:
-                self._sync_tools_from_reflection(db, service)
+                service.candidate_artifact_id = artifact.id
+                service.last_reflection = now
+                service.reachable = True
+                catalog = (artifact.source_info or {}).get("catalog") or {}
+                method_count = sum(len(item.get("methods", [])) for item in catalog.values())
+                if activate_reflection and method_count == 0 and (service.method_count or 0) > 0:
+                    service.last_reflection_error = "Reflected schema has no methods; keeping active schema"
+                elif activate_reflection and (method_count > 0 or active_artifact is None):
+                    GrpcSchemaService.activate_artifact(db, service, artifact, catalog=catalog)
+                    service.last_reflection_error = None
+                    self._sync_tools_from_reflection(db, service)
+                else:
+                    # A conflicting uploaded artifact remains authoritative and drift is
+                    # displayed for an administrator to resolve.
+                    service.schema_drift = bool(service.active_schema_hash and service.active_schema_hash != artifact.content_hash)
+                    service.last_reflection_error = None
 
             db.commit()
             reflection_outcome = "success"
 
         except Exception as e:
             logger.error("Reflection error for %s: %s", service.target, e)
+            # Undo any schema activation or tool sync started in this transaction,
+            # then persist only the failure state so a partial publish never lands.
+            db.rollback()
             service.reachable = False
+            service.last_reflection_error = str(e)[:1000]
             db.commit()
             raise
 
@@ -766,6 +876,16 @@ class GrpcService:
         existing_tools = db.execute(select(DbTool).where(DbTool.grpc_service_id == service.id)).scalars().all()
         existing_tools_map = {tool.original_name: tool for tool in existing_tools}
 
+        # Last-line defense: an empty catalog over published tools would soft-disable
+        # everything. Reflection now guards this upstream, but keep the sync itself safe.
+        if not expected_tool_names and existing_tools:
+            logger.warning(
+                "Skipping tool sync for %s: empty catalog would disable %d existing tools",
+                service.name,
+                len(existing_tools),
+            )
+            return
+
         # Preserve IDs, server relations, and metrics when a method disappears.
         # Reappearing methods are re-enabled below.
         stale_tools = [tool for tool in existing_tools if tool.original_name not in expected_tool_names]
@@ -796,16 +916,7 @@ class GrpcService:
                 try:
                     _validate_reflected_tool_name(tool_name)
                     description = f"gRPC method {tool_name}"
-                    input_schema = dict(method.get("input_schema") or {"type": "object", "properties": {}})
-                    input_schema.update(
-                        {
-                            "x-grpc-input-type": method.get("input_type", ""),
-                            "x-grpc-output-type": method.get("output_type", ""),
-                            "x-grpc-client-streaming": method.get("client_streaming", False),
-                            "x-grpc-server-streaming": method.get("server_streaming", False),
-                            "examples": [method.get("request_example", {})],
-                        }
-                    )
+                    input_schema = _expected_input_schema(method)
                     output_schema = method.get("output_schema")
 
                     existing_tool = existing_tools_map.get(tool_name)
@@ -897,7 +1008,7 @@ class GrpcService:
         if activate:
             service.grpc_metadata = _encrypt_metadata(service.grpc_metadata or {})
             self._sync_tools_from_reflection(db, service)
-            db.commit()
+        db.commit()
         return artifact
 
     async def list_schemas(self, db: Session, service_id: str) -> List[GrpcSchemaArtifact]:
@@ -987,15 +1098,6 @@ class GrpcService:
         stored_descriptors = GrpcSchemaService.descriptors_for_service(db, service)
         has_stored_descriptors = bool(stored_descriptors)
 
-        endpoint = translate_grpc.GrpcEndpoint(
-            target=service.target,
-            reflection_enabled=not has_stored_descriptors,
-            tls_enabled=service.tls_enabled,
-            tls_cert_path=service.tls_cert_path,
-            tls_key_path=service.tls_key_path,
-            metadata={**_decrypt_metadata(service.grpc_metadata or {}), **(metadata_override or {})},
-        )
-
         effective_timeout = timeout if timeout is not None else float(settings.tool_timeout)
         call_started = time.monotonic()
         grpc_status = "ERROR"
@@ -1011,7 +1113,56 @@ class GrpcService:
         )
         span_context.__enter__()  # noqa  # Explicit lifecycle preserves the active exception for __exit__.
 
+        cache_enabled = bool(getattr(settings, "grpc_runtime_cache_enabled", True)) and GRPC_AVAILABLE
+        cache_entry = None
+        cache_key = None
+        endpoint = None
         try:
+            if cache_enabled and has_stored_descriptors:
+                # Reuse a cached channel + descriptor pool when the schema and
+                # connection configuration are unchanged; otherwise build a fresh
+                # bundle on a miss. Reflection-only services (no stored schema)
+                # keep the original per-call path because their descriptors come
+                # from the live server each time.
+                metadata_decrypted = _decrypt_metadata(service.grpc_metadata or {})
+                cache_key = runtime_cache.key_for(
+                    service.id,
+                    getattr(service, "active_schema_hash", None),
+                    service.target,
+                    service.tls_enabled,
+                    service.tls_cert_path,
+                    service.tls_key_path,
+                    metadata_decrypted,
+                )
+                cache_entry = runtime_cache.acquire(
+                    cache_key,
+                    service.target,
+                    service.tls_enabled,
+                    service.tls_cert_path,
+                    service.tls_key_path,
+                )
+                endpoint = translate_grpc.GrpcEndpoint(
+                    target=service.target,
+                    reflection_enabled=False,
+                    tls_enabled=service.tls_enabled,
+                    tls_cert_path=service.tls_cert_path,
+                    tls_key_path=service.tls_key_path,
+                    metadata={**metadata_decrypted, **(metadata_override or {})},
+                    channel=cache_entry.channel,
+                    pool=cache_entry.pool,
+                    method_class_cache=cache_entry.method_classes,
+                    owns_channel=False,
+                )
+            else:
+                endpoint = translate_grpc.GrpcEndpoint(
+                    target=service.target,
+                    reflection_enabled=not has_stored_descriptors,
+                    tls_enabled=service.tls_enabled,
+                    tls_cert_path=service.tls_cert_path,
+                    tls_key_path=service.tls_key_path,
+                    metadata={**_decrypt_metadata(service.grpc_metadata or {}), **(metadata_override or {})},
+                )
+
             # Both the asyncio wrapper AND the underlying gRPC call get the deadline so a slow
             # upstream cannot keep an executor thread alive after the coroutine is cancelled.
             await asyncio.wait_for(endpoint.start(timeout=effective_timeout, trusted_local=True), timeout=effective_timeout)
@@ -1069,7 +1220,12 @@ class GrpcService:
 
         finally:
             grpc_status_context.set(grpc_status)
-            await endpoint.close()
+            if cache_entry is not None and cache_key is not None:
+                # Injected channels are owned by the cache; balance the acquire
+                # so an evicted entry can be closed once idle.
+                runtime_cache.release(cache_key, cache_entry)
+            elif endpoint is not None:
+                await endpoint.close()
             grpc_client_calls_counter.labels(service=service.slug, method=method_name, status=grpc_status).inc()
             grpc_client_duration_histogram.labels(service=service.slug, method=method_name).observe(time.monotonic() - call_started)
             span_context.__exit__(*sys.exc_info())

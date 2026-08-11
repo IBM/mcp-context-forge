@@ -14,7 +14,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 import orjson
 from sqlalchemy import delete, or_, select
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, aliased
 
 # First-Party
 from mcpgateway.auth_context import get_token_teams_from_request, get_user_email
@@ -26,6 +26,7 @@ from mcpgateway.middleware.rbac import get_current_user_with_permissions, requir
 from mcpgateway.schemas import (
     APISQLTableBindingCreate,
     APISQLTableBindingRead,
+    APISQLTableBindingReadDetail,
     SQLDataSourceCreate,
     SQLDataSourceRead,
     SQLDataSourceUpdate,
@@ -242,13 +243,58 @@ async def update_relation(  # pylint: disable=unused-argument
     return relation
 
 
-@admin_router.get("/bindings", response_model=list[APISQLTableBindingRead])
+@admin_router.get("/bindings", response_model=list[APISQLTableBindingReadDetail])
 @require_permission("sql.tables.read", allow_admin_bypass=False)
-async def list_bindings(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)):
-    """List API/table bindings for visible tables."""
+async def list_bindings(
+    request: Request,
+    tool_id: Optional[str] = None,
+    sql_table_id: Optional[str] = None,
+    source_id: Optional[str] = None,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+):
+    """List API/table bindings with joined Tool and SQLTable context for visible tables."""
     _require_sql_enabled()
+    tool_alias = aliased(DbTool, name="btool")
+    table_alias = aliased(DbSQLTable, name="btable")
+    source_alias = aliased(SQLDataSource, name="bsource")
     visible = _scoped_tables(request, user, select(DbSQLTable.id)).subquery()
-    return list(db.execute(select(APISQLTableBinding).where(APISQLTableBinding.sql_table_id.in_(select(visible.c.id)))).scalars())
+    statement = (
+        select(APISQLTableBinding, tool_alias, table_alias, source_alias)
+        .join(tool_alias, tool_alias.id == APISQLTableBinding.tool_id)
+        .join(table_alias, table_alias.id == APISQLTableBinding.sql_table_id)
+        .join(source_alias, source_alias.id == table_alias.source_id)
+        .where(APISQLTableBinding.sql_table_id.in_(select(visible.c.id)))
+    )
+    if tool_id:
+        statement = statement.where(APISQLTableBinding.tool_id == tool_id)
+    if sql_table_id:
+        statement = statement.where(APISQLTableBinding.sql_table_id == sql_table_id)
+    if source_id:
+        statement = statement.where(source_alias.id == source_id)
+    rows = db.execute(statement).mappings().all()
+    return [
+        APISQLTableBindingReadDetail(
+            id=row[APISQLTableBinding].id,
+            tool_id=row[APISQLTableBinding].tool_id,
+            sql_table_id=row[APISQLTableBinding].sql_table_id,
+            access_mode=row[APISQLTableBinding].access_mode,
+            binding_type=row[APISQLTableBinding].binding_type,
+            created_by=row[APISQLTableBinding].created_by,
+            created_at=row[APISQLTableBinding].created_at,
+            tool_name=row[tool_alias].display_name or row[tool_alias].original_name,
+            tool_display_name=row[tool_alias].display_name,
+            tool_integration_type=row[tool_alias].integration_type,
+            tool_enabled=row[tool_alias].enabled,
+            table_schema=row[table_alias].schema_name,
+            table_name=row[table_alias].table_name,
+            object_type=row[table_alias].object_type,
+            table_exposed=row[table_alias].exposed,
+            source_id=row[source_alias].id,
+            source_name=row[source_alias].name,
+        )
+        for row in rows
+    ]
 
 
 @admin_router.post("/bindings", response_model=APISQLTableBindingRead, status_code=201)

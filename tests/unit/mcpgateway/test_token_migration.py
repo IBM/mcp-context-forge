@@ -33,6 +33,18 @@ async def test_get_user_email_from_token_with_email():
 
 
 @pytest.mark.asyncio
+async def test_get_user_email_from_token_prefers_signed_user_email():
+    """Test new API token format with UUID sub and signed user.email metadata."""
+    payload = {"sub": TEST_UUID, "user": {"email": "user@example.com"}}
+    db = MagicMock()
+
+    email = await get_user_email_from_token(payload, db)
+
+    assert email == "user@example.com"
+    db.query.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_get_user_email_from_token_with_user_id():
     """Test new token format with UUID in sub claim."""
     payload = {"sub": TEST_UUID}
@@ -107,9 +119,9 @@ async def test_set_user_context_from_token_with_email():
 
     mock_db_user = MagicMock()
     mock_db_user.is_admin = True
+    db.query.return_value.filter.return_value.first.return_value = mock_db_user
 
-    with patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_db_user):
-        await set_user_context_from_token(request, payload, db)
+    await set_user_context_from_token(request, payload, db)
 
     assert request.state.user_email == "user@example.com"
     assert request.state.user_id == "user@example.com"
@@ -128,13 +140,10 @@ async def test_set_user_context_from_token_with_user_id():
     db = MagicMock()
     mock_user = MagicMock(spec=EmailUser)
     mock_user.email = "user@example.com"
+    mock_user.is_admin = False
     db.query.return_value.filter.return_value.first.return_value = mock_user
 
-    mock_db_user = MagicMock()
-    mock_db_user.is_admin = False
-
-    with patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_db_user):
-        await set_user_context_from_token(request, payload, db)
+    await set_user_context_from_token(request, payload, db)
 
     assert request.state.user_email == "user@example.com"
     assert request.state.user_id == TEST_UUID
@@ -149,9 +158,9 @@ async def test_set_user_context_from_token_defaults():
     request.state = MagicMock()
     payload = {"sub": "user@example.com"}
     db = MagicMock()
+    db.query.return_value.filter.return_value.first.return_value = None
 
-    with patch("mcpgateway.auth._get_user_by_email_sync", return_value=None):
-        await set_user_context_from_token(request, payload, db)
+    await set_user_context_from_token(request, payload, db)
 
     assert request.state.user_email == "user@example.com"
     assert request.state.user_id == "user@example.com"

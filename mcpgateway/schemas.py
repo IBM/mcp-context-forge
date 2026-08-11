@@ -3880,7 +3880,22 @@ class GatewayRead(BaseModelWithConfigDict):
     _normalize_visibility = field_validator("visibility", mode="before")(classmethod(lambda cls, v: _coerce_visibility(v)))
 
     # Tool count (populated from the tools relationship; 0 when not loaded)
-    tool_count: int = Field(default=0, description="Number of tools registered for this gateway")
+    tool_count: int = Field(
+        default=0,
+        description="Total tools registered for this gateway, including disabled ones. Not filtered per-tool by caller visibility. 0 may mean none registered or the field wasn't populated on this response path.",
+    )
+
+    # Prompt count (populated from the prompts relationship; 0 when not loaded)
+    prompt_count: int = Field(
+        default=0,
+        description="Total prompts registered for this gateway, including disabled ones. Not filtered per-prompt by caller visibility. 0 may mean none registered or the field wasn't populated on this response path.",
+    )
+
+    # Resource count (populated from the resources relationship; 0 when not loaded)
+    resource_count: int = Field(
+        default=0,
+        description="Total resources registered for this gateway, including disabled ones. Not filtered per-resource by caller visibility. 0 may mean none registered or the field wasn't populated on this response path.",
+    )
 
     # Tools skipped during gateway import due to validation errors (transient, not persisted)
     skipped_tools: List[str] = Field(default_factory=list, description="Tools skipped during gateway import due to validation errors")
@@ -4271,6 +4286,23 @@ class EventMessage(BaseModelWithConfigDict):
             str: ISO 8601 formatted string in UTC, ending with 'Z'.
         """
         return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+class RootCreate(BaseModelWithConfigDict):
+    """Management-only schema for root creation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    uri: str = Field(..., min_length=1, max_length=2048)
+    name: Optional[str] = Field(default=None, max_length=255)
+
+
+class RootUpdate(BaseModelWithConfigDict):
+    """Management-only schema for root updates."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: Optional[str] = Field(default=None, max_length=255)
 
 
 class AdminToolCreate(BaseModelWithConfigDict):
@@ -8000,6 +8032,7 @@ class GrpcServiceRead(BaseModel):
     grpc_metadata: Dict[str, str] = Field(default_factory=dict, description="gRPC metadata")
     discovery_mode: Literal["auto", "reflection", "artifact"] = Field(default="auto", description="Descriptor discovery mode")
     active_artifact_id: Optional[str] = Field(None, description="Active descriptor artifact ID")
+    candidate_artifact_id: Optional[str] = Field(None, description="Latest non-activated candidate schema artifact ID")
     active_schema_hash: Optional[str] = Field(None, description="Active descriptor SHA-256")
     reflected_schema_hash: Optional[str] = Field(None, description="Latest reflection descriptor SHA-256")
     schema_drift: bool = Field(default=False, description="Reflection and active artifact differ")
@@ -8023,6 +8056,7 @@ class GrpcServiceRead(BaseModel):
     method_count: int = Field(default=0, description="Number of methods discovered")
     discovered_services: Dict[str, Any] = Field(default_factory=dict, description="Discovered service descriptors")
     last_reflection: Optional[datetime] = Field(None, description="Last reflection timestamp")
+    last_reflection_error: Optional[str] = Field(None, description="Last reflection failure reason; null on success")
 
     # Tags
     tags: List[str] = Field(default_factory=list, description="Service tags")
@@ -8103,6 +8137,105 @@ class GrpcSchemaDiff(BaseModel):
     added_methods: List[str] = Field(default_factory=list)
     removed_methods: List[str] = Field(default_factory=list)
     changed_methods: List[str] = Field(default_factory=list)
+
+
+class GrpcToolSyncPreview(BaseModel):
+    """Read-only preview of what tool synchronization would do for a candidate schema.
+
+    Computed against the candidate artifact without mutating the Tool table or
+    activating anything. The four lists classify the would-be sync outcomes:
+    - added_tools: methods in the candidate catalog with no current Tool row
+    - modified_tools: methods whose Tool row would be updated (description,
+      schemas, url, or parent token-scoping fields)
+    - disabled_tools: current tools whose method vanished or became
+      client-streaming (soft-disable triad)
+    - methods_needing_reapproval: methods present on both sides whose
+      signature (I/O types, schemas, or streaming flags) changed
+    """
+
+    service_id: str
+    candidate_artifact_id: str
+    added_tools: List[str] = Field(default_factory=list)
+    modified_tools: List[str] = Field(default_factory=list)
+    disabled_tools: List[str] = Field(default_factory=list)
+    methods_needing_reapproval: List[str] = Field(default_factory=list)
+    warning: Optional[str] = None
+
+
+class GrpcRegistrySchemaVersionRead(BaseModel):
+    """One schema version in the registry view, without descriptor bytes."""
+
+    artifact_id: str
+    version: int
+    source_type: Literal["reflection", "proto", "zip", "protoset", "legacy"]
+    content_hash: str
+    is_active: bool
+    created_by: Optional[str] = None
+    created_at: datetime
+    activated_at: Optional[datetime] = None
+    method_count: int = Field(default=0, description="Methods described by this schema version")
+
+
+class GrpcRegistryMethodRead(BaseModel):
+    """One method within a schema version: descriptor shape and exposure state."""
+
+    name: str
+    input_type: str = ""
+    output_type: str = ""
+    client_streaming: bool = False
+    server_streaming: bool = False
+    tool_id: Optional[str] = None
+    tool_enabled: bool = False
+    tool_deprecated: bool = False
+    tool_reachable: bool = False
+    exposed: bool = Field(default=False, description="A live, enabled, non-deprecated tool backs this method")
+
+
+class GrpcRegistrySchemaViewRead(BaseModel):
+    """Schema versions for one service with per-method exposure details."""
+
+    version: int
+    artifact_id: str
+    source_type: Literal["reflection", "proto", "zip", "protoset", "legacy"]
+    content_hash: str
+    is_active: bool
+    created_by: Optional[str] = None
+    created_at: datetime
+    activated_at: Optional[datetime] = None
+    methods: List[GrpcRegistryMethodRead] = Field(default_factory=list)
+
+
+class GrpcRegistryServiceRead(BaseModel):
+    """Service-level registry summary with nested schema versions and tools."""
+
+    id: str
+    name: str
+    slug: str
+    target: str
+    description: Optional[str] = None
+    enabled: bool
+    reachable: bool
+    health_status: str = Field(default="unknown")
+    service_count: int = Field(default=0)
+    method_count: int = Field(default=0)
+    active_schema_hash: Optional[str] = None
+    schema_drift: bool = False
+    team_id: Optional[str] = None
+    owner_email: Optional[str] = None
+    visibility: Literal["private", "team", "public"] = Field(default="public")
+    schema_versions: List[GrpcRegistrySchemaVersionRead] = Field(default_factory=list)
+    tool_count: int = Field(default=0, description="Total tool rows bound to this service")
+    exposed_tool_count: int = Field(default=0, description="Live enabled, non-deprecated tool rows")
+
+
+class GrpcRegistryViewRead(BaseModel):
+    """Top-level registry view: services with their schema/method/tool state."""
+
+    services: List[GrpcRegistryServiceRead] = Field(default_factory=list)
+    total_services: int = Field(default=0)
+    total_schema_versions: int = Field(default=0)
+    total_methods: int = Field(default=0)
+    total_exposed_tools: int = Field(default=0)
 
 
 class SQLDataSourceCreate(BaseModel):
@@ -8262,6 +8395,21 @@ class APISQLTableBindingRead(BaseModel):
     binding_type: Literal["auto", "manual"]
     created_by: Optional[str] = None
     created_at: datetime
+
+
+class APISQLTableBindingReadDetail(APISQLTableBindingRead):
+    """Enriched binding with joined Tool and SQLTable context."""
+
+    tool_name: str
+    tool_display_name: Optional[str] = None
+    tool_integration_type: Optional[str] = None
+    tool_enabled: Optional[bool] = None
+    table_schema: Optional[str] = None
+    table_name: Optional[str] = None
+    object_type: Optional[str] = None
+    table_exposed: Optional[bool] = None
+    source_id: Optional[str] = None
+    source_name: Optional[str] = None
 
 
 class APIDebugInvokeRequest(BaseModel):

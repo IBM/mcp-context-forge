@@ -16,6 +16,7 @@ from datetime import datetime, timedelta, timezone
 import logging
 import re
 from typing import Any, Dict, Iterable, List, Optional
+from urllib.parse import urlsplit, urlunsplit
 import uuid
 
 # Third-Party
@@ -33,6 +34,19 @@ logger = logging.getLogger(__name__)
 MCP_UI_EXTENSION = "io.modelcontextprotocol/ui"
 MCP_UI_DEFAULT_VERSION = "2026-01-26"
 MCP_APP_MIME_TYPE = "text/html;profile=mcp-app"
+# Deprecated flat metadata key kept for backward compatibility with servers that
+# predate the nested ``_meta.ui`` shape. Removed from the spec before GA.
+LEGACY_RESOURCE_URI_META_KEY = "ui/resourceUri"
+UI_URI_SCHEME = "ui://"
+# Canonical nested keys that take precedence over the deprecated flat one.
+NESTED_RESOURCE_URI_KEYS = ("resourceUri", "resource_uri")
+# Upstream-controlled URIs are bounded before they reach the logs.
+MAX_LOGGED_URI_LENGTH = 120
+# Stands in for an authority that cannot be shown to be credential-free.
+REDACTED_AUTHORITY = "***"
+# Standard MCP messages an app may send over the AppBridge. Ordered so the
+# advertised capability payload stays stable; the router matches on membership.
+MCP_APPS_BRIDGE_METHODS = ("tools/call", "resources/read", "notifications/message", "ping")
 
 _ALLOWED_CSP_DIRECTIVES = frozenset(
     {
@@ -70,7 +84,7 @@ def mcp_apps_capability() -> Dict[str, Any]:
     return {
         "version": MCP_UI_DEFAULT_VERSION,
         "resources": {"schemes": ["ui://"]},
-        "bridge": {"methods": ["tools/call"]},
+        "bridge": {"methods": list(MCP_APPS_BRIDGE_METHODS)},
     }
 
 
@@ -136,19 +150,78 @@ def mcp_ui_metadata(value: Any) -> Dict[str, Any]:
     return ui if isinstance(ui, dict) else {}
 
 
+def _loggable_uri(value: str) -> str:
+    """Reduce an upstream-controlled URI to a bounded, credential-free form for logging."""
+    try:
+        parts = urlsplit(value)
+    except ValueError:
+        # Malformed enough that no component can be trusted; the length is the only safe detail.
+        return f"<unparseable {len(value)}-character URI>"
+
+    netloc = parts.netloc.rpartition("@")[2]
+    path = parts.path
+    if "@" in parts.query or "@" in parts.fragment or (not parts.netloc and "@" in path):
+        # The authority ended part-way through what may still be credential material: either an
+        # unencoded delimiter pushed the rest of the userinfo into the query or fragment
+        # (``https://user:pa?ss@host/``), or the URI is not hierarchical so there is no authority
+        # to strip (``mailto:user@host``). Nothing preceding that ``@`` can be shown to be safe.
+        netloc = REDACTED_AUTHORITY if parts.netloc else netloc
+        path = path if parts.netloc else path.rpartition("@")[2]
+
+    safe = urlunsplit((parts.scheme, netloc, path, "", ""))
+    if len(safe) > MAX_LOGGED_URI_LENGTH:
+        safe = f"{safe[:MAX_LOGGED_URI_LENGTH]}...(truncated)"
+    return safe
+
+
+def _legacy_ui_resource_uri(meta: Dict[str, Any], ui: Dict[str, Any]) -> Optional[str]:
+    """Return the deprecated flat ``ui/resourceUri`` value when it should be applied."""
+    legacy_uri = meta.get(LEGACY_RESOURCE_URI_META_KEY)
+    if not isinstance(legacy_uri, str) or not legacy_uri:
+        return None
+
+    for nested_key in NESTED_RESOURCE_URI_KEYS:
+        if nested_key not in ui:
+            continue
+        # Presence, not truthiness: the canonical key stays authoritative even when its
+        # value is empty or malformed, so a bad nested value is rejected downstream by
+        # validate_extension_metadata instead of being silently replaced. Upstream servers
+        # may legitimately emit both shapes, so only a genuine disagreement is reported.
+        if ui[nested_key] != legacy_uri:
+            logger.info("Ignoring deprecated _meta[%r] in favour of the nested %s already present", LEGACY_RESOURCE_URI_META_KEY, nested_key)
+        return None
+
+    if not legacy_uri.startswith(UI_URI_SCHEME) or not legacy_uri.removeprefix(UI_URI_SCHEME).strip():
+        # Folding an unusable URI in would fail extension metadata validation and
+        # drop the whole tool, so keep the pre-existing "ignore it" behaviour.
+        logger.warning("Ignoring deprecated _meta[%r]=%r because it is not a usable %s URI", LEGACY_RESOURCE_URI_META_KEY, _loggable_uri(legacy_uri), UI_URI_SCHEME)
+        return None
+
+    return legacy_uri
+
+
 def merge_mcp_protocol_meta(payload: Dict[str, Any]) -> None:
     """Translate MCP protocol ``_meta.ui`` into internal extension metadata.
 
     Upstream MCP servers advertise Apps metadata on protocol objects as
     ``_meta: {"ui": ...}``, while ContextForge stores extension state as
     ``extensionMetadata: {"io.modelcontextprotocol/ui": ...}``.
+
+    The deprecated flat ``_meta["ui/resourceUri"]`` key is also honoured so that
+    servers still emitting only the legacy shape keep their tool/UI association.
     """
     meta = payload.get("_meta")
     if not isinstance(meta, dict):
         return
 
-    ui = meta.get("ui")
-    if not isinstance(ui, dict) or not ui:
+    raw_ui = meta.get("ui")
+    ui = dict(raw_ui) if isinstance(raw_ui, dict) else {}
+
+    legacy_uri = _legacy_ui_resource_uri(meta, ui)
+    if legacy_uri:
+        ui["resourceUri"] = legacy_uri
+
+    if not ui:
         return
 
     extension_metadata = payload.get("extensionMetadata") or payload.get("extension_metadata")

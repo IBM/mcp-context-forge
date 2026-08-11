@@ -251,7 +251,7 @@ def set_csrf_cookie(response: Any, token: str, settings: Any) -> None:
         >>> call_kwargs['path']
         '/'
     """
-    cookie_name = getattr(settings, "csrf_cookie_name", "csrf_token")
+    cookie_name = getattr(settings, "csrf_cookie_name", "mcpgateway_csrf_token")
     response.set_cookie(
         key=cookie_name,
         value=token,
@@ -287,7 +287,7 @@ def clear_csrf_cookie(response: Any, settings: Any) -> None:
         >>> call_kwargs['secure']
         True
     """
-    cookie_name = getattr(settings, "csrf_cookie_name", "csrf_token")
+    cookie_name = getattr(settings, "csrf_cookie_name", "mcpgateway_csrf_token")
     response.set_cookie(
         key=cookie_name,
         value="",
@@ -348,4 +348,4 @@ def get_csrf_service() -> CSRFService:
     Returns:
         CSRFService instance
     """
-    return CSRFService(secret=app_settings.csrf_secret_key, expiry=app_settings.csrf_token_expiry)
+    return CSRFService(secret=app_settings.csrf_secret_key.get_secret_value(), expiry=app_settings.csrf_token_expiry)

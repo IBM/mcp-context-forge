@@ -252,17 +252,17 @@ class TestGetCurrentUser:
         assert user.email == "resolved@example.com"
 
     @pytest.mark.asyncio
-    async def test_jwt_uuid_sub_not_found_keeps_uuid_as_email(self, monkeypatch):
-        """UUID sub not found in DB: email stays as UUID (resolved is None path, line 1489)."""
+    async def test_jwt_uuid_sub_with_signed_email_uses_email_metadata(self, monkeypatch):
+        """UUID sub with signed user.email should not need UUID-to-email DB resolution."""
         import uuid as _uuid
 
         user_uuid = str(_uuid.uuid4())
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="uuid_sub_token")  # pragma: allowlist secret
-        jwt_payload = {"sub": user_uuid, "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()}
+        jwt_payload = {"sub": user_uuid, "user": {"email": "signed@example.com"}, "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()}
         mock_user = EmailUser(
-            email=user_uuid,
+            email="signed@example.com",
             password_hash="hash",
-            full_name="UUID User",
+            full_name="Signed User",
             is_admin=False,
             is_active=True,
             email_verified_at=datetime.now(timezone.utc),
@@ -272,14 +272,43 @@ class TestGetCurrentUser:
         monkeypatch.setattr(settings, "auth_cache_enabled", False)
         monkeypatch.setattr(settings, "auth_cache_batch_queries", False)
 
-        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
-            with patch("mcpgateway.auth._get_email_by_id_sync", return_value=None):
-                with patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user):
-                    with patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
-                        with patch("mcpgateway.auth._check_token_revoked_sync", return_value=False):
-                            user = await get_current_user(credentials=credentials)
+        with (
+            patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)),
+            patch("mcpgateway.auth._get_email_by_id_sync", return_value=None) as mock_resolve_id,
+            patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user) as mock_resolve_email,
+            patch("mcpgateway.auth._get_personal_team_sync", return_value=None),
+            patch("mcpgateway.auth._check_token_revoked_sync", return_value=False),
+        ):
+            user = await get_current_user(credentials=credentials)
 
-        assert user.email == user_uuid
+        assert user.email == "signed@example.com"
+        mock_resolve_id.assert_not_called()
+        mock_resolve_email.assert_called_with("signed@example.com")
+
+    @pytest.mark.asyncio
+    async def test_jwt_unknown_uuid_sub_rejected(self, monkeypatch):
+        """UUID sub not found in DB should fail closed instead of using UUID as email."""
+        import uuid as _uuid
+
+        user_uuid = str(_uuid.uuid4())
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="uuid_sub_token")  # pragma: allowlist secret
+        jwt_payload = {"sub": user_uuid, "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()}
+        monkeypatch.setattr(settings, "auth_cache_enabled", False)
+        monkeypatch.setattr(settings, "auth_cache_batch_queries", False)
+
+        with (
+            patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)),
+            patch("mcpgateway.auth._get_email_by_id_sync", return_value=None),
+            patch("mcpgateway.auth._get_user_by_email_sync") as mock_resolve_email,
+            patch("mcpgateway.auth._get_personal_team_sync", return_value=None),
+            patch("mcpgateway.auth._check_token_revoked_sync", return_value=False),
+        ):
+            with pytest.raises(HTTPException) as exc_info:
+                await get_current_user(credentials=credentials)
+
+        assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
+        assert exc_info.value.detail == "Invalid token"
+        mock_resolve_email.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_jwt_without_email_or_sub_raises_401(self):
@@ -2287,6 +2316,252 @@ class TestSetAuthMethodFromPayload:
         assert request.state.auth_method == "jwt"
 
 
+def _scope_test_user(email: str = "user@example.com", *, auth_provider: str = "api_token") -> EmailUser:
+    """Build a minimal active EmailUser for token-scope tests.
+
+    Args:
+        email: Email address for the user.
+        auth_provider: Auth provider recorded on the user row.
+
+    Returns:
+        EmailUser: Detached user instance.
+    """
+    now = datetime.now(timezone.utc)
+    return EmailUser(
+        email=email,
+        password_hash="h",
+        full_name="U",
+        is_admin=False,
+        is_active=True,
+        auth_provider=auth_provider,
+        password_change_required=False,
+        email_verified_at=now,
+        created_at=now,
+        updated_at=now,
+    )
+
+
+class TestJwtTokenScopeExtraction:
+    """Layer 1 scope extraction must run on every JWT authentication path.
+
+    ``AUTH_CACHE_ENABLED`` and ``AUTH_CACHE_BATCH_QUERIES`` both default to True, so the
+    auth-cache and batched-query paths serve most real requests. Extracting scopes only on
+    the individual-query fallback would leave enforcement dead in a default deployment.
+    Every case here is parametrized across all three paths.
+    """
+
+    AUTH_PATHS = ("cache_hit", "batched", "fallback")
+
+    @staticmethod
+    def _patches(auth_path: str, payload: dict, monkeypatch):
+        """Configure settings and return the patch stack for the requested auth path.
+
+        Args:
+            auth_path: One of "cache_hit", "batched", "fallback".
+            payload: Decoded JWT payload the token verifier should return.
+            monkeypatch: pytest monkeypatch fixture.
+
+        Returns:
+            list: Context managers to enter for this path.
+        """
+        # First-Party
+        from mcpgateway.cache.auth_cache import CachedAuthContext
+
+        monkeypatch.setattr(settings, "auth_cache_enabled", auth_path == "cache_hit")
+        monkeypatch.setattr(settings, "auth_cache_batch_queries", auth_path == "batched")
+
+        user_dict = {"email": "user@example.com", "is_admin": False, "is_active": True, "auth_provider": "api_token"}
+
+        common = [
+            patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)),
+            patch("mcpgateway.auth._check_token_revoked_sync", return_value=False),
+            patch("mcpgateway.auth._update_api_token_last_used_sync", return_value=None),
+            patch("mcpgateway.auth._is_api_token_jti_sync", return_value=True),
+            patch("mcpgateway.auth._get_personal_team_sync", return_value=None),
+            patch("mcpgateway.auth._get_user_by_email_sync", return_value=_scope_test_user()),
+        ]
+
+        if auth_path == "cache_hit":
+            mock_cache = MagicMock()
+            mock_cache.get_auth_context = AsyncMock(return_value=CachedAuthContext(user=user_dict, personal_team_id=None, is_token_revoked=False))
+            mock_cache.set_auth_context = AsyncMock()
+            mock_cache.set_user_teams = AsyncMock()
+            return common + [patch("mcpgateway.cache.auth_cache.auth_cache", mock_cache)]
+
+        if auth_path == "batched":
+            batched = {"user": user_dict, "personal_team_id": None, "is_token_revoked": False, "team_ids": [], "team_names": {}}
+            return common + [patch("mcpgateway.auth._get_auth_context_batched_sync", return_value=batched)]
+
+        return common
+
+    async def _authenticate(self, auth_path: str, payload: dict, monkeypatch):
+        """Run get_current_user through the given auth path and return the request.
+
+        Args:
+            auth_path: One of "cache_hit", "batched", "fallback".
+            payload: Decoded JWT payload the token verifier should return.
+            monkeypatch: pytest monkeypatch fixture.
+
+        Returns:
+            SimpleNamespace: The request object, with state populated by authentication.
+        """
+        # Standard
+        from contextlib import ExitStack
+
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid_jwt")  # pragma: allowlist secret
+        request = SimpleNamespace(state=SimpleNamespace())
+
+        with ExitStack() as stack:
+            for ctx in self._patches(auth_path, payload, monkeypatch):
+                stack.enter_context(ctx)
+            await get_current_user(credentials=credentials, request=request)
+
+        return request
+
+    @staticmethod
+    def _api_token_payload(scopes) -> dict:
+        """Build an API-token JWT payload carrying the given scopes claim.
+
+        Args:
+            scopes: Value for the ``scopes`` claim; use ``...`` to omit the claim entirely.
+
+        Returns:
+            dict: JWT payload.
+        """
+        payload = {
+            "sub": "user@example.com",
+            "email": "user@example.com",
+            "user": {"auth_provider": "api_token"},
+            "jti": "jti-scope-test",
+            "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp(),
+        }
+        if scopes is not ...:
+            payload["scopes"] = scopes
+        return payload
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("auth_path", AUTH_PATHS)
+    @pytest.mark.parametrize(
+        "permissions",
+        [
+            ["tools.read"],
+            ["*"],
+            ["tools.*"],
+            [],
+        ],
+    )
+    async def test_api_token_scopes_reach_request_state(self, auth_path, permissions, monkeypatch):
+        """Scopes are extracted on all three paths, for every scope shape."""
+        payload = self._api_token_payload({"permissions": permissions})
+        request = await self._authenticate(auth_path, payload, monkeypatch)
+
+        assert request.state.auth_method == "api_token"
+        assert request.state.token_scopes == permissions
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("auth_path", AUTH_PATHS)
+    async def test_legacy_api_token_scopes_reach_request_state(self, auth_path, monkeypatch):
+        """Legacy API tokens (no auth_provider, classified via JTI lookup) also get scopes."""
+        payload = self._api_token_payload({"permissions": ["tools.read"]})
+        payload["user"] = {}  # no auth_provider — forces the legacy JTI classification branch
+
+        request = await self._authenticate(auth_path, payload, monkeypatch)
+
+        assert request.state.auth_method == "api_token"
+        assert request.state.token_scopes == ["tools.read"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("auth_path", AUTH_PATHS)
+    async def test_session_token_with_scopes_is_not_scope_restricted(self, auth_path, monkeypatch):
+        """Interactive-login JWTs carry a scopes dict but must not be Layer 1 restricted.
+
+        ``email_auth.create_access_token()`` always emits a scopes claim, so structural
+        detection would wrongly classify session tokens as scoped API tokens. Classification
+        is driven by auth_provider instead.
+        """
+        payload = self._api_token_payload({"permissions": ["some.permission"]})
+        payload["user"] = {"auth_provider": "email"}
+
+        request = await self._authenticate(auth_path, payload, monkeypatch)
+
+        assert request.state.auth_method == "jwt"
+        assert getattr(request.state, "token_scopes", None) is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("auth_path", AUTH_PATHS)
+    async def test_api_token_without_scopes_claim_is_accepted(self, auth_path, monkeypatch):
+        """Legacy tokens predating the scopes claim authenticate with no Layer 1 restriction.
+
+        Absent scopes is equivalent to empty permissions ("inherit from RBAC"), not a bypass:
+        RBAC still gates every operation.
+        """
+        payload = self._api_token_payload(...)
+
+        request = await self._authenticate(auth_path, payload, monkeypatch)
+
+        assert request.state.auth_method == "api_token"
+        assert getattr(request.state, "token_scopes", None) is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("auth_path", AUTH_PATHS)
+    @pytest.mark.parametrize("scopes", ["tools.read,a2a.read", ["tools.read"], 42])
+    async def test_malformed_scopes_claim_rejected(self, auth_path, scopes, monkeypatch):
+        """A scopes claim that is not an object is rejected rather than failing open."""
+        payload = self._api_token_payload(scopes)
+
+        with pytest.raises(HTTPException) as exc_info:
+            await self._authenticate(auth_path, payload, monkeypatch)
+
+        assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
+        assert "malformed scopes" in exc_info.value.detail
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("auth_path", AUTH_PATHS)
+    async def test_malformed_permissions_claim_rejected(self, auth_path, monkeypatch):
+        """A non-list permissions claim is rejected — substring matching must never happen."""
+        payload = self._api_token_payload({"permissions": "tools.read"})
+
+        with pytest.raises(HTTPException) as exc_info:
+            await self._authenticate(auth_path, payload, monkeypatch)
+
+        assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
+        assert "malformed scopes" in exc_info.value.detail
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("auth_path", AUTH_PATHS)
+    async def test_null_permissions_claim_treated_as_empty(self, auth_path, monkeypatch):
+        """``permissions: null`` normalizes to [] rather than blowing up or denying all."""
+        payload = self._api_token_payload({"permissions": None})
+
+        request = await self._authenticate(auth_path, payload, monkeypatch)
+
+        assert request.state.token_scopes == []
+
+
+class TestDatabaseApiTokenScopeExtraction:
+    """Database API tokens propagate resource_scopes into request.state.token_scopes."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("resource_scopes", [["tools.read"], ["*"], []])
+    async def test_resource_scopes_reach_request_state(self, resource_scopes):
+        """A token found in EmailApiToken carries its resource_scopes forward."""
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="opaque-db-token")  # pragma: allowlist secret
+        request = SimpleNamespace(state=SimpleNamespace())
+
+        token_info = {"user_email": "user@example.com", "jti": "db-jti", "resource_scopes": resource_scopes}
+
+        with (
+            patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(side_effect=ValueError("not a jwt"))),
+            patch("mcpgateway.auth._lookup_api_token_sync", return_value=token_info),
+            patch("mcpgateway.auth._get_user_by_email_sync", return_value=_scope_test_user()),
+            patch("mcpgateway.auth._get_personal_team_sync", return_value=None),
+        ):
+            await get_current_user(credentials=credentials, request=request)
+
+        assert request.state.auth_method == "api_token"
+        assert request.state.token_scopes == resource_scopes
+
+
 class TestPluginAuthHook:
     """Tests for plugin HTTP_AUTH_RESOLVE_USER hook path."""
 
@@ -4154,7 +4429,7 @@ class TestTenantIdPropagation:
         auth_module._inject_userinfo_instate(request=request, user=user)
         auth_module._propagate_tenant_id(request)
 
-        assert request.state.plugin_global_context.tenant_id == "team-acme", "_propagate_tenant_id must propagate request.state.team_id into " "global_context.tenant_id for single-team tokens"
+        assert request.state.plugin_global_context.tenant_id == "team-acme", "_propagate_tenant_id must propagate request.state.team_id into global_context.tenant_id for single-team tokens"
 
     def test_no_team_id_leaves_tenant_id_none(self):
         """P1: when request.state.team_id is None (multi-team or no team), tenant_id stays None.
@@ -4173,7 +4448,7 @@ class TestTenantIdPropagation:
         auth_module._inject_userinfo_instate(request=request, user=user)
         auth_module._propagate_tenant_id(request)
 
-        assert request.state.plugin_global_context.tenant_id is None, "When team_id is None (multi-team or no-team token), " "tenant_id must remain None — no fake 'default' tenant should be invented"
+        assert request.state.plugin_global_context.tenant_id is None, "When team_id is None (multi-team or no-team token), tenant_id must remain None — no fake 'default' tenant should be invented"
 
     def test_existing_tenant_id_is_not_overwritten(self):
         """P1: if global_context.tenant_id is already set (e.g. by an auth plugin), do not overwrite it.
@@ -4230,7 +4505,7 @@ class TestTenantIdPropagation:
         call_kwargs = mock_pm.invoke_hook.call_args
         global_context = call_kwargs.kwargs.get("global_context")
         assert global_context is not None
-        assert global_context.tenant_id == "team-acme", "get_current_user() fallback must propagate request.state.team_id " "into GlobalContext.tenant_id for by_tenant rate limiting"
+        assert global_context.tenant_id == "team-acme", "get_current_user() fallback must propagate request.state.team_id into GlobalContext.tenant_id for by_tenant rate limiting"
 
     @pytest.mark.asyncio
     async def test_get_current_user_fallback_tenant_id_none_when_no_team(self):
@@ -4268,7 +4543,7 @@ class TestTenantIdPropagation:
         call_kwargs = mock_pm.invoke_hook.call_args
         global_context = call_kwargs.kwargs.get("global_context")
         assert global_context is not None
-        assert global_context.tenant_id is None, "When team_id is None, GlobalContext.tenant_id must be None — " "no phantom tenant should be invented"
+        assert global_context.tenant_id is None, "When team_id is None, GlobalContext.tenant_id must be None — no phantom tenant should be invented"
 
     def test_propagate_tenant_id_on_middleware_seeded_context(self):
         """_propagate_tenant_id must work when middleware has already created GlobalContext.
@@ -4289,7 +4564,7 @@ class TestTenantIdPropagation:
         auth_module._propagate_tenant_id(request)
 
         assert request.state.plugin_global_context.tenant_id == "team-acme", (
-            "_propagate_tenant_id must fill tenant_id even when middleware " "has already created plugin_global_context with tenant_id=None"
+            "_propagate_tenant_id must fill tenant_id even when middleware has already created plugin_global_context with tenant_id=None"
         )
 
     def test_propagate_tenant_id_no_overwrite(self):

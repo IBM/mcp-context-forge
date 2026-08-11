@@ -1331,6 +1331,9 @@ class Permissions:
     TOOLS_EXECUTE = "tools.execute"
     TOOLS_MANAGE_PLUGINS = "tools.manage_plugins"
 
+    # Plugin permissions
+    PLUGINS_READ = "plugins.read"
+
     # Resource permissions
     RESOURCES_CREATE = "resources.create"
     RESOURCES_READ = "resources.read"
@@ -2849,6 +2852,123 @@ class A2AAgentMetricsHourly(Base):
     p50_response_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     p95_response_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     p99_response_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class ToolMetricsDaily(Base):
+    """
+    Daily rollup of tool metrics for efficient long-term trend analysis.
+
+    Aggregated from hourly rollups (24 hourly rows per tool per day). Only
+    composable aggregates are stored (counts, min/max/avg) - percentiles are
+    intentionally omitted because they cannot be recomposed across hours.
+    """
+
+    __tablename__ = "tool_metrics_daily"
+    __table_args__ = (
+        UniqueConstraint("tool_id", "day_start", name="uq_tool_metrics_daily_tool_day"),
+        Index("ix_tool_metrics_daily_day_start", "day_start"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    tool_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("tools.id", ondelete="SET NULL"), nullable=True, index=True)
+    tool_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    day_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    total_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    success_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    failure_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    min_response_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    max_response_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    avg_response_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class ResourceMetricsDaily(Base):
+    """Daily rollup of resource metrics for efficient long-term trend analysis."""
+
+    __tablename__ = "resource_metrics_daily"
+    __table_args__ = (
+        UniqueConstraint("resource_id", "day_start", name="uq_resource_metrics_daily_resource_day"),
+        Index("ix_resource_metrics_daily_day_start", "day_start"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    resource_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("resources.id", ondelete="SET NULL"), nullable=True, index=True)
+    resource_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    day_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    total_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    success_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    failure_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    min_response_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    max_response_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    avg_response_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class PromptMetricsDaily(Base):
+    """Daily rollup of prompt metrics for efficient long-term trend analysis."""
+
+    __tablename__ = "prompt_metrics_daily"
+    __table_args__ = (
+        UniqueConstraint("prompt_id", "day_start", name="uq_prompt_metrics_daily_prompt_day"),
+        Index("ix_prompt_metrics_daily_day_start", "day_start"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    prompt_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("prompts.id", ondelete="SET NULL"), nullable=True, index=True)
+    prompt_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    day_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    total_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    success_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    failure_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    min_response_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    max_response_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    avg_response_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class ServerMetricsDaily(Base):
+    """Daily rollup of server metrics for efficient long-term trend analysis."""
+
+    __tablename__ = "server_metrics_daily"
+    __table_args__ = (
+        UniqueConstraint("server_id", "day_start", name="uq_server_metrics_daily_server_day"),
+        Index("ix_server_metrics_daily_day_start", "day_start"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    server_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("servers.id", ondelete="SET NULL"), nullable=True, index=True)
+    server_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    day_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    total_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    success_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    failure_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    min_response_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    max_response_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    avg_response_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class A2AAgentMetricsDaily(Base):
+    """Daily rollup of A2A agent metrics for efficient long-term trend analysis."""
+
+    __tablename__ = "a2a_agent_metrics_daily"
+    __table_args__ = (
+        UniqueConstraint("a2a_agent_id", "day_start", "interaction_type", name="uq_a2a_agent_metrics_daily_agent_day_type"),
+        Index("ix_a2a_agent_metrics_daily_day_start", "day_start"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    a2a_agent_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("a2a_agents.id", ondelete="SET NULL"), nullable=True, index=True)
+    agent_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    day_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    interaction_type: Mapped[str] = mapped_column(String(50), nullable=False, default="invoke")
+    total_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    success_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    failure_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    min_response_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    max_response_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    avg_response_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
@@ -4743,6 +4863,8 @@ class Gateway(Base):
 
     # Header passthrough configuration
     passthrough_headers: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True)  # Store list of strings as JSON array
+    add_headers: Mapped[Optional[Dict[str, str]]] = mapped_column(JSON, nullable=True, default=None)  # Static headers injected onto upstream connection
+    remove_headers: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True, default=None)  # Header names stripped from upstream connection
 
     # CA certificate
     ca_certificate: Mapped[Optional[bytes]] = mapped_column(Text, nullable=True)
@@ -5439,6 +5561,7 @@ class GrpcService(Base):
     grpc_metadata: Mapped[Dict[str, str]] = mapped_column(JSON, default=dict)  # gRPC metadata headers
     discovery_mode: Mapped[str] = mapped_column(String(20), default="auto", nullable=False)
     active_artifact_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
+    candidate_artifact_id: Mapped[Optional[str]] = mapped_column(String(36), nullable=True)
     active_schema_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     reflected_schema_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     schema_drift: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
@@ -5464,6 +5587,7 @@ class GrpcService(Base):
     method_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     discovered_services: Mapped[Dict[str, Any]] = mapped_column(JSON, default=dict)  # Service descriptors
     last_reflection: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    last_reflection_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     # Tags for categorization
     tags: Mapped[List[str]] = mapped_column(JSON, default=list, nullable=False)
@@ -5545,6 +5669,14 @@ class OAuthToken(Base):
     token_type: Mapped[str] = mapped_column(String(50), default="Bearer")
     expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     scopes: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True)
+    # Per-user learned OAuth audience/issuer (RFC 7519 §4.1.3 aud is string OR list).
+    # Populated from the token's unverified aud/iss claims on the OAuth callback; used
+    # by the token_validation_service to authoritatively validate THIS USER'S subsequent
+    # tokens. Kept per-user (rather than on gateway.oauth_config) so multi-tenant IdPs
+    # with per-tenant aud values do not create cross-tenant DoS, and so a user without
+    # gateways.update cannot mutate shared gateway config via the callback path.
+    learned_aud: Mapped[Optional[Any]] = mapped_column(JSON, nullable=True)
+    learned_iss: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 

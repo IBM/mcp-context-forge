@@ -117,6 +117,7 @@ def test_migrate_legacy_descriptors_creates_artifact_and_sets_active(test_db):
     assert artifact is not None
     assert artifact.source_type == "legacy"
     assert artifact.is_active is True
+    test_db.commit()
 
     test_db.refresh(service)
     assert service.active_artifact_id == artifact.id
@@ -133,3 +134,106 @@ def test_migrate_legacy_descriptors_creates_artifact_and_sets_active(test_db):
     assert test_db.query(GrpcSchemaArtifact).filter(
         GrpcSchemaArtifact.grpc_service_id == service.id
     ).count() == 1
+
+
+def _new_service(test_db, name=None):
+    import uuid
+
+    from mcpgateway.db import GrpcService
+
+    if name is None:
+        name = f"candidate-svc-{uuid.uuid4().hex[:8]}"
+    service = GrpcService(name=name, slug=name, target="candidate.example.com:443")
+    test_db.add(service)
+    test_db.commit()
+    return service
+
+
+def test_import_artifact_as_candidate_sets_candidate_pointer(test_db):
+    from mcpgateway.db import GrpcSchemaArtifact
+
+    service = _new_service(test_db)
+    artifact = GrpcSchemaService.import_artifact(
+        test_db, service, _descriptor_set(), "candidate.protoset", created_by="system", activate=False, source_type="reflection"
+    )
+    test_db.commit()
+    test_db.refresh(service)
+    assert artifact.is_active is False
+    assert service.candidate_artifact_id == artifact.id
+    assert service.active_artifact_id is None
+    assert test_db.query(GrpcSchemaArtifact).filter(GrpcSchemaArtifact.grpc_service_id == service.id).count() == 1
+
+
+def _empty_descriptor_set() -> bytes:
+    file_proto = FileDescriptorProto(name="empty.proto", package="example.empty", syntax="proto3")
+    descriptor_set = FileDescriptorSet()
+    descriptor_set.file.append(file_proto)
+    return descriptor_set.SerializeToString()
+
+
+def test_activate_artifact_refuses_empty_catalog_when_methods_exist(test_db):
+    service = _new_service(test_db)
+    active = GrpcSchemaService.import_artifact(
+        test_db, service, _descriptor_set(), "active.protoset", created_by="system", activate=True
+    )
+    test_db.commit()
+    test_db.refresh(service)
+    assert active.is_active is True
+    assert service.method_count > 0
+
+    empty = GrpcSchemaService.import_artifact(
+        test_db, service, _empty_descriptor_set(), "empty.protoset", created_by="system", activate=False
+    )
+    test_db.commit()
+    test_db.refresh(service)
+    assert service.candidate_artifact_id == empty.id
+
+    with pytest.raises(GrpcServiceError, match="Refusing to activate empty schema"):
+        GrpcSchemaService.activate_artifact(test_db, service, empty, catalog={})
+    test_db.rollback()
+
+    test_db.refresh(service)
+    test_db.refresh(active)
+    assert service.active_artifact_id == active.id
+    assert active.is_active is True
+
+
+def _variant_descriptor_set() -> bytes:
+    """Same catalog as _descriptor_set but with an extra message so the hash differs."""
+    base = FileDescriptorSet()
+    base.ParseFromString(_descriptor_set())
+    extra = base.file[0].message_type.add(name="ExtraMessage")
+    extra.field.add(name="note", number=1, type=FieldDescriptorProto.TYPE_STRING)
+    return base.SerializeToString()
+
+
+def test_activate_artifact_promotes_candidate_and_clears_pointer(test_db):
+    service = _new_service(test_db)
+    active = GrpcSchemaService.import_artifact(
+        test_db, service, _descriptor_set(), "active.protoset", created_by="system", activate=True
+    )
+    test_db.commit()
+    test_db.refresh(service)
+    assert active.is_active is True
+    assert service.active_artifact_id == active.id
+
+    candidate = GrpcSchemaService.import_artifact(
+        test_db, service, _variant_descriptor_set(), "candidate.protoset", created_by="system", activate=False
+    )
+    test_db.commit()
+    test_db.refresh(service)
+    assert candidate.id != active.id
+    assert candidate.is_active is False
+    assert service.candidate_artifact_id == candidate.id
+
+    GrpcSchemaService.activate_artifact(test_db, service, candidate, catalog=candidate.source_info["catalog"])
+    test_db.commit()
+
+    test_db.refresh(service)
+    test_db.refresh(candidate)
+    test_db.refresh(active)
+    assert candidate.is_active is True
+    assert active.is_active is False
+    assert service.candidate_artifact_id is None
+    assert service.active_artifact_id == candidate.id
+    assert service.active_schema_hash == candidate.content_hash

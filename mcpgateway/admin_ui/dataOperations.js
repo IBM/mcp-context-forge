@@ -1,4 +1,5 @@
 import { getCookie } from "./utils.js";
+import { escapeHtml } from "./security.js";
 
 const rootPath = () => window.ROOT_PATH || "";
 
@@ -624,24 +625,89 @@ const setupDebugPanel = async () => {
   }
 };
 
+const showGrpcSyncPreview = async (box) => {
+  const serviceId = box.dataset.serviceId;
+  const candidateId = box.dataset.candidateId;
+  const panel = box.querySelector(".grpc-sync-preview-panel");
+  const body = box.querySelector(".grpc-sync-preview-body");
+  if (!serviceId || !candidateId || !panel || !body) return;
+  const toggle = box.querySelector(".grpc-sync-preview-toggle");
+  if (toggle) toggle.classList.remove("hidden");
+  panel.classList.remove("hidden");
+  body.textContent = "Loading…";
+  try {
+    const preview = await requestJson(
+      `/admin/grpc/${serviceId}/schemas/${candidateId}/preview`
+    );
+    const rows = [
+      ["Added", "added_tools", "bg-green-100 text-green-800"],
+      ["Modified", "modified_tools", "bg-yellow-100 text-yellow-800"],
+      ["Disabled", "disabled_tools", "bg-red-100 text-red-800"],
+      ["Re-approval", "methods_needing_reapproval", "bg-orange-100 text-orange-800"],
+    ];
+    const listHtml = (items, chipClass) =>
+      items.length
+        ? `<ul class="space-y-0.5">${items
+            .map((item) => `<li><span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium ${chipClass}">${escapeHtml(item)}</span></li>`)
+            .join("")}</ul>`
+        : '<p class="text-gray-500 dark:text-gray-400">None</p>';
+    const rendered = rows
+      .map(
+        ([label, key, chip]) =>
+          `<div>
+            <div class="flex items-center gap-2">
+              <span class="font-medium">${label}</span>
+              <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300">${(preview[key] || []).length}</span>
+            </div>
+            ${listHtml(preview[key] || [], chip)}
+          </div>`
+      )
+      .join("");
+    const warning = preview.warning
+      ? `<p class="text-amber-700 dark:text-amber-400 mt-1">⚠️ ${escapeHtml(preview.warning)}</p>`
+      : "";
+    body.innerHTML = `<div class="space-y-2">${rendered}${warning}</div>`;
+  } catch (error) {
+    body.textContent = `Preview failed: ${error.message}`;
+  }
+};
+
 const setupGrpcOperations = () => {
   document.querySelectorAll(".grpc-schema-upload").forEach((form) => {
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
       const submit = form.querySelector('button[type="submit"]');
       const original = submit.textContent;
+      const activateCheckbox = form.querySelector('input[name="activate"]');
+      // A bare unchecked checkbox sends nothing, and FastAPI's Form(default=True)
+      // would treat the candidate as an activation. Send activate=false explicitly.
+      const activate = activateCheckbox?.checked ?? true;
       submit.disabled = true;
       submit.textContent = "Importing…";
       try {
+        const fd = new FormData(form);
+        if (!activate) fd.set("activate", "false");
         const artifact = await requestJson(
           `/admin/grpc/${form.dataset.serviceId}/schemas/import`,
           {
             method: "POST",
-            body: new FormData(form),
+            body: fd,
           }
         );
         submit.textContent = `Imported v${artifact.version}`;
-        window.setTimeout(() => window.location.reload(), 500);
+        if (artifact && !artifact.is_active && artifact.id) {
+          window.setTimeout(() => {
+            const previewBox = form.parentElement.querySelector(".grpc-sync-preview");
+            if (previewBox) {
+              previewBox.dataset.candidateId = artifact.id;
+              const toggle = previewBox.querySelector(".grpc-sync-preview-toggle");
+              if (toggle) toggle.classList.remove("hidden");
+              showGrpcSyncPreview(previewBox);
+            }
+          }, 200);
+        } else {
+          window.setTimeout(() => window.location.reload(), 500);
+        }
       } catch (error) {
         submit.textContent = error.message;
         window.setTimeout(() => {
@@ -650,6 +716,27 @@ const setupGrpcOperations = () => {
         }, 3000);
       }
     });
+  });
+  document.querySelectorAll(".grpc-sync-preview").forEach((box) => {
+    const toggle = box.querySelector(".grpc-sync-preview-toggle");
+    const close = box.querySelector(".grpc-sync-preview-close");
+    const panel = box.querySelector(".grpc-sync-preview-panel");
+    if (toggle) {
+      toggle.addEventListener("click", () => {
+        if (panel) {
+          if (panel.classList.contains("hidden")) {
+            showGrpcSyncPreview(box);
+          } else {
+            panel.classList.add("hidden");
+          }
+        }
+      });
+    }
+    if (close) {
+      close.addEventListener("click", () => {
+        if (panel) panel.classList.add("hidden");
+      });
+    }
   });
   document.querySelectorAll(".grpc-health-check").forEach((control) => {
     control.addEventListener("click", async () => {

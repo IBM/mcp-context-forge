@@ -88,7 +88,7 @@ jobs:
             OSL-3.0,
             CPAL-1.0
 
-          # To whitelist a specific dependency whose license would otherwise
+          # To allowlist a specific dependency whose license would otherwise
           # be denied (e.g. a transitively-pulled GPL package that has been
           # legally reviewed and approved), add it to `allow-dependencies-licenses`
           # as a comma-separated list of Package URLs (purl spec). Example:

@@ -34,28 +34,33 @@ def test_closed_resource_error_is_suppressed(monkeypatch):
     collector.setLevel(logging.DEBUG)
     root = logging.getLogger()
     root.addHandler(collector)
+    root_level = root.level
     root.setLevel(logging.DEBUG)
 
     logger = logging.getLogger("mcp.server.streamable_http")
+    logger_level = logger.level
     logger.setLevel(logging.DEBUG)
 
-    # Emit a ClosedResourceError and ensure it's filtered
     try:
-        raise anyio.ClosedResourceError
-    except anyio.ClosedResourceError:
-        logger.error("Error in message router", exc_info=True)
+        # Emit a ClosedResourceError and ensure it's filtered
+        try:
+            raise anyio.ClosedResourceError
+        except anyio.ClosedResourceError:
+            logger.error("Error in message router", exc_info=True)
 
-    # No records should be collected for the ClosedResourceError
-    assert len(emitted) == 0
+        # No records should be collected for the ClosedResourceError
+        assert len(emitted) == 0
 
-    # Emit a different error to ensure logging still works
-    try:
-        raise RuntimeError("boom")
-    except RuntimeError:
-        logger.error("Some real error", exc_info=True)
+        # Emit a different error to ensure logging still works
+        try:
+            raise RuntimeError("boom")
+        except RuntimeError:
+            logger.error("Some real error", exc_info=True)
 
-    assert len(emitted) == 1
-
-    # Cleanup
-    root.removeHandler(collector)
-    anyio.run(service.shutdown)  # type: ignore[arg-type]
+        assert len(emitted) == 1
+    finally:
+        # Cleanup
+        root.removeHandler(collector)
+        root.setLevel(root_level)
+        logger.setLevel(logger_level)
+        anyio.run(service.shutdown)  # type: ignore[arg-type]

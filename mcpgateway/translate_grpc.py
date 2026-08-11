@@ -1,16 +1,16 @@
 # -*- coding: utf-8 -*-
-"""Location: ./mcpgateway/translate_grpc.py
+"""位置: ./mcpgateway/translate_grpc.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 
-gRPC to MCP Translation Module
+gRPC 到 MCP 的转换模块
 
-This module provides gRPC to MCP protocol translation capabilities.
-It enables exposing gRPC services as MCP tools via HTTP/SSE endpoints
-using automatic service discovery through gRPC server reflection.
+本模块提供 gRPC 到 MCP 协议转换的能力。
+通过 gRPC 服务器反射（server reflection）自动发现服务，
+从而把 gRPC 服务以 MCP 工具的形式暴露为 HTTP/SSE 端点。
 """
 
-# Standard
+# 标准库
 import asyncio
 import base64
 from functools import lru_cache
@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any, AsyncGenerator, Dict, List, Optional, Sequence
 
 try:
-    # Third-Party
+    # 第三方库
     from google.protobuf import descriptor_pool, json_format, message_factory
     from google.protobuf.descriptor_pb2 import FileDescriptorProto  # pylint: disable=no-name-in-module
     from google.protobuf.message import DecodeError
@@ -28,7 +28,7 @@ try:
     GRPC_AVAILABLE = True
 except ImportError:
     GRPC_AVAILABLE = False
-    # Placeholder values for when grpc is not available
+    # 当 grpc 不可用时的占位值
     descriptor_pool = None  # type: ignore
     json_format = None  # type: ignore
     message_factory = None  # type: ignore
@@ -37,37 +37,37 @@ except ImportError:
     reflection_pb2 = None  # type: ignore
     reflection_pb2_grpc = None  # type: ignore
 
-# First-Party
+# 第一方（项目内部）模块
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.grpc_validation import _validate_grpc_target, _validate_tls_path
 
-# Initialize logging
+# 初始化日志
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
 
 
 @lru_cache(maxsize=1)
 def _warn_trusted_local_once() -> None:
-    """Warn, at most once per process, that SSRF/TLS validation was skipped."""
+    """每个进程最多告警一次：SSRF/TLS 校验被跳过。"""
     logger.warning("GrpcEndpoint.start() called with trusted_local=True: SSRF/TLS target validation is skipped. The caller is responsible for having validated the target address and TLS paths.")
 
 
 PROTO_TO_JSON_TYPE_MAP = {
-    1: "number",  # TYPE_DOUBLE
-    2: "number",  # TYPE_FLOAT
-    3: "integer",  # TYPE_INT64
-    4: "integer",  # TYPE_UINT64
-    5: "integer",  # TYPE_INT32
-    8: "boolean",  # TYPE_BOOL
-    9: "string",  # TYPE_STRING
-    12: "string",  # TYPE_BYTES (base64)
-    13: "integer",  # TYPE_UINT32
-    14: "string",  # TYPE_ENUM
+    1: "number",  # TYPE_DOUBLE（双精度浮点）
+    2: "number",  # TYPE_FLOAT（单精度浮点）
+    3: "integer",  # TYPE_INT64（64 位有符号整数）
+    4: "integer",  # TYPE_UINT64（64 位无符号整数）
+    5: "integer",  # TYPE_INT32（32 位有符号整数）
+    8: "boolean",  # TYPE_BOOL（布尔）
+    9: "string",  # TYPE_STRING（字符串）
+    12: "string",  # TYPE_BYTES（字节串，以 base64 编码）
+    13: "integer",  # TYPE_UINT32（32 位无符号整数）
+    14: "string",  # TYPE_ENUM（枚举）
 }
 
 
 class GrpcEndpoint:
-    """Wrapper around a gRPC channel with reflection-based introspection."""
+    """gRPC channel 的封装，附带基于反射的接口自省能力。"""
 
     def __init__(
         self,
@@ -77,16 +77,30 @@ class GrpcEndpoint:
         tls_cert_path: Optional[str] = None,
         tls_key_path: Optional[str] = None,
         metadata: Optional[Dict[str, str]] = None,
+        channel: Optional[grpc.Channel] = None,
+        pool: Optional[Any] = None,
+        method_class_cache: Optional[Dict[str, Any]] = None,
+        owns_channel: bool = True,
     ):
-        """Initialize gRPC endpoint.
+        """初始化 gRPC 端点。
 
-        Args:
-            target: gRPC server address (host:port)
-            reflection_enabled: Enable server reflection for discovery
-            tls_enabled: Use TLS for connection
-            tls_cert_path: Path to TLS certificate
-            tls_key_path: Path to TLS key
-            metadata: gRPC metadata headers
+        参数:
+            target: gRPC 服务器地址（host:port）
+            reflection_enabled: 是否启用服务器反射以进行服务发现
+            tls_enabled: 连接是否使用 TLS
+            tls_cert_path: TLS 证书路径
+            tls_key_path: TLS 密钥路径
+            metadata: gRPC 元数据请求头
+            channel: 可选，预先创建好的 channel；传入时直接复用，而不是在
+                ``start`` 里重新创建。给出时，``owns_channel`` 决定 ``close``
+                是否允许关闭它。
+            pool: 可选，预先创建的描述符池（供运行时缓存使用）。缺省时为每个
+                端点创建一个独立的私有池。
+            method_class_cache: 可选的共享 ``{完整类型名: MessageClass}`` 映射，
+                使得基于缓存池构建的消息类可以在多次调用间复用，而无需每次
+                重新构建。
+            owns_channel: 为 False 时，``close`` 永远不会关闭注入的 channel
+                （由持有方保留生命周期控制权）。
         """
         self._target = target
         self._reflection_enabled = reflection_enabled
@@ -94,19 +108,22 @@ class GrpcEndpoint:
         self._tls_cert_path = tls_cert_path
         self._tls_key_path = tls_key_path
         self._metadata = metadata or {}
-        self._channel: Optional[grpc.Channel] = None
+        self._channel: Optional[grpc.Channel] = channel
+        self._injected_channel = channel is not None
+        self._owns_channel = owns_channel
         self._services: Dict[str, Any] = {}
         self._descriptors: Dict[str, Any] = {}
         self._last_call_metadata: Dict[str, Any] = {"headers": {}, "trailers": {}, "status": None}
-        # Per-endpoint private descriptor pool. NEVER use ``descriptor_pool.Default()``: reflected
-        # descriptors come from untrusted upstream services, and adding them to the process-wide
-        # default pool can cause cross-request type confusion or symbol collisions.
-        self._pool = descriptor_pool.DescriptorPool()
+        # 每个端点独立的私有描述符池。绝不要使用 ``descriptor_pool.Default()``：
+        # 反射得到的描述符来自不受信任的上游服务，把它们加入进程级的默认池
+        # 可能造成跨请求的类型混淆或符号冲突。
+        self._pool = pool if pool is not None else descriptor_pool.DescriptorPool()
+        self._method_class_cache = method_class_cache if method_class_cache is not None else {}
         self._factory = message_factory.MessageFactory(pool=self._pool)
 
     @staticmethod
     def _metadata_values(values) -> Dict[str, List[str]]:
-        """Convert gRPC metadata into JSON-safe lists while preserving duplicates."""
+        """把 gRPC 元数据转换成 JSON 安全格式的列表，同时保留重复项。"""
         result: Dict[str, List[str]] = {}
         for key, value in values or ():
             rendered = base64.b64encode(value).decode() if isinstance(value, bytes) else str(value)
@@ -114,7 +131,7 @@ class GrpcEndpoint:
         return result
 
     def get_call_metadata(self) -> Dict[str, Any]:
-        """Return JSON-safe initial metadata, trailers, and final status for the last call."""
+        """返回上次调用的 JSON 安全格式的初始元数据、trailer 和最终状态。"""
         return {
             "headers": dict(self._last_call_metadata.get("headers") or {}),
             "trailers": dict(self._last_call_metadata.get("trailers") or {}),
@@ -122,12 +139,12 @@ class GrpcEndpoint:
         }
 
     def _validate_target_and_tls(self) -> None:
-        """Validate the target address and any TLS paths against SSRF / traversal rules.
+        """根据 SSRF / 路径穿越规则校验目标地址及任何 TLS 路径。
 
-        Reuses the shared validators from ``mcpgateway.utils.grpc_validation``.
+        复用 ``mcpgateway.utils.grpc_validation`` 中的共享校验器。
 
-        Raises:
-            GrpcServiceError: If the target or a TLS path is rejected.
+        抛出:
+            GrpcServiceError: 如果目标地址或某个 TLS 路径被拒绝。
         """
         _validate_grpc_target(self._target)
         if self._tls_cert_path:
@@ -136,23 +153,20 @@ class GrpcEndpoint:
             _validate_tls_path(self._tls_key_path, "TLS key path")
 
     async def start(self, timeout: Optional[float] = None, trusted_local: bool = False) -> None:
-        """Initialize gRPC channel and perform reflection if enabled.
+        """初始化 gRPC channel，若启用反射则执行服务发现。
 
-        Args:
-            timeout: Per-call gRPC deadline propagated to reflection RPCs so a
-                slow upstream cannot block the executor beyond the caller's
-                asyncio cancellation.
-            trusted_local: When False (the default), the target address and any
-                TLS certificate/key paths are validated against the platform SSRF
-                and path-traversal rules before any channel is opened, so a direct
-                caller cannot be steered at a blocked destination (e.g. a cloud
-                metadata endpoint). Set True only when the caller has already
-                validated the target; validation is then skipped and a warning is
-                logged once per process.
+        参数:
+            timeout: 单次调用的 gRPC 截止时间（deadline），会传播给反射 RPC，
+                避免上游响应过慢时在调用方的 asyncio 取消之外继续阻塞执行器。
+            trusted_local: 为 False（默认值）时，在打开任何 channel 之前，
+                目标地址及 TLS 证书/密钥路径会先按平台的 SSRF 和路径穿越规则
+                校验，防止直接调用方被引导到被拦截的目的地（例如云元数据
+                端点）。只有在调用方已自行校验过目标时才设为 True；设为 True
+                时校验被跳过，并每个进程记录一次告警。
 
-        Raises:
-            GrpcServiceError: If trusted_local is False and the target or a TLS
-                path is rejected by the SSRF / path-traversal validators.
+        抛出:
+            GrpcServiceError: 如果 trusted_local 为 False，且目标地址或某个
+                TLS 路径被 SSRF / 路径穿越校验器拒绝。
         """
         if trusted_local:
             _warn_trusted_local_once()
@@ -161,8 +175,12 @@ class GrpcEndpoint:
 
         logger.info(f"Starting gRPC endpoint connection to {self._target}")
 
-        # Create channel
-        if self._tls_enabled:
+        # 创建 channel
+        if self._channel is not None:
+            # 注入的 channel（运行时缓存命中）原样复用；生命周期控制权归持有方，
+            # 因此 start() 不得重建它。
+            logger.debug("Reusing injected gRPC channel for %s", self._target)
+        elif self._tls_enabled:
             if self._tls_cert_path and self._tls_key_path:
                 cert = await asyncio.to_thread(Path(self._tls_cert_path).read_bytes)
                 key = await asyncio.to_thread(Path(self._tls_key_path).read_bytes)
@@ -174,25 +192,25 @@ class GrpcEndpoint:
         else:
             self._channel = grpc.insecure_channel(self._target)
 
-        # Perform reflection if enabled
+        # 若启用反射则执行服务发现
         if self._reflection_enabled:
             await self._discover_services(timeout=timeout)
 
     async def _discover_services(self, timeout: Optional[float] = None) -> None:
-        """Use gRPC reflection to discover services and methods.
+        """使用 gRPC 反射发现服务和方法。
 
-        Args:
-            timeout: Per-call gRPC deadline applied to each reflection RPC.
+        参数:
+            timeout: 应用于每个反射 RPC 的单次调用 gRPC 截止时间。
 
-        Raises:
-            Exception: If service discovery fails
+        抛出:
+            Exception: 如果服务发现失败
         """
         logger.info(f"Discovering services on {self._target} via reflection")
 
         try:
             stub = reflection_pb2_grpc.ServerReflectionStub(self._channel)
 
-            # List all services
+            # 列出所有服务
             request = reflection_pb2.ServerReflectionRequest(list_services="")  # pylint: disable=no-member
 
             response = stub.ServerReflectionInfo(iter([request]), timeout=timeout) if timeout is not None else stub.ServerReflectionInfo(iter([request]))
@@ -202,13 +220,13 @@ class GrpcEndpoint:
                 if resp.HasField("list_services_response"):
                     for svc in resp.list_services_response.service:
                         service_name = svc.name
-                        # Skip reflection service itself
+                        # 跳过反射服务本身
                         if "ServerReflection" in service_name:
                             continue
                         service_names.append(service_name)
                         logger.debug(f"Discovered service: {service_name}")
 
-            # Get file descriptors for each service
+            # 为每个服务获取文件描述符
             for service_name in service_names:
                 await self._discover_service_details(stub, service_name, timeout=timeout)
 
@@ -219,34 +237,34 @@ class GrpcEndpoint:
             raise
 
     async def _discover_service_details(self, stub, service_name: str, timeout: Optional[float] = None) -> None:
-        """Discover detailed information about a service including methods and message types.
+        """发现服务的详细信息，包括方法和消息类型。
 
-        Args:
-            stub: gRPC reflection stub
-            service_name: Name of the service to discover
-            timeout: Per-call gRPC deadline applied to the reflection RPC.
+        参数:
+            stub: gRPC 反射 stub
+            service_name: 要发现的服务名称
+            timeout: 应用于反射 RPC 的单次调用 gRPC 截止时间。
         """
         try:  # pylint: disable=too-many-nested-blocks
-            # Request file descriptor containing this service
+            # 请求包含此服务的文件描述符
             request = reflection_pb2.ServerReflectionRequest(file_containing_symbol=service_name)  # pylint: disable=no-member
 
             response = stub.ServerReflectionInfo(iter([request]), timeout=timeout) if timeout is not None else stub.ServerReflectionInfo(iter([request]))
 
             for resp in response:
                 if resp.HasField("file_descriptor_response"):
-                    # Process all file descriptors
+                    # 处理所有文件描述符
                     for file_desc_proto_bytes in resp.file_descriptor_response.file_descriptor_proto:
                         file_desc_proto = FileDescriptorProto()
                         file_desc_proto.ParseFromString(file_desc_proto_bytes)
 
-                        # Add to pool (ignore if already exists)
+                        # 加入池中（已存在则忽略）
                         try:
                             self._pool.Add(file_desc_proto)
                         except Exception as e:  # pylint: disable=broad-except
-                            # Descriptor already in pool, safe to skip
+                            # 描述符已在池中，跳过是安全的
                             logger.debug(f"Descriptor already in pool: {e}")
 
-                        # Extract service and method information
+                        # 提取服务和方法的描述信息
                         for service_desc in file_desc_proto.service:
                             if service_desc.name in service_name or service_name.endswith(service_desc.name):
                                 full_service_name = f"{file_desc_proto.package}.{service_desc.name}" if file_desc_proto.package else service_desc.name
@@ -269,14 +287,14 @@ class GrpcEndpoint:
                                     "package": file_desc_proto.package,
                                 }
 
-                                # Store descriptors for this service
+                                # 存储此服务的描述符
                                 self._descriptors[full_service_name] = file_desc_proto
 
                                 logger.debug(f"Service {full_service_name} has {len(methods)} methods")
 
         except Exception as e:
             logger.warning(f"Failed to get details for {service_name}: {e}")
-            # Still add basic service info even if details fail
+            # 即使详情获取失败，也仍然添加基本服务信息
             self._services[service_name] = {
                 "name": service_name,
                 "methods": [],
@@ -289,27 +307,26 @@ class GrpcEndpoint:
         request_data: Dict[str, Any],
         timeout: Optional[float] = None,
     ) -> Dict[str, Any]:
-        """Invoke a gRPC method with JSON request data.
+        """使用 JSON 请求数据调用 gRPC 方法。
 
-        Args:
-            service: Service name
-            method: Method name
-            request_data: JSON request data
-            timeout: Per-RPC deadline in seconds. When set, the underlying
-                gRPC call is given a server-side deadline so a slow upstream
-                cannot tie up the executor thread even if the asyncio
-                wrapper is cancelled.
+        参数:
+            service: 服务名称
+            method: 方法名称
+            request_data: JSON 请求数据
+            timeout: 单次 RPC 的截止时间（秒）。设置后，底层 gRPC 调用会被
+                赋予一个服务端截止时间，即使包装它的 asyncio 协程被取消，
+                慢速上游也无法一直占用执行器线程。
 
-        Returns:
-            JSON response data
+        返回:
+            JSON 响应数据
 
-        Raises:
-            ValueError: If service or method not found
-            Exception: If invocation fails
+        抛出:
+            ValueError: 如果服务或方法不存在
+            Exception: 如果调用失败
         """
         logger.debug(f"Invoking {service}.{method}")
 
-        # Get method info
+        # 获取方法信息
         if service not in self._services:
             raise ValueError(f"Service {service} not found")
 
@@ -325,7 +342,7 @@ class GrpcEndpoint:
         if method_info["client_streaming"] or method_info["server_streaming"]:
             raise ValueError(f"Method {method} is streaming, use invoke_streaming instead")
 
-        # Get message descriptors from pool
+        # 从池中获取消息描述符
         input_type = method_info["input_type"].lstrip(".")
         output_type = method_info["output_type"].lstrip(".")
 
@@ -335,24 +352,25 @@ class GrpcEndpoint:
         except KeyError as e:
             raise ValueError(f"Message type not found in descriptor pool: {e}")
 
-        # protobuf>=5.x removed MessageFactory.GetPrototype; use the module-level helper bound
-        # to our private pool instead.
-        request_class = message_factory.GetMessageClass(input_desc)
-        response_class = message_factory.GetMessageClass(output_desc)
+        # protobuf>=5.x 移除了 MessageFactory.GetPrototype；改用绑定到我们私有池的
+        # 模块级辅助函数。消息类会被缓存（按端点，或通过注入的缓存共享），
+        # 这样重复调用可以省去构建类的开销。
+        request_class = self._message_class(input_type, input_desc)
+        response_class = self._message_class(output_type, output_desc)
 
-        # Convert JSON to protobuf message
+        # 把 JSON 转换成 protobuf 消息
         request_msg = json_format.ParseDict(request_data, request_class())
 
-        # Create generic stub and invoke
+        # 创建通用 stub 并调用
         channel = self._channel
         method_path = f"/{service}/{method}"
 
-        # Bind the per-RPC deadline (server-side timeout) so a slow upstream cannot outlive an
-        # asyncio.wait_for cancellation on the wrapping coroutine.
+        # 绑定单次 RPC 的截止时间（服务端超时），使慢速上游无法在包装协程被
+        # asyncio.wait_for 取消后仍然存活。
         unary = channel.unary_unary(method_path, request_serializer=request_msg.SerializeToString, response_deserializer=response_class.FromString)
 
         def _call(req):
-            """Sync gRPC unary call dispatched to a thread executor; binds ``timeout`` when set."""
+            """同步的 gRPC 一元调用，分发到线程执行器；设置 ``timeout`` 时绑定之。"""
             metadata = list(self._metadata.items())
             return unary.with_call(req, timeout=timeout, metadata=metadata) if timeout is not None else unary.with_call(req, metadata=metadata)
 
@@ -363,8 +381,9 @@ class GrpcEndpoint:
             "status": call.code().name if call.code() is not None else None,
         }
 
-        # Convert protobuf response to JSON.
-        # protobuf>=5 renamed `including_default_value_fields` -> `always_print_fields_with_no_presence`; do not revert.
+        # 把 protobuf 响应转换成 JSON。
+        # protobuf>=5 把 `including_default_value_fields` 改名为
+        # `always_print_fields_with_no_presence`；不要改回去。
         response_dict = json_format.MessageToDict(response_msg, preserving_proto_field_name=True, always_print_fields_with_no_presence=True)
 
         logger.debug(f"Successfully invoked {service}.{method}")
@@ -377,24 +396,24 @@ class GrpcEndpoint:
         request_data: Dict[str, Any],
         timeout: Optional[float] = None,
     ) -> AsyncGenerator[Dict[str, Any], None]:
-        """Invoke a server-streaming gRPC method.
+        """调用一个服务端流式（server-streaming）gRPC 方法。
 
-        Args:
-            service: Service name
-            method: Method name
-            request_data: JSON request data
-            timeout: Per-RPC deadline in seconds
+        参数:
+            service: 服务名称
+            method: 方法名称
+            request_data: JSON 请求数据
+            timeout: 单次 RPC 的截止时间（秒）
 
-        Yields:
-            JSON response chunks
+        产出:
+            JSON 响应数据块
 
-        Raises:
-            ValueError: If service or method not found or not streaming
-            grpc.RpcError: If streaming RPC fails
+        抛出:
+            ValueError: 如果服务或方法不存在，或不是流式方法
+            grpc.RpcError: 如果流式 RPC 失败
         """
         logger.debug(f"Invoking streaming {service}.{method}")
 
-        # Get method info
+        # 获取方法信息
         if service not in self._services:
             raise ValueError(f"Service {service} not found")
 
@@ -413,7 +432,7 @@ class GrpcEndpoint:
         if method_info["client_streaming"]:
             raise ValueError("Client streaming not yet supported")
 
-        # Get message descriptors from pool
+        # 从池中获取消息描述符
         input_type = method_info["input_type"].lstrip(".")
         output_type = method_info["output_type"].lstrip(".")
 
@@ -423,14 +442,15 @@ class GrpcEndpoint:
         except KeyError as e:
             raise ValueError(f"Message type not found in descriptor pool: {e}")
 
-        # protobuf>=5.x removed MessageFactory.GetPrototype; module-level helper used here too.
-        request_class = message_factory.GetMessageClass(input_desc)
-        response_class = message_factory.GetMessageClass(output_desc)
+        # 与 invoke() 相同，这里同样使用模块级辅助函数（protobuf>=5.x 移除了
+        # MessageFactory.GetPrototype）。
+        request_class = self._message_class(input_type, input_desc)
+        response_class = self._message_class(output_type, output_desc)
 
-        # Convert JSON to protobuf message
+        # 把 JSON 转换成 protobuf 消息
         request_msg = json_format.ParseDict(request_data, request_class())
 
-        # Create streaming call
+        # 创建流式调用
         channel = self._channel
         method_path = f"/{service}/{method}"
 
@@ -440,11 +460,11 @@ class GrpcEndpoint:
             metadata=list(self._metadata.items()),
         )
 
-        # Yield responses as they arrive
+        # 逐个产出响应
         stream_completed = False
 
         def _final_metadata():
-            """Read terminal streaming metadata in the executor thread."""
+            """在执行器线程中读取流结束时的元数据。"""
             code = stream_call.code()
             return stream_call.trailing_metadata(), code.name if code is not None else None
 
@@ -452,14 +472,14 @@ class GrpcEndpoint:
             iterator = iter(stream_call)
 
             def _initial_metadata():
-                """Read initial streaming metadata in the executor thread."""
+                """在执行器线程中读取流的初始元数据。"""
                 return stream_call.initial_metadata()
 
             initial_metadata = await asyncio.get_running_loop().run_in_executor(None, _initial_metadata)
             self._last_call_metadata = {"headers": self._metadata_values(initial_metadata), "trailers": {}, "status": None}
 
             def _next_response():
-                """Read the next stream item without leaking StopIteration into asyncio."""
+                """读取流中的下一项，避免把 StopIteration 泄漏进 asyncio。"""
                 try:
                     return next(iterator)
                 except StopIteration:
@@ -470,7 +490,7 @@ class GrpcEndpoint:
                 if response_msg is None:
                     stream_completed = True
                     break
-                # See note in invoke() about the kwarg rename in protobuf >=5.x.
+                # 见 invoke() 中关于 protobuf >=5.x 关键字参数改名的注释。
                 response_dict = json_format.MessageToDict(response_msg, preserving_proto_field_name=True, always_print_fields_with_no_presence=True)
                 yield response_dict
         except grpc.RpcError as e:
@@ -492,26 +512,45 @@ class GrpcEndpoint:
         logger.debug(f"Streaming complete for {service}.{method}")
 
     async def close(self) -> None:
-        """Close the gRPC channel."""
-        if self._channel:
+        """当该端点拥有 channel 时，关闭这个 gRPC channel。"""
+        if self._channel is not None and self._owns_channel:
             self._channel.close()
             logger.info("Closed gRPC connection to %s", self._target)
 
+    def _message_class(self, type_name: str, message_descriptor: Any) -> Any:
+        """返回绑定到本池的 ``type_name`` 对应的缓存 MessageClass。
+
+        消息类由 protobuf 的消息工厂根据池中的描述符派生而来。缓存它们
+        （按端点，或放入共享的运行时缓存）可以避免每次调用同一个 RPC 时
+        都重新构建类。
+
+        参数:
+            type_name: protobuf 消息类型的完整名称。
+            message_descriptor: ``type_name`` 对应的已解析描述符。
+
+        返回:
+            消息类。
+        """
+        cached = self._method_class_cache.get(type_name)
+        if cached is None:
+            cached = message_factory.GetMessageClass(message_descriptor)
+            self._method_class_cache[type_name] = cached
+        return cached
+
     def load_file_descriptors(self, file_descriptor_protos: Sequence[bytes]) -> None:
-        """Load serialized FileDescriptorProto bytes into the descriptor pool.
+        """把序列化的 FileDescriptorProto 字节加载进描述符池。
 
-        This populates the pool with message type definitions so that
-        invoke() can serialize/deserialize requests without a reflection
-        round-trip.
+        这会把消息类型定义填充进池中，使 invoke() 无需反射往返即可
+        完成请求的序列化/反序列化。
 
-        Args:
-            file_descriptor_protos: Sequence of raw FileDescriptorProto bytes.
-                Passing a single ``bytes`` object directly is rejected because
-                Python would silently iterate it byte-by-byte.
+        参数:
+            file_descriptor_protos: 原始 FileDescriptorProto 字节的序列。
+                直接传单个 ``bytes`` 对象会被拒绝，因为 Python 会把它
+                逐字节静默迭代。
 
-        Raises:
-            TypeError: If a single bytes object is passed instead of a sequence.
-            ValueError: If unable to parse the protobuf descriptor.
+        抛出:
+            TypeError: 如果传入的是单个 bytes 对象而不是序列。
+            ValueError: 如果无法解析 protobuf 描述符。
         """
         if isinstance(file_descriptor_protos, (bytes, bytearray)):
             raise TypeError("file_descriptor_protos must be a sequence of bytes, not a single bytes object")
@@ -526,28 +565,28 @@ class GrpcEndpoint:
             try:
                 self._pool.Add(fd)
             except TypeError as conflict_err:
-                # protobuf raises TypeError when a file with the same name is already registered
-                # with conflicting content. The existing descriptor stays authoritative; this is
-                # NOT a true no-op, but treating it as "skip-and-log" matches the prior intent
-                # without masking actual programming errors.
+                # 当同名文件已注册且内容冲突时，protobuf 会抛出 TypeError。
+                # 已存在的描述符仍具有权威性；这并非真正意义上的空操作，
+                # 但把它当作"跳过并记录日志"处理与先前的意图一致，
+                # 同时不会掩盖真正的编程错误。
                 logger.debug("Descriptor pool conflict for %s: %s", fd.name, conflict_err)
 
     def get_services(self) -> List[str]:
-        """Get list of discovered service names.
+        """获取已发现的服务名称列表。
 
-        Returns:
-            List of service names
+        返回:
+            服务名称列表
         """
         return list(self._services.keys())
 
     def get_methods(self, service: str) -> List[str]:
-        """Get list of methods for a service.
+        """获取某个服务的方法列表。
 
-        Args:
-            service: Service name
+        参数:
+            service: 服务名称
 
-        Returns:
-            List of method names
+        返回:
+            方法名称列表
         """
         if service in self._services:
             return [m["name"] for m in self._services[service].get("methods", [])]
@@ -555,24 +594,24 @@ class GrpcEndpoint:
 
 
 class GrpcToMcpTranslator:
-    """Translates between gRPC and MCP protocols."""
+    """在 gRPC 和 MCP 协议之间进行转换。"""
 
     def __init__(self, endpoint: GrpcEndpoint):
-        """Initialize translator.
+        """初始化转换器。
 
-        Args:
-            endpoint: gRPC endpoint to translate
+        参数:
+            endpoint: 要转换的 gRPC 端点
         """
         self._endpoint = endpoint
 
     def grpc_service_to_mcp_server(self, service_name: str) -> Dict[str, Any]:
-        """Convert a gRPC service to an MCP virtual server definition.
+        """把一个 gRPC 服务转换为 MCP 虚拟服务器定义。
 
-        Args:
-            service_name: gRPC service name
+        参数:
+            service_name: gRPC 服务名称
 
-        Returns:
-            MCP server definition
+        返回:
+            MCP 服务器定义
         """
         return {
             "name": service_name,
@@ -582,13 +621,13 @@ class GrpcToMcpTranslator:
         }
 
     def grpc_methods_to_mcp_tools(self, service_name: str) -> List[Dict[str, Any]]:
-        """Convert gRPC methods to MCP tool definitions.
+        """把 gRPC 方法转换为 MCP 工具定义。
 
-        Args:
-            service_name: gRPC service name
+        参数:
+            service_name: gRPC 服务名称
 
-        Returns:
-            List of MCP tool definitions
+        返回:
+            MCP 工具定义列表
         """
         # pylint: disable=protected-access
         if service_name not in self._endpoint._services:
@@ -601,12 +640,12 @@ class GrpcToMcpTranslator:
             method_name = method_info["name"]
             input_type = method_info["input_type"].lstrip(".")
 
-            # Try to get input schema from descriptor
+            # 尝试从描述符获取输入 schema
             try:
                 input_desc = self._endpoint._pool.FindMessageTypeByName(input_type)
                 input_schema = self.protobuf_to_json_schema(input_desc)
             except KeyError:
-                # Fallback to generic schema if descriptor not found
+                # 描述符找不到时，回退到通用 schema
                 input_schema = {"type": "object", "properties": {}}
 
             tools.append({"name": f"{service_name}.{method_name}", "description": f"gRPC method {service_name}.{method_name}", "inputSchema": input_schema})
@@ -614,65 +653,65 @@ class GrpcToMcpTranslator:
         return tools
 
     def protobuf_to_json_schema(self, message_descriptor: Any) -> Dict[str, Any]:
-        """Convert protobuf message descriptor to JSON schema.
+        """把 protobuf 消息描述符转换为 JSON schema。
 
-        Args:
-            message_descriptor: Protobuf message descriptor
+        参数:
+            message_descriptor: protobuf 消息描述符
 
-        Returns:
+        返回:
             JSON schema
         """
         schema = {"type": "object", "properties": {}, "required": []}
 
-        # Iterate over fields in the message
+        # 遍历消息中的字段
         for field in message_descriptor.fields:
             field_name = field.name
             field_schema = self._protobuf_field_to_json_schema(field)
             schema["properties"][field_name] = field_schema
 
-            # Add to required if field is required (proto2/proto3 handling)
+            # 如果字段是必填的则加入 required（proto2/proto3 处理）
             if hasattr(field, "label") and field.label == 2:  # LABEL_REQUIRED
                 schema["required"].append(field_name)
 
         return schema
 
     def _protobuf_field_to_json_schema(self, field: Any) -> Dict[str, Any]:
-        """Convert a protobuf field to JSON schema type.
+        """把一个 protobuf 字段转换为 JSON schema 类型。
 
-        Args:
-            field: Protobuf field descriptor
+        参数:
+            field: protobuf 字段描述符
 
-        Returns:
-            JSON schema for the field
+        返回:
+            该字段对应的 JSON schema
         """
-        # Map protobuf types to JSON schema types
+        # 把 protobuf 类型映射为 JSON schema 类型
         type_map = {
-            1: "number",  # TYPE_DOUBLE
-            2: "number",  # TYPE_FLOAT
-            3: "integer",  # TYPE_INT64
-            4: "integer",  # TYPE_UINT64
-            5: "integer",  # TYPE_INT32
-            6: "integer",  # TYPE_FIXED64
-            7: "integer",  # TYPE_FIXED32
-            8: "boolean",  # TYPE_BOOL
-            9: "string",  # TYPE_STRING
-            11: "object",  # TYPE_MESSAGE
-            12: "string",  # TYPE_BYTES (base64)
-            13: "integer",  # TYPE_UINT32
-            14: "string",  # TYPE_ENUM
-            15: "integer",  # TYPE_SFIXED32
-            16: "integer",  # TYPE_SFIXED64
-            17: "integer",  # TYPE_SINT32
-            18: "integer",  # TYPE_SINT64
+            1: "number",  # TYPE_DOUBLE（双精度浮点）
+            2: "number",  # TYPE_FLOAT（单精度浮点）
+            3: "integer",  # TYPE_INT64（64 位有符号整数）
+            4: "integer",  # TYPE_UINT64（64 位无符号整数）
+            5: "integer",  # TYPE_INT32（32 位有符号整数）
+            6: "integer",  # TYPE_FIXED64（64 位固定长度整数）
+            7: "integer",  # TYPE_FIXED32（32 位固定长度整数）
+            8: "boolean",  # TYPE_BOOL（布尔）
+            9: "string",  # TYPE_STRING（字符串）
+            11: "object",  # TYPE_MESSAGE（嵌套消息）
+            12: "string",  # TYPE_BYTES（字节串，以 base64 编码）
+            13: "integer",  # TYPE_UINT32（32 位无符号整数）
+            14: "string",  # TYPE_ENUM（枚举）
+            15: "integer",  # TYPE_SFIXED32（32 位有符号固定长度整数）
+            16: "integer",  # TYPE_SFIXED64（64 位有符号固定长度整数）
+            17: "integer",  # TYPE_SINT32（32 位有符号整数）
+            18: "integer",  # TYPE_SINT64（64 位有符号整数）
         }
 
         field_type = type_map.get(field.type, "string")
 
-        # Handle repeated fields
+        # 处理重复字段（repeated）
         if hasattr(field, "label") and field.label == 3:  # LABEL_REPEATED
             return {"type": "array", "items": {"type": field_type}}
 
-        # Handle message types (nested objects)
+        # 处理消息类型（嵌套对象）
         if field.type == 11:  # TYPE_MESSAGE
             try:
                 nested_desc = field.message_type
@@ -683,7 +722,7 @@ class GrpcToMcpTranslator:
         return {"type": field_type}
 
 
-# Utility functions for CLI usage
+# 供 CLI 使用的工具函数
 
 
 async def expose_grpc_via_sse(
@@ -694,15 +733,15 @@ async def expose_grpc_via_sse(
     tls_key: Optional[str] = None,
     metadata: Optional[Dict[str, str]] = None,
 ) -> None:
-    """Expose a gRPC service via SSE/HTTP endpoints.
+    """通过 SSE/HTTP 端点暴露一个 gRPC 服务。
 
-    Args:
-        target: gRPC server address (host:port)
-        port: HTTP port to listen on
-        tls_enabled: Use TLS for gRPC connection
-        tls_cert: TLS certificate path
-        tls_key: TLS key path
-        metadata: gRPC metadata headers
+    参数:
+        target: gRPC 服务器地址（host:port）
+        port: 要监听的 HTTP 端口
+        tls_enabled: gRPC 连接是否使用 TLS
+        tls_cert: TLS 证书路径
+        tls_key: TLS 密钥路径
+        metadata: gRPC 元数据请求头
     """
     logger.info(f"Exposing gRPC service {target} via SSE on port {port}")
 
@@ -723,9 +762,9 @@ async def expose_grpc_via_sse(
         logger.info(f"  Target: {target}")
         logger.info(f"  Discovered: {len(endpoint.get_services())} services")
 
-        # Keep endpoint connection alive
-        # Note: For full HTTP/SSE exposure, register the service via the gateway admin API
-        # which will make it accessible through the existing multi-protocol server infrastructure
+        # 保持端点连接存活
+        # 注意: 完整的 HTTP/SSE 暴露需要经由网关 admin API 注册服务，
+        # 那样它才能通过现有的多协议服务器基础设施被访问到。
         while True:
             await asyncio.sleep(1)
 

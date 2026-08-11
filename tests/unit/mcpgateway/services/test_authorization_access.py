@@ -499,9 +499,12 @@ class TestInvokeToolAuthorization:
         mock_response.raise_for_status = Mock()
         mock_response.status_code = 200
         mock_response.json = Mock(return_value={"result": "success"})
-        tool_service._http_client.get = AsyncMock(return_value=mock_response)
+        pinned_client = SimpleNamespace(get=AsyncMock(return_value=mock_response), request=AsyncMock(), aclose=AsyncMock())
 
-        with patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=MagicMock()):
+        with (
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=MagicMock()),
+            patch("mcpgateway.services.tool_service._build_pinned_rest_http_client", return_value=pinned_client),
+        ):
             result = await tool_service.invoke_tool(
                 mock_db,
                 "test_tool",
@@ -512,6 +515,8 @@ class TestInvokeToolAuthorization:
 
         assert result is not None
         assert result.content[0].text is not None
+        pinned_client.get.assert_awaited_once()
+        pinned_client.aclose.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_invoke_tool_admin_bypass_denied_for_private(self, tool_service, mock_db):
@@ -592,9 +597,12 @@ class TestInvokeToolAuthorization:
         mock_response.raise_for_status = Mock()
         mock_response.status_code = 200
         mock_response.json = Mock(return_value={"result": "success"})
-        tool_service._http_client.get = AsyncMock(return_value=mock_response)
+        pinned_client = SimpleNamespace(get=AsyncMock(return_value=mock_response), request=AsyncMock(), aclose=AsyncMock())
 
-        with patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=MagicMock()):
+        with (
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=MagicMock()),
+            patch("mcpgateway.services.tool_service._build_pinned_rest_http_client", return_value=pinned_client),
+        ):
             # Admin bypass: user_email=None and token_teams=None
             result = await tool_service.invoke_tool(
                 mock_db,
@@ -606,6 +614,8 @@ class TestInvokeToolAuthorization:
 
         assert result is not None
         assert result.content[0].text is not None
+        pinned_client.get.assert_awaited_once()
+        pinned_client.aclose.assert_awaited_once()
 
 
 class TestServerScoping:

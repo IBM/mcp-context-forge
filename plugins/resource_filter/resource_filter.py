@@ -14,11 +14,14 @@ to filter and modify resource content. It can:
 """
 
 # Standard
+import ipaddress
 import re
+import socket
 from typing import List, Pattern
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 # Third-Party
+import idna
 from cpex.framework import (
     Plugin,
     PluginConfig,
@@ -32,6 +35,79 @@ from cpex.framework import (
     ToolPostInvokePayload,
     ToolPostInvokeResult,
 )
+
+
+def _canonical_host(value: str) -> str:
+    """Reduce a host or a blocklist entry to one comparable form.
+
+    Both sides of the blocklist comparison run through this so that equivalent
+    spellings of the same host match: percent-encoding, case, IPv6 brackets, a
+    trailing dot, uncompressed or legacy IP literals, and Unicode versus
+    punycode domains.
+
+    Args:
+        value: A parsed URL hostname, or a configured blocked-domain entry.
+
+    Returns:
+        The canonical form, or an empty string when there is nothing to compare.
+
+    Examples:
+        >>> _canonical_host("EVIL.com.")
+        'evil.com'
+        >>> _canonical_host("[::1]")
+        '::1'
+        >>> _canonical_host("2130706433")
+        '127.0.0.1'
+        >>> _canonical_host("[::ffff:7f00:1]")
+        '127.0.0.1'
+        >>> _canonical_host("m\\u00fcnchen.de")
+        'xn--mnchen-3ya.de'
+        >>> _canonical_host("blocked.example:8443")
+        'blocked.example'
+    """
+    if not value:
+        return ""
+    host = unquote(value).strip().lower()
+    # blocked_domains entries are hostnames, but the previous netloc comparison
+    # also matched "host:port" and "[v6]:port" spellings. Reduce those to the
+    # host so such an entry becomes a host-wide block rather than silently
+    # matching nothing. A bare IPv6 literal keeps its colons.
+    if host.startswith("["):
+        closing = host.find("]")
+        if closing != -1:
+            host = host[1:closing]
+    elif host.count(":") == 1:
+        host = host.split(":", 1)[0]
+    host = host.rstrip(".")
+    if not host:
+        return ""
+    # IP literals compare on their compressed form, so "[::1]", "::1" and the
+    # expanded "0:0:0:0:0:0:0:1" are all recognised as the same address. An
+    # IPv4-mapped IPv6 address folds down to the IPv4 endpoint it identifies,
+    # so "[::ffff:127.0.0.1]" matches a blocked "127.0.0.1".
+    try:
+        address = ipaddress.ip_address(host)
+        if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
+            return address.ipv4_mapped.compressed
+        return address.compressed
+    except ValueError:
+        pass
+    # Legacy IPv4 spellings (decimal integer, octal, hex, shortened dotted) are
+    # rejected by ipaddress but accepted by the platform resolver, so a blocked
+    # "127.0.0.1" has to match "2130706433", "0x7f000001" and "127.1" too.
+    # Resolvers disagree on octal, so this can over-block, which is the safe
+    # direction for a denylist.
+    try:
+        return socket.inet_ntoa(socket.inet_aton(host))
+    except OSError:
+        pass
+    # Domains compare as IDNA ASCII, so a Unicode entry and its punycode
+    # equivalent match in either direction. Hosts that are not valid IDN
+    # (internal names with underscores, for example) are left as-is.
+    try:
+        return idna.encode(host, uts46=True).decode("ascii")
+    except (idna.IDNAError, UnicodeError):
+        return host
 
 
 class ResourceFilterPlugin(Plugin):
@@ -55,6 +131,8 @@ class ResourceFilterPlugin(Plugin):
         self.max_content_size = plugin_config.get("max_content_size", 1048576)
         self.allowed_protocols = plugin_config.get("allowed_protocols", ["file", "http", "https"])
         self.blocked_domains = plugin_config.get("blocked_domains", [])
+        # Canonicalize the blocklist once at load rather than on every request.
+        self._blocked_hosts: List[str] = [canonical for canonical in (_canonical_host(domain) for domain in self.blocked_domains) if canonical]
         # Precompile content filter patterns for performance
         self.content_filters: List[tuple[Pattern[str], str]] = []
         for filter_rule in plugin_config.get("content_filters", []):
@@ -106,15 +184,12 @@ class ResourceFilterPlugin(Plugin):
                 return ResourcePreFetchResult(continue_processing=True, violation=violation, modified_payload=payload)
             return ResourcePreFetchResult(continue_processing=False, violation=violation)
 
-        # Check domain blocking (case-insensitive)
-        if parsed.netloc:
-            # Convert both to lowercase for comparison
-            domain_lower = parsed.netloc.lower()
-            blocked_domains_lower = [d.lower() for d in self.blocked_domains]
-            if domain_lower in blocked_domains_lower or any(domain_lower.endswith("." + d) for d in blocked_domains_lower):
-                violation = PluginViolation(
-                    reason="Domain is blocked", description=f"Domain '{parsed.netloc}' is in blocked list", code="DOMAIN_BLOCKED", details={"uri": payload.uri, "domain": parsed.netloc}
-                )
+        # Match on the connected host, not netloc: netloc carries userinfo and port, so
+        # "good.com@evil.com" and "evil.com:8080" slip past a blocklist keyed on "evil.com".
+        host = _canonical_host(parsed.hostname or "")
+        if host:
+            if host in self._blocked_hosts or any(host.endswith("." + blocked) for blocked in self._blocked_hosts):
+                violation = PluginViolation(reason="Domain is blocked", description=f"Domain '{host}' is in blocked list", code="DOMAIN_BLOCKED", details={"uri": payload.uri, "domain": host})
                 # In transform mode, log but continue
                 if self.mode == PluginMode.TRANSFORM:
                     return ResourcePreFetchResult(continue_processing=True, violation=violation, modified_payload=payload)

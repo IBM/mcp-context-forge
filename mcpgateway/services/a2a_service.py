@@ -30,7 +30,7 @@ from sqlalchemy.orm import Session
 from mcpgateway.cache.a2a_stats_cache import a2a_stats_cache
 from mcpgateway.config import settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
-from mcpgateway.db import A2AAgentMetric, A2AAgentMetricsHourly, A2ATask, EmailTeam
+from mcpgateway.db import A2AAgentMetric, A2AAgentMetricsDaily, A2AAgentMetricsHourly, A2ATask, EmailTeam
 from mcpgateway.db import EmailTeamMember as DbEmailTeamMember
 from mcpgateway.db import fresh_db_session, get_for_update
 from mcpgateway.db import Tool as DbTool
@@ -1520,6 +1520,9 @@ class A2AAgentService(BaseService):
                 if field == "visibility" and value == "team":
                     target_team_id = update_data.get("team_id", agent.team_id) if "team_id" in update_data else agent.team_id
                     _validate_a2a_team_assignment(db, user_email, target_team_id)
+
+                if field == "owner_email":
+                    continue  # ownership is set at creation; never overwritten by an update
 
                 if hasattr(agent, field):
                     setattr(agent, field, value)
@@ -3088,9 +3091,11 @@ class A2AAgentService(BaseService):
         if agent_id:
             db.execute(delete(A2AAgentMetric).where(A2AAgentMetric.a2a_agent_id == agent_id))
             db.execute(delete(A2AAgentMetricsHourly).where(A2AAgentMetricsHourly.a2a_agent_id == agent_id))
+            db.execute(delete(A2AAgentMetricsDaily).where(A2AAgentMetricsDaily.a2a_agent_id == agent_id))
         else:
             db.execute(delete(A2AAgentMetric))
             db.execute(delete(A2AAgentMetricsHourly))
+            db.execute(delete(A2AAgentMetricsDaily))
         db.commit()
 
         # Invalidate metrics cache

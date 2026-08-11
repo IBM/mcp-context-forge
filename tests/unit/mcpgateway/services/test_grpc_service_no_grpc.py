@@ -283,7 +283,7 @@ async def test_list_services_team_filter(service, db):
     db.commit = MagicMock()
 
     with patch("mcpgateway.services.grpc_service.TeamManagementService") as mock_team:
-        mock_team.return_value.build_team_filter_clause = AsyncMock(return_value=DbGrpcService.id == "svc-1")
+        mock_team.return_value.get_user_teams = AsyncMock(return_value=[MagicMock(id="team-1")])
         with patch("mcpgateway.services.grpc_service.GrpcServiceRead.model_validate", side_effect=lambda svc: svc):
             with patch("mcpgateway.services.grpc_service.unified_paginate", new_callable=AsyncMock) as mock_paginate:
                 mock_paginate.return_value = ([mock_svc], None)
@@ -314,7 +314,7 @@ async def test_get_service_with_team_filter(service, db):
     db.execute.return_value.scalar_one_or_none.return_value = MagicMock()
 
     with patch("mcpgateway.services.grpc_service.TeamManagementService") as mock_team:
-        mock_team.return_value.build_team_filter_clause = AsyncMock(return_value=DbGrpcService.id == "svc-1")
+        mock_team.return_value.get_user_teams = AsyncMock(return_value=[MagicMock(id="team-1")])
         with patch("mcpgateway.services.grpc_service.GrpcServiceRead.model_validate", side_effect=lambda svc: svc):
             result = await service.get_service(db, "svc-1", user_email="user@example.com")
 
@@ -775,7 +775,13 @@ async def test_perform_reflection_builds_discovery(monkeypatch, service, db):
         reflected.discovered_services = catalog
         reflected.service_count = len(catalog)
         reflected.method_count = sum(len(item["methods"]) for item in catalog.values())
-        return SimpleNamespace(source_type="reflection")
+        return SimpleNamespace(
+            id=uuid.uuid4().hex,
+            grpc_service_id=reflected.id,
+            content_hash=uuid.uuid4().hex,
+            source_type="reflection",
+            source_info={"catalog": catalog},
+        )
 
     monkeypatch.setattr(module.GrpcSchemaService, "import_artifact", persist_artifact)
 

@@ -1091,6 +1091,7 @@
                             >Resources</span
                           >
                         </label>
+                        {% if 'roots' not in hidden_sections %}
                         <label class="flex items-center">
                           <input
                             type="checkbox"
@@ -1099,9 +1100,10 @@
                             class="mr-2"
                           />
                           <span class="text-sm text-gray-600 dark:text-gray-300"
-                            >Roots</span
+                          >Roots</span
                           >
                         </label>
+                        {% endif %}
                       </div>
                     </div>
 
@@ -4312,9 +4314,10 @@
           </h3>
           <form method="POST" id="add-resource-form">
             <div class="grid grid-cols-1 gap-7">
-              <div>
+              <div class="relative">
                 <label
                   class="block text-sm font-medium text-gray-700 dark:text-gray-400"
+                  for="resource-uri"
                   >URI</label
                 >
                 <input
@@ -4324,6 +4327,7 @@
                   required
                   class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 />
+                <p data-error-message-for="uri" class="absolute top-full left-0 mt-1 text-xs text-red-500 invisible">URI is required.</p>
               </div>
               <div class="relative">
                 <label
@@ -4336,8 +4340,13 @@
                   name="name"
                   required
                   id="resource-name"
+                  aria-describedby="resource-name-helper"
                   class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
                 />
+                <p id="resource-name-helper" class="mt-1 text-xs text-gray-500 dark:text-gray-400">
+                  Display label &mdash; does not need to be unique. The URI
+                  identifies the resource.
+                </p>
                 <p data-error-message-for="name" class="absolute top-full left-0 mt-1 text-xs text-red-500 invisible">Name is required.</p>
               </div>
               <div>
@@ -5533,6 +5542,27 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       The OAuth Authorization Server issuer URL. Required for DCR (Dynamic Client Registration).
                     </p>
                   <div class="oauth-discover-status mt-1 hidden"></div>
+                  </div>
+
+                  <div>
+                    <label
+                      class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                    >
+                      Resource (Audience) <span class="text-gray-500">(optional)</span>
+                    </label>
+                    <input
+                      type="text"
+                      name="oauth_resource"
+                      class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                      placeholder="https://api.example.com or your-client-id"
+                    />
+                    <p class="mt-1 text-sm text-gray-500">
+                      RFC 8707 resource indicator sent to the IdP and used as the
+                      expected token audience. Leave blank to auto-derive from the
+                      gateway URL origin and auto-learn from the IdP's first token
+                      response. Set explicitly for IdPs (ServiceNow, Authentik) that
+                      use a client_id or other opaque audience identifier.
+                    </p>
                   </div>
 
                   <div>
@@ -7912,6 +7942,18 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       <label class="block text-xs text-gray-600 dark:text-gray-300"><input type="checkbox" name="activate" checked /> Activate</label>
                       <button type="submit" class="px-3 py-1 text-sm font-medium bg-indigo-100 text-indigo-800 rounded-md hover:bg-indigo-200">Import Schema</button>
                     </form>
+                    <div class="grpc-sync-preview space-y-2" data-service-id="{{ service.id }}"{% if service.candidate_artifact_id %} data-candidate-id="{{ service.candidate_artifact_id }}"{% endif %}>
+                      <button type="button" class="grpc-sync-preview-toggle px-3 py-1 text-sm font-medium bg-teal-100 text-teal-800 rounded-md hover:bg-teal-200{% if not service.candidate_artifact_id %} hidden{% endif %}">
+                        Preview Tool Sync
+                      </button>
+                      <div class="grpc-sync-preview-panel hidden border border-teal-200 dark:border-teal-800 rounded-lg p-3 bg-teal-50 dark:bg-teal-900/20 space-y-2 text-xs text-gray-700 dark:text-gray-300">
+                        <div class="flex items-center justify-between">
+                          <span class="font-medium text-teal-800 dark:text-teal-300">Tool Sync Preview</span>
+                          <button type="button" class="grpc-sync-preview-close text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200">✕</button>
+                        </div>
+                        <div class="grpc-sync-preview-body">Loading…</div>
+                      </div>
+                    </div>
                     <form action="{{ root_path }}/admin/grpc/{{ service.id }}/delete" method="POST" class="inline" data-action-submit="confirmAction" data-arg0="Are you sure you want to delete this gRPC service?" data-prevent-default="false">
                       <button
                         type="submit"
@@ -10223,6 +10265,32 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                           <label
                             class="block text-sm font-medium text-gray-700 dark:text-gray-300"
                           >
+                            Resource (Audience) <span class="text-gray-500">(optional)</span>
+                          </label>
+                          <input
+                            type="text"
+                            name="oauth_resource"
+                            id="oauth-resource-gw-edit"
+                            class="mt-1 px-3 py-2 block w-full rounded-md border border-gray-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                            placeholder="https://api.example.com or your-client-id"
+                          />
+                          <p class="mt-1 text-sm text-gray-500">
+                            RFC 8707 resource indicator sent to the IdP. When admins
+                            leave this blank, the gateway derives it from the gateway URL
+                            origin, and each user's actual token audience is auto-learned
+                            per-user on their own OAuth callback. Set explicitly here to
+                            force a global (all-user) audience — for example, when you
+                            need a specific Application ID URI in multi-tenant Entra ID.
+                            To make a stored value take effect again, users simply
+                            re-authenticate; to clear this admin-configured value,
+                            blank the field and save.
+                          </p>
+                        </div>
+
+                        <div>
+                          <label
+                            class="block text-sm font-medium text-gray-700 dark:text-gray-300"
+                          >
                             Client ID <span class="text-gray-500">(optional for DCR)</span>
                           </label>
                           <input
@@ -10681,34 +10749,25 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                           </div>
 
                           <div>
-                          <label
-                            class="block text-sm font-medium text-gray-700 dark:text-gray-300"
-                          >
-                            Issuer URL
-                          </label>
-                          <div class="mt-1 flex gap-2">
-                            <input
-                              type="url"
-                              name="oauth_issuer"
-                              id="oauth-issuer-a2a-edit"
-                              class="px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
-                              placeholder="http://localhost:3003 or https://oauth.example.com"
-                            />
-                            <button
-                              type="button"
-                              data-action-click="discoverOAuthEndpoints" data-arg0="this"
-                              class="shrink-0 px-3 py-1.5 text-sm font-medium rounded-md border border-indigo-500 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900 transition-colors"
-                              title="Auto-discover token &amp; authorization endpoints from issuer metadata"
-                            >🔍 Discover</button>
-                          </div>
-
-                          <!--
-                          <p class="mt-1 text-sm text-gray-500">
-                            The OAuth Authorization Server issuer URL. Required for DCR (Dynamic Client Registration).
-                          </p>
-                          <div class="oauth-discover-status mt-1 hidden"></div>
-                          -->
-
+                            <label class="block text-sm font-medium text-gray-700 dark:text-gray-300" >
+                              Issuer URL
+                            </label>
+                            <div class="mt-1 flex gap-2">
+                              <input
+                                type="url"
+                                name="oauth_issuer"
+                                id="oauth-issuer-a2a-edit"
+                                class="px-1.5 block w-full rounded-md border border-gray-300 dark:border-gray-700 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 dark:bg-gray-900 dark:placeholder-gray-300 dark:text-gray-300"
+                                placeholder="http://localhost:3003 or https://oauth.example.com"
+                              />
+                              <button
+                                type="button"
+                                data-action-click="discoverOAuthEndpoints" data-arg0="this"
+                                class="shrink-0 px-3 py-1.5 text-sm font-medium rounded-md border border-indigo-500 text-indigo-600 dark:text-indigo-400 hover:bg-indigo-50 dark:hover:bg-indigo-900 transition-colors"
+                                title="Auto-discover token &amp; authorization endpoints from issuer metadata"
+                              >🔍 Discover</button>
+                            </div>
+                            <div class="oauth-discover-status mt-1 hidden"></div>
                           </div>
 
                           <div>

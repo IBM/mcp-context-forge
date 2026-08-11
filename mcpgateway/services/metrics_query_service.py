@@ -22,14 +22,19 @@ from sqlalchemy.orm import Session
 from mcpgateway.config import settings
 from mcpgateway.db import (
     A2AAgentMetric,
+    A2AAgentMetricsDaily,
     A2AAgentMetricsHourly,
     PromptMetric,
+    PromptMetricsDaily,
     PromptMetricsHourly,
     ResourceMetric,
+    ResourceMetricsDaily,
     ResourceMetricsHourly,
     ServerMetric,
+    ServerMetricsDaily,
     ServerMetricsHourly,
     ToolMetric,
+    ToolMetricsDaily,
     ToolMetricsHourly,
 )
 
@@ -90,6 +95,16 @@ METRIC_MODELS = {
     "prompt": (PromptMetric, PromptMetricsHourly, "prompt_id", "prompt_name"),
     "server": (ServerMetric, ServerMetricsHourly, "server_id", "server_name"),
     "a2a_agent": (A2AAgentMetric, A2AAgentMetricsHourly, "a2a_agent_id", "agent_name"),
+}
+
+# Mapping of metric types to their daily rollup models
+# Format: (DailyModel, entity_id_column, preserved_name_column)
+DAILY_MODELS = {
+    "tool": (ToolMetricsDaily, "tool_id", "tool_name"),
+    "resource": (ResourceMetricsDaily, "resource_id", "resource_name"),
+    "prompt": (PromptMetricsDaily, "prompt_id", "prompt_name"),
+    "server": (ServerMetricsDaily, "server_id", "server_name"),
+    "a2a_agent": (A2AAgentMetricsDaily, "a2a_agent_id", "agent_name"),
 }
 
 
@@ -202,6 +217,23 @@ def get_retention_cutoff() -> datetime:
     return cutoff.replace(minute=0, second=0, microsecond=0)
 
 
+def get_daily_retention_cutoff() -> datetime:
+    """Get the cutoff datetime for daily rollup usage, aligned to day boundary.
+
+    Data older than this cutoff is read from the daily rollup tables; more recent
+    data is read from hourly rollups (and raw for the latest hours). The cutoff is
+    day-aligned (UTC midnight) so the daily/hourly partition has no overlap and
+    no gap, as long as the daily rollup pass keeps every completed day populated.
+
+    Returns:
+        datetime: The cutoff (day-aligned) - daily rollups use day_start < cutoff.
+    """
+    cutoff_days = getattr(settings, "metrics_daily_rollup_cutoff_days", 90)
+    now = datetime.now(timezone.utc)
+    cutoff = now - timedelta(days=cutoff_days)
+    return cutoff.replace(hour=0, minute=0, second=0, microsecond=0)
+
+
 def get_current_hour_aggregation(
     db: Session,
     metric_type: str,
@@ -274,15 +306,21 @@ def aggregate_metrics_combined(
     metric_type: str,
     entity_id: Optional[str] = None,
 ) -> AggregatedMetrics:
-    """Aggregate metrics combining three data sources for complete coverage.
+    """Aggregate metrics combining four data sources for complete coverage.
 
     This function queries:
-    1. Hourly rollup table (for data older than retention cutoff)
-    2. Raw metrics table (for completed hours within retention period)
-    3. Current hour raw metrics (for the incomplete current hour)
+    1. Daily rollup table (for data older than the daily cutoff) - when enabled
+    2. Hourly rollup table (for the mid-term range)
+    3. Raw metrics table (for completed hours within retention period)
+    4. Current hour raw metrics (for the incomplete current hour)
 
-    This three-source approach ensures metrics are available immediately during
-    benchmarks, even before the hourly rollup job has processed the current hour.
+    Partition (no overlap, no gap) when daily rollups are enabled:
+    - daily: day_start < daily_cutoff
+    - hourly: daily_cutoff <= hour_start < retention_cutoff
+    - raw completed hours: retention_cutoff <= timestamp < current_hour_start
+    - current hour: timestamp >= current_hour_start
+
+    When daily rollups are disabled, falls back to the three-source behaviour.
 
     Args:
         db: Database session
@@ -290,7 +328,7 @@ def aggregate_metrics_combined(
         entity_id: Optional entity ID to filter by (e.g., specific tool_id)
 
     Returns:
-        AggregatedMetrics: Combined metrics from all three sources
+        AggregatedMetrics: Combined metrics from all sources
 
     Raises:
         ValueError: If metric_type is not recognized.
@@ -302,8 +340,48 @@ def aggregate_metrics_combined(
     cutoff = get_retention_cutoff()
     current_hour_start = get_current_hour_start()
 
-    # Query 1: Historical rollup data (older than retention cutoff)
+    daily_enabled = getattr(settings, "metrics_daily_rollup_enabled", True)
+    daily_models = DAILY_MODELS.get(metric_type)
+    use_daily = daily_enabled and daily_models is not None
+    daily_cutoff = get_daily_retention_cutoff() if use_daily else None
+
+    daily_total = daily_successful = daily_failed = 0
+    daily_min_rt = daily_max_rt = daily_avg_rt = daily_last_time = None
+
+    if use_daily:
+        daily_model, _, _ = daily_models
+        daily_filters = [daily_model.day_start < daily_cutoff]
+        if entity_id is not None:
+            daily_filters.append(getattr(daily_model, id_col) == entity_id)
+
+        # pylint: disable=not-callable
+        daily_result = db.execute(
+            select(
+                func.sum(daily_model.total_count).label("total"),
+                func.sum(daily_model.success_count).label("successful"),
+                func.sum(daily_model.failure_count).label("failed"),
+                func.min(daily_model.min_response_time).label("min_rt"),
+                func.max(daily_model.max_response_time).label("max_rt"),
+                (func.sum(daily_model.avg_response_time * daily_model.total_count) / func.nullif(func.sum(daily_model.total_count), 0)).label("avg_rt"),
+                func.max(daily_model.day_start).label("last_time"),
+            ).where(and_(*daily_filters))
+        ).one()
+
+        daily_total = daily_result.total or 0
+        daily_successful = daily_result.successful or 0
+        daily_failed = daily_result.failed or 0
+        daily_min_rt = daily_result.min_rt
+        daily_max_rt = daily_result.max_rt
+        daily_avg_rt = daily_result.avg_rt
+        daily_last_time = daily_result.last_time
+
+    # Query: Hourly rollup data for the mid-term range.
+    # When daily rollups are enabled, hourly covers [daily_cutoff, cutoff) only,
+    # so older data is read from the daily tables instead of scanning months of
+    # hourly rows. When disabled, hourly covers everything older than cutoff.
     rollup_filters = [hourly_model.hour_start < cutoff]
+    if daily_cutoff is not None:
+        rollup_filters.append(hourly_model.hour_start >= daily_cutoff)
     if entity_id is not None:
         rollup_filters.append(getattr(hourly_model, id_col) == entity_id)
 
@@ -384,26 +462,27 @@ def aggregate_metrics_combined(
     current_avg_rt = current_result.avg_rt
     current_last_time = current_result.last_time
 
-    # Merge all three sources
-    total = rollup_total + raw_total + current_total
-    successful = rollup_successful + raw_successful + current_successful
-    failed = rollup_failed + raw_failed + current_failed
+    # Merge all sources
+    total = daily_total + rollup_total + raw_total + current_total
+    successful = daily_successful + rollup_successful + raw_successful + current_successful
+    failed = daily_failed + rollup_failed + raw_failed + current_failed
     failure_rate = failed / total if total > 0 else 0.0
 
     # Min/max across all sources
-    min_rt = _merge_min(_merge_min(rollup_min_rt, raw_min_rt), current_min_rt)
-    max_rt = _merge_max(_merge_max(rollup_max_rt, raw_max_rt), current_max_rt)
+    min_rt = _merge_min(_merge_min(_merge_min(daily_min_rt, rollup_min_rt), raw_min_rt), current_min_rt)
+    max_rt = _merge_max(_merge_max(_merge_max(daily_max_rt, rollup_max_rt), raw_max_rt), current_max_rt)
 
     # Weighted average across all sources
-    avg_rt = _merge_weighted_avg(
-        _merge_weighted_avg(rollup_avg_rt, rollup_total, raw_avg_rt, raw_total),
-        rollup_total + raw_total,
-        current_avg_rt,
-        current_total,
-    )
+    daily_rollup_avg = _merge_weighted_avg(daily_avg_rt, daily_total, rollup_avg_rt, rollup_total)
+    daily_rollup_total = daily_total + rollup_total
+    mid_avg = _merge_weighted_avg(daily_rollup_avg, daily_rollup_total, raw_avg_rt, raw_total)
+    avg_rt = _merge_weighted_avg(mid_avg, daily_rollup_total + raw_total, current_avg_rt, current_total)
 
     # Last execution time (most recent from any source)
-    last_time = _merge_last_time(_merge_last_time(rollup_last_time, raw_last_time), current_last_time)
+    last_time = _merge_last_time(
+        _merge_last_time(_merge_last_time(daily_last_time, rollup_last_time), raw_last_time),
+        current_last_time,
+    )
 
     return AggregatedMetrics(
         total_executions=total,
@@ -415,7 +494,7 @@ def aggregate_metrics_combined(
         avg_response_time=avg_rt,
         last_execution_time=last_time,
         raw_count=raw_total + current_total,
-        rollup_count=rollup_total,
+        rollup_count=daily_total + rollup_total,
     )
 
 
@@ -428,15 +507,15 @@ def get_top_entities_combined(
     name_column: str = "name",
     include_deleted: bool = False,
 ) -> List[Dict[str, Any]]:
-    """Get top entities by metric counts, combining three data sources.
+    """Get top entities by metric counts, combining four data sources.
 
     This function queries:
-    1. Hourly rollup table (for data older than retention cutoff)
-    2. Raw metrics table (for completed hours within retention period)
-    3. Current hour raw metrics (for the incomplete current hour)
+    1. Daily rollup table (for data older than the daily cutoff) - when enabled
+    2. Hourly rollup table (for the mid-term range)
+    3. Raw metrics table (for completed hours within retention period)
+    4. Current hour raw metrics (for the incomplete current hour)
 
-    This three-source approach ensures top performers are available immediately
-    during benchmarks, even before the hourly rollup job has processed the current hour.
+    When daily rollups are disabled, falls back to the three-source behaviour.
 
     Args:
         db: Database session
@@ -460,13 +539,43 @@ def get_top_entities_combined(
     cutoff = get_retention_cutoff()
     current_hour_start = get_current_hour_start()
 
-    # Get all entity IDs with their combined metrics from three sources
+    daily_enabled = getattr(settings, "metrics_daily_rollup_enabled", True)
+    daily_models = DAILY_MODELS.get(metric_type)
+    use_daily = daily_enabled and daily_models is not None
+    daily_cutoff = get_daily_retention_cutoff() if use_daily else None
+    daily_model = daily_models[0] if use_daily else None
+
+    # Get all entity IDs with their combined metrics from four sources
     # This query includes both existing entities and deleted entities (via rollup name preservation)
 
-    # Subquery 1: Rollup metrics aggregated by entity (data older than cutoff)
+    # Subquery 0: Daily rollup metrics aggregated by entity (data older than daily cutoff)
+    # Daily tables carry the same preserved_name, so deleted entities stay distinct
+    # exactly as they do on the hourly side.
+    # pylint: disable=not-callable
+    daily_subq = None
+    if use_daily:
+        daily_subq = (
+            select(
+                getattr(daily_model, id_col).label("entity_id"),
+                getattr(daily_model, preserved_name_col).label("preserved_name"),
+                func.sum(daily_model.total_count).label("total"),
+                func.sum(daily_model.success_count).label("successful"),
+                func.sum(daily_model.failure_count).label("failed"),
+                (func.sum(daily_model.avg_response_time * daily_model.total_count) / func.nullif(func.sum(daily_model.total_count), 0)).label("avg_rt"),
+                func.max(daily_model.day_start).label("last_time"),
+            )
+            .where(daily_model.day_start < daily_cutoff)
+            .group_by(getattr(daily_model, id_col), getattr(daily_model, preserved_name_col))
+            .subquery()
+        )
+
+    # Subquery 1: Hourly rollup metrics aggregated by entity (mid-term range)
+    # When daily rollups are enabled, hourly covers [daily_cutoff, cutoff) only.
     # Group by BOTH entity_id AND preserved_name to keep deleted entities separate
     # (when entity is deleted, entity_id becomes NULL, but preserved_name keeps them distinct)
-    # pylint: disable=not-callable
+    rollup_filters = [hourly_model.hour_start < cutoff]
+    if daily_cutoff is not None:
+        rollup_filters.append(hourly_model.hour_start >= daily_cutoff)
     rollup_subq = (
         select(
             getattr(hourly_model, id_col).label("entity_id"),
@@ -478,7 +587,7 @@ def get_top_entities_combined(
             (func.sum(hourly_model.avg_response_time * hourly_model.total_count) / func.nullif(func.sum(hourly_model.total_count), 0)).label("avg_rt"),
             func.max(hourly_model.hour_start).label("last_time"),
         )
-        .where(hourly_model.hour_start < cutoff)
+        .where(and_(*rollup_filters))
         .group_by(getattr(hourly_model, id_col), getattr(hourly_model, preserved_name_col))
         .subquery()
     )
@@ -516,15 +625,21 @@ def get_top_entities_combined(
     # Get the name column from entity model
     entity_name_col = getattr(entity_model, name_column)
 
-    # Compute combined totals from all three sources
-    total_count_expr = func.coalesce(rollup_subq.c.total, 0) + func.coalesce(raw_subq.c.total, 0) + func.coalesce(current_subq.c.total, 0)
-    successful_expr = func.coalesce(rollup_subq.c.successful, 0) + func.coalesce(raw_subq.c.successful, 0) + func.coalesce(current_subq.c.successful, 0)
-    failed_expr = func.coalesce(rollup_subq.c.failed, 0) + func.coalesce(raw_subq.c.failed, 0) + func.coalesce(current_subq.c.failed, 0)
+    # Compute combined totals from all sources (daily optional)
+    daily_total_expr = func.coalesce(daily_subq.c.total, 0) if daily_subq is not None else literal(0)
+    daily_successful_expr = func.coalesce(daily_subq.c.successful, 0) if daily_subq is not None else literal(0)
+    daily_failed_expr = func.coalesce(daily_subq.c.failed, 0) if daily_subq is not None else literal(0)
 
-    # Weighted average across all three sources
-    # Formula: (avg1 * count1 + avg2 * count2 + avg3 * count3) / (count1 + count2 + count3)
+    total_count_expr = daily_total_expr + func.coalesce(rollup_subq.c.total, 0) + func.coalesce(raw_subq.c.total, 0) + func.coalesce(current_subq.c.total, 0)
+    successful_expr = daily_successful_expr + func.coalesce(rollup_subq.c.successful, 0) + func.coalesce(raw_subq.c.successful, 0) + func.coalesce(current_subq.c.successful, 0)
+    failed_expr = daily_failed_expr + func.coalesce(rollup_subq.c.failed, 0) + func.coalesce(raw_subq.c.failed, 0) + func.coalesce(current_subq.c.failed, 0)
+
+    # Weighted average across all sources
+    # Formula: sum(avg_i * count_i) / sum(count_i)
+    daily_avg_term = func.coalesce(daily_subq.c.avg_rt * func.coalesce(daily_subq.c.total, 0), 0) if daily_subq is not None else literal(0)
     weighted_avg_expr = (
-        func.coalesce(rollup_subq.c.avg_rt * func.coalesce(rollup_subq.c.total, 0), 0)
+        daily_avg_term
+        + func.coalesce(rollup_subq.c.avg_rt * func.coalesce(rollup_subq.c.total, 0), 0)
         + func.coalesce(raw_subq.c.avg_rt * func.coalesce(raw_subq.c.total, 0), 0)
         + func.coalesce(current_subq.c.avg_rt * func.coalesce(current_subq.c.total, 0), 0)
     ) / func.nullif(total_count_expr, 0)
@@ -532,9 +647,13 @@ def get_top_entities_combined(
     # Last execution time (most recent from any source) using GREATEST-like logic
     # SQLAlchemy doesn't have a portable GREATEST, so we use COALESCE with preference order
     # pylint: disable-next=assignment-from-no-return
-    last_time_expr = func.coalesce(current_subq.c.last_time, raw_subq.c.last_time, rollup_subq.c.last_time)
+    daily_last_term = daily_subq.c.last_time if daily_subq is not None else None
+    if daily_last_term is not None:
+        last_time_expr = func.coalesce(current_subq.c.last_time, raw_subq.c.last_time, rollup_subq.c.last_time, daily_last_term)
+    else:
+        last_time_expr = func.coalesce(current_subq.c.last_time, raw_subq.c.last_time, rollup_subq.c.last_time)
 
-    # Query: Existing entities with combined metrics from all three sources
+    # Query: Existing entities with combined metrics from all sources
     existing_entities_query = (
         select(
             entity_model.id.label("id"),
@@ -552,25 +671,45 @@ def get_top_entities_combined(
         .where(
             # Only include entities that have metrics in any source
             (rollup_subq.c.total.isnot(None)) | (raw_subq.c.total.isnot(None)) | (current_subq.c.total.isnot(None))
+            | ((daily_subq.c.total.isnot(None)) if daily_subq is not None else False)
         )
     )
 
+    if use_daily and daily_subq is not None:
+        existing_entities_query = existing_entities_query.outerjoin(daily_subq, entity_model.id == daily_subq.c.entity_id)
+
     if include_deleted:
-        # Query for deleted entities (exist in rollup but not in entity table)
-        # Handle NULL properly: entity_id IS NULL (deleted via SET NULL) OR entity_id not in existing entities
+        # Query for deleted entities (exist in rollup/daily but not in entity table).
+        # rollup_subq and daily_subq share the same column shape (entity_id, preserved_name,
+        # total, successful, failed, avg_rt, last_time). Union them and re-aggregate
+        # by (entity_id, preserved_name). This avoids a cross join between the two sources and
+        # keeps deleted entities with NULL entity_id (SET NULL on delete) distinct via name.
+        deleted_source = rollup_subq
+        if daily_subq is not None:
+            _cols = ("entity_id", "preserved_name", "total", "successful", "failed", "avg_rt", "last_time")
+            deleted_source = union_all(
+                select(*[getattr(rollup_subq.c, c).label(c) for c in _cols]),
+                select(*[getattr(daily_subq.c, c).label(c) for c in _cols]),
+            ).subquery()
+
         existing_ids_select = select(entity_model.id)
-        deleted_entities_query = select(
-            rollup_subq.c.entity_id.label("id"),
-            rollup_subq.c.preserved_name.label("name"),
-            rollup_subq.c.total.label("execution_count"),
-            rollup_subq.c.successful.label("successful"),
-            rollup_subq.c.failed.label("failed"),
-            rollup_subq.c.avg_rt.label("avg_response_time"),
-            rollup_subq.c.last_time.label("last_execution"),
-            literal(True).label("is_deleted"),
-        ).where(
-            # Include entities with NULL id (deleted via SET NULL) OR entities not in entity table
-            (rollup_subq.c.entity_id.is_(None)) | (rollup_subq.c.entity_id.notin_(existing_ids_select))
+        deleted_entities_query = (
+            select(
+                deleted_source.c.entity_id.label("id"),
+                deleted_source.c.preserved_name.label("name"),
+                func.sum(deleted_source.c.total).label("execution_count"),
+                func.sum(deleted_source.c.successful).label("successful"),
+                func.sum(deleted_source.c.failed).label("failed"),
+                (func.sum(deleted_source.c.avg_rt * func.coalesce(deleted_source.c.total, 0)) / func.nullif(func.sum(deleted_source.c.total), 0)).label("avg_response_time"),
+                func.max(deleted_source.c.last_time).label("last_execution"),
+                literal(True).label("is_deleted"),
+            )
+            .where(
+                # Include entities with NULL id (deleted via SET NULL) OR entities not in entity table
+                (deleted_source.c.entity_id.is_(None))
+                | (deleted_source.c.entity_id.notin_(existing_ids_select))
+            )
+            .group_by(deleted_source.c.entity_id, deleted_source.c.preserved_name)
         )
 
         # Combine existing and deleted entities
