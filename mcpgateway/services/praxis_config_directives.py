@@ -1,4 +1,10 @@
-"""Immutable Praxis rollout directive, cohort, cursor, and report contracts."""
+# -*- coding: utf-8 -*-
+"""Location: ./mcpgateway/services/praxis_config_directives.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+
+Immutable Praxis rollout directive, cohort, cursor, and report contracts.
+"""
 
 from __future__ import annotations
 
@@ -110,15 +116,18 @@ class _PraxisDirectiveBase(PraxisStrictModel):
     @field_validator("eligibility_deadline")
     @classmethod
     def validate_deadline(cls, value: datetime) -> datetime:
+        """Require the deadline to round-trip as UTC text."""
         utc_datetime_text(value)
         return value.astimezone(timezone.utc)
 
     @field_serializer("eligibility_deadline", when_used="json")
     def serialize_deadline(self, value: datetime) -> str:
+        """Serialize the deadline as canonical UTC text."""
         return utc_datetime_text(value)
 
     @model_validator(mode="after")
     def validate_directive_id(self) -> _PraxisDirectiveBase:
+        """Recompute the directive identity from its canonical fields."""
         identity = PraxisDirectiveIdentity.model_validate(self.model_dump(include={"target_id", "rollout_id", "policy_epoch", "action", "generation_id", "eligibility_deadline"}))
         if self.directive_id != compute_directive_id(identity):
             raise PraxisConfigContractError(PraxisContractErrorCode.INVALID_CANONICAL_VALUE, "directive identity does not match directive fields")

@@ -1,4 +1,10 @@
-"""Persistence and report-only policy for legacy Praxis consumers."""
+# -*- coding: utf-8 -*-
+"""Location: ./mcpgateway/services/praxis_legacy_telemetry.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+
+Persistence and report-only policy for legacy Praxis consumers.
+"""
 
 from datetime import datetime, timedelta, timezone
 import hashlib
@@ -36,7 +42,6 @@ class Clock(Protocol):
 
     def now(self) -> datetime:
         """Return the current timezone-aware instant."""
-        ...
 
 
 class LegacyTelemetryError(RuntimeError):
@@ -44,10 +49,12 @@ class LegacyTelemetryError(RuntimeError):
 
 
 def _utc(value: datetime) -> datetime:
+    """Normalize one instant to timezone-aware UTC."""
     return value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
 
 
 def _consumer_id(identity: str, path: LegacyConsumerPath) -> str:
+    """Derive the deterministic consumer row key from identity and path."""
     return hashlib.sha256(f"{path.value}\0{identity}".encode()).hexdigest()[:36]
 
 
@@ -60,9 +67,11 @@ class PraxisLegacyTelemetryService:
         self._clock = clock
 
     def _state(self) -> PraxisLegacyTelemetryState | None:
+        """Load the singleton telemetry state row when present."""
         return self._db.get(PraxisLegacyTelemetryState, 1)
 
     def _initialize_state(self, now: datetime) -> None:
+        """Insert the singleton row once without overwriting existing state."""
         values = {
             "id": 1,
             "private_state_present": False,
@@ -80,6 +89,7 @@ class PraxisLegacyTelemetryService:
         self._db.commit()
 
     def _locked_state(self) -> PraxisLegacyTelemetryState:
+        """Load the singleton row under a dialect-native write lock."""
         if self._db.get_bind().dialect.name == "sqlite":
             self._db.execute(text("BEGIN IMMEDIATE"))
         query = select(PraxisLegacyTelemetryState).where(PraxisLegacyTelemetryState.id == 1)
@@ -170,14 +180,22 @@ class PraxisLegacyTelemetryService:
         }
         updates = {key: value for key, value in values.items() if key not in {"id", "declared_identity", "consumer_path", "attested", "first_seen_at"}}
         if self._db.get_bind().dialect.name == "postgresql":
-            statement = postgresql_insert(PraxisLegacyConsumer).values(**values).on_conflict_do_update(
-                constraint="uq_praxis_legacy_consumers_identity_path",
-                set_=updates,
+            statement = (
+                postgresql_insert(PraxisLegacyConsumer)
+                .values(**values)
+                .on_conflict_do_update(
+                    constraint="uq_praxis_legacy_consumers_identity_path",
+                    set_=updates,
+                )
             )
         else:
-            statement = sqlite_insert(PraxisLegacyConsumer).values(**values).on_conflict_do_update(
-                index_elements=["declared_identity", "consumer_path"],
-                set_=updates,
+            statement = (
+                sqlite_insert(PraxisLegacyConsumer)
+                .values(**values)
+                .on_conflict_do_update(
+                    index_elements=["declared_identity", "consumer_path"],
+                    set_=updates,
+                )
             )
         self._db.execute(statement)
         self._db.commit()
@@ -185,6 +203,7 @@ class PraxisLegacyTelemetryService:
         return HeartbeatReceipt(identity=actor, observed_at=now, expires_at=expires_at)
 
     def _effective_retention(self, row: PraxisLegacyConsumer, now: datetime) -> LegacyRetentionState:
+        """Classify one consumer row as active, retained, or expired."""
         if row.retain_until is not None and _utc(row.retain_until) <= now:
             return LegacyRetentionState.EXPIRED
         if row.observed and row.expires_at is not None and _utc(row.expires_at) <= now:

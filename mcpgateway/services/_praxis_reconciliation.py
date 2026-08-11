@@ -1,4 +1,10 @@
-"""Typed policy contracts and transaction boundary for Praxis reconciliation."""
+# -*- coding: utf-8 -*-
+"""Location: ./mcpgateway/services/_praxis_reconciliation.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+
+Typed policy contracts and transaction boundary for Praxis reconciliation.
+"""
 
 from __future__ import annotations
 
@@ -23,7 +29,6 @@ class Clock(Protocol):
 
     def now(self) -> datetime:
         """Return the current instant."""
-        ...
 
 
 @unique
@@ -183,12 +188,14 @@ class WriteSession:
         self._db: Session | None = None
 
     def __enter__(self) -> Session:
+        """Open the serialized transaction and return its session."""
         self._db = self._sessions()
         statement = "BEGIN IMMEDIATE" if self._db.get_bind().dialect.name == "sqlite" else "BEGIN"
         self._db.execute(text(statement))
         return self._db
 
     def __exit__(self, exc_type, exc_value, traceback) -> None:
+        """Commit on success, roll back on error, and close the session."""
         if self._db is None:
             return
         events = tuple(self._db.info.pop("praxis_observability_events", ()))
