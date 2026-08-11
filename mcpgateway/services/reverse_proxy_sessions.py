@@ -20,6 +20,7 @@ from mcpgateway.services.reverse_proxy_protocol import JsonRpcId, JsonRpcNotific
 
 ConnectionId = NewType("ConnectionId", str)
 LocalSessionId = NewType("LocalSessionId", str)
+StableGatewayId = NewType("StableGatewayId", str)  # persistent gateway identity used to locate a live reverse-proxy connection
 PendingKey: TypeAlias = tuple[ConnectionId, JsonRpcId]
 
 
@@ -158,6 +159,7 @@ class ReverseProxySessionManager:
         """Initialize empty connection and pending-response registries."""
         self._sessions: dict[ConnectionId, ReverseProxySession] = {}
         self._local_connections: dict[LocalSessionId, ConnectionId] = {}
+        self._stable_connections: dict[StableGatewayId, ConnectionId] = {}
         self._pending: dict[PendingKey, _PendingResponse] = {}
         self._lock = anyio.Lock()
 
@@ -182,6 +184,9 @@ class ReverseProxySessionManager:
             for key in keys:
                 pending = self._pending.pop(key)
                 pending.disconnect(connection_id)
+            stable_ids = [sid for sid, cid in self._stable_connections.items() if cid == connection_id]
+            for sid in stable_ids:
+                self._stable_connections.pop(sid, None)
 
     async def send_request(self, connection_id: ConnectionId, payload: JsonRpcRequest, timeout_seconds: float) -> ResponseMessage:
         """Install correlation, send a request, and await its connection-scoped response."""
@@ -227,3 +232,31 @@ class ReverseProxySessionManager:
     def pending_count(self, connection_id: ConnectionId) -> int:
         """Return the outstanding request count for one connection."""
         return sum(key[0] == connection_id for key in self._pending)
+
+    async def attach_stable_id(self, stable_id: StableGatewayId, connection_id: ConnectionId) -> None:
+        """Map a stable gateway identity to an active process-local connection.
+
+        Replaces any existing mapping for ``stable_id`` (last-writer-wins).
+        Raises ``ConnectionNotFoundError`` when ``connection_id`` is not active.
+        """
+        async with self._lock:
+            if connection_id not in self._sessions:
+                raise ConnectionNotFoundError(connection_id=connection_id)
+            self._stable_connections[stable_id] = connection_id
+
+    def resolve_connection_id(self, stable_id: StableGatewayId) -> ConnectionId | None:
+        """Return the live connection identifier for ``stable_id`` or ``None`` when unknown."""
+        return self._stable_connections.get(stable_id)
+
+
+_default_manager: ReverseProxySessionManager | None = None
+_manager_lock = anyio.Lock()
+
+
+async def get_reverse_proxy_session_manager() -> ReverseProxySessionManager:
+    """Return the process-default session manager, creating it lazily."""
+    global _default_manager
+    async with _manager_lock:
+        if _default_manager is None:
+            _default_manager = ReverseProxySessionManager()
+        return _default_manager
