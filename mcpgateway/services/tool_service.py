@@ -2801,15 +2801,18 @@ class ToolService(BaseService):
                 converter_is_default = False
 
             if cursor is None and user_email is None and token_teams is None and page is None and converter_is_default:
-                # Include visibility in the cache hash so admin requests that include
-                # an explicit visibility filter don't get served stale results from
-                # a previously cached unfiltered admin request.
+                # Include visibility and team_id in the cache hash so admin requests that
+                # include an explicit filter don't get served stale results from a
+                # previously cached unfiltered admin request. Omitting team_id would let a
+                # warm cross-team entry satisfy a team-scoped request, bypassing the
+                # team_id narrowing applied in _apply_access_control below.
                 filters_hash = cache.hash_filters(
                     include_inactive=include_inactive,
                     tags=sorted(tags) if tags else None,
                     gateway_id=gateway_id,
                     limit=limit,
                     visibility=visibility,
+                    team_id=team_id,
                 )
                 cached = await cache.get("tools", filters_hash)
                 if cached is not None:
