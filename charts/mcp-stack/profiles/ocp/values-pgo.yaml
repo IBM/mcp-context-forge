@@ -319,6 +319,9 @@ redis:
   image:
     repository: docker.io/library/redis
     tag: "7"
+  # OpenShift SCC compatibility — omit seccompProfile (not allowed with anyuid SCC)
+  podSecurityContext:
+    runAsUser: 999
   resources:
     limits:
       cpu: "2"
