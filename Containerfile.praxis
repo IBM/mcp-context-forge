@@ -20,8 +20,6 @@ COPY crates/praxis_cf_dataplane/src/ crates/praxis_cf_dataplane/src/
 COPY crates/praxis_config_launcher/Cargo.toml crates/praxis_config_launcher/
 COPY crates/praxis_config_launcher/src/ crates/praxis_config_launcher/src/
 COPY crates/praxis_config_launcher/fixtures/ crates/praxis_config_launcher/fixtures/
-COPY crates/request_logging_masking_native_extension/Cargo.toml crates/request_logging_masking_native_extension/
-COPY crates/request_logging_masking_native_extension/src/ crates/request_logging_masking_native_extension/src/
 COPY crates/wrapper/Cargo.toml crates/wrapper/
 COPY crates/wrapper/src/ crates/wrapper/src/
 
