@@ -228,7 +228,10 @@ async def health_samples(
     """Return recent persisted health samples."""
     _require_grpc_enabled()
     _require_service_access(request, user, db, service_id)
+    from mcpgateway.services.grpc_monitoring_service import GrpcMonitoringService  # pylint: disable=import-outside-toplevel
     samples = list(db.execute(select(GrpcHealthSample).where(GrpcHealthSample.grpc_service_id == service_id).order_by(GrpcHealthSample.timestamp.desc()).limit(limit)).scalars())
+    # Also fetch the service for last_health_success
+    service = db.get(DbGrpcService, service_id)
     return {
         "data": [
             {
@@ -240,7 +243,16 @@ async def health_samples(
                 "error_message": sample.error_message,
             }
             for sample in samples
-        ]
+        ],
+        "summary": {
+            "last_health_success": service.last_health_success.isoformat() if service and service.last_health_success else None,
+            "last_health_check": service.last_health_check.isoformat() if service and service.last_health_check else None,
+            "last_health_error": service.last_health_error if service else None,
+            "health_status": service.health_status if service else "unknown",
+            "consecutive_failures": service.consecutive_failures if service else 0,
+            "availability_24h": GrpcMonitoringService._availability_rate(db, service_id, window_hours=24),  # pylint: disable=protected-access
+            "availability_7d": GrpcMonitoringService._availability_rate(db, service_id, window_hours=168),  # pylint: disable=protected-access
+        },
     }
 
 
