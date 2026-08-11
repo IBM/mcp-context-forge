@@ -242,10 +242,7 @@ def ensure_env_file_secrets(
     try:
         configured_min: int = int(_min_raw)
     except ValueError:
-        raise ValueError(
-            f"MIN_SECRET_LENGTH={_min_raw!r} is not a valid integer. "
-            "Set it to a whole number (e.g. MIN_SECRET_LENGTH=64)."
-        ) from None
+        raise ValueError(f"MIN_SECRET_LENGTH={_min_raw!r} is not a valid integer. Set it to a whole number (e.g. MIN_SECRET_LENGTH=64).") from None
     effective_min: int = max(configured_min, _MIN_SECRET_LENGTH)
 
     for field, nbytes in _SECRET_FIELDS.items():
