@@ -169,6 +169,7 @@ mcp.db-shm
 mcp.db-wal
 db.sqlite3
 db_path/
+
 pdm.lock
 .pdm-python
 
