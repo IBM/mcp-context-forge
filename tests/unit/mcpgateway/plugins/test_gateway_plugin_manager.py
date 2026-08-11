@@ -9,15 +9,15 @@ Tests cover:
     - make_context_id: correct format
     - get_config_from_db: unrecognised format returns None
     - get_config_from_db: unknown team / no bindings returns None
-    - get_config_from_db: bindings translated to PluginConfigOverride list
-    - get_config_from_db: unknown plugin_id is passed through to the framework
+    - get_config_from_db: bindings compiled into effective CPEX config
+    - get_config_from_db: unknown plugin_id fails closed
     - reload_plugin_context: no-op when plugins disabled or factory is None
     - reload_plugin_context: delegates to factory.reload_tenant when factory exists
 """
 
 # Standard
 import asyncio
-from datetime import datetime, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
@@ -32,14 +32,14 @@ from mcpgateway.plugins import reload_plugin_context, set_global_observability
 from mcpgateway.plugins.gateway_plugin_manager import (
     CONTEXT_ID_SEPARATOR,
     GatewayTenantPluginManagerFactory,
-    PluginConfigOverride,
     TenantPluginManagerFactory,
     _CachedManager,
     make_context_id,
 )
+from mcpgateway.plugins.binding_compiler import BindingCompilationError, BindingCompilationErrorCode
 from mcpgateway.plugins.utils import apply_attribute_mapping
 from cpex.framework import OnError
-from cpex.framework.models import PluginMode
+from cpex.framework.models import Config, PluginConfig, PluginMode
 from mcpgateway.schemas import (
     PluginBindingMode,
     PluginPolicyItem,
@@ -106,8 +106,14 @@ def _make_factory(db_session_fixture):
     We mock ``_base_config`` after construction so tests don't need a real
     plugins/config.yaml on disk.
     """
-    # Patch ConfigLoader.load_config so __init__ succeeds without a real YAML file
-    with patch("cpex.framework.manager.ConfigLoader.load_config", return_value=MagicMock(plugins=[])):
+    operator_config = Config(
+        plugins=[
+            PluginConfig(name="OutputLengthGuardPlugin", kind="plugins.output_length_guard.OutputLengthGuardPlugin"),
+            PluginConfig(name="RateLimiterPlugin", kind="plugins.rate_limiter.RateLimiterPlugin"),
+            PluginConfig(name="SomePlugin", kind="plugins.some.SomePlugin"),
+        ]
+    )
+    with patch("cpex.framework.manager.ConfigLoader.load_config", return_value=operator_config):
         factory = GatewayTenantPluginManagerFactory(
             yaml_path="/fake/config.yaml",
             db_factory=lambda: db_session_fixture,
@@ -145,15 +151,20 @@ class TestGetConfigFromDb:
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_no_bindings_returns_none(self, db_session):
-        """Returns None when no DB rows exist for the given team+tool."""
+    async def test_no_bindings_compile_mandatory_plugins_fail_closed(self, db_session):
+        """Empty DB state still normalizes mandatory operator plugins."""
         factory = _make_factory(db_session)
+        factory._base_config = Config(plugins=[PluginConfig(name="AuthPlugin", kind="plugins.auth.AuthPlugin", hooks=["http_auth_check_permission"], on_error=OnError.IGNORE)])
+
         result = await factory.get_config_from_db(make_context_id("no-such-team", "any_tool"))
-        assert result is None
+
+        assert result is not None
+        assert result.plugins is not None
+        assert result.plugins[0].on_error is OnError.FAIL
 
     @pytest.mark.asyncio
     async def test_bindings_translated_to_overrides(self, db_session):
-        """DB bindings are converted to PluginConfigOverride objects correctly."""
+        """DB bindings are compiled into the effective CPEX config."""
         # Seed one binding
         svc = ToolPluginBindingService()
         req = ToolPluginBindingRequest(
@@ -164,9 +175,10 @@ class TestGetConfigFromDb:
                             tool_names=["my_tool"],
                             plugin_id="OutputLengthGuardPlugin",
                             mode=PluginBindingMode.ENFORCE,
-
                             priority=42,
                             config={**_OLG, "max_chars": 500},
+                            on_error=None,
+                            binding_reference_id=None,
                         )
                     ]
                 )
@@ -175,24 +187,19 @@ class TestGetConfigFromDb:
         svc.upsert_bindings(db_session, req, caller_email="admin@example.com")
 
         factory = _make_factory(db_session)
-        overrides = await factory.get_config_from_db(make_context_id("team-a", "my_tool"))
+        config = await factory.get_config_from_db(make_context_id("team-a", "my_tool"))
 
-        assert overrides is not None
-        assert len(overrides) == 1
-        o = overrides[0]
+        assert config is not None
+        assert config.plugins is not None
+        o = next(plugin for plugin in config.plugins if plugin.name == "OutputLengthGuardPlugin")
         assert o.name == "OutputLengthGuardPlugin"
         assert o.mode == PluginMode.SEQUENTIAL
         assert o.priority == 42
         assert o.config == {**_OLG, "max_chars": 500}
 
     @pytest.mark.asyncio
-    async def test_unknown_plugin_id_passed_through(self, db_session):
-        """A binding with an unrecognised plugin_id is passed to the framework as-is.
-
-        CF no longer skips unknown plugin names — the framework decides what to
-        do with them.  This allows new plugins added to cpex to be used without
-        a CF code change.
-        """
+    async def test_unknown_plugin_id_rejected(self, db_session):
+        """A binding cannot reference a plugin absent from operator config."""
         from mcpgateway.db import ToolPluginBinding, utc_now
         import uuid
 
@@ -214,11 +221,9 @@ class TestGetConfigFromDb:
         db_session.flush()
 
         factory = _make_factory(db_session)
-        result = await factory.get_config_from_db(make_context_id("team-x", "t"))
-        # Unknown plugin is passed through — framework will ignore it if unrecognised
-        assert result is not None
-        assert len(result) == 1
-        assert result[0].name == "FUTURE_PLUGIN_NOT_YET_KNOWN"
+        with pytest.raises(BindingCompilationError) as captured:
+            await factory.get_config_from_db(make_context_id("team-x", "t"))
+        assert captured.value.code is BindingCompilationErrorCode.UNKNOWN_PLUGIN
 
     @pytest.mark.asyncio
     async def test_on_error_from_binding_propagated(self, db_session):
@@ -244,11 +249,11 @@ class TestGetConfigFromDb:
         db_session.flush()
 
         factory = _make_factory(db_session)
-        overrides = await factory.get_config_from_db(make_context_id("team-e", "t"))
+        config = await factory.get_config_from_db(make_context_id("team-e", "t"))
 
-        assert overrides is not None
-        assert len(overrides) == 1
-        o = overrides[0]
+        assert config is not None
+        assert config.plugins is not None
+        o = next(plugin for plugin in config.plugins if plugin.name == "OutputLengthGuardPlugin")
         assert o.name == "OutputLengthGuardPlugin"
         assert o.on_error is not None
         assert o.on_error.value == "ignore"
@@ -267,6 +272,8 @@ class TestGetConfigFromDb:
                             mode=PluginBindingMode.ENFORCE,
                             priority=42,
                             config={**_OLG, "max_chars": 500},
+                            on_error=None,
+                            binding_reference_id=None,
                         )
                     ]
                 )
@@ -275,11 +282,12 @@ class TestGetConfigFromDb:
         svc.upsert_bindings(db_session, req, caller_email="admin@example.com")
 
         factory = _make_factory(db_session)
-        overrides = await factory.get_config_from_db(make_context_id("team-f", "my_tool"))
+        config = await factory.get_config_from_db(make_context_id("team-f", "my_tool"))
 
-        assert overrides is not None
-        assert len(overrides) == 1
-        assert overrides[0].on_error is None
+        assert config is not None
+        assert config.plugins is not None
+        plugin = next(plugin for plugin in config.plugins if plugin.name == "OutputLengthGuardPlugin")
+        assert plugin.on_error is OnError.FAIL
 
     @pytest.mark.asyncio
     async def test_invalid_on_error_rejected_by_db_constraint(self, db_session):
@@ -319,9 +327,10 @@ class TestGetConfigFromDb:
                             tool_names=["*"],
                             plugin_id="RateLimiterPlugin",
                             mode=PluginBindingMode.PERMISSIVE,
-
                             priority=5,
                             config={**_RL, "by_user": "60/m", "by_tenant": "600/m"},
+                            on_error=None,
+                            binding_reference_id=None,
                         )
                     ]
                 )
@@ -330,11 +339,12 @@ class TestGetConfigFromDb:
         svc.upsert_bindings(db_session, req, caller_email="admin@example.com")
 
         factory = _make_factory(db_session)
-        overrides = await factory.get_config_from_db(make_context_id("team-w", "any_specific_tool"))
+        config = await factory.get_config_from_db(make_context_id("team-w", "any_specific_tool"))
 
-        assert overrides is not None
-        assert len(overrides) == 1
-        assert overrides[0].name == "RateLimiterPlugin"
+        assert config is not None
+        assert config.plugins is not None
+        plugin = next(plugin for plugin in config.plugins if plugin.name == "RateLimiterPlugin")
+        assert plugin.mode is PluginMode.TRANSFORM
 
 
 # ---------------------------------------------------------------------------
@@ -378,63 +388,31 @@ class TestReloadPluginContext:
 
 
 # ---------------------------------------------------------------------------
-# TenantPluginManagerFactory._merge_tenant_config with on_error
+# TenantPluginManagerFactory._merge_tenant_config
 # ---------------------------------------------------------------------------
 
 
-class TestMergeTenantConfigOnError:
-    """Verify that _merge_tenant_config propagates on_error from overrides."""
+class TestSelectTenantConfig:
+    """Verify selection between compiled and operator CPEX configs."""
 
     def _make_factory_with_base_config(self):
-        from mcpgateway.plugins.gateway_plugin_manager import TenantPluginManagerFactory
-
         factory = TenantPluginManagerFactory.__new__(TenantPluginManagerFactory)
-        factory._base_config = MagicMock()
+        factory._base_config = Config(plugins=[PluginConfig(name="OperatorAuthPlugin", kind="plugins.operator.OperatorAuthPlugin", hooks=["http_auth_check_permission"], on_error=OnError.IGNORE)])
+        return factory
 
-        plugin = MagicMock()
-        plugin.name = "TestPlugin"
-        plugin.config = {"key": "base_value"}
-        plugin.mode = PluginMode.SEQUENTIAL
-        plugin.priority = 50
+    def test_compiled_config_is_selected(self):
+        factory = self._make_factory_with_base_config()
+        compiled = Config(plugins=[PluginConfig(name="CompiledPlugin", kind="plugins.compiled.CompiledPlugin")])
 
-        captured_updates = []
-        plugin.model_copy = MagicMock(side_effect=lambda update: (captured_updates.append(update), MagicMock(**update, name="TestPlugin"))[-1])
-        factory._base_config.plugins = [plugin]
-        factory._base_config.model_copy = MagicMock(side_effect=lambda update, deep: MagicMock(plugins=update["plugins"]))
-        return factory, plugin, captured_updates
+        result = factory._merge_tenant_config(compiled)
 
-    def test_on_error_applied_when_present(self):
-        from cpex.framework import OnError
-        from mcpgateway.plugins.gateway_plugin_manager import PluginConfigOverride
+        assert result is compiled
 
-        factory, _plugin, captured = self._make_factory_with_base_config()
-        overrides = [PluginConfigOverride(name="TestPlugin", on_error=OnError.IGNORE)]
-
-        factory._merge_tenant_config(overrides)
-        assert len(captured) == 1
-        assert captured[0].get("on_error") == OnError.IGNORE
-
-    def test_on_error_not_applied_when_none(self):
-        from mcpgateway.plugins.gateway_plugin_manager import PluginConfigOverride
-
-        factory, _plugin, captured = self._make_factory_with_base_config()
-        overrides = [PluginConfigOverride(name="TestPlugin")]
-
-        factory._merge_tenant_config(overrides)
-        assert len(captured) == 1
-        assert "on_error" not in captured[0]
-
-    def test_none_override_returns_base_config(self):
-        factory, _plugin, _captured = self._make_factory_with_base_config()
+    def test_none_override_compiles_base_config_fail_closed(self):
+        factory = self._make_factory_with_base_config()
         result = factory._merge_tenant_config(None)
-        assert result is factory._base_config
-
-    def test_unmatched_plugin_passed_through(self):
-        factory, plugin, captured = self._make_factory_with_base_config()
-        overrides = [PluginConfigOverride(name="NonExistentPlugin")]
-        result = factory._merge_tenant_config(overrides)
-        assert len(captured) == 0
-        assert plugin in result.plugins
+        assert result.plugins is not None
+        assert result.plugins[0].on_error is OnError.FAIL
 
 
 # ---------------------------------------------------------------------------
@@ -444,7 +422,6 @@ class TestMergeTenantConfigOnError:
 
 class TestObservabilityProperty:
     def test_getter_returns_initial_value(self):
-        factory = _make_factory.__wrapped__(None) if hasattr(_make_factory, "__wrapped__") else None
         with patch("cpex.framework.manager.ConfigLoader.load_config", return_value=MagicMock(plugins=[])):
             factory = GatewayTenantPluginManagerFactory(yaml_path="/fake.yaml")
         assert factory.observability is None
@@ -543,9 +520,6 @@ class TestBuildManager:
         mock_manager.initialize = AsyncMock()
         mock_manager.shutdown = AsyncMock(side_effect=RuntimeError("shutdown boom"))
 
-        async def failing_redis_overrides(config):
-            raise RuntimeError("redis error after init")
-
         with (
             patch.object(factory, "get_config_from_db", new_callable=AsyncMock, return_value=None),
             patch.object(factory, "_apply_redis_mode_overrides", new_callable=AsyncMock, side_effect=RuntimeError("redis fail")),
@@ -555,14 +529,14 @@ class TestBuildManager:
                 await factory._build_manager("team::tool")
 
     @pytest.mark.asyncio
-    async def test_build_manager_cancelled_error_shuts_down(self, factory):
-        mock_manager = AsyncMock()
-        mock_manager.initialize = AsyncMock()
-        mock_manager.shutdown = AsyncMock()
+    async def test_build_manager_cancelled_before_replacement_keeps_cached_manager(self, factory):
+        old_manager = AsyncMock()
+        old_manager.shutdown = AsyncMock()
+        factory._managers["team::tool"] = _CachedManager(manager=old_manager, created_at=0)
 
         call_count = 0
 
-        async def cancel_on_redis(config):
+        async def cancel_on_redis(_config):
             nonlocal call_count
             call_count += 1
             raise asyncio.CancelledError()
@@ -570,10 +544,11 @@ class TestBuildManager:
         with (
             patch.object(factory, "get_config_from_db", new_callable=AsyncMock, return_value=None),
             patch.object(factory, "_apply_redis_mode_overrides", side_effect=cancel_on_redis),
-            patch("mcpgateway.plugins.gateway_plugin_manager.TenantPluginManager", return_value=mock_manager),
         ):
             with pytest.raises(asyncio.CancelledError):
                 await factory._build_manager("team::tool")
+        assert factory._managers["team::tool"].manager is old_manager
+        old_manager.shutdown.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_build_manager_cancelled_shutdown_failure_logged(self, factory):
@@ -581,7 +556,7 @@ class TestBuildManager:
         mock_manager.initialize = AsyncMock()
         mock_manager.shutdown = AsyncMock(side_effect=RuntimeError("shutdown fail"))
 
-        async def cancel_on_redis(config):
+        async def cancel_on_redis(_config):
             raise asyncio.CancelledError()
 
         with (
@@ -632,7 +607,6 @@ class TestGetManager:
         assert result is new_manager
         old_manager.shutdown.assert_awaited_once()
 
-
     @pytest.mark.asyncio
     async def test_get_manager_race_returns_cached_entry(self, factory):
         mock_manager = AsyncMock()
@@ -640,6 +614,7 @@ class TestGetManager:
 
         async def build_and_inject(context_id):
             import time
+
             factory._managers[context_id] = _CachedManager(manager=cached_manager, created_at=time.monotonic())
             return mock_manager
 
@@ -779,7 +754,7 @@ class TestApplyRedisModeOverrides:
     def _make_config_with_plugin(self, name="TestPlugin"):
         plugin = MagicMock()
         plugin.name = name
-        plugin.model_copy = MagicMock(side_effect=lambda update: MagicMock(**{**{"name": name}, **update}))
+        plugin.model_copy = MagicMock(side_effect=lambda update: SimpleNamespace(name=name, priority=100, tags=[], hooks=[], **update))
         config = MagicMock()
         config.plugins = [plugin]
         config.model_copy = MagicMock(side_effect=lambda update, deep: MagicMock(plugins=update["plugins"]))
@@ -794,7 +769,7 @@ class TestApplyRedisModeOverrides:
 
     @pytest.mark.asyncio
     async def test_redis_valid_gateway_mode(self, factory):
-        config, plugin = self._make_config_with_plugin()
+        config, _plugin = self._make_config_with_plugin()
         mock_client = AsyncMock()
         mock_client.mget = AsyncMock(return_value=[b"enforce"])
 
@@ -804,19 +779,22 @@ class TestApplyRedisModeOverrides:
         assert result.plugins[0].mode == PluginMode.SEQUENTIAL
 
     @pytest.mark.asyncio
-    async def test_redis_invalid_mode_skipped(self, factory):
-        config, plugin = self._make_config_with_plugin()
+    async def test_redis_invalid_mode_rejected_without_echoing_value(self, factory):
+        config, _plugin = self._make_config_with_plugin()
         mock_client = AsyncMock()
-        mock_client.mget = AsyncMock(return_value=[b"totally_invalid_mode"])
+        raw_mode = "totally_invalid_mode"
+        mock_client.mget = AsyncMock(return_value=[raw_mode.encode()])
 
         with patch("mcpgateway.plugins.gateway_plugin_manager._redis", new_callable=AsyncMock, return_value=mock_client):
-            result = await factory._apply_redis_mode_overrides(config)
+            with pytest.raises(BindingCompilationError) as captured:
+                await factory._apply_redis_mode_overrides(config)
 
-        assert result is config
+        assert captured.value.code is BindingCompilationErrorCode.UNSUPPORTED_MODE
+        assert raw_mode not in str(captured.value)
 
     @pytest.mark.asyncio
     async def test_redis_plugin_mode_enum_value(self, factory):
-        config, plugin = self._make_config_with_plugin()
+        config, _plugin = self._make_config_with_plugin()
         mock_client = AsyncMock()
         mock_client.mget = AsyncMock(return_value=[PluginMode.TRANSFORM.value.encode()])
 
@@ -827,7 +805,7 @@ class TestApplyRedisModeOverrides:
 
     @pytest.mark.asyncio
     async def test_redis_client_error_skipped(self, factory):
-        config, plugin = self._make_config_with_plugin()
+        config, _plugin = self._make_config_with_plugin()
 
         with patch("mcpgateway.plugins.gateway_plugin_manager._redis", new_callable=AsyncMock, side_effect=RuntimeError("no redis")):
             result = await factory._apply_redis_mode_overrides(config)
@@ -836,7 +814,7 @@ class TestApplyRedisModeOverrides:
 
     @pytest.mark.asyncio
     async def test_redis_mget_failure_fallback(self, factory):
-        config, plugin = self._make_config_with_plugin()
+        config, _plugin = self._make_config_with_plugin()
         mock_client = AsyncMock()
         mock_client.mget = AsyncMock(side_effect=RuntimeError("mget failed"))
 
@@ -847,7 +825,7 @@ class TestApplyRedisModeOverrides:
 
     @pytest.mark.asyncio
     async def test_enforce_ignore_error_sets_on_error(self, factory):
-        config, plugin = self._make_config_with_plugin()
+        config, _plugin = self._make_config_with_plugin()
         mock_client = AsyncMock()
         mock_client.mget = AsyncMock(return_value=[b"enforce_ignore_error"])
 
@@ -858,7 +836,7 @@ class TestApplyRedisModeOverrides:
         assert result.plugins[0].on_error == OnError.IGNORE
 
     @pytest.mark.asyncio
-    async def test_validation_error_skipped(self, factory):
+    async def test_validation_error_propagates(self, factory):
         from pydantic import ValidationError
 
         config, plugin = self._make_config_with_plugin()
@@ -867,9 +845,8 @@ class TestApplyRedisModeOverrides:
         mock_client.mget = AsyncMock(return_value=[b"enforce"])
 
         with patch("mcpgateway.plugins.gateway_plugin_manager._redis", new_callable=AsyncMock, return_value=mock_client):
-            result = await factory._apply_redis_mode_overrides(config)
-
-        assert result is config
+            with pytest.raises(ValidationError):
+                await factory._apply_redis_mode_overrides(config)
 
 
 # ---------------------------------------------------------------------------
@@ -996,12 +973,13 @@ class TestEnforceIgnoreErrorDbBinding:
         db_session.commit()
 
         factory = _make_factory(db_session)
-        overrides = await factory.get_config_from_db(make_context_id("team-x", "my_tool"))
+        config = await factory.get_config_from_db(make_context_id("team-x", "my_tool"))
 
-        assert overrides is not None
-        assert len(overrides) == 1
-        assert overrides[0].mode == PluginMode.SEQUENTIAL
-        assert overrides[0].on_error == OnError.IGNORE
+        assert config is not None
+        assert config.plugins is not None
+        plugin = next(plugin for plugin in config.plugins if plugin.name == "SomePlugin")
+        assert plugin.mode == PluginMode.SEQUENTIAL
+        assert plugin.on_error == OnError.IGNORE
 
 
 # ---------------------------------------------------------------------------

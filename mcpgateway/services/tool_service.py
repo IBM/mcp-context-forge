@@ -88,6 +88,7 @@ from mcpgateway.services.metrics_query_service import get_top_performers_combine
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
 from mcpgateway.services.performance_tracker import get_performance_tracker
+from mcpgateway.services.praxis_target_epoch import PraxisTargetEpochService
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.services.token_exchange_cache import TokenExchangeCache
@@ -3426,6 +3427,7 @@ class ToolService(BaseService):
             # Clean up server_tool_association rows referencing this tool.
             # The association table FK has no ondelete cascade, so rows must
             # be removed explicitly before the tool row can be deleted.
+            PraxisTargetEpochService(db).bump_for_tools((tool_id,))
             db.execute(delete(server_tool_association).where(server_tool_association.c.tool_id == tool_id))
 
             # Use DELETE with rowcount check for database-agnostic atomic delete
@@ -3585,6 +3587,7 @@ class ToolService(BaseService):
 
             if is_activated or is_reachable:
                 tool.updated_at = datetime.now(timezone.utc)
+                PraxisTargetEpochService(db).bump_for_tools((tool_id,))
 
                 db.commit()
                 db.refresh(tool)
@@ -7086,6 +7089,7 @@ class ToolService(BaseService):
             logger.info("Update tool: %s (output_schema: %s)", tool.name, tool.output_schema)
 
             tool.updated_at = datetime.now(timezone.utc)
+            PraxisTargetEpochService(db).bump_for_tools((tool_id,))
             db.commit()
             db.refresh(tool)
             await self._notify_tool_updated(tool)

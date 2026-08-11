@@ -24,10 +24,13 @@ from contextlib import contextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
+from cpex.framework import OnError
+from cpex.framework.models import Config, PluginConfig
 import pytest
 
 # First-Party
 from mcpgateway.plugins._redis import set_shared_redis_provider
+from mcpgateway.plugins.binding_compiler import BindingCompilationError, BindingCompilationErrorCode
 
 
 @contextmanager
@@ -79,7 +82,7 @@ def _make_bare_factory(**attrs):
     factory._inflight = attrs.get("_inflight", {})
     factory._lock = attrs.get("_lock", asyncio.Lock())
     factory._cache_ttl = attrs.get("_cache_ttl", 30)
-    factory._base_config = attrs.get("_base_config", MagicMock())
+    factory._base_config = Config(plugins=[])
     factory._timeout = attrs.get("_timeout", 30)
     factory._observability = attrs.get("_observability", None)
     factory._hook_policies = attrs.get("_hook_policies", None)
@@ -334,6 +337,9 @@ class TestApplyRedisModeOverrides:
         for name in plugin_names:
             plugin = MagicMock()
             plugin.name = name
+            plugin.priority = 100
+            plugin.tags = []
+            plugin.hooks = []
             plugin.model_copy = MagicMock(side_effect=lambda update, _name=name: SimpleNamespacePlugin(name=_name, mode=update["mode"]))
             plugins.append(plugin)
         config = MagicMock()
@@ -376,51 +382,56 @@ class TestApplyRedisModeOverrides:
 
         # A had its mode swapped; B was preserved as-is.
         new_plugins = result.plugins
+        assert new_plugins is not None
         assert new_plugins[0].mode.value == "disabled"
         assert new_plugins[1] is config.plugins[1]
 
     @pytest.mark.asyncio
-    async def test_corrupt_redis_falls_through_to_local_override(self):
-        """A corrupt Redis value must not shadow a valid local override — both candidates are tried in priority order."""
+    async def test_corrupt_redis_is_rejected_even_with_valid_local_override(self, caplog):
+        """Malformed Redis state cannot fall through to a local value."""
+        import logging as _logging
         import mcpgateway.plugins as framework
 
         factory = self._make_factory()
         config = self._build_config(["A"])
+        raw_mode = "garbage_mode"
 
         mock_client = AsyncMock()
-        mock_client.mget = AsyncMock(return_value=[b"garbage_mode"])
+        mock_client.mget = AsyncMock(return_value=[raw_mode.encode()])
 
         framework._state.set_local_mode_override("A", "permissive", None)
         try:
-            with _mock_redis(client=mock_client):
-                result = await factory._apply_redis_mode_overrides(config)
+            with caplog.at_level(_logging.WARNING, logger="mcpgateway.plugins.gateway_plugin_manager"):
+                with _mock_redis(client=mock_client):
+                    with pytest.raises(BindingCompilationError) as captured:
+                        await factory._apply_redis_mode_overrides(config)
         finally:
             framework._state.clear_local_mode_overrides()
 
-        # Previously the corrupt Redis value was logged then the loop fell
-        # through to YAML; now it falls through to the local override.
-        assert result.plugins[0].mode.value == "transform"
+        assert captured.value.code is BindingCompilationErrorCode.UNSUPPORTED_MODE
+        assert raw_mode not in str(captured.value)
+        assert all(raw_mode not in record.getMessage() for record in caplog.records)
 
     @pytest.mark.asyncio
-    async def test_invalid_mode_value_skipped_not_batch_aborted(self, caplog):
-        """One bad Redis value must not drop valid overrides for the rest of the batch."""
+    async def test_invalid_mode_aborts_batch_without_logging_raw_value(self, caplog):
+        """One malformed observation rejects the complete deterministic snapshot."""
         import logging as _logging
 
         factory = self._make_factory()
         config = self._build_config(["A", "B"])
+        raw_mode = "not_a_mode"
 
         mock_client = AsyncMock()
-        mock_client.mget = AsyncMock(return_value=[b"not_a_mode", b"enforce"])
+        mock_client.mget = AsyncMock(return_value=[raw_mode.encode(), b"enforce"])
 
         with caplog.at_level(_logging.WARNING, logger="mcpgateway.plugins.gateway_plugin_manager"):
             with _mock_redis(client=mock_client):
-                result = await factory._apply_redis_mode_overrides(config)
+                with pytest.raises(BindingCompilationError) as captured:
+                    await factory._apply_redis_mode_overrides(config)
 
-        # A was left alone (invalid); B was swapped — batch is NOT aborted.
-        new_plugins = result.plugins
-        assert new_plugins[0] is config.plugins[0]
-        assert new_plugins[1].mode.value == "sequential"
-        assert any("invalid Redis mode override" in rec.message.lower() or "invalid redis mode override" in rec.message.lower() for rec in caplog.records)
+        assert captured.value.code is BindingCompilationErrorCode.UNSUPPORTED_MODE
+        assert raw_mode not in str(captured.value)
+        assert all(raw_mode not in record.getMessage() for record in caplog.records)
 
     @pytest.mark.asyncio
     async def test_local_override_applied_when_redis_has_nothing(self):
@@ -441,12 +452,14 @@ class TestApplyRedisModeOverrides:
         finally:
             framework._state.clear_local_mode_overrides()
 
-        assert result.plugins[0].mode.value == "disabled"
-        assert result.plugins[1] is config.plugins[1]
+        plugins = result.plugins
+        assert plugins is not None
+        assert plugins[0].mode.value == "disabled"
+        assert plugins[1] is config.plugins[1]
 
     @pytest.mark.asyncio
-    async def test_redis_value_beats_local_override(self):
-        """When both Redis and the local map hold a value, Redis wins — cluster coordination beats local drift."""
+    async def test_redis_local_conflict_is_rejected(self):
+        """Conflicting observations fail rather than selecting Redis."""
         import mcpgateway.plugins as framework
 
         factory = self._make_factory()
@@ -458,11 +471,12 @@ class TestApplyRedisModeOverrides:
         framework._state.set_local_mode_override("A", "disabled", None)
         try:
             with _mock_redis(client=mock_client):
-                result = await factory._apply_redis_mode_overrides(config)
+                with pytest.raises(BindingCompilationError) as captured:
+                    await factory._apply_redis_mode_overrides(config)
         finally:
             framework._state.clear_local_mode_overrides()
 
-        assert result.plugins[0].mode.value == "sequential"
+        assert captured.value.code is BindingCompilationErrorCode.RUNTIME_OVERRIDE_MISMATCH
 
     @pytest.mark.asyncio
     async def test_local_override_applied_when_redis_client_none(self):
@@ -479,7 +493,9 @@ class TestApplyRedisModeOverrides:
         finally:
             framework._state.clear_local_mode_overrides()
 
-        assert result.plugins[0].mode.value == "transform"
+        plugins = result.plugins
+        assert plugins is not None
+        assert plugins[0].mode.value == "transform"
 
     @pytest.mark.asyncio
     async def test_expired_redis_synced_local_override_is_pruned(self):
@@ -503,10 +519,12 @@ class TestApplyRedisModeOverrides:
         finally:
             framework._state.clear_local_mode_overrides()
 
+        plugins = result.plugins
+        assert plugins is not None
         # A expired → no override applied (YAML/config default preserved).
-        assert result.plugins[0] is config.plugins[0]
+        assert plugins[0] is config.plugins[0]
         # B is durable → still applied.
-        assert result.plugins[1].mode.value == "transform"
+        assert plugins[1].mode.value == "transform"
 
     @pytest.mark.asyncio
     async def test_mget_failure_warns_and_returns_input(self, caplog):
@@ -535,6 +553,9 @@ class SimpleNamespacePlugin:
 
         self.name = name
         self.mode = mode if isinstance(mode, PluginMode) else PluginMode(mode)
+        self.priority = 100
+        self.tags = []
+        self.hooks = []
 
 
 # ---------------------------------------------------------------------------
@@ -568,17 +589,21 @@ class TestDBErrorFallback:
         assert result is None
 
     @pytest.mark.asyncio
-    async def test_returns_none_for_empty_bindings(self):
-        """When no bindings found, returns None."""
+    async def test_empty_bindings_compile_mandatory_plugins_fail_closed(self):
+        """Empty bindings still produce normalized runtime config."""
         from mcpgateway.plugins.gateway_plugin_manager import GatewayTenantPluginManagerFactory
 
         mock_session = MagicMock()
         factory = GatewayTenantPluginManagerFactory.__new__(GatewayTenantPluginManagerFactory)
         factory._db_factory = MagicMock(return_value=mock_session)
+        factory._base_config = Config(plugins=[PluginConfig(name="AuthPlugin", kind="plugins.auth.AuthPlugin", hooks=["http_auth_check_permission"], on_error=OnError.IGNORE)])
 
         with patch("mcpgateway.plugins.gateway_plugin_manager.get_bindings_for_tool", return_value=[]):
             result = await factory.get_config_from_db("team_a::my_tool")
-            assert result is None
+
+        assert result is not None
+        assert result.plugins is not None
+        assert result.plugins[0].on_error is OnError.FAIL
 
 
 # ---------------------------------------------------------------------------
@@ -1324,8 +1349,8 @@ class TestFactoryGetManagerBranches:
         fresh = MagicMock(name="fresh_manager")
         build_calls: list[str] = []
 
-        async def _fake_build(ctx):
-            build_calls.append(ctx)
+        async def _fake_build(context_id):
+            build_calls.append(context_id)
             return fresh
 
         factory._build_manager = _fake_build
@@ -1357,10 +1382,8 @@ class TestFactoryGetManagerBranches:
         assert any("client error" in rec.message for rec in caplog.records)
 
     @pytest.mark.asyncio
-    async def test_apply_redis_mode_overrides_skips_override_on_validation_error(self, caplog):
-        """``plugin.model_copy`` raising ``ValidationError`` logs a WARNING and leaves the plugin untouched."""
-        import logging as _logging
-
+    async def test_apply_redis_mode_overrides_propagates_validation_error(self):
+        """Invalid effective plugin state fails the rebuild."""
         from pydantic import ValidationError as _PydValidationError
         from cpex.framework import PluginMode
 
@@ -1380,12 +1403,8 @@ class TestFactoryGetManagerBranches:
         mock_client.mget = AsyncMock(return_value=[b"permissive"])
 
         with _mock_redis(client=mock_client):
-            with caplog.at_level(_logging.WARNING, logger="mcpgateway.plugins.gateway_plugin_manager"):
-                result = await factory._apply_redis_mode_overrides(config)
-
-        # Config is returned unchanged because the one override failed validation.
-        assert result is config
-        assert any("validation failed" in rec.message for rec in caplog.records)
+            with pytest.raises(_PydValidationError):
+                await factory._apply_redis_mode_overrides(config)
 
 
 class TestInvalidateHelpers:
@@ -1593,7 +1612,7 @@ class TestInitPluginManagerFactory:
         try:
             init_plugin_manager_factory(
                 yaml_path="does/not/matter.yaml",
-                timeout=30.0,
+                timeout=30,
                 hook_policies={},
                 observability=None,
                 db_factory=_fake_session_local,

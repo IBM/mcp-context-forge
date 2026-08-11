@@ -72,6 +72,7 @@ from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_servic
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
+from mcpgateway.services.praxis_target_epoch import PraxisTargetEpochService
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.upstream_session_registry import downstream_session_id_from_request_context as _downstream_session_id_from_request
 from mcpgateway.services.upstream_session_registry import get_upstream_session_registry, RegistryNotInitializedError, TransportType
@@ -2886,6 +2887,7 @@ class ResourceService(BaseService):
             if resource.enabled != activate:
                 resource.enabled = activate
                 resource.updated_at = datetime.now(timezone.utc)
+                PraxisTargetEpochService(db).bump_for_resources((str(resource.id),))
                 db.commit()
                 db.refresh(resource)
 
@@ -3295,6 +3297,7 @@ class ResourceService(BaseService):
                 resource.version = resource.version + 1
             else:
                 resource.version = 1
+            PraxisTargetEpochService(db).bump_for_resources((str(resource.id),))
             db.commit()
             db.refresh(resource)
 
@@ -3560,6 +3563,7 @@ class ResourceService(BaseService):
             resource_name = resource.name
             resource_team_id = resource.team_id
 
+            PraxisTargetEpochService(db).bump_for_resources((str(resource.id),))
             db.delete(resource)
             db.commit()
 

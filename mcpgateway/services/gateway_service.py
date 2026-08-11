@@ -103,6 +103,7 @@ from mcpgateway.services.http_client_service import get_default_verify, get_http
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.mcp_apps import merge_mcp_protocol_meta, optional_extension_metadata, validate_extension_metadata, validate_ui_resource
 from mcpgateway.services.oauth_manager import OAuthManager
+from mcpgateway.services.praxis_target_epoch import PraxisTargetEpochService
 from mcpgateway.services.session_affinity import register_gateway_capabilities_for_notifications
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
@@ -2978,6 +2979,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     else:
                         gateway.version = 1
 
+                    PraxisTargetEpochService(db).bump_for_gateways((str(gateway.id),))
                     db.commit()
                     db.refresh(gateway)
 
@@ -3022,7 +3024,6 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         context={
                             "modified_via": modified_via,
                         },
-                        db=db,
                     )
 
                     structured_logger.log(
@@ -3158,6 +3159,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 else:
                     gateway.version = 1
 
+                PraxisTargetEpochService(db).bump_for_gateways((str(gateway.id),))
                 db.commit()
                 db.refresh(gateway)
 
@@ -3619,6 +3621,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 else:
                     self._active_gateways.discard(gateway.url)
 
+                PraxisTargetEpochService(db).bump_for_gateways((str(gateway.id),))
                 db.commit()
                 db.refresh(gateway)
 
@@ -3655,6 +3658,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
                 # Commit tool updates
                 if tools_updated > 0:
+                    PraxisTargetEpochService(db).bump_for_gateways((str(gateway.id),))
                     db.commit()
 
                 # Invalidate tools cache once after bulk update
@@ -3669,6 +3673,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     prompts_result = db.execute(update(DbPrompt).where(DbPrompt.gateway_id == gateway_id).where(DbPrompt.enabled != activate).values(enabled=activate, updated_at=now))
                     prompts_updated = prompts_result.rowcount
                     if prompts_updated > 0:
+                        PraxisTargetEpochService(db).bump_for_gateways((str(gateway.id),))
                         db.commit()
                         await cache.invalidate_prompts()
 
@@ -3678,6 +3683,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     resources_result = db.execute(update(DbResource).where(DbResource.gateway_id == gateway_id).where(DbResource.enabled != activate).values(enabled=activate, updated_at=now))
                     resources_updated = resources_result.rowcount
                     if resources_updated > 0:
+                        PraxisTargetEpochService(db).bump_for_gateways((str(gateway.id),))
                         db.commit()
                         await cache.invalidate_resources()
 
@@ -3848,6 +3854,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 gateway.next_retry_at = None
                 gateway.last_error = None
                 gateway.reachable = False
+                PraxisTargetEpochService(db).bump_for_gateways((str(gateway.id),))
                 db.commit()
                 db.refresh(gateway)
 
@@ -3882,7 +3889,6 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         "url": gateway_info["url"],
                         "status": gateway.status,
                     },
-                    db=db,
                 )
 
                 structured_logger.log(
@@ -3903,6 +3909,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
                 return self.convert_gateway_to_read(gateway)
 
+            PraxisTargetEpochService(db).bump_for_gateways((str(gateway.id),))
             self._hard_delete_gateway(db, gateway)
 
             db.commit()

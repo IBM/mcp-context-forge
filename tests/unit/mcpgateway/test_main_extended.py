@@ -1631,6 +1631,7 @@ class TestApplicationStartupPaths:
             mock_import = stack.enter_context(patch("mcpgateway.main.import_service"))
             mock_a2a = stack.enter_context(patch("mcpgateway.main.a2a_service"))
             stack.enter_context(patch("mcpgateway.main.refresh_slugs_on_startup"))
+            stack.enter_context(patch("mcpgateway.main.start_praxis_legacy_coverage"))
             mock_get_redis = stack.enter_context(patch("mcpgateway.main.get_redis_client", new_callable=AsyncMock))
             mock_close_redis = stack.enter_context(patch("mcpgateway.main.close_redis_client", new_callable=AsyncMock))
             mock_init_llmchat = stack.enter_context(patch("mcpgateway.routers.llmchat_router.init_redis", new_callable=AsyncMock))
@@ -5256,6 +5257,7 @@ class TestLifespanAdvanced:
         monkeypatch.setattr(main_mod, "setup_passthrough_headers", AsyncMock())
         monkeypatch.setattr(main_mod, "validate_security_configuration", MagicMock())
         monkeypatch.setattr(main_mod, "init_telemetry", MagicMock())
+        monkeypatch.setattr(main_mod, "start_praxis_legacy_coverage", MagicMock())
         monkeypatch.setattr(main_mod, "refresh_slugs_on_startup", MagicMock())
         monkeypatch.setattr(main_mod, "attempt_to_bootstrap_sso_providers", AsyncMock())
 
@@ -5362,6 +5364,10 @@ class TestLifespanAdvanced:
             ("metrics_rollup_enabled", False),
             ("sso_enabled", False),
             ("metrics_aggregation_enabled", False),
+            ("praxis_shadow_render_enabled", False),
+            ("praxis_artifact_delivery_enabled", False),
+            ("praxis_activation_enabled", False),
+            ("praxis_traffic_enabled", False),
         ):
             monkeypatch.setattr(main_mod.settings, flag, value)
 
@@ -5390,6 +5396,7 @@ class TestLifespanAdvanced:
         monkeypatch.setattr(main_mod, "close_redis_client", AsyncMock())
         monkeypatch.setattr("mcpgateway.routers.llmchat_router.init_redis", AsyncMock())
         monkeypatch.setattr(main_mod, "init_telemetry", MagicMock())
+        monkeypatch.setattr(main_mod, "start_praxis_legacy_coverage", MagicMock())
         monkeypatch.setattr(main_mod, "validate_security_configuration", MagicMock())
         monkeypatch.setattr("mcpgateway.utils.db_isready.wait_for_db_ready", MagicMock())
         monkeypatch.setattr("mcpgateway.bootstrap_db.main", AsyncMock())
@@ -5465,6 +5472,7 @@ class TestLifespanAdvanced:
         monkeypatch.setattr(main_mod, "close_redis_client", AsyncMock())
         monkeypatch.setattr("mcpgateway.routers.llmchat_router.init_redis", AsyncMock())
         monkeypatch.setattr(main_mod, "init_telemetry", MagicMock())
+        monkeypatch.setattr(main_mod, "start_praxis_legacy_coverage", MagicMock())
         monkeypatch.setattr(main_mod, "validate_security_configuration", MagicMock())
         monkeypatch.setattr("mcpgateway.services.http_client_service.SharedHttpClient.get_instance", AsyncMock())
         monkeypatch.setattr("mcpgateway.services.http_client_service.SharedHttpClient.shutdown", AsyncMock())
@@ -5480,6 +5488,24 @@ class TestLifespanAdvanced:
         monkeypatch.setattr(main_mod, "shutdown_plugin_manager_factory", AsyncMock())
         monkeypatch.setattr(main_mod, "start_plugin_invalidation_listener", AsyncMock())
         monkeypatch.setattr(main_mod, "stop_plugin_invalidation_listener", AsyncMock())
+
+    @pytest.mark.asyncio
+    async def test_lifespan_starts_praxis_legacy_coverage(self, monkeypatch):
+        """Legacy coverage starts unconditionally after mocked database bootstrap."""
+        # First-Party
+        import mcpgateway.main as main_mod
+
+        monkeypatch.setattr("mcpgateway.utils.db_isready.wait_for_db_ready", MagicMock())
+        monkeypatch.setattr("mcpgateway.bootstrap_db.main", AsyncMock())
+        await self._prepare_lifespan_stubs(monkeypatch, plugins_enabled=False)
+        legacy_coverage = MagicMock()
+        monkeypatch.setattr(main_mod, "start_praxis_legacy_coverage", legacy_coverage)
+        monkeypatch.setattr(main_mod, "init_plugin_manager_factory", MagicMock())
+
+        async with main_mod.lifespan(main_mod.app):
+            pass
+
+        legacy_coverage.assert_called_once_with()
 
     @pytest.mark.asyncio
     async def test_lifespan_raises_when_init_factory_fails_and_plugins_enabled(self, monkeypatch):
@@ -5587,6 +5613,35 @@ class TestLifespanAdvanced:
         dataplane_publisher_factory.assert_called_once_with()
         dataplane_publisher.start.assert_awaited_once()
         dataplane_publisher.shutdown.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("activation_enabled", [False, True])
+    async def test_lifespan_starts_only_enabled_praxis_stages(self, monkeypatch, activation_enabled):
+        """Shadow starts for every valid stage while reconciliation starts only for activation."""
+        monkeypatch.setattr("mcpgateway.config.settings.database_url", "sqlite:///:memory:")
+        import mcpgateway.main as main_mod
+
+        await self._prepare_lifespan_stubs(monkeypatch, plugins_enabled=False)
+        monkeypatch.setattr(main_mod, "init_plugin_manager_factory", MagicMock())
+        monkeypatch.setattr(main_mod.settings, "praxis_shadow_render_enabled", True)
+        monkeypatch.setattr(main_mod.settings, "praxis_artifact_delivery_enabled", activation_enabled)
+        monkeypatch.setattr(main_mod.settings, "praxis_activation_enabled", activation_enabled)
+        shadow = MagicMock(start=AsyncMock(), shutdown=AsyncMock())
+        reconciliation = MagicMock(start=AsyncMock(), shutdown=AsyncMock())
+        shadow_factory = MagicMock(return_value=shadow)
+        reconciliation_factory = MagicMock(return_value=reconciliation)
+        monkeypatch.setattr(main_mod, "PraxisShadowRendererService", shadow_factory)
+        monkeypatch.setattr(main_mod, "PraxisReconcilerLifecycleService", reconciliation_factory)
+        monkeypatch.setattr(main_mod, "get_praxis_source_service", MagicMock())
+        monkeypatch.setattr(main_mod, "get_praxis_reconciler", MagicMock())
+
+        async with main_mod.lifespan(main_mod.app):
+            pass
+
+        shadow.start.assert_awaited_once()
+        shadow.shutdown.assert_awaited_once()
+        assert reconciliation.start.await_count == int(activation_enabled)
+        assert reconciliation.shutdown.await_count == int(activation_enabled)
 
     @pytest.mark.asyncio
     async def test_shutdown_services_continues_on_exception(self):
@@ -12967,6 +13022,7 @@ class TestRemainingCoverageGaps:
         monkeypatch.setattr(main_mod, "close_redis_client", AsyncMock())
         monkeypatch.setattr(main_mod, "validate_security_configuration", MagicMock())
         monkeypatch.setattr(main_mod, "init_telemetry", MagicMock())
+        monkeypatch.setattr(main_mod, "start_praxis_legacy_coverage", MagicMock())
         monkeypatch.setattr(main_mod, "refresh_slugs_on_startup", MagicMock())
         monkeypatch.setattr("mcpgateway.routers.llmchat_router.init_redis", AsyncMock())
         monkeypatch.setattr("mcpgateway.services.http_client_service.SharedHttpClient.get_instance", AsyncMock())
@@ -13063,6 +13119,7 @@ class TestRemainingCoverageGaps:
         monkeypatch.setattr("mcpgateway.routers.llmchat_router.init_redis", AsyncMock())
         monkeypatch.setattr("mcpgateway.utils.db_isready.wait_for_db_ready", MagicMock())
         monkeypatch.setattr("mcpgateway.bootstrap_db.main", AsyncMock())
+        monkeypatch.setattr(main_mod, "start_praxis_legacy_coverage", MagicMock())
         monkeypatch.setattr("mcpgateway.services.http_client_service.SharedHttpClient.get_instance", AsyncMock())
         monkeypatch.setattr("mcpgateway.services.http_client_service.SharedHttpClient.shutdown", AsyncMock())
 
@@ -13155,6 +13212,7 @@ class TestRemainingCoverageGaps:
         monkeypatch.setattr(main_mod, "validate_security_configuration", MagicMock())
         monkeypatch.setattr(main_mod, "init_telemetry", MagicMock())
         monkeypatch.setattr(main_mod, "refresh_slugs_on_startup", MagicMock())
+        monkeypatch.setattr(main_mod, "start_praxis_legacy_coverage", MagicMock())
         monkeypatch.setattr("mcpgateway.routers.llmchat_router.init_redis", AsyncMock())
         monkeypatch.setattr("mcpgateway.services.http_client_service.SharedHttpClient.get_instance", AsyncMock())
         monkeypatch.setattr("mcpgateway.services.http_client_service.SharedHttpClient.shutdown", AsyncMock())

@@ -58,6 +58,7 @@ from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_service
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
+from mcpgateway.services.praxis_target_epoch import PraxisTargetEpochService
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.services.upstream_session_registry import downstream_session_id_from_request_context as _downstream_session_id_from_request
@@ -2407,6 +2408,7 @@ class PromptService(BaseService):
             else:
                 prompt.version = 1
 
+            PraxisTargetEpochService(db).bump_for_prompts((str(prompt.id),))
             db.commit()
             db.refresh(prompt)
 
@@ -2624,6 +2626,7 @@ class PromptService(BaseService):
             if prompt.enabled != activate:
                 prompt.enabled = activate
                 prompt.updated_at = datetime.now(timezone.utc)
+                PraxisTargetEpochService(db).bump_for_prompts((str(prompt.id),))
                 db.commit()
                 db.refresh(prompt)
 
@@ -2844,6 +2847,7 @@ class PromptService(BaseService):
                     delete_metrics_in_batches(db, PromptMetric, PromptMetric.prompt_id, prompt_id)
                     delete_metrics_in_batches(db, PromptMetricsHourly, PromptMetricsHourly.prompt_id, prompt_id)
 
+            PraxisTargetEpochService(db).bump_for_prompts((str(prompt.id),))
             db.delete(prompt)
             db.commit()
             await self._notify_prompt_deleted(prompt_info)

@@ -30,7 +30,7 @@ import uuid
 
 # Third-Party
 import jsonschema
-from sqlalchemy import BigInteger, Boolean, CheckConstraint, Column, create_engine, DateTime, event, Float, ForeignKey, func, Index
+from sqlalchemy import BigInteger, Boolean, CheckConstraint, Column, create_engine, DateTime, event, Float, ForeignKey, ForeignKeyConstraint, func, Index, LargeBinary
 from sqlalchemy import inspect as sa_inspect
 from sqlalchemy import Integer, JSON, make_url, MetaData, select, String, Table, text, Text, UniqueConstraint
 from sqlalchemy.engine import Engine
@@ -1406,6 +1406,11 @@ class Permissions:
     A2A_UPDATE = "a2a.update"
     A2A_DELETE = "a2a.delete"
     A2A_INVOKE = "a2a.invoke"
+
+    # Praxis control-plane and replica machine permissions
+    PRAXIS_MANAGE = "praxis.manage"
+    PRAXIS_ARTIFACTS_READ = "praxis.artifacts.read"
+    PRAXIS_REPORTS_WRITE = "praxis.reports.write"
 
     # Tag permissions
     TAGS_READ = "tags.read"
@@ -7021,3 +7026,392 @@ class A2AAgentPluginBinding(Base):
             str: String representation of A2AAgentPluginBinding instance.
         """
         return f"<A2AAgentPluginBinding(id='{self.id}', team_id='{self.team_id}', agent_name='{self.agent_name}', plugin_id='{self.plugin_id}')>"
+
+
+class PraxisTarget(Base):
+    """Administrative target and compare-and-swap state for Praxis publication."""
+
+    __tablename__ = "praxis_targets"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+    name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    source_epoch: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    policy_epoch: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    fence: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    desired_rollout_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    created_by: Mapped[str] = mapped_column(String(255), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+    updated_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+
+    server_assignments: Mapped[List["PraxisTargetServer"]] = relationship(back_populates="target", cascade="all, delete-orphan", foreign_keys="PraxisTargetServer.target_id")
+    generations: Mapped[List["PraxisBundleGeneration"]] = relationship(back_populates="target", cascade="all, delete-orphan", foreign_keys="PraxisBundleGeneration.target_id")
+    rollouts: Mapped[List["PraxisRollout"]] = relationship(back_populates="target", cascade="all, delete-orphan", foreign_keys="PraxisRollout.target_id")
+    replicas: Mapped[List["PraxisReplica"]] = relationship(back_populates="target", cascade="all, delete-orphan", foreign_keys="PraxisReplica.target_id")
+    desired_rollout: Mapped[Optional["PraxisRollout"]] = relationship(
+        foreign_keys=[id, desired_rollout_id],
+        primaryjoin="and_(PraxisTarget.id == PraxisRollout.target_id, PraxisTarget.desired_rollout_id == PraxisRollout.rollout_id)",
+        post_update=True,
+        viewonly=True,
+    )
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["id", "desired_rollout_id"],
+            ["praxis_rollouts.target_id", "praxis_rollouts.rollout_id"],
+            name="fk_praxis_targets_desired_rollout",
+        ),
+        CheckConstraint("source_epoch >= 0", name="source_epoch"),
+        CheckConstraint("policy_epoch >= 0", name="policy_epoch"),
+        CheckConstraint("fence >= 0", name="fence"),
+    )
+
+
+class PraxisTargetServer(Base):
+    """Exclusive assignment of one virtual server to one Praxis target."""
+
+    __tablename__ = "praxis_target_servers"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+    target_id: Mapped[str] = mapped_column(String(36), ForeignKey("praxis_targets.id", ondelete="CASCADE"), nullable=False)
+    server_id: Mapped[str] = mapped_column(String(36), ForeignKey("servers.id", ondelete="CASCADE"), nullable=False)
+    assigned_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    assigned_by: Mapped[str] = mapped_column(String(255), nullable=False)
+
+    target: Mapped["PraxisTarget"] = relationship(back_populates="server_assignments", foreign_keys=[target_id])
+    server: Mapped["Server"] = relationship(foreign_keys=[server_id])
+
+    __table_args__ = (
+        UniqueConstraint("target_id", "server_id", name="uq_praxis_target_servers_target_server"),
+        UniqueConstraint("server_id", name="uq_praxis_target_servers_assignment"),
+    )
+
+
+class PraxisBundleGeneration(Base):
+    """Immutable encrypted bundle generation and external envelope metadata."""
+
+    __tablename__ = "praxis_bundle_generations"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+    target_id: Mapped[str] = mapped_column(String(36), ForeignKey("praxis_targets.id", ondelete="CASCADE"), nullable=False)
+    generation_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_epoch: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    policy_epoch: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    fence: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    payload_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    content_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    ciphertext_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    ciphertext: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    envelope_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    key_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    nonce: Mapped[bytes] = mapped_column(LargeBinary(12), nullable=False)
+    source_ciphertext_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    source_ciphertext: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    source_envelope_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    source_key_id: Mapped[str] = mapped_column(String(255), nullable=False)
+    source_nonce: Mapped[bytes] = mapped_column(LargeBinary(12), nullable=False)
+    source_schema: Mapped[str] = mapped_column(String(64), nullable=False)
+    bundle_schema: Mapped[str] = mapped_column(String(64), nullable=False)
+    renderer_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    praxis_revision: Mapped[str] = mapped_column(String(64), nullable=False)
+    cpex_contract_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    mcp_protocol_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    minimum_launcher_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+
+    target: Mapped["PraxisTarget"] = relationship(back_populates="generations", foreign_keys=[target_id])
+
+    __table_args__ = (
+        UniqueConstraint("target_id", "generation_id", name="uq_praxis_bundle_generations_target_generation"),
+        UniqueConstraint("key_id", "nonce", name="uq_praxis_bundle_generations_key_nonce"),
+        UniqueConstraint("source_key_id", "source_nonce", name="uq_praxis_bundle_generations_source_key_nonce"),
+        Index("ix_praxis_bundle_generations_source_fingerprint", "source_fingerprint"),
+        CheckConstraint("source_epoch >= 0", name="source_epoch"),
+        CheckConstraint("policy_epoch >= 0", name="policy_epoch"),
+        CheckConstraint("fence >= 0", name="fence"),
+        CheckConstraint("envelope_version > 0", name="envelope_version"),
+        CheckConstraint("source_envelope_version > 0", name="source_envelope_version"),
+    )
+
+
+class PraxisCryptoNonceReservation(Base):
+    """Burned AES-GCM nonce identity shared by primary and sidecar envelopes."""
+
+    __tablename__ = "praxis_crypto_nonce_reservations"
+
+    cryptographic_key_id: Mapped[str] = mapped_column(String(255), primary_key=True)
+    nonce: Mapped[bytes] = mapped_column(LargeBinary(12), primary_key=True)
+    reserved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+
+
+class PraxisRollout(Base):
+    """Immutable rollout directive identity with mutable convergence state."""
+
+    __tablename__ = "praxis_rollouts"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+    target_id: Mapped[str] = mapped_column(String(36), ForeignKey("praxis_targets.id", ondelete="CASCADE"), nullable=False)
+    rollout_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    generation_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    directive_id: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    policy_epoch: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    source_epoch: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    fence: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    action: Mapped[str] = mapped_column(String(16), nullable=False)
+    eligibility_deadline: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="rendered")
+    rollback_eligible: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    eligibility_reason: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    failure_category: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+    target: Mapped["PraxisTarget"] = relationship(back_populates="rollouts", foreign_keys=[target_id])
+    cohort: Mapped[List["PraxisRolloutReplica"]] = relationship(back_populates="rollout", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        UniqueConstraint("target_id", "rollout_id", name="uq_praxis_rollouts_target_rollout"),
+        UniqueConstraint("target_id", "rollout_id", "directive_id", name="uq_praxis_rollouts_target_rollout_directive"),
+        ForeignKeyConstraint(
+            ["target_id", "generation_id"],
+            ["praxis_bundle_generations.target_id", "praxis_bundle_generations.generation_id"],
+            name="fk_praxis_rollouts_target_generation",
+        ),
+        CheckConstraint("policy_epoch >= 0", name="policy_epoch"),
+        CheckConstraint("source_epoch >= 0", name="source_epoch"),
+        CheckConstraint("fence >= 0", name="fence"),
+        CheckConstraint("action IN ('activate', 'retry', 'rollback', 'stop')", name="action"),
+        CheckConstraint("(action = 'stop' AND generation_id IS NULL) OR (action <> 'stop' AND generation_id IS NOT NULL)", name="action_generation"),
+    )
+
+
+class PraxisReplica(Base):
+    """Server-issued, target-bound Praxis dataplane replica identity."""
+
+    __tablename__ = "praxis_replicas"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+    target_id: Mapped[str] = mapped_column(String(36), ForeignKey("praxis_targets.id", ondelete="CASCADE"), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    credential_epoch: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    registered_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    last_heartbeat_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    target: Mapped["PraxisTarget"] = relationship(back_populates="replicas", foreign_keys=[target_id])
+    credentials: Mapped[List["PraxisReplicaCredential"]] = relationship(back_populates="replica", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        UniqueConstraint("target_id", "id", name="uq_praxis_replicas_target_replica"),
+        UniqueConstraint("target_id", "name", name="uq_praxis_replicas_target_name"),
+        CheckConstraint("credential_epoch >= 0", name="credential_epoch"),
+    )
+
+
+class PraxisRolloutReplica(Base):
+    """Frozen target-owned replica membership for one rollout directive."""
+
+    __tablename__ = "praxis_rollout_replicas"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+    target_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    rollout_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    replica_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    directive_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    position: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    state: Mapped[str] = mapped_column(String(32), nullable=False, default="pending")
+    last_report_sequence: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    state_updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+    rollout: Mapped["PraxisRollout"] = relationship(back_populates="cohort", foreign_keys=[target_id, rollout_id, directive_id])
+    replica: Mapped["PraxisReplica"] = relationship(foreign_keys=[target_id, replica_id], overlaps="cohort,rollout")
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["target_id", "rollout_id", "directive_id"],
+            ["praxis_rollouts.target_id", "praxis_rollouts.rollout_id", "praxis_rollouts.directive_id"],
+            name="fk_praxis_rollout_replicas_rollout_directive",
+            ondelete="CASCADE",
+        ),
+        ForeignKeyConstraint(
+            ["target_id", "replica_id"],
+            ["praxis_replicas.target_id", "praxis_replicas.id"],
+            name="fk_praxis_rollout_replicas_target_replica",
+            ondelete="CASCADE",
+        ),
+        UniqueConstraint("target_id", "rollout_id", "replica_id", name="uq_praxis_rollout_replicas_membership"),
+        UniqueConstraint("target_id", "rollout_id", "replica_id", "directive_id", name="uq_praxis_rollout_replicas_report_binding"),
+        UniqueConstraint("target_id", "rollout_id", "position", name="uq_praxis_rollout_replicas_position"),
+        CheckConstraint("position >= 0", name="position"),
+        CheckConstraint("last_report_sequence >= 0", name="report_sequence"),
+    )
+
+
+class PraxisReplicaCredential(Base):
+    """Revocable JTI binding for one target-owned Praxis replica."""
+
+    __tablename__ = "praxis_replica_credentials"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+    target_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    replica_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    jti: Mapped[str] = mapped_column(String(255), nullable=False, unique=True)
+    credential_epoch: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_seen_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    revoked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    replica: Mapped["PraxisReplica"] = relationship(back_populates="credentials", foreign_keys=[target_id, replica_id])
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["target_id", "replica_id"],
+            ["praxis_replicas.target_id", "praxis_replicas.id"],
+            name="fk_praxis_replica_credentials_target_replica",
+            ondelete="CASCADE",
+        ),
+        CheckConstraint("credential_epoch >= 0", name="epoch"),
+    )
+
+
+class PraxisReplicaReport(Base):
+    """Immutable replica report bound to an exact frozen rollout member."""
+
+    __tablename__ = "praxis_replica_reports"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: uuid.uuid4().hex)
+    target_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    rollout_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    replica_id: Mapped[str] = mapped_column(String(36), nullable=False)
+    directive_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    sequence: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    state: Mapped[str] = mapped_column(String(32), nullable=False)
+    failure_category: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+
+    cohort_member: Mapped["PraxisRolloutReplica"] = relationship(foreign_keys=[target_id, rollout_id, replica_id, directive_id])
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["target_id", "rollout_id", "replica_id", "directive_id"],
+            ["praxis_rollout_replicas.target_id", "praxis_rollout_replicas.rollout_id", "praxis_rollout_replicas.replica_id", "praxis_rollout_replicas.directive_id"],
+            name="fk_praxis_replica_reports_cohort",
+            ondelete="CASCADE",
+        ),
+        UniqueConstraint("target_id", "replica_id", "directive_id", "sequence", name="uq_praxis_replica_reports_identity"),
+        CheckConstraint("sequence > 0", name="sequence"),
+        CheckConstraint("state IN ('prepared', 'canary_passed', 'active', 'failed')", name="state"),
+        CheckConstraint(
+            "(state = 'failed' AND failure_category IS NOT NULL AND failure_category IN ('spawn', 'early_exit', 'config_validation', 'listener', 'policy_canary', 'timeout')) OR (state <> 'failed' AND failure_category IS NULL)",
+            name="failure_category",
+        ),
+    )
+
+
+class PraxisLegacyTelemetryState(Base):
+    """Singleton compare-and-swap state for legacy-consumer inventory coverage."""
+
+    __tablename__ = "praxis_legacy_telemetry_state"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    coverage_started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    inventory_attested_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    inventory_attested_by: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    inventory_attestation_hash: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    private_state_present: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    shadow_diff_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    task20_e2e_passed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    launcher_fleet_compatible: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    cas_epoch: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+    __table_args__ = (
+        CheckConstraint("id = 1", name="singleton"),
+        CheckConstraint("cas_epoch >= 0", name="cas_epoch"),
+        CheckConstraint("shadow_diff_count >= 0", name="shadow_diff_count"),
+    )
+
+
+class PraxisLegacyConsumer(Base):
+    """Server-issued legacy publisher consumer identity and retained heartbeat state."""
+
+    __tablename__ = "praxis_legacy_consumers"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    declared_identity: Mapped[str] = mapped_column(String(255), nullable=False)
+    declared_version: Mapped[str] = mapped_column(String(64), nullable=False)
+    observability_class: Mapped[str] = mapped_column(String(64), nullable=False)
+    consumer_path: Mapped[str] = mapped_column(String(64), nullable=False, default="control_plane_grpc")
+    authenticated_identity: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    observed: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    attested: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utc_now)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    revoked_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    retain_until: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    retention_state: Mapped[str] = mapped_column(String(32), nullable=False, default="active")
+
+    __table_args__ = (
+        UniqueConstraint("declared_identity", "consumer_path", name="uq_praxis_legacy_consumers_identity_path"),
+        CheckConstraint("(active = true AND revoked_at IS NULL) OR (active = false AND revoked_at IS NOT NULL)", name="state"),
+        CheckConstraint("retention_state IN ('active', 'retained', 'expired')", name="retention_state"),
+    )
+
+
+_PRAXIS_IMMUTABLE_FIELDS = {
+    PraxisBundleGeneration: (
+        "id",
+        "target_id",
+        "generation_id",
+        "source_fingerprint",
+        "source_epoch",
+        "policy_epoch",
+        "fence",
+        "payload_hash",
+        "content_hash",
+        "ciphertext_hash",
+        "ciphertext",
+        "envelope_version",
+        "key_id",
+        "nonce",
+        "source_ciphertext_hash",
+        "source_ciphertext",
+        "source_envelope_version",
+        "source_key_id",
+        "source_nonce",
+        "source_schema",
+        "bundle_schema",
+        "renderer_version",
+        "praxis_revision",
+        "cpex_contract_version",
+        "mcp_protocol_version",
+        "minimum_launcher_version",
+        "created_at",
+    ),
+    PraxisCryptoNonceReservation: ("cryptographic_key_id", "nonce", "reserved_at"),
+    PraxisRollout: ("id", "target_id", "rollout_id", "generation_id", "directive_id", "policy_epoch", "source_epoch", "fence", "action", "eligibility_deadline", "created_at"),
+    PraxisReplica: ("id", "target_id", "registered_at"),
+    PraxisRolloutReplica: ("id", "target_id", "rollout_id", "replica_id", "directive_id", "position", "created_at"),
+    PraxisReplicaCredential: ("id", "target_id", "replica_id", "jti", "credential_epoch", "issued_at", "expires_at"),
+    PraxisReplicaReport: ("id", "target_id", "rollout_id", "replica_id", "directive_id", "sequence", "state", "failure_category", "received_at"),
+}
+
+
+def _reject_praxis_identity_update(_mapper, _connection, target) -> None:
+    """Reject changes to persisted Praxis identity and immutable payload fields."""
+    state = sa_inspect(target)
+    for field in _PRAXIS_IMMUTABLE_FIELDS[type(target)]:
+        if state.attrs[field].history.has_changes():
+            raise ValueError(f"{type(target).__name__}.{field} is immutable")
+
+
+for _praxis_model in _PRAXIS_IMMUTABLE_FIELDS:
+    event.listen(_praxis_model, "before_update", _reject_praxis_identity_update)

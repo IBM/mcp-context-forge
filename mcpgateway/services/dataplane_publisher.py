@@ -10,6 +10,7 @@ Be careful not to overfit production-grade assumptions onto the design.
 
 # Standard
 import asyncio
+from collections.abc import Sequence
 from collections import defaultdict
 import logging
 import os
@@ -38,6 +39,8 @@ from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import Server as DbServer
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.utils.redis_client import get_redis_client
+from mcpgateway.services.praxis_legacy_models import LegacyConsumerPath
+from mcpgateway.services.praxis_legacy_observability import emit_legacy_event
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +111,7 @@ class DataplanePublisherService:
             return
         self._shutdown_event.clear()
         self.task = asyncio.create_task(self.publish_to_redis())
+        emit_legacy_event(LegacyConsumerPath.REDIS_PUBLISHER, "enabled")
         logger.info("Dataplane publisher started.")
 
     async def shutdown(self) -> None:
@@ -127,9 +131,10 @@ class DataplanePublisherService:
                 pass
 
         self.task = None
+        emit_legacy_event(LegacyConsumerPath.REDIS_PUBLISHER, "stopped")
         logger.info("Dataplane publisher stopped.")
 
-    async def fetch_payload(self) -> dict[str, dict[str, dict[str, Any]]] | None:
+    async def fetch_payload(self) -> dict[str, UserConfig] | None:
         """Fetch the payload to publish to Redis. Returns None on error."""
         user_data = await self.get_data_from_db()
         if user_data is None:
@@ -181,8 +186,10 @@ class DataplanePublisherService:
                         )
                     try:
                         await pipe.execute()
+                        emit_legacy_event(LegacyConsumerPath.REDIS_PUBLISHER, "published")
                         logger.info("Published %d user configs", len(payload))
                     except Exception as e:
+                        emit_legacy_event(LegacyConsumerPath.REDIS_PUBLISHER, "failed")
                         logger.error("Could not write dataplane payload to Redis: %s", e)
             except Exception as e:
                 logger.error("Error during publish: %s", e)
@@ -261,7 +268,13 @@ class DataplanePublisherService:
                         continue
 
                     backends[gateway_id] = {
-                        **gateway_config,
+                        "name": gateway_config["name"],
+                        "url": gateway_config["url"],
+                        "transport": gateway_config["transport"],
+                        "passthrough_headers": gateway_config["passthrough_headers"],
+                        "add_headers": gateway_config["add_headers"],
+                        "remove_headers": gateway_config["remove_headers"],
+                        "capabilities": gateway_config["capabilities"],
                         "allowed_tool_names": backend_items["tools"],
                         "allowed_resource_names": allowed_resource_names,
                         "allowed_resource_uris": allowed_resource_uris,
@@ -353,11 +366,11 @@ class DataplanePublisherService:
         user_email: str,
         team_ids: set[str],
         is_admin: bool,
-        server_rows: list[Any],
-        gateway_rows: list[Any],
-        prompt_rows: list[Any],
-        resource_rows: list[Any],
-        tool_rows: list[Any],
+        server_rows: Sequence[Any],
+        gateway_rows: Sequence[Any],
+        prompt_rows: Sequence[Any],
+        resource_rows: Sequence[Any],
+        tool_rows: Sequence[Any],
         backend_items_by_server: BackendItemsByServer,
     ) -> dict[str, Any]:
         """Build already-filtered dataplane data for one user."""
