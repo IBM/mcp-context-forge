@@ -769,7 +769,7 @@ class ServerService(BaseService):
             user_email: Email of user for team-based access control. None for no access control.
             team_id: Optional team ID to filter by specific team. Applies to every caller
                 shape, including the admin and anonymous bypasses; globally-public rows
-                from other teams remain visible (see #4773).
+                from other teams remain visible.
             visibility: Optional visibility filter (private, team, public) (requires user_email).
             token_teams: Optional list of team IDs from the token (None=unrestricted, []=public-only).
 

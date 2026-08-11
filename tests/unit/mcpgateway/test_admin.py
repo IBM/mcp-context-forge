@@ -17251,7 +17251,10 @@ async def test_get_gateways_section(monkeypatch, mock_db):
     gateway_service.list_gateways = AsyncMock(return_value=([gateway_a, gateway_b, GatewayModel()], None))
     monkeypatch.setattr("mcpgateway.admin.GatewayService", lambda: gateway_service)
 
-    response = await get_gateways_section(team_id="team-1", db=mock_db, user={"email": "admin@example.com", "db": mock_db})
+    mock_request = MagicMock()
+    mock_request.state = MagicMock()
+    mock_request.state.token_teams = []
+    response = await get_gateways_section(request=mock_request, team_id="team-1", db=mock_db, user={"email": "admin@example.com", "db": mock_db})
     payload = response.body.decode()
     assert "gateways" in payload
 
@@ -17263,7 +17266,10 @@ async def test_get_gateways_section_exception_returns_500(monkeypatch, mock_db, 
     gateway_service.list_gateways = AsyncMock(side_effect=RuntimeError("boom"))
     monkeypatch.setattr("mcpgateway.admin.GatewayService", lambda: gateway_service)
 
-    response = await get_gateways_section(team_id="team-1", db=mock_db, user={"email": "admin@example.com", "db": mock_db})
+    mock_request = MagicMock()
+    mock_request.state = MagicMock()
+    mock_request.state.token_teams = []
+    response = await get_gateways_section(request=mock_request, team_id="team-1", db=mock_db, user={"email": "admin@example.com", "db": mock_db})
     assert response.status_code == 500
     payload = json.loads(response.body)
     assert "boom" in payload["error"]
@@ -17994,7 +18000,10 @@ async def test_get_servers_section_team_filter(mock_list, mock_db, allow_permiss
             visibility="private",
         )
     ]
-    response = await get_servers_section(team_id="team-3", include_inactive=True, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    mock_request = MagicMock()
+    mock_request.state = MagicMock()
+    mock_request.state.token_teams = []
+    response = await get_servers_section(request=mock_request, team_id="team-3", include_inactive=True, db=mock_db, user={"email": "u@example.com", "db": mock_db})
     payload = json.loads(response.body)
     assert payload["team_id"] == "team-3"
     assert len(payload["servers"]) == 1
@@ -18017,7 +18026,10 @@ async def test_get_servers_section_team_filter_with_tuple_result(mock_list, mock
         ],
         None,
     )
-    response = await get_servers_section(team_id="team-3", include_inactive=True, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    mock_request = MagicMock()
+    mock_request.state = MagicMock()
+    mock_request.state.token_teams = []
+    response = await get_servers_section(request=mock_request, team_id="team-3", include_inactive=True, db=mock_db, user={"email": "u@example.com", "db": mock_db})
     payload = json.loads(response.body)
     assert payload["team_id"] == "team-3"
     assert len(payload["servers"]) == 1
@@ -18028,7 +18040,10 @@ async def test_get_servers_section_team_filter_with_tuple_result(mock_list, mock
 async def test_get_servers_section_exception_returns_500(mock_list, mock_db, allow_permission):
     """Cover get_servers_section exception handler."""
     mock_list.side_effect = RuntimeError("boom")
-    response = await get_servers_section(team_id="team-3", include_inactive=True, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    mock_request = MagicMock()
+    mock_request.state = MagicMock()
+    mock_request.state.token_teams = []
+    response = await get_servers_section(request=mock_request, team_id="team-3", include_inactive=True, db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert response.status_code == 500
     payload = json.loads(response.body)
     assert "boom" in payload["error"]

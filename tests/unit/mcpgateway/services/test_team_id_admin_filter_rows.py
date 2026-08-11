@@ -13,10 +13,13 @@ PR #4773. These tests seed rows and assert on the IDs actually returned, so a
 flipped connective fails loudly.
 
 Contract under test (issue #5496, semantics per issue #4732 / PR #4773):
-    * team-scoped rows of the requested team  -> returned
-    * team-scoped rows of *other* teams       -> excluded
-    * globally-public rows of other teams     -> returned
-    * globally-public rows with no team       -> returned
+    * team-scoped rows of the requested team   -> returned
+    * team-scoped rows of *other* teams        -> excluded
+    * globally-public rows of other teams      -> returned
+    * globally-public rows with no team        -> returned
+    * caller's own private rows in that team   -> returned only when the caller has an
+                                                  identity (never on the anonymous bypass)
+    * another owner's private rows in that team -> excluded
 """
 
 # Future
@@ -50,17 +53,24 @@ from mcpgateway.services.server_service import ServerService
 from mcpgateway.services.tool_service import ToolService
 
 OWNER = "admin@example.com"
+OTHER_OWNER = "someone-else@example.com"
 
-# Row shapes seeded for every service: (label, team key or None, visibility, expected-returned)
+# Row shapes seeded for every service: (label, team key or None, visibility, owner, expectation).
+# "always"     -> returned for both caller shapes
+# "never"      -> returned for neither
+# "owner_only" -> returned only when the caller has an identity to owner-match against;
+#                 the anonymous bypass passes no owner_email, so private rows stay hidden.
 ROW_SHAPES = [
-    ("alpha_team", "alpha", "team", True),
-    ("beta_team", "beta", "team", False),
-    ("beta_public", "beta", "public", True),
-    ("noteam_public", None, "public", True),
+    ("alpha_team", "alpha", "team", OWNER, "always"),
+    ("beta_team", "beta", "team", OWNER, "never"),
+    ("beta_public", "beta", "public", OWNER, "always"),
+    ("noteam_public", None, "public", OWNER, "always"),
+    ("alpha_private_own", "alpha", "private", OWNER, "owner_only"),
+    ("alpha_private_other", "alpha", "private", OTHER_OWNER, "never"),
 ]
 
 
-def _make_row(model, tag: str, team_id: str | None, visibility: str):
+def _make_row(model, tag: str, team_id: str | None, visibility: str, owner_email: str = OWNER):
     """Build a minimal persistable row for the given model.
 
     Args:
@@ -68,6 +78,7 @@ def _make_row(model, tag: str, team_id: str | None, visibility: str):
         tag: Unique-per-row suffix used for names/URIs.
         team_id: Owning team, or None for a team-less row.
         visibility: One of private/team/public.
+        owner_email: Row owner, used to exercise owner-matching on private rows.
 
     Returns:
         An unsaved model instance.
@@ -80,7 +91,7 @@ def _make_row(model, tag: str, team_id: str | None, visibility: str):
         "id": uuid.uuid4().hex,
         "team_id": team_id,
         "visibility": visibility,
-        "owner_email": OWNER,
+        "owner_email": owner_email,
         "created_at": now,
         "updated_at": now,
     }
@@ -195,9 +206,10 @@ async def test_team_id_returns_own_team_plus_globally_public(label, service_cls,
         teams[key] = team.id
 
     expected, excluded = set(), set()
-    for shape, team_key, visibility, should_return in ROW_SHAPES:
-        row = _make_row(model, f"{label}_{shape}_{run}", teams.get(team_key) if team_key else None, visibility)
+    for shape, team_key, visibility, owner, expectation in ROW_SHAPES:
+        row = _make_row(model, f"{label}_{shape}_{run}", teams.get(team_key) if team_key else None, visibility, owner)
         rows_db.add(row)
+        should_return = expectation == "always" or (expectation == "owner_only" and user_email == owner)
         (expected if should_return else excluded).add(row.id)
     rows_db.commit()
 
@@ -215,4 +227,4 @@ async def test_team_id_returns_own_team_plus_globally_public(label, service_cls,
     assert not missing, f"{label}: rows that should be visible were filtered out (or_ flipped to and_?): {sorted(missing)}"
 
     leaked = excluded & returned
-    assert not leaked, f"{label}: another team's team-scoped rows leaked through the team_id filter: {sorted(leaked)}"
+    assert not leaked, f"{label}: rows that must stay hidden were returned: {sorted(leaked)}"

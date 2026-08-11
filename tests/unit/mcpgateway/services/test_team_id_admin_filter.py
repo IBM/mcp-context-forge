@@ -75,3 +75,41 @@ async def test_admin_team_id_scopes_to_team_and_keeps_public(module, service_cls
     assert f"{table}.team_id = '{TEAM_ID}'" in compiled
     # ... but globally-public rows from any team are still ORed in.
     assert f"{table}.visibility = 'public'" in compiled
+
+
+# token_teams value that reaches each service's registry-cache read. gateway and server
+# only consult the cache on the public-only path; the rest cache on the bypass path.
+CACHE_TOKEN_TEAMS = {"gateway_service": [], "server_service": []}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("module, service_cls, method, table", LIST_ENDPOINTS, ids=[e[3] for e in LIST_ENDPOINTS])
+async def test_cache_key_includes_team_id(module, service_cls, method, table, monkeypatch):
+    """The registry-cache key must vary with team_id.
+
+    Without team_id in the hash, an entry warmed by an unfiltered call satisfies a
+    later team-scoped request and is returned before the query (and therefore before
+    any team narrowing) ever runs.
+    """
+    cache = MagicMock()
+    cache.get = AsyncMock(return_value=None)
+    cache.set = AsyncMock()
+    cache.hash_filters = MagicMock(return_value="h")
+    monkeypatch.setattr(f"mcpgateway.services.{module}._get_registry_cache", lambda: cache)
+    monkeypatch.setattr(f"mcpgateway.services.{module}.unified_paginate", AsyncMock(return_value=([], None)))
+
+    service = service_cls()
+    try:
+        await getattr(service, method)(
+            MagicMock(),
+            user_email=None,
+            token_teams=CACHE_TOKEN_TEAMS.get(module),
+            team_id=TEAM_ID,
+        )
+    finally:
+        client = getattr(service, "_http_client", None)
+        if client is not None:
+            await client.aclose()
+
+    assert cache.hash_filters.call_args is not None, f"{table}: cache lookup was never attempted"
+    assert cache.hash_filters.call_args.kwargs.get("team_id") == TEAM_ID, f"{table}: team_id missing from the cache key -> a warm cross-team entry would satisfy this request"

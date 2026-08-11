@@ -1406,7 +1406,9 @@ class PromptService(BaseService):
             page: Page number for page-based pagination (1-indexed). Mutually exclusive with cursor.
             per_page: Items per page for page-based pagination. Defaults to pagination_default_page_size.
             user_email (Optional[str]): User email for team-based access control. If None, no access control is applied.
-            team_id (Optional[str]): Filter by specific team ID. Requires user_email for access validation.
+            team_id (Optional[str]): Filter by specific team ID. Applies to every caller shape,
+                including the admin and anonymous bypasses; globally-public rows from other
+                teams remain visible.
             visibility (Optional[str]): Filter by visibility (private, team, public).
             token_teams (Optional[List[str]]): Override DB team lookup with token's teams. Used for MCP/API token access
                 where the token scope should be respected instead of the user's full team memberships.
