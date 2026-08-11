@@ -7017,7 +7017,6 @@ class ToolService(BaseService):
                     tool.custom_name = tool_update.name
                 tool.name = tool_update.name
 
-
             if tool_update.custom_name is not None:
                 if tool_update.custom_name != tool.custom_name and not name_is_changing:
                     tool_visibility_ref = tool.visibility if tool_update.visibility is None else tool_update.visibility.lower()
