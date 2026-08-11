@@ -4206,7 +4206,7 @@ async def admin_ui(
     grpc_services = []
     try:
         if "grpc-services" not in hidden_sections and GRPC_AVAILABLE and grpc_service_mgr and settings.mcpgateway_grpc_enabled:
-            grpc_services_raw = await grpc_service_mgr.list_services(
+            grpc_services_raw, _grpc_next_cursor = await grpc_service_mgr.list_services(
                 db,
                 include_inactive=include_inactive,
                 user_email=user_email,
@@ -16875,99 +16875,129 @@ async def admin_update_grpc_service(
 @require_permission("admin.grpc", allow_admin_bypass=False)
 async def admin_set_grpc_service_state(
     service_id: str,
+    request: Request,
     activate: Optional[bool] = Query(None, description="Set enabled state. If not provided, inverts current state."),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),  # pylint: disable=unused-argument
-):
+) -> RedirectResponse:
     """Set a gRPC service's enabled state.
+
+    Triggered by a native HTML form submit from the admin UI, so this redirects
+    back to the gRPC Services panel rather than returning JSON.
 
     Args:
         service_id: Service ID
+        request: FastAPI request object, used to resolve the redirect root path
         activate: If provided, sets enabled to this value. If None, inverts current state (legacy behavior).
         db: Database session
         user: Authenticated user
 
     Returns:
-        Updated gRPC service
+        RedirectResponse: A redirect to the admin dashboard gRPC Services section
+        with a status code of 303 (See Other)
 
     Raises:
-        HTTPException: If gRPC support is disabled or state change fails
+        HTTPException: If gRPC support is disabled
     """
     if not GRPC_AVAILABLE or not settings.mcpgateway_grpc_enabled:
         raise HTTPException(status_code=404, detail="gRPC support is not available or disabled")
 
+    root_path = _resolve_root_path(request)
+    error_message = None
     try:
         if activate is None:
             # Legacy toggle behavior - invert current state
             service = await grpc_service_mgr.get_service(db, service_id)
             activate = not service.enabled
-        result = await grpc_service_mgr.set_service_state(db, service_id, activate)
-        return ORJSONResponse(content=jsonable_encoder(result))
+        await grpc_service_mgr.set_service_state(db, service_id, activate)
     except GrpcServiceNotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        error_message = str(e)
+
+    redirect_url = _build_admin_redirect(root_path, "grpc-services", error=error_message)
+    return RedirectResponse(redirect_url, status_code=303)
 
 
 @admin_router.post("/grpc/{service_id}/delete")
 @require_permission("admin.grpc", allow_admin_bypass=False)
 async def admin_delete_grpc_service(
     service_id: str,
+    request: Request,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),  # pylint: disable=unused-argument
-):
+) -> RedirectResponse:
     """Delete a gRPC service.
+
+    Triggered by a native HTML form submit from the admin UI, so this redirects
+    back to the gRPC Services panel rather than returning a bodyless response.
 
     Args:
         service_id: Service ID
+        request: FastAPI request object, used to resolve the redirect root path
         db: Database session
         user: Authenticated user
 
     Returns:
-        No content response
+        RedirectResponse: A redirect to the admin dashboard gRPC Services section
+        with a status code of 303 (See Other)
 
     Raises:
-        HTTPException: If gRPC support is disabled or deletion fails
+        HTTPException: If gRPC support is disabled
     """
     if not GRPC_AVAILABLE or not settings.mcpgateway_grpc_enabled:
         raise HTTPException(status_code=404, detail="gRPC support is not available or disabled")
 
+    root_path = _resolve_root_path(request)
+    error_message = None
     try:
         await grpc_service_mgr.delete_service(db, service_id)
-        return Response(status_code=204)
     except GrpcServiceNotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        error_message = str(e)
+
+    redirect_url = _build_admin_redirect(root_path, "grpc-services", error=error_message)
+    return RedirectResponse(redirect_url, status_code=303)
 
 
 @admin_router.post("/grpc/{service_id}/reflect")
 @require_permission("admin.grpc", allow_admin_bypass=False)
 async def admin_reflect_grpc_service(
     service_id: str,
+    request: Request,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),  # pylint: disable=unused-argument
-):
+) -> RedirectResponse:
     """Trigger re-reflection on a gRPC service.
+
+    Triggered by a native HTML form submit from the admin UI, so this redirects
+    back to the gRPC Services panel rather than returning JSON.
 
     Args:
         service_id: Service ID
+        request: FastAPI request object, used to resolve the redirect root path
         db: Database session
         user: Authenticated user
 
     Returns:
-        Updated gRPC service with reflection results
+        RedirectResponse: A redirect to the admin dashboard gRPC Services section
+        with a status code of 303 (See Other)
 
     Raises:
-        HTTPException: If gRPC support is disabled or reflection fails
+        HTTPException: If gRPC support is disabled
     """
     if not GRPC_AVAILABLE or not settings.mcpgateway_grpc_enabled:
         raise HTTPException(status_code=404, detail="gRPC support is not available or disabled")
 
+    root_path = _resolve_root_path(request)
+    error_message = None
     try:
-        result = await grpc_service_mgr.reflect_service(db, service_id)
-        return ORJSONResponse(content=jsonable_encoder(result))
+        await grpc_service_mgr.reflect_service(db, service_id)
     except GrpcServiceNotFoundError as e:
-        raise HTTPException(status_code=404, detail=str(e))
+        error_message = str(e)
     except GrpcServiceError as e:
         LOGGER.error(f"gRPC service error: {e}")
-        raise HTTPException(status_code=500, detail="gRPC service error")
+        error_message = "gRPC service error"
+
+    redirect_url = _build_admin_redirect(root_path, "grpc-services", error=error_message)
+    return RedirectResponse(redirect_url, status_code=303)
 
 
 @admin_router.get("/grpc/{service_id}/methods")
