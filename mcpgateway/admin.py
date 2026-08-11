@@ -17024,16 +17024,13 @@ async def get_resources_section(
         user_email, token_teams = get_scoped_resource_access_context(request, user)
         LOGGER.debug(f"User {user_email} requesting resources section with team_id={team_id}, token_teams={token_teams}")
 
-        # Get all resources with token_teams for proper scoping
-        resources_result = await local_resource_service.list_resources(db, include_inactive=True, user_email=user_email, token_teams=token_teams)
+        # Filter in the service, not here: a strict team_id comparison would drop
+        # globally-public rows owned by other teams.
+        resources_result = await local_resource_service.list_resources(db, include_inactive=True, user_email=user_email, token_teams=token_teams, team_id=team_id)
         if isinstance(resources_result, tuple):
             resources_list = resources_result[0]
         else:
             resources_list = resources_result
-
-        # Apply team filtering if specified
-        if team_id:
-            resources_list = [r for r in resources_list if getattr(r, "team_id", None) == team_id]
 
         # Convert to JSON-serializable format
         resources = []
@@ -17085,16 +17082,13 @@ async def get_prompts_section(
         user_email, token_teams = get_scoped_resource_access_context(request, user)
         LOGGER.debug(f"User {user_email} requesting prompts section with team_id={team_id}, token_teams={token_teams}")
 
-        # Get all prompts with token_teams for proper scoping
-        prompts_result = await local_prompt_service.list_prompts(db, include_inactive=True, user_email=user_email, token_teams=token_teams)
+        # Filter in the service, not here: a strict team_id comparison would drop
+        # globally-public rows owned by other teams.
+        prompts_result = await local_prompt_service.list_prompts(db, include_inactive=True, user_email=user_email, token_teams=token_teams, team_id=team_id)
         if isinstance(prompts_result, tuple):
             prompts_list = prompts_result[0]
         else:
             prompts_list = prompts_result
-
-        # Apply team filtering if specified
-        if team_id:
-            prompts_list = [p for p in prompts_list if getattr(p, "team_id", None) == team_id]
 
         # Convert to JSON-serializable format
         prompts = []
@@ -17126,6 +17120,7 @@ async def get_prompts_section(
 @admin_router.get("/sections/servers")
 @require_permission("servers.read", allow_admin_bypass=False)
 async def get_servers_section(
+    request: Request,
     team_id: Optional[str] = None,
     include_inactive: bool = False,
     db: Session = Depends(get_db),
@@ -17134,6 +17129,7 @@ async def get_servers_section(
     """Get servers data filtered by team.
 
     Args:
+        request: FastAPI request, used to derive the caller's Layer-1 visibility scope
         team_id: Optional team ID to filter by
         include_inactive: Whether to include inactive servers
         db: Database session
@@ -17144,19 +17140,16 @@ async def get_servers_section(
     """
     try:
         local_server_service = ServerService()
-        user_email = get_user_email(user)
-        LOGGER.debug(f"User {user_email} requesting servers section with team_id={team_id}, include_inactive={include_inactive}")
+        user_email, token_teams = get_scoped_resource_access_context(request, user)
+        LOGGER.debug(f"User {user_email} requesting servers section with team_id={team_id}, include_inactive={include_inactive}, token_teams={token_teams}")
 
-        # Get servers with optional include_inactive parameter
-        servers_result = await local_server_service.list_servers(db, include_inactive=include_inactive)
+        # Filter in the service, not here: a strict team_id comparison would drop
+        # globally-public rows owned by other teams.
+        servers_result = await local_server_service.list_servers(db, include_inactive=include_inactive, user_email=user_email, token_teams=token_teams, team_id=team_id)
         if isinstance(servers_result, tuple):
             servers_list = servers_result[0]
         else:
             servers_list = servers_result
-
-        # Apply team filtering if specified
-        if team_id:
-            servers_list = [s for s in servers_list if getattr(s, "team_id", None) == team_id]
 
         # Convert to JSON-serializable format
         servers = []
@@ -17186,6 +17179,7 @@ async def get_servers_section(
 @admin_router.get("/sections/gateways")
 @require_permission("gateways.read", allow_admin_bypass=False)
 async def get_gateways_section(
+    request: Request,
     team_id: Optional[str] = None,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -17193,6 +17187,7 @@ async def get_gateways_section(
     """Get gateways data filtered by team.
 
     Args:
+        request: FastAPI request, used to derive the caller's Layer-1 visibility scope
         team_id: Optional team ID to filter by
         db: Database session
         user: Current authenticated user context
@@ -17202,14 +17197,11 @@ async def get_gateways_section(
     """
     try:
         local_gateway_service = GatewayService()
-        get_user_email(user)
+        user_email, token_teams = get_scoped_resource_access_context(request, user)
 
-        # Get all gateways and filter by team
-        gateways_list, _ = await local_gateway_service.list_gateways(db, include_inactive=True)
-
-        # Apply team filtering if specified
-        if team_id:
-            gateways_list = [g for g in gateways_list if g.team_id == team_id]
+        # Filter in the service, not here: a strict team_id comparison would drop
+        # globally-public rows owned by other teams.
+        gateways_list, _ = await local_gateway_service.list_gateways(db, include_inactive=True, user_email=user_email, token_teams=token_teams, team_id=team_id)
 
         # Convert to JSON-serializable format
         gateways = []

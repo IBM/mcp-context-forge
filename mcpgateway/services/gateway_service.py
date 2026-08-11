@@ -2343,7 +2343,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             page: Page number for page-based pagination (1-indexed). Mutually exclusive with cursor.
             per_page: Items per page for page-based pagination. Defaults to pagination_default_page_size.
             user_email: Email of user for team-based access control. None for no access control.
-            team_id: Optional team ID to filter by specific team (requires user_email).
+            team_id: Optional team ID to filter by specific team. Applies to every caller
+                shape, including the admin and anonymous bypasses; globally-public rows
+                from other teams remain visible.
             visibility: Optional visibility filter (private, team, public) (requires user_email).
             token_teams: Optional list of team IDs from the token (None=unrestricted, []=public-only).
 
@@ -2394,7 +2396,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         is_public_only = token_teams is not None and len(token_teams) == 0
         use_cache = cursor is None and user_email is None and page is None and is_public_only
         if use_cache:
-            filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None, visibility=visibility)
+            filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None, visibility=visibility, team_id=team_id)
             cached = await cache.get("gateways", filters_hash)
             if cached is not None:
                 # Reconstruct GatewayRead objects from cached dicts
@@ -2417,9 +2419,6 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             query = query.where(DbGateway.enabled)
 
         query = await self._apply_access_control(query, db, user_email, token_teams, team_id)
-
-        if team_id:
-            query = query.where(DbGateway.team_id == team_id)
 
         if visibility:
             query = query.where(DbGateway.visibility == visibility)
