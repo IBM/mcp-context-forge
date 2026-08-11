@@ -37,11 +37,17 @@ def _restore_real_rbac_decorators():
     importlib.reload() re-executes the module source, restoring real decorators.
     Non-decorator attributes are saved and restored to preserve object identity
     for FastAPI dependency_overrides in other test files on the same worker.
+    ``require_global_admin_scope_dep`` must be preserved the same way: routers
+    like metrics_maintenance.py capture it once via ``Depends(...)`` at import
+    time, and test_global_record_scope.py's drift guard matches it by identity
+    (not name, to resist spoofing) — a reload without preserving it desyncs the
+    two references and makes the guard falsely report the route as unguarded.
     """
     saved_ps = rbac.PermissionService
     saved_gcuwp = rbac.get_current_user_with_permissions
     saved_get_db = rbac.get_db
     saved_get_ps = rbac.get_permission_service
+    saved_scope_dep = rbac.require_global_admin_scope_dep
 
     importlib.reload(rbac)
 
@@ -49,10 +55,12 @@ def _restore_real_rbac_decorators():
     rbac.get_current_user_with_permissions = saved_gcuwp
     rbac.get_db = saved_get_db
     rbac.get_permission_service = saved_get_ps
+    rbac.require_global_admin_scope_dep = saved_scope_dep
     yield
     rbac.get_current_user_with_permissions = saved_gcuwp
     rbac.get_db = saved_get_db
     rbac.get_permission_service = saved_get_ps
+    rbac.require_global_admin_scope_dep = saved_scope_dep
 
 
 @pytest.fixture
