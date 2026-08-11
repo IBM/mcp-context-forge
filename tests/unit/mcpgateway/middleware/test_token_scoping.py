@@ -350,6 +350,29 @@ class TestTokenScopingMiddleware:
         assert result is False, "POST /catalog/{id} without the /register suffix must stay default-denied"
 
     @pytest.mark.asyncio
+    async def test_observability_metrics_endpoints_require_metrics_read(self, middleware):
+        """GET /observability/metrics/* is mapped to metrics:read, not default-denied.
+
+        Only the two summary endpoints are mapped; the rest of /observability/*
+        stays default-denied for scoped tokens (admin.system_config surface).
+        """
+        for path in ("/observability/metrics/timeseries", "/observability/metrics/percentiles"):
+            result = middleware._check_permission_restrictions(path, "GET", [Permissions.METRICS_READ])
+            assert result is True, f"GET {path} should be allowed when token has metrics:read"
+
+            result = middleware._check_permission_restrictions(path, "GET", ["*"])
+            assert result is True, f"GET {path} should be allowed with wildcard permission"
+
+            result = middleware._check_permission_restrictions(path, "GET", [Permissions.LOGS_READ])
+            assert result is False, f"GET {path} should be denied when token lacks metrics:read"
+
+        result = middleware._check_permission_restrictions("/v1/observability/metrics/timeseries", "GET", [Permissions.METRICS_READ])
+        assert result is True, "Versioned path should normalize to /observability before pattern matching"
+
+        result = middleware._check_permission_restrictions("/observability/traces", "GET", [Permissions.METRICS_READ])
+        assert result is False, "The rest of /observability/* must stay default-denied for scoped tokens"
+
+    @pytest.mark.asyncio
     async def test_sse_endpoint_allowed_with_servers_use_permission(self, middleware):
         """GET /sse must be reachable for tokens that carry servers.use.
 

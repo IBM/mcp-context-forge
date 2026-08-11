@@ -487,6 +487,7 @@ async def bootstrap_default_roles(conn: Connection) -> None:
                         "prompts.read",
                         "llm.read",
                         "a2a.read",
+                        "metrics:read",
                         "tokens.create",
                         "tokens.read",
                         "tokens.update",
