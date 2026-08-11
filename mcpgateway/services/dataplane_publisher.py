@@ -270,7 +270,6 @@ class DataplanePublisherService:
                     backends[gateway_id] = {
                         "name": gateway_config["name"],
                         "url": gateway_config["url"],
-                        "transport": gateway_config["transport"],
                         "passthrough_headers": gateway_config["passthrough_headers"],
                         "add_headers": gateway_config["add_headers"],
                         "remove_headers": gateway_config["remove_headers"],

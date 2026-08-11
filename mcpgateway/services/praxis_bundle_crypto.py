@@ -1,4 +1,10 @@
-"""Strict authenticated encryption for canonical Praxis bundle archives."""
+# -*- coding: utf-8 -*-
+"""Location: ./mcpgateway/services/praxis_bundle_crypto.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+
+Strict authenticated encryption for canonical Praxis bundle archives.
+"""
 
 from __future__ import annotations
 
@@ -40,7 +46,6 @@ class NonceReservationStore(Protocol):
 
     def reserve(self, key_id: str, nonce: bytes) -> bool:
         """Return true only when the pair was newly reserved."""
-        ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,6 +81,7 @@ class EncryptedPraxisBundle:
 
 
 def _valid_key_id(key_id: str) -> bool:
+    """Return true only for an operator-safe key identifier."""
     return _KEY_ID_PATTERN.fullmatch(key_id) is not None
 
 

@@ -1,4 +1,10 @@
-"""Strict public contracts for versioned Praxis configuration delivery."""
+# -*- coding: utf-8 -*-
+"""Location: ./mcpgateway/services/_praxis_config_core.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+
+Strict public contracts for versioned Praxis configuration delivery.
+"""
 
 from __future__ import annotations
 
@@ -42,6 +48,7 @@ class PraxisConfigContractError(ValueError):
     detail: str
 
     def __str__(self) -> str:
+        """Return the sanitized code and detail pair."""
         return f"{self.code}: {self.detail}"
 
 
@@ -96,6 +103,7 @@ class _PraxisDocumentPath(PraxisStrictModel):
     @field_validator("path")
     @classmethod
     def validate_path(cls, value: str) -> str:
+        """Require a canonical relative POSIX document path."""
         encoded = value.encode("utf-8")
         canonical = PurePosixPath(value)
         invalid = len(encoded) > MAX_PATH_BYTES or "\\" in value or "\x00" in value or canonical.is_absolute() or str(canonical) != value or any(part in {"", ".", ".."} for part in canonical.parts)
@@ -112,6 +120,7 @@ class PraxisRenderedDocument(_PraxisDocumentPath):
     @field_validator("content")
     @classmethod
     def validate_utf8(cls, value: bytes) -> bytes:
+        """Require UTF-8 decodable document content."""
         try:
             value.decode("utf-8")
         except UnicodeDecodeError as error:
@@ -153,6 +162,7 @@ class PraxisRenderManifestV1(PraxisCompatibilityContract):
 
     @model_validator(mode="after")
     def validate_identity_and_documents(self) -> PraxisRenderManifestV1:
+        """Recompute the manifest identity and require canonical document order."""
         paths = tuple(document.path for document in self.documents)
         if paths != tuple(sorted(paths)) or len(paths) != len(set(paths)) or MANIFEST_PATH in paths:
             raise PraxisConfigContractError(PraxisContractErrorCode.INVALID_DOCUMENT, "manifest documents must be unique, sorted, and non-self-referential")
@@ -171,6 +181,7 @@ class PraxisBundleBuildRequest(PraxisStrictModel):
 
     @model_validator(mode="after")
     def validate_documents(self) -> PraxisBundleBuildRequest:
+        """Require unique bundle documents that exclude the manifest."""
         paths = tuple(document.path for document in self.documents)
         if len(paths) != len(set(paths)) or MANIFEST_PATH in paths:
             raise PraxisConfigContractError(PraxisContractErrorCode.INVALID_DOCUMENT, "bundle documents must be unique and exclude the manifest")
@@ -188,11 +199,13 @@ class PraxisGenerationEncryptionMetadata(PraxisStrictModel):
     @field_validator("created_at")
     @classmethod
     def validate_created_at(cls, value: datetime) -> datetime:
+        """Require the metadata instant to round-trip as UTC text."""
         utc_datetime_text(value)
         return value.astimezone(timezone.utc)
 
     @field_serializer("created_at", when_used="json")
     def serialize_created_at(self, value: datetime) -> str:
+        """Serialize the metadata instant as canonical UTC text."""
         return utc_datetime_text(value)
 
 
@@ -213,15 +226,18 @@ class PraxisGenerationEnvelope(PraxisCompatibilityContract):
     @field_validator("created_at")
     @classmethod
     def validate_created_at(cls, value: datetime) -> datetime:
+        """Require the envelope instant to round-trip as UTC text."""
         utc_datetime_text(value)
         return value.astimezone(timezone.utc)
 
     @field_serializer("created_at", when_used="json")
     def serialize_created_at(self, value: datetime) -> str:
+        """Serialize the envelope instant as canonical UTC text."""
         return utc_datetime_text(value)
 
     @model_validator(mode="after")
     def validate_generation_id(self) -> PraxisGenerationEnvelope:
+        """Recompute the envelope generation identity from its fields."""
         snapshot = PraxisSourceSnapshot(target_id=self.target_id, source_fingerprint=self.source_fingerprint)
         if self.generation_id != compute_generation_id(snapshot, self, self.payload_hash):
             raise PraxisConfigContractError(PraxisContractErrorCode.INVALID_CANONICAL_VALUE, "generation identity does not match envelope fields")

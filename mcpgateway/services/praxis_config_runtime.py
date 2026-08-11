@@ -1,4 +1,10 @@
-"""Narrow runtime dependency wiring for Praxis API orchestration."""
+# -*- coding: utf-8 -*-
+"""Location: ./mcpgateway/services/praxis_config_runtime.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+
+Narrow runtime dependency wiring for Praxis API orchestration.
+"""
 
 from datetime import datetime
 from pathlib import Path
@@ -18,7 +24,10 @@ from mcpgateway.services.praxis_legacy_telemetry import PraxisLegacyTelemetrySer
 
 
 class _SystemClock:
+    """Supply the current UTC instant to runtime factories."""
+
     def now(self) -> datetime:
+        """Return the current timezone-aware instant."""
         return utc_now()
 
 
@@ -26,6 +35,7 @@ class _DatabaseNonceReservationStore:
     """Atomically burn AES-GCM key/nonce pairs in the database."""
 
     def reserve(self, key_id: str, nonce: bytes) -> bool:
+        """Return true only when the pair was newly reserved."""
         with SessionLocal() as db:
             try:
                 if db.get_bind().dialect.name == "sqlite":
@@ -39,6 +49,7 @@ class _DatabaseNonceReservationStore:
 
 
 def _operator_config() -> Config:
+    """Load the operator plugin configuration when its file exists."""
     path = Path(settings.plugins.config_file)
     return ConfigLoader.load_config(str(path)) if path.is_file() else Config()
 
@@ -59,6 +70,7 @@ def get_praxis_source_service() -> PraxisConfigSourceService:
 
 def get_praxis_publication_service() -> PraxisBundlePublicationService:
     """Build the fenced publication service without Task 12 notifications."""
+
     def notify(_publication: PraxisPublication) -> None:
         return None
 

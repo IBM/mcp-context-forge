@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Target-bound identity and credential rotation for Praxis replicas."""
+"""Location: ./mcpgateway/services/praxis_replica_identity.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+
+Target-bound identity and credential rotation for Praxis replicas.
+"""
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -93,7 +98,7 @@ class PraxisReplicaIdentityService:
         try:
             replica = self._lock_replica(replica_id)
             active_count = self.db.scalar(
-                select(func.count(PraxisReplicaCredential.id)).where(
+                select(func.count(PraxisReplicaCredential.id)).where(  # pylint: disable=not-callable
                     PraxisReplicaCredential.replica_id == replica.id,
                     PraxisReplicaCredential.revoked_at.is_(None),
                     PraxisReplicaCredential.expires_at > now,
@@ -179,6 +184,7 @@ class PraxisReplicaIdentityService:
         return self._revoke_locked(replica_id, jti)
 
     def _lock_replica(self, replica_id: str) -> PraxisReplica:
+        """Lock one enabled replica row for a serialized credential mutation."""
         if self.db.in_transaction():
             self.db.rollback()
         dialect = self.db.get_bind().dialect.name
@@ -193,12 +199,14 @@ class PraxisReplicaIdentityService:
         return replica
 
     def _machine_role(self) -> Role:
+        """Load the fixed active machine role for replica principals."""
         role = self.db.scalar(select(Role).where(Role.name == PRAXIS_REPLICA_ROLE, Role.scope == "global", Role.is_active.is_(True)))
         if role is None or set(role.permissions) != PRAXIS_REPLICA_PERMISSIONS:
             raise PraxisReplicaRoleError
         return role
 
     def _ensure_machine_principal(self, replica_id: str, role_id: str, now: datetime) -> str:
+        """Create or reuse the locked machine user for one replica."""
         principal = praxis_replica_principal(replica_id)
         if self.db.scalar(select(EmailUser).where(EmailUser.email == principal)) is None:
             self.db.add(EmailUser(email=principal, password_hash="!praxis-machine-account", full_name="Praxis replica", auth_provider=PRAXIS_REPLICA_ROLE, email_verified_at=now))
@@ -209,12 +217,10 @@ class PraxisReplicaIdentityService:
         return principal
 
     def _increment_epoch(self, replica: PraxisReplica) -> int:
+        """Atomically advance the replica credential epoch or raise on conflict."""
         current = replica.credential_epoch
         updated_id = self.db.scalar(
-            update(PraxisReplica)
-            .where(PraxisReplica.id == replica.id, PraxisReplica.credential_epoch == current)
-            .values(credential_epoch=current + 1)
-            .returning(PraxisReplica.id)
+            update(PraxisReplica).where(PraxisReplica.id == replica.id, PraxisReplica.credential_epoch == current).values(credential_epoch=current + 1).returning(PraxisReplica.id)
         )
         if updated_id is None:
             raise PraxisCredentialConflictError
@@ -222,7 +228,10 @@ class PraxisReplicaIdentityService:
         return current + 1
 
     def _revoke_locked(self, replica_id: str, jti: str) -> bool:
-        credential = self.db.scalar(select(PraxisReplicaCredential).where(PraxisReplicaCredential.replica_id == replica_id, PraxisReplicaCredential.jti == jti, PraxisReplicaCredential.revoked_at.is_(None)))
+        """Revoke one active credential inside the replica lock."""
+        credential = self.db.scalar(
+            select(PraxisReplicaCredential).where(PraxisReplicaCredential.replica_id == replica_id, PraxisReplicaCredential.jti == jti, PraxisReplicaCredential.revoked_at.is_(None))
+        )
         if credential is None:
             self.db.rollback()
             return False
@@ -242,6 +251,7 @@ class PraxisReplicaIdentityService:
 
     @staticmethod
     def _mint_token(principal: str, jti: str, expires_at: datetime, issued_at: datetime) -> str:
+        """Sign one expiring machine JWT for the replica principal."""
         validate_jwt_algo_and_keys()
         claims = {
             "sub": principal,

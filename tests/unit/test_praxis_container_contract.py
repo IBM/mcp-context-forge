@@ -1,4 +1,10 @@
-"""Executable contracts for the dedicated Praxis dataplane image."""
+# -*- coding: utf-8 -*-
+"""Location: ./tests/unit/test_praxis_container_contract.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+
+Executable contracts for the dedicated Praxis dataplane image.
+"""
 
 from __future__ import annotations
 
@@ -85,6 +91,21 @@ def _validate_bundle(bundle_root: Path) -> subprocess.CompletedProcess[str]:
         )
 
 
+def _require_praxis_image() -> None:
+    """Skip image-backed contract tests unless the pinned dataplane image is local."""
+    if shutil.which("docker") is None:
+        pytest.skip("docker not on PATH; cannot run image-backed contract test")
+    inspected = subprocess.run(
+        ["docker", "image", "inspect", PRAXIS_IMAGE],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if inspected.returncode != 0:
+        pytest.skip(f"Local dataplane image {PRAXIS_IMAGE!r} not present — run `make docker-praxis-dataplane` first to enable this test.")
+
+
 def test_dedicated_definition_satisfies_complete_contract() -> None:
     _assert_contract(_containerfile())
     assert "docker-praxis-dataplane:" in MAKEFILE.read_text(encoding="utf-8")
@@ -121,6 +142,7 @@ def test_writable_secret_is_refused() -> None:
 
 
 def test_golden_bundle_validates_with_native_praxis() -> None:
+    _require_praxis_image()
     result = _validate_bundle(GOLDEN_ROOT)
 
     assert result.returncode == 0
@@ -129,6 +151,7 @@ def test_golden_bundle_validates_with_native_praxis() -> None:
 
 
 def test_invalid_bundle_is_refused(tmp_path: Path) -> None:
+    _require_praxis_image()
     bundle_root = tmp_path / "bundle"
     shutil.copytree(GOLDEN_ROOT, bundle_root)
     config_path = bundle_root / "praxis.yaml"
