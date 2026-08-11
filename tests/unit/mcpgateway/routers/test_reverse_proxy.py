@@ -11,10 +11,13 @@ session management, and HTTP endpoints.
 # Standard
 import asyncio
 from datetime import datetime
+import math
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, call, Mock, patch
+from typing import cast
+from unittest.mock import AsyncMock, call, MagicMock, Mock, patch
 
 # Third-Party
+import anyio
 import orjson
 
 # Third-Party
@@ -24,6 +27,7 @@ import pytest
 
 # First-Party
 from mcpgateway.config import settings
+from mcpgateway.services.gateway_service import GatewayCatalogReconcileResult
 from mcpgateway.routers.reverse_proxy import (
     manager,
     ReverseProxyManager,
@@ -67,6 +71,91 @@ def reverse_proxy_manager():
 def sample_session(mock_websocket):
     """Create a sample ReverseProxySession."""
     return ReverseProxySession("test-session", mock_websocket, "test-user")
+
+
+# --------------------------------------------------------------------------- #
+# Scripted WebSocket fakes (real anyio scheduling)                           #
+# --------------------------------------------------------------------------- #
+
+
+class ScriptedReverseProxyWebSocket:
+    """Fake reverse-proxy client WebSocket driving real anyio scheduling.
+
+    Unlike the AsyncMock-based ``mock_websocket`` (whose scripted side effects
+    never yield to the event loop), this fake suspends the endpoint's receive
+    pump on a real anyio stream so a sibling registration task runs
+    concurrently, exactly as it would against a live client.
+    """
+
+    def __init__(self) -> None:
+        """Initialize with an empty incoming-frame stream."""
+        self._send_stream, self._receive_stream = anyio.create_memory_object_stream[str](math.inf)
+        self.sent_frames: list[dict] = []
+        self.accepted = False
+        self.closed_code: int | None = None
+        self.headers: dict[str, str] = {}
+        self.query_params: dict[str, str] = {}
+        self.client = SimpleNamespace(host="127.0.0.1")
+        self.scope: dict = {"type": "websocket", "state": {}}
+
+    def queue_client_frame(self, frame: dict) -> None:
+        """Queue one client frame for the endpoint's receive pump."""
+        self._send_stream.send_nowait(orjson.dumps(frame).decode())
+
+    def queue_disconnect(self) -> None:
+        """Close the client stream so the pump observes a disconnect."""
+        self._send_stream.close()
+
+    async def accept(self) -> None:
+        """Record the acceptance."""
+        self.accepted = True
+
+    async def send_text(self, data: str) -> None:
+        """Capture one server frame; auto-disconnect once registration completes."""
+        frame = orjson.loads(data)
+        self.sent_frames.append(frame)
+        if frame.get("type") == "register_complete":
+            self.queue_disconnect()
+
+    async def receive_text(self) -> str:
+        """Return the next scripted client frame, raising disconnect at stream end."""
+        try:
+            return await self._receive_stream.receive()
+        except anyio.EndOfStream:
+            raise WebSocketDisconnect()
+
+    async def close(self, code: int = 1000, reason: str | None = None) -> None:
+        """Record a server-initiated close and end the client stream."""
+        self.closed_code = code
+        self._send_stream.close()
+
+
+class DiscoveryAnsweringWebSocket(ScriptedReverseProxyWebSocket):
+    """Scripted client that answers the discovery initialize handshake.
+
+    Advertises empty capabilities so the handshake needs no list pagination.
+    """
+
+    async def send_text(self, data: str) -> None:
+        """Capture the server frame and reply to the initialize request."""
+        frame = orjson.loads(data)
+        self.sent_frames.append(frame)
+        frame_type = frame.get("type")
+        if frame_type == "request":
+            payload = frame["payload"]
+            if payload.get("method") == "initialize":
+                self.queue_client_frame(
+                    {
+                        "type": "response",
+                        "payload": {
+                            "jsonrpc": "2.0",
+                            "id": payload["id"],
+                            "result": {"protocolVersion": "2024-11-05", "capabilities": {}, "serverInfo": {"name": "scripted-client", "version": "0.0.0"}},
+                        },
+                    }
+                )
+        elif frame_type == "register_complete":
+            self.queue_disconnect()
 
 
 # --------------------------------------------------------------------------- #
@@ -388,17 +477,17 @@ class TestWebSocketEndpoint:
         assert ack["sessionId"] != "client-controlled"
 
     @pytest.mark.asyncio
-    async def test_websocket_register_message(self, mock_websocket, session_manager, catalog_service, discovery_service):
+    async def test_websocket_register_message(self, session_manager, catalog_service, discovery_service):
         """Register drives ack(processing) -> catalog -> stable-id attach -> discovery -> complete(success)."""
-        register_msg = {"type": "register", "server": {"name": "test-server", "description": "Test server", "protocol": "mcp"}}
-        mock_websocket.receive_text.side_effect = [orjson.dumps(register_msg).decode(), WebSocketDisconnect()]
+        websocket = ScriptedReverseProxyWebSocket()
+        websocket.queue_client_frame({"type": "register", "server": {"name": "test-server", "description": "Test server", "protocol": "mcp"}})
 
         # First-Party
         from mcpgateway.routers.reverse_proxy import websocket_endpoint
 
-        await websocket_endpoint(mock_websocket, Mock())
+        await websocket_endpoint(cast(WebSocket, websocket), Mock())
 
-        frames = self._sent_frames(mock_websocket)
+        frames = websocket.sent_frames
         assert [frame["type"] for frame in frames] == ["register_ack", "register_complete"]
         assert frames[0]["status"] == "processing"
         assert frames[0]["sessionId"] == str(self._CONNECTION_ID)
@@ -423,51 +512,51 @@ class TestWebSocketEndpoint:
         assert discovery_call.args[4] is not None  # db_server row
         assert discovery_call.kwargs["timeout_seconds"] == float(settings.tool_timeout)
 
-        mock_websocket.close.assert_not_called()
+        assert websocket.closed_code is None
 
     @pytest.mark.asyncio
-    async def test_websocket_register_catalog_failure_closes_connection(self, mock_websocket, session_manager, catalog_service, discovery_service):
+    async def test_websocket_register_catalog_failure_closes_connection(self, session_manager, catalog_service, discovery_service):
         """Catalog failure -> register_complete(error) then close 1008; discovery never runs."""
         catalog_service.register.side_effect = RuntimeError("catalog exploded")
-        register_msg = {"type": "register", "server": {"name": "test-server"}}
-        mock_websocket.receive_text.side_effect = [orjson.dumps(register_msg).decode(), WebSocketDisconnect()]
+        websocket = ScriptedReverseProxyWebSocket()
+        websocket.queue_client_frame({"type": "register", "server": {"name": "test-server"}})
 
         # First-Party
         from mcpgateway.routers.reverse_proxy import websocket_endpoint
 
-        await websocket_endpoint(mock_websocket, Mock())
+        await websocket_endpoint(cast(WebSocket, websocket), Mock())
 
-        frames = self._sent_frames(mock_websocket)
+        frames = websocket.sent_frames
         assert [frame["type"] for frame in frames] == ["register_ack", "register_complete"]
         assert frames[1]["status"] == "error"
-        assert "catalog exploded" in frames[1]["message"]
-        mock_websocket.close.assert_awaited_once()
-        assert mock_websocket.close.await_args.kwargs["code"] == 1008
+        assert frames[1]["message"] == "registration failed"
+        assert "catalog exploded" not in frames[1]["message"]
+        assert websocket.closed_code == 1008
         session_manager.attach_stable_id.assert_not_awaited()
         discovery_service.discover_and_reconcile.assert_not_awaited()
-        assert mock_websocket.receive_text.await_count == 1
         session_manager.disconnect.assert_awaited_once_with(self._CONNECTION_ID)
 
     @pytest.mark.asyncio
-    async def test_websocket_register_discovery_failure_closes_connection(self, mock_websocket, session_manager, catalog_service, discovery_service):
+    async def test_websocket_register_discovery_failure_closes_connection(self, session_manager, catalog_service, discovery_service):
         """Discovery failure -> register_complete(error) then close 1008 after catalog persisted."""
         discovery_service.discover_and_reconcile.side_effect = RuntimeError("discovery exploded")
-        register_msg = {"type": "register", "server": {"name": "test-server"}}
-        mock_websocket.receive_text.side_effect = [orjson.dumps(register_msg).decode(), WebSocketDisconnect()]
+        websocket = ScriptedReverseProxyWebSocket()
+        websocket.queue_client_frame({"type": "register", "server": {"name": "test-server"}})
 
         # First-Party
         from mcpgateway.routers.reverse_proxy import websocket_endpoint
 
-        await websocket_endpoint(mock_websocket, Mock())
+        await websocket_endpoint(cast(WebSocket, websocket), Mock())
 
-        frames = self._sent_frames(mock_websocket)
+        frames = websocket.sent_frames
         assert [frame["type"] for frame in frames] == ["register_ack", "register_complete"]
         assert frames[1]["status"] == "error"
-        assert "discovery exploded" in frames[1]["message"]
-        mock_websocket.close.assert_awaited_once()
-        assert mock_websocket.close.await_args.kwargs["code"] == 1008
+        assert frames[1]["message"] == "registration failed"
+        assert "discovery exploded" not in frames[1]["message"]
+        assert websocket.closed_code == 1008
         catalog_service.register.assert_awaited_once()
         session_manager.attach_stable_id.assert_awaited_once_with(StableGatewayId(self._STABLE_ID), self._CONNECTION_ID)
+        session_manager.disconnect.assert_awaited_once_with(self._CONNECTION_ID)
 
     @pytest.mark.asyncio
     async def test_websocket_heartbeat_message(self, mock_websocket, session_manager, catalog_service):
@@ -505,23 +594,27 @@ class TestWebSocketEndpoint:
         mock_websocket.send_text.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_websocket_duplicate_register_closes_connection(self, mock_websocket, session_manager, catalog_service, discovery_service):
+    async def test_websocket_duplicate_register_closes_connection(self, session_manager, catalog_service, discovery_service):
         """D13: a second register on one connection is an error and closes 1008."""
         register_msg = {"type": "register", "server": {"name": "test-server"}}
-        mock_websocket.receive_text.side_effect = [orjson.dumps(register_msg).decode(), orjson.dumps(register_msg).decode(), WebSocketDisconnect()]
+        websocket = ScriptedReverseProxyWebSocket()
+        websocket.queue_client_frame(register_msg)
+        websocket.queue_client_frame(register_msg)
 
         # First-Party
         from mcpgateway.routers.reverse_proxy import websocket_endpoint
 
-        await websocket_endpoint(mock_websocket, Mock())
+        await websocket_endpoint(cast(WebSocket, websocket), Mock())
 
-        frames = self._sent_frames(mock_websocket)
+        # anyio checkpoints let the first registration complete before the pump
+        # takes the buffered duplicate; the duplicate is still rejected and closed.
+        frames = websocket.sent_frames
         assert [frame["type"] for frame in frames] == ["register_ack", "register_complete", "error"]
         assert "already registered" in frames[2]["message"]
-        mock_websocket.close.assert_awaited_once()
-        assert mock_websocket.close.await_args.kwargs["code"] == 1008
+        assert websocket.closed_code == 1008
         catalog_service.register.assert_awaited_once()
         discovery_service.discover_and_reconcile.assert_awaited_once()
+        session_manager.disconnect.assert_awaited_once_with(self._CONNECTION_ID)
 
     @pytest.mark.asyncio
     async def test_websocket_unregister_message(self, mock_websocket, session_manager):
@@ -598,6 +691,125 @@ class TestWebSocketEndpoint:
             await websocket_endpoint(mock_websocket, Mock())
 
         session_manager.disconnect.assert_awaited_once_with(self._CONNECTION_ID)
+        assert manager.sessions == {}
+
+
+class TestWebSocketRegistrationIntegration:
+    """Integration regression for the B1 registration deadlock.
+
+    The wire path is fully real: a REAL ``ReverseProxySessionManager`` and the
+    REAL ``ReverseProxyDiscoveryService`` run against a scripted client that
+    answers the discovery ``initialize`` handshake. Only the catalog register
+    call and the DB-facing gateway-service seam are mocked. Against the former
+    single-receive-loop endpoint this test deadlocked (discovery's own
+    responses could never be received) and fails here by ``anyio.fail_after``
+    timeout; after the pump/sibling-task restructure it passes.
+    """
+
+    _STABLE_ID = "stable-integration-id"
+
+    @pytest.fixture(autouse=True)
+    def mock_admission(self):
+        """Authenticate through the admission seam."""
+        context = SimpleNamespace(owner_email="integration-user@example.com", team_id=None)
+        with patch("mcpgateway.routers.reverse_proxy._authenticate_reverse_proxy_websocket", new=AsyncMock(return_value=context)):
+            yield
+
+    @pytest.fixture
+    def real_session_manager(self):
+        """A fresh REAL session manager (never mocked) for the wire path."""
+        return ReverseProxySessionManager()
+
+    @pytest.fixture(autouse=True)
+    def patch_session_manager_singleton(self, real_session_manager):
+        """Route the endpoint's session-manager singleton to the real instance."""
+        with patch("mcpgateway.routers.reverse_proxy.get_reverse_proxy_session_manager", new=AsyncMock(return_value=real_session_manager)):
+            yield
+
+    @pytest.fixture(autouse=True)
+    def catalog_service(self):
+        """Mock ONLY ``ReverseProxyCatalogService.register`` at the router import site."""
+        service = Mock(spec=ReverseProxyCatalogService)
+        service.register.return_value = SimpleNamespace(stable_id=self._STABLE_ID, gateway=Mock(), server=Mock())
+        with patch("mcpgateway.routers.reverse_proxy.ReverseProxyCatalogService", return_value=service):
+            yield service
+
+    @pytest.fixture
+    def gateway_service_mock(self):
+        """Mock the DB-facing gateway-service seam used by REAL discovery."""
+        service = MagicMock()
+        service._validate_tools.return_value = ([], [])
+        service._sync_gateway_catalog.return_value = MagicMock(name="catalog_sync")
+        service._reconcile_gateway_catalog.return_value = GatewayCatalogReconcileResult(tools_added=0, resources_added=0, prompts_added=0, tools_removed=0, resources_removed=0, prompts_removed=0)
+        return service
+
+    @pytest.fixture(autouse=True)
+    def patch_gateway_service_seams(self, gateway_service_mock):
+        """Inject the mocked seam into discovery on both pre- and post-restructure code.
+
+        ``create=True`` lets the router-module symbol patch apply even before the
+        router gains its shared-singleton import, so this identical test runs red
+        against the pre-restructure endpoint.
+        """
+        registry_cache = MagicMock()
+        registry_cache.invalidate_servers = AsyncMock()
+        tool_lookup_cache = MagicMock()
+        tool_lookup_cache.invalidate_gateway = AsyncMock()
+        with (
+            patch("mcpgateway.routers.reverse_proxy.gateway_service", gateway_service_mock, create=True),
+            patch("mcpgateway.services.reverse_proxy_discovery.GatewayService", return_value=gateway_service_mock),
+            patch("mcpgateway.services.reverse_proxy_discovery._get_registry_cache", return_value=registry_cache),
+            patch("mcpgateway.services.reverse_proxy_discovery._get_tool_lookup_cache", return_value=tool_lookup_cache),
+        ):
+            yield
+
+    @pytest.fixture(autouse=True)
+    def clear_legacy_manager(self):
+        """Keep the legacy observability mirror empty around each test."""
+        manager.sessions.clear()
+        yield
+        manager.sessions.clear()
+
+    @pytest.fixture
+    def mock_db(self):
+        """Mock db whose ``get`` returns non-None catalog rows."""
+        db = MagicMock()
+        db.get.side_effect = [MagicMock(name="db_gateway"), MagicMock(name="db_server")]
+        return db
+
+    @pytest.mark.asyncio
+    async def test_registration_completes_while_receive_pump_resolves_discovery_responses(self, real_session_manager, catalog_service, mock_db):
+        """Register -> real discovery handshake -> register_complete(success).
+
+        Red against the single-loop endpoint: discovery awaits responses that
+        only the (blocked) receive loop could resolve, so ``anyio.fail_after``
+        fires long before ``settings.tool_timeout`` would.
+        """
+        websocket = DiscoveryAnsweringWebSocket()
+        websocket.queue_client_frame({"type": "register", "server": {"name": "integration-server"}})
+
+        # First-Party
+        from mcpgateway.routers.reverse_proxy import websocket_endpoint
+
+        with anyio.fail_after(10):
+            await websocket_endpoint(cast(WebSocket, websocket), mock_db)
+
+        frame_types = [frame["type"] for frame in websocket.sent_frames]
+        assert frame_types == ["register_ack", "request", "request", "register_complete"]
+        assert websocket.sent_frames[0]["status"] == "processing"
+        assert websocket.sent_frames[1]["payload"]["method"] == "initialize"
+        assert websocket.sent_frames[2]["payload"]["method"] == "notifications/initialized"
+        assert websocket.sent_frames[3]["status"] == "success"
+        assert websocket.closed_code is None
+
+        catalog_service.register.assert_awaited_once()
+        register_call = catalog_service.register.await_args
+        assert isinstance(register_call.args[1], AuthenticatedRegistrationContext)
+        assert register_call.args[1].owner_email == "integration-user@example.com"
+
+        connection_id = ConnectionId(websocket.sent_frames[0]["sessionId"])
+        assert real_session_manager.pending_count(connection_id) == 0
+        assert real_session_manager.resolve_connection_id(StableGatewayId(self._STABLE_ID)) is None
         assert manager.sessions == {}
 
 
