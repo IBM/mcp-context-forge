@@ -82,6 +82,27 @@ export function Tokens() {
 
   return (
     <div className="space-y-6">
+      {/* Always-present header keeps a consistent gap between the tab row and the
+          content (card / table / states), matching the Users and Teams tabs. Its
+          generate action portals onto the tab row and only shows once tokens
+          exist (the empty state offers its own button); the sr-only title labels
+          the section since the visible one is dropped per design. */}
+      <header className="flex items-center justify-end">
+        <h2 className="sr-only">{intl.formatMessage({ id: "tokens.table.caption" })}</h2>
+        {!isLoading && !error && tokens.length > 0 && (
+          <SettingsToolbar>
+            <Button
+              variant="default"
+              className="h-7 rounded-sm px-4"
+              onClick={() => setView("create")}
+            >
+              <Plus className="h-4 w-4" aria-hidden="true" />
+              {intl.formatMessage({ id: "tokens.generate" })}
+            </Button>
+          </SettingsToolbar>
+        )}
+      </header>
+
       {isLoading ? (
         <div
           role="status"
@@ -119,25 +140,11 @@ export function Tokens() {
           </Button>
         </div>
       ) : (
-        <>
-          {/* Hosted inside the Settings tabs, the generate action renders on the
-              tab row (via the toolbar slot); standalone it falls back inline. */}
-          <SettingsToolbar>
-            <Button
-              variant="default"
-              className="h-7 rounded-sm px-4"
-              onClick={() => setView("create")}
-            >
-              <Plus className="h-4 w-4" aria-hidden="true" />
-              {intl.formatMessage({ id: "tokens.generate" })}
-            </Button>
-          </SettingsToolbar>
-          <TokensTable
-            tokens={tokens}
-            teamNames={teamNames}
-            onDeleteClick={(token) => setTokenToDelete(token)}
-          />
-        </>
+        <TokensTable
+          tokens={tokens}
+          teamNames={teamNames}
+          onDeleteClick={(token) => setTokenToDelete(token)}
+        />
       )}
 
       <TokenCreatedDialog token={createdToken} onClose={() => setCreatedToken(null)} />
