@@ -1,0 +1,294 @@
+<!-- API Metrics Dashboard -->
+<div class="space-y-6" x-data="apiMetricsDashboard()" x-init="init()">
+  <!-- Header with Time Range -->
+  <div class="flex items-center justify-between">
+    <div>
+      <h2 class="text-2xl font-bold text-gray-900 dark:text-gray-100">API Metrics</h2>
+      <p class="text-sm text-gray-500 dark:text-gray-400 mt-1">
+        Real-time API performance and reliability overview
+      </p>
+    </div>
+    <div class="flex items-center space-x-3">
+      <label class="text-sm text-gray-600 dark:text-gray-400">Time Range</label>
+      <select x-model="timeRange" @change="loadAll()"
+        class="rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500">
+        <option value="1">Last 1 hour</option>
+        <option value="6">Last 6 hours</option>
+        <option value="24" selected>Last 24 hours</option>
+        <option value="168">Last 7 days</option>
+      </select>
+      <button @click="loadAll()" :disabled="loading"
+        class="px-3 py-2 text-sm bg-indigo-600 hover:bg-indigo-700 text-white rounded-lg disabled:opacity-50 transition-colors">
+        <span x-show="!loading">Refresh</span>
+        <span x-show="loading" class="inline-flex items-center">
+          <svg class="animate-spin h-4 w-4 mr-1" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+          Loading
+        </span>
+      </button>
+    </div>
+  </div>
+
+  <!-- Error Banner -->
+  <div x-show="error" class="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4" x-cloak>
+    <p class="text-red-700 dark:text-red-400 text-sm" x-text="error"></p>
+  </div>
+
+  <!-- KPI Cards -->
+  <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+    <!-- Call Volume -->
+    <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-5">
+      <p class="text-sm font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Call Volume</p>
+      <p class="mt-2 text-3xl font-bold text-gray-900 dark:text-gray-100" x-text="fmtCount(stats.total_traces)">—</p>
+      <p class="mt-1 text-xs text-gray-400 dark:text-gray-500" x-text="timeRangeLabel()"></p>
+    </div>
+
+    <!-- Success Rate -->
+    <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-5">
+      <p class="text-sm font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Success Rate</p>
+      <p class="mt-2 text-3xl font-bold" :class="successRateColor()" x-text="fmtPct(successRate())">—</p>
+      <p class="mt-1 text-xs text-gray-400 dark:text-gray-500">
+        <span x-text="fmtCount(stats.success_count)">0</span> of <span x-text="fmtCount(stats.total_traces)">0</span> calls
+      </p>
+    </div>
+
+    <!-- Error Rate -->
+    <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-5">
+      <p class="text-sm font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Error Rate</p>
+      <p class="mt-2 text-3xl font-bold" :class="errorRateColor()" x-text="fmtPct(errorRate())">—</p>
+      <p class="mt-1 text-xs text-gray-400 dark:text-gray-500">
+        <span x-text="fmtCount(stats.error_count)">0</span> errors
+      </p>
+    </div>
+
+    <!-- p95 Latency -->
+    <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-5">
+      <p class="text-sm font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">p95 Latency</p>
+      <p class="mt-2 text-3xl font-bold text-gray-900 dark:text-gray-100" x-text="fmtMs(latestPercentile(95))">—</p>
+      <p class="mt-1 text-xs text-gray-400 dark:text-gray-500">95th percentile</p>
+    </div>
+
+    <!-- p99 Latency -->
+    <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 p-5">
+      <p class="text-sm font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">p99 Latency</p>
+      <p class="mt-2 text-3xl font-bold text-gray-900 dark:text-gray-100" x-text="fmtMs(latestPercentile(99))">—</p>
+      <p class="mt-1 text-xs text-gray-400 dark:text-gray-500">99th percentile</p>
+    </div>
+  </div>
+
+  <!-- Tables Row -->
+  <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+    <!-- Top Failing APIs -->
+    <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
+      <div class="px-5 py-4 border-b border-gray-200 dark:border-gray-700">
+        <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">🔴 Top Failing APIs</h3>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+          <thead class="bg-gray-50 dark:bg-gray-800/50">
+            <tr>
+              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Endpoint</th>
+              <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Calls</th>
+              <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Errors</th>
+              <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Error Rate</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-200 dark:divide-gray-700">
+            <template x-if="topErrors.length === 0">
+              <tr><td colspan="4" class="px-4 py-8 text-center text-gray-400 dark:text-gray-500 text-sm">No errors in this time range</td></tr>
+            </template>
+            <template x-for="ep in topErrors" :key="ep.endpoint">
+              <tr class="hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
+                <td class="px-4 py-3 text-sm">
+                  <span class="font-mono text-xs px-2 py-0.5 rounded" :class="methodBadge(ep.method)" x-text="ep.method"></span>
+                  <span class="text-gray-700 dark:text-gray-300 ml-2 font-mono text-xs" x-text="truncateUrl(ep.url, 50)"></span>
+                </td>
+                <td class="px-4 py-3 text-sm text-right text-gray-600 dark:text-gray-400" x-text="ep.total_count"></td>
+                <td class="px-4 py-3 text-sm text-right font-semibold text-red-600 dark:text-red-400" x-text="ep.error_count"></td>
+                <td class="px-4 py-3 text-sm text-right">
+                  <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium"
+                    :class="ep.error_rate > 50 ? bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400 : bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400"
+                    x-text="ep.error_rate + %"></span>
+                </td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Top Slow APIs -->
+    <div class="bg-white dark:bg-gray-800 rounded-xl shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
+      <div class="px-5 py-4 border-b border-gray-200 dark:border-gray-700">
+        <h3 class="text-lg font-semibold text-gray-900 dark:text-gray-100">🐢 Top Slow APIs</h3>
+      </div>
+      <div class="overflow-x-auto">
+        <table class="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+          <thead class="bg-gray-50 dark:bg-gray-800/50">
+            <tr>
+              <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Endpoint</th>
+              <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Calls</th>
+              <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Avg</th>
+              <th class="px-4 py-3 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Max</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-200 dark:divide-gray-700">
+            <template x-if="topSlow.length === 0">
+              <tr><td colspan="4" class="px-4 py-8 text-center text-gray-400 dark:text-gray-500 text-sm">No data in this time range</td></tr>
+            </template>
+            <template x-for="ep in topSlow" :key="ep.endpoint">
+              <tr class="hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
+                <td class="px-4 py-3 text-sm">
+                  <span class="font-mono text-xs px-2 py-0.5 rounded" :class="methodBadge(ep.method)" x-text="ep.method"></span>
+                  <span class="text-gray-700 dark:text-gray-300 ml-2 font-mono text-xs" x-text="truncateUrl(ep.url, 50)"></span>
+                </td>
+                <td class="px-4 py-3 text-sm text-right text-gray-600 dark:text-gray-400" x-text="ep.count"></td>
+                <td class="px-4 py-3 text-sm text-right font-semibold" :class="durationColor(ep.avg_duration_ms)" x-text="fmtMs(ep.avg_duration_ms)"></td>
+                <td class="px-4 py-3 text-sm text-right text-gray-500 dark:text-gray-400" x-text="fmtMs(ep.max_duration_ms)"></td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script nonce="{{ csp_nonce(request) }}">
+function apiMetricsDashboard() {
+  return {
+    timeRange: 24,
+    loading: false,
+    error: null,
+    stats: { total_traces: 0, success_count: 0, error_count: 0, avg_duration_ms: 0 },
+    percentileData: [],
+    topErrors: [],
+    topSlow: [],
+
+    async init() {
+      await this.loadAll();
+    },
+
+    async loadAll() {
+      this.loading = true;
+      this.error = null;
+      try {
+        const [statsRes, pctRes, errRes, slowRes] = await Promise.all([
+          fetch(`${window.ROOT_PATH}/admin/observability/stats?hours=${this.timeRange}`),
+          fetch(`${window.ROOT_PATH}/admin/observability/metrics/percentiles?hours=${this.timeRange}&interval_minutes=${this.intervalForRange()}`),
+          fetch(`${window.ROOT_PATH}/admin/observability/metrics/top-errors?hours=${this.timeRange}&limit=10`),
+          fetch(`${window.ROOT_PATH}/admin/observability/metrics/top-slow?hours=${this.timeRange}&limit=10`),
+        ]);
+
+        if (!statsRes.ok) throw new Error(`Stats endpoint returned ${statsRes.status}`);
+        const statsData = await statsRes.json();
+        this.stats = statsData.stats || statsData;
+
+        if (pctRes.ok) {
+          const pctData = await pctRes.json();
+          this.percentileData = pctData.percentiles || pctData.data || [];
+        }
+
+        if (errRes.ok) {
+          const errData = await errRes.json();
+          this.topErrors = errData.endpoints || [];
+        }
+
+        if (slowRes.ok) {
+          const slowData = await slowRes.json();
+          this.topSlow = slowData.endpoints || [];
+        }
+      } catch (e) {
+        console.error(API Metrics Dashboard error:, e);
+        this.error = Failed to load metrics:  + e.message;
+      } finally {
+        this.loading = false;
+      }
+    },
+
+    intervalForRange() {
+      if (this.timeRange <= 1) return 5;
+      if (this.timeRange <= 6) return 15;
+      if (this.timeRange <= 24) return 60;
+      return 360; // 7 days → 6h buckets
+    },
+
+    successRate() {
+      if (!this.stats.total_traces) return 0;
+      return (this.stats.success_count / this.stats.total_traces) * 100;
+    },
+
+    errorRate() {
+      if (!this.stats.total_traces) return 0;
+      return (this.stats.error_count / this.stats.total_traces) * 100;
+    },
+
+    successRateColor() {
+      const r = this.successRate();
+      if (r >= 99) return text-green-600 dark:text-green-400;
+      if (r >= 95) return text-yellow-600 dark:text-yellow-400;
+      return text-red-600 dark:text-red-400;
+    },
+
+    errorRateColor() {
+      const r = this.errorRate();
+      if (r <= 1) return text-green-600 dark:text-green-400;
+      if (r <= 5) return text-yellow-600 dark:text-yellow-400;
+      return text-red-600 dark:text-red-400;
+    },
+
+    latestPercentile(p) {
+      if (!this.percentileData.length) return null;
+      const last = this.percentileData[this.percentileData.length - 1];
+      const key = p + p;
+      return last[key] !== undefined ? last[key] : null;
+    },
+
+    timeRangeLabel() {
+      if (this.timeRange <= 1) return last hour;
+      if (this.timeRange <= 6) return last 6 hours;
+      if (this.timeRange <= 24) return last 24 hours;
+      return last 7 days;
+    },
+
+    // Formatting helpers
+    fmtCount(v) {
+      if (v == null) return —;
+      if (v >= 1000000) return (v / 1000000).toFixed(1) + M;
+      if (v >= 1000) return (v / 1000).toFixed(1) + K;
+      return String(v);
+    },
+
+    fmtPct(v) {
+      if (v == null) return —;
+      return v.toFixed(1) + %;
+    },
+
+    fmtMs(v) {
+      if (v == null) return —;
+      if (v >= 1000) return (v / 1000).toFixed(1) + s;
+      return Math.round(v) +  ms;
+    },
+
+    truncateUrl(url, max) {
+      if (!url) return ;
+      return url.length > max ? url.substring(0, max) + … : url;
+    },
+
+    methodBadge(method) {
+      const m = (method || ).toUpperCase();
+      if (m === GET) return bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400;
+      if (m === POST) return bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400;
+      if (m === PUT || m === PATCH) return bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400;
+      if (m === DELETE) return bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400;
+      return bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300;
+    },
+
+    durationColor(ms) {
+      if (ms == null) return text-gray-600 dark:text-gray-400;
+      if (ms >= 1000) return text-red-600 dark:text-red-400;
+      if (ms >= 500) return text-yellow-600 dark:text-yellow-400;
+      return text-green-600 dark:text-green-400;
+    },
+  };
+}
+</script>

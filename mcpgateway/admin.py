@@ -18388,6 +18388,22 @@ async def get_observability_metrics_partial(request: Request, _user=Depends(get_
     return request.app.state.templates.TemplateResponse(request, "observability_metrics.html", {"request": request, "root_path": root_path})
 
 
+@admin_router.get("/api-metrics/partial", response_class=HTMLResponse)
+@require_permission("admin.system_config", allow_admin_bypass=False)
+async def get_api_metrics_partial(request: Request, _user=Depends(get_current_user_with_permissions), _db: Session = Depends(get_db)):
+    """Render the API Metrics dashboard partial.
+
+    Args:
+        request: FastAPI request object
+        _user: Authenticated user with admin permissions (required by dependency)
+        _db: Database session for permission checks.
+
+    Returns:
+        HTMLResponse: Rendered API metrics dashboard template
+    """
+    root_path = _resolve_root_path(request)
+    return request.app.state.templates.TemplateResponse(request, "api_metrics_dashboard.html", {"request": request, "root_path": root_path})
+
 @admin_router.get("/observability/stats", response_class=HTMLResponse)
 @require_permission("admin.system_config", allow_admin_bypass=False)
 async def get_observability_stats(request: Request, hours: int = Query(24, ge=1, le=168), _user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
