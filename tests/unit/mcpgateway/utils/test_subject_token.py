@@ -75,3 +75,8 @@ def test_cookie_error_returns_none():
 def test_headers_present_but_no_cookie_key():
     headers = {"X-Something": "value"}
     assert extract_subject_jwt(headers) is None
+
+
+def test_opaque_bearer_and_no_jwt_token_cookie_returns_none():
+    headers = {"Authorization": "Bearer opaque-session-token", "cookie": "mcpgateway_csrf_token=abc"}
+    assert extract_subject_jwt(headers) is None
