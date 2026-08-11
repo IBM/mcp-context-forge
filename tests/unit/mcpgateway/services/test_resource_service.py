@@ -2128,6 +2128,22 @@ class TestUtilityMethods:
         result = resource_service.convert_resource_to_read(mock_resource, include_metrics=False)
         assert result.tags == ["plain", "dict-label", "dict-name", "obj-label", "obj-name"]
 
+    def test_convert_resource_to_read_maps_text_content_to_content(self, resource_service, mock_resource):
+        """text_content from DB row must appear as content in ResourceRead."""
+        mock_resource.text_content = "Hello paddddd"
+
+        result = resource_service.convert_resource_to_read(mock_resource, include_metrics=False)
+
+        assert result.content == "Hello paddddd"
+
+    def test_convert_resource_to_read_content_none_when_no_text_content(self, resource_service, mock_resource):
+        """content must be None when the resource has no stored text_content."""
+        mock_resource.text_content = None
+
+        result = resource_service.convert_resource_to_read(mock_resource, include_metrics=False)
+
+        assert result.content is None
+
     def test_init_creates_service_with_expected_attributes(self):
         """Cover ResourceService.__init__ — verify core attributes are set."""
         # First-Party

@@ -324,7 +324,7 @@ export const viewResource = async function (resourceId) {
     const resource = data.resource;
 
     // console.log("Resource JSON:\n", JSON.stringify(resource, null, 2));
-    // const content = data.content;
+    const content = resource.content;
 
     const resourceDetailsDiv = safeGetElement("resource-details");
     if (resourceDetailsDiv) {
@@ -404,29 +404,19 @@ export const viewResource = async function (resourceId) {
       statusP.appendChild(statusSpan);
       container.appendChild(statusP);
 
-      // Content display - safely handle different types
-      // const contentDiv = document.createElement("div");
-      // const contentStrong = document.createElement("strong");
-      // contentStrong.textContent = "Content:";
-      // contentDiv.appendChild(contentStrong);
-
-      // const contentPre = document.createElement("pre");
-      // contentPre.className =
-      //     "mt-1 bg-gray-100 p-2 rounded overflow-auto max-h-80 dark:bg-gray-800 dark:text-gray-100";
-
-      // // Handle content display - extract actual content from object if needed
-      // let contentStr = extractContent(
-      //     content,
-      //     resource.description || "No content available",
-      // );
-
-      // if (!contentStr.trim()) {
-      //     contentStr = resource.description || "No content available";
-      // }
-
-      // contentPre.textContent = contentStr;
-      // contentDiv.appendChild(contentPre);
-      // container.appendChild(contentDiv);
+      // Content display — only render when the resource has stored text content
+      if (content !== null && content !== undefined && String(content).trim() !== "") {
+        const contentDiv = document.createElement("div");
+        const contentStrong = document.createElement("strong");
+        contentStrong.textContent = "Content:";
+        contentDiv.appendChild(contentStrong);
+        const contentPre = document.createElement("pre");
+        contentPre.className =
+          "mt-1 bg-gray-100 p-2 rounded overflow-auto max-h-80 dark:bg-gray-800 dark:text-gray-100 text-sm whitespace-pre-wrap break-words";
+        contentPre.textContent = String(content);
+        contentDiv.appendChild(contentPre);
+        container.appendChild(contentDiv);
+      }
 
       // Metrics display
       if (resource.metrics) {
@@ -606,7 +596,7 @@ export const editResource = async function (resourceId) {
 
     const data = await response.json();
     const resource = data.resource;
-    // const content = data.content;
+    const content = resource.content;
     // Ensure hidden inactive flag is preserved
     const isInactiveCheckedBool = isInactiveChecked("resources");
     let hiddenField = safeGetElement("edit-resource-show-inactive");
@@ -673,7 +663,7 @@ export const editResource = async function (resourceId) {
     const nameField = safeGetElement("edit-resource-name");
     const descField = safeGetElement("edit-resource-description");
     const mimeField = safeGetElement("edit-resource-mime-type");
-    // const contentField = safeGetElement("edit-resource-content");
+    const contentField = safeGetElement("edit-resource-content");
 
     if (uriField && uriValidation.valid) {
       uriField.value = uriValidation.value;
@@ -687,6 +677,14 @@ export const editResource = async function (resourceId) {
     if (mimeField) {
       mimeField.value = resource.mimeType || "";
     }
+    // CodeMirror wraps this textarea and hides it — set value on the editor
+    // instance if available, otherwise fall back to the raw textarea.
+    if (window.editResourceContentEditor) {
+      window.editResourceContentEditor.setValue(content || "");
+      window.editResourceContentEditor.refresh();
+    } else if (contentField) {
+      contentField.value = content || "";
+    }
 
     // Set tags field
     const tagsField = safeGetElement("edit-resource-tags");
@@ -698,34 +696,6 @@ export const editResource = async function (resourceId) {
         : [];
       tagsField.value = rawTags.join(", ");
     }
-
-    // if (contentField) {
-    //     let contentStr = extractContent(
-    //         content,
-    //         resource.description || "No content available",
-    //     );
-
-    //     if (!contentStr.trim()) {
-    //         contentStr = resource.description || "No content available";
-    //     }
-
-    //     contentField.value = contentStr;
-    // }
-
-    // // Update CodeMirror editor if it exists
-    // if (window.editResourceContentEditor) {
-    //     let contentStr = extractContent(
-    //         content,
-    //         resource.description || "No content available",
-    //     );
-
-    //     if (!contentStr.trim()) {
-    //         contentStr = resource.description || "No content available";
-    //     }
-
-    //     window.editResourceContentEditor.setValue(contentStr);
-    //     window.editResourceContentEditor.refresh();
-    // }
 
     openModal("resource-edit-modal");
     applyVisibilityRestrictions(["edit-resource-visibility"]); // Disable public radio if restricted, preserve checked state
