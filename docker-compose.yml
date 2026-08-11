@@ -20,6 +20,7 @@
 #  --profile resilience:  Adds slow_time_server for timeout, circuit breaker, and resilience testing
 #  --profile benchmark:   Adds benchmark MCP servers for load testing
 #  --profile tls:         Enables HTTPS via nginx_tls (auto-generates certs)
+#  --profile praxis:      Adds the dedicated Praxis dataplane (requires --profile tls)
 #  --profile inspector:   Adds MCP Inspector client (http://localhost:6274)
 #
 #  Compose overlays (separate files):
@@ -59,6 +60,10 @@ volumes:                # Named volumes survive podman-compose down/up
   locust_token:
   prometheus_token:
   keycloakdata:
+
+secrets:
+  praxis_replica_token:
+    file: ${PRAXIS_REPLICA_TOKEN_FILE:-./secrets/praxis/replica-token}
 
 ###############################################################################
 #  CORE SERVICE - ContextForge
@@ -229,11 +234,6 @@ services:
       - A2A_RUST_EVENT_STORE_TTL_SECS=${A2A_RUST_EVENT_STORE_TTL_SECS:-3600}
       - A2A_RUST_EVENT_FLUSH_INTERVAL_MS=${A2A_RUST_EVENT_FLUSH_INTERVAL_MS:-1000}
       - A2A_RUST_EVENT_FLUSH_BATCH_SIZE=${A2A_RUST_EVENT_FLUSH_BATCH_SIZE:-100}
-      # Praxis Proxy Configuration (sidecar for data plane operations)
-      - PRAXIS_PROXY_ENABLED=${PRAXIS_PROXY_ENABLED:-false}
-      - PRAXIS_PROXY_CONFIG=${PRAXIS_PROXY_CONFIG:-/app/praxis.yaml}
-      - PRAXIS_PROXY_LISTEN=${PRAXIS_PROXY_LISTEN:-127.0.0.1:8789}
-      - PRAXIS_PROXY_LOG=${PRAXIS_PROXY_LOG:-info}
       # WebSocket transport features (disabled by default; opt-in only)
       - MCPGATEWAY_WS_RELAY_ENABLED=${MCPGATEWAY_WS_RELAY_ENABLED:-false}
       - MCPGATEWAY_REVERSE_PROXY_ENABLED=${MCPGATEWAY_REVERSE_PROXY_ENABLED:-false}
@@ -853,7 +853,7 @@ services:
         soft: 5000
         hard: 5000
     ports:
-      - "5433:5432"      # Expose for baseline load testing (5433 to avoid conflict with local postgres)
+      - "${POSTGRES_PORT:-5433}:5432"      # Expose for baseline load testing (5433 to avoid conflict with local postgres)
     # Performance tuning for high-load testing (3000 sustained users)
     # WITH PgBouncer (default): 800 connections provides headroom for 700 pool + system overhead
     # DIRECT connection mode: increase to 4000 for (3 replicas × 16 workers × 80 pool)
@@ -950,7 +950,7 @@ services:
       # - "idle_in_transaction_session_timeout=60s"
     environment:
       - POSTGRES_USER=postgres
-      - POSTGRES_PASSWORD=mysecretpassword
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-mysecretpassword}
       - POSTGRES_DB=mcp
     volumes:
       # - pgdata:/var/lib/postgresql/data
@@ -988,7 +988,7 @@ services:
         soft: 5000
         hard: 5000
     ports:
-      - "6432:6432"    # PgBouncer port (optional external access)
+      - "${PGBOUNCER_PORT:-6432}:6432"    # PgBouncer port (optional external access)
     environment:
       # Connection to upstream PostgreSQL
       - DATABASE_URL=postgres://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@postgres:5432/mcp
@@ -1139,7 +1139,7 @@ services:
       start_period: 10s
     ports:
       #- "6380:6380"      # TLS port exposed to host
-      - "6379:6379"      # plain TCP port exposed to host
+      - "${REDIS_PORT:-6379}:6379"      # plain TCP port exposed to host
     networks: [mcpnet]
     deploy:
       resources:
@@ -2532,9 +2532,22 @@ services:
         echo "🔏 Generating self-signed TLS certificate..."
         mkdir -p /certs
         openssl req -x509 -newkey rsa:4096 -sha256 -days 365 -nodes \
-          -keyout /certs/key.pem -out /certs/cert.pem \
+          -keyout /certs/ca-key.pem -out /certs/ca.pem \
+          -subj "/CN=ContextForge Local CA" \
+          -addext "basicConstraints=critical,CA:TRUE" \
+          -addext "keyUsage=critical,keyCertSign,cRLSign"
+        openssl req -new -newkey rsa:4096 -sha256 -nodes \
+          -keyout /certs/key.pem -out /certs/server.csr \
           -subj "/CN=localhost" \
-          -addext "subjectAltName=DNS:localhost,DNS:gateway,DNS:nginx,IP:127.0.0.1"
+          -addext "basicConstraints=critical,CA:FALSE" \
+          -addext "keyUsage=critical,digitalSignature,keyEncipherment" \
+          -addext "extendedKeyUsage=serverAuth" \
+          -addext "subjectAltName=DNS:localhost,DNS:gateway,DNS:nginx,DNS:nginx_tls,IP:127.0.0.1"
+        openssl x509 -req -in /certs/server.csr \
+          -CA /certs/ca.pem -CAkey /certs/ca-key.pem -CAcreateserial \
+          -out /certs/cert.pem -days 365 -sha256 -copy_extensions copy
+        rm -f /certs/server.csr /certs/ca-key.pem /certs/ca.srl
+        chmod 644 /certs/ca.pem
         chmod 644 /certs/cert.pem
         chmod 640 /certs/key.pem
         echo "✅ TLS certificate generated in ./certs"
@@ -2551,7 +2564,7 @@ services:
     restart: unless-stopped
     ports:
       - "${NGINX_PORT:-8080}:80"                   # HTTP caching proxy (public-facing)
-      - "8443:443"                  # HTTPS caching proxy (public-facing)
+      - "${NGINX_TLS_PORT:-8443}:443"                  # HTTPS caching proxy (public-facing)
     networks: [mcpnet]
     environment:
       # Set to "true" to force all HTTP requests to redirect to HTTPS
@@ -2577,7 +2590,7 @@ services:
         soft: 5000
         hard: 5000
     healthcheck:
-      test: ["CMD", "curl", "-fk", "https://localhost/health"]
+      test: ["CMD", "curl", "-f", "--cacert", "/app/certs/ca.pem", "https://localhost/health"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -2591,6 +2604,55 @@ services:
           cpus: '2'
           memory: 512M
     profiles: ["tls"]
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Praxis Dataplane - dedicated launcher/Praxis process, never client-facing
+  # Requires both profiles: --profile tls --profile praxis
+  # ──────────────────────────────────────────────────────────────────────
+  praxis:
+    image: praxis-dataplane:${PRAXIS_IMAGE_TAG:-ed46eb5}
+    profiles: ["praxis"]
+    restart: unless-stopped
+    networks: [mcpnet]
+    depends_on:
+      nginx_tls:
+        condition: service_healthy
+    environment:
+      - PRAXIS_CONTROL_PLANE_URL=https://nginx_tls/praxis/v1
+    secrets:
+      - source: praxis_replica_token
+        target: /run/secrets/praxis/token
+    volumes:
+      - type: bind
+        source: ./certs/ca.pem
+        target: /run/secrets/praxis/ca.pem
+        read_only: true
+    tmpfs:
+      - /var/lib/praxis:uid=65532,gid=65532,mode=0700
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test:
+        - CMD
+        - /bin/bash
+        - -ec
+        - |
+          probe() {
+            exec 3<>/dev/tcp/127.0.0.1/9090
+            printf 'GET %s HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' "$$1" >&3
+            grep -q '^HTTP/1.1 200' <&3
+            exec 3<&- 3>&-
+          }
+          probe /livez
+          probe /readyz
+      interval: 15s
+      timeout: 5s
+      retries: 4
+      start_period: 30s
+    stop_grace_period: 45s
 
 ###############################################################################
 #  MCP INSPECTOR - Interactive MCP client for debugging and testing

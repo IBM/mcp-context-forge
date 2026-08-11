@@ -1,0 +1,113 @@
+{{- include "mcp-stack.praxis.validate" . -}}
+{{- if .Values.praxis.enabled }}
+{{- $root := . -}}
+{{- $fullName := include "mcp-stack.fullname" . -}}
+{{- range .Values.praxis.replicas }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ printf "%s-praxis-%s" $fullName .replicaId }}
+  labels:
+    {{- include "mcp-stack.labels" $root | nindent 4 }}
+    app.kubernetes.io/component: praxis
+    contextforge.io/praxis-replica-id: {{ .replicaId | quote }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: {{ printf "praxis-%s" .replicaId }}
+      app.kubernetes.io/instance: {{ $root.Release.Name }}
+  template:
+    metadata:
+      labels:
+        app: {{ printf "praxis-%s" .replicaId }}
+        app.kubernetes.io/instance: {{ $root.Release.Name }}
+        app.kubernetes.io/component: praxis
+        contextforge.io/praxis-replica-id: {{ .replicaId | quote }}
+    spec:
+      {{- if $root.Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range $root.Values.global.imagePullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      {{- if or $root.Values.serviceAccount.create $root.Values.serviceAccount.name }}
+      serviceAccountName: {{ include "mcp-stack.serviceAccountName" $root }}
+      {{- end }}
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: {{ $root.Values.praxis.terminationGracePeriodSeconds }}
+      securityContext:
+        {{- toYaml $root.Values.praxis.podSecurityContext | nindent 8 }}
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: praxis
+          image: "{{ $root.Values.praxis.image.repository }}:{{ $root.Values.praxis.image.tag }}"
+          imagePullPolicy: {{ $root.Values.praxis.image.pullPolicy }}
+          securityContext:
+            {{- toYaml $root.Values.praxis.containerSecurityContext | nindent 12 }}
+          env:
+            - name: PRAXIS_CONTROL_PLANE_URL
+              value: {{ $root.Values.praxis.controlPlane.url | quote }}
+          livenessProbe:
+            exec:
+              command:
+                - /bin/bash
+                - -ec
+                - |
+                  exec 3<>/dev/tcp/127.0.0.1/9090
+                  printf 'GET /livez HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3
+                  read -r _ status _ <&3
+                  test "$status" = 200
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 3
+          readinessProbe:
+            exec:
+              command:
+                - /bin/bash
+                - -ec
+                - |
+                  exec 3<>/dev/tcp/127.0.0.1/9090
+                  printf 'GET /readyz HTTP/1.0\r\nHost: localhost\r\nConnection: close\r\n\r\n' >&3
+                  read -r _ status _ <&3
+                  test "$status" = 200
+            initialDelaySeconds: 2
+            periodSeconds: 5
+            timeoutSeconds: 2
+            failureThreshold: 3
+          resources:
+            {{- toYaml $root.Values.praxis.resources | nindent 12 }}
+          volumeMounts:
+            - name: praxis-credentials
+              mountPath: /run/secrets/praxis
+              readOnly: true
+            - name: praxis-data
+              mountPath: /var/lib/praxis
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: praxis-credentials
+          projected:
+            defaultMode: 256
+            sources:
+              - secret:
+                  name: {{ .tokenSecret.name }}
+                  items:
+                    - key: {{ .tokenSecret.key }}
+                      path: token
+              - secret:
+                  name: {{ $root.Values.praxis.controlPlane.caSecret.name }}
+                  items:
+                    - key: {{ $root.Values.praxis.controlPlane.caSecret.key }}
+                      path: ca.pem
+        - name: praxis-data
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+{{- end }}
+{{- end }}

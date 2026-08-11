@@ -58,6 +58,69 @@ networkPolicies:
     enabled: true
     allowUpgradeJobs: true
 
+  praxis:
+    # -- Render an egress-only NetworkPolicy for Praxis pods.
+    enabled: false
+    # -- Explicit egress rules for the external HTTPS control plane and cluster DNS.
+    egress: []
+
+########################################################################
+# PRAXIS CONFIGURATION DATAPLANE
+# Dedicated singleton Deployments that poll ContextForge for immutable
+# configuration bundles. Disabled by default and never exposed by a Service
+# or Ingress. Token and CA bytes must already exist in external Secrets.
+########################################################################
+praxis:
+  # -- Deploy dedicated Praxis configuration dataplane replicas.
+  enabled: false
+  image:
+    # -- Dedicated Task 16 Praxis dataplane image repository.
+    repository: praxis-dataplane
+    # -- Exact Praxis source revision baked into the dedicated image.
+    tag: ed46eb5
+    # -- Kubernetes image pull policy. The revision tag must remain immutable.
+    pullPolicy: IfNotPresent
+  controlPlane:
+    # -- Exact HTTPS ContextForge machine API URL ending in /praxis/v1.
+    url: ""
+    caSecret:
+      # -- Existing Secret containing the trusted control-plane CA bundle.
+      name: ""
+      # -- Key in the external CA Secret.
+      key: ""
+  # -- Server-issued replica identities and their distinct external token refs.
+  replicas: []
+  storage:
+    # -- Praxis generation and cursor state is always pod-local and ephemeral.
+    type: emptyDir
+  traffic:
+    # -- Praxis is configuration-only and cannot expose an MCP traffic surface.
+    enabled: false
+  # -- Allows the launcher's 30-second TERM and 5-second KILL sequence to finish.
+  terminationGracePeriodSeconds: 45
+  podSecurityContext:
+    runAsUser: 65532
+    runAsGroup: 65532
+    fsGroup: 65532
+    runAsNonRoot: true
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    runAsUser: 65532
+    runAsGroup: 65532
+    capabilities:
+      drop:
+        - ALL
+  # -- Resource requests and limits for each singleton Praxis replica.
+  resources:
+    limits:
+      cpu: "1"
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+
 ########################################################################
 # MCP CONTEXT-FORGE (Gateway / API tier)
 ########################################################################

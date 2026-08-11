@@ -340,6 +340,34 @@ flowchart TD
 
 ---
 
+## Praxis configuration replicas
+
+The default-off `praxis` section creates one `Recreate` Deployment per replica. Each needs a server-issued replica ID and
+its own external token Secret. Replicas must not share a token. No Service, Ingress, or traffic port is created.
+
+Set `praxis.controlPlane.url` to an HTTPS only URL ending exactly in `/praxis/v1`. Supply an external CA Secret covering
+the trusted proxy SAN and one external token Secret per replica. Token and CA mounts are read-only. Direct HTTP, a wrong SAN
+or an untrusted CA is refused; TLS verification can't be disabled.
+
+The default image is `praxis-dataplane:ed46eb5`, tied to
+`ed46eb5347d99b7aaf1fe67fa40f8c9178b7aa88`. Each singleton runs as `65532:65532`, keeps immutable generation state on
+pod-local `emptyDir`, and has 45 seconds to terminate. The launcher gives process-group TERM 30 seconds and KILL 5 seconds.
+`praxis.traffic.enabled` must remain false.
+
+```yaml
+praxis:
+  enabled: true
+  controlPlane:
+    url: https://contextforge-proxy.example.com/praxis/v1
+    caSecret: {name: contextforge-praxis-ca, key: ca.pem}
+  replicas:
+    - replicaId: replica-a
+      tokenSecret: {name: praxis-replica-a, key: token}
+```
+
+For credential rotation, issue a second JTI, update that replica's Secret, wait for authenticated polling, then revoke the
+old JTI. At most two may overlap. Configuration rollback is server-directed with a fresh directive and cohort.
+
 ## 🚀 Install / Upgrade the stack
 
 ???+ info "🚀 Install or Upgrade the Stack"

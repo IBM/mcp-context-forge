@@ -1,0 +1,46 @@
+praxis:
+  enabled: true
+  image:
+    repository: praxis-dataplane
+    tag: ed46eb5
+    pullPolicy: IfNotPresent
+  controlPlane:
+    url: https://contextforge.example.com/praxis/v1
+    caSecret:
+      name: praxis-control-plane-ca
+      key: ca.pem
+  replicas:
+    - replicaId: praxis-replica-a
+      tokenSecret:
+        name: praxis-replica-a-token
+        key: token
+    - replicaId: praxis-replica-b
+      tokenSecret:
+        name: praxis-replica-b-token
+        key: token
+  storage:
+    type: emptyDir
+  traffic:
+    enabled: false
+  terminationGracePeriodSeconds: 45
+  podSecurityContext:
+    runAsUser: 65532
+    runAsGroup: 65532
+    fsGroup: 65532
+    runAsNonRoot: true
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: true
+    runAsNonRoot: true
+    runAsUser: 65532
+    runAsGroup: 65532
+    capabilities:
+      drop:
+        - ALL
+  resources:
+    limits:
+      cpu: "1"
+      memory: 512Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi

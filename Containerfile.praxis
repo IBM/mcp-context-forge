@@ -1,0 +1,72 @@
+# syntax=docker/dockerfile:1.12
+
+FROM docker.io/library/rust@sha256:5e2214abe154fe26e39f64488952e5c991eeed1d6d6da7cc8381ae83927f0cfc AS builder
+
+ENV SOURCE_DATE_EPOCH=0 \
+    CARGO_INCREMENTAL=0 \
+    RUSTFLAGS="--remap-path-prefix=/workspace=/usr/src/contextforge --remap-path-prefix=/usr/local/cargo=/usr/src/cargo"
+WORKDIR /workspace
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends cmake protobuf-compiler \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY Cargo.toml Cargo.lock ./
+COPY crates/mcp_runtime/Cargo.toml crates/mcp_runtime/
+COPY crates/mcp_runtime/src/ crates/mcp_runtime/src/
+COPY crates/praxis_cf_dataplane/Cargo.toml crates/praxis_cf_dataplane/build.rs crates/praxis_cf_dataplane/
+COPY crates/praxis_cf_dataplane/proto/ crates/praxis_cf_dataplane/proto/
+COPY crates/praxis_cf_dataplane/src/ crates/praxis_cf_dataplane/src/
+COPY crates/praxis_config_launcher/Cargo.toml crates/praxis_config_launcher/
+COPY crates/praxis_config_launcher/src/ crates/praxis_config_launcher/src/
+COPY crates/praxis_config_launcher/fixtures/ crates/praxis_config_launcher/fixtures/
+COPY crates/request_logging_masking_native_extension/Cargo.toml crates/request_logging_masking_native_extension/
+COPY crates/request_logging_masking_native_extension/src/ crates/request_logging_masking_native_extension/src/
+COPY crates/wrapper/Cargo.toml crates/wrapper/
+COPY crates/wrapper/src/ crates/wrapper/src/
+
+RUN cargo build --locked --release -p praxis_cf_dataplane --bin praxis \
+    && cargo build --locked --release -p praxis_config_launcher \
+    && install -D -m 0755 target/release/praxis /out/praxis \
+    && install -D -m 0755 target/release/praxis_config_launcher /out/praxis_config_launcher \
+    && cd crates/praxis_config_launcher/fixtures/golden \
+    && /out/praxis --validate --config praxis.yaml
+
+FROM docker.io/library/debian@sha256:abd67ffcfa541b485a3dff59865ab629aa048a6c613e639d36e7456b0b229241
+
+LABEL org.opencontainers.image.title="ContextForge Praxis dataplane" \
+    org.opencontainers.image.source="https://github.com/praxis-proxy/praxis" \
+    org.opencontainers.image.revision="ed46eb5347d99b7aaf1fe67fa40f8c9178b7aa88" \
+    io.contextforge.praxis.revision="ed46eb5" \
+    io.contextforge.praxis.builder-base="docker.io/library/rust@sha256:5e2214abe154fe26e39f64488952e5c991eeed1d6d6da7cc8381ae83927f0cfc" \
+    io.contextforge.praxis.runtime-base="docker.io/library/debian@sha256:abd67ffcfa541b485a3dff59865ab629aa048a6c613e639d36e7456b0b229241" \
+    io.contextforge.praxis.filter.mcp="registered" \
+    io.contextforge.praxis.filter.cpex="registered" \
+    io.contextforge.praxis.filter.cf_control_plane_data="registered" \
+    io.contextforge.praxis.filter.cf_tools_router="registered" \
+    io.contextforge.praxis.filter.cf_mcp_broker="registered" \
+    io.contextforge.praxis.filter.cf_upstream_proxy="registered" \
+    io.contextforge.praxis.token-mount="/run/secrets/praxis/token:ro" \
+    io.contextforge.praxis.ca-mount="/run/secrets/praxis/ca.pem:ro" \
+    io.contextforge.praxis.generation-storage="ephemeral-local"
+
+COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+COPY --from=builder /out/praxis /usr/local/bin/praxis
+COPY --from=builder /out/praxis_config_launcher /usr/local/bin/praxis_config_launcher
+COPY --from=builder /workspace/crates/praxis_config_launcher/fixtures/golden /fixtures/golden
+
+RUN install -d -o 65532 -g 65532 -m 0700 /var/lib/praxis \
+    && install -d -o 0 -g 0 -m 0555 /run/secrets/praxis \
+    && find /fixtures/golden -type d -exec chmod 0555 {} + \
+    && find /fixtures/golden -type f -exec chmod 0444 {} +
+
+ENV PRAXIS_BINARY=/usr/local/bin/praxis \
+    PRAXIS_CA_PATH=/run/secrets/praxis/ca.pem \
+    PRAXIS_TOKEN_PATH=/run/secrets/praxis/token \
+    PRAXIS_GENERATION_ROOT=/var/lib/praxis/generations \
+    PRAXIS_STATE_PATH=/var/lib/praxis/state.json \
+    PRAXIS_HEALTH_LISTEN=127.0.0.1:9090
+
+VOLUME ["/var/lib/praxis"]
+USER 65532:65532
+ENTRYPOINT ["/usr/local/bin/praxis_config_launcher"]

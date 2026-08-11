@@ -814,6 +814,7 @@ clean:
 # help: test-mcp-session-isolation - MCP session/auth isolation tests for Rust public transport
 # help: test-e2e-sso         - E2E tests requiring a live SSO identity provider (Keycloak or Entra ID)
 # help: test-live-gateway    - Run ALL live-gateway tests (mcp + sso + protocol_compliance + e2e_rust)
+# help: test-praxis-config-e2e - Build and run isolated Praxis activation/security E2E
 # help: test-plugin-integration - Self-contained plugin E2E tests (boots gateway; PLUGIN=<name> ENFORCEMENT=static|binding|both)
 # help: test-plugin-secrets-detection  - Plugin E2E: SecretsDetection
 # help: test-plugin-encoded-exfil      - Plugin E2E: EncodedExfil
@@ -850,7 +851,7 @@ clean:
 
 .PHONY: smoketest test-mcp-cli test-mcp-rbac test-mcp-plugin-parity test-mcp-access-matrix \
 	test-mcp-session-isolation test-mcp-session-isolation-load test-e2e-sso \
-	test-live-gateway test test-verbose test-profile coverage test-docs pytest-examples \
+	test-live-gateway test-praxis-config-e2e test test-verbose test-profile coverage test-docs pytest-examples \
 	test-curl htmlcov doctest doctest-verbose doctest-coverage doctest-check test-db-perf \
 	test-db-perf-verbose 2025-11-25 2025-11-25-core 2025-11-25-tasks 2025-11-25-auth \
 	2025-11-25-report dev-query-log query-log-tail query-log-analyze query-log-clear \
@@ -985,6 +986,17 @@ test-live-gateway: uv  ## Run ALL live-gateway tests (mcp + sso + protocol_compl
 	@$(UV_BIN) run --extra plugins pytest -p playwright tests/live_gateway/ -v --tb=short \
 		|| { echo "❌ Live-gateway test suite failed!"; exit 1; }
 	@echo "✅ Live-gateway test suite finished."
+
+test-praxis-config-e2e: uv  ## Build and run isolated Praxis activation/security E2E
+	@echo "Building pinned Praxis and current ContextForge images for isolated E2E..."
+	@$(MAKE) --no-print-directory docker-praxis-dataplane IMAGE_TAG=ed46eb5
+	@IMAGE_LOCAL=mcpgateway/mcpgateway:praxis-e2e docker compose build gateway
+	@echo "Running real TLS control-plane and two-replica Praxis activation narrative..."
+	@$(UV_BIN) run pytest tests/live_gateway/praxis/test_live_failure_paths.py tests/live_gateway/praxis/test_live_praxis.py tests/live_gateway/praxis/test_live_legacy_telemetry.py -v -s --tb=short
+	@echo "Running deterministic race, rollback, staleness, and malicious-input sentinels..."
+	@$(UV_BIN) run pytest -q tests/security/test_praxis_artifact_authorization.py tests/security/test_praxis_task11_remediation.py tests/integration/test_praxis_credential_rotation_cross_db.py tests/integration/test_praxis_rollout_cohorts.py tests/integration/test_praxis_bundle_fencing_cross_db.py --with-integration
+	@cargo test --locked -p praxis_config_launcher supervisor
+	@echo "Praxis configuration E2E passed with parsing/listener/local-policy canary evidence only."
 
 MCP_ISOLATION_LOCUSTFILE ?= tests/loadtest/locustfile_mcp_isolation.py
 MCP_ISOLATION_LOAD_HOST ?= http://localhost:8080
@@ -8401,6 +8413,9 @@ upgrade-validate:                         ## Validate fresh + upgrade + roundtri
 # help: rust-diff-cover                       - Run changed-line coverage for Rust
 # help: rust-clean                            - Clean Rust build artifacts and uninstall maturin crates
 # help: rust-bench-check                      - Verify benchmarks build (no run; for CI)
+# help: praxis-dataplane-check                 - Verify the pinned Praxis filter source and dataplane crate
+# help: praxis-task5-native-check              - Validate Task 5 golden config through exact native Praxis APIs
+# help: docker-praxis-dataplane                - Build the dedicated pinned Praxis dataplane image
 # help:
 # help: Maturin (Python bindings, crates/* with pyproject.toml):
 # help: rust-install                          - Install maturin crates into venv (release build)
@@ -8418,13 +8433,21 @@ upgrade-validate:                         ## Validate fresh + upgrade + roundtri
 # help: rust-mcp-runtime-run                  - Run the experimental Rust MCP runtime against local gateway /rpc
 # help: -----------------------------------------------------------------------------
 
-.PHONY: rust-build rust-build-check rust-dev rust-test rust-format rust-fmt-check rust-lint rust-check rust-doc rust-clean rust-verify rust-verify-stubs rust-stub-gen rust-licenses rust-vet rust-deny rust-coverage rust-diff-cover rust-bench-check
+.PHONY: rust-build rust-build-check rust-dev rust-test rust-format rust-fmt-check rust-lint rust-check rust-doc rust-clean rust-verify rust-verify-stubs rust-stub-gen rust-licenses rust-vet rust-deny rust-coverage rust-diff-cover rust-bench-check praxis-dataplane-check praxis-task5-native-check docker-praxis-dataplane
 .PHONY: rust-ensure-deps rust-install-deps rust-install-targets rust-install rust-build-wheels rust-uninstall-plugins rust-clean-stubs rust-verify-python-crates
 .PHONY: rust-mcp-runtime-build rust-mcp-runtime-test rust-mcp-runtime-run
 
 # Intentional broad scan under crates/: workspace-owned crates live here and CI
 # should pick up new maturin crates automatically rather than curating a short list.
 RUST_MATURIN_CRATES := $(shell find crates -type d 2>/dev/null | while read d; do [ -f "$$d/Cargo.toml" ] && [ -f "$$d/pyproject.toml" ] && echo "$$d"; done | sort)
+PRAXIS_DATAPLANE_MANIFEST := crates/praxis_cf_dataplane/Cargo.toml
+PRAXIS_FILTER_GIT_URL := https://github.com/praxis-proxy/praxis
+PRAXIS_FILTER_GIT_REV := ed46eb5
+PRAXIS_FILTER_GIT_COMMIT := ed46eb5347d99b7aaf1fe67fa40f8c9178b7aa88
+PRAXIS_FILTER_LOCK_SOURCE := git+$(PRAXIS_FILTER_GIT_URL)?rev=$(PRAXIS_FILTER_GIT_REV)\#$(PRAXIS_FILTER_GIT_COMMIT)
+PRAXIS_LOCK_FILE ?= Cargo.lock
+PRAXIS_IMAGE_NAME ?= praxis-dataplane
+NO_CACHE ?= 0
 
 rust-ensure-deps:                       ## Ensure Rust toolchain and maturin are available
 	@if ! command -v rustup > /dev/null 2>&1; then \
@@ -8508,6 +8531,28 @@ rust-lint: rust-ensure-deps             ## Lint Rust code (cargo clippy)
 
 rust-check: rust-build-check rust-fmt-check rust-lint rust-test  ## Run all Rust checks (build, fmt, clippy, test)
 	@echo "✅ Rust check passed"
+
+praxis-dataplane-check:                        ## Verify the pinned Praxis source and dataplane crate
+	@echo "🦀 Verifying pinned Praxis dataplane dependency..."
+	@python3 -c 'import pathlib, sys, tomllib; manifest = tomllib.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")); dependency = manifest.get("dependencies", {}).get("praxis-filter"); expected = {"git": sys.argv[2], "rev": sys.argv[3], "package": "praxis-proxy-filter"}; matches = isinstance(dependency, dict) and all(dependency.get(key) == value for key, value in expected.items()); print("✅ Praxis filter manifest pin verified" if matches else "❌ Expected Praxis filter manifest pin " + repr(expected) + ", found " + repr(dependency)); sys.exit(0 if matches else 1)' '$(PRAXIS_DATAPLANE_MANIFEST)' '$(PRAXIS_FILTER_GIT_URL)' '$(PRAXIS_FILTER_GIT_REV)'
+	@python3 -c 'import pathlib, sys, tomllib; lock = tomllib.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")); packages = [package for package in lock["package"] if package["name"] == "praxis-proxy-filter"]; source = packages[0].get("source") if len(packages) == 1 else None; expected = sys.argv[2]; matches = source == expected; found = [package.get("source") for package in packages]; print("✅ Praxis filter source: " + str(source) if matches else "❌ Expected exactly one praxis-proxy-filter source " + expected + ", found " + repr(found)); sys.exit(0 if matches else 1)' '$(PRAXIS_LOCK_FILE)' '$(PRAXIS_FILTER_LOCK_SOURCE)'
+	@cargo fetch --locked --manifest-path $(PRAXIS_DATAPLANE_MANIFEST)
+	@cargo metadata --locked --manifest-path $(PRAXIS_DATAPLANE_MANIFEST) --format-version 1 --no-deps >/dev/null
+	@cargo fmt --manifest-path $(PRAXIS_DATAPLANE_MANIFEST) -- --check
+	@cargo clippy --locked --manifest-path $(PRAXIS_DATAPLANE_MANIFEST) --package praxis_cf_dataplane --all-targets --all-features -- -D warnings
+	@cargo test --locked --manifest-path $(PRAXIS_DATAPLANE_MANIFEST) --package praxis_cf_dataplane
+	@echo "✅ Praxis dataplane checks passed"
+
+praxis-task5-native-check:                     ## Validate Task 5 golden config through exact native Praxis APIs
+	@echo "🦀 Validating Task 5 golden configuration with exact native Praxis APIs..."
+	@cargo fetch --locked --manifest-path $(PRAXIS_DATAPLANE_MANIFEST)
+	@cargo test --locked --offline --manifest-path $(PRAXIS_DATAPLANE_MANIFEST) --package praxis_cf_dataplane task5_native_compat
+	@echo "✅ Task 5 native Praxis compatibility passed"
+
+docker-praxis-dataplane:                       ## Build the dedicated pinned Praxis dataplane image
+	@no_cache=""; \
+	if [ "$(NO_CACHE)" = "1" ]; then no_cache="--no-cache"; fi; \
+	docker build $$no_cache --file Containerfile.praxis --tag $(PRAXIS_IMAGE_NAME):$(IMAGE_TAG) .
 
 rust-doc: rust-ensure-deps              ## Build Rust documentation
 	@echo "🦀 Building Rust documentation..."

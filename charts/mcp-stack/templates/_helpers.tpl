@@ -11,8 +11,60 @@
 {{- else }}
 {{- printf "%s-%s" .Release.Name $name }}
 {{- end }}
+
 {{- end }}
 {{- end }}
+
+{{- /* Validate the fail-closed Praxis configuration contract. */}}
+{{- define "mcp-stack.praxis.validate" -}}
+{{- if .Values.praxis.enabled -}}
+{{- if not (hasPrefix "https://" .Values.praxis.controlPlane.url) -}}
+{{- fail "praxis.controlPlane.url must use https://" -}}
+{{- end -}}
+{{- if not (hasSuffix "/praxis/v1" .Values.praxis.controlPlane.url) -}}
+{{- fail "praxis.controlPlane.url must end with /praxis/v1" -}}
+{{- end -}}
+{{- if or (empty .Values.praxis.controlPlane.caSecret.name) (empty .Values.praxis.controlPlane.caSecret.key) -}}
+{{- fail "praxis.controlPlane.caSecret name and key are required" -}}
+{{- end -}}
+{{- if ne .Values.praxis.image.tag "ed46eb5" -}}
+{{- fail "praxis.image.tag must be the Task 16 revision ed46eb5" -}}
+{{- end -}}
+{{- if ne .Values.praxis.storage.type "emptyDir" -}}
+{{- fail "praxis.storage must use pod-local emptyDir" -}}
+{{- end -}}
+{{- if .Values.praxis.traffic.enabled -}}
+{{- fail "praxis.traffic.enabled must remain false" -}}
+{{- end -}}
+{{- if lt (int .Values.praxis.terminationGracePeriodSeconds) 45 -}}
+{{- fail "praxis.terminationGracePeriodSeconds must be at least 45" -}}
+{{- end -}}
+{{- if or (not .Values.praxis.podSecurityContext.runAsNonRoot) (eq (int .Values.praxis.podSecurityContext.runAsUser) 0) -}}
+{{- fail "praxis.podSecurityContext.runAsUser must be non-root" -}}
+{{- end -}}
+{{- if empty .Values.praxis.replicas -}}
+{{- fail "praxis.replicas must contain at least one server-issued identity" -}}
+{{- end -}}
+{{- $replicaIds := dict -}}
+{{- $credentialRefs := dict -}}
+{{- range .Values.praxis.replicas -}}
+{{- if empty .replicaId -}}
+{{- fail "praxis.replicas[].replicaId is required" -}}
+{{- end -}}
+{{- if hasKey $replicaIds .replicaId -}}
+{{- fail (printf "duplicate Praxis replicaId: %s" .replicaId) -}}
+{{- end -}}
+{{- $_ := set $replicaIds .replicaId true -}}
+{{- if or (empty .tokenSecret.name) (empty .tokenSecret.key) -}}
+{{- fail (printf "praxis replica %s tokenSecret name and key are required" .replicaId) -}}
+{{- end -}}
+{{- if hasKey $credentialRefs .tokenSecret.name -}}
+{{- fail "duplicate Praxis credential reference" -}}
+{{- end -}}
+{{- $_ := set $credentialRefs .tokenSecret.name true -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
 
 {{- /* --------------------------------------------------------------------
      Helper: mcp-stack.labels
