@@ -438,7 +438,7 @@ class TestResolveAuthCodeRefreshHeaders:
     """Tests for _resolve_auth_code_refresh_headers."""
 
     @staticmethod
-    async def _call(gateway_service: GatewayService, user_email: Any = "user@example.com") -> Dict[str, str]:
+    async def _call(gateway_service: GatewayService, user_email: Any = "user@example.com"):
         """Invoke the helper with the standard authorization_code fixture arguments."""
         return await gateway_service._resolve_auth_code_refresh_headers(
             gateway_id="gw-123",
@@ -471,9 +471,9 @@ class TestResolveAuthCodeRefreshHeaders:
     async def test_returns_bearer_header_for_valid_token(self, gateway_service):
         """A stored token that passes claim validation becomes an Authorization header."""
         with _patch_token_storage("tok-abc"), _patch_claim_validation():
-            headers = await self._call(gateway_service)
+            result = await self._call(gateway_service)
 
-        assert headers == {"Authorization": "Bearer tok-abc"}
+        assert result.headers == {"Authorization": "Bearer tok-abc"}
 
     @pytest.mark.asyncio
     async def test_raises_on_blocking_claim_errors(self, gateway_service):
@@ -500,9 +500,10 @@ class TestResolveAuthCodeRefreshHeaders:
         """Advisory warnings are surfaced in logs but must not fail the refresh."""
         with _patch_token_storage("tok-abc"), _patch_claim_validation(warnings=["issuer claim absent"]):
             with caplog.at_level(logging.WARNING, logger="mcpgateway.services.gateway_service"):
-                headers = await self._call(gateway_service)
+                result = await self._call(gateway_service)
 
-        assert headers == {"Authorization": "Bearer tok-abc"}
+        assert result.headers == {"Authorization": "Bearer tok-abc"}
+        assert result.warnings == ["issuer claim absent"]
         assert "issuer claim absent" in caplog.text
 
     @pytest.mark.asyncio

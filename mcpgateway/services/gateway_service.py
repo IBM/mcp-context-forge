@@ -557,6 +557,14 @@ class GatewayCatalogReconcileResult:
 
 
 @dataclass(frozen=True)
+class AuthCodeRefreshHeaders:
+    """Resolved Authorization header plus advisory warnings from OAuth claim validation."""
+
+    headers: Dict[str, str]
+    warnings: List[str]
+
+
+@dataclass(frozen=True)
 class GatewayRegistrationPreparation:
     """Prepared gateway registration state reused by sync and async create paths."""
 
@@ -2219,70 +2227,38 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             if grant_type != "authorization_code":
                 raise ValueError(f"Gateway {gateway_id} is not using Authorization Code flow")
 
-            # Get OAuth tokens for this gateway
-            # First-Party
-            from mcpgateway.services.token_storage_service import TokenStorageService  # pylint: disable=import-outside-toplevel
-
-            token_storage = TokenStorageService(db)
-
-            # Get user-specific OAuth token
-            if not app_user_email:
-                raise GatewayConnectionError(f"User authentication required for OAuth gateway {gateway.name}")
-
-            access_token = await token_storage.get_user_token(gateway.id, app_user_email)
-
-            if not access_token:
-                raise GatewayConnectionError(
-                    f"No OAuth tokens found for user {app_user_email} on gateway {gateway.name}. Please complete the OAuth authorization flow first at /oauth/authorize/{gateway.id}"
-                )
+            # Resolve the caller's stored OAuth token into an Authorization header, sharing
+            # the same lookup-and-validate sequence used by manual gateway refresh so the two
+            # call sites can't drift on token-claim validation.
+            oauth_result = await self._resolve_auth_code_refresh_headers(
+                gateway_id=gateway.id,
+                gateway_name=gateway.name,
+                gateway_url=gateway.url,
+                oauth_config=gateway.oauth_config,
+                user_email=app_user_email,
+                db=db,
+            )
+            authentication = oauth_result.headers
+            token_validation_warnings = oauth_result.warnings
 
             # Debug: Check if token was decrypted
+            access_token = authentication.get("Authorization", "").removeprefix("Bearer ")
             if access_token.startswith("Z0FBQUFBQm"):  # Encrypted tokens start with this
                 logger.error("OAuth token decryption may have failed before gateway initialization")
             else:
                 logger.info("Using decrypted OAuth token for gateway %s", gateway.name)
 
-            # Retrieve this user's learned audience for authoritative per-user validation.
-            # See token_validation_service._validate_audience for the precedence rule
-            # (admin-configured resource > per-user learned aud > gateway URL fallback).
-            learned_aud, _learned_iss = await token_storage.get_user_learned_audience(gateway.id, app_user_email)
-
-            # Validate JWT claims (audience, scopes, issuer) before forwarding token
-            # First-Party
-            from mcpgateway.services.token_validation_service import validate_oauth_token_claims  # pylint: disable=import-outside-toplevel
-
-            token_validation = validate_oauth_token_claims(
-                access_token=access_token,
-                oauth_config=gateway.oauth_config,
-                gateway_url=gateway.url,
-                gateway_name=gateway.name,
-                learned_aud=learned_aud,
-            )
-            for warning in token_validation.warnings:
-                logger.warning("OAuth token validation for gateway %s: %s", gateway.name, warning)
-
-            # Fail fast if any claim is definitively mismatched (present but wrong).
-            # Claims that are simply absent from the token produce None (not False)
-            # and are NOT blocked — this preserves backward compat with legacy IdPs.
-            blocking = token_validation.blocking_errors
-            if blocking:
-                detail = "; ".join(blocking)
-                raise GatewayConnectionError(f"Refusing to forward OAuth token for gateway '{gateway.name}': {detail}. Fix oauth_config (resource/scopes/issuer) or the IdP token request.")
-
-            # Now connect to MCP server with the access token
-            authentication = {"Authorization": f"Bearer {access_token}"}
-
             # Use the existing connection logic with validation context for diagnostics
             if gateway.transport.upper() == "SSE":
-                capabilities, tools, resources, prompts, _ = await self._connect_to_sse_server_without_validation(gateway.url, authentication, validation_warnings=token_validation.warnings)
+                capabilities, tools, resources, prompts, _ = await self._connect_to_sse_server_without_validation(gateway.url, authentication, validation_warnings=token_validation_warnings)
             elif gateway.transport.upper() == "STREAMABLEHTTP":
                 try:
                     capabilities, tools, resources, prompts, _ = await self.connect_to_streamablehttp_server(gateway.url, authentication)
                 except Exception as streamable_err:
                     # Surface diagnostic context for likely auth rejections (401/403)
                     error_str = str(streamable_err).lower()
-                    if token_validation.warnings and ("401" in error_str or "403" in error_str or "unauthorized" in error_str or "forbidden" in error_str):
-                        diagnostics = "; ".join(token_validation.warnings)
+                    if token_validation_warnings and ("401" in error_str or "403" in error_str or "unauthorized" in error_str or "forbidden" in error_str):
+                        diagnostics = "; ".join(token_validation_warnings)
                         sanitized_url = sanitize_url_for_logging(gateway.url)
                         raise GatewayConnectionError(
                             f"MCP server rejected OAuth token at {sanitized_url} (HTTP {type(streamable_err).__name__}). Possible causes: {diagnostics}. Check oauth_config audience and scopes."
@@ -6095,8 +6071,12 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         gateway_url: str,
         oauth_config: Dict[str, Any],
         user_email: Optional[str],
-    ) -> Dict[str, str]:
+        db: Optional[Session] = None,
+    ) -> AuthCodeRefreshHeaders:
         """Build the Authorization header for refreshing an authorization_code OAuth gateway.
+
+        Shared by manual gateway refresh and ``fetch_tools_after_oauth`` so the two call
+        sites can't drift on token-claim validation.
 
         Args:
             gateway_id: Gateway identifier used for the per-user token lookup.
@@ -6104,9 +6084,12 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             gateway_url: Gateway URL (before any auth mutation), used as the fallback audience.
             oauth_config: The gateway's OAuth configuration dict.
             user_email: Authenticated caller's email; required to locate the stored token.
+            db: Optional caller-owned session to reuse for the token lookup. When omitted, a
+                short-lived ``fresh_db_session()`` is opened and closed here instead.
 
         Returns:
-            Mapping with a single ``Authorization`` bearer header.
+            The resolved ``Authorization`` bearer header plus any advisory (non-blocking)
+            claim-validation warnings, for callers that surface connection diagnostics.
 
         Raises:
             GatewayConnectionError: If no caller identity is available, no token is stored for
@@ -6119,14 +6102,21 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         if not user_email:
             raise GatewayConnectionError(f"User authentication required for OAuth gateway {gateway_name}")
 
-        with fresh_db_session() as token_db:
-            token_storage = TokenStorageService(token_db)
-            access_token = await token_storage.get_user_token(gateway_id, user_email)
-            if not access_token:
+        async def _lookup(session: Session) -> tuple:
+            token_storage = TokenStorageService(session)
+            token = await token_storage.get_user_token(gateway_id, user_email)
+            if not token:
                 raise GatewayConnectionError(
                     f"No OAuth tokens found for user {user_email} on gateway {gateway_name}. Please complete the OAuth authorization flow first at /oauth/authorize/{gateway_id}"
                 )
-            learned_aud, _learned_iss = await token_storage.get_user_learned_audience(gateway_id, user_email)
+            aud, _iss = await token_storage.get_user_learned_audience(gateway_id, user_email)
+            return token, aud
+
+        if db is not None:
+            access_token, learned_aud = await _lookup(db)
+        else:
+            with fresh_db_session() as token_db:
+                access_token, learned_aud = await _lookup(token_db)
 
         token_validation = validate_oauth_token_claims(
             access_token=access_token,
@@ -6143,7 +6133,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             detail = "; ".join(blocking)
             raise GatewayConnectionError(f"Refusing to forward OAuth token for gateway '{gateway_name}': {detail}. Fix oauth_config (resource/scopes/issuer) or the IdP token request.")
 
-        return {"Authorization": f"Bearer {access_token}"}
+        return AuthCodeRefreshHeaders(headers={"Authorization": f"Bearer {access_token}"}, warnings=token_validation.warnings)
 
     async def _refresh_gateway_tools_resources_prompts(
         self,
@@ -6336,14 +6326,14 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 # return in _initialize_gateway, so the refresh reaches the MCP server instead
                 # of silently returning empty lists. An explicit caller-supplied Authorization
                 # header (checked above) always takes precedence over this OAuth lookup.
-                oauth_headers = await self._resolve_auth_code_refresh_headers(
+                oauth_result = await self._resolve_auth_code_refresh_headers(
                     gateway_id=gateway_id,
                     gateway_name=gateway_name,
                     gateway_url=gateway_base_url,
                     oauth_config=gateway_oauth_config,
                     user_email=user_email,
                 )
-                pre_auth_headers = {**(pre_auth_headers or {}), **oauth_headers}
+                pre_auth_headers = {**(pre_auth_headers or {}), **oauth_result.headers}
 
             # Decrypt client_key for refresh initialization
             _refresh_key = refresh_client_key
