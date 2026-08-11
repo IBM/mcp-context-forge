@@ -89,6 +89,8 @@ from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.token_backends.vault_backend import VaultAuthError, VaultConnectionError
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
 from mcpgateway.services.performance_tracker import get_performance_tracker
+from mcpgateway.services.reverse_proxy_protocol import JsonRpcErrorResponse, JsonRpcRequest
+from mcpgateway.services.reverse_proxy_sessions import ConnectionClosedError, ConnectionNotFoundError, get_reverse_proxy_session_manager, StableGatewayId
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.services.token_exchange_cache import TokenExchangeCache
@@ -4931,7 +4933,89 @@ class ToolService(BaseService):
                 retry_attempt=retry_attempt + 1,
             )
 
-    async def _resolve_tool_for_invocation(
+    async def _invoke_reverse_proxied_tool(
+        self,
+        gateway_id_str: str,
+        tool_name_original: str,
+        arguments: Dict[str, Any],
+        meta_data: Optional[Dict[str, Any]],
+        effective_timeout: float,
+    ) -> types.CallToolResult:
+        """Dispatch ``tools/call`` to a PROXIED gateway over its reverse-proxy session.
+
+        The request resolves the process-local connection for the persisted stable
+        gateway ID and sends the persisted ``original_name`` (never the namespaced
+        public name) downstream. No gateway identity or auth headers are attached
+        to the downstream call (Phase 3 decision): PROXIED gateways persist no
+        auth material and the downstream MCP server is operator-local.
+
+        Args:
+            gateway_id_str: Stable gateway identifier used to resolve the live connection.
+            tool_name_original: Persisted upstream tool name sent as ``params.name``.
+            arguments: Tool arguments sent as ``params.arguments``.
+            meta_data: Optional MCP ``_meta`` merged into the request params.
+            effective_timeout: Per-request timeout in seconds.
+
+        Returns:
+            The upstream ``tools/call`` result.
+
+        Raises:
+            ToolInvocationError: If no live connection exists for the gateway, the
+                connection drops mid-call, or the downstream server returns a
+                JSON-RPC error.
+            ToolTimeoutError: If the downstream call exceeds ``effective_timeout``.
+        """
+        session_manager = await get_reverse_proxy_session_manager()
+        connection_id = session_manager.resolve_connection_id(StableGatewayId(gateway_id_str))
+        if connection_id is None:
+            raise ToolInvocationError(f"No active reverse-proxy connection for gateway '{gateway_id_str}'")
+
+        params: Dict[str, Any] = {"name": tool_name_original, "arguments": arguments}
+        if meta_data is not None:
+            params["_meta"] = meta_data
+        request_payload = JsonRpcRequest(jsonrpc="2.0", id=uuid.uuid4().hex, method="tools/call", params=params)
+
+        correlation_id = get_correlation_id()
+        mcp_start_time = time.time()
+        structured_logger.log(
+            level="INFO",
+            message=f"MCP tool call started: {tool_name_original}",
+            component="tool_service",
+            correlation_id=correlation_id,
+            metadata={"event": "mcp_call_started", "tool_name": tool_name_original, "gateway_id": gateway_id_str, "transport": "proxied"},
+        )
+        try:
+            response = await session_manager.send_request(connection_id, request_payload, timeout_seconds=effective_timeout)
+        except TimeoutError as timeout_err:
+            mcp_duration_ms = (time.time() - mcp_start_time) * 1000
+            structured_logger.log(
+                level="WARNING",
+                message=f"MCP proxied tool invocation timed out: {tool_name_original}",
+                component="tool_service",
+                correlation_id=correlation_id,
+                duration_ms=mcp_duration_ms,
+                metadata={"event": "tool_timeout", "tool_name": tool_name_original, "gateway_id": gateway_id_str, "transport": "proxied", "timeout_seconds": effective_timeout},
+            )
+            raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s") from timeout_err
+        except (ConnectionClosedError, ConnectionNotFoundError) as conn_err:
+            raise ToolInvocationError(f"Reverse-proxy connection for gateway '{gateway_id_str}' failed: {conn_err}") from conn_err
+
+        if isinstance(response.payload, JsonRpcErrorResponse):
+            mcp_error = response.payload.error
+            raise ToolInvocationError(f"MCP error {mcp_error.code}: {mcp_error.message}")
+
+        mcp_duration_ms = (time.time() - mcp_start_time) * 1000
+        structured_logger.log(
+            level="INFO",
+            message=f"MCP tool call completed: {tool_name_original}",
+            component="tool_service",
+            correlation_id=correlation_id,
+            duration_ms=mcp_duration_ms,
+            metadata={"event": "mcp_call_completed", "tool_name": tool_name_original, "gateway_id": gateway_id_str, "transport": "proxied", "success": True},
+        )
+        return types.CallToolResult.model_validate(response.payload.result)
+
+    async def invoke_tool(
         self,
         db: Session,
         name: str,
@@ -5316,6 +5400,7 @@ class ToolService(BaseService):
         gateway_client_key = gateway_payload.get("client_key") if has_gateway else None
         gateway_passthrough = gateway_payload.get("passthrough_headers") if has_gateway else None
         gateway_id_str = gateway_payload.get("id") if has_gateway else None
+        gateway_transport = gateway_payload.get("transport") if has_gateway else None
 
         # Cache payload intentionally excludes sensitive auth material. For cache hits
         # (tool is None), hydrate auth-related fields from DB only when needed.
@@ -6595,7 +6680,12 @@ class ToolService(BaseService):
 
                     with create_child_span("tool.gateway_call", {"tool.name": name, "tool.id": tool_id, "tool.integration_type": "MCP"}):
                         tool_call_result = ToolResult(content=[TextContent(text="", type="text")])
-                        if transport == "sse":
+                        if gateway_transport == "PROXIED":
+                            # Invariant: a payload carrying "transport" always carries "id" too
+                            # (_build_tool_cache_payload); the direct-proxy payload carries neither.
+                            assert gateway_id_str is not None
+                            tool_call_result = await self._invoke_reverse_proxied_tool(gateway_id_str, tool_name_original, arguments, meta_data, effective_timeout)
+                        elif transport == "sse":
                             tool_call_result = await connect_to_sse_server(gateway_url, headers=headers)
                         elif transport == "streamablehttp":
                             tool_call_result = await connect_to_streamablehttp_server(gateway_url, headers=headers)
