@@ -363,8 +363,16 @@ class TestAggregateMetricsCombined:
         current_result.avg_rt = 0.2
         current_result.last_time = datetime(2024, 1, 15, 10, 45, tzinfo=timezone.utc)  # Most recent
 
-        # Setup mock to return different results for each query
-        db.execute.return_value.one.side_effect = [rollup_result, raw_result, current_result]
+        # Setup mock to return different results for each query (4 sources: daily, hourly, raw, current)
+        daily_combine = MagicMock()
+        daily_combine.total = 0
+        daily_combine.successful = 0
+        daily_combine.failed = 0
+        daily_combine.min_rt = None
+        daily_combine.max_rt = None
+        daily_combine.avg_rt = None
+        daily_combine.last_time = None
+        db.execute.return_value.one.side_effect = [daily_combine, rollup_result, raw_result, current_result]
 
         result = mqs.aggregate_metrics_combined(db, "tool")
 
@@ -452,7 +460,15 @@ class TestAggregateMetricsCombined:
         current_result.avg_rt = 0.1
         current_result.last_time = datetime(2024, 1, 15, 10, 30, tzinfo=timezone.utc)
 
-        db.execute.return_value.one.side_effect = [rollup_result, raw_result, current_result]
+        daily_empty = MagicMock()
+        daily_empty.total = 0
+        daily_empty.successful = 0
+        daily_empty.failed = 0
+        daily_empty.min_rt = None
+        daily_empty.max_rt = None
+        daily_empty.avg_rt = None
+        daily_empty.last_time = None
+        db.execute.return_value.one.side_effect = [daily_empty, rollup_result, raw_result, current_result]
 
         result = mqs.aggregate_metrics_combined(db, "tool")
 
@@ -478,7 +494,7 @@ class TestAggregateMetricsCombined:
         empty_result.avg_rt = None
         empty_result.last_time = None
 
-        db.execute.return_value.one.side_effect = [empty_result, empty_result, empty_result]
+        db.execute.return_value.one.side_effect = [empty_result, empty_result, empty_result, empty_result]
 
         result = mqs.aggregate_metrics_combined(db, "tool", entity_id="tool-1")
         assert result.total_executions == 0
