@@ -235,6 +235,11 @@ def ensure_env_file_secrets(
     # Keys whose weak value came from .env (or was absent) — write to disk + environ.
     file_generated: dict[str, str] = {}
 
+    # Honour operator-raised MIN_SECRET_LENGTH floor (e.g. MIN_SECRET_LENGTH=64).
+    # Using max() keeps the constant as the lower bound — never go below 32 bytes.
+    configured_min: int = int(os.environ.get("MIN_SECRET_LENGTH", _MIN_SECRET_LENGTH))
+    effective_min: int = max(configured_min, _MIN_SECRET_LENGTH)
+
     for field, nbytes in _SECRET_FIELDS.items():
         # os.environ takes priority over .env (mirrors pydantic-settings behaviour)
         env_val = os.environ.get(field)
@@ -243,9 +248,12 @@ def ensure_env_file_secrets(
         is_non_compliant = not current.strip() or current.lower() in weak_values or current.lower().startswith("__replace_me__")
         # Length and entropy checks apply only to secrets that Settings hard-fails on startup.
         if not is_non_compliant and field in _STRONG_SECRET_FIELDS:
-            is_non_compliant = len(current) < _MIN_SECRET_LENGTH or calculate_entropy(current) < _MIN_ENTROPY
+            is_non_compliant = len(current) < effective_min or calculate_entropy(current) < _MIN_ENTROPY
         if is_non_compliant:
-            new_val = generate_token(nbytes)
+            # Size the generated token against the operator-configured floor so it
+            # always satisfies Settings.validate_security_combinations() on startup.
+            token_bytes = max(nbytes, effective_min) if field in _STRONG_SECRET_FIELDS else nbytes
+            new_val = generate_token(token_bytes)
             if env_val is not None and field.lower() not in _env_file_ci:
                 # Weak value came from os.environ; patching environ is enough.
                 # Writing to .env would shadow subsequent env-var injections (Docker/K8s).

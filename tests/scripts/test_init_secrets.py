@@ -405,3 +405,34 @@ class TestEnsureEnvFileSecrets:
         env = tmp_path / ".env"
         env.write_text("JWT_SECRET_KEY=changeme # generated\n", encoding="utf-8")
         assert _read_env_file(str(env))["JWT_SECRET_KEY"] == "changeme"
+
+    def test_merge_env_file_case_insensitive_key_replaced_in_place(self, tmp_path):
+        """Regression: lowercase key in .env must be replaced in-place, not duplicated."""
+        env = tmp_path / ".env"
+        env.write_text("auth_encryption_secret=weak\nOTHER=keep\n", encoding="utf-8")
+        _merge_env_file(str(env), {"AUTH_ENCRYPTION_SECRET": "strong-new-value-here-long-enough"})
+        content = env.read_text(encoding="utf-8")
+        # The weak lowercase line must be gone; the strong value written with canonical casing
+        assert "weak" not in content
+        assert "AUTH_ENCRYPTION_SECRET=strong-new-value-here-long-enough" in content
+        # No duplication: key must appear exactly once
+        assert content.count("ENCRYPTION_SECRET=") == 1
+        assert "OTHER=keep" in content
+
+    def test_ensure_respects_min_secret_length_env_var(self, tmp_path, monkeypatch):
+        """Regression: MIN_SECRET_LENGTH=64 must result in a generated token >= 64 chars."""
+        env = tmp_path / ".env"
+        env.write_text("JWT_SECRET_KEY=changeme\nAUTH_ENCRYPTION_SECRET=changeme\n", encoding="utf-8")
+        monkeypatch.delenv("JWT_SECRET_KEY", raising=False)
+        monkeypatch.delenv("AUTH_ENCRYPTION_SECRET", raising=False)
+        monkeypatch.setenv("MCPGATEWAY_AUTO_INIT_SECRETS", "true")
+        monkeypatch.setenv("MIN_SECRET_LENGTH", "64")
+
+        generated = ensure_env_file_secrets(env_file=str(env))
+
+        assert "JWT_SECRET_KEY" in generated
+        assert len(generated["JWT_SECRET_KEY"]) >= 64, (
+            f"Expected token >= 64 chars with MIN_SECRET_LENGTH=64, got {len(generated['JWT_SECRET_KEY'])}"
+        )
+        assert "AUTH_ENCRYPTION_SECRET" in generated
+        assert len(generated["AUTH_ENCRYPTION_SECRET"]) >= 64
