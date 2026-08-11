@@ -15,7 +15,7 @@ association -> commit -> cache invalidations.
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import logging
-from typing import Any, Final, Mapping
+from typing import Any, Final, Mapping, cast
 import uuid
 
 from pydantic import ValidationError
@@ -227,11 +227,16 @@ class ReverseProxyDiscoveryService:
             page = result.get(result_key, [])
             if not isinstance(page, list):
                 raise ReverseProxyDiscoveryError(f"reverse-proxy {method} returned a non-array {result_key}")
-            items.extend(entry for entry in page if isinstance(entry, dict))
+            for page_index, entry in enumerate(page):
+                if not isinstance(entry, dict):
+                    raise ReverseProxyDiscoveryError(f"reverse-proxy {method} returned non-object item at index {page_index}")
+                items.append(cast(dict[str, Any], entry))
             next_cursor = result.get("nextCursor")
             if next_cursor is None:
                 return items
-            cursor = str(next_cursor)
+            if not isinstance(next_cursor, str):
+                raise ReverseProxyDiscoveryError(f"reverse-proxy {method} returned non-string nextCursor")
+            cursor = next_cursor
         raise ReverseProxyDiscoveryError(f"reverse-proxy {method} did not finish within {MAX_LIST_PAGES} pages")
 
     def _build_tools(self, tool_dicts: list[dict[str, Any]]) -> tuple[list[ToolCreate], list[str]]:

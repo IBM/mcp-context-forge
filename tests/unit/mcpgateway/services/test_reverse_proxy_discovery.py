@@ -9,6 +9,7 @@ Reverse-proxy MCP discovery and catalog reconciliation tests.
 from collections import deque
 from dataclasses import dataclass
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import AsyncMock
 import uuid
 
@@ -73,7 +74,7 @@ class _ScriptedSessionManager:
             raise reply
         if isinstance(reply, _RpcErrorReply):
             return ResponseMessage(type="response", payload=JsonRpcErrorResponse(jsonrpc="2.0", id=payload.id, error=JsonRpcError(code=reply.code, message=reply.message)))
-        return ResponseMessage(type="response", payload=JsonRpcSuccessResponse(jsonrpc="2.0", id=payload.id, result=reply))
+        return ResponseMessage(type="response", payload=JsonRpcSuccessResponse(jsonrpc="2.0", id=payload.id, result=cast(JsonValue, reply)))
 
     async def send_notification(self, connection_id: ConnectionId, payload: JsonRpcNotification, timeout_seconds: float) -> None:
         """Record the notification without producing a reply."""
@@ -256,6 +257,44 @@ async def test_pagination_beyond_page_bound_raises(discovery, test_db, proxy_pai
 
 
 @pytest.mark.asyncio
+async def test_tools_list_non_object_item_raises_and_leaves_catalog_unchanged(discovery, test_db, proxy_pair):
+    # Given
+    fake = _ScriptedSessionManager()
+    fake.script_result(_initialize_result({"tools": {}}))
+    fake.script_result({"tools": [{"name": "tool-a"}, None]})
+
+    # When / Then
+    with pytest.raises(ReverseProxyDiscoveryError, match="non-object item"):
+        await _discover(discovery, test_db, fake, proxy_pair)
+    assert test_db.query(DbTool).count() == 0
+
+
+@pytest.mark.asyncio
+async def test_resources_list_non_object_item_raises(discovery, test_db, proxy_pair):
+    # Given
+    fake = _ScriptedSessionManager()
+    fake.script_result(_initialize_result({"resources": {}}))
+    fake.script_result({"resources": [None]})
+
+    # When / Then
+    with pytest.raises(ReverseProxyDiscoveryError, match="non-object item"):
+        await _discover(discovery, test_db, fake, proxy_pair)
+
+
+@pytest.mark.asyncio
+async def test_non_string_next_cursor_raises(discovery, test_db, proxy_pair):
+    # Given
+    fake = _ScriptedSessionManager()
+    fake.script_result(_initialize_result({"tools": {}}))
+    fake.script_result({"tools": [{"name": "tool-a"}], "nextCursor": 123})
+
+    # When / Then
+    with pytest.raises(ReverseProxyDiscoveryError, match="non-string nextCursor"):
+        await _discover(discovery, test_db, fake, proxy_pair)
+    assert test_db.query(DbTool).count() == 0
+
+
+@pytest.mark.asyncio
 async def test_discovered_tools_land_with_stable_gateway_and_reverse_proxy_origin(discovery, test_db, proxy_pair):
     # Given
     fake = _ScriptedSessionManager()
@@ -370,6 +409,38 @@ async def test_malformed_tool_skipped_and_reported_in_validation_errors(discover
     assert len(result.validation_errors) == 1
     assert {row.original_name for row in test_db.query(DbTool)} == {"good-tool"}
     assert result.tools_added == 1
+
+
+@pytest.mark.asyncio
+async def test_valid_pages_still_aggregate_after_list_hardening(discovery, test_db, proxy_pair):
+    # Given
+    fake = _ScriptedSessionManager()
+    fake.script_result(_initialize_result({"tools": {}}))
+    fake.script_result({"tools": [{"name": "tool-a"}], "nextCursor": "cursor-2"})
+    fake.script_result({"tools": [{"name": "tool-b"}]})
+
+    # When
+    result = await _discover(discovery, test_db, fake, proxy_pair)
+
+    # Then
+    assert {row.original_name for row in test_db.query(DbTool)} == {"tool-a", "tool-b"}
+    assert result.tools_added == 2
+
+
+@pytest.mark.asyncio
+async def test_object_but_invalid_tool_still_reports_validation_error_not_raised(discovery, test_db, proxy_pair):
+    # Given
+    fake = _ScriptedSessionManager()
+    fake.script_result(_initialize_result({"tools": {}}))
+    fake.script_result({"tools": [{"name": "tool-a"}, {"description": "missing name"}]})
+
+    # When
+    result = await _discover(discovery, test_db, fake, proxy_pair)
+
+    # Then
+    assert {row.original_name for row in test_db.query(DbTool)} == {"tool-a"}
+    assert result.tools_added == 1
+    assert len(result.validation_errors) == 1
 
 
 @pytest.mark.asyncio
