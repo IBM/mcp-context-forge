@@ -4298,15 +4298,15 @@ class SessionManagerWrapper:
             try:
                 # First-Party - lazy import to avoid circular dependencies
                 # First-Party
-                from mcpgateway.services.session_affinity import get_session_affinity, WORKER_ID  # pylint: disable=import-outside-toplevel
+                from mcpgateway.services.session_affinity import get_session_affinity, get_worker_id  # pylint: disable=import-outside-toplevel
 
                 pool = get_session_affinity()
                 owner = await pool.get_session_owner(mcp_session_id)
-                logger.debug("[HTTP_AFFINITY_CHECK] Worker %s | Session %s... | Owner from Redis: %s", WORKER_ID, mcp_session_id[:8], owner)
+                logger.debug("[HTTP_AFFINITY_CHECK] Worker %s | Session %s... | Owner from Redis: %s", get_worker_id(), mcp_session_id[:8], owner)
 
-                if owner and owner != WORKER_ID:
+                if owner and owner != get_worker_id():
                     # Session owned by another worker - forward the entire HTTP request
-                    logger.info("[HTTP_AFFINITY] Worker %s | Session %s... | Owner: %s | Forwarding HTTP request", WORKER_ID, mcp_session_id[:8], owner)
+                    logger.info("[HTTP_AFFINITY] Worker %s | Session %s... | Owner: %s | Forwarding HTTP request", get_worker_id(), mcp_session_id[:8], owner)
 
                     # Package the edge-validated identity so the owner can dispatch via
                     # the trusted internal /_internal/mcp/rpc endpoint without
@@ -4361,17 +4361,17 @@ class SessionManagerWrapper:
                                 "body": response["body"],
                             }
                         )
-                        logger.debug("[HTTP_AFFINITY] Worker %s | Session %s... | Forwarded response sent to client", WORKER_ID, mcp_session_id[:8])
+                        logger.debug("[HTTP_AFFINITY] Worker %s | Session %s... | Forwarded response sent to client", get_worker_id(), mcp_session_id[:8])
                         return
 
                     # Forwarding failed - fall through to local handling
                     # This may result in "session not found" but it's better than no response
-                    logger.debug("[HTTP_AFFINITY] Worker %s | Session %s... | Forwarding failed, falling back to local", WORKER_ID, mcp_session_id[:8])
+                    logger.debug("[HTTP_AFFINITY] Worker %s | Session %s... | Forwarding failed, falling back to local", get_worker_id(), mcp_session_id[:8])
 
-                elif owner == WORKER_ID and method == "POST":
+                elif owner == get_worker_id() and method == "POST":
                     # We own this session - route POST requests to /rpc to avoid SDK session issues
                     # The SDK's _server_instances gets cleared between requests, so we can't rely on it
-                    logger.debug("[HTTP_AFFINITY_LOCAL] Worker %s | Session %s... | Owner is us, routing to /rpc", WORKER_ID, mcp_session_id[:8])
+                    logger.debug("[HTTP_AFFINITY_LOCAL] Worker %s | Session %s... | Owner is us, routing to /rpc", get_worker_id(), mcp_session_id[:8])
 
                     # Read request body
                     body_parts = []
@@ -4751,13 +4751,13 @@ class SessionManagerWrapper:
                 try:
                     # First-Party - lazy import to avoid circular dependencies
                     # First-Party
-                    from mcpgateway.services.session_affinity import get_session_affinity, WORKER_ID  # pylint: disable=import-outside-toplevel
+                    from mcpgateway.services.session_affinity import get_session_affinity, get_worker_id  # pylint: disable=import-outside-toplevel
 
                     pool = get_session_affinity()
                     await pool.register_session_owner(session_to_register)
                     logger.debug(
                         "[HTTP_AFFINITY_SDK] Worker %s | Session %s... | Registered ownership after SDK handling",
-                        WORKER_ID,
+                        get_worker_id(),
                         session_to_register[:8],
                     )
                 except Exception as e:

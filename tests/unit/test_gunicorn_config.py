@@ -10,16 +10,15 @@ Covers two concerns of the hook:
 - **Engine / Redis pool reset on fork** (``TestPostForkHook``): each worker
   disposes the inherited SQLAlchemy engine pool and resets the Redis client.
 
-- **Per-worker WORKER_ID rebind (#4557)**: the load-bearing fix behind PR #4981.
-  With ``--preload``, ``mcpgateway.services.session_affinity.WORKER_ID`` is
-  captured at import time in the master process, so every forked worker would
-  otherwise inherit ``{hostname}:1`` (the master's PID). A shared WORKER_ID
-  collapses the per-worker pub/sub channels and makes every forwarded request
-  execute on all workers in the container (24x broadcast amplification observed
-  in #4557). The ``post_fork`` hook recomputes WORKER_ID per worker to restore
-  single-executor forwarding, and wraps the rebind in a broad ``except`` that
-  logs a ``warning`` referencing #4557 so silent fallback can't drift production
-  back into the amplification state.
+- **Per-worker worker-id correctness (#4557)**: with ``--preload``, a
+  module-level ``WORKER_ID`` constant would be captured at import time in the
+  master process, so every forked worker would inherit ``{hostname}:1`` (the
+  master's PID). A shared worker id collapses the per-worker pub/sub channels
+  and makes every forwarded request execute on all workers in the container
+  (24x broadcast amplification observed in #4557).
+  ``mcpgateway.services.session_affinity.get_worker_id()`` derives the id from
+  the live PID at call time, so each forked worker reports its own id with no
+  ``post_fork`` rebind required; these tests pin that contract.
 """
 
 # Future
@@ -170,12 +169,26 @@ class TestPostForkHook:
         mock_server.log.info.assert_any_call("SQLAlchemy engine pool reset for worker %s", 12345)
 
 
-def test_post_fork_rebinds_worker_id_per_worker(fake_worker, monkeypatch):
-    """Happy path: with the affinity flag on, ``post_fork`` overrides the master-frozen ``WORKER_ID`` with ``{hostname}:{worker.pid}``.
+def test_get_worker_id_reads_live_pid(monkeypatch):
+    """``get_worker_id()`` derives the id from the live PID at call time.
 
-    Without this, every forked gunicorn worker carries the master's
-    ``{hostname}:1``, so a forwarded request published to the owner's
-    pub/sub channel reaches every worker in the container.
+    This is what makes per-worker identity correct after ``fork()`` without any
+    ``post_fork`` rebind: each forked worker has its own PID, so every worker
+    automatically reports ``{hostname}:{worker.pid}`` instead of the master's
+    import-time-frozen id (#4557's per-container broadcast amplification).
+    """
+    # First-Party
+    from mcpgateway.services import session_affinity
+
+    monkeypatch.setattr(session_affinity.os, "getpid", lambda: 4242)
+    assert session_affinity.get_worker_id() == f"{socket.gethostname()}:4242"
+
+
+def test_post_fork_does_not_rebind_worker_id_constant_enabled(fake_worker, monkeypatch):
+    """With the affinity flag on, ``post_fork`` must not set a module-level ``WORKER_ID``.
+
+    The constant was replaced by ``get_worker_id()``; a stale rebind would be
+    dead state and mask regressions of the live-PID contract.
     """
     # First-Party
     from mcpgateway.config import settings
@@ -183,21 +196,15 @@ def test_post_fork_rebinds_worker_id_per_worker(fake_worker, monkeypatch):
 
     monkeypatch.setattr(settings, "mcpgateway_session_affinity_enabled", True)
     cfg = _load_gunicorn_config()
-    original = session_affinity.WORKER_ID
-    try:
-        cfg.post_fork(_make_fake_server(), fake_worker)
-        assert session_affinity.WORKER_ID == f"{socket.gethostname()}:{fake_worker.pid}"
-    finally:
-        # Restore the module-level constant so other tests aren't affected.
-        session_affinity.WORKER_ID = original
+    cfg.post_fork(_make_fake_server(), fake_worker)
+    assert not hasattr(session_affinity, "WORKER_ID")
 
 
-def test_post_fork_skips_worker_id_rebind_when_affinity_disabled(fake_worker, monkeypatch):
-    """With the affinity flag off, ``post_fork`` must NOT touch ``WORKER_ID``.
+def test_post_fork_does_not_rebind_worker_id_constant_disabled(fake_worker, monkeypatch):
+    """With the affinity flag off, ``post_fork`` likewise sets no ``WORKER_ID``.
 
-    The kill-switch contract: flag off means the affinity machinery is a clean
-    no-op, so the per-worker rebind (and the ``session_affinity`` import at fork)
-    is skipped and ``WORKER_ID`` keeps whatever value it already had.
+    The kill-switch contract stays intact: flag off means the affinity
+    machinery is a clean no-op.
     """
     # First-Party
     from mcpgateway.config import settings
@@ -205,57 +212,5 @@ def test_post_fork_skips_worker_id_rebind_when_affinity_disabled(fake_worker, mo
 
     monkeypatch.setattr(settings, "mcpgateway_session_affinity_enabled", False)
     cfg = _load_gunicorn_config()
-    sentinel = "sentinel-host:0"
-    original = session_affinity.WORKER_ID
-    session_affinity.WORKER_ID = sentinel
-    try:
-        cfg.post_fork(_make_fake_server(), fake_worker)
-        # Unchanged: the rebind block was gated out by the disabled flag.
-        assert session_affinity.WORKER_ID == sentinel
-    finally:
-        session_affinity.WORKER_ID = original
-
-
-def test_post_fork_logs_warning_when_rebind_fails(fake_worker, monkeypatch):
-    """If the rebind raises, the hook must log a ``warning`` referencing #4557 and NOT crash the worker.
-
-    Regression test for the F2 follow-up: the original ``except ImportError: pass``
-    silently fell back to the master's frozen ``WORKER_ID``, so #4557's broadcast
-    amplification could return into production unnoticed. The fix broadens the
-    catch and surfaces the failure via ``server.log.warning(...)``.
-
-    To reproduce a rebind failure deterministically without depending on the
-    real module's internals, monkeypatch ``socket.gethostname`` (called inside
-    the try block) to raise.
-    """
-    # First-Party
-    from mcpgateway.config import settings
-    from mcpgateway.services import session_affinity
-
-    monkeypatch.setattr(settings, "mcpgateway_session_affinity_enabled", True)
-
-    original_worker_id = session_affinity.WORKER_ID
-
-    def _boom() -> str:
-        raise RuntimeError("simulated rebind failure")
-
-    monkeypatch.setattr(socket, "gethostname", _boom)
-
-    cfg = _load_gunicorn_config()
-    server = _make_fake_server()
-    try:
-        # Must not raise — the hook is expected to swallow + log, never propagate.
-        cfg.post_fork(server, fake_worker)
-    finally:
-        session_affinity.WORKER_ID = original_worker_id
-
-    # WORKER_ID was NOT silently rebound (the failure was real, not papered over).
-    assert session_affinity.WORKER_ID == original_worker_id
-
-    # A warning was emitted, mentioning the failing operation (rebind) and the consequence.
-    assert server.log.warning.called, "expected post_fork to log a warning on rebind failure"
-    call_args = server.log.warning.call_args
-    # First arg is the format string; subsequent args are the format params.
-    fmt = call_args.args[0] if call_args.args else ""
-    assert "WORKER_ID" in fmt
-    assert "broadcast" in fmt, "warning should describe the consequence (per-container broadcast) so operators can act on it"
+    cfg.post_fork(_make_fake_server(), fake_worker)
+    assert not hasattr(session_affinity, "WORKER_ID")
