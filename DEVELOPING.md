@@ -40,6 +40,26 @@ cd tools_rust/mcp_runtime && cargo fmt --check && cargo clippy -- -D warnings &&
 Note that if the pre-commit check fails on detect secrets you need to identify if any secrets are in the code and remove them if necessary.
 If these are fake secrets for testing, you can attest to the fact that they are not in-fact secrets by executing `make detect-secrets-scan` followed by `make detect-secrets-audit` which will bring you through the `detect-secrets` interface for acknowledging/rejecting secrets - you will need to commit the `.secrets.baseline file as part of your PR.
 
+`make detect-secrets-scan` is a thin wrapper around the `.secrets.baseline` git merge driver (`scripts/git/resolve-secrets-baseline-conflict.sh`). It scans only the files changed vs `main` (set `GIT_DIFF_TARGET` to change the base, `DETECT_SECRETS_PATH` to override the file list; when neither is set the driver probes for the repository's root/default branch — local `main`/`master`/`develop`, then the remote's default `origin/HEAD`, then `origin/main`/`origin/master`/`origin/develop` — and degrades to a whole-tree scan when nothing matches, so checkouts without a local default branch — e.g. CI fetching only the PR ref — still work), then merges the fresh results into `.secrets.baseline` with a jq merge that keeps previously audited entries for tracked files outside the scan scope and drops entries for files git no longer tracks. The target exits non-zero when the audit report shows any live, unaudited, or audited-as-real findings, so `make detect-secrets-audit` is the remediation flow. Whole-tree coverage runs in CI via `make detect-secrets-hook`, which checks all of `git ls-files` with `--fail-on-unaudited`.
+
+### Git hooks: `make configure-git`
+
+`make configure-git` installs the repository's git-side tooling:
+
+- the pre-commit framework hooks (the shim installed by `pre-commit install`),
+- the `.secrets.baseline` merge driver, copied to `<git-common-dir>/git-drivers/` and bound via `.gitattributes` plus the repo-local `info/attributes`, and
+- the `post-rewrite` hook, which refreshes `.secrets.baseline` after a rebase; a foreign pre-existing `post-rewrite` hook is moved to `post-rewrite.chain` and chained rather than clobbered.
+
+The versioned `.gitattributes` ships `merge=secrets-baseline` to every clone, but the driver install is per-machine: on a clone where `make configure-git` has not run, git falls back to the default text merge with a warning. Safe, but run `make configure-git` once per machine.
+
+**Removed hook targets.** The `lint-install-hooks`, `lint-pre-commit`, and `lint-pre-push` Make targets have been removed. Hook files previously installed on developer machines still call `make lint-pre-commit` / `make lint-pre-push` and now fail with `No rule to make target`. Remediate with:
+
+```bash
+rm .git/hooks/pre-commit .git/hooks/pre-push && make configure-git
+```
+
+The old hook ran `lint-staged`; the replacement installs the pre-commit framework shim, which runs a different set of checks.
+
 ## Development Setup
 
 ### Prerequisites

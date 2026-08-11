@@ -139,23 +139,10 @@ services:
     # Environment - pick ONE database URL line, comment the rest
     # ──────────────────────────────────────────────────────────────────────
     environment:
-      # ═══════════════════════════════════════════════════════════════════════════
-      # HTTP Server Selection: gunicorn vs granian
-      # ═══════════════════════════════════════════════════════════════════════════
-      # Performance comparison (2500 concurrent users, PostgreSQL backend):
-      #   Gunicorn: ~2.7GB RAM, ~740% CPU, no backpressure (queues unbounded)
-      #   Granian:  ~4.0GB RAM, ~680% CPU, native backpressure (rejects excess with 503)
-      #
-      # Choose Gunicorn for: memory-constrained environments (32% less RAM)
-      # Choose Granian for:  load spike protection, bursty traffic (graceful degradation)
-      # Both achieve same RPS when database is the bottleneck.
-      # ═══════════════════════════════════════════════════════════════════════════
-      # - HTTP_SERVER=granian    # Rust-based, native backpressure, +47% memory, -8% CPU
-      - HTTP_SERVER=${HTTP_SERVER:-gunicorn} # Python-based by default; set granian to benchmark the Rust ASGI front door
-      - HOST=0.0.0.0
-      - PORT=4444
       # Domain for CORS/cookies (nginx default at http://localhost:8080)
       - APP_DOMAIN=${APP_DOMAIN:-http://localhost:8080}
+      # Bind address - must be 0.0.0.0 inside Docker or other containers cannot connect
+      - HOST=${GATEWAY_HOST:-0.0.0.0}
       # Transport: sse, streamablehttp, http, or all (default: all)
       - TRANSPORT_TYPE=streamablehttp
       # High-level Rust MCP UX:
@@ -343,7 +330,7 @@ services:
       # JWT Configuration - Choose ONE approach:
       # Option 1: HMAC (Default - Simple deployments)
       - JWT_ALGORITHM=HS256
-      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-my-test-key-but-now-longer-than-32-bytes}
+      - "JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
       # Option 2: RSA (Production - Asymmetric, uncomment and generate certs)
       # - JWT_ALGORITHM=RS256
       # - JWT_PUBLIC_KEY_PATH=/app/certs/jwt/public.pem
@@ -356,7 +343,7 @@ services:
       # - BASIC_AUTH_USER=${BASIC_AUTH_USER:-admin}
       # - BASIC_AUTH_PASSWORD=${BASIC_AUTH_PASSWORD:-changeme}
       # Auth encryption secret + default user password
-      - AUTH_ENCRYPTION_SECRET=${AUTH_ENCRYPTION_SECRET:-my-test-salt}
+      - "AUTH_ENCRYPTION_SECRET=${AUTH_ENCRYPTION_SECRET:?AUTH_ENCRYPTION_SECRET is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
       - DEFAULT_USER_PASSWORD=${DEFAULT_USER_PASSWORD:-changeme}
       # Admin UI uses email/password authentication
       - EMAIL_AUTH_ENABLED=true
@@ -423,8 +410,7 @@ services:
       # Admin-specific UI hide lists (empty = admins see all; embedded defaults skip admins)
       - MCPGATEWAY_UI_HIDE_SECTIONS_ADMIN=
       - MCPGATEWAY_UI_HIDE_HEADER_ITEMS_ADMIN=
-      # Security configuration (using defaults)
-      - ENVIRONMENT=development
+      - ENVIRONMENT=${ENVIRONMENT:-development}
       - SECURITY_HEADERS_ENABLED=true
       - CORS_ALLOW_CREDENTIALS=true
       - SECURE_COOKIES=false
@@ -570,7 +556,7 @@ services:
       - HTTPX_HTTP2_ENABLED=false           # HTTP/2 support (requires server support)
       - HTTPX_ADMIN_READ_TIMEOUT=30.0       # Admin UI/health check timeout (seconds)
       # ═══════════════════════════════════════════════════════════════════════════
-      # Gunicorn Configuration (used when HTTP_SERVER=gunicorn)
+      # Gunicorn Configuration
       # ═══════════════════════════════════════════════════════════════════════════
       - GUNICORN_WORKERS=${GUNICORN_WORKERS:-24}                    # Worker processes (match CPU cores)
       - GUNICORN_TIMEOUT=${GUNICORN_TIMEOUT:-120}                   # Worker timeout in seconds
@@ -580,40 +566,6 @@ services:
       - GUNICORN_MAX_REQUESTS=${GUNICORN_MAX_REQUESTS:-1000000}          # Recycle workers after 1M requests
       - GUNICORN_MAX_REQUESTS_JITTER=${GUNICORN_MAX_REQUESTS_JITTER:-100000}    # ±100000 jitter prevents thundering herd
       - GUNICORN_BACKLOG=${GUNICORN_BACKLOG:-4096}                  # Connection queue depth
-      # ═══════════════════════════════════════════════════════════════════════════
-      # Granian Backpressure Configuration (used when HTTP_SERVER=granian)
-      # ═══════════════════════════════════════════════════════════════════════════
-      # Backpressure provides overload protection by rejecting excess requests with
-      # immediate 503 responses instead of queuing them (which can cause OOM/timeouts).
-      # Total capacity = GRANIAN_WORKERS × GRANIAN_BACKPRESSURE = 16 × 128 = 2048 concurrent
-      # Requests beyond this limit receive immediate 503 (no queuing, no OOM)
-      - GRANIAN_WORKERS=${GRANIAN_WORKERS:-16}
-      - GRANIAN_BACKLOG=${GRANIAN_BACKLOG:-4096}
-      - GRANIAN_BACKPRESSURE=${GRANIAN_BACKPRESSURE:-128}
-      - GRANIAN_HTTP1_BUFFER_SIZE=${GRANIAN_HTTP1_BUFFER_SIZE:-524288}
-      - GRANIAN_RESPAWN_FAILED=${GRANIAN_RESPAWN_FAILED:-true}
-      # ───────────────────────────────────────────────────────────────────────
-      # Granian Worker Lifecycle (recycling to prevent resource leaks)
-      # ───────────────────────────────────────────────────────────────────────
-      # Workaround for granian issue where SSE connections may not be properly
-      # closed after client disconnect, causing CPU spin loops. See:
-      # - https://github.com/emmett-framework/granian/issues/286
-      # - https://github.com/IBM/mcp-context-forge/issues/2357
-      #
-      # GRANIAN_WORKERS_LIFETIME: Restart workers after this duration (min 60s)
-      # GRANIAN_WORKERS_MAX_RSS: Restart workers exceeding this memory (MiB)
-      #
-      # Using both provides natural jitter - workers hit memory limits at
-      # different times based on load, with lifetime as a backstop.
-      # - GRANIAN_WORKERS_LIFETIME=3600    # 1 hour max worker lifetime
-      # - GRANIAN_WORKERS_MAX_RSS=512      # 512 MiB max RSS per worker
-      # ───────────────────────────────────────────────────────────────────────
-      # HTTP/2: Granian supports native HTTP/2 multiplexing, but not useful here because:
-      # - nginx sits in front and downgrades to HTTP/1.1 for upstream connections
-      # - nginx open-source doesn't support HTTP/2 to backends (only nginx Plus does)
-      # - Internal Docker network is fast enough that HTTP/2 gains are negligible
-      # To use HTTP/2, either bypass nginx or use Granian with TLS directly.
-      # - GRANIAN_HTTP=2
 
       # ═══════════════════════════════════════════════════════════════════════════
       # MCP Session Pool Configuration
@@ -799,10 +751,8 @@ services:
     # - Multi-instance: comment out ports, set replicas: 2+, access via nginx:8080
 
     # ──────────────────────────────────────────────────────────────────────
-    # Server Engine Selection (Default: Granian - Rust-based HTTP server)
+    # Server Engine Selection (Default: Gunicorn + Uvicorn)
     # ──────────────────────────────────────────────────────────────────────
-    # Default is Granian. For Gunicorn with Uvicorn workers:
-    # command: ["./run-gunicorn.sh"]
 
     deploy:
       mode: replicated
@@ -1099,12 +1049,12 @@ services:
       dockerfile: Containerfile
     environment:
       - DATABASE_URL=postgresql+psycopg://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@postgres:5432/mcp
-      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-your-secret-jwt-key-here}
+      - "JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY is not set. Run: make setup (first time) or make init-secrets-patch-env (if .env exists)}"
       - BASIC_AUTH_USER=${BASIC_AUTH_USER:-admin}
       - BASIC_AUTH_PASSWORD=${BASIC_AUTH_PASSWORD:-changeme}
       - PLATFORM_ADMIN_EMAIL=${PLATFORM_ADMIN_EMAIL:-admin@example.com}
       - AUTH_REQUIRED=${AUTH_REQUIRED:-true}
-      - AUTH_ENCRYPTION_SECRET=${AUTH_ENCRYPTION_SECRET:-my-test-salt}
+      - "AUTH_ENCRYPTION_SECRET=${AUTH_ENCRYPTION_SECRET:?AUTH_ENCRYPTION_SECRET is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
     command: ["python", "-m", "mcpgateway.bootstrap_db"]
     depends_on:
@@ -1305,7 +1255,8 @@ services:
     volumes:
       - prometheus_token:/tokens
     environment:
-      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-my-test-key-but-now-longer-than-32-bytes}
+      - "JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY is not set. Run: make setup (first time) or make init-secrets-patch-env (if .env exists)}"
+      - "AUTH_ENCRYPTION_SECRET=${AUTH_ENCRYPTION_SECRET:?AUTH_ENCRYPTION_SECRET is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
@@ -1520,17 +1471,27 @@ services:
 
   ###############################################################################
   # Fast Time Server - High-performance time/timezone service for MCP
-  # Defaults to the published GHCR image. Override FAST_TIME_IMAGE when building locally:
-  #   FAST_TIME_IMAGE=mcpgateway/fast-time-server:local docker compose build fast_time_server
+  # Pinned by digest so `docker compose pull` cannot change the tool inventory
+  # under the benchmarks. Digest resolved 2026-08-07 (== commit tag
+  # 9b97731fab3cce083d09fe48b4d4760a38d17248); 8 tools exposed:
+  #   echo, flaky, get_system_time, convert_time, schema_error, schema_success,
+  #   get_stats, verify-protocol
+  # When bumping this digest: re-run `tools/list` against the new image and
+  # update MCP_BENCHMARK_TOOL_DENYLIST in the Makefile if new failure fixtures
+  # were added (see tests/loadtest/locustfile_mcp_protocol.py).
+  # Override for local builds:
+  #   FAST_TIME_IMAGE=mcpgateway/fast-time-server:local docker compose up fast_time_server
   ###############################################################################
   fast_time_server:
-    image: ${FAST_TIME_IMAGE:-ghcr.io/ibm/cfex-mcp-fast-time-server:latest}
+    image: ${FAST_TIME_IMAGE:-ghcr.io/ibm/cfex-mcp-fast-time-server@sha256:2f095509d535a0769449f3b9417858f5c233dc74b1e09de335b48b7591d995a1}
     restart: unless-stopped
     networks: [mcpnet]
     ports:
-      - "8888:9080"    # Map host port 8888 to container port 9080 (server's default port)
-    # Use dual mode for both SSE (/sse) and Streamable HTTP (/http) endpoints
-    command: ["-transport=dual", "-listen=0.0.0.0:9080", "-log-level=info"]
+      - "8888:9080"    # Map host port 8888 to container port 9080
+    # Configured via environment variables (Streamable HTTP at /mcp)
+    environment:
+      - BIND_ADDRESS=0.0.0.0:9080
+      - RUST_LOG=info
 
   ###############################################################################
   # Auto-registration service - registers fast_time_server with gateway
@@ -1544,7 +1505,8 @@ services:
       fast_time_server:
         condition: service_started
     environment:
-      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-my-test-key-but-now-longer-than-32-bytes}
+      - "JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY is not set. Run: make setup (first time) or make init-secrets-patch-env (if .env exists)}"
+      - "AUTH_ENCRYPTION_SECRET=${AUTH_ENCRYPTION_SECRET:?AUTH_ENCRYPTION_SECRET is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
 
     # This is a one-shot container that exits after registration
     restart: "no"
@@ -1599,8 +1561,8 @@ services:
         "
 
         echo "Generating JWT token..."
-        echo "Environment: JWT_SECRET_KEY=$$JWT_SECRET_KEY"
-        echo "Running: python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --admin --exp 10080 --secret $$JWT_SECRET_KEY --algo HS256"
+        echo "Environment: JWT_SECRET_KEY=[redacted]"
+        echo "Running: python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --admin --exp 10080 --secret [redacted] --algo HS256"
         # Only capture stdout (the token), let warnings go to stderr
         export MCPGATEWAY_BEARER_TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --admin --exp 10080 --secret $$JWT_SECRET_KEY --algo HS256 2>/dev/null)
         echo "Generated token: $$MCPGATEWAY_BEARER_TOKEN"
@@ -1850,7 +1812,7 @@ services:
       slow_time_server:
         condition: service_healthy
     environment:
-      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-my-test-key-but-now-longer-than-32-bytes}
+      - "JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY is not set. Run: make setup (first time) or make init-secrets-patch-env (if .env exists)}"
     restart: "no"
     entrypoint: ["/bin/sh", "-c"]
     command:
@@ -1911,7 +1873,7 @@ services:
   # Usage: docker compose --profile testing up -d
   ###############################################################################
   fast_test_server:
-    image: ghcr.io/ibm/cfex-mcp-fast-time-server:latest
+    image: ${FAST_TIME_IMAGE:-ghcr.io/ibm/cfex-mcp-fast-time-server@sha256:2f095509d535a0769449f3b9417858f5c233dc74b1e09de335b48b7591d995a1}
     restart: unless-stopped
     networks: [mcpnet]
     ports:
@@ -1959,7 +1921,8 @@ services:
       fast_test_server:
         condition: service_healthy
     environment:
-      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-my-test-key-but-now-longer-than-32-bytes}
+      - "JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY is not set. Run: make setup (first time) or make init-secrets-patch-env (if .env exists)}"
+      - "AUTH_ENCRYPTION_SECRET=${AUTH_ENCRYPTION_SECRET:?AUTH_ENCRYPTION_SECRET is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
     restart: "no"
     entrypoint: ["/bin/sh", "-c"]
     command:
@@ -2166,7 +2129,8 @@ services:
       a2a_echo_agent:
         condition: service_healthy
     environment:
-      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-my-test-key-but-now-longer-than-32-bytes}
+      - "JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY is not set. Run: make setup (first time) or make init-secrets-patch-env (if .env exists)}"
+      - "AUTH_ENCRYPTION_SECRET=${AUTH_ENCRYPTION_SECRET:?AUTH_ENCRYPTION_SECRET is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
     restart: "no"
     entrypoint: ["/bin/sh", "-c"]
     command:
@@ -2237,7 +2201,8 @@ services:
     volumes:
       - locust_token:/tokens
     environment:
-      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-my-test-key-but-now-longer-than-32-bytes}
+      - "JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY is not set. Run: make setup (first time) or make init-secrets-patch-env (if .env exists)}"
+      - "AUTH_ENCRYPTION_SECRET=${AUTH_ENCRYPTION_SECRET:?AUTH_ENCRYPTION_SECRET is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
@@ -2407,7 +2372,8 @@ services:
       benchmark_server:
         condition: service_started
     environment:
-      - JWT_SECRET_KEY=${JWT_SECRET_KEY:-my-test-key-but-now-longer-than-32-bytes}
+      - "JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY is not set. Run: make setup (first time) or make init-secrets-patch-env (if .env exists)}"
+      - "AUTH_ENCRYPTION_SECRET=${AUTH_ENCRYPTION_SECRET:?AUTH_ENCRYPTION_SECRET is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
       - BENCHMARK_SERVER_COUNT=${BENCHMARK_SERVER_COUNT:-10}
       - BENCHMARK_START_PORT=${BENCHMARK_START_PORT:-9000}
     restart: "no"
@@ -2631,10 +2597,10 @@ services:
 #    2. URL: http://nginx:80/servers/9779b6698cbd4b4995ee04a4fab38737/mcp
 #    3. Add header:  Authorization: Bearer <your-jwt-token>
 #
-#  Generate a JWT token:
+#  Generate a JWT token (JWT_SECRET_KEY must be set in .env — see make install-dev):
 #    python -m mcpgateway.utils.create_jwt_token \
 #      --username admin@example.com --exp 10080 \
-#      --secret my-test-key-but-now-longer-than-32-bytes --algo HS256
+#      --secret ${JWT_SECRET_KEY} --algo HS256
 ###############################################################################
 
   mcp_inspector:

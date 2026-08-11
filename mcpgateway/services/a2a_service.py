@@ -937,7 +937,9 @@ class A2AAgentService(BaseService):
             token_teams: Teams from JWT token. None with user_email=None = anonymous admin bypass (public+team only);
                          None with user_email set = DB admin check (public+team+own-private);
                          [] = public-only; [...] = team-scoped access.
-            team_id: Optional team ID to filter by specific team.
+            team_id: Optional team ID to filter by specific team. Applies to every caller
+                shape, including the admin and anonymous bypasses; globally-public rows
+                from other teams remain visible.
             visibility: Optional visibility filter (private, team, public).
 
         Returns:
@@ -986,7 +988,7 @@ class A2AAgentService(BaseService):
         # ══════════════════════════════════════════════════════════════════════
         cache = _get_registry_cache()
         if cursor is None and user_email is None and token_teams is None and page is None:
-            filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None, visibility=visibility)
+            filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None, visibility=visibility, team_id=team_id)
             cached = await cache.get("agents", filters_hash)
             if cached is not None:
                 # Reconstruct A2AAgentRead objects from cached dicts
@@ -1520,6 +1522,9 @@ class A2AAgentService(BaseService):
                 if field == "visibility" and value == "team":
                     target_team_id = update_data.get("team_id", agent.team_id) if "team_id" in update_data else agent.team_id
                     _validate_a2a_team_assignment(db, user_email, target_team_id)
+
+                if field == "owner_email":
+                    continue  # ownership is set at creation; never overwritten by an update
 
                 if hasattr(agent, field):
                     setattr(agent, field, value)

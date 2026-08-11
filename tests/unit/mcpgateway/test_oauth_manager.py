@@ -1054,7 +1054,7 @@ class TestOAuthManager:
                         # This should work without token storage
                         result = await manager.complete_authorization_code_flow(gateway_id, code, state, credentials)
 
-                        expected = {"success": True, "user_id": "user123", "expires_at": None, "token_aud": None}  # No token storage means no expiration tracking
+                        expected = {"success": True, "user_id": "user123", "expires_at": None, "token_aud": None, "token_iss": None}  # No token storage means no expiration tracking
                         assert result == expected
 
                         # PKCE: Now includes code_verifier parameter and CA certificate parameters
@@ -1390,7 +1390,11 @@ class TestOAuthManager:
 
     @pytest.mark.asyncio
     async def test_refresh_token_error_handling(self):
-        """Test token refresh error handling."""
+        """Test token refresh error handling.
+        """
+        # First-Party
+        from mcpgateway.services.oauth_manager import OAuthInvalidGrantError
+
         manager = OAuthManager()
 
         credentials = {"token_url": "https://oauth.example.com/token", "client_id": "test_client"}
@@ -1398,6 +1402,7 @@ class TestOAuthManager:
         # Create mock response
         mock_response = MagicMock()
         mock_response.status_code = 400
+        mock_response.headers = {"content-type": "application/json"}
         mock_response.json = MagicMock(return_value={"error": "invalid_grant"})
         mock_response.text = '{"error": "invalid_grant"}'
         mock_response.raise_for_status = MagicMock(side_effect=httpx.HTTPStatusError("HTTP Error", request=MagicMock(), response=MagicMock(status_code=400)))
@@ -1407,10 +1412,12 @@ class TestOAuthManager:
         mock_client.post = AsyncMock(return_value=mock_response)
 
         with patch.object(manager, "_get_client", return_value=mock_client):
-            with pytest.raises(OAuthError) as exc_info:
+            # OAuthInvalidGrantError is a subclass of OAuthError — both assertions hold
+            with pytest.raises(OAuthInvalidGrantError) as exc_info:
                 await manager.refresh_token("invalid_token", credentials)
 
-            assert "Refresh token invalid or expired" in str(exc_info.value)
+            assert isinstance(exc_info.value, OAuthError)
+            assert "invalid_grant" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_refresh_token_missing_access_token(self):
@@ -1997,9 +2004,15 @@ class TestTokenStorageService:
 
     @pytest.mark.asyncio
     async def test_refresh_access_token_invalid_token(self):
-        """Test refresh with invalid refresh token."""
+        """Test refresh with invalid_grant error (permanent OAuth failure).
+
+        OAuthManager now raises OAuthInvalidGrantError (a typed subclass of OAuthError)
+        when the token endpoint explicitly returns {"error": "invalid_grant"}.
+        TokenStorageService catches that specific type and deletes the token.
+        """
         # First-Party
         from mcpgateway.db import Gateway
+        from mcpgateway.services.oauth_manager import OAuthInvalidGrantError
 
         mock_db = Mock()
         mock_db.delete = Mock()
@@ -2025,15 +2038,17 @@ class TestTokenStorageService:
                 expires_at=datetime.now(tz=timezone.utc) - timedelta(hours=1),
             )
 
-            # Mock the OAuthManager refresh_token method to raise an error
+            # Mock the OAuthManager to raise OAuthInvalidGrantError — this is the
+            # typed exception raised when the provider returns {"error":"invalid_grant"}.
+            # This is the ONLY exception type that should trigger token deletion.
             with patch("mcpgateway.services.oauth_manager.OAuthManager") as mock_oauth_manager_class:
                 mock_manager = mock_oauth_manager_class.return_value
-                mock_manager.refresh_token = AsyncMock(side_effect=Exception("Refresh token invalid or expired"))
+                mock_manager.refresh_token = AsyncMock(side_effect=OAuthInvalidGrantError("Refresh token permanently invalid (invalid_grant): {'error': 'invalid_grant'}"))
 
                 result = await service._refresh_access_token(token_record)
 
                 assert result is None
-                # Should delete the invalid token
+                # Should delete the invalid token only on OAuthInvalidGrantError
                 mock_db.delete.assert_called_once_with(token_record)
                 mock_db.commit.assert_called_once()
 
@@ -2314,3 +2329,145 @@ class TestTokenStorageService:
 
             assert result == 0
             mock_db.rollback.assert_called_once()
+
+
+class TestExtractTokenClaims:
+    """Tests for the unverified-decode JWT claim extractors used by audience learning."""
+
+    @staticmethod
+    def _make_jwt(claims: dict) -> str:
+        """Build a minimal HS256 JWT for testing; signature value is irrelevant."""
+        # Third-Party
+        import jwt as pyjwt
+
+        return pyjwt.encode(claims, "test-key-irrelevant-for-unverified-decode", algorithm="HS256")
+
+    # ---------- _extract_aud_and_iss (audience element) ----------
+
+    def test_audience_string(self):
+        """A string aud claim is returned verbatim."""
+        token = self._make_jwt({"aud": "my-client-id"})
+        assert OAuthManager._extract_aud_and_iss(token)[0] == "my-client-id"
+
+    def test_audience_list_of_strings(self):
+        """A list aud claim is returned verbatim when every item is a string."""
+        token = self._make_jwt({"aud": ["api://a", "api://b"]})
+        assert OAuthManager._extract_aud_and_iss(token)[0] == ["api://a", "api://b"]
+
+    def test_audience_missing_returns_none(self):
+        """A token without an aud claim yields None."""
+        token = self._make_jwt({"sub": "user1"})
+        assert OAuthManager._extract_aud_and_iss(token)[0] is None
+
+    def test_audience_unexpected_type_returns_none(self):
+        """A non-string, non-list aud claim is rejected (RFC 7519 §4.1.3 disallows)."""
+        token = self._make_jwt({"aud": 42})
+        assert OAuthManager._extract_aud_and_iss(token)[0] is None
+
+    def test_audience_mixed_list_returns_none(self):
+        """A list aud containing a non-string item is rejected."""
+        token = self._make_jwt({"aud": ["valid", 42]})
+        assert OAuthManager._extract_aud_and_iss(token)[0] is None
+
+    def test_audience_empty_string_token_returns_none(self):
+        """Empty access token short-circuits to None (no jwt library invocation)."""
+        assert OAuthManager._extract_aud_and_iss("")[0] is None
+
+    def test_audience_opaque_token_returns_none(self):
+        """A non-JWT (opaque) access token is silently dropped."""
+        assert OAuthManager._extract_aud_and_iss("opaque-bearer-token")[0] is None
+
+    def test_audience_malformed_jwt_returns_none(self):
+        """A string with too few segments to be a JWT is silently dropped."""
+        assert OAuthManager._extract_aud_and_iss("not.a.jwt")[0] is None
+
+    # ---------- _extract_aud_and_iss (issuer element) ----------
+
+    def test_issuer_string(self):
+        """A non-empty string iss claim is returned verbatim."""
+        token = self._make_jwt({"iss": "https://idp.example.com"})
+        assert OAuthManager._extract_aud_and_iss(token)[1] == "https://idp.example.com"
+
+    def test_issuer_missing_returns_none(self):
+        """A token without an iss claim yields None."""
+        token = self._make_jwt({"sub": "user1"})
+        assert OAuthManager._extract_aud_and_iss(token)[1] is None
+
+    def test_issuer_empty_string_returns_none(self):
+        """An empty-string iss claim is rejected (cannot be pinned to)."""
+        token = self._make_jwt({"iss": ""})
+        assert OAuthManager._extract_aud_and_iss(token)[1] is None
+
+    def test_issuer_non_string_returns_none(self):
+        """A non-string iss claim is rejected (built manually since pyjwt rejects at encode time)."""
+        # Standard
+        import base64
+        import json
+
+        header = base64.urlsafe_b64encode(json.dumps({"alg": "HS256", "typ": "JWT"}).encode()).rstrip(b"=").decode()
+        payload = base64.urlsafe_b64encode(json.dumps({"iss": 42}).encode()).rstrip(b"=").decode()
+        token = f"{header}.{payload}.invalid-signature"
+        assert OAuthManager._extract_aud_and_iss(token)[1] is None
+
+    def test_issuer_opaque_token_returns_none(self):
+        """A non-JWT (opaque) access token is silently dropped."""
+        assert OAuthManager._extract_aud_and_iss("opaque-bearer-token")[1] is None
+
+    def test_issuer_empty_token_returns_none(self):
+        """Empty access token short-circuits to None."""
+        assert OAuthManager._extract_aud_and_iss("")[1] is None
+
+    def test_decode_failure_emits_debug_breadcrumb(self, caplog):
+        """A decode failure logs at DEBUG so operators can chase 'audience never learned' reports."""
+        with caplog.at_level("DEBUG", logger="mcpgateway.services.oauth_manager"):
+            assert OAuthManager._extract_aud_and_iss("malformed.jwt.token")[0] is None
+        assert any("Unverified JWT decode failed" in record.message for record in caplog.records)
+
+    def test_opaque_token_does_not_emit_debug_for_empty_input(self, caplog):
+        """An empty access token short-circuits before the decoder, so no breadcrumb is emitted."""
+        with caplog.at_level("DEBUG", logger="mcpgateway.services.oauth_manager"):
+            assert OAuthManager._extract_aud_and_iss("")[0] is None
+        assert not any("Unverified JWT decode failed" in record.message for record in caplog.records)
+
+    # ---------- _coerce_aud_claim direct empty-shape rejection (Fix 3) ----------
+
+    @pytest.mark.parametrize(
+        "malformed_aud",
+        [
+            "",
+            "   ",
+            "\t\n",
+            [],
+            [""],
+            ["  ", "\t"],
+            ["valid", ""],
+            ["valid", "   "],
+        ],
+    )
+    def test_coerce_aud_claim_rejects_empty_shapes(self, malformed_aud):
+        """Malformed / empty aud shapes are coerced to None so they cannot overwrite
+        a previously-learned per-user audience via ``TokenStorageService.store_tokens``
+        (whose ``if learned_aud is not None`` guard would otherwise pass them through
+        and silently clobber good state).
+        """
+        assert OAuthManager._coerce_aud_claim(malformed_aud) is None
+
+    @pytest.mark.parametrize(
+        "valid_aud,expected",
+        [
+            ("api://valid-audience", "api://valid-audience"),
+            (["api://a", "api://b"], ["api://a", "api://b"]),
+            (["opaque-client-id"], ["opaque-client-id"]),
+        ],
+    )
+    def test_coerce_aud_claim_passes_valid_shapes(self, valid_aud, expected):
+        """Non-empty strings and non-empty lists of non-empty strings pass through unchanged."""
+        assert OAuthManager._coerce_aud_claim(valid_aud) == expected
+
+    @pytest.mark.parametrize(
+        "non_string_aud",
+        [None, 42, 3.14, {"k": "v"}, ["valid", 42], [None]],
+    )
+    def test_coerce_aud_claim_rejects_non_string_types(self, non_string_aud):
+        """Non-string / non-list-of-strings inputs are rejected as None."""
+        assert OAuthManager._coerce_aud_claim(non_string_aud) is None

@@ -18,7 +18,7 @@ import logging
 import re
 import secrets
 from typing import Annotated, Any, Dict
-from urllib.parse import urlparse, urlunparse
+from urllib.parse import urlparse
 
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -28,12 +28,13 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.auth import normalize_token_teams
+from mcpgateway.auth_context import get_user_email
 from mcpgateway.common.query_params import QueryErrorCode
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import Gateway, get_db
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
-from mcpgateway.middleware.token_scoping import token_scoping_middleware
+from mcpgateway.middleware.token_scoping import ResourceOwnershipResult, token_scoping_middleware
 from mcpgateway.schemas import EmailUserResponse
 from mcpgateway.services.dcr_service import DcrError, DcrService
 from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
@@ -43,6 +44,7 @@ from mcpgateway.services.token_storage_service import TokenStorageService
 # First-Party - CSP nonce support
 from mcpgateway.utils.csp_nonce import get_csp_nonce_from_request
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
+from mcpgateway.utils.oauth_resource import derive_resource_origin
 from mcpgateway.utils.paths import resolve_root_path
 from mcpgateway.utils.verify_credentials import get_auth_header_value
 
@@ -103,35 +105,24 @@ async def enforce_fetch_tools_csrf(request: Request) -> None:
         raise HTTPException(status_code=403, detail="CSRF validation failed")
 
 
-def _normalize_resource_url(url: str | None, *, preserve_query: bool = False) -> str | None:
-    """Normalize URL for use as RFC 8707 resource parameter.
+def _is_well_formed_audience(value: Any) -> bool:
+    """Return True if *value* is a usable audience claim shape.
 
-    Per RFC 8707 Section 2:
-    - resource MUST be an absolute URI (scheme required; supports both URLs and URNs)
-    - resource MUST NOT include a fragment component
-    - resource SHOULD NOT include a query component (but allowed when necessary)
+    Accepts a non-empty string or a non-empty list of non-empty strings; any
+    other shape (None, empty container, mixed types, numbers, dicts) is
+    rejected so a malformed IdP response cannot pollute persisted state.
 
     Args:
-        url: The resource URL to normalize
-        preserve_query: If True, preserve query component (for explicitly configured resources).
-                       If False, strip query (for auto-derived resources per RFC 8707 SHOULD NOT).
+        value: Candidate audience value pulled from a token claim.
 
     Returns:
-        Normalized URL suitable for RFC 8707 resource parameter, or None if invalid
+        ``True`` iff the value is a well-formed audience identifier.
     """
-    if not url:
-        return None
-    parsed = urlparse(url)
-    # RFC 8707: resource MUST be an absolute URI (requires scheme)
-    # Support both hierarchical URIs (https://...) and URNs (urn:example:app)
-    if not parsed.scheme:
-        logger.warning(f"Invalid resource URL (must be absolute URI with scheme): {url}")
-        return None
-    # Remove fragment (MUST NOT per RFC 8707)
-    # Query: strip for auto-derived (SHOULD NOT), preserve for explicit config (allowed when necessary)
-    query = parsed.query if preserve_query else ""
-    normalized = urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, query, ""))
-    return normalized
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, list):
+        return bool(value) and all(isinstance(item, str) and item.strip() for item in value)
+    return False
 
 
 async def _persist_learned_audience(gateway: Gateway, oauth_result: Dict[str, Any], db: Session) -> None:
@@ -153,53 +144,165 @@ async def _persist_learned_audience(gateway: Gateway, oauth_result: Dict[str, An
     change, an admin must clear the ``resource`` field via the gateway update
     API (which does enforce ``gateways.update``).
 
-    This is a best-effort operation: opaque tokens, missing ``aud`` claims, and
-    already-set (truthy) resources are silently skipped.  Empty strings and
-    empty lists count as unset, so an admin can clear the field to trigger
-    re-learning on the next callback.
+    Two additional defensive checks run before any write:
+
+    * **Shape validation** -- the candidate ``token_aud`` must be a non-empty
+      string or non-empty list of non-empty strings.  Anything else (numbers,
+      empty containers, mixed types) is silently dropped so a malformed IdP
+      response cannot pollute persisted state.
+    * **Issuer pinning** -- when ``oauth_config["issuer"]`` is configured, the
+      token's ``iss`` claim must match it.  This prevents a stale or misrouted
+      token from a different AS from injecting an audience for the wrong IdP.
+      The check is skipped when no issuer is configured (preserves existing
+      behavior for non-OIDC / non-discovery setups).
+
+    This is a best-effort operation: opaque tokens, missing ``aud`` claims,
+    malformed shapes, mismatched issuers, and already-set resources are all
+    silently skipped.  Each skip path emits a DEBUG log so operators tracing
+    "audience never learned" reports can distinguish the cause.
 
     Args:
         gateway: The gateway ORM object (will be mutated and flushed).
         oauth_result: The result dict from ``complete_authorization_code_flow``,
-            expected to contain ``token_aud``.
+            expected to contain ``token_aud`` and ``token_iss``.
         db: Active database session.
+
+    Returns:
+        ``None``.  Persistence is a side effect on ``gateway.oauth_config``
+        (mutated in place via reassignment) and the database session
+        (``db.flush()``).
     """
     token_aud = oauth_result.get("token_aud")
-    if token_aud is None:
+    if not _is_well_formed_audience(token_aud):
+        logger.debug("Skipping audience persistence for gateway %s: token_aud absent or malformed", gateway.name)
         return
 
     # First-write-only: do not overwrite an existing usable resource.  Empty
-    # strings and empty lists are treated as unset (Python truthiness) so an
-    # admin can clear the field via the gateway update API to trigger
+    # strings, empty lists, and lists of empty strings are treated as unset so
+    # an admin can clear the field via the gateway update API to trigger
     # re-learning on the next callback.  See docstring for the authorization
     # rationale.
     oauth_config = gateway.oauth_config or {}
-    if oauth_config.get("resource"):
+    if _is_well_formed_audience(oauth_config.get("resource")):
+        logger.debug("Skipping audience persistence for gateway %s: resource already set", gateway.name)
         return
 
-    # Store aud as-is (string or list) -- RFC 7519 allows both forms.
-    updated_config = dict(gateway.oauth_config) if gateway.oauth_config else {}
+    # Issuer pinning: refuse to persist an audience drawn from a token whose
+    # iss claim does not match the configured issuer.  Trailing slashes are
+    # stripped for comparison so ``https://idp.example.com`` and
+    # ``https://idp.example.com/`` are treated as equivalent (matches the
+    # convention used by token_validation_service for issuer comparison).
+    # See docstring for the cross-IdP bleed scenario this prevents.
+    configured_issuer = oauth_config.get("issuer")
+    if configured_issuer:
+        token_iss = oauth_result.get("token_iss")
+        if not isinstance(token_iss, str) or token_iss.rstrip("/") != configured_issuer.rstrip("/"):
+            logger.debug(
+                "Skipping audience persistence for gateway %s: token iss does not match configured issuer",
+                gateway.name,
+            )
+            return
+
+    updated_config = dict(oauth_config)
     updated_config["resource"] = token_aud
     gateway.oauth_config = updated_config
     db.flush()
     logger.info("Learned OAuth audience from IdP token for gateway %s; persisted as resource", gateway.name)
 
 
+def _popup_notification_script(nonce: str, payload: dict) -> str:
+    """Build an inline script that posts the OAuth result to window.opener and closes the popup.
+
+    When the callback page is opened inside a React UI popup, this script communicates
+    the OAuth result to the parent window via postMessage and then closes the popup.
+    When opened via direct navigation (no opener), the script is a no-op and the
+    surrounding HTML page is shown as a fallback.
+
+    Args:
+        nonce: CSP nonce for the inline script tag.
+        payload: Dict to send as the postMessage data.  Values are JSON-encoded
+            with ``<``, ``>``, and ``&`` Unicode-escaped to prevent script injection.
+
+    Returns:
+        HTML ``<script>`` tag string safe for embedding in an HTML body.
+    """
+    safe_payload = (
+        json.dumps(payload)
+        .replace("<", "\\u003c")
+        .replace(">", "\\u003e")
+        .replace("&", "\\u0026")
+        .replace("\u2028", "\\\\u2028")  # U+2028 LINE SEPARATOR
+        .replace("\u2029", "\\\\u2029")  # U+2029 PARAGRAPH SEPARATOR
+    )
+    safe_nonce = escape(nonce, quote=True)
+    # targetOrigin is "*" rather than window.location.origin because in production
+    # the API server and the React app may run on different origins (e.g.
+    # api.company.com vs app.company.com).  Using window.location.origin would
+    # cause the browser to silently drop the message.  The receiver mitigates the
+    # reduced targetOrigin restriction by validating event.source === authWindow
+    # (the exact popup reference), so only the window that initiated the flow can
+    # act on the result.
+    return f"<script nonce=\"{safe_nonce}\">(function(){{if(window.opener&&!window.opener.closed){{window.opener.postMessage({safe_payload},'*');window.close();}}}})()</script>"
+
+
+def _popup_callback_response(nonce: str, payload: dict, status_code: int = 200, extra_body: str = "") -> HTMLResponse:
+    """Build the full HTML page wrapping the popup postMessage script for an OAuth callback result.
+
+    Args:
+        nonce: CSP nonce for the inline script tag.
+        payload: Dict to send as the postMessage data (see ``_popup_notification_script``).
+        status_code: HTTP status code for the response.
+        extra_body: Optional extra HTML appended after the script tag (e.g. a visible message).
+
+    Returns:
+        HTMLResponse containing the postMessage script for the popup window.
+    """
+    title = "OAuth Authorization Successful" if payload.get("status") == "success" else "OAuth Authorization Failed"
+    return HTMLResponse(
+        content=(f"<!DOCTYPE html><html><head><title>{title}</title></head><body>" + _popup_notification_script(nonce, payload) + extra_body + "</body></html>"),
+        status_code=status_code,
+    )
+
+
 oauth_router = APIRouter(prefix="/oauth", tags=["oauth"])
 
 
 def _require_admin_user(current_user: EmailUserResponse) -> None:
-    """Require admin context for DCR management endpoints.
+    """Require un-narrowed admin context for DCR management endpoints.
 
     Args:
         current_user: Authenticated user context from RBAC dependency.
 
     Raises:
-        HTTPException: If requester is not an admin user.
+        HTTPException: If requester is not an admin user or has a narrowed token scope.
     """
     is_admin = current_user.is_admin if hasattr(current_user, "is_admin") else current_user.get("is_admin", False)
     if not is_admin:
         raise HTTPException(status_code=403, detail="Admin permissions required")
+    token_teams = current_user.token_teams if hasattr(current_user, "token_teams") else current_user.get("token_teams")
+    if token_teams is not None:
+        raise HTTPException(status_code=403, detail="DCR management requires un-narrowed admin access")
+
+
+def _require_unnarrowed_admin(request: Request, current_user: EmailUserResponse) -> None:
+    """Require un-narrowed platform admin for DCR management endpoints.
+
+    Registered OAuth clients are stored globally with no team column, so a
+    team-narrowed admin token has no coherent scope over them. Narrowed and
+    public-only admin sessions are rejected rather than silently granted
+    global visibility.
+
+    Args:
+        request: Incoming request carrying token-scoping state.
+        current_user: Authenticated user context.
+
+    Raises:
+        HTTPException: If the requester is not an admin, or is a narrowed or
+            public-only admin.
+    """
+    _require_admin_user(current_user)
+    if _resolve_token_teams_for_scope_check(request, current_user) is not None:
+        raise HTTPException(status_code=403, detail="OAuth client management requires un-narrowed admin access")
 
 
 def _resolve_token_teams_for_scope_check(request: Request, current_user: EmailUserResponse) -> list[str] | None:
@@ -227,7 +330,9 @@ def _resolve_token_teams_for_scope_check(request: Request, current_user: EmailUs
             if payload:
                 token_teams = normalize_token_teams(payload)
                 is_admin = bool(payload.get("is_admin", False) or payload.get("user", {}).get("is_admin", False))
-        # Fail closed when request.state contains an unexpected token_teams value.
+        # An unexpected token_teams value falls through to the _not_set branch below,
+        # which fails closed (empty scope) for non-admins but is treated as un-narrowed
+        # for admins.
         if token_teams is not _not_set and not (token_teams is None or isinstance(token_teams, list)):
             token_teams = _not_set
 
@@ -241,26 +346,6 @@ def _resolve_token_teams_for_scope_check(request: Request, current_user: EmailUs
     if is_admin and token_teams is None:
         return None
     return token_teams
-
-
-def _extract_user_email(current_user: EmailUserResponse | dict) -> str | None:
-    """Extract requester email from typed or dict user contexts.
-
-    Args:
-        current_user: Authenticated user context.
-
-    Returns:
-        Lowercased email when available, otherwise ``None``.
-    """
-    if hasattr(current_user, "email"):
-        email = getattr(current_user, "email", None)
-        if isinstance(email, str) and email.strip():
-            return email.strip().lower()
-    if isinstance(current_user, dict):
-        email = current_user.get("email") or current_user.get("user", {}).get("email")
-        if isinstance(email, str) and email.strip():
-            return email.strip().lower()
-    return None
 
 
 def _extract_is_admin(current_user: EmailUserResponse | dict) -> bool:
@@ -298,9 +383,11 @@ async def _enforce_gateway_access(
     Raises:
         HTTPException: If authentication is missing or access is not permitted.
     """
-    requester_email = _extract_user_email(current_user)
-    if not requester_email:
+    requester_email = get_user_email(current_user)
+    if requester_email == "unknown" or not requester_email.strip():
         raise HTTPException(status_code=401, detail="User authentication required")
+    # Normalize so comparisons against gateway_owner (also stripped/lowercased below) are case- and whitespace-insensitive
+    requester_email = requester_email.strip().lower()
 
     requester_is_admin = _extract_is_admin(current_user)
 
@@ -311,11 +398,14 @@ async def _enforce_gateway_access(
                 return
             token_teams = []
 
-        if not token_scoping_middleware._check_resource_team_ownership(
-            f"/gateways/{gateway_id}",
-            token_teams,
-            db=db,
-            _user_email=requester_email,
+        if (
+            token_scoping_middleware._check_resource_team_ownership(
+                f"/gateways/{gateway_id}",
+                token_teams,
+                db=db,
+                _user_email=requester_email,
+            )
+            is not ResourceOwnershipResult.ALLOWED
         ):
             raise HTTPException(status_code=403, detail="You don't have access to this gateway")
 
@@ -361,7 +451,16 @@ async def _enforce_gateway_access(
 
 
 @oauth_router.get("/authorize/{gateway_id}")
-async def initiate_oauth_flow(gateway_id: str, request: Request, current_user: EmailUserResponse = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> RedirectResponse:  # noqa: ARG001
+async def initiate_oauth_flow(
+    gateway_id: str,
+    request: Request,
+    current_user: EmailUserResponse = Depends(get_current_user_with_permissions),
+    db: Session = Depends(get_db),
+    popup: bool = Query(
+        default=False,
+        description="Set by the React UI when opening OAuth in a popup window; encodes a popup. prefix in the state token so the callback responds with postMessage instead of a full HTML page",
+    ),
+) -> RedirectResponse:  # noqa: ARG001
     """Initiates the OAuth 2.0 Authorization Code flow for a specified gateway.
 
     This endpoint retrieves the OAuth configuration for the given gateway, validates that
@@ -409,11 +508,17 @@ async def initiate_oauth_flow(gateway_id: str, request: Request, current_user: E
 
         oauth_config = gateway.oauth_config.copy()  # Work with a copy to avoid mutating the original
 
-        # RFC 8707: Set resource parameter for JWT access tokens.
-        # If resource was previously learned from the IdP's token aud claim, use it as-is.
-        # Otherwise derive from gateway.url for the first authorization request.
+        # RFC 8707: Set the outbound `resource` parameter for the IdP request.
+        # Admin-configured `oauth_config.resource` takes precedence; otherwise
+        # derive the gateway URL's *origin* (not full path) since most OAuth
+        # providers issue tokens with origin-level audiences.  This value is
+        # request-local — the DCR persist block below deliberately strips it
+        # before writing to shared config, and per-user inbound validation
+        # uses OAuthToken.learned_aud (populated on the callback).
         if not oauth_config.get("resource"):
-            oauth_config["resource"] = _normalize_resource_url(gateway.url)
+            origin = derive_resource_origin(gateway.url)
+            if origin:
+                oauth_config["resource"] = origin
 
         # Phase 1.4: Auto-trigger DCR if credentials are missing
         # Check if gateway has issuer but no client_id (DCR scenario)
@@ -464,9 +569,22 @@ async def initiate_oauth_flow(gateway_id: str, request: Request, current_user: E
                         oauth_config["token_url"] = metadata.get("token_endpoint")
                         logger.info(f"Discovered OAuth endpoints for {issuer}")
 
-                    # Update gateway's oauth_config and auth_type in database for future use.
-                    # Protect sensitive fields before persistence to keep service-layer behavior consistent.
-                    gateway.oauth_config = await protect_oauth_config_for_storage(oauth_config, existing_oauth_config=gateway.oauth_config)
+                    # Persist only DCR-derived fields (client credentials + AS metadata) —
+                    # deliberately strip the request-local `resource` derivation before
+                    # writing to shared config. This route enforces gateway *access* but
+                    # not gateways.update, so persisting the auto-derived resource would
+                    # let any authenticated caller pin the shared audience for all users
+                    # — the same RBAC-bypass class of bug the callback-path redesign
+                    # eliminated by moving learned audience to OAuthToken.learned_aud.
+                    # Admin-configured resource (present in gateway.oauth_config before
+                    # this request) is preserved as-is.
+                    persist_dict = dict(oauth_config)
+                    stored_resource = (gateway.oauth_config or {}).get("resource")
+                    if stored_resource is None:
+                        persist_dict.pop("resource", None)
+                    else:
+                        persist_dict["resource"] = stored_resource
+                    gateway.oauth_config = await protect_oauth_config_for_storage(persist_dict, existing_oauth_config=gateway.oauth_config)
                     gateway.auth_type = "oauth"  # Ensure auth_type is set for OAuth-protected servers
                     db.commit()
 
@@ -494,9 +612,12 @@ async def initiate_oauth_flow(gateway_id: str, request: Request, current_user: E
             raise HTTPException(status_code=400, detail="OAuth configuration missing client_id")
 
         # Initiate OAuth flow with user context (now includes PKCE from existing implementation)
-        requester_email = _extract_user_email(current_user)
+        requester_email = get_user_email(current_user)
+        # Filter out "unknown" sentinel - OAuth requires a real user identity
+        if requester_email == "unknown":
+            requester_email = None
         oauth_manager = OAuthManager(token_storage=TokenStorageService(db))
-        auth_data = await oauth_manager.initiate_authorization_code_flow(gateway_id, oauth_config, app_user_email=requester_email)
+        auth_data = await oauth_manager.initiate_authorization_code_flow(gateway_id, oauth_config, app_user_email=requester_email, popup=popup)
 
         logger.info(f"Initiated OAuth flow for gateway {SecurityValidator.sanitize_log_message(gateway_id)} by user {SecurityValidator.sanitize_log_message(requester_email)}")
 
@@ -554,6 +675,12 @@ async def oauth_callback(
         True
     """
 
+    # Determine early whether this callback was initiated from the React UI popup.
+    # The authorize endpoint prefixes the state token with "popup." when popup=True,
+    # so we can detect it here without any additional storage lookups.
+    is_popup = bool(state and isinstance(state, str) and state.startswith("popup."))
+    csp_nonce = get_csp_nonce_from_request(request)
+
     try:
         # Get root path for URL construction
         root_path = resolve_root_path(request) if request else ""
@@ -565,6 +692,12 @@ async def oauth_callback(
             description_text = escape(error_description or "OAuth provider returned an authorization error.")
             # Sanitize untrusted query parameters before logging to prevent log injection
             logger.warning(f"OAuth provider returned error callback: error={sanitize_for_log(error)}, description={sanitize_for_log(error_description)}")
+            if is_popup:
+                return _popup_callback_response(
+                    csp_nonce,
+                    {"type": "oauth_callback", "status": "error", "error": error, "errorDescription": error_description or "OAuth provider returned an authorization error."},
+                    status_code=400,
+                )
             return HTMLResponse(
                 content=f"""
                 <!DOCTYPE html>
@@ -583,6 +716,10 @@ async def oauth_callback(
 
         if not code:
             logger.warning("OAuth callback missing authorization code")
+            if is_popup:
+                return _popup_callback_response(
+                    csp_nonce, {"type": "oauth_callback", "status": "error", "error": "missing_code", "errorDescription": "Missing authorization code in callback response."}, status_code=400
+                )
             return HTMLResponse(
                 content=f"""
                 <!DOCTYPE html>
@@ -604,6 +741,10 @@ async def oauth_callback(
             Returns:
                 HTMLResponse: A 400 error page describing the invalid state.
             """
+            if is_popup:
+                return _popup_callback_response(
+                    csp_nonce, {"type": "oauth_callback", "status": "error", "error": "invalid_state", "errorDescription": "Invalid OAuth state parameter."}, status_code=400
+                )
             return HTMLResponse(
                 content=f"""
                 <!DOCTYPE html>
@@ -642,30 +783,38 @@ async def oauth_callback(
 
         # Complete OAuth flow
 
-        # RFC 8707: Set resource parameter for the token exchange request.
-        # If resource was previously learned from the IdP's token aud claim, use it as-is.
-        # Otherwise derive from gateway.url for the first authorization request.
+        # RFC 8707: Set the outbound `resource` parameter for the token exchange.
+        # Admin-configured `oauth_config.resource` takes precedence; otherwise
+        # derive the gateway URL's *origin* (not full path).  Request-local
+        # only — not persisted (see derive_resource_origin docstring).
         oauth_config_with_resource = gateway.oauth_config.copy()
         if not oauth_config_with_resource.get("resource"):
-            oauth_config_with_resource["resource"] = _normalize_resource_url(gateway.url)
+            origin = derive_resource_origin(gateway.url)
+            if origin:
+                oauth_config_with_resource["resource"] = origin
 
         result = await oauth_manager.complete_authorization_code_flow(
             gateway_id, code, state, oauth_config_with_resource, ca_certificate=gateway.ca_certificate, client_cert=gateway.client_cert, client_key=gateway.client_key
         )
 
-        # Learn the IdP's audience mapping from the token and persist as resource.
-        # RFC 8707 Section 2: "The authorization server may use the exact resource value
-        # as the audience or it may map from that value to a more general URI or abstract
-        # identifier for the given resource."  We persist whatever the IdP chose so that
-        # subsequent token validation matches.
-        await _persist_learned_audience(gateway, result, db)
+        # Token's aud/iss claims (best-effort, unverified) are persisted per-user by
+        # TokenStorageService.store_tokens as OAuthToken.learned_aud / learned_iss so
+        # subsequent validation can be authoritative for THIS USER without letting
+        # anyone with gateway access mutate globally-shared gateway config. See
+        # OAuthManager.complete_authorization_code_flow and
+        # token_validation_service._validate_audience for the full trust model.
 
         logger.info(f"Completed OAuth flow for gateway {SecurityValidator.sanitize_log_message(gateway_id)}, user {SecurityValidator.sanitize_log_message(str(result.get('user_id')))}")
 
-        # Return success page with option to return to admin
-        # Get CSP nonce for inline script
-        csp_nonce = get_csp_nonce_from_request(request)
+        # React UI popup: post result to parent window and close.
+        if is_popup:
+            return _popup_callback_response(
+                csp_nonce,
+                {"type": "oauth_callback", "status": "success", "gatewayId": str(gateway_id), "gatewayName": str(gateway.name)},
+                extra_body="<p>Authorization successful. This window will close automatically.</p>",
+            )
 
+        # Legacy admin UI: return full page with fetch-tools button.
         # Generate CSRF token early so it can be embedded in the JS literal
         csrf_token = request.cookies.get(ADMIN_CSRF_COOKIE_NAME, "")
         if not isinstance(csrf_token, str) or not re.match(r"^[A-Za-z0-9_=-]{32,}$", csrf_token):
@@ -735,7 +884,7 @@ async def oauth_callback(
                         try {{
                             const response = await fetch('{safe_root_path}/oauth/fetch-tools/{escape(str(gateway_id), quote=True)}', {{
                                 method: 'POST',
-                                credentials: 'include',  # pragma: allowlist secret
+                                credentials: 'include',
                                 headers: {{
                                     'Accept': 'application/json',
                                     'X-CSRF-Token': {json.dumps(csrf_token)}
@@ -793,6 +942,8 @@ async def oauth_callback(
 
     except OAuthError as e:
         logger.error(f"OAuth callback failed: {str(e)}")
+        if is_popup:
+            return _popup_callback_response(csp_nonce, {"type": "oauth_callback", "status": "error", "error": "oauth_error", "errorDescription": str(e)}, status_code=400)
         return HTMLResponse(
             content=f"""
         <!DOCTYPE html>
@@ -827,6 +978,10 @@ async def oauth_callback(
 
     except Exception as e:
         logger.error(f"Unexpected error in OAuth callback: {str(e)}")
+        if is_popup:
+            return _popup_callback_response(
+                csp_nonce, {"type": "oauth_callback", "status": "error", "error": "server_error", "errorDescription": "An unexpected error occurred during authorization."}, status_code=500
+            )
         return HTMLResponse(
             content=f"""
         <!DOCTYPE html>
@@ -956,7 +1111,10 @@ async def fetch_tools_after_oauth(
         if not gateway:
             raise HTTPException(status_code=404, detail=f"Gateway not found: {gateway_id}")
 
-        requester_email = current_user.get("email") if isinstance(current_user, dict) else getattr(current_user, "email", None)
+        requester_email = get_user_email(current_user)
+        # Filter out "unknown" sentinel - OAuth requires a real user identity
+        if requester_email == "unknown":
+            requester_email = None
         await _enforce_gateway_access(gateway_id, gateway, current_user, db, request=request)
 
         # First-Party
@@ -985,13 +1143,14 @@ async def fetch_tools_after_oauth(
 
 
 @oauth_router.get("/registered-clients")
-async def list_registered_oauth_clients(current_user: EmailUserResponse = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> Dict[str, Any]:  # noqa: ARG001
+async def list_registered_oauth_clients(request: Request, current_user: EmailUserResponse = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> Dict[str, Any]:  # noqa: ARG001
     """List all registered OAuth clients (created via DCR).
 
     This endpoint shows OAuth clients that were dynamically registered with external
     Authorization Servers using RFC 7591 Dynamic Client Registration.
 
     Args:
+        request: The FastAPI request object.
         current_user: The authenticated user (admin access required)
         db: Database session
 
@@ -1001,7 +1160,7 @@ async def list_registered_oauth_clients(current_user: EmailUserResponse = Depend
     Raises:
         HTTPException: If user lacks permissions or database error occurs
     """
-    _require_admin_user(current_user)
+    _require_unnarrowed_admin(request, current_user)
 
     try:
         # First-Party
@@ -1039,6 +1198,7 @@ async def list_registered_oauth_clients(current_user: EmailUserResponse = Depend
 @oauth_router.get("/registered-clients/{gateway_id}")
 async def get_registered_client_for_gateway(
     gateway_id: str,
+    request: Request,
     current_user: EmailUserResponse = Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),  # noqa: ARG001
 ) -> Dict[str, Any]:
@@ -1046,6 +1206,7 @@ async def get_registered_client_for_gateway(
 
     Args:
         gateway_id: The gateway ID to lookup
+        request: The FastAPI request object.
         current_user: The authenticated user
         db: Database session
 
@@ -1055,7 +1216,7 @@ async def get_registered_client_for_gateway(
     Raises:
         HTTPException: If gateway or registered client not found
     """
-    _require_admin_user(current_user)
+    _require_unnarrowed_admin(request, current_user)
 
     try:
         # First-Party
@@ -1090,7 +1251,7 @@ async def get_registered_client_for_gateway(
 
 
 @oauth_router.delete("/registered-clients/{client_id}")
-async def delete_registered_client(client_id: str, current_user: EmailUserResponse = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> Dict[str, Any]:  # noqa: ARG001
+async def delete_registered_client(client_id: str, request: Request, current_user: EmailUserResponse = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> Dict[str, Any]:  # noqa: ARG001
     """Delete a registered OAuth client.
 
     This will revoke the client registration locally. Note: This does not automatically
@@ -1099,6 +1260,7 @@ async def delete_registered_client(client_id: str, current_user: EmailUserRespon
 
     Args:
         client_id: The registered client ID to delete
+        request: The FastAPI request object.
         current_user: The authenticated user (admin access required)
         db: Database session
 
@@ -1108,7 +1270,7 @@ async def delete_registered_client(client_id: str, current_user: EmailUserRespon
     Raises:
         HTTPException: If client not found or deletion fails
     """
-    _require_admin_user(current_user)
+    _require_unnarrowed_admin(request, current_user)
 
     try:
         # First-Party

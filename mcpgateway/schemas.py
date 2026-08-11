@@ -3878,7 +3878,22 @@ class GatewayRead(BaseModelWithConfigDict):
     _normalize_visibility = field_validator("visibility", mode="before")(classmethod(lambda cls, v: _coerce_visibility(v)))
 
     # Tool count (populated from the tools relationship; 0 when not loaded)
-    tool_count: int = Field(default=0, description="Number of tools registered for this gateway")
+    tool_count: int = Field(
+        default=0,
+        description="Total tools registered for this gateway, including disabled ones. Not filtered per-tool by caller visibility. 0 may mean none registered or the field wasn't populated on this response path.",
+    )
+
+    # Prompt count (populated from the prompts relationship; 0 when not loaded)
+    prompt_count: int = Field(
+        default=0,
+        description="Total prompts registered for this gateway, including disabled ones. Not filtered per-prompt by caller visibility. 0 may mean none registered or the field wasn't populated on this response path.",
+    )
+
+    # Resource count (populated from the resources relationship; 0 when not loaded)
+    resource_count: int = Field(
+        default=0,
+        description="Total resources registered for this gateway, including disabled ones. Not filtered per-resource by caller visibility. 0 may mean none registered or the field wasn't populated on this response path.",
+    )
 
     # Tools skipped during gateway import due to validation errors (transient, not persisted)
     skipped_tools: List[str] = Field(default_factory=list, description="Tools skipped during gateway import due to validation errors")
@@ -4269,6 +4284,23 @@ class EventMessage(BaseModelWithConfigDict):
             str: ISO 8601 formatted string in UTC, ending with 'Z'.
         """
         return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+class RootCreate(BaseModelWithConfigDict):
+    """Management-only schema for root creation."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    uri: str = Field(..., min_length=1, max_length=2048)
+    name: Optional[str] = Field(default=None, max_length=255)
+
+
+class RootUpdate(BaseModelWithConfigDict):
+    """Management-only schema for root updates."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: Optional[str] = Field(default=None, max_length=255)
 
 
 class AdminToolCreate(BaseModelWithConfigDict):
@@ -6516,6 +6548,39 @@ class SuccessResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+# Hard ceiling on how many people can be seeded in one create-team call. The real
+# limit is the team's own max_members, checked server-side; this only stops an
+# unbounded request from being accepted when that limit is configured as unlimited.
+# Configurable via the MAX_TEAM_MEMBER_SEEDS environment variable (default 500),
+# resolved at import time.
+MAX_TEAM_MEMBER_SEEDS = settings.max_team_member_seeds
+
+
+class TeamMemberSeed(BaseModel):
+    """Schema for a member to seed into a team at creation time.
+
+    The server decides how each seed is applied: an email that matches an
+    active user becomes a membership directly, any other address gets an
+    invitation instead. Callers do not need to know which is which.
+
+    Attributes:
+        email: Email address of the person to add or invite
+        role: Role to assign in the team
+
+    Examples:
+        >>> seed = TeamMemberSeed(email="alice@example.com")
+        >>> seed.email
+        'alice@example.com'
+        >>> seed.role
+        'member'
+        >>> TeamMemberSeed(email="lead@example.com", role="owner").role
+        'owner'
+    """
+
+    email: EmailStr = Field(..., description="Email address of the person to add or invite")
+    role: Literal["owner", "member"] = Field("member", description="Role to assign in the team")
+
+
 class TeamCreateRequest(BaseModel):
     """Schema for creating a new team.
 
@@ -6525,6 +6590,7 @@ class TeamCreateRequest(BaseModel):
         description: Team description
         visibility: Team visibility level
         max_members: Maximum number of members allowed
+        members: Optional people to seed the team with (added or invited by the server)
 
     Examples:
         >>> request = TeamCreateRequest(
@@ -6537,6 +6603,19 @@ class TeamCreateRequest(BaseModel):
         'private'
         >>> request.slug is None
         True
+        >>> request.members is None
+        True
+        >>>
+        >>> # Seed the team with members in the same request
+        >>> seeded = TeamCreateRequest(
+        ...     name="Engineering Team",
+        ...     members=[
+        ...         {"email": "alice@example.com", "role": "owner"},
+        ...         {"email": "external@partner.com"},
+        ...     ],
+        ... )
+        >>> [m.role for m in seeded.members]
+        ['owner', 'member']
         >>>
         >>> # Test with all fields
         >>> full_request = TeamCreateRequest(
@@ -6578,6 +6657,11 @@ class TeamCreateRequest(BaseModel):
     description: Optional[str] = Field(None, max_length=1000, description="Team description")
     visibility: Literal["private", "public"] = Field("private", description="Team visibility level")
     max_members: Optional[int] = Field(default=None, ge=1, description="Maximum number of team members. If omitted, the team inherits the global MAX_MEMBERS_PER_TEAM setting at check time.")
+    members: Optional[List[TeamMemberSeed]] = Field(
+        default=None,
+        max_length=MAX_TEAM_MEMBER_SEEDS,
+        description="People to seed the team with. Each entry is routed by the server: active users become members directly, everyone else is sent an invitation.",
+    )
 
     @field_validator("name")
     @classmethod
@@ -6772,6 +6856,84 @@ class TeamResponse(BaseModel):
     created_at: datetime = Field(..., description="Team creation timestamp")
     updated_at: datetime = Field(..., description="Last update timestamp")
     is_active: bool = Field(..., description="Whether the team is active")
+
+
+class SeededMemberResponse(BaseModel):
+    """Schema for a member added directly during team creation.
+
+    Attributes:
+        email: Email address of the member
+        role: Role assigned in the team
+
+    Examples:
+        >>> added = SeededMemberResponse(email="alice@example.com", role="member")
+        >>> added.email
+        'alice@example.com'
+    """
+
+    email: str = Field(..., description="Email address of the member")
+    role: Literal["owner", "member"] = Field(..., description="Role assigned in the team")
+
+
+class SeededInvitationResponse(BaseModel):
+    """Schema for an invitation sent during team creation.
+
+    Attributes:
+        email: Email address the invitation was sent to
+        role: Role the invitee will have once they accept
+        invitation_id: UUID of the created invitation
+
+    Examples:
+        >>> sent = SeededInvitationResponse(
+        ...     email="external@partner.com",
+        ...     role="member",
+        ...     invitation_id="inv-123",
+        ... )
+        >>> sent.invitation_id
+        'inv-123'
+    """
+
+    email: str = Field(..., description="Email address the invitation was sent to")
+    role: Literal["owner", "member"] = Field(..., description="Role the invitee will have once they accept")
+    invitation_id: str = Field(..., description="UUID of the created invitation")
+
+
+class TeamCreateResponse(TeamResponse):
+    """Schema for the team creation response.
+
+    A superset of :class:`TeamResponse`: every existing field stays where it
+    was, with two extra arrays reporting how each seeded member was resolved,
+    so a create-team form can confirm "3 added, 2 invited" without re-querying.
+    Both arrays are empty when no members were seeded.
+
+    Attributes:
+        members_added: Members added to the team directly
+        invitations_sent: Invitations created for addresses that are not active users
+
+    Examples:
+        >>> response = TeamCreateResponse(
+        ...     id="team-123",
+        ...     name="Engineering Team",
+        ...     slug="engineering-team",
+        ...     created_by="admin@example.com",
+        ...     is_personal=False,
+        ...     visibility="private",
+        ...     member_count=2,
+        ...     created_at=datetime.now(timezone.utc),
+        ...     updated_at=datetime.now(timezone.utc),
+        ...     is_active=True,
+        ...     members_added=[{"email": "alice@example.com", "role": "member"}],
+        ... )
+        >>> response.name
+        'Engineering Team'
+        >>> len(response.members_added)
+        1
+        >>> response.invitations_sent
+        []
+    """
+
+    members_added: List[SeededMemberResponse] = Field(default_factory=list, description="Members added to the team directly")
+    invitations_sent: List[SeededInvitationResponse] = Field(default_factory=list, description="Invitations created for addresses that are not active users")
 
 
 class TeamMemberResponse(BaseModel):
@@ -8001,6 +8163,32 @@ class CatalogServerRegisterRequest(BaseModel):
     name: Optional[str] = Field(None, description="Optional custom name for the server")
     api_key: Optional[str] = Field(None, description="API key if required")
     oauth_credentials: Optional[Dict[str, Any]] = Field(None, description="OAuth credentials if required")
+
+
+class CatalogServerRegisterBody(BaseModel):
+    """Body for the v1 catalog register endpoint.
+
+    The catalog server id comes from the path; this body carries only the
+    optional overrides. OAuth configuration is out of scope here (#5967).
+    """
+
+    name: Optional[str] = Field(None, description="Optional custom name for the server")
+    api_key: Optional[str] = Field(None, max_length=4096, description="API key if the catalog entry requires one")
+
+    @field_validator("name")
+    @classmethod
+    def validate_name_field(cls, v: Optional[str]) -> Optional[str]:
+        """Ensure the override name is safe to render and store.
+
+        Args:
+            v: Server name override to validate.
+
+        Returns:
+            The validated name or None.
+        """
+        if v is None:
+            return v
+        return SecurityValidator.validate_name(v, "Server name")
 
 
 class CatalogServerRegisterResponse(BaseModel):

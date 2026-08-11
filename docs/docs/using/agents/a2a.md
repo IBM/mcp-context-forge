@@ -427,6 +427,29 @@ Associate A2A agents with virtual servers to:
 | `MCPGATEWAY_A2A_MAX_RETRIES` | Retry attempts | `3` |
 | `MCPGATEWAY_A2A_METRICS_ENABLED` | Enable metrics collection | `true` |
 
+## Required Permissions
+
+Every A2A endpoint is guarded by both layers of the security model: a token scope check
+(Layer 1) followed by an RBAC check (Layer 2). A caller needs the permission below granted
+by *both* — an API token scoped to `tools.read` cannot reach `/a2a` even if its user holds
+the `a2a.read` role.
+
+| Endpoint | Method | Permission |
+|----------|--------|------------|
+| `/a2a` | GET | `a2a.read` |
+| `/a2a/{agent_id}` | GET | `a2a.read` |
+| `/a2a` | POST | `a2a.create` |
+| `/a2a/{agent_id}` | PUT | `a2a.update` |
+| `/a2a/{agent_id}/state` | POST | `a2a.update` |
+| `/a2a/{agent_id}/toggle` | POST | `a2a.update` (deprecated, use `/state`) |
+| `/a2a/{agent_id}` | DELETE | `a2a.delete` |
+| `/a2a/invoke` | POST | `a2a.invoke` |
+| `/a2a/{agent_name}/invoke` | POST | `a2a.invoke` |
+| `/a2a/{agent_name}/jsonrpc` | POST | `a2a.invoke` |
+
+A token whose scopes are empty inherits its permissions from RBAC at runtime rather than
+being denied — see [Token Scope Semantics](../../manage/rbac.md#token-scope-semantics).
+
 ## Security Considerations
 
 - **Encrypted Storage**: Agent credentials are encrypted in the database
@@ -453,9 +476,12 @@ Before running the demo agent, ensure the following configuration:
 
   Restart ContextForge after adding this. The default blocks loopback addresses as an SSRF safeguard. This is intentional for production, but must be opted into locally.
 
-2. **Pass your admin email at runtime**
+2. **Pass an admin identity at runtime**
 
-  The script creates a JWT signed with your instance's secret. The token subject must match a user in the database (typically your `PLATFORM_ADMIN_EMAIL`). See the "Running the Demo" section below for the actual commands.
+  The script creates a JWT signed with your instance's secret. The token identity must resolve to a user in the
+  database. The helper commands below pass your `PLATFORM_ADMIN_EMAIL` as a legacy email subject; service-issued tokens
+  now use opaque UUID subjects for token-catalog API tokens platform-wide and carry the human email in signed metadata
+  such as `user.email`. See the "Running the Demo" section below for the actual commands.
 
 #### Running the Demo
 
@@ -464,7 +490,7 @@ Before running the demo agent, ensure the following configuration:
 make dev
 
 # Terminal 2: Start the demo agent (auto-registers with ContextForge)
-# Override the token subject if your admin email differs from the default:
+# Override the admin email if it differs from the default:
 #   export PLATFORM_ADMIN_EMAIL=you@example.com
 uv run python scripts/demo_a2a_agent.py
 

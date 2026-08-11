@@ -15,7 +15,7 @@ from datetime import datetime, timezone
 import logging
 from pathlib import Path
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 # Third-Party
 from sqlalchemy import select
@@ -24,6 +24,7 @@ import yaml
 
 # First-Party
 from mcpgateway.config import settings
+from mcpgateway.utils.admin_check import is_admin_bypass_granted
 from mcpgateway.schemas import (
     CatalogBulkRegisterRequest,
     CatalogBulkRegisterResponse,
@@ -39,6 +40,10 @@ from mcpgateway.utils.create_slug import slugify
 from mcpgateway.validation.tags import validate_tags_field
 
 logger = logging.getLogger(__name__)
+
+# Business-failure messages the v1 router maps to HTTP 404/409.
+CATALOG_REGISTER_NOT_FOUND_MSG = "Server not found in catalog"
+CATALOG_REGISTER_ALREADY_REGISTERED_MSG = "Server already registered"
 
 
 class CatalogService:
@@ -106,19 +111,23 @@ class CatalogService:
         except ImportError:
             return None
 
-    async def get_catalog_servers(self, request: CatalogListRequest, db) -> CatalogListResponse:
+    async def get_catalog_servers(self, request: CatalogListRequest, db, user_email: Optional[str] = None, token_teams: Optional[List[str]] = None) -> CatalogListResponse:
         """Get filtered list of catalog servers.
 
         Args:
             request: Filter criteria
             db: Database session
+            user_email: Optional requester email for scoped registration state
+            token_teams: Optional requester team scope for scoped registration state
 
         Returns:
             Filtered catalog servers response
         """
+        is_scoped_request = user_email is not None or token_teams is not None
+
         # Check cache first
         cache = self._get_registry_cache()
-        if cache:
+        if cache and not is_scoped_request:
             filters_hash = cache.hash_filters(
                 category=request.category,
                 auth_type=request.auth_type,
@@ -148,12 +157,26 @@ class CatalogService:
                 # Query all gateways (enabled and disabled) to properly track registration status
                 # Include auth_type and oauth_config to distinguish OAuth servers needing setup
                 # from OAuth servers that were manually disabled after configuration
-                stmt = select(DbGateway.url, DbGateway.enabled, DbGateway.auth_type, DbGateway.oauth_config)
+                stmt = select(
+                    DbGateway.url,
+                    DbGateway.enabled,
+                    DbGateway.auth_type,
+                    DbGateway.oauth_config,
+                    DbGateway.visibility,
+                    DbGateway.team_id,
+                    DbGateway.owner_email,
+                )
                 result = db.execute(stmt)
                 registered_urls = set()
                 oauth_disabled_urls = set()
                 for row in result:
-                    url, enabled, auth_type, oauth_config = row
+                    if len(row) == 4:
+                        url, enabled, auth_type, oauth_config = row
+                        visibility, team_id, owner_email = "public", None, None
+                    else:
+                        url, enabled, auth_type, oauth_config, visibility, team_id, owner_email = row
+                    if is_scoped_request and not self._can_view_registered_gateway(db, visibility, team_id, owner_email, user_email, token_teams):
+                        continue
                     registered_urls.add(url)
                     # Only mark as requiring OAuth config if:
                     # - disabled AND OAuth auth_type AND oauth_config is empty/None
@@ -218,7 +241,7 @@ class CatalogService:
         response = CatalogListResponse(servers=paginated, total=total, categories=all_categories, auth_types=all_auth_types, providers=all_providers, all_tags=all_tags)
 
         # Store in cache
-        if cache:
+        if cache and not is_scoped_request:
             try:
                 cache_data = response.model_dump(mode="json")
                 await cache.set("catalog", cache_data, filters_hash)
@@ -227,13 +250,56 @@ class CatalogService:
 
         return response
 
-    async def register_catalog_server(self, catalog_id: str, request: Optional[CatalogServerRegisterRequest], db: Session) -> CatalogServerRegisterResponse:
+    @staticmethod
+    def _can_view_registered_gateway(
+        db: Session,
+        visibility: str,
+        team_id: Optional[str],
+        owner_email: Optional[str],
+        user_email: Optional[str],
+        token_teams: Optional[List[str]],
+    ) -> bool:
+        """Return whether a registered gateway is visible to a scoped catalog caller."""
+        if visibility == "public":
+            return True
+
+        if is_admin_bypass_granted(db, user_email, token_teams):
+            if visibility == "private":
+                return bool(owner_email and owner_email == user_email)
+            return True
+
+        if not user_email:
+            return False
+
+        if token_teams is not None and len(token_teams) == 0:
+            return False
+
+        if visibility == "private":
+            return bool(owner_email and owner_email == user_email)
+
+        if visibility == "team" and team_id:
+            return bool(token_teams and team_id in token_teams)
+
+        return False
+
+    async def register_catalog_server(
+        self,
+        catalog_id: str,
+        request: Optional[CatalogServerRegisterRequest],
+        db: Session,
+        created_by: Optional[str] = None,
+        owner_email: Optional[str] = None,
+        team_id: Optional[str] = None,
+    ) -> CatalogServerRegisterResponse:
         """Register a catalog server as a gateway.
 
         Args:
             catalog_id: Catalog server ID
             request: Registration request with optional overrides
             db: Database session
+            created_by: Identity of the caller creating the gateway
+            owner_email: Email of the gateway owner
+            team_id: Team the gateway belongs to
 
         Returns:
             Registration response
@@ -251,7 +317,7 @@ class CatalogService:
                     break
 
             if not server_data:
-                return CatalogServerRegisterResponse(success=False, server_id="", message="Server not found in catalog", error="Invalid catalog server ID")
+                return CatalogServerRegisterResponse(success=False, server_id="", message=CATALOG_REGISTER_NOT_FOUND_MSG, error="Invalid catalog server ID")
 
             # Check if already registered
             try:
@@ -266,7 +332,9 @@ class CatalogService:
                 existing = None
 
             if existing:
-                return CatalogServerRegisterResponse(success=False, server_id=str(existing.id), message="Server already registered", error="This server is already registered in the system")
+                return CatalogServerRegisterResponse(
+                    success=False, server_id=str(existing.id), message=CATALOG_REGISTER_ALREADY_REGISTERED_MSG, error="This server is already registered in the system"
+                )
 
             # Prepare gateway creation request using proper schema
             # First-Party
@@ -350,6 +418,9 @@ class CatalogService:
                     enabled=False,  # Disabled until OAuth is configured
                     created_via="catalog",
                     visibility="public",
+                    created_by=created_by,
+                    owner_email=owner_email,
+                    team_id=team_id,
                     version=1,
                 )
 
@@ -417,6 +488,9 @@ class CatalogService:
                 gateway=gateway_create,
                 created_via="catalog",
                 visibility="public",  # Catalog servers should be public
+                created_by=created_by,
+                owner_email=owner_email,
+                team_id=team_id,
                 initialize_timeout=settings.httpx_admin_read_timeout,
             )
 

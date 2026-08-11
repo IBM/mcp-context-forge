@@ -309,7 +309,6 @@ plugins:
       algorithm: fixed_window
       backend: redis
       redis_url: redis://localhost:6379/0
-      redis_fallback: true
 
   # Rate limiter (sliding_window algorithm, Redis backend)
   - name: RateLimiterPlugin_redis_sliding_window
@@ -330,7 +329,6 @@ plugins:
       algorithm: sliding_window
       backend: redis
       redis_url: redis://localhost:6379/0
-      redis_fallback: true
 
   # Rate limiter (token_bucket algorithm, Redis backend)
   - name: RateLimiterPlugin_redis_token_bucket
@@ -351,7 +349,6 @@ plugins:
       algorithm: token_bucket
       backend: redis
       redis_url: redis://localhost:6379/0
-      redis_fallback: true
 
   # Schema guard for tool args/results (subset JSONSchema)
   - name: SchemaGuardPlugin
@@ -769,7 +766,7 @@ plugins:
 
   # SQL Sanitizer - detect dangerous SQL patterns in inputs
   - name: SQLSanitizer
-    kind: plugins.sql_sanitizer.sql_sanitizer.SQLSanitizerPlugin
+    kind: cpex_sql_sanitizer.sql_sanitizer.SQLSanitizerPlugin
     description: Detects risky SQL and optionally strips comments or blocks
     version: 0.1.0
     author: ContextForge

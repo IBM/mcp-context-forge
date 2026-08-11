@@ -23,7 +23,7 @@ import pytest
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import Permissions
-from mcpgateway.middleware.token_scoping import _get_llm_permission_patterns, TokenScopingMiddleware
+from mcpgateway.middleware.token_scoping import ResourceOwnershipResult, _get_llm_permission_patterns, TokenScopingMiddleware
 
 
 def _trusted_internal_runtime_headers() -> dict[str, str]:
@@ -181,7 +181,7 @@ class TestTokenScopingMiddleware:
         with (
             patch.object(middleware, "_extract_token_scopes", new=AsyncMock(return_value=payload)),
             patch.object(middleware, "_check_team_membership", return_value=True),
-            patch.object(middleware, "_check_resource_team_ownership", return_value=True),
+            patch.object(middleware, "_check_resource_team_ownership", return_value=ResourceOwnershipResult.ALLOWED),
             patch.object(middleware, "_check_server_restriction", return_value=True),
             patch.object(middleware, "_check_permission_restrictions", return_value=False),
         ):
@@ -250,6 +250,12 @@ class TestTokenScopingMiddleware:
         result = middleware._check_permission_restrictions("/tools", "POST", ["tools.write"])
         assert result == False, "Should reject non-canonical 'tools.write' permission"
 
+    def test_plugin_discovery_requires_plugins_read(self, middleware):
+        """Versioned plugin discovery uses explicit least-privilege permission."""
+        assert middleware._check_permission_restrictions("/v1/plugins", "GET", [Permissions.PLUGINS_READ]) is True
+        assert middleware._check_permission_restrictions("/plugins", "GET", [Permissions.PLUGINS_READ]) is True
+        assert middleware._check_permission_restrictions("/v1/plugins", "GET", [Permissions.TOOLS_READ]) is False
+
     @pytest.mark.asyncio
     async def test_rpc_endpoint_allowed_with_servers_use_permission(self, middleware):
         """POST /rpc must be reachable for tokens that carry servers.use.
@@ -305,6 +311,45 @@ class TestTokenScopingMiddleware:
         assert result is False, "POST /mcp should be denied when token has only non-MCP permissions"
 
     @pytest.mark.asyncio
+    async def test_catalog_endpoint_allowed_with_servers_read_permission(self, middleware):
+        """GET /catalog must be reachable for tokens that carry servers.read.
+
+        Regression: same root cause as /rpc and /mcp — the endpoint's RBAC is
+        servers.read, but without a _PERMISSION_PATTERNS entry scoped tokens were
+        default-denied at the middleware layer.
+        """
+        result = middleware._check_permission_restrictions("/catalog", "GET", [Permissions.SERVERS_READ])
+        assert result is True, "GET /catalog should be allowed when token has servers.read"
+
+        result = middleware._check_permission_restrictions("/catalog", "GET", ["*"])
+        assert result is True, "GET /catalog should be allowed with wildcard permission"
+
+        result = middleware._check_permission_restrictions("/catalog", "GET", [Permissions.TOOLS_READ])
+        assert result is False, "GET /catalog should be denied when token lacks servers.read"
+
+    @pytest.mark.asyncio
+    async def test_catalog_register_endpoint_requires_servers_create(self, middleware):
+        """POST /catalog/{id}/register is gated on servers.create, with /v1 normalization.
+
+        Layer 1 here gates on servers.create only: the pattern list maps one permission
+        per route. The route's stacked decorators additionally enforce gateways.create.
+        """
+        result = middleware._check_permission_restrictions("/catalog/asana/register", "POST", [Permissions.SERVERS_CREATE])
+        assert result is True, "POST /catalog/{id}/register should be allowed when token has servers.create"
+
+        result = middleware._check_permission_restrictions("/catalog/asana/register", "POST", ["*"])
+        assert result is True, "POST /catalog/{id}/register should be allowed with wildcard permission"
+
+        result = middleware._check_permission_restrictions("/catalog/asana/register", "POST", [Permissions.SERVERS_READ])
+        assert result is False, "POST /catalog/{id}/register should be denied for a read-only scoped token"
+
+        result = middleware._check_permission_restrictions("/v1/catalog/asana/register", "POST", [Permissions.SERVERS_CREATE])
+        assert result is True, "Versioned path should normalize to /catalog before pattern matching"
+
+        result = middleware._check_permission_restrictions("/catalog/foo", "POST", [Permissions.SERVERS_CREATE])
+        assert result is False, "POST /catalog/{id} without the /register suffix must stay default-denied"
+
+    @pytest.mark.asyncio
     async def test_sse_endpoint_allowed_with_servers_use_permission(self, middleware):
         """GET /sse must be reachable for tokens that carry servers.use.
 
@@ -324,6 +369,76 @@ class TestTokenScopingMiddleware:
 
         result = middleware._check_permission_restrictions("/sse", "GET", ["*"])
         assert result is True, "GET /sse should be allowed with wildcard permission"
+
+    @pytest.mark.parametrize(
+        "method,path,permission",
+        [
+            # Every route registered on a2a_router (main.py) with the permission its
+            # @require_permission decorator demands. An unmapped route is default-denied,
+            # so a gap here silently 403s validly-scoped tokens.
+            ("GET", "/a2a", Permissions.A2A_READ),
+            ("GET", "/a2a/", Permissions.A2A_READ),
+            ("GET", "/a2a/agent-1", Permissions.A2A_READ),
+            ("POST", "/a2a", Permissions.A2A_CREATE),
+            ("POST", "/a2a/", Permissions.A2A_CREATE),
+            ("PUT", "/a2a/agent-1", Permissions.A2A_UPDATE),
+            ("POST", "/a2a/agent-1/state", Permissions.A2A_UPDATE),
+            ("POST", "/a2a/agent-1/toggle", Permissions.A2A_UPDATE),
+            ("DELETE", "/a2a/agent-1", Permissions.A2A_DELETE),
+            ("POST", "/a2a/invoke", Permissions.A2A_INVOKE),
+            ("POST", "/a2a/my-agent/invoke", Permissions.A2A_INVOKE),
+            ("POST", "/a2a/my-agent/jsonrpc", Permissions.A2A_INVOKE),
+        ],
+    )
+    def test_a2a_routes_map_to_declared_permission(self, middleware, method, path, permission):
+        """Each A2A route resolves to the permission its endpoint decorator requires."""
+        assert middleware._check_permission_restrictions(path, method, [permission]) is True
+
+    @pytest.mark.parametrize(
+        "method,path,permission",
+        [
+            ("GET", "/a2a", Permissions.A2A_CREATE),
+            ("POST", "/a2a", Permissions.A2A_READ),
+            ("DELETE", "/a2a/agent-1", Permissions.A2A_UPDATE),
+            ("POST", "/a2a/my-agent/invoke", Permissions.A2A_READ),
+            ("POST", "/a2a/my-agent/jsonrpc", Permissions.A2A_UPDATE),
+        ],
+    )
+    def test_a2a_routes_reject_wrong_permission(self, middleware, method, path, permission):
+        """A token scoped to a different A2A action is denied."""
+        assert middleware._check_permission_restrictions(path, method, [permission]) is False
+
+    @pytest.mark.parametrize(
+        "token_scopes",
+        [
+            ["tools.execute"],
+            ["tools.read"],
+            ["resources.read"],
+            ["prompts.read"],
+            ["tools.read", "resources.read"],
+        ],
+    )
+    @pytest.mark.parametrize("path", ["/sse", "/servers/s1/sse", "/servers/s1/message", "/rpc", "/mcp"])
+    def test_mcp_method_tokens_keep_transport_access(self, middleware, token_scopes, path):
+        """MCP method permissions imply transport access at this layer.
+
+        These paths map to servers.use. The RBAC decorators guard the same endpoints with
+        @require_permission("servers.use"), so both layers must agree — see
+        TestTokenScopeGrants in test_rbac.py for the decorator side of this contract.
+        """
+        method = "GET" if path in ("/sse", "/servers/s1/sse") else "POST"
+        assert middleware._check_permission_restrictions(path, method, token_scopes) is True
+
+    @pytest.mark.parametrize("token_scopes", [["a2a.read"], ["admin.user_management"], ["gateways.read"]])
+    def test_non_mcp_tokens_denied_transport_access(self, middleware, token_scopes):
+        """Tokens without MCP method permissions get no transport compensation."""
+        assert middleware._check_permission_restrictions("/sse", "GET", token_scopes) is False
+
+    def test_a2a_category_wildcard_covers_all_a2a_routes(self, middleware):
+        """An `a2a.*` scope grants every A2A route but nothing outside the category."""
+        assert middleware._check_permission_restrictions("/a2a", "GET", ["a2a.*"]) is True
+        assert middleware._check_permission_restrictions("/a2a/my-agent/invoke", "POST", ["a2a.*"]) is True
+        assert middleware._check_permission_restrictions("/tools", "GET", ["a2a.*"]) is False
 
     @pytest.mark.asyncio
     async def test_admin_permissions_use_canonical_constants(self, middleware):
@@ -523,7 +638,7 @@ class TestTokenScopingMiddleware:
 
             expected_response = Response(status_code=200, content="ok")
             call_next = AsyncMock(return_value=expected_response)
-            response = await middleware(mock_request, call_next)
+            await middleware(mock_request, call_next)
 
             call_next.assert_called_once()
 
@@ -565,7 +680,7 @@ class TestTokenScopingMiddleware:
 
             expected_response = Response(status_code=200, content="ok")
             call_next = AsyncMock(return_value=expected_response)
-            response = await middleware(mock_request, call_next)
+            await middleware(mock_request, call_next)
 
             call_next.assert_called_once()
 
@@ -607,7 +722,7 @@ class TestTokenScopingMiddleware:
 
             expected_response = Response(status_code=200, content="ok")
             call_next = AsyncMock(return_value=expected_response)
-            response = await middleware(mock_request, call_next)
+            await middleware(mock_request, call_next)
 
             call_next.assert_called_once()
 
@@ -712,6 +827,36 @@ class TestTokenScopingMiddleware:
         result = middleware._check_team_membership(payload, db=MagicMock())
         assert result is False
 
+    def test_check_team_membership_uses_signed_user_email_for_uuid_subject(self, middleware, monkeypatch):
+        """UUID-sub API tokens validate membership with the signed email metadata."""
+        payload = {
+            "sub": "11111111-1111-1111-1111-111111111111",
+            "user": {"email": "user@example.com"},
+            "teams": ["team-1"],
+        }
+
+        cache = MagicMock()
+        cache.get_team_membership_valid_sync.return_value = None
+        monkeypatch.setattr("mcpgateway.cache.auth_cache.get_auth_cache", lambda: cache)
+
+        db = MagicMock()
+        db.execute.return_value.scalars.return_value.all.return_value = ["team-1"]
+
+        result = middleware._check_team_membership(payload, db=db)
+
+        assert result is True
+        cache.get_team_membership_valid_sync.assert_called_once_with("user@example.com", ["team-1"])
+        cache.set_team_membership_valid_sync.assert_called_once_with("user@example.com", ["team-1"], True)
+
+    def test_check_team_membership_does_not_treat_uuid_sub_as_email(self, middleware):
+        """A UUID subject without signed email metadata is not a user email."""
+        payload = {
+            "sub": "11111111-1111-1111-1111-111111111111",
+            "teams": ["team-1"],
+        }
+
+        assert middleware._check_team_membership(payload) is False
+
     @pytest.mark.asyncio
     async def test_session_token_with_teams_claim_still_resolves_from_db(self, middleware, mock_request):
         """Session tokens always resolve teams from DB even when a teams claim is present."""
@@ -732,7 +877,7 @@ class TestTokenScopingMiddleware:
                 # Mock _check_team_membership to avoid DB query
                 with patch.object(middleware, "_check_team_membership", return_value=True):
                     # Mock _check_resource_team_ownership to avoid DB query
-                    with patch.object(middleware, "_check_resource_team_ownership", return_value=True):
+                    with patch.object(middleware, "_check_resource_team_ownership", return_value=ResourceOwnershipResult.ALLOWED):
                         call_next = AsyncMock(return_value="success")
 
                         result = await middleware(mock_request, call_next)
@@ -828,7 +973,7 @@ class TestTokenScopingMiddleware:
                     # Mock _check_team_membership to avoid DB query
                     with patch.object(middleware, "_check_team_membership", return_value=True):
                         # Mock _check_resource_team_ownership to avoid DB query
-                        with patch.object(middleware, "_check_resource_team_ownership", return_value=True):
+                        with patch.object(middleware, "_check_resource_team_ownership", return_value=ResourceOwnershipResult.ALLOWED):
                             call_next = AsyncMock(return_value="success")
 
                             result = await middleware(mock_request, call_next)
@@ -842,6 +987,43 @@ class TestTokenScopingMiddleware:
 
                             # Verify _resolve_teams_from_db was NOT called
                             mock_resolve_teams.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_api_token_uuid_subject_uses_signed_user_email_for_ownership(self, middleware, mock_request, monkeypatch):
+        """API tokens can use opaque subjects without breaking email-keyed ownership checks."""
+        mock_request.url.path = "/servers"
+        mock_request.method = "GET"
+        mock_request.headers = {"Authorization": "Bearer api_token"}
+
+        api_payload = {
+            "sub": "11111111-1111-1111-1111-111111111111",
+            "user": {"email": "user@example.com"},
+            "token_use": "api",
+            "teams": ["team-1"],
+            "scopes": {"permissions": ["*"]},
+        }
+        db = MagicMock()
+
+        def _get_db():
+            yield db
+
+        monkeypatch.setattr("mcpgateway.db.get_db", _get_db)
+
+        with (
+            patch.object(middleware, "_extract_token_scopes", return_value=api_payload),
+            patch("mcpgateway.middleware.token_scoping.normalize_token_teams", return_value=["team-1"]),
+            patch.object(middleware, "_check_team_membership", return_value=True) as mock_membership,
+            patch.object(middleware, "_check_resource_team_ownership", return_value=ResourceOwnershipResult.ALLOWED) as mock_ownership,
+            patch.object(middleware, "_check_server_restriction", return_value=True),
+            patch.object(middleware, "_check_permission_restrictions", return_value=True),
+        ):
+            call_next = AsyncMock(return_value="success")
+
+            result = await middleware(mock_request, call_next)
+
+            assert result == "success"
+            mock_membership.assert_called_once_with(api_payload, db=db)
+            mock_ownership.assert_called_once_with("/servers", ["team-1"], db=db, _user_email="user@example.com")
 
     @pytest.mark.asyncio
     async def test_legacy_token_without_token_use_uses_embedded_teams(self, middleware, mock_request):
@@ -863,7 +1045,7 @@ class TestTokenScopingMiddleware:
                     # Mock _check_team_membership to avoid DB query
                     with patch.object(middleware, "_check_team_membership", return_value=True):
                         # Mock _check_resource_team_ownership to avoid DB query
-                        with patch.object(middleware, "_check_resource_team_ownership", return_value=True):
+                        with patch.object(middleware, "_check_resource_team_ownership", return_value=ResourceOwnershipResult.ALLOWED):
                             call_next = AsyncMock(return_value="success")
 
                             result = await middleware(mock_request, call_next)
@@ -894,13 +1076,55 @@ class TestTokenScopingMiddleware:
 
         with patch.object(middleware, "_extract_token_scopes", return_value=session_payload):
             with patch("mcpgateway.middleware.token_scoping.resolve_session_teams", new=AsyncMock(return_value=["team-1"])) as mock_resolve:
-                with patch.object(middleware, "_check_resource_team_ownership", return_value=True):
+                with patch.object(middleware, "_check_resource_team_ownership", return_value=ResourceOwnershipResult.ALLOWED):
                     call_next = AsyncMock(return_value="success")
 
                     result = await middleware(mock_request, call_next)
 
                     assert result == "success"
                     mock_resolve.assert_awaited_once_with(session_payload, "user@example.com", {})
+
+    @pytest.mark.asyncio
+    async def test_uuid_only_session_token_resolves_email_before_session_scope(self, middleware, mock_request, monkeypatch):
+        """Production session tokens use UUID sub without email metadata and must still get DB-backed scope."""
+        mock_request.url.path = "/servers/a1b2c3d4-e5f6-0000-1111-222233334444"
+        mock_request.method = "GET"
+        mock_request.headers = {"Authorization": "Bearer session_token"}
+
+        user_id = "11111111-1111-1111-1111-111111111111"
+        session_payload = {
+            "sub": user_id,
+            "token_use": "session",
+            "teams": ["team-1"],
+            "scopes": {"permissions": ["*"]},
+        }
+        db = MagicMock()
+
+        def _get_db():
+            yield db
+
+        monkeypatch.setattr("mcpgateway.db.get_db", _get_db)
+        monkeypatch.setattr("mcpgateway.auth._get_email_by_id_sync", MagicMock(return_value="user@example.com"))
+
+        with (
+            patch.object(middleware, "_extract_token_scopes", return_value=session_payload),
+            patch("mcpgateway.middleware.token_scoping.resolve_session_teams", new=AsyncMock(return_value=["team-1"])) as mock_resolve,
+            patch.object(middleware, "_check_resource_team_ownership", return_value=ResourceOwnershipResult.ALLOWED) as mock_ownership,
+            patch.object(middleware, "_check_server_restriction", return_value=True),
+            patch.object(middleware, "_check_permission_restrictions", return_value=True),
+        ):
+            call_next = AsyncMock(return_value="success")
+
+            result = await middleware(mock_request, call_next)
+
+            assert result == "success"
+            mock_resolve.assert_awaited_once_with(session_payload, "user@example.com", {})
+            mock_ownership.assert_called_once_with(
+                "/servers/a1b2c3d4-e5f6-0000-1111-222233334444",
+                ["team-1"],
+                db=db,
+                _user_email="user@example.com",
+            )
 
     @pytest.mark.asyncio
     async def test_session_token_skips_membership_check_on_stale_jwt_teams(self, middleware, mock_request):
@@ -922,7 +1146,7 @@ class TestTokenScopingMiddleware:
             # resolve_session_teams returns [] (empty intersection)
             with patch("mcpgateway.auth._resolve_teams_from_db", return_value=["db-team"]) as mock_resolve:
                 with patch.object(middleware, "_check_team_membership", return_value=False) as mock_membership:
-                    with patch.object(middleware, "_check_resource_team_ownership", return_value=True):
+                    with patch.object(middleware, "_check_resource_team_ownership", return_value=ResourceOwnershipResult.ALLOWED):
                         call_next = AsyncMock(return_value="success")
 
                         result = await middleware(mock_request, call_next)
@@ -1008,15 +1232,15 @@ class TestTokenScopingMiddleware:
         tool.team_id = "team-1"
         db.execute.return_value.scalar_one_or_none.return_value = tool
 
-        assert middleware._check_resource_team_ownership("/tools/abc", ["team-1"], db=db, _user_email="user@example.com") is True
-        assert middleware._check_resource_team_ownership("/tools/abc", [], db=db, _user_email="user@example.com") is False
+        assert middleware._check_resource_team_ownership("/tools/abc", ["team-1"], db=db, _user_email="user@example.com") is ResourceOwnershipResult.ALLOWED
+        assert middleware._check_resource_team_ownership("/tools/abc", [], db=db, _user_email="user@example.com") is ResourceOwnershipResult.DENIED
 
         resource = MagicMock()
         resource.visibility = "private"
         resource.owner_email = "user@example.com"
         db.execute.return_value.scalar_one_or_none.return_value = resource
 
-        assert middleware._check_resource_team_ownership("/resources/abc", ["team-1"], db=db, _user_email="user@example.com") is True
+        assert middleware._check_resource_team_ownership("/resources/abc", ["team-1"], db=db, _user_email="user@example.com") is ResourceOwnershipResult.ALLOWED
 
         # Test that GET /tools requires TOOLS_READ permission specifically
         assert middleware._check_permission_restrictions("/tools", "GET", [Permissions.TOOLS_CREATE]) == False
@@ -1358,7 +1582,7 @@ class TestTokenScopingMiddleware:
             db=mock_db,
             _user_email="owner@example.com",
         )
-        assert result is True, "Owner should access their private resource"
+        assert result is ResourceOwnershipResult.ALLOWED, "Owner should access their private resource"
 
         # Test: Non-owner in same team CANNOT access private resource
         result = middleware._check_resource_team_ownership(
@@ -1367,7 +1591,7 @@ class TestTokenScopingMiddleware:
             db=mock_db,
             _user_email="teammate@example.com",
         )
-        assert result is False, "Non-owner teammate should NOT access private resource"
+        assert result is ResourceOwnershipResult.DENIED, "Non-owner teammate should NOT access private resource"
 
         # Test: Non-owner in different team CANNOT access private resource
         result = middleware._check_resource_team_ownership(
@@ -1376,7 +1600,7 @@ class TestTokenScopingMiddleware:
             db=mock_db,
             _user_email="outsider@example.com",
         )
-        assert result is False, "Non-owner outsider should NOT access private resource"
+        assert result is ResourceOwnershipResult.DENIED, "Non-owner outsider should NOT access private resource"
 
     @pytest.mark.asyncio
     async def test_team_visibility_allows_team_members(self, middleware):
@@ -1397,7 +1621,7 @@ class TestTokenScopingMiddleware:
             db=mock_db,
             _user_email="teammate@example.com",
         )
-        assert result is True, "Team member should access team resource"
+        assert result is ResourceOwnershipResult.ALLOWED, "Team member should access team resource"
 
         # Test: Non-team member cannot access team resource
         result = middleware._check_resource_team_ownership(
@@ -1406,7 +1630,7 @@ class TestTokenScopingMiddleware:
             db=mock_db,
             _user_email="outsider@example.com",
         )
-        assert result is False, "Non-team member should NOT access team resource"
+        assert result is ResourceOwnershipResult.DENIED, "Non-team member should NOT access team resource"
 
     @pytest.mark.asyncio
     async def test_public_visibility_allows_all(self, middleware):
@@ -1427,7 +1651,7 @@ class TestTokenScopingMiddleware:
             db=mock_db,
             _user_email="anyone@example.com",
         )
-        assert result is True, "Any user should access public resource"
+        assert result is ResourceOwnershipResult.ALLOWED, "Any user should access public resource"
 
         # Test: Public-only token (empty teams) can access public resource
         result = middleware._check_resource_team_ownership(
@@ -1436,7 +1660,7 @@ class TestTokenScopingMiddleware:
             db=mock_db,
             _user_email="public-user@example.com",
         )
-        assert result is True, "Public-only token should access public resource"
+        assert result is ResourceOwnershipResult.ALLOWED, "Public-only token should access public resource"
 
     @pytest.mark.asyncio
     async def test_admin_bypass_skips_team_validation(self, middleware, mock_request):
@@ -1495,7 +1719,7 @@ class TestTokenScopingMiddleware:
         with (
             patch.object(middleware, "_extract_token_scopes", return_value=payload),
             patch.object(middleware, "_check_team_membership", return_value=True),
-            patch.object(middleware, "_check_resource_team_ownership", return_value=True),
+            patch.object(middleware, "_check_resource_team_ownership", return_value=ResourceOwnershipResult.ALLOWED),
             patch("mcpgateway.auth._resolve_teams_from_db", new=AsyncMock(return_value=["team-1"])),
         ):
             call_next = AsyncMock(return_value="ok")
@@ -1522,7 +1746,7 @@ class TestTokenScopingMiddleware:
         with (
             patch.object(middleware, "_extract_token_scopes", return_value=payload),
             patch.object(middleware, "_check_team_membership", return_value=True),
-            patch.object(middleware, "_check_resource_team_ownership", return_value=True),
+            patch.object(middleware, "_check_resource_team_ownership", return_value=ResourceOwnershipResult.ALLOWED),
             patch.object(middleware, "_check_server_restriction", return_value=True),
             patch.object(middleware, "_check_permission_restrictions", return_value=True),
         ):
@@ -1601,18 +1825,18 @@ def test_check_resource_team_ownership_prompt_and_gateway():
     prompt.visibility = "team"
     prompt.team_id = "team-1"
     db.execute.return_value.scalar_one_or_none.return_value = prompt
-    assert middleware._check_resource_team_ownership("/prompts/a1b2c3d4", ["team-1"], db=db, _user_email="user@example.com") is True
+    assert middleware._check_resource_team_ownership("/prompts/a1b2c3d4", ["team-1"], db=db, _user_email="user@example.com") is ResourceOwnershipResult.ALLOWED
 
     # Gateway: private visibility with owner match should allow
     gateway = MagicMock()
     gateway.visibility = "private"
     gateway.owner_email = "owner@example.com"
     db.execute.return_value.scalar_one_or_none.return_value = gateway
-    assert middleware._check_resource_team_ownership("/gateways/a1b2c3d4", ["team-1"], db=db, _user_email="owner@example.com") is True
+    assert middleware._check_resource_team_ownership("/gateways/a1b2c3d4", ["team-1"], db=db, _user_email="owner@example.com") is ResourceOwnershipResult.ALLOWED
 
     # Missing resources must fail closed
     db.execute.return_value.scalar_one_or_none.return_value = None
-    assert middleware._check_resource_team_ownership("/resources/a1b2c3d4", ["team-1"], db=db, _user_email="user@example.com") is False
+    assert middleware._check_resource_team_ownership("/resources/a1b2c3d4", ["team-1"], db=db, _user_email="user@example.com") is ResourceOwnershipResult.DENIED
 
 
 def test_check_resource_team_ownership_normalizes_team_dict_and_allows_team_resource():
@@ -1625,7 +1849,7 @@ def test_check_resource_team_ownership_normalizes_team_dict_and_allows_team_reso
     resource.team_id = "team-1"
     db.execute.return_value.scalar_one_or_none.return_value = resource
 
-    assert middleware._check_resource_team_ownership("/resources/a1b2c3d4", [{"id": "team-1"}], db=db, _user_email="user@example.com") is True
+    assert middleware._check_resource_team_ownership("/resources/a1b2c3d4", [{"id": "team-1"}], db=db, _user_email="user@example.com") is ResourceOwnershipResult.ALLOWED
 
 
 def test_check_resource_team_ownership_owns_session_commits_and_closes(monkeypatch):
@@ -1642,7 +1866,7 @@ def test_check_resource_team_ownership_owns_session_commits_and_closes(monkeypat
 
     monkeypatch.setattr("mcpgateway.db.get_db", _get_db)
 
-    assert middleware._check_resource_team_ownership("/resources/a1b2c3d4", ["team-1"], _user_email="user@example.com") is True
+    assert middleware._check_resource_team_ownership("/resources/a1b2c3d4", ["team-1"], _user_email="user@example.com") is ResourceOwnershipResult.ALLOWED
     db.commit.assert_called_once()
     db.close.assert_called_once()
 
@@ -1657,7 +1881,7 @@ def test_check_resource_team_ownership_public_only_token_denied_for_team_prompt(
     prompt.team_id = "team-1"
     db.execute.return_value.scalar_one_or_none.return_value = prompt
 
-    assert middleware._check_resource_team_ownership("/prompts/a1b2c3d4", [], db=db, _user_email="user@example.com") is False
+    assert middleware._check_resource_team_ownership("/prompts/a1b2c3d4", [], db=db, _user_email="user@example.com") is ResourceOwnershipResult.DENIED
 
 
 def test_check_resource_team_ownership_prompt_unknown_visibility_denies():
@@ -1670,7 +1894,7 @@ def test_check_resource_team_ownership_prompt_unknown_visibility_denies():
     prompt.team_id = "team-1"
     db.execute.return_value.scalar_one_or_none.return_value = prompt
 
-    assert middleware._check_resource_team_ownership("/prompts/a1b2c3d4", ["team-1"], db=db, _user_email="user@example.com") is False
+    assert middleware._check_resource_team_ownership("/prompts/a1b2c3d4", ["team-1"], db=db, _user_email="user@example.com") is ResourceOwnershipResult.DENIED
 
 
 def test_check_resource_team_ownership_gateway_team_allows_matching_team():
@@ -1683,7 +1907,7 @@ def test_check_resource_team_ownership_gateway_team_allows_matching_team():
     gateway.team_id = "team-1"
     db.execute.return_value.scalar_one_or_none.return_value = gateway
 
-    assert middleware._check_resource_team_ownership("/gateways/a1b2c3d4", ["team-1"], db=db, _user_email="user@example.com") is True
+    assert middleware._check_resource_team_ownership("/gateways/a1b2c3d4", ["team-1"], db=db, _user_email="user@example.com") is ResourceOwnershipResult.ALLOWED
 
 
 def test_check_resource_team_ownership_gateway_private_denies_non_owner():
@@ -1697,7 +1921,7 @@ def test_check_resource_team_ownership_gateway_private_denies_non_owner():
     gateway.team_id = "team-1"
     db.execute.return_value.scalar_one_or_none.return_value = gateway
 
-    assert middleware._check_resource_team_ownership("/gateways/a1b2c3d4", ["team-1"], db=db, _user_email="other@example.com") is False
+    assert middleware._check_resource_team_ownership("/gateways/a1b2c3d4", ["team-1"], db=db, _user_email="other@example.com") is ResourceOwnershipResult.DENIED
 
 
 def test_check_resource_team_ownership_unknown_resource_type_denies(monkeypatch):
@@ -1712,7 +1936,7 @@ def test_check_resource_team_ownership_unknown_resource_type_denies(monkeypatch)
     db = MagicMock()
 
     monkeypatch.setattr(token_scoping_module, "_RESOURCE_PATTERNS", [(re.compile(r"/weird/?([a-f0-9\\-]+)"), "weird")])
-    assert middleware._check_resource_team_ownership("/weird/a1b2c3d4", ["team-1"], db=db, _user_email="user@example.com") is False
+    assert middleware._check_resource_team_ownership("/weird/a1b2c3d4", ["team-1"], db=db, _user_email="user@example.com") is ResourceOwnershipResult.DENIED
 
 
 def test_check_resource_team_ownership_tool_private_and_unknown():
@@ -1724,12 +1948,12 @@ def test_check_resource_team_ownership_tool_private_and_unknown():
     tool.visibility = "private"
     tool.owner_email = "owner@example.com"
     db.execute.return_value.scalar_one_or_none.return_value = tool
-    assert middleware._check_resource_team_ownership("/tools/a1b2c3d4", ["team-1"], db=db, _user_email="owner@example.com") is True
-    assert middleware._check_resource_team_ownership("/tools/a1b2c3d4", ["team-1"], db=db, _user_email="other@example.com") is False
+    assert middleware._check_resource_team_ownership("/tools/a1b2c3d4", ["team-1"], db=db, _user_email="owner@example.com") is ResourceOwnershipResult.ALLOWED
+    assert middleware._check_resource_team_ownership("/tools/a1b2c3d4", ["team-1"], db=db, _user_email="other@example.com") is ResourceOwnershipResult.DENIED
 
     # Unknown visibility denies
     tool.visibility = "mystery"
-    assert middleware._check_resource_team_ownership("/tools/a1b2c3d4", ["team-1"], db=db, _user_email="owner@example.com") is False
+    assert middleware._check_resource_team_ownership("/tools/a1b2c3d4", ["team-1"], db=db, _user_email="owner@example.com") is ResourceOwnershipResult.DENIED
 
 
 def test_check_resource_team_ownership_resource_branches():
@@ -1740,31 +1964,31 @@ def test_check_resource_team_ownership_resource_branches():
     resource = MagicMock()
     resource.visibility = "public"
     db.execute.return_value.scalar_one_or_none.return_value = resource
-    assert middleware._check_resource_team_ownership("/resources/a1b2c3d4", ["team-1"], db=db, _user_email="user@example.com") is True
+    assert middleware._check_resource_team_ownership("/resources/a1b2c3d4", ["team-1"], db=db, _user_email="user@example.com") is ResourceOwnershipResult.ALLOWED
 
     # Public-only token denied for team resource
     resource.visibility = "team"
     resource.team_id = "team-1"
-    assert middleware._check_resource_team_ownership("/resources/a1b2c3d4", [], db=db, _user_email="user@example.com") is False
+    assert middleware._check_resource_team_ownership("/resources/a1b2c3d4", [], db=db, _user_email="user@example.com") is ResourceOwnershipResult.DENIED
 
     # Team mismatch denied
-    assert middleware._check_resource_team_ownership("/resources/a1b2c3d4", ["team-2"], db=db, _user_email="user@example.com") is False
+    assert middleware._check_resource_team_ownership("/resources/a1b2c3d4", ["team-2"], db=db, _user_email="user@example.com") is ResourceOwnershipResult.DENIED
 
     # Private resource denied for non-owner
     resource.visibility = "private"
     resource.owner_email = "owner@example.com"
-    assert middleware._check_resource_team_ownership("/resources/a1b2c3d4", ["team-1"], db=db, _user_email="other@example.com") is False
+    assert middleware._check_resource_team_ownership("/resources/a1b2c3d4", ["team-1"], db=db, _user_email="other@example.com") is ResourceOwnershipResult.DENIED
 
     # Unknown visibility denies
     resource.visibility = "mystery"
-    assert middleware._check_resource_team_ownership("/resources/a1b2c3d4", ["team-1"], db=db, _user_email="user@example.com") is False
+    assert middleware._check_resource_team_ownership("/resources/a1b2c3d4", ["team-1"], db=db, _user_email="user@example.com") is ResourceOwnershipResult.DENIED
 
 
-def test_check_resource_team_ownership_exception_returns_false():
+def test_check_resource_team_ownership_exception_returns_denied():
     middleware = TokenScopingMiddleware()
     db = MagicMock()
     db.execute.side_effect = RuntimeError("boom")
-    assert middleware._check_resource_team_ownership("/tools/a1b2c3d4", ["team-1"], db=db, _user_email="user@example.com") is False
+    assert middleware._check_resource_team_ownership("/tools/a1b2c3d4", ["team-1"], db=db, _user_email="user@example.com") is ResourceOwnershipResult.DENIED
 
 
 def _make_request(path: str = "/servers/server-123") -> MagicMock:
@@ -1818,12 +2042,111 @@ async def test_team_scoped_resource_denied(monkeypatch):
     with (
         patch.object(middleware, "_extract_token_scopes", return_value=payload),
         patch.object(middleware, "_check_team_membership", return_value=True),
-        patch.object(middleware, "_check_resource_team_ownership", return_value=False),
+        patch.object(middleware, "_check_resource_team_ownership", return_value=ResourceOwnershipResult.DENIED),
     ):
         call_next = AsyncMock()
         response = await middleware(mock_request, call_next)
         assert response.status_code == status.HTTP_403_FORBIDDEN
         call_next.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("path", "token_teams"),
+    [
+        ("/servers/aabbccddeeff00112233445566778899", ["team-1"]),
+        ("/gateways/aabbccddeeff00112233445566778899", ["team-1"]),
+        ("/servers/aabbccddeeff00112233445566778899", []),
+        ("/gateways/aabbccddeeff00112233445566778899", []),
+        ("/servers/aabbccdd-eeff-0011-2233-445566778899", ["team-1"]),
+        ("/gateways/aabbccdd-eeff-0011-2233-445566778899", []),
+        ("/v1/servers/aabbccddeeff00112233445566778899", ["team-1"]),
+        ("/v1/gateways/aabbccddeeff00112233445566778899", []),
+    ],
+)
+async def test_missing_targeted_delete_returns_404(monkeypatch, path, token_teams):
+    middleware = TokenScopingMiddleware()
+    request = _make_request(path)
+    request.method = "DELETE"
+    db = MagicMock()
+    db.execute.return_value.scalar_one_or_none.return_value = None
+    payload = {"sub": "user@example.com", "teams": token_teams, "scopes": {"permissions": ["*"]}}
+
+    monkeypatch.setattr("mcpgateway.db.get_db", lambda: iter([db]))
+    with (
+        patch.object(middleware, "_extract_token_scopes", return_value=payload),
+        patch.object(middleware, "_check_team_membership", return_value=True),
+    ):
+        response = await middleware(request, AsyncMock())
+
+    assert response.status_code == status.HTTP_404_NOT_FOUND
+
+
+@pytest.mark.asyncio
+async def test_missing_targeted_delete_under_app_root_path_returns_404(monkeypatch):
+    middleware = TokenScopingMiddleware()
+    request = _make_request("/forge/v1/servers/aabbccddeeff00112233445566778899")
+    request.method = "DELETE"
+    db = MagicMock()
+    db.execute.return_value.scalar_one_or_none.return_value = None
+    payload = {"sub": "user@example.com", "teams": ["team-1"], "scopes": {"permissions": ["*"]}}
+
+    monkeypatch.setattr("mcpgateway.middleware.token_scoping.settings.app_root_path", "/forge")
+    monkeypatch.setattr("mcpgateway.db.get_db", lambda: iter([db]))
+    with (
+        patch.object(middleware, "_extract_token_scopes", return_value=payload),
+        patch.object(middleware, "_check_team_membership", return_value=True),
+    ):
+        response = await middleware(request, AsyncMock())
+
+    assert response.status_code == status.HTTP_404_NOT_FOUND
+
+
+@pytest.mark.asyncio
+async def test_targeted_delete_database_error_returns_403(monkeypatch):
+    middleware = TokenScopingMiddleware()
+    request = _make_request("/servers/aabbccddeeff00112233445566778899")
+    request.method = "DELETE"
+    db = MagicMock()
+    db.execute.side_effect = RuntimeError("boom")
+    payload = {"sub": "user@example.com", "teams": ["team-1"], "scopes": {"permissions": ["*"]}}
+
+    monkeypatch.setattr("mcpgateway.db.get_db", lambda: iter([db]))
+    with (
+        patch.object(middleware, "_extract_token_scopes", return_value=payload),
+        patch.object(middleware, "_check_team_membership", return_value=True),
+    ):
+        response = await middleware(request, AsyncMock())
+
+    assert response.status_code == status.HTTP_403_FORBIDDEN
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method", "path", "ownership_result"),
+    [
+        ("DELETE", "/servers/aabbccddeeff00112233445566778899", ResourceOwnershipResult.DENIED),
+        ("DELETE", "/gateways/aabbccddeeff00112233445566778899", ResourceOwnershipResult.DENIED),
+        ("GET", "/servers/aabbccddeeff00112233445566778899", ResourceOwnershipResult.NOT_FOUND),
+        ("PUT", "/gateways/aabbccddeeff00112233445566778899", ResourceOwnershipResult.NOT_FOUND),
+        ("DELETE", "/servers/aabbccddeeff00112233445566778899/sse", ResourceOwnershipResult.NOT_FOUND),
+        ("DELETE", "/tools/aabbccddeeff00112233445566778899", ResourceOwnershipResult.DENIED),
+    ],
+)
+async def test_non_targeted_or_denied_ownership_returns_403(method, path, ownership_result):
+    middleware = TokenScopingMiddleware()
+    request = _make_request(path)
+    request.method = method
+    payload = {"sub": "user@example.com", "teams": [], "scopes": {"permissions": ["*"]}}
+
+    with (
+        patch.object(middleware, "_extract_token_scopes", return_value=payload),
+        patch.object(middleware, "_check_team_membership", return_value=True),
+        patch.object(middleware, "_check_resource_team_ownership", return_value=ownership_result),
+    ):
+        response = await middleware(request, AsyncMock())
+
+    assert response.status_code == status.HTTP_403_FORBIDDEN
 
 
 class TestRuntimeMcpTransportCompensation:
@@ -2002,9 +2325,66 @@ async def test_public_only_resource_denied():
     with (
         patch.object(middleware, "_extract_token_scopes", return_value=payload),
         patch.object(middleware, "_check_team_membership", return_value=True),
-        patch.object(middleware, "_check_resource_team_ownership", return_value=False),
+        patch.object(middleware, "_check_resource_team_ownership", return_value=ResourceOwnershipResult.DENIED),
     ):
         call_next = AsyncMock()
         response = await middleware(mock_request, call_next)
         assert response.status_code == status.HTTP_403_FORBIDDEN
         call_next.assert_not_called()
+
+
+class TestUnifiedSearchPathScoping:
+    """Regression tests: /v1/search must be reachable by validly-scoped tokens.
+
+    /v1/search is authenticated-only at the middleware layer (it spans many entity
+    types, each with its own @require_permission). Before the fix, the unmapped
+    path hit the default-deny branch and any non-wildcard scoped token got 403
+    before the handler ran.
+    """
+
+    def test_permission_check_allows_search_for_scoped_token(self):
+        """A non-wildcard scoped token is allowed past the permission check for /search."""
+        middleware = TokenScopingMiddleware()
+
+        # /v1/search normalizes to /search; allowed regardless of the specific scope.
+        assert middleware._check_permission_restrictions("/v1/search", "GET", ["tools.read"]) is True
+        assert middleware._check_permission_restrictions("/search", "GET", ["tools.read"]) is True
+        # Even a scope unrelated to any searchable entity is allowed here; the
+        # handler's per-entity RBAC + _safe_entity_search filter results downstream.
+        assert middleware._check_permission_restrictions("/search", "GET", ["admin.metrics"]) is True
+
+    def test_admin_search_still_requires_admin_dashboard(self):
+        """The allow is scoped to /search only; /admin/search keeps its admin gate."""
+        middleware = TokenScopingMiddleware()
+
+        # Unchanged: /admin/search still requires admin.dashboard, not tools.read.
+        assert middleware._check_permission_restrictions("/admin/search", "GET", ["tools.read"]) is False
+        assert middleware._check_permission_restrictions("/admin/search", "GET", ["admin.dashboard"]) is True
+
+    def test_real_scoped_jwt_reaches_search_handler(self):
+        """A real signed scoped JWT passes the live middleware for /v1/search (200), while an unmapped path still 403s."""
+        # Third-Party
+        from fastapi import FastAPI  # pylint: disable=import-outside-toplevel
+        from fastapi.testclient import TestClient  # pylint: disable=import-outside-toplevel
+        from starlette.middleware.base import BaseHTTPMiddleware  # pylint: disable=import-outside-toplevel
+
+        # First-Party
+        from tests.helpers.auth import make_test_jwt  # pylint: disable=import-outside-toplevel
+
+        app = FastAPI()
+        app.add_middleware(BaseHTTPMiddleware, dispatch=TokenScopingMiddleware())
+
+        @app.get("/v1/search")
+        def _search():  # pragma: no cover - trivial stub
+            return {"ok": True}
+
+        @app.get("/v1/other")
+        def _other():  # pragma: no cover - trivial stub
+            return {"ok": True}
+
+        client = TestClient(app, raise_server_exceptions=False)
+        token = make_test_jwt(email="scoped@example.com", scopes={"permissions": ["tools.read"]})
+        headers = {"Authorization": f"Bearer {token}"}
+
+        assert client.get("/v1/search", headers=headers).status_code == 200  # middleware lets it through
+        assert client.get("/v1/other", headers=headers).status_code == 403  # control: default-deny still enforced

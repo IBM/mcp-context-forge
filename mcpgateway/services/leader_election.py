@@ -18,8 +18,8 @@ the cached flag for the redis backend.
 import asyncio
 import logging
 import os
-import uuid
 from typing import Any, Optional
+import uuid
 
 # Third-Party
 from filelock import FileLock, Timeout

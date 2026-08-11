@@ -876,8 +876,11 @@ def get_user_email_from_context() -> str:
     """
     user = user_context_var.get()
     if isinstance(user, dict):
-        # First try 'email', then 'sub' (JWT standard claim)
-        return user.get("email") or user.get("sub") or "unknown"
+        # Use canonical email extraction
+        # First-Party
+        from mcpgateway.auth_context import get_user_email
+
+        return get_user_email(user)
     return str(user) if user else "unknown"
 
 
@@ -1384,13 +1387,19 @@ async def _send_streamable_http_json_response(send: Send, *, status_code: int, p
         send: ASGI send callable.
         status_code: HTTP status code for the response.
         payload: JSON-serializable response payload.
+
+    Note:
+        Content-Length is NOT manually set here to allow the compression
+        middleware (or ASGI server) to set it correctly after compression.
+        Setting it manually causes "Content-Length mismatch" errors when
+        compression is enabled (issue #5457).
     """
     body = orjson.dumps(payload)
     await send(
         {
             "type": "http.response.start",
             "status": status_code,
-            "headers": [(b"content-type", b"application/json"), (b"content-length", str(len(body)).encode())],
+            "headers": [(b"content-type", b"application/json")],
         }
     )
     await send({"type": "http.response.body", "body": body})
@@ -2194,6 +2203,19 @@ async def _get_request_context_or_default() -> Tuple[str, dict[str, Any], dict[s
         return s_id, request_headers_var.get(), user_context_var.get()
 
 
+async def _resolve_jwt_user_email_for_streamable(payload: dict[str, Any]) -> str | None:
+    """Resolve JWT user email for Streamable HTTP auth without treating UUID sub as email."""
+    # First-Party
+    from mcpgateway.auth import _get_email_by_id_sync  # pylint: disable=import-outside-toplevel
+    from mcpgateway.auth_context import resolve_jwt_user_email_from_payload  # pylint: disable=import-outside-toplevel
+
+    async def resolve_uuid_subject(user_id: str) -> str | None:
+        """Resolve a UUID subject to the owning user's email."""
+        return await asyncio.to_thread(_get_email_by_id_sync, user_id)
+
+    return await resolve_jwt_user_email_from_payload(payload, uuid_email_resolver=resolve_uuid_subject)
+
+
 async def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
     """Normalize a raw JWT payload to the canonical user context shape.
 
@@ -2209,7 +2231,7 @@ async def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
     Returns:
         Canonical user context dict with keys email, teams, is_admin, is_authenticated, token_use.
     """
-    email = payload.get("sub") or payload.get("email")
+    email = await _resolve_jwt_user_email_for_streamable(payload)
     jwt_is_admin = payload.get("is_admin", False)
     if not jwt_is_admin:
         user_info = payload.get("user", {})
@@ -4249,7 +4271,6 @@ class SessionManagerWrapper:
                 # Return response to client
                 response_headers = [
                     (b"content-type", b"application/json"),
-                    (b"content-length", str(len(response.content)).encode()),
                 ]
                 if mcp_session_id != "not-provided":
                     response_headers.append((b"mcp-session-id", mcp_session_id.encode()))
@@ -4321,8 +4342,11 @@ class SessionManagerWrapper:
 
                     if response:
                         # Send forwarded response back to client
+                        # Note: Content-Length is NOT manually added to allow compression
+                        # middleware to set it correctly after compression (issue #5457).
+                        # We filter out transfer-encoding, content-encoding, and content-length
+                        # from the forwarded headers to let the middleware handle them.
                         response_headers = [(k.encode(), v.encode()) for k, v in response["headers"].items() if k.lower() not in ("transfer-encoding", "content-encoding", "content-length")]
-                        response_headers.append((b"content-length", str(len(response["body"])).encode()))
 
                         await send(
                             {
@@ -4440,9 +4464,10 @@ class SessionManagerWrapper:
                                 timeout=settings.mcpgateway_pool_rpc_forward_timeout,
                             )
 
+                        # Note: Content-Length is NOT manually set to allow compression
+                        # middleware to set it correctly after compression (issue #5457)
                         response_headers = [
                             (b"content-type", b"application/json"),
-                            (b"content-length", str(len(response.content)).encode()),
                             (b"mcp-session-id", mcp_session_id.encode()),
                         ]
 
@@ -5071,10 +5096,13 @@ class _StreamableHttpAuthHandler:
 
             # First-Party
             from mcpgateway.auth import _get_auth_context_batched_sync, resolve_trace_team_name  # pylint: disable=import-outside-toplevel
+            from mcpgateway.auth_context import jwt_subject_is_uuid  # pylint: disable=import-outside-toplevel
             from mcpgateway.cache.auth_cache import CachedAuthContext, get_auth_cache  # pylint: disable=import-outside-toplevel
 
             jti = user_payload.get("jti")
-            user_email = user_payload.get("sub") or user_payload.get("email")
+            user_email = await _resolve_jwt_user_email_for_streamable(user_payload)
+            if not user_email and settings.require_user_in_db and jwt_subject_is_uuid(user_payload):
+                return await self._send_error(detail="User not found in database", headers={"WWW-Authenticate": "Bearer"})
             nested_user = user_payload.get("user", {})
             nested_is_admin = nested_user.get("is_admin", False) if isinstance(nested_user, dict) else False
             is_admin = user_payload.get("is_admin", False) or nested_is_admin

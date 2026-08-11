@@ -149,6 +149,42 @@ def _unwrap(func):
 
 
 @pytest.mark.asyncio
+async def test_admin_ui_hides_roots_for_scoped_admin(monkeypatch):
+    request = _make_request()
+    db = MagicMock()
+    _configure_admin_ui_test_dependencies(monkeypatch)
+    list_roots = AsyncMock()
+    monkeypatch.setattr(admin.root_service, "list_roots", list_roots)
+    monkeypatch.setattr(admin, "is_unrestricted_platform_admin", AsyncMock(return_value=False))
+
+    await admin.admin_ui(request, None, False, db, user={"email": "admin@example.com", "is_admin": True, "db": db})
+
+    context = request.app.state.templates.TemplateResponse.call_args[0][2]
+    assert "roots" in context["ui_hidden_sections"]
+    assert context["roots"] == []
+    list_roots.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_admin_ui_loads_roots_for_unrestricted_admin(monkeypatch):
+    request = _make_request()
+    db = MagicMock()
+    _configure_admin_ui_test_dependencies(monkeypatch)
+    root = MagicMock()
+    root.model_dump.return_value = {"uri": "https://example.com/root"}
+    list_roots = AsyncMock(return_value=[root])
+    monkeypatch.setattr(admin.root_service, "list_roots", list_roots)
+    monkeypatch.setattr(admin, "is_unrestricted_platform_admin", AsyncMock(return_value=True))
+
+    await admin.admin_ui(request, None, False, db, user={"email": "admin@example.com", "is_admin": True, "db": db})
+
+    context = request.app.state.templates.TemplateResponse.call_args[0][2]
+    assert "roots" not in context["ui_hidden_sections"]
+    assert context["roots"] == [{"uri": "https://example.com/root"}]
+    list_roots.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_admin_add_gateway_includes_gateway_payload(monkeypatch):
     request = _gateway_payload_request()
     db = MagicMock()

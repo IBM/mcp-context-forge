@@ -34,6 +34,17 @@ spec:
       serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
       {{- end }}
       automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
+      {{- if gt (int .Values.mcpFastTimeServer.replicaCount) 1 }}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: {{ include "mcp-stack.fullname" . }}-mcp-fast-time-server
+                topologyKey: kubernetes.io/hostname
+      {{- end }}
       securityContext:
         seccompProfile:
           type: RuntimeDefault
@@ -41,7 +52,12 @@ spec:
         - name: mcp-fast-time-server
           securityContext:
             allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
             runAsNonRoot: true
+            # The fast-time-server image declares no USER, so runAsNonRoot alone
+            # leaves kubelet with no non-root uid to use and it refuses the
+            # container. 1001 is the non-root uid used upstream.
+            runAsUser: 1001
             capabilities:
               drop:
                 - ALL

@@ -1,15 +1,16 @@
 [project]
 name = "url-to-markdown-server"
-version = "2.0.0"
+version = "2.1.0"
 description = "MCP server for retrieving web content and files, converting them to markdown"
 authors = [
   { name = "Mihai Criveti", email = "noreply@example.com" }
 ]
 license = { text = "Apache-2.0" }
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
-    "fastmcp>=3.3.0",
+    "fastmcp>=3.4.4",
+    "httpcore>=1.0.5",
     "httpx>=0.28.1",
     "pydantic>=2.13.4",
     "typing-extensions>=4.16.0",
@@ -18,11 +19,11 @@ dependencies = [
 [project.optional-dependencies]
 dev = [
     "black>=26.5.1",
-    "mypy>=2.1.0",
+    "mypy>=2.3.0",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
     "pytest-cov>=7.1.0",
-    "ruff>=0.15.20",
+    "ruff>=0.16.0",
 ]
 html = [
     "beautifulsoup4>=4.15.0",
@@ -63,17 +64,17 @@ url-to-markdown-server = "url_to_markdown_server.server_fastmcp:main"
 
 [tool.black]
 line-length = 100
-target-version = ["py311"]
+target-version = ["py312"]
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.12"
 strict = true
 warn_return_any = true
 warn_unused_configs = true
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py312"
 select = ["E", "W", "F", "B", "I", "N", "UP"]
 
 [tool.pytest.ini_options]

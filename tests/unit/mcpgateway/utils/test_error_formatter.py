@@ -197,10 +197,34 @@ def make_mock_integrity_error(msg):
         ("UNIQUE constraint failed: gateways.url", "A gateway with this URL already exists"),
         ("UNIQUE constraint failed: gateways.slug", "A gateway with this name already exists"),
         ("UNIQUE constraint failed: tools.name", "A tool with this name already exists"),
-        ("UNIQUE constraint failed: resources.uri", "A resource with this URI already exists"),
-        ("UNIQUE constraint failed: resources.name", "A resource with this name already exists"),
-        ("uq_team_owner_gateway_name_resource", "A resource with this name already exists"),
-        ("uq_team_owner_name_resource_local", "A resource with this name already exists"),
+        # Resource URI uniqueness - SQLite single-column variant
+        (
+            "UNIQUE constraint failed: resources.uri",
+            "A resource with this URI already exists in this scope. Resource URIs must be unique; names may repeat.",
+        ),
+        # Resource URI uniqueness - SQLite multi-column variant emitted by the real composite constraint
+        (
+            "UNIQUE constraint failed: resources.team_id, resources.owner_email, resources.gateway_id, resources.uri",
+            "A resource with this URI already exists in this scope. Resource URIs must be unique; names may repeat.",
+        ),
+        # Resource URI uniqueness - PostgreSQL reports the constraint name, not column paths
+        (
+            "uq_team_owner_gateway_uri_resource",
+            "A resource with this URI already exists in this scope. Resource URIs must be unique; names may repeat.",
+        ),
+        (
+            "uq_team_owner_uri_resource_local",
+            "A resource with this URI already exists in this scope. Resource URIs must be unique; names may repeat.",
+        ),
+        # Resource URI uniqueness - realistic full PostgreSQL error text
+        (
+            'duplicate key value violates unique constraint "uq_team_owner_gateway_uri_resource"',
+            "A resource with this URI already exists in this scope. Resource URIs must be unique; names may repeat.",
+        ),
+        (
+            'duplicate key value violates unique constraint "uq_team_owner_uri_resource_local"',
+            "A resource with this URI already exists in this scope. Resource URIs must be unique; names may repeat.",
+        ),
         ("UNIQUE constraint failed: servers.name", "A server with this name already exists"),
         ("UNIQUE constraint failed: prompts.name", "A prompt with this name already exists"),
         ("UNIQUE constraint failed: servers.id", "A server with this ID already exists"),

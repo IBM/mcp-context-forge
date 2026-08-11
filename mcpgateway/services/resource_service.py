@@ -168,7 +168,7 @@ class ResourceURIConflictError(ResourceError):
         self.uri = uri
         self.enabled = enabled
         self.resource_id = resource_id
-        message = f"{visibility.capitalize()} Resource already exists with URI: {uri}"
+        message = f"{visibility.capitalize()} resource already exists with URI: {uri} — resource URIs must be unique within this scope (names may repeat)."
         if not enabled:
             message += f" (currently inactive, ID: {resource_id})"
         super().__init__(message)
@@ -559,11 +559,27 @@ class ResourceService(BaseService):
                 if existing_resource:
                     raise ResourceURIConflictError(resource.uri, enabled=existing_resource.enabled, resource_id=existing_resource.id, visibility=existing_resource.visibility)
             elif visibility.lower() == "team":
-                # team_id is guaranteed non-None here: the name-check above already raised
-                # ResourceValidationError for team visibility without a team_id.
+                # team_id is guaranteed non-None here: a ResourceValidationError is raised above for
+                # team visibility without a team_id.
                 # Check for existing team resource with the same uri and gateway_id
                 existing_resource = db.execute(
                     select(DbResource).where(DbResource.uri == resource.uri, DbResource.visibility == "team", DbResource.team_id == team_id, DbResource.gateway_id == gateway_id)
+                ).scalar_one_or_none()
+                if existing_resource:
+                    raise ResourceURIConflictError(resource.uri, enabled=existing_resource.enabled, resource_id=existing_resource.id, visibility=existing_resource.visibility)
+            elif visibility.lower() == "private":
+                # Scope the check to the DB constraint UniqueConstraint("team_id", "owner_email", "gateway_id", "uri"),
+                # mirroring the team_id/owner_email precedence used when DbResource is constructed below.
+                effective_team_id = getattr(resource, "team_id", None) or team_id
+                effective_owner = getattr(resource, "owner_email", None) or owner_email or created_by
+                existing_resource = db.execute(
+                    select(DbResource).where(
+                        DbResource.uri == resource.uri,
+                        DbResource.visibility == "private",
+                        DbResource.owner_email == effective_owner,
+                        DbResource.team_id == effective_team_id,
+                        DbResource.gateway_id == gateway_id,
+                    )
                 ).scalar_one_or_none()
                 if existing_resource:
                     raise ResourceURIConflictError(resource.uri, enabled=existing_resource.enabled, resource_id=existing_resource.id, visibility=existing_resource.visibility)
@@ -1178,7 +1194,9 @@ class ResourceService(BaseService):
             page: Page number for page-based pagination (1-indexed). Mutually exclusive with cursor.
             per_page: Items per page for page-based pagination. Defaults to pagination_default_page_size.
             user_email (Optional[str]): User email for team-based access control. If None, no access control is applied.
-            team_id (Optional[str]): Filter by specific team ID. Requires user_email for access validation.
+            team_id (Optional[str]): Filter by specific team ID. Applies to every caller shape,
+                including the admin and anonymous bypasses; globally-public rows from other
+                teams remain visible.
             visibility (Optional[str]): Filter by visibility (private, team, public).
             token_teams (Optional[List[str]]): Override DB team lookup with token's teams. Used for MCP/API token access
                 where the token scope should be respected instead of the user's full team memberships.
@@ -1234,7 +1252,7 @@ class ResourceService(BaseService):
             # This prevents cache poisoning where admin results could leak to public-only requests
             cache = _get_registry_cache()
             if cursor is None and user_email is None and token_teams is None and page is None:
-                filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None, gateway_id=gateway_id, limit=limit, visibility=visibility)
+                filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None, gateway_id=gateway_id, limit=limit, visibility=visibility, team_id=team_id)
                 cached = await cache.get("resources", filters_hash)
                 if cached is not None:
                     # Reconstruct ResourceRead objects from cached dicts
@@ -2399,8 +2417,11 @@ class ResourceService(BaseService):
                     # Normalize user to an identifier string if provided
                     user_id = None
                     if user is not None:
-                        if isinstance(user, dict) and "email" in user:
-                            user_id = user.get("email")
+                        if isinstance(user, dict):
+                            # First-Party
+                            from mcpgateway.auth_context import get_user_email
+
+                            user_id = get_user_email(user)
                         elif isinstance(user, str):
                             user_id = user
                         else:
@@ -3131,6 +3152,23 @@ class ResourceService(BaseService):
                     # Check for existing team resource with the same uri
                     existing_resource = get_for_update(
                         db, DbResource, where=and_(DbResource.uri == resource_update.uri, DbResource.visibility == "team", DbResource.team_id == team_id, DbResource.id != resource_id)
+                    )
+                    if existing_resource:
+                        raise ResourceURIConflictError(resource_update.uri, enabled=existing_resource.enabled, resource_id=existing_resource.id, visibility=existing_resource.visibility)
+                elif visibility.lower() == "private":
+                    # Scope the check to the DB constraint UniqueConstraint("team_id", "owner_email", "gateway_id", "uri").
+                    effective_owner = resource_update.owner_email or resource.owner_email
+                    existing_resource = get_for_update(
+                        db,
+                        DbResource,
+                        where=and_(
+                            DbResource.uri == resource_update.uri,
+                            DbResource.visibility == "private",
+                            DbResource.owner_email == effective_owner,
+                            DbResource.team_id == team_id,
+                            DbResource.gateway_id == resource.gateway_id,
+                            DbResource.id != resource_id,
+                        ),
                     )
                     if existing_resource:
                         raise ResourceURIConflictError(resource_update.uri, enabled=existing_resource.enabled, resource_id=existing_resource.id, visibility=existing_resource.visibility)

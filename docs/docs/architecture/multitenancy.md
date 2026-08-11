@@ -15,6 +15,12 @@ The multi-tenancy system is built around **teams as the primary organizational u
 5. **Role-Based Access**: Users have roles (Owner, Member) within teams that determine their capabilities
 6. **Platform Administration**: Separate platform-level administration for system management
 
+### Global Root Configuration
+
+MCP roots are global, process-local platform configuration. They are not team-owned resources in this release: team-scoped identities cannot read or mutate roots, even when a role grants `admin.system_config`. Team-owned roots and `team_id` filtering are intentionally deferred.
+
+Root registration is disabled by default because `ROOT_ALLOWED_SCHEMES` defaults to an empty list. Operators must explicitly allow supported schemes. `file://` roots additionally require `ROOT_ALLOW_FILE_SCHEME=true` and configured allowed file prefixes. Invalid `DEFAULT_ROOTS` fail startup; deployments using defaults must configure matching root policy before upgrade or restart.
+
 ---
 
 ## User Lifecycle & Authentication
@@ -308,6 +314,29 @@ Enforcement summary:
 - Owner-based access applies only to private resources. Owners cannot use ownership to bypass team scoping for team-visibility resources outside their token scope.
 - Public-only tokens (token_teams=[]) see only public resources — owner and team access are both suppressed.
 - Read follows the same rules as list; write operations require ownership or delegated/team administrative rights.
+
+### Resource URI uniqueness
+
+Applies to the **Resources** entity specifically, not to the other entity types listed above. Per the MCP specification, `uri` is the resource identifier and `name` is a human-readable display label — so URIs are constrained and **names are deliberately not unique** (a name-uniqueness constraint was added in [#5158](https://github.com/IBM/mcp-context-forge/pull/5158) and reverted in [#5664](https://github.com/IBM/mcp-context-forge/pull/5664) because it broke legitimate task-scoped resources sharing a type name).
+
+Uniqueness is enforced at two levels, and they are not identical:
+
+**Database (`mcpgateway/db.py`, `Resource.__table_args__`)** — visibility is *not* part of any key:
+
+| Constraint | Key | Applies when |
+|---|---|---|
+| `uq_team_owner_gateway_uri_resource` | `(team_id, owner_email, gateway_id, uri)` | Always |
+| `uq_team_owner_uri_resource_local` (partial unique index) | `(team_id, owner_email, uri)` | `gateway_id IS NULL` |
+
+**Application pre-check (`mcpgateway/services/resource_service.py`)** — runs before the insert so a collision surfaces as a `409` with a specific message rather than a raw `IntegrityError`. This check *is* visibility-dependent and is narrower or wider than the DB key depending on visibility:
+
+| Visibility | Pre-check key on create |
+|---|---|
+| `public` | `(uri, visibility, gateway_id)` — collides across teams and owners |
+| `team` | `(uri, visibility, team_id, gateway_id)` |
+| `private` | `(uri, visibility, owner_email, team_id, gateway_id)` |
+
+On update the `public` and `team` branches match on `(uri, visibility[, team_id])` without `gateway_id`; only the `private` branch includes it. Anything the pre-check misses is still caught by the database constraints above and reported as `409` via `ErrorFormatter.format_database_error`.
 
 ---
 

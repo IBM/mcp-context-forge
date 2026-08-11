@@ -259,6 +259,9 @@ curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/gateways | jq '.'
       "name": "my-mcp-server",
       "url": "http://localhost:9000/mcp",
       "enabled": true,
+      "toolCount": 5,
+      "promptCount": 3,
+      "resourceCount": 2,
       ...
     }
   ],
@@ -902,6 +905,25 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" \
   $BASE_URL/resources | jq '.'
 ```
 
+!!! note "Resource URI uniqueness"
+    `uri` is the resource identifier and must be unique within the scope the resource is created in; `name` is a human-readable display label and **may repeat**. Registering a resource whose URI already exists in that scope returns `409 Conflict`. The scope depends on `visibility` — see [Resource URI uniqueness](../architecture/multitenancy.md#resource-uri-uniqueness) for the exact keys.
+
+**Error responses:**
+
+| Status | Condition |
+|--------|-----------|
+| `409 Conflict` | A resource with this URI already exists in the target scope. |
+| `422 Unprocessable Entity` | Payload failed schema or resource validation. |
+| `400 Bad Request` | Other resource errors (for example, `visibility=team` without a `team_id`). |
+
+`409` bodies use the standard FastAPI shape:
+
+```json
+{
+  "detail": "Public resource already exists with URI: file:///etc/config.json — resource URIs must be unique within this scope (names may repeat)."
+}
+```
+
 ### Get Resource Details
 
 ```bash
@@ -957,6 +979,16 @@ curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
   }' \
   $BASE_URL/resources/$RESOURCE_ID | jq '.'
 ```
+
+**Error responses:**
+
+| Status | Condition |
+|--------|-----------|
+| `409 Conflict` | The new `uri` collides with an existing resource in the target scope, or a database uniqueness constraint was violated. |
+| `422 Unprocessable Entity` | Payload failed schema or resource validation. |
+| `413 Payload Too Large` | Resource content exceeded the configured size limit. |
+| `415 Unsupported Media Type` | MIME type is not in the allowed list. |
+| `400 Bad Request` | Other resource errors, including a concurrent-update lock conflict. |
 
 ### Enable/Disable Resource
 
@@ -1130,6 +1162,310 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" \
 # Delete prompt
 curl -s -X DELETE -H "Authorization: Bearer $TOKEN" \
   $BASE_URL/prompts/$PROMPT_ID | jq '.'
+```
+
+## LLM Settings Management
+
+LLM Settings Management endpoints configure language model providers and models. The feature is available only when `LLMCHAT_ENABLED=true`; when it is `false`, the LLM routers are never mounted (`api/v1/__init__.py`'s `_assemble_routers` skips them entirely), so every LLM route path is simply absent and any request to it gets the framework's default `404 Not Found` — not a feature-gate check that returns 404 from within a handler. These endpoints are exposed through two route families that use different CSRF protection schemes:
+
+- **`/v1/llm/providers`, `/v1/llm/models`** — Write operations protected by `CSRFMiddleware` (HMAC-based tokens); read operations (GET/HEAD/OPTIONS) are safe methods and skip CSRF validation. The canonical prefix is `/v1/`; unprefixed legacy aliases (`/llm/providers`, `/llm/models`) also resolve when `LEGACY_API_ENABLED=true`, but are hidden from `/openapi.json`.
+- **`/v1/admin/llm/*`** — Write operations for the Admin UI, protected by `enforce_admin_csrf` dependency (double-submit with plain token comparison). These routes are validated by **both** CSRF schemes (the `/admin` prefix does not exempt `/v1/admin/*` paths from `CSRFMiddleware`).
+- **`/admin/llm/*` (legacy)**  — Legacy unprefixed aliases of the admin routes, also protected by `enforce_admin_csrf` but **exempt from `CSRFMiddleware`** due to the `/admin` prefix exemption. Only the `enforce_admin_csrf` dependency is applied.
+
+### Path-Based CSRF Validation Matrix
+
+The middleware's exemption for the `/admin` prefix is prefix-matched on the raw request path, affecting which CSRF schemes apply:
+
+| Request Path | CSRFMiddleware | enforce_admin_csrf | Total Schemes |
+|---|---|---|---|
+| `/admin/llm/*` (legacy) | Exempt | Applied | 1 (admin only) |
+| `/v1/admin/llm/*` (versioned) | Applied | Applied | 2 (double validation) |
+
+**Consequence**: Versioned admin routes at `/v1/admin/llm/*` validate against both CSRF schemes simultaneously. Legacy routes at `/admin/llm/*` use only the admin dependency's double-submit scheme. The legacy mount is hidden from `/openapi.json` and exists for backward compatibility; do not assume the versioned `/v1/` prefix is strictly safer to prefer — see the known issue below before choosing between them for new code.
+
+!!! warning "Known Issue: mounts disagree right after login (#5978)"
+    The intended contract is that `/admin/llm/*` and `/v1/admin/llm/*` behave identically for CSRF purposes — the extra `CSRFMiddleware` pass on the versioned mount is meant to be redundant with `enforce_admin_csrf`, not stricter. In practice, there is a narrow window where they disagree: `admin_login_handler` sets the CSRF cookie as an opaque, non-HMAC token, and only the first dashboard load (`GET /admin/`) rotates it to its real HMAC-bound value. A write issued between login and that first dashboard load presents the opaque cookie, which satisfies `enforce_admin_csrf`'s plain double-submit comparison but fails `CSRFMiddleware`'s HMAC validation. The result: the identical request is accepted at `/admin/llm/*` and rejected with `CSRF_TOKEN_INVALID` at `/v1/admin/llm/*`. Tracked at [IBM/mcp-context-forge#5978](https://github.com/IBM/mcp-context-forge/issues/5978); until it is fixed, do not rely on either mount being strictly more permissive or more correct than the other in this window.
+
+The Admin UI itself calls the unprefixed `/admin/llm/*` form, not `/v1/admin/llm/*` — which is why this divergence has gone unnoticed in practice; only direct callers of the versioned mount are affected.
+
+### CSRF Protection Detail
+
+The two LLM route families use independent CSRF implementations (a third, `enforce_fetch_tools_csrf`, exists in `mcpgateway/routers/oauth_router.py` for the unrelated `/oauth/fetch-tools` endpoint — see [CSRF Protection](configuration.md#csrf-protection) in the configuration reference for the full picture):
+
+| Aspect | `/v1/llm/*` (CSRFMiddleware) | `/v1/admin/llm/*` (enforce_admin_csrf) |
+|--------|------------------------------|----------------------------------------|
+| Cookie name | `settings.csrf_cookie_name` (configurable) | `mcpgateway_csrf_token` (hardcoded) |
+| Header name | `settings.csrf_token_name` (configurable, default `X-CSRF-Token`) | `x-csrf-token` (hardcoded) |
+| Token scheme | HMAC over `user_id:session_id:window` | Plain double-submit: `compare_digest(header, cookie)` |
+| Origin check | Via `CSRF_CHECK_REFERER` setting + `CSRF_TRUSTED_ORIGINS` | Always, via `Origin`/`Referer` header validation |
+| Bearer-token bypass | Yes — middleware skips token check for `Authorization: Bearer` | Yes — dependency returns early when no `jwt_token` cookie is present |
+| Form field fallback | Not supported | `csrf_token` form field (for form-encoded requests) |
+
+**Bearer-token API callers** do not need CSRF tokens on either family. Form-encoded POST requests to `/v1/admin/llm/*` may carry the token in the `csrf_token` form field instead of a header.
+
+### List LLM Providers
+
+```bash
+# Bearer-token auth (CSRF not required for GET requests)
+curl -s -H "Authorization: Bearer $TOKEN" \
+  $BASE_URL/v1/llm/providers | jq '.'
+```
+
+**Response:**
+```json
+{
+  "providers": [
+    {
+      "id": "provider-123",
+      "name": "openai",
+      "slug": "openai",
+      "provider_type": "openai",
+      "api_base": "https://api.openai.com/v1",
+      "enabled": true,
+      "health_status": "healthy",
+      "model_count": 8
+    }
+  ],
+  "total": 1,
+  "page": 1,
+  "page_size": 50
+}
+```
+
+### List LLM Models
+
+```bash
+# Bearer-token auth (CSRF not required for GET requests)
+curl -s -H "Authorization: Bearer $TOKEN" \
+  $BASE_URL/v1/llm/models | jq '.'
+```
+
+**Response:**
+```json
+{
+  "models": [
+    {
+      "id": "model-456",
+      "model_id": "gpt-4",
+      "model_name": "GPT-4",
+      "provider_id": "provider-123",
+      "provider_name": "openai",
+      "supports_chat": true,
+      "supports_streaming": true,
+      "enabled": true
+    }
+  ],
+  "total": 1,
+  "page": 1,
+  "page_size": 50
+}
+```
+
+### Update Provider State
+
+Toggle a provider's enabled status. Returns an HTML fragment of the updated provider row for HTMX.
+
+```bash
+# Bearer-token auth (CSRF not required)
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  $BASE_URL/v1/admin/llm/providers/provider-123/state
+
+# Cookie + CSRF token auth (Admin UI form)
+# Note: enforce_admin_csrf requires Origin or Referer header
+curl -s -X POST \
+  -b "jwt_token=$JWT_COOKIE; mcpgateway_csrf_token=$CSRF_COOKIE" \
+  -H "X-CSRF-Token: $CSRF_COOKIE" \
+  -H "Origin: http://localhost:8000" \
+  $BASE_URL/v1/admin/llm/providers/provider-123/state
+```
+
+### Check Provider Health
+
+Verify provider API connectivity and response time.
+
+```bash
+# Bearer-token auth
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  $BASE_URL/v1/admin/llm/providers/provider-123/health | jq '.'
+
+# Cookie + CSRF token auth
+curl -s -X POST \
+  -b "jwt_token=$JWT_COOKIE; mcpgateway_csrf_token=$CSRF_COOKIE" \
+  -H "X-CSRF-Token: $CSRF_COOKIE" \
+  -H "Origin: http://localhost:8000" \
+  $BASE_URL/v1/admin/llm/providers/provider-123/health | jq '.'
+```
+
+**Response:**
+```json
+{
+  "status": "healthy",
+  "provider_id": "provider-123",
+  "latency_ms": 245,
+  "error": null
+}
+```
+
+### Delete Provider
+
+Remove a provider and all associated models. Returns HTTP 200 with an empty body for HTMX row removal.
+
+```bash
+# Bearer-token auth
+curl -s -X DELETE -H "Authorization: Bearer $TOKEN" \
+  $BASE_URL/v1/admin/llm/providers/provider-123
+
+# Cookie + CSRF token auth
+curl -s -X DELETE \
+  -b "jwt_token=$JWT_COOKIE; mcpgateway_csrf_token=$CSRF_COOKIE" \
+  -H "X-CSRF-Token: $CSRF_COOKIE" \
+  -H "Origin: http://localhost:8000" \
+  $BASE_URL/v1/admin/llm/providers/provider-123
+```
+
+### Update Model State
+
+Toggle a model's enabled status. Returns an HTML fragment of the updated model row for HTMX.
+
+```bash
+# Bearer-token auth
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  $BASE_URL/v1/admin/llm/models/model-456/state
+
+# Cookie + CSRF token auth
+curl -s -X POST \
+  -b "jwt_token=$JWT_COOKIE; mcpgateway_csrf_token=$CSRF_COOKIE" \
+  -H "X-CSRF-Token: $CSRF_COOKIE" \
+  -H "Origin: http://localhost:8000" \
+  $BASE_URL/v1/admin/llm/models/model-456/state
+```
+
+### Delete Model
+
+Remove a model. Returns HTTP 200 with an empty body for HTMX row removal.
+
+```bash
+# Bearer-token auth
+curl -s -X DELETE -H "Authorization: Bearer $TOKEN" \
+  $BASE_URL/v1/admin/llm/models/model-456
+
+# Cookie + CSRF token auth
+curl -s -X DELETE \
+  -b "jwt_token=$JWT_COOKIE; mcpgateway_csrf_token=$CSRF_COOKIE" \
+  -H "X-CSRF-Token: $CSRF_COOKIE" \
+  -H "Origin: http://localhost:8000" \
+  $BASE_URL/v1/admin/llm/models/model-456
+```
+
+### Test LLM Provider
+
+Test a provider's API connectivity and LLM response. Accepts JSON request bodies only.
+
+```bash
+# Bearer-token auth
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "test_type": "models"
+  }' \
+  $BASE_URL/v1/admin/llm/test | jq '.'
+
+# Cookie + CSRF token auth (JSON submission)
+curl -s -X POST \
+  -b "jwt_token=$JWT_COOKIE; mcpgateway_csrf_token=$CSRF_COOKIE" \
+  -H "X-CSRF-Token: $CSRF_COOKIE" \
+  -H "Origin: http://localhost:8000" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "test_type": "models"
+  }' \
+  $BASE_URL/v1/admin/llm/test | jq '.'
+```
+
+**Response (models list):**
+```json
+{
+  "success": true,
+  "test_type": "models",
+  "data": {
+    "object": "list",
+    "data": [
+      {"id": "gpt-4", "owned_by": "openai"},
+      {"id": "gpt-4-turbo", "owned_by": "openai"}
+    ]
+  },
+  "metrics": {
+    "duration": 125,
+    "modelCount": 2
+  }
+}
+```
+
+### Fetch Models from Provider
+
+Retrieve available models from a provider's API.
+
+```bash
+# Bearer-token auth
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  $BASE_URL/v1/admin/llm/providers/provider-123/fetch-models | jq '.'
+
+# Cookie + CSRF token auth
+curl -s -X POST \
+  -b "jwt_token=$JWT_COOKIE; mcpgateway_csrf_token=$CSRF_COOKIE" \
+  -H "X-CSRF-Token: $CSRF_COOKIE" \
+  -H "Origin: http://localhost:8000" \
+  $BASE_URL/v1/admin/llm/providers/provider-123/fetch-models | jq '.'
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "models": [
+    {
+      "id": "gpt-4",
+      "name": "GPT-4",
+      "owned_by": "openai",
+      "created": 1687882411
+    },
+    {
+      "id": "gpt-4-turbo",
+      "name": "GPT-4 Turbo",
+      "owned_by": "openai",
+      "created": 1694767999
+    }
+  ],
+  "count": 2
+}
+```
+
+### Sync Models to Database
+
+Import models from a provider's API into the database.
+
+```bash
+# Bearer-token auth
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  $BASE_URL/v1/admin/llm/providers/provider-123/sync-models | jq '.'
+
+# Cookie + CSRF token auth
+curl -s -X POST \
+  -b "jwt_token=$JWT_COOKIE; mcpgateway_csrf_token=$CSRF_COOKIE" \
+  -H "X-CSRF-Token: $CSRF_COOKIE" \
+  -H "Origin: http://localhost:8000" \
+  $BASE_URL/v1/admin/llm/providers/provider-123/sync-models | jq '.'
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Synced models: 2 added, 5 skipped",
+  "added": 2,
+  "skipped": 5,
+  "total": 7
+}
 ```
 
 ## Tag Management
@@ -1367,7 +1703,136 @@ curl -s -X DELETE -H "Authorization: Bearer $TOKEN" \
 
 ## Team Management
 
-Teams are the unit of multi-tenancy in ContextForge. The `GET /teams` endpoint lists the teams visible to the caller and is the same endpoint that backs the Admin UI Teams page and the team switcher.
+Teams are the unit of multi-tenancy in ContextForge. Endpoints require a valid Bearer token and the caller must hold the `teams.create` or `teams.read` RBAC permission respectively.
+
+### Create Team
+
+```bash
+POST /teams
+Authorization: Bearer $TOKEN
+Content-Type: application/json
+```
+
+**Request body (`TeamCreateRequest`):**
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `name` | string | ✓ | – | Display name (1–255 chars, letters/numbers/spaces/`_`/`.`/`-`). |
+| `slug` | string | – | auto-generated | URL-friendly identifier (`[a-z0-9-]+`, 2–255 chars). |
+| `description` | string | – | `null` | Team description (max 1 000 chars). |
+| `visibility` | `"private"` \| `"public"` | – | `"private"` | Who can see the team. |
+| `max_members` | int ≥ 1 | – | global setting | Per-team member cap. Omit to inherit `MAX_MEMBERS_PER_TEAM`. |
+| `members` | array of `TeamMemberSeed` | – | `null` | Up to `MAX_TEAM_MEMBER_SEEDS` (500) addresses to seed. |
+
+Each `TeamMemberSeed` object:
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `email` | string (email) | ✓ | – | Address to add or invite. Normalised to lowercase. |
+| `role` | `"owner"` \| `"member"` | – | `"member"` | Role to assign. |
+
+**Seed routing rules (server-decided, not caller-controlled):**
+
+- An address that matches an **active** `EmailUser` record is added as a direct member.
+- Any other address (unknown, or known but deactivated) receives an invitation.
+- The creator's own address is silently skipped — team creation already makes the creator an owner.
+- Email addresses are normalised to lowercase before lookup; `ALICE@example.com` and `alice@example.com` are treated as the same address.
+- Duplicate addresses (case-insensitive) in a single request are rejected with a row-indexed error.
+- The whole operation is **atomic**: a failure on any seed rolls back the team and all prior seeds.
+- Deleting a team also deactivates its **pending invitations**, so an invitation cannot outlive (or be revived alongside) the team it points at.
+
+**Configuration notes:**
+
+| Setting | Default | Effect on `POST /teams` |
+|---------|---------|------------------------|
+| `ALLOW_TEAM_CREATION` | `true` | When `false`, non-admin callers receive `403`. Platform admins bypass this flag. |
+| `ALLOW_TEAM_INVITATIONS` | `true` | When `false`, seeded addresses that would normally become invitations instead fail the whole request with `400`. |
+| `MAX_TEAM_MEMBER_SEEDS` | `500` | Hard ceiling on the `members` array length (validated before any write). |
+| `MAX_MEMBERS_PER_TEAM` | `100` | Seed count + creator must not exceed this limit (or the per-team `max_members` override). |
+
+**Minimal create (no members):**
+
+```bash
+curl -s -X POST \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Engineering", "visibility": "private"}' \
+  $BASE_URL/teams | jq '.'
+```
+
+**Create with seeded members:**
+
+```bash
+curl -s -X POST \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Engineering",
+    "visibility": "private",
+    "members": [
+      {"email": "alice@example.com", "role": "owner"},
+      {"email": "external@partner.com"}
+    ]
+  }' \
+  $BASE_URL/teams | jq '.'
+```
+
+**Response (`TeamCreateResponse`):**
+
+`TeamCreateResponse` extends `TeamResponse` through Pydantic subclassing, so it is a strict superset: every `TeamResponse` field is present unchanged, plus two extra arrays that report how each seeded member was resolved. Both arrays are always present (empty when no members were seeded), so clients that only care about the team itself can ignore them.
+
+```json
+{
+  "id": "team-abc123",
+  "name": "Engineering",
+  "slug": "engineering",
+  "description": null,
+  "created_by": "admin@example.com",
+  "is_personal": false,
+  "visibility": "private",
+  "max_members": null,
+  "member_count": 2,
+  "created_at": "2026-01-15T10:00:00Z",
+  "updated_at": "2026-01-15T10:00:00Z",
+  "is_active": true,
+  "members_added": [
+    {"email": "alice@example.com", "role": "owner"}
+  ],
+  "invitations_sent": [
+    {"email": "external@partner.com", "role": "member", "invitation_id": "inv-xyz789"}
+  ]
+}
+```
+
+`members_added` entries (`SeededMemberResponse`):
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `email` | string | Canonical lowercase email of the user added directly. |
+| `role` | `"owner"` \| `"member"` | Role assigned. |
+
+`invitations_sent` entries (`SeededInvitationResponse`):
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `email` | string | Canonical lowercase email the invitation was sent to. |
+| `role` | `"owner"` \| `"member"` | Role the invitee will hold after accepting. |
+| `invitation_id` | string | UUID of the created invitation record. |
+
+**Error responses:**
+
+| HTTP status | Condition | Example `detail` |
+|-------------|-----------|-----------------|
+| `400` | Duplicate email in `members` | `members[1] (alice@example.com): duplicate address, already listed at members[0]` |
+| `400` | Seed count + 1 exceeds capacity | `Team would start with 6 members, exceeding the maximum of 5` |
+| `400` | Invalid role value | `Input should be 'owner' or 'member'` |
+| `400` | Invitations disabled and unknown address seeded | `members[1] (external@partner.com): invitations are currently disabled` |
+| `403` | `ALLOW_TEAM_CREATION=false` and caller is not admin | `Team creation is currently disabled` |
+| `422` | `members` array exceeds 500 entries | Pydantic validation error |
+
+### List Teams
+
+The `GET /teams` endpoint lists the teams visible to the caller and is the same endpoint that backs the Admin UI Teams page and the team switcher.
 
 Visibility follows the two-layer security model:
 
@@ -1375,8 +1840,6 @@ Visibility follows the two-layer security model:
 - **Regular users** see only the teams they are a member of (including their own personal team).
 
 The caller's own personal team is derived from the authenticated identity, never from client input, so this endpoint cannot be used to enumerate other users' personal teams.
-
-### List Teams
 
 ```bash
 # List teams visible to the caller (non-paginated response - default)
@@ -1602,6 +2065,16 @@ echo "=== E2E Test Complete ==="
 ```
 
 **Solution**: Verify the resource ID exists using the list endpoint.
+
+#### 409 Conflict
+
+```json
+{
+  "detail": "Public resource already exists with URI: file:///etc/config.json — resource URIs must be unique within this scope (names may repeat)."
+}
+```
+
+**Solution**: The identifier already exists in the scope you are writing to. For resources the identifier is `uri` (not `name` — names may repeat); for gateways it is the URL or name. Choose a different identifier, or update the existing record instead of creating a new one.
 
 #### 422 Validation Error
 

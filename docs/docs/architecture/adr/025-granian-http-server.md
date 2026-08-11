@@ -1,8 +1,14 @@
 # ADR-0025: Add Granian as Alternative HTTP Server
 
-- *Status:* Accepted
+- *Status:* Superseded by [ADR-0054](054-remove-granian-http-server.md)
 - *Date:* 2025-12-21
+- *Superseded:* 2026-07-22
 - *Deciders:* Core Engineering Team
+
+!!! warning
+    This ADR has been superseded by the decision to remove Granian.
+    See [ADR-054](054-remove-granian-http-server.md) for the current
+    decision.
 
 ## Context
 

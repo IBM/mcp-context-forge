@@ -7,34 +7,34 @@ authors = [
 ]
 license = { text = "Apache-2.0" }
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
-    "matplotlib>=3.11.0",
-    "mcp>=1.28.1",
-    "numpy>=2.4.4",
+"matplotlib>=3.11.1",
+    "mcp>=1.28.1,<2",
+    "numpy>=2.5.1",
     "openpyxl>=3.1.5",
     "orjson>=3.11.9",
-    "pandas>=3.0.3",
-    "plotly>=6.8.0",
-    "pyarrow>=24.0.0",
+    "pandas>=3.0.5",
+    "plotly>=6.9.0",
+    "pyarrow>=25.0.0",
     "pydantic>=2.13.4",
     "pyyaml>=6.0.3",
     "requests>=2.34.2",
     "scikit-learn>=1.9.0",
-    "scipy>=1.17.1",
+    "scipy>=1.18.0",
     "seaborn>=0.13.2",
-    "sqlalchemy<2.0.50",
+    "sqlalchemy>=2.0.51",
     "statsmodels>=0.14.6",
 ]
 
 [project.optional-dependencies]
 dev = [
     "black>=26.5.1",
-    "mypy>=2.1.0",
+    "mypy>=2.3.0",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
     "pytest-cov>=7.1.0",
-    "ruff>=0.15.20",
+    "ruff>=0.16.0",
 ]
 
 [build-system]
@@ -48,17 +48,17 @@ packages = ["src/data_analysis_server"]
 data-analysis-server = "data_analysis_server.server:main"
 
 [tool.black]
-target-version = ["py311"]
+target-version = ["py312"]
 line-length = 88
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.12"
 strict = true
 warn_return_any = true
 warn_unused_configs = true
 
 [tool.ruff]
-target-version = "py311"
+target-version = "py312"
 line-length = 88
 select = ["E", "W", "F", "B", "I", "N", "UP", "S"]
 

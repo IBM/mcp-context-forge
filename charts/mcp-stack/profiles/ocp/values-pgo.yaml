@@ -27,6 +27,21 @@ global:
 mcpContextForge:
   replicaCount: 3                          # 3 replicas × 8 CPU = 24 CPU (matches benchmark)
 
+  # OpenShift SCC compatibility — let OCP assign UIDs from its allowed range
+  # instead of using the image default (10001) which is outside OCP's range
+  podSecurityContext:
+    runAsUser: null
+    runAsGroup: null
+    fsGroup: null
+    runAsNonRoot: true
+  containerSecurityContext:
+    runAsUser: null
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    seccompProfile: null
+
   hpa:
     enabled: false                           # disabled — manual scaling for benchmarking
     minReplicas: 3
@@ -92,7 +107,6 @@ mcpContextForge:
             backend: "redis"
             redis_url: "redis://:{{ "{{" }} env.REDIS_PASSWORD {{ "}}" }}@{{ .Release.Name }}-mcp-stack-redis:6379/0"
             redis_key_prefix: "rl"
-            redis_fallback: true
             by_user: "30/m"
             by_tenant: "3000/m"
             by_tool: {}
@@ -224,6 +238,8 @@ mcpContextForge:
     # For tighter control, use SSRF_ALLOWED_NETWORKS to restrict to the cluster CIDR.
     SSRF_ALLOW_PRIVATE_NETWORKS: "true"
     LOG_LEVEL: INFO
+    # Raise validation rate limit to avoid 429s during load test setup and registration jobs
+    VALIDATION_MAX_REQUESTS_PER_MINUTE: "10000"
     # --- Gunicorn tuning (match VM benchmark) ---
     GUNICORN_WORKERS: "8"                  # 8 workers per pod × 3 pods = 24 total (matches VM)
     GUNICORN_MAX_REQUESTS: "1000000"       # recycle after 1M requests (VM: 1M)
@@ -263,10 +279,10 @@ mcpContextForge:
     DB_POOL_TIMEOUT: "60"
 
   secret:
-    JWT_SECRET_KEY: "my-test-key-but-now-longer-than-32-bytes"  # pragma: allowlist secret
-    AUTH_ENCRYPTION_SECRET: "my-test-salt"  # pragma: allowlist secret
-    BASIC_AUTH_PASSWORD: "changeme"  # pragma: allowlist secret
-    PLATFORM_ADMIN_PASSWORD: "changeme"  # pragma: allowlist secret
+    JWT_SECRET_KEY: ""  # must be set to a strong value before deploy (run make init-secrets-patch-env)
+    AUTH_ENCRYPTION_SECRET: ""  # must be set to a strong value before deploy (run make init-secrets-patch-env)
+    BASIC_AUTH_PASSWORD: "changeme"  # CHANGE THIS before deploy  # pragma: allowlist secret
+    PLATFORM_ADMIN_PASSWORD: "changeme"  # CHANGE THIS before deploy  # pragma: allowlist secret
     REQUIRE_STRONG_SECRETS: "true"         # gateway refuses to start with weak/default secrets
 
 # --- Migration ---
@@ -276,6 +292,9 @@ migration:
   hookPhase: "pre-install,pre-upgrade"
   hostKey: "host"
   portKey: "port"
+  # OpenShift SCC: let OCP assign UID from its allowed range (1000740000-1000749999)
+  podSecurityContext:
+    runAsNonRoot: true
 
 # --- Postgres ---
 # Using CrunchyData PGO operator — internal Postgres and PgBouncer disabled
@@ -385,7 +404,7 @@ testing:
     jwt:
       username: admin@example.com
       expirationMinutes: 10080
-      secret: "my-test-key-but-now-longer-than-32-bytes"  # pragma: allowlist secret
+      secret: ""  # must be set to a strong value before deploy (run make init-secrets-patch-env)
   fastTime:
     register:
       enabled: true

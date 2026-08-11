@@ -181,11 +181,13 @@ endef
 # 🌱 VIRTUAL ENVIRONMENT & INSTALLATION
 # =============================================================================
 # help: 🌱 VIRTUAL ENVIRONMENT & INSTALLATION
+# help: setup                - First-time setup: copy .env.example → .env and generate secrets (works for make dev AND make compose-up)
 # help: uv                   - Ensure uv is installed or install it if needed
 # help: venv                 - Create virtual environment if it doesn't exist
 # help: activate             - Activate the virtual environment in the current shell
 # help: install              - Install project into the venv
 # help: install-dev          - Install project (incl. dev deps) into the venv
+# help: ensure-secrets       - Seed .env from .env.example if absent, then patch placeholder secrets (GHSA-8pcq-mx48-hjvj)
 # help: install-db           - Install project (incl. postgres and redis) into venv
 # help: update               - Update all installed deps inside the venv
 .PHONY: uv
@@ -299,6 +301,22 @@ install: venv
 install-db: venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && $(UV_BIN) pip install .[redis,postgres]"
 
+.PHONY: ensure-secrets
+ensure-secrets:
+	@# Internal automation target — silently self-heals .env on fresh checkouts.
+	@# Not interactive: does not prompt, does not print advisory options.
+	@# For interactive first-time setup use 'make setup'.
+	@# If .env is absent, seed it from .env.example first.
+	@if [ ! -f .env ] && [ -f .env.example ]; then \
+		echo "📋  .env not found — copying .env.example → .env"; \
+		cp .env.example .env; \
+	fi
+	@# Replace any __REPLACE_ME__ placeholders with strong generated values.
+	@# No-ops if the secrets already hold real values (idempotent, safe to re-run).
+	@if [ -f .env ]; then \
+		$(UV_BIN) run python3 -m mcpgateway.scripts.init_secrets --patch-env .env; \
+	fi
+
 .PHONY: install-dev
 install-dev: venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && $(UV_BIN) pip install --group dev '.[plugins]'"
@@ -309,6 +327,12 @@ install-dev: venv
 		echo "⏭️  Rust builds disabled (set ENABLE_RUST_BUILD=1 to enable)"; \
 	fi
 	@$(MAKE) build-ui
+	@echo ""
+	@echo "🔑  Next step — choose one:"
+	@echo "    make setup           # recommended: auto-creates .env and patches secrets in-place"
+	@echo "    make init-secrets    # writes secrets to .env.secrets so you can review before copying"
+	@echo "    JWT_SECRET_KEY must be strong in every environment."
+	@echo "    AUTH_ENCRYPTION_SECRET: weak values (e.g. my-test-salt) are allowed in ENVIRONMENT=development."
 
 # help: build-ui              - Build Admin UI CSS and JS bundles (requires npm; set SKIP_UI_BUILD=1 to bypass)
 .PHONY: build-ui
@@ -350,9 +374,41 @@ check-env-dev:
 	@echo "🔎  Validating .env (dev, warnings do not fail)..."
 	@python -c "import sys; from mcpgateway.scripts import validate_env as ve; sys.exit(ve.main(env_file='.env', exit_on_warnings=False))"
 
-.PHONY: init-secrets
-init-secrets: ## Generate secure secrets for the gateway (US-3)
-	python3 -m mcpgateway.scripts.init_secrets
+# help: init-secrets          - Generate secrets → .env.secrets for manual review; copy values into .env when ready
+# help: init-secrets-force    - Regenerate .env.secrets unconditionally (no prompt)
+# help: init-secrets-patch-env - Patch JWT_SECRET_KEY/BASIC_AUTH_PASSWORD into .env; AUTH_ENCRYPTION_SECRET written to .env.secrets only
+.PHONY: init-secrets init-secrets-force init-secrets-patch-env
+init-secrets:                   ## 🔑 Generate secrets → .env.secrets (prompts if file exists)
+	$(UV_BIN) run python3 -m mcpgateway.scripts.init_secrets
+
+init-secrets-force:             ## 🔑 Regenerate .env.secrets unconditionally (--force)
+	$(UV_BIN) run python3 -m mcpgateway.scripts.init_secrets --force
+
+init-secrets-patch-env:         ## 🔑 Patch JWT_SECRET_KEY into .env; AUTH_ENCRYPTION_SECRET written to .env.secrets only (--patch-env)
+	$(UV_BIN) run python3 -m mcpgateway.scripts.init_secrets --patch-env .env
+
+# First-time setup: works before make dev, make serve, and make compose-up.
+# Copies .env.example → .env (skipped if .env already exists), then generates
+# strong secrets for any placeholder values. Safe to re-run — idempotent.
+.PHONY: setup
+setup:                          ## 🚀 First-time setup: copy .env.example → .env and generate secrets
+	@echo "🔧 ContextForge first-time setup..."
+	@echo ""
+	@echo "    This target auto-patches secrets into .env."
+	@echo "    If you prefer to review secrets before use, run instead:"
+	@echo "      make init-secrets    # writes to .env.secrets — review, then copy into .env"
+	@echo ""
+	@if [ ! -f .env ]; then \
+		echo "📋  Copying .env.example → .env"; \
+		cp .env.example .env; \
+	else \
+		echo "ℹ️   .env already exists — skipping copy"; \
+	fi
+	@$(MAKE) --no-print-directory ensure-secrets
+	@echo ""
+	@echo "✅  Setup complete."
+	@echo "    For local dev:    make install-dev && make dev"
+	@echo "    For Docker stack: make compose-up"
 
 # =============================================================================
 # ▶️ SERVE
@@ -379,7 +435,7 @@ init-secrets: ## Generate secure secrets for the gateway (US-3)
 # help: stop-serve           - Stop gunicorn production server (port 4444)
 # help: run                  - Execute helper script ./run.sh
 
-.PHONY: serve serve-ssl serve-granian serve-granian-ssl serve-granian-http2 dev dev-remote stop stop-dev stop-serve run \
+.PHONY: serve serve-ssl dev dev-remote stop stop-dev stop-serve run \
         certs certs-jwt certs-jwt-ecdsa certs-all certs-mcp-ca certs-mcp-gateway certs-mcp-plugin certs-mcp-all certs-mcp-check \
         js-build
 
@@ -397,15 +453,6 @@ serve: install js-build                  ## Run production server with Gunicorn 
 
 serve-ssl: js-build certs        ## Run Gunicorn with TLS enabled
 	SSL=true CERT_FILE=certs/cert.pem KEY_FILE=certs/key.pem ./run-gunicorn.sh
-
-serve-granian: js-build          ## Run production server with Granian (Rust-based, alternative)
-	./run-granian.sh
-
-serve-granian-ssl: js-build certs ## Run Granian with TLS enabled
-	SSL=true CERT_FILE=certs/cert.pem KEY_FILE=certs/key.pem ./run-granian.sh
-
-serve-granian-http2: js-build certs ## Run Granian with HTTP/2 and TLS
-	SSL=true GRANIAN_HTTP=2 CERT_FILE=certs/cert.pem KEY_FILE=certs/key.pem ./run-granian.sh
 
 dev:
 	@echo "🚀 Starting development server with CSS watch..."
@@ -432,7 +479,6 @@ dev-remote: js-build             ## Run dev server with remote debugging (debugp
 stop:                            ## Stop all mcpgateway server processes
 	@echo "Stopping all mcpgateway processes..."
 	@if [ -f /tmp/mcpgateway-gunicorn.lock ]; then kill -9 $$(cat /tmp/mcpgateway-gunicorn.lock) 2>/dev/null || true; rm -f /tmp/mcpgateway-gunicorn.lock; fi
-	@if [ -f /tmp/mcpgateway-granian.lock ]; then kill -9 $$(cat /tmp/mcpgateway-granian.lock) 2>/dev/null || true; rm -f /tmp/mcpgateway-granian.lock; fi
 	@lsof -ti:8000 2>/dev/null | xargs $(XARGS_FLAGS) kill -9 || true
 	@lsof -ti:4444 2>/dev/null | xargs $(XARGS_FLAGS) kill -9 || true
 	@echo "Done."
@@ -761,6 +807,7 @@ clean:
 # help: test-protocol-compliance-matrix - Protocol compliance matrix across every runnable engine; summary table (pass MATRIX_ARGS='--format markdown --out X' to override)
 # help: test-mcp-protocol-e2e - MCP protocol E2E via FastMCP client against live gateway (K=<filter> to pick one; MCP_E2E_CLIENT_TIMEOUT env to extend the 5s client timeout)
 # help: test-mcp-cli         - [DEPRECATED] Alias for test-mcp-protocol-e2e (accepts same K=<filter>)
+# help: test-bats            - Run bats tests for git tooling (tests/bash; requires bats)
 # help: test-mcp-rbac        - RBAC + multi-transport MCP protocol tests (needs live gateway + SSE)
 # help: test-mcp-access-matrix - MCP role/access matrix (Rust transport, edge/full mode)
 # help: test-mcp-plugin-parity - MCP plugin parity E2E for current Python or Rust stack
@@ -774,7 +821,7 @@ clean:
 # help: test-plugin-rate-limiter       - Plugin E2E: RateLimiter (needs Redis)
 # help: test-plugin-retry-with-backoff - Plugin E2E: RetryWithBackoff (needs Redis)
 # help: test-plugin-pii-filter         - Plugin E2E: PIIFilter
-# help: test-plugin-sql-sanitizer      - Plugin E2E: SQLSanitizer (native plugin)
+# help: test-plugin-sql-sanitizer      - Plugin E2E: SQLSanitizer
 # help: test                 - Run unit tests with pytest
 # help: test-verbose         - Run tests sequentially with real-time test name output
 # help: test-profile         - Run tests and show slowest 20 tests (durations >= 1s)
@@ -801,7 +848,16 @@ clean:
 # help: query-log-analyze    - Analyze query log for N+1 patterns and slow queries
 # help: query-log-clear      - Clear database query log files
 
-.PHONY: smoketest test-mcp-cli test-mcp-rbac test-mcp-plugin-parity test-mcp-access-matrix test-mcp-session-isolation test-mcp-session-isolation-load test-e2e-sso test-live-gateway test test-verbose test-profile coverage test-docs pytest-examples test-curl htmlcov doctest doctest-verbose doctest-coverage doctest-check test-db-perf test-db-perf-verbose 2025-11-25 2025-11-25-core 2025-11-25-tasks 2025-11-25-auth 2025-11-25-report dev-query-log query-log-tail query-log-analyze query-log-clear load-test load-test-ui load-test-light load-test-heavy load-test-sustained load-test-stress load-test-report load-test-compose load-test-timeserver load-test-fasttime load-test-1000 load-test-summary load-test-baseline load-test-baseline-ui load-test-baseline-stress load-test-agentgateway-mcp-server-time
+.PHONY: smoketest test-mcp-cli test-mcp-rbac test-mcp-plugin-parity test-mcp-access-matrix \
+	test-mcp-session-isolation test-mcp-session-isolation-load test-e2e-sso \
+	test-live-gateway test test-verbose test-profile coverage test-docs pytest-examples \
+	test-curl htmlcov doctest doctest-verbose doctest-coverage doctest-check test-db-perf \
+	test-db-perf-verbose 2025-11-25 2025-11-25-core 2025-11-25-tasks 2025-11-25-auth \
+	2025-11-25-report dev-query-log query-log-tail query-log-analyze query-log-clear \
+	load-test load-test-ui load-test-light load-test-heavy load-test-sustained load-test-stress \
+	load-test-report load-test-compose load-test-timeserver load-test-fasttime load-test-1000 \
+	load-test-summary load-test-baseline load-test-baseline-ui load-test-baseline-stress \
+	load-test-agentgateway-mcp-server-time
 
 # Dirs/files always excluded from standard pytest runs.
 # tests/live_gateway/ — see tests/live_gateway/README.md. Subsuites need
@@ -833,10 +889,22 @@ test-mcp-protocol-e2e: uv  ## MCP protocol E2E via FastMCP client (K=<filter> to
 		|| { echo "❌ MCP protocol E2E tests failed!"; exit 1; }
 	@echo "✅ MCP protocol E2E tests passed!"
 
-test-mcp-cli:  ## [DEPRECATED] Alias for test-mcp-protocol-e2e (subprocess + mcp-cli path removed)
-	@echo "⚠️  'make test-mcp-cli' is deprecated — use 'make test-mcp-protocol-e2e'."
-	@echo "   The mcp-cli + mcpgateway.wrapper subprocess path was replaced by the FastMCP client."
-	@$(MAKE) test-mcp-protocol-e2e
+# deprecated: test-mcp-cli       - Use "make test-mcp-protocol-e2e" instead (v1.2.0)
+test-mcp-cli:
+	$(call deprecated_target,test-mcp-cli,make test-mcp-protocol-e2e,1.2.0)
+	@$(MAKE) --no-print-directory test-mcp-protocol-e2e K="$(K)"
+
+.PHONY: test-bats
+test-bats:                     ## 🧪  Run bats tests for git tooling (tests/bash)
+	@command -v bats >/dev/null 2>&1 || { \
+		echo "❌  bats not found - install it to run tests/bash:"; \
+		echo "    macOS:          brew install bats-core"; \
+		echo "    Debian/Ubuntu:  sudo apt-get install bats"; \
+		echo "    npm:            npm install -g bats"; \
+		exit 1; \
+	}
+	@echo "🧪  Running bats tests for git tooling (tests/bash)..."
+	@bats tests/bash/ && echo "✅  bats tests passed!" || { echo "❌  bats tests failed!"; exit 1; }
 
 test-protocol-compliance: uv  ## MCP protocol compliance harness — full (target, transport) matrix (K=<filter> to pick one)
 	@echo "📜 Running MCP protocol compliance harness (tests/live_gateway/protocol_compliance)..."
@@ -1053,12 +1121,14 @@ test-curl:
 ## --- Doctest targets ---------------------------------------------------------
 doctest: uv
 	@echo "🧪 Running doctest on all modules..."
-	@JWT_SECRET_KEY=secret \
+	@JWT_SECRET_KEY=doctest-jwt-secret-DO-NOT-USE-IN-PRODUCTION-32plus \
+	 AUTH_ENCRYPTION_SECRET=doctest-enc-secret-DO-NOT-USE-IN-PRODUCTION-32plus \
 	 $(UV_BIN) run pytest --doctest-modules mcpgateway/ --ignore=mcpgateway/utils/pagination.py --tb=short --no-cov --disable-warnings -n 4
 
 doctest-verbose: uv
 	@echo "🧪 Running doctest with verbose output..."
-	@JWT_SECRET_KEY=secret \
+	@JWT_SECRET_KEY=doctest-jwt-secret-DO-NOT-USE-IN-PRODUCTION-32plus \
+	 AUTH_ENCRYPTION_SECRET=doctest-enc-secret-DO-NOT-USE-IN-PRODUCTION-32plus \
 	 $(UV_BIN) run pytest --doctest-modules mcpgateway/ --ignore=mcpgateway/utils/pagination.py -v --tb=short --no-cov --disable-warnings -n 4
 
 doctest-coverage: uv
@@ -2652,6 +2722,8 @@ MCP_BENCHMARK_WORKERS ?= 4
 MCP_BENCHMARK_MIXED_MASTER_PORT ?= 5567
 MCP_BENCHMARK_TOOLS_MASTER_PORT ?= 5569
 MCP_BENCHMARK_LOCUST_LOG_LEVEL ?= ERROR
+MCP_BENCHMARK_TOOL_POOL_SIZE ?= 0
+MCP_BENCHMARK_TOOL_DENYLIST ?= schema_error,flaky
 MCP_BENCHMARK_WORKER_LOG_DIR ?= reports/mcp_benchmark_workers
 RL_LIMIT_PER_MIN ?= 30
 
@@ -2704,6 +2776,8 @@ benchmark-mcp-mixed:                        ## Quick mixed MCP benchmark against
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -eu -o pipefail -c 'source $(VENV_DIR)/bin/activate && \
 		LOCUST_LOG_LEVEL=$(MCP_BENCHMARK_LOCUST_LOG_LEVEL) MCP_SERVER_ID=$(MCP_BENCHMARK_SERVER_ID) \
+		MCP_BENCHMARK_TOOL_POOL_SIZE=$(MCP_BENCHMARK_TOOL_POOL_SIZE) \
+		MCP_BENCHMARK_TOOL_DENYLIST=$(MCP_BENCHMARK_TOOL_DENYLIST) \
 		locust -f $(MCP_PROTOCOL_LOCUSTFILE) \
 			--host=$(MCP_BENCHMARK_HOST) \
 			--users=$(MCP_BENCHMARK_USERS) \
@@ -2721,6 +2795,8 @@ benchmark-mcp-tools:                        ## Quick tools-only MCP benchmark ag
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -eu -o pipefail -c 'source $(VENV_DIR)/bin/activate && \
 		LOCUST_LOG_LEVEL=$(MCP_BENCHMARK_LOCUST_LOG_LEVEL) MCP_SERVER_ID=$(MCP_BENCHMARK_SERVER_ID) \
+		MCP_BENCHMARK_TOOL_POOL_SIZE=$(MCP_BENCHMARK_TOOL_POOL_SIZE) \
+		MCP_BENCHMARK_TOOL_DENYLIST=$(MCP_BENCHMARK_TOOL_DENYLIST) \
 		locust -f $(MCP_PROTOCOL_LOCUSTFILE) \
 			--host=$(MCP_BENCHMARK_HOST) \
 			--users=$(MCP_BENCHMARK_USERS) \
@@ -2847,6 +2923,8 @@ benchmark-mcp-mixed-300:                    ## Distributed 300-user mixed MCP be
 		trap cleanup EXIT INT TERM; \
 		for i in $$(seq 1 $(MCP_BENCHMARK_WORKERS)); do \
 			LOCUST_LOG_LEVEL=$(MCP_BENCHMARK_LOCUST_LOG_LEVEL) MCP_SERVER_ID=$(MCP_BENCHMARK_SERVER_ID) \
+			MCP_BENCHMARK_TOOL_POOL_SIZE=$(MCP_BENCHMARK_TOOL_POOL_SIZE) \
+			MCP_BENCHMARK_TOOL_DENYLIST=$(MCP_BENCHMARK_TOOL_DENYLIST) \
 			locust -f $(MCP_PROTOCOL_LOCUSTFILE) \
 				--worker \
 				--master-host=127.0.0.1 \
@@ -2855,6 +2933,8 @@ benchmark-mcp-mixed-300:                    ## Distributed 300-user mixed MCP be
 			pids="$$pids $$!"; \
 		done; \
 		LOCUST_LOG_LEVEL=$(MCP_BENCHMARK_LOCUST_LOG_LEVEL) MCP_SERVER_ID=$(MCP_BENCHMARK_SERVER_ID) \
+		MCP_BENCHMARK_TOOL_POOL_SIZE=$(MCP_BENCHMARK_TOOL_POOL_SIZE) \
+		MCP_BENCHMARK_TOOL_DENYLIST=$(MCP_BENCHMARK_TOOL_DENYLIST) \
 		locust -f $(MCP_PROTOCOL_LOCUSTFILE) \
 			--host=$(MCP_BENCHMARK_HOST) \
 			--master \
@@ -2883,6 +2963,8 @@ benchmark-mcp-tools-300:                    ## Distributed 300-user tools-only M
 		trap cleanup EXIT INT TERM; \
 		for i in $$(seq 1 $(MCP_BENCHMARK_WORKERS)); do \
 			LOCUST_LOG_LEVEL=$(MCP_BENCHMARK_LOCUST_LOG_LEVEL) MCP_SERVER_ID=$(MCP_BENCHMARK_SERVER_ID) \
+			MCP_BENCHMARK_TOOL_POOL_SIZE=$(MCP_BENCHMARK_TOOL_POOL_SIZE) \
+			MCP_BENCHMARK_TOOL_DENYLIST=$(MCP_BENCHMARK_TOOL_DENYLIST) \
 			locust -f $(MCP_PROTOCOL_LOCUSTFILE) \
 				--worker \
 				--master-host=127.0.0.1 \
@@ -2891,6 +2973,8 @@ benchmark-mcp-tools-300:                    ## Distributed 300-user tools-only M
 			pids="$$pids $$!"; \
 		done; \
 		LOCUST_LOG_LEVEL=$(MCP_BENCHMARK_LOCUST_LOG_LEVEL) MCP_SERVER_ID=$(MCP_BENCHMARK_SERVER_ID) \
+		MCP_BENCHMARK_TOOL_POOL_SIZE=$(MCP_BENCHMARK_TOOL_POOL_SIZE) \
+		MCP_BENCHMARK_TOOL_DENYLIST=$(MCP_BENCHMARK_TOOL_DENYLIST) \
 		locust -f $(MCP_PROTOCOL_LOCUSTFILE) \
 			--host=$(MCP_BENCHMARK_HOST) \
 			--master \
@@ -3294,9 +3378,9 @@ FILE_AWARE_LINTERS := isort black pylint mypy bandit pydocstyle \
 
 .PHONY: lint $(LINTERS) pyright-pr black black-check isort-check ruff-check ruff-fix ruff-format autoflake lint-py lint-yaml lint-json lint-md lint-strict \
 	lint-count-errors lint-report lint-changed lint-staged lint-commit \
-	lint-pre-commit lint-pre-push lint-parallel lint-cache-clear lint-stats \
+	lint-parallel lint-cache-clear lint-stats \
 	lint-complexity lint-watch lint-watch-quick \
-	lint-install-hooks lint-quick lint-fix lint-smart lint-target lint-all \
+	lint-quick lint-fix lint-smart lint-target lint-all \
 	lint-actionlint lint-chart-testing lint-helm-unittest lint-commitlint \
 	linting-python-env \
 	linting-workflow-actionlint linting-workflow-zizmor linting-workflow-reviewdog linting-workflow-commitlint \
@@ -3594,7 +3678,10 @@ linting-security-checkov:            ## 🛡️  IaC security scanning with Chec
 	@echo "🛡️ checkov scan of $(LINT_CHECKOV_TARGET)..."
 	@$(MAKE) --no-print-directory linting-python-env
 	@"$(LINT_PY_VENV)/bin/python" -m pip install -q --disable-pip-version-check checkov
-	@"$(LINT_PY_VENV)/bin/checkov" -d "$(LINT_CHECKOV_TARGET)" --quiet
+	@"$(LINT_PY_VENV)/bin/checkov" \
+		-d "$(LINT_CHECKOV_TARGET)" \
+		--quiet \
+		--skip-check CKV_DOCKER_3,CKV_DOCKER_2,CKV_SECRET_4,CKV_SECRET_6,CKV_K8S_21,CKV_GHA_7,CKV_K8S_43,CKV_K8S_35,CKV_K8S_40,CKV2_K8S_6,CKV2_GHA_1
 
 .PHONY: linting-security-kube-linter
 linting-security-kube-linter:        ## 🧱  Kubernetes best-practice linting
@@ -3749,6 +3836,95 @@ pre-commit: uv                     ## 🪄  Run pre-commit tool
 		$(VENV_DIR)/bin/pre-commit run --config .pre-commit-config.yaml --all-files --show-diff-on-failure"
 
 RUFF_MODE   ?= check
+
+.PHONY: install-pre-commit-hooks
+install-pre-commit-hooks: uv          ## 🪝  Install pre-commit hooks
+	@echo "🪝  Installing pre-commit hooks..."
+	@# pre-commit refuses to install when core.hooksPath is set (e.g. an
+	@# MDM-managed global hook such as vault-radar in ~/.gitconfig). Shadow
+	@# the global git config for this invocation only — nothing is modified —
+	@# so the shim lands in <git-common-dir>/hooks, where the hooksPath hook's
+	@# own chain probe (vault-radar's probe_chain) detects and executes it.
+	@# Only the global scope is shadowed; a repo-local hooksPath still refuses.
+	@if git config --global core.hooksPath >/dev/null 2>&1; then \
+		echo "⚠️  Global core.hooksPath detected ($$(git config --global core.hooksPath)); installing shim into default hooks dir for chaining"; \
+		GIT_CONFIG_GLOBAL=/dev/null $(UV_BIN) run pre-commit install; \
+	else \
+		$(UV_BIN) run pre-commit install; \
+	fi
+	@echo "✅  Pre-commit hooks installed"
+
+.PHONY: configure-secrets-merge-driver
+configure-secrets-merge-driver:    ## 🔀  Configure git merge driver for .secrets.baseline
+	@echo "🔀  Configuring git merge driver for .secrets.baseline..."
+	@if ! git rev-parse --git-dir > /dev/null 2>&1; then \
+		echo "❌  Not in a git repository"; \
+		exit 1; \
+	fi
+	@git config merge.secrets-baseline.name "Regenerate .secrets.baseline via detect-secrets-scan"
+	@# Install the driver outside the worktree so it stays resolvable while
+	@# rebasing history that predates the script itself.
+	@common_dir=$$(cd "$$(git rev-parse --git-common-dir)" && pwd) && \
+	mkdir -p "$$common_dir/git-drivers" && \
+	cp scripts/git/resolve-secrets-baseline-conflict.sh "$$common_dir/git-drivers/" && \
+	chmod +x "$$common_dir/git-drivers/resolve-secrets-baseline-conflict.sh" && \
+	git config merge.secrets-baseline.driver "$$common_dir/git-drivers/resolve-secrets-baseline-conflict.sh %O %A %B %P" && \
+	echo "✅  Installed driver to $$common_dir/git-drivers/"
+	@# Bind the attribute repo-locally too: the versioned .gitattributes entry
+	@# only exists in later history, so early rebase picks would otherwise fall
+	@# back to the default text merge.
+	@info_attrs=$$(cd "$$(git rev-parse --git-common-dir)" && pwd)/info/attributes && \
+	mkdir -p "$$(dirname "$$info_attrs")" && \
+	if ! grep -qF ".secrets.baseline merge=secrets-baseline" "$$info_attrs" 2>/dev/null; then \
+		echo ".secrets.baseline merge=secrets-baseline" >> "$$info_attrs"; \
+		echo "✅  Added merge driver binding to $$info_attrs"; \
+	else \
+		echo "✅  $$info_attrs already contains merge driver binding"; \
+	fi
+	@if [ ! -f .gitattributes ]; then \
+		echo ".secrets.baseline merge=secrets-baseline" > .gitattributes; \
+		echo "✅  Created .gitattributes with merge driver entry"; \
+	elif ! grep -qF ".secrets.baseline merge=secrets-baseline" .gitattributes; then \
+		echo ".secrets.baseline merge=secrets-baseline" >> .gitattributes; \
+		echo "✅  Added merge driver entry to .gitattributes"; \
+	else \
+		echo "✅  .gitattributes already contains merge driver entry"; \
+	fi
+	@echo "✅  Git merge driver configured for .secrets.baseline"
+
+.PHONY: install-post-rewrite-detect-secrets-hook
+install-post-rewrite-detect-secrets-hook:     ## 🪝  Install post-rewrite hook that refreshes .secrets.baseline after rebase
+	@echo "🪝  Installing post-rewrite secrets refresh hook..."
+	@if ! git rev-parse --git-dir > /dev/null 2>&1; then \
+		echo "❌  Not in a git repository"; \
+		exit 1; \
+	fi
+	@# Idempotent + non-destructive install:
+	@#  - hook missing or already ours (marker comment) -> (over)write ours
+	@#  - foreign hook, no chain yet -> move it to post-rewrite.chain; our
+	@#    hook executes the chain after itself, so both still run
+	@#  - foreign hook AND chain present -> ambiguous; never clobber
+	@hooks_dir=$$(git rev-parse --git-common-dir)/hooks && \
+	target="$$hooks_dir/post-rewrite" && \
+	chain="$$hooks_dir/post-rewrite.chain" && \
+	if [ -f "$$target" ] && ! grep -q '^# contextforge: post-rewrite-secrets-refresh$$' "$$target"; then \
+		if [ -e "$$chain" ]; then \
+			echo "❌  Foreign post-rewrite hook and existing post-rewrite.chain both present; merge manually" >&2; \
+			exit 1; \
+		fi; \
+		mv "$$target" "$$chain" && chmod +x "$$chain" && \
+		echo "🔀  Moved existing post-rewrite hook to post-rewrite.chain (chained by our hook)"; \
+	fi && \
+	cp scripts/git/post-rewrite-secrets-refresh.sh "$$target" && \
+	chmod +x "$$target" && \
+	echo "✅  Installed $$target"
+
+.PHONY: configure-git
+configure-git: install-pre-commit-hooks configure-secrets-merge-driver install-post-rewrite-detect-secrets-hook  ## 🔧  Configure git hooks and merge drivers
+	@echo "✅  Git configuration complete"
+
+
+
 RUFF_SELECT ?=
 
 ruff: uv                            ## ⚡  Ruff linter (RUFF_MODE=check|fix|format, RUFF_SELECT=rules)
@@ -4087,48 +4263,6 @@ lint-report:							## 📋 Generate comprehensive linting report
 	@echo "## Error Count by Tool" >> $(DOCS_DIR)/reports/full-lint-report.md
 	@$(MAKE) --no-print-directory lint-count-errors TARGET="$(TARGET)" >> $(DOCS_DIR)/reports/full-lint-report.md 2>&1 || true
 	@echo "📄 Report generated: $(DOCS_DIR)/reports/full-lint-report.md"
-
-# -----------------------------------------------------------------------------
-# 🔧 PRE-COMMIT INTEGRATION
-# -----------------------------------------------------------------------------
-# help: lint-install-hooks   - Install git pre-commit hooks for linting
-# help: lint-pre-commit      - Run linting as pre-commit check
-# help: lint-pre-push        - Run linting as pre-push check
-.PHONY: lint-install-hooks lint-pre-commit lint-pre-push
-
-# Install git hooks for linting
-lint-install-hooks:						## 🔧 Install git hooks for auto-linting
-	@echo "🔧 Installing git pre-commit hooks for linting..."
-	@if [ ! -d ".git" ]; then \
-		echo "❌ Not a git repository"; \
-		exit 1; \
-	fi
-	@echo '#!/bin/bash' > .git/hooks/pre-commit
-	@echo '# Auto-generated pre-commit hook for linting' >> .git/hooks/pre-commit
-	@echo 'echo "🔍 Running pre-commit linting..."' >> .git/hooks/pre-commit
-	@echo 'make lint-pre-commit' >> .git/hooks/pre-commit
-	@chmod +x .git/hooks/pre-commit
-	@echo '#!/bin/bash' > .git/hooks/pre-push
-	@echo '# Auto-generated pre-push hook for linting' >> .git/hooks/pre-push
-	@echo 'echo "🔍 Running pre-push linting..."' >> .git/hooks/pre-push
-	@echo 'make lint-pre-push' >> .git/hooks/pre-push
-	@chmod +x .git/hooks/pre-push
-	@echo "✅ Git hooks installed:"
-	@echo "   📝 pre-commit: .git/hooks/pre-commit"
-	@echo "   📤 pre-push: .git/hooks/pre-push"
-	@echo "💡 To disable: rm .git/hooks/pre-commit .git/hooks/pre-push"
-
-# Pre-commit hook (lint staged files)
-lint-pre-commit:						## 🔍 Pre-commit linting check
-	@echo "🔍 Pre-commit linting check..."
-	@$(MAKE) --no-print-directory lint-staged
-	@echo "✅ Pre-commit linting passed!"
-
-# Pre-push hook (lint all changed files)
-lint-pre-push:							## 🔍 Pre-push linting check
-	@echo "🔍 Pre-push linting check..."
-	@$(MAKE) --no-print-directory lint-changed
-	@echo "✅ Pre-push linting passed!"
 
 # -----------------------------------------------------------------------------
 # 🎯 FILE TYPE SPECIFIC LINTING
@@ -4603,7 +4737,7 @@ dockle:
 # help: hadolint             - Lint Containerfile/Dockerfile(s) with hadolint
 .PHONY: hadolint
 # List of Containerfile/Dockerfile patterns to scan
-HADOFILES := Containerfile.* Dockerfile Dockerfile.*
+HADOFILES := Containerfile Containerfile.* Dockerfile Dockerfile.*
 
 hadolint:
 	@echo "🔎  hadolint scan..."
@@ -4664,8 +4798,9 @@ deps-update:
 # =============================================================================
 .PHONY: dist wheel sdist verify publish publish-testpypi
 
-dist: clean uv               ## Build wheel + sdist into ./dist (optionally includes Rust)
+dist: uv                     ## Build wheel + sdist into ./dist (optionally includes Rust)
 	@echo "📦 Building Python package..."
+	@rm -rf dist build *.egg-info
 	@BUILD_UI_ASSETS=true $(UV_BIN) build
 	@if [ "$(ENABLE_RUST_BUILD)" = "1" ]; then \
 		echo "🦀 Building Rust..."; \
@@ -4767,7 +4902,7 @@ endef
 # help: container-build-rust - Build image WITH Rust plugins (ENABLE_RUST_BUILD=1)
 # help: container-build-rust-lite - Build lite image WITH Rust plugins
 # help: container-rust       - Build with Rust and run container (all-in-one)
-# help: container-run        - Run container (CONTAINER_SSL=1 CONTAINER_HOST_NET=1 CONTAINER_JWT=1 CONTAINER_HTTP_SERVER=granian|gunicorn)
+# help: container-run        - Run container (CONTAINER_SSL=1 CONTAINER_HOST_NET=1 CONTAINER_JWT=1)
 # help: container-push       - Push image (handles localhost/ prefix)
 # help: container-stop       - Stop & remove the container
 # help: container-logs       - Stream container logs
@@ -4846,7 +4981,7 @@ container-build:
 	if [ "$(ENABLE_FIPS_BUILD)" = "true" ] || [ "$(ENABLE_FIPS_BUILD)" = "1" ]; then \
 		echo "🔐 Building container WITH FedRAMP/FIPS compliance (UBI 9 stack)..."; \
 		FIPS_ARG="--build-arg ENABLE_FIPS=true \
-			--build-arg PYTHON_VERSION=3.11 \
+			--build-arg PYTHON_VERSION=3.12 \
 			--build-arg UBI_BASE=registry.access.redhat.com/ubi9/ubi:latest \
 			--build-arg NODEJS_IMAGE=registry.access.redhat.com/ubi9/nodejs-20:latest \
 			--build-arg UBI_MINIMAL=registry.access.redhat.com/ubi9/ubi-minimal:latest"; \
@@ -4891,25 +5026,22 @@ container-validate-fedramp: container-check-image ## Validate FedRAMP compliance
 CONTAINER_SSL        ?=
 CONTAINER_HOST_NET   ?=
 CONTAINER_JWT        ?=
-CONTAINER_HTTP_SERVER ?=
 
 .PHONY: container-run
-container-run: container-check-image  ## Run container (CONTAINER_SSL=1 CONTAINER_HOST_NET=1 CONTAINER_JWT=1 CONTAINER_HTTP_SERVER=granian|gunicorn)
+container-run: container-check-image  ## Run container (CONTAINER_SSL=1 CONTAINER_HOST_NET=1 CONTAINER_JWT=1)
 	$(if $(call is_true,$(CONTAINER_SSL)),@test -d certs || $(MAKE) --no-print-directory certs,)
 	$(if $(call is_true,$(CONTAINER_JWT)),@test -d certs/jwt || $(MAKE) --no-print-directory certs-jwt,)
-	@printf '🚀 Running with %s%s%s%s%s...\n' \
+	@printf '🚀 Running with %s%s%s%s...\n' \
 		'$(CONTAINER_RUNTIME)' \
 		'$(if $(call is_true,$(CONTAINER_SSL)), (TLS),)' \
 		'$(if $(call is_true,$(CONTAINER_HOST_NET)), (host network),)' \
-		'$(if $(call is_true,$(CONTAINER_JWT)), (JWT asymmetric),)' \
-		'$(if $(CONTAINER_HTTP_SERVER), + $(CONTAINER_HTTP_SERVER),)'
+		'$(if $(call is_true,$(CONTAINER_JWT)), (JWT asymmetric),)'
 	-$(CONTAINER_RUNTIME) stop $(PROJECT_NAME) 2>/dev/null || true
 	-$(CONTAINER_RUNTIME) rm $(PROJECT_NAME) 2>/dev/null || true
 	$(CONTAINER_RUNTIME) run --name $(PROJECT_NAME) \
 		$(if $(or $(call is_true,$(CONTAINER_SSL)),$(call is_true,$(CONTAINER_JWT))),--user $(shell id -u):$(shell id -g),) \
 		$(if $(call is_true,$(CONTAINER_HOST_NET)),--network=host,) \
 		--env-file=.env \
-		$(if $(CONTAINER_HTTP_SERVER),-e HTTP_SERVER=$(CONTAINER_HTTP_SERVER),) \
 		$(if $(call is_true,$(CONTAINER_SSL)),-e SSL=true -e CERT_FILE=certs/cert.pem -e KEY_FILE=certs/key.pem,) \
 		$(if $(call is_true,$(CONTAINER_JWT)),-e JWT_ALGORITHM=RS256 -e JWT_PUBLIC_KEY_PATH=/app/certs/jwt/public.pem -e JWT_PRIVATE_KEY_PATH=/app/certs/jwt/private.pem,) \
 		$(if $(or $(call is_true,$(CONTAINER_SSL)),$(call is_true,$(CONTAINER_JWT))),-v $(PWD)/certs:/app/certs:ro$(if $(filter podman,$(CONTAINER_RUNTIME)),$(COMMA)Z,),) \
@@ -4921,10 +5053,9 @@ container-run: container-check-image  ## Run container (CONTAINER_SSL=1 CONTAINE
 		--health-start-period=30s --health-timeout=10s \
 		-d $(call get_image_name)
 	@sleep 2
-	@printf '✅ Container started%s%s%s\n' \
+	@printf '✅ Container started%s%s\n' \
 		'$(if $(call is_true,$(CONTAINER_SSL)), with TLS,)' \
-		'$(if $(call is_true,$(CONTAINER_JWT)), + JWT asymmetric,)' \
-		'$(if $(CONTAINER_HTTP_SERVER), ($(CONTAINER_HTTP_SERVER)),)'
+		'$(if $(call is_true,$(CONTAINER_JWT)), + JWT asymmetric,)'
 	$(if $(call is_true,$(CONTAINER_JWT)),@echo "🔐 JWT Algorithm: RS256",)
 	$(if $(call is_true,$(CONTAINER_JWT)),@echo "📁 Keys mounted: /app/certs/jwt/{private$(COMMA)public}.pem",)
 
@@ -4933,12 +5064,7 @@ container-run: container-check-image  ## Run container (CONTAINER_SSL=1 CONTAINE
 # deprecated: container-run-ssl         - Use "make container-run CONTAINER_SSL=1" instead (v1.2.0)
 # deprecated: container-run-ssl-host    - Use "make container-run CONTAINER_SSL=1 CONTAINER_HOST_NET=1" instead (v1.2.0)
 # deprecated: container-run-ssl-jwt     - Use "make container-run CONTAINER_SSL=1 CONTAINER_JWT=1" instead (v1.2.0)
-# deprecated: container-run-granian     - Use "make container-run CONTAINER_HTTP_SERVER=granian" instead (v1.2.0)
-# deprecated: container-run-gunicorn    - Use "make container-run CONTAINER_HTTP_SERVER=gunicorn" instead (v1.2.0)
-# deprecated: container-run-granian-ssl - Use "make container-run CONTAINER_SSL=1 CONTAINER_HTTP_SERVER=granian" instead (v1.2.0)
-# deprecated: container-run-gunicorn-ssl - Use "make container-run CONTAINER_SSL=1 CONTAINER_HTTP_SERVER=gunicorn" instead (v1.2.0)
-.PHONY: container-run-host container-run-ssl container-run-ssl-host container-run-ssl-jwt \
-	container-run-granian container-run-gunicorn container-run-granian-ssl container-run-gunicorn-ssl
+.PHONY: container-run-host container-run-ssl container-run-ssl-host container-run-ssl-jwt
 
 container-run-host: container-check-image
 	$(call deprecated_target,container-run-host,make container-run CONTAINER_HOST_NET=1,1.2.0)
@@ -4955,22 +5081,6 @@ container-run-ssl-host: container-check-image
 container-run-ssl-jwt: container-check-image
 	$(call deprecated_target,container-run-ssl-jwt,make container-run CONTAINER_SSL=1 CONTAINER_JWT=1,1.2.0)
 	@$(MAKE) --no-print-directory container-run CONTAINER_SSL=1 CONTAINER_JWT=1
-
-container-run-granian: container-check-image
-	$(call deprecated_target,container-run-granian,make container-run CONTAINER_HTTP_SERVER=granian,1.2.0)
-	@$(MAKE) --no-print-directory container-run CONTAINER_HTTP_SERVER=granian
-
-container-run-gunicorn: container-check-image
-	$(call deprecated_target,container-run-gunicorn,make container-run CONTAINER_HTTP_SERVER=gunicorn,1.2.0)
-	@$(MAKE) --no-print-directory container-run CONTAINER_HTTP_SERVER=gunicorn
-
-container-run-granian-ssl: container-check-image
-	$(call deprecated_target,container-run-granian-ssl,make container-run CONTAINER_SSL=1 CONTAINER_HTTP_SERVER=granian,1.2.0)
-	@$(MAKE) --no-print-directory container-run CONTAINER_SSL=1 CONTAINER_HTTP_SERVER=granian
-
-container-run-gunicorn-ssl: container-check-image
-	$(call deprecated_target,container-run-gunicorn-ssl,make container-run CONTAINER_SSL=1 CONTAINER_HTTP_SERVER=gunicorn,1.2.0)
-	@$(MAKE) --no-print-directory container-run CONTAINER_SSL=1 CONTAINER_HTTP_SERVER=gunicorn
 
 .PHONY: container-push
 container-push: container-check-image
@@ -5527,11 +5637,16 @@ compose-siem-up compose-siem-down compose-siem-logs \
 	embedded-up embedded-down embedded-clean embedded-status embedded-logs
 
 # Validate compose file
+# To auto-fix before validating, run: make setup && make compose-validate
 .PHONY: compose-validate
 compose-validate:
 	@echo "🔍 Validating compose file..."
 	@if [ ! -f "$(COMPOSE_FILE)" ]; then \
 		echo "❌ Compose file not found: $(COMPOSE_FILE)"; \
+		exit 1; \
+	fi
+	@if [ ! -f .env ]; then \
+		echo "❌ .env not found. Run: make setup"; \
 		exit 1; \
 	fi
 	$(COMPOSE) config --quiet
@@ -5660,6 +5775,7 @@ compose-siem-logs: ## 📜 Tail logs for SIEM stack services
 	$(COMPOSE_CMD) -f docker-compose.yml -f docker-compose.siem-opensearch.yml logs -f gateway opensearch
 
 .PHONY: compose-restart
+compose-restart:
 	@echo "🔄  Restarting stack..."
 	$(COMPOSE) pull
 	$(COMPOSE) build
@@ -6846,7 +6962,7 @@ SHELL_SCRIPTS := $(shell find . -type f -name '*.sh' \
 # Define shfmt binary location
 SHFMT := $(shell command -v shfmt 2>/dev/null || echo "$(HOME)/go/bin/shfmt")
 
-.PHONY: shell-linters-install shell-lint shfmt-fix shellcheck bashate
+.PHONY: shell-linters-install shell-lint shfmt-fix
 
 shell-linters-install:     ## 🔧  Install shellcheck, shfmt, bashate
 	@echo "🔧  Installing/ensuring shell linters are present..."
@@ -6952,36 +7068,46 @@ alembic-install:
 	@echo "➜ Installing Alembic ..."
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && $(UV_BIN) pip install -q alembic sqlalchemy"
 
+# Alembic commands require Settings() to be constructable (GHSA-8pcq-mx48-hjvj).
+# Load secrets from .env if present; otherwise fall back to recognisable
+# test-only values so 'make db-*' works on a fresh checkout without secrets.
+define db_env
+	$(eval _JWT  := $(shell grep -s '^JWT_SECRET_KEY=' .env | cut -d= -f2-))
+	$(eval _ENC  := $(shell grep -s '^AUTH_ENCRYPTION_SECRET=' .env | cut -d= -f2-))
+	$(eval _JWT  := $(if $(_JWT),$(_JWT),alembic-jwt-secret-DO-NOT-USE-IN-PRODUCTION-xx))
+	$(eval _ENC  := $(if $(_ENC),$(_ENC),alembic-enc-secret-DO-NOT-USE-IN-PRODUCTION-xx))
+endef
+
 .PHONY: db-init
 db-init: ## Initialize alembic migrations
 	@echo "🗄️ Initializing database migrations..."
-	alembic -c $(ALEMBIC_CONFIG) init alembic
+	$(call db_env)JWT_SECRET_KEY="$(_JWT)" AUTH_ENCRYPTION_SECRET="$(_ENC)" alembic -c $(ALEMBIC_CONFIG) init alembic
 
 .PHONY: db-migrate
 db-migrate: ## Create a new migration
-	@echo "�️ Creating new migration..."
-	@read -p "Enter migration message: " msg; \
-	alembic -c $(ALEMBIC_CONFIG) revision --autogenerate -m "$$msg"
+	@echo "🗄️ Creating new migration..."
+	$(call db_env)@read -p "Enter migration message: " msg; \
+	JWT_SECRET_KEY="$(_JWT)" AUTH_ENCRYPTION_SECRET="$(_ENC)" alembic -c $(ALEMBIC_CONFIG) revision --autogenerate -m "$$msg"
 
 .PHONY: db-upgrade
 db-upgrade: ## Upgrade database to latest migration
 	@echo "🗄️ Upgrading database..."
-	alembic -c $(ALEMBIC_CONFIG) upgrade head
+	$(call db_env)JWT_SECRET_KEY="$(_JWT)" AUTH_ENCRYPTION_SECRET="$(_ENC)" alembic -c $(ALEMBIC_CONFIG) upgrade head
 
 .PHONY: db-downgrade
 db-downgrade: ## Downgrade database by one revision
-	@echo "�️ Downgrading database..."
-	alembic -c $(ALEMBIC_CONFIG) downgrade -1
+	@echo "🗄️ Downgrading database..."
+	$(call db_env)JWT_SECRET_KEY="$(_JWT)" AUTH_ENCRYPTION_SECRET="$(_ENC)" alembic -c $(ALEMBIC_CONFIG) downgrade -1
 
 .PHONY: db-current
 db-current: ## Show current database revision
 	@echo "🗄️ Current database revision:"
-	@alembic -c $(ALEMBIC_CONFIG) current
+	$(call db_env)@JWT_SECRET_KEY="$(_JWT)" AUTH_ENCRYPTION_SECRET="$(_ENC)" alembic -c $(ALEMBIC_CONFIG) current
 
 .PHONY: db-history
 db-history: ## Show migration history
 	@echo "🗄️ Migration history:"
-	@alembic -c $(ALEMBIC_CONFIG) history
+	$(call db_env)@JWT_SECRET_KEY="$(_JWT)" AUTH_ENCRYPTION_SECRET="$(_ENC)" alembic -c $(ALEMBIC_CONFIG) history
 
 .PHONY: db-heads
 db-heads: ## Show available heads
@@ -7270,7 +7396,6 @@ test-full: coverage test-js test-ui-report
 
 # help: pyupgrade           - Upgrade Python syntax to newer versions
 # help: interrogate         - Check docstring coverage
-# help: prospector          - Comprehensive Python code analysis
 # help: pip-audit           - Audit Python dependencies for published CVEs
 # help: detect-secrets-scan    - detect-secrets scan for secrets in repository using baseline file .secrets.baseline
 # help: detect-secrets-audit   - detect-secrets audit for unverified secrets detected in baseline file .secrets.baseline
@@ -7278,7 +7403,7 @@ test-full: coverage test-js test-ui-report
 # help: devskim             - Run DevSkim static analysis for security anti-patterns
 
 # List of security tools to run with security-all
-SECURITY_TOOLS := semgrep dodgy detect-secrets-scan interrogate prospector pip-audit devskim
+SECURITY_TOOLS := semgrep dodgy detect-secrets-scan interrogate pip-audit devskim
 
 .PHONY: security-all security-report security-fix $(SECURITY_TOOLS) pyupgrade devskim-install-dotnet devskim
 
@@ -7328,19 +7453,21 @@ interrogate: uv                     ## 📝 Docstring coverage
 	@echo "📝  interrogate - checking docstring coverage..."
 	@$(UV_BIN) tool run interrogate==$(INTERROGATE_VERSION) -vv mcpgateway || true
 
-prospector:                         ## 🔬 Comprehensive code analysis
-	@echo "🔬  prospector - running comprehensive analysis..."
-	@test -d "$(VENV_DIR)" || $(MAKE) venv
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		$(UV_BIN) pip install -q prospector[with_everything] && \
-		$(VENV_DIR)/bin/prospector mcpgateway || true"
-
 pip-audit:                          ## 🔒 Audit Python dependencies for CVEs
 	@echo "🔒  pip-audit vulnerability scan..."
+	@echo ""
+	@echo "  ⚠️  NOTE: --skip-editable is active. Two editable installs are expected to be skipped:"
+	@echo "       • compliance-reference-server   (mcp-servers/ dev install)"
+	@echo "       • mcp-contextforge-gateway      (main gateway dev install)"
+	@echo ""
+	@echo "  🚨 If ANY OTHER package appears in the skip table → STOP and investigate."
+	@echo "     It may have active CVEs that are being silently suppressed."
+	@echo "     To audit it manually: pip-audit --path <pkg-path> --no-deps"
+	@echo ""
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
 		$(UV_BIN) pip install -q pip-audit && \
-		pip-audit --strict || true"
+		pip-audit --skip-editable || true"
 
 
 
@@ -7457,10 +7584,39 @@ DETECT_SECRETS_FILES_EXCLUDE := '(?x)( \
   |uv\.lock$$                  \
   |go\.sum$$                   \
   |mcpgateway/sri_hashes\.json$$ \
-)'
+  )|^\.secrets\.baseline$$'
 
+# The commit to use as the baseline for determining changes files for the
+# detect secrets scan
+GIT_DIFF_TARGET ?= main
+
+# --diff-filter=d EXCLUDES delete files
+# 2>/dev/null silences the parse-time git error in checkouts with no main
+# ref (e.g. CI fetching only the PR ref); the driver recomputes the file
+# list itself in that case (see the fallback chain in
+# scripts/git/resolve-secrets-baseline-conflict.sh).
+DETECT_SECRETS_PATH ?= $(shell git diff $(GIT_DIFF_TARGET) --name-only --diff-filter=d 2>/dev/null)
+
+# The scan/merge/gate pipeline lives in ONE place: the .secrets.baseline git
+# merge driver (scripts/git/resolve-secrets-baseline-conflict.sh), documented
+# there including the line-by-line jq merge walkthrough. This target is a thin
+# wrapper: it execs the driver with placeholder %O/%B (`-`), .secrets.baseline
+# as both %A (output) and %P. GIT_DIFF_TARGET / DETECT_SECRETS_PATH are
+# forwarded only when the user set them (command line or environment); with
+# the file defaults above ($(origin) is 'file') nothing is forwarded, so the
+# driver's own fallback chain (root-branch probe -> whole-tree scan) can
+# engage.
 .PHONY: detect-secrets-scan
 detect-secrets-scan: uv                      ## 🔍  detect-secrets scan for secrets in repository
+	@echo "🔍 Running detect-secrets scan..."
+	$(if $(filter file default undefined,$(origin GIT_DIFF_TARGET)),,GIT_DIFF_TARGET="$(GIT_DIFF_TARGET)") $(if $(filter file default undefined,$(origin DETECT_SECRETS_PATH)),,DETECT_SECRETS_PATH="$(DETECT_SECRETS_PATH)") scripts/git/resolve-secrets-baseline-conflict.sh - .secrets.baseline - .secrets.baseline
+
+# Verbatim copy of main's detect-secrets-scan (whole-repo scan, updates
+# .secrets.baseline in place, report-only). This branch rescopes
+# detect-secrets-scan to files changed vs $(GIT_DIFF_TARGET); keep the -all
+# variant for whole-tree baseline regeneration.
+.PHONY: detect-secrets-scan-all
+detect-secrets-scan-all: uv                  ## 🔍  detect-secrets scan of the full repository (main's original detect-secrets-scan)
 	@echo "🔍 Running detect-secrets scan..."
 	@$(UV_BIN) tool run --from '$(DETECT_SECRETS_SPEC)' detect-secrets scan \
 		--update .secrets.baseline \

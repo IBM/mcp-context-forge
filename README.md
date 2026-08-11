@@ -157,22 +157,24 @@ ContextForge is published on [PyPI](https://pypi.org/project/mcp-contextforge-ga
 
 ---
 
-**TLDR;**:
-(single command using [uv](https://docs.astral.sh/uv/))
+> ⚠️ **`JWT_SECRET_KEY` and `AUTH_ENCRYPTION_SECRET` are required in every environment — including local development.** The gateway will not start without them. Generate real secrets with `python3 -m mcpgateway.scripts.init_secrets` before first run.
+
+**TLDR** — single command using [uv](https://docs.astral.sh/uv/):
 
 ```bash
-# Quick start with environment variables
-BASIC_AUTH_PASSWORD=pass \
+# 1️⃣  Generate secure secrets (creates .env.secrets)
+python3 -m mcpgateway.scripts.init_secrets
+
+# 2️⃣  Export the generated values
+export JWT_SECRET_KEY="$(grep '^JWT_SECRET_KEY=' .env.secrets | cut -d= -f2)"
+export AUTH_ENCRYPTION_SECRET="$(grep '^AUTH_ENCRYPTION_SECRET=' .env.secrets | cut -d= -f2)"
+
+# 3️⃣  Start the gateway
+JWT_SECRET_KEY="$JWT_SECRET_KEY" \
+AUTH_ENCRYPTION_SECRET="$AUTH_ENCRYPTION_SECRET" \
 MCPGATEWAY_UI_ENABLED=true \
 MCPGATEWAY_ADMIN_API_ENABLED=true \
 PLATFORM_ADMIN_EMAIL=admin@example.com \
-PLATFORM_ADMIN_PASSWORD=changeme \
-PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
-uvx --from mcp-contextforge-gateway mcpgateway --host 0.0.0.0 --port 4444
-
-# Or better: use the provided .env.example
-cp .env.example .env
-# Edit .env to customize your settings
 uvx --from mcp-contextforge-gateway mcpgateway --host 0.0.0.0 --port 4444
 ```
 
@@ -187,31 +189,29 @@ uvx --from mcp-contextforge-gateway mcpgateway --host 0.0.0.0 --port 4444
 ### 1 - Install & run (copy-paste friendly)
 
 ```bash
-# 1️⃣  Isolated env + install from pypi
+# 1️⃣  Create an isolated env and install from PyPI
 mkdir mcpgateway && cd mcpgateway
 python3 -m venv .venv && source .venv/bin/activate
 pip install --upgrade pip
 pip install mcp-contextforge-gateway
 
-# 2️⃣  Copy and customize the configuration
-# Download the example environment file
+# 2️⃣  Download .env.example and generate real secrets
 curl -O https://raw.githubusercontent.com/IBM/mcp-context-forge/main/.env.example
 cp .env.example .env
-# Edit .env to customize your settings (especially passwords!)
 
-# Or set environment variables directly:
-export MCPGATEWAY_UI_ENABLED=true
-export MCPGATEWAY_ADMIN_API_ENABLED=true
-export PLATFORM_ADMIN_EMAIL=admin@example.com
-export PLATFORM_ADMIN_PASSWORD=changeme
-export PLATFORM_ADMIN_FULL_NAME="Platform Administrator"
+# Generate cryptographically secure secrets into .env.secrets
+python3 -m mcpgateway.scripts.init_secrets
 
-BASIC_AUTH_PASSWORD=pass JWT_SECRET_KEY=my-test-key-but-now-longer-than-32-bytes \
-  mcpgateway --host 0.0.0.0 --port 4444 &   # admin/pass
+# Patch the generated secrets into .env (replaces __REPLACE_ME__ placeholders)
+python3 -m mcpgateway.scripts.init_secrets --patch-env .env
 
-# 3️⃣  Generate a bearer token & smoke-test the API
+# 3️⃣  Start the gateway
+mcpgateway --host 0.0.0.0 --port 4444 &
+
+# 4️⃣  Generate a bearer token and smoke-test
+export JWT_SECRET_KEY=$(grep '^JWT_SECRET_KEY=' .env | cut -d= -f2)
 export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
-    --username admin@example.com --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes)
+    --username admin@example.com --exp 10080 --secret "$JWT_SECRET_KEY")
 
 curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      http://127.0.0.1:4444/version | jq
@@ -227,30 +227,23 @@ python3 -m venv .venv ; .\.venv\Scripts\Activate.ps1
 pip install --upgrade pip
 pip install mcp-contextforge-gateway
 
-# 2️⃣  Copy and customize the configuration
-# Download the example environment file
+# 2️⃣  Download .env.example and generate real secrets
 Invoke-WebRequest -Uri "https://raw.githubusercontent.com/IBM/mcp-context-forge/main/.env.example" -OutFile ".env.example"
 Copy-Item .env.example .env
-# Edit .env to customize your settings
 
-# Or set environment variables (session-only)
-$Env:MCPGATEWAY_UI_ENABLED        = "true"
-$Env:MCPGATEWAY_ADMIN_API_ENABLED = "true"
-# Note: Basic auth for API is disabled by default (API_ALLOW_BASIC_AUTH=false)
-$Env:JWT_SECRET_KEY               = "my-test-key-but-now-longer-than-32-bytes"
-$Env:PLATFORM_ADMIN_EMAIL         = "admin@example.com"
-$Env:PLATFORM_ADMIN_PASSWORD      = "changeme"
-$Env:PLATFORM_ADMIN_FULL_NAME     = "Platform Administrator"
+# Generate cryptographically secure secrets into .env.secrets
+python3 -m mcpgateway.scripts.init_secrets
+
+# Patch the generated secrets into .env (replaces __REPLACE_ME__ placeholders)
+python3 -m mcpgateway.scripts.init_secrets --patch-env .env
 
 # 3️⃣  Launch the gateway
 mcpgateway.exe --host 0.0.0.0 --port 4444
 
-#   Optional: background it
-# Start-Process -FilePath "mcpgateway.exe" -ArgumentList "--host 0.0.0.0 --port 4444"
-
 # 4️⃣  Bearer token and smoke-test
+$Env:JWT_SECRET_KEY = (Get-Content .env | Select-String '^JWT_SECRET_KEY=').ToString().Split('=')[1]
 $Env:MCPGATEWAY_BEARER_TOKEN = python3 -m mcpgateway.utils.create_jwt_token `
-    --username admin@example.com --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes
+    --username admin@example.com --exp 10080 --secret $Env:JWT_SECRET_KEY
 
 curl -s -H "Authorization: Bearer $Env:MCPGATEWAY_BEARER_TOKEN" `
      http://127.0.0.1:4444/version | jq
@@ -392,26 +385,45 @@ Please note: Currently, arm64 is not supported on production. If you are e.g. ru
 
 ### 🚀 Quick Start - Docker Compose
 
-Get a full stack running with PostgreSQL and Redis in under 30 seconds:
+> **Important:** `docker compose up -d` does **not** build the gateway image locally by default — it uses the pre-built image from GHCR. The compose file includes a `build:` block as a fallback, but local builds require a hermetic wheel closure that is only produced by the CI pipeline. If you see a `cryptography` or dependency resolution error during build, you are hitting this — just pull the image instead (step 2 below handles this automatically).
+>
+> You also **must** have a `.env` file with real secrets before running `docker compose up -d`. The gateway will not start with placeholder values.
+
+Get a full stack running with PostgreSQL and Redis:
 
 ```bash
-# Clone and start the stack
+# 1️⃣  Clone the repository
 git clone https://github.com/IBM/mcp-context-forge.git
 cd mcp-context-forge
 
-# Start with PostgreSQL (recommended for production)
+# 2️⃣  Set up .env with real secrets AND pull the pre-built images
+cp .env.example .env
+python3 -m mcpgateway.scripts.init_secrets --patch-env .env
+# .env now has strong JWT_SECRET_KEY and AUTH_ENCRYPTION_SECRET
+
+# Pull pre-built images from GHCR (avoids local build entirely)
+docker pull ghcr.io/ibm/mcp-context-forge:latest
+echo 'IMAGE_LOCAL=ghcr.io/ibm/mcp-context-forge:latest' >> .env
+
+# Build only the nginx image (small, local-only, builds in seconds)
+docker compose build nginx
+
+# 3️⃣  Start the full stack
 docker compose up -d
 
-# Check status
+# 4️⃣  Check status
 docker compose ps
 
-# View logs
+# 5️⃣  View logs
 docker compose logs -f gateway
 
-# Access Admin UI: http://localhost:8080/admin (login with PLATFORM_ADMIN_EMAIL/PASSWORD)
-# Generate API token
+# 6️⃣  Access Admin UI: http://localhost:8080/admin
+#     Login: PLATFORM_ADMIN_EMAIL / PLATFORM_ADMIN_PASSWORD (from .env)
+
+# 7️⃣  Generate an API token
+export JWT_SECRET_KEY=$(grep '^JWT_SECRET_KEY=' .env | cut -d= -f2)
 docker compose exec gateway python3 -m mcpgateway.utils.create_jwt_token \
-  --username admin@example.com --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes
+  --username admin@example.com --exp 10080 --secret "$JWT_SECRET_KEY"
 ```
 
 **What you get:**
@@ -454,11 +466,19 @@ Deploy to Kubernetes with enterprise-grade features:
 git clone https://github.com/IBM/mcp-context-forge.git
 cd mcp-context-forge/charts/mcp-stack
 
+# Generate secrets first
+python3 -m mcpgateway.scripts.init_secrets
+JWT_SECRET=$(grep '^JWT_SECRET_KEY=' .env.secrets | cut -d= -f2)
+ENC_SECRET=$(grep '^AUTH_ENCRYPTION_SECRET=' .env.secrets | cut -d= -f2)
+
 # Install with PostgreSQL (default)
+# IMPORTANT: replace <strong-password> with a real password — do not use 'changeme' in production
 helm install mcp-gateway . \
   --set mcpContextForge.secret.PLATFORM_ADMIN_EMAIL=admin@yourcompany.com \
-  --set mcpContextForge.secret.PLATFORM_ADMIN_PASSWORD=changeme \
-  --set mcpContextForge.secret.JWT_SECRET_KEY=your-secret-key
+  --set mcpContextForge.secret.PLATFORM_ADMIN_PASSWORD=<strong-password> \
+  --set mcpContextForge.secret.BASIC_AUTH_PASSWORD=<strong-password> \
+  --set "mcpContextForge.secret.JWT_SECRET_KEY=${JWT_SECRET}" \
+  --set "mcpContextForge.secret.AUTH_ENCRYPTION_SECRET=${ENC_SECRET}"
 
 # Check deployment status
 kubectl get pods -l app.kubernetes.io/name=mcp-context-forge
@@ -467,10 +487,10 @@ kubectl get pods -l app.kubernetes.io/name=mcp-context-forge
 kubectl port-forward svc/mcp-gateway-mcp-context-forge 4444:80
 # Access: http://localhost:4444/admin
 
-# Generate API token
+# Generate API token (reads JWT_SECRET_KEY from the pod's environment)
 kubectl exec deployment/mcp-gateway-mcp-context-forge -- \
   python3 -m mcpgateway.utils.create_jwt_token \
-  --username admin@yourcompany.com --exp 10080 --secret your-secret-key
+  --username admin@yourcompany.com --exp 10080 --secret "${JWT_SECRET}"
 ```
 
 > SSRF note: Helm defaults to strict SSRF settings (`SSRF_ALLOW_PRIVATE_NETWORKS=false`).
@@ -492,24 +512,35 @@ kubectl exec deployment/mcp-gateway-mcp-context-forge -- \
 ### 🐳 Docker (Single Container)
 
 ```bash
+# Generate secrets first (creates .env.secrets)
+python3 -m mcpgateway.scripts.init_secrets
+export JWT_SECRET_KEY="$(grep '^JWT_SECRET_KEY=' .env.secrets | cut -d= -f2)"
+export AUTH_ENCRYPTION_SECRET="$(grep '^AUTH_ENCRYPTION_SECRET=' .env.secrets | cut -d= -f2)"
+
 docker run -d --name mcpgateway \
   -p 4444:4444 \
   -e MCPGATEWAY_UI_ENABLED=true \
   -e MCPGATEWAY_ADMIN_API_ENABLED=true \
   -e HOST=0.0.0.0 \
-  -e JWT_SECRET_KEY=my-test-key-but-now-longer-than-32-bytes \
+  -e JWT_SECRET_KEY="${JWT_SECRET_KEY}" \
+  -e AUTH_ENCRYPTION_SECRET="${AUTH_ENCRYPTION_SECRET}" \
   -e AUTH_REQUIRED=true \
   -e PLATFORM_ADMIN_EMAIL=admin@example.com \
-  -e PLATFORM_ADMIN_PASSWORD=changeme \
+  -e PLATFORM_ADMIN_PASSWORD=<strong-password> \
   -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
   -e DATABASE_URL=sqlite:///./mcp.db \
   -e SECURE_COOKIES=false \
-  ghcr.io/ibm/mcp-context-forge:1.0.0-RC-3
+  ghcr.io/ibm/mcp-context-forge:latest
 
-# Tail logs and generate API key
+# Tail logs
 docker logs -f mcpgateway
-docker run --rm -it ghcr.io/ibm/mcp-context-forge:1.0.0-RC-3 \
-  python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes
+
+# Generate API token (using the same secret)
+docker run --rm -it \
+  -e JWT_SECRET_KEY="${JWT_SECRET_KEY}" \
+  ghcr.io/ibm/mcp-context-forge:latest \
+  python3 -m mcpgateway.utils.create_jwt_token \
+  --username admin@example.com --exp 10080 --secret "${JWT_SECRET_KEY}"
 ```
 
 Browse to **[http://localhost:4444/admin](http://localhost:4444/admin)** and login with `PLATFORM_ADMIN_EMAIL` / `PLATFORM_ADMIN_PASSWORD`.
@@ -524,9 +555,10 @@ docker run -d --name mcpgateway --restart unless-stopped \
   -p 4444:4444 -v $(pwd)/data:/data \
   -e DATABASE_URL=sqlite:////data/mcp.db \
   -e MCPGATEWAY_UI_ENABLED=true -e MCPGATEWAY_ADMIN_API_ENABLED=true \
-  -e HOST=0.0.0.0 -e JWT_SECRET_KEY=my-test-key-but-now-longer-than-32-bytes \
-  -e PLATFORM_ADMIN_EMAIL=admin@example.com -e PLATFORM_ADMIN_PASSWORD=changeme \
-  ghcr.io/ibm/mcp-context-forge:1.0.0-RC-3
+  -e HOST=0.0.0.0 -e JWT_SECRET_KEY="${JWT_SECRET_KEY}" \
+  -e AUTH_ENCRYPTION_SECRET="${AUTH_ENCRYPTION_SECRET}" \
+  -e PLATFORM_ADMIN_EMAIL=admin@example.com -e PLATFORM_ADMIN_PASSWORD=<strong-password> \
+  ghcr.io/ibm/mcp-context-forge:latest
 ```
 
 **Host networking** (access local MCP servers):
@@ -534,7 +566,8 @@ docker run -d --name mcpgateway --restart unless-stopped \
 docker run -d --name mcpgateway --network=host \
   -v $(pwd)/data:/data -e DATABASE_URL=sqlite:////data/mcp.db \
   -e MCPGATEWAY_UI_ENABLED=true -e HOST=0.0.0.0 -e PORT=4444 \
-  ghcr.io/ibm/mcp-context-forge:1.0.0-RC-3
+  -e JWT_SECRET_KEY="${JWT_SECRET_KEY}" -e AUTH_ENCRYPTION_SECRET="${AUTH_ENCRYPTION_SECRET}" \
+  ghcr.io/ibm/mcp-context-forge:latest
 ```
 
 **Airgapped deployment** (no internet):
@@ -542,7 +575,8 @@ docker run -d --name mcpgateway --network=host \
 docker build -f Containerfile -t mcpgateway:airgapped .
 docker run -d --name mcpgateway -p 4444:4444 \
   -e MCPGATEWAY_UI_AIRGAPPED=true -e MCPGATEWAY_UI_ENABLED=true \
-  -e HOST=0.0.0.0 -e JWT_SECRET_KEY=my-test-key-but-now-longer-than-32-bytes \
+  -e HOST=0.0.0.0 -e JWT_SECRET_KEY="${JWT_SECRET_KEY}" \
+  -e AUTH_ENCRYPTION_SECRET="${AUTH_ENCRYPTION_SECRET}" \
   mcpgateway:airgapped
 ```
 
@@ -586,10 +620,11 @@ podman run -d --name mcpgateway --network=host \
 
 * **.env files** - Put all the `-e FOO=` lines into a file and replace them with `--env-file .env`. See the provided [.env.example](https://github.com/IBM/mcp-context-forge/blob/main/.env.example) for reference.
 * **Pinned tags** - Use an explicit version (e.g. `1.0.0-RC-3`) instead of `latest` for reproducible builds.
-* **JWT tokens** - Generate one in the running container:
+* **JWT tokens** - Generate one in the running container (reads the secret from the container environment):
 
   ```bash
-  docker exec mcpgateway python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes
+  docker exec mcpgateway python3 -m mcpgateway.utils.create_jwt_token \
+    --username admin@example.com --exp 10080 --secret "${JWT_SECRET_KEY}"
   ```
 * **Upgrades** - Stop, remove, and rerun with the same `-v $(pwd)/data:/data` mount; your DB and config stay intact.
 
@@ -619,19 +654,20 @@ curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
 The `mcpgateway.wrapper` lets you connect to the gateway over **stdio** while keeping JWT authentication. You should run this from the MCP Client. The example below is just for testing.
 
 ```bash
-# Set environment variables
-export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes)
+# JWT_SECRET_KEY must be set — see "Docker (Single Container)" for how to generate it
+export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
+  --username admin@example.com --exp 10080 --secret "${JWT_SECRET_KEY}")
 export MCP_AUTH="Bearer ${MCPGATEWAY_BEARER_TOKEN}"
 export MCP_SERVER_URL='http://localhost:4444/servers/UUID_OF_SERVER_1/mcp'
 export MCP_TOOL_CALL_TIMEOUT=120
 export MCP_WRAPPER_LOG_LEVEL=DEBUG  # or OFF to disable logging
 
 docker run --rm -i \
-  -e MCP_AUTH=$MCP_AUTH \
+  -e MCP_AUTH="${MCP_AUTH}" \
   -e MCP_SERVER_URL=http://host.docker.internal:4444/servers/UUID_OF_SERVER_1/mcp \
   -e MCP_TOOL_CALL_TIMEOUT=120 \
   -e MCP_WRAPPER_LOG_LEVEL=DEBUG \
-  ghcr.io/ibm/mcp-context-forge:1.0.0-RC-3 \
+  ghcr.io/ibm/mcp-context-forge:latest \
   python3 -m mcpgateway.wrapper
 ```
 
@@ -721,19 +757,24 @@ For upgrade instructions, migration guides, and rollback procedures, see:
 
 Copy the provided [.env.example](https://github.com/IBM/mcp-context-forge/blob/main/.env.example) to `.env` and update the security-sensitive values below.
 
-### 🔐 Required: Change Before Use
+### 🔐 Required: Set Before Starting
 
-These variables have insecure defaults and **must be changed** before production deployment:
+These variables **must be set** before the gateway will start. There are no usable defaults — the application fails at startup if these are missing or placeholder values:
 
-| Variable | Description | Default | Action Required |
-|----------|-------------|---------|-----------------|
-| `JWT_SECRET_KEY` | Secret key for signing JWT tokens (32+ chars) | `my-test-key-but-now-longer-than-32-bytes` | Generate with `openssl rand -hex 32` |
-| `AUTH_ENCRYPTION_SECRET` | Passphrase for encrypting stored credentials | `my-test-salt` | Generate with `openssl rand -hex 32` |
-| `BASIC_AUTH_USER` | Username for HTTP Basic auth | `admin` | Change for production |
-| `BASIC_AUTH_PASSWORD` | Password for HTTP Basic auth | `changeme` | Set a strong password |
-| `PLATFORM_ADMIN_EMAIL` | Email for bootstrap admin user | `admin@example.com` | Use real admin email |
-| `PLATFORM_ADMIN_PASSWORD` | Password for bootstrap admin user | `changeme` | Set a strong password |
-| `PLATFORM_ADMIN_FULL_NAME` | Display name for bootstrap admin | `Admin User` | Set admin name |
+| Variable | Description | How to generate |
+|----------|-------------|-----------------|
+| `JWT_SECRET_KEY` | HMAC secret for signing JWTs (32+ chars) | `python3 -m mcpgateway.scripts.init_secrets` |
+| `AUTH_ENCRYPTION_SECRET` | Passphrase for encrypting stored credentials | `python3 -m mcpgateway.scripts.init_secrets` |
+
+These variables have insecure defaults and **should be changed** before production use:
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `BASIC_AUTH_USER` | Username for HTTP Basic auth | `admin` |
+| `BASIC_AUTH_PASSWORD` | Password for HTTP Basic auth | **required — no default; set via `make init-secrets-patch-env`** |
+| `PLATFORM_ADMIN_EMAIL` | Email for bootstrap admin user | `admin@example.com` |
+| `PLATFORM_ADMIN_PASSWORD` | Password for bootstrap admin user | **required — set a strong value before first run** |
+| `PLATFORM_ADMIN_FULL_NAME` | Display name for bootstrap admin | `Admin User` |
 
 ### 🔒 Security Defaults (Secure by Default)
 
@@ -901,9 +942,12 @@ Interactive API documentation is available when the server is running:
 
 **Quick Authentication:**
 ```bash
+# Read JWT_SECRET_KEY from your .env (it must already contain a real secret)
+export JWT_SECRET_KEY=$(grep '^JWT_SECRET_KEY=' .env | cut -d= -f2)
+
 # Generate a JWT token
 export TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
-  --username admin@example.com --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes)
+  --username admin@example.com --exp 10080 --secret "$JWT_SECRET_KEY")
 
 # Test API access
 curl -H "Authorization: Bearer $TOKEN" http://localhost:4444/health
@@ -986,9 +1030,13 @@ Common issues and solutions:
 
 | Issue | Quick Fix |
 |-------|-----------|
+| `docker compose up` fails with `cryptography` or dependency resolution error | The local build requires a CI-produced wheel closure. Run `docker pull ghcr.io/ibm/mcp-context-forge:latest && echo 'IMAGE_LOCAL=ghcr.io/ibm/mcp-context-forge:latest' >> .env` then retry |
+| `docker compose up` fails with `SecurityConfigurationError: jwt_secret_key` | `.env` is missing or has `__REPLACE_ME__` placeholders. Run `cp .env.example .env && python3 -m mcpgateway.scripts.init_secrets --patch-env .env` |
+| `docker compose up` fails — `mcpgateway/nginx-cache` pull access denied | nginx image must be built locally: `docker compose build nginx` |
+| `make dev` — nothing on port 8000 | Check terminal for `SecurityConfigurationError` — run `make ensure-secrets` then retry. On WSL2 use `http://127.0.0.1:8000` not `localhost` |
 | SQLite "disk I/O error" on macOS | Avoid iCloud-synced directories; use `~/mcp-context-forge/data` |
 | Port 4444 not accessible on WSL2 | Configure WSL integration in Docker Desktop |
-| Gateway exits immediately | Copy `.env.example` to `.env` and configure required vars |
+| Gateway exits immediately | Run `cp .env.example .env && python3 -m mcpgateway.scripts.init_secrets --patch-env .env` |
 | `ModuleNotFoundError` | Run `make install-dev` |
 
 For detailed troubleshooting guides, see **[Troubleshooting Documentation](https://ibm.github.io/mcp-context-forge/manage/troubleshooting/)**.

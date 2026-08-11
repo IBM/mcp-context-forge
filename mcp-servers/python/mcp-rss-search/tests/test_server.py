@@ -2,11 +2,17 @@
 # -*- coding: utf-8 -*-
 """Tests for MCP RSS Search Server."""
 
+import socket
+
 import pytest
 from httpx import AsyncClient, Response
 from pytest_httpx import HTTPXMock
 
 from mcp_rss_search.server_fastmcp import RSSParser
+
+# Public IP that all hostnames resolve to under the ``patch_public_dns`` fixture,
+# keeping tests hermetic (no real DNS) and past the SSRF public-address check.
+PUBLIC_TEST_IP = "93.184.216.34"
 
 # Sample RSS feed for testing
 SAMPLE_RSS_FEED = """<?xml version="1.0" encoding="UTF-8"?>
@@ -61,10 +67,28 @@ def rss_parser():
 
 
 @pytest.fixture
-def mock_feed_response(httpx_mock: HTTPXMock):
-    """Mock HTTP response for RSS feed."""
+def patch_public_dns(monkeypatch):
+    """Resolve every hostname to a fixed public IP.
+
+    The SSRF guard resolves hostnames via ``socket.getaddrinfo`` before fetching;
+    patching it keeps the tests hermetic (no live DNS) and ensures hostnames pass
+    the public-address check so the happy-path fetch tests can exercise the mock.
+    """
+
+    def fake_getaddrinfo(host, port, *args, **kwargs):
+        return [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", (PUBLIC_TEST_IP, port or 0))]
+
+    monkeypatch.setattr("mcp_rss_search.server_fastmcp.socket.getaddrinfo", fake_getaddrinfo)
+
+
+@pytest.fixture
+def mock_feed_response(httpx_mock: HTTPXMock, patch_public_dns):
+    """Mock HTTP response for RSS feed.
+
+    The SSRF guard pins the connection to the resolved IP, so the outbound request
+    targets ``PUBLIC_TEST_IP`` rather than the original hostname; match on any URL.
+    """
     httpx_mock.add_response(
-        url="https://example.com/feed.rss",
         content=SAMPLE_RSS_FEED.encode("utf-8"),
         headers={"content-type": "application/rss+xml"},
     )
@@ -290,12 +314,9 @@ class TestRSSParser:
         assert len(rss_parser.cache) == 0
 
     @pytest.mark.asyncio
-    async def test_http_error_handling(self, rss_parser, httpx_mock: HTTPXMock):
+    async def test_http_error_handling(self, rss_parser, httpx_mock: HTTPXMock, patch_public_dns):
         """Test HTTP error handling."""
-        httpx_mock.add_response(
-            url="https://example.com/notfound.rss",
-            status_code=404,
-        )
+        httpx_mock.add_response(status_code=404)
 
         result = await rss_parser.fetch_feed(
             "https://example.com/notfound.rss", use_cache=False
@@ -377,3 +398,56 @@ class TestTools:
         authors = rss_parser.list_unique_values(result, "author")
         assert authors["success"] is True
         assert authors["unique_count"] == 2
+
+
+class TestSSRFProtection:
+    """Deny-path tests for the SSRF guard in fetch_feed."""
+
+    @pytest.mark.asyncio
+    async def test_blocks_cloud_metadata_ip(self, rss_parser, httpx_mock: HTTPXMock):
+        """Requests to the cloud metadata endpoint are rejected without a fetch."""
+        result = await rss_parser.fetch_feed(
+            "http://169.254.169.254/latest/meta-data/", use_cache=False
+        )
+
+        assert result["success"] is False
+        assert httpx_mock.get_requests() == []
+
+    @pytest.mark.asyncio
+    async def test_blocks_loopback(self, rss_parser, httpx_mock: HTTPXMock):
+        """Requests to loopback addresses are rejected without a fetch."""
+        result = await rss_parser.fetch_feed("http://127.0.0.1:8080/", use_cache=False)
+
+        assert result["success"] is False
+        assert httpx_mock.get_requests() == []
+
+    @pytest.mark.asyncio
+    async def test_blocks_private_network(self, rss_parser, httpx_mock: HTTPXMock):
+        """Requests to private-range addresses are rejected without a fetch."""
+        result = await rss_parser.fetch_feed("http://10.0.0.5/internal", use_cache=False)
+
+        assert result["success"] is False
+        assert httpx_mock.get_requests() == []
+
+    @pytest.mark.asyncio
+    async def test_blocks_non_http_scheme(self, rss_parser, httpx_mock: HTTPXMock):
+        """Non-HTTP(S) schemes are rejected without a fetch."""
+        result = await rss_parser.fetch_feed("file:///etc/passwd", use_cache=False)
+
+        assert result["success"] is False
+        assert httpx_mock.get_requests() == []
+
+    @pytest.mark.asyncio
+    async def test_blocks_redirect_to_internal(self, rss_parser, httpx_mock: HTTPXMock):
+        """A redirect from a public host to an internal target is rejected on the hop."""
+        # First (public) hop redirects to the cloud metadata endpoint.
+        httpx_mock.add_response(
+            status_code=302,
+            headers={"location": "http://169.254.169.254/latest/meta-data/"},
+        )
+
+        result = await rss_parser.fetch_feed("http://93.184.216.34/feed.rss", use_cache=False)
+
+        assert result["success"] is False
+        # Only the first public hop was requested; nothing reached the internal target.
+        assert len(httpx_mock.get_requests()) == 1

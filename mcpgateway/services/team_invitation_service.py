@@ -149,7 +149,7 @@ class TeamInvitationService:
         """
         return secrets.token_urlsafe(32)
 
-    async def create_invitation(self, team_id: str, email: str, role: str, invited_by: str, expiry_days: Optional[int] = None) -> Optional[EmailTeamInvitation]:
+    async def create_invitation(self, team_id: str, email: str, role: str, invited_by: str, expiry_days: Optional[int] = None, commit: bool = True) -> Optional[EmailTeamInvitation]:
         """Create a team invitation.
 
         Args:
@@ -158,6 +158,10 @@ class TeamInvitationService:
             role: Role to assign (owner, member)
             invited_by: Email of user sending the invitation
             expiry_days: Days until invitation expires (default from settings)
+            commit: Commit the invitation immediately. Pass ``False`` to flush it
+                into an outer transaction instead, so the caller can create the
+                invitation atomically alongside other rows (see
+                ``TeamManagementService.create_team_with_members``).
 
         Returns:
             EmailTeamInvitation: The created invitation or None if failed
@@ -249,7 +253,10 @@ class TeamInvitationService:
             )
 
             self.db.add(invitation)
-            self.db.commit()
+            if commit:
+                self.db.commit()
+            else:
+                self.db.flush()
 
             logger.info(
                 "Created invitation for %s to team %s by %s",
@@ -260,7 +267,10 @@ class TeamInvitationService:
             return invitation
 
         except Exception as e:
-            self.db.rollback()
+            # Only unwind the transaction when we own it. With commit=False the
+            # caller is mid-transaction and decides what to roll back.
+            if commit:
+                self.db.rollback()
             logger.error("Failed to create invitation for %s to team %s: %s", SecurityValidator.sanitize_log_message(email), SecurityValidator.sanitize_log_message(team_id), e)
             raise
 

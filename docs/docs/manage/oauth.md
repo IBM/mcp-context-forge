@@ -80,12 +80,16 @@ AUTH_ENCRYPTION_SECRET=<strong-random-key>
    - Client Secret (stored encrypted at rest)
    - Token URL
    - Scopes (space-separated)
-   - Audience (optional, for Atlassian, Auth0, and other non-RFC-8707 providers)
+   - Audience (optional, for Atlassian, Auth0, and other non-RFC-8707 providers that use an `audience` request parameter)
+   - Resource (optional, RFC 8707 audience indicator — see [OAuth Resource Configuration](oauth-resource-configuration.md))
    - Authorization URL and Redirect URI (required for Authorization Code)
 
 5. Save.
 
 Field mapping follows the architecture proposal and is used by the OAuth Manager service to request tokens.
+
+!!! tip "Resource (Audience) Configuration"
+    The **Resource** field controls the OAuth 2.0 `resource` parameter (RFC 8707) and token audience validation. In most cases you can leave it empty and let ContextForge auto-derive (from the gateway URL origin) and auto-learn (from the first successful token) the correct value. See [OAuth Resource Configuration](oauth-resource-configuration.md) for when to set it explicitly and how to force a re-learn.
 
 ---
 
@@ -111,6 +115,23 @@ Example OAuth-enabled gateway record:
 ```
 
 For Client Credentials, omit `authorization_url` and `redirect_uri` and set `grant_type` to `client_credentials`.
+
+### Resource Parameter and `omit_resource`
+
+By default ContextForge derives an RFC 8707 `resource` parameter from the gateway URL and includes it in token requests and refresh calls. Some IdPs (e.g. certain Atlassian configurations) reject requests that include the `resource` parameter. Set `omit_resource: true` to suppress it:
+
+```json
+{
+  "oauth_config": {
+    "grant_type": "authorization_code",
+    "client_id": "your-client-id",
+    "token_url": "https://auth.example.com/token",
+    "omit_resource": true
+  }
+}
+```
+
+When `omit_resource` is `true`, the `resource` parameter is removed before every token request and refresh call, regardless of whether a `resource` value was explicitly configured or auto-derived from the gateway URL.
 
 ### Audience Parameter
 
@@ -139,6 +160,63 @@ The `audience` parameter:
 - Can coexist with `resource` parameter for providers that accept both
 - When set without `resource`, the RFC 8707 `resource` parameter is automatically omitted
 
+### Resource Parameter (RFC 8707) — per-user audience learning, origin fallback, advisory validation
+
+!!! info "See also"
+    For a task-oriented guide (provider patterns, multi-resource configs, forcing a re-learn), see [OAuth Resource Configuration](oauth-resource-configuration.md). This section summarises the behaviour and links back to the implementation details.
+
+The gateway resolves the expected token audience via a three-level precedence, with
+per-user isolation on the learned tier:
+
+1. **Explicit `oauth_config.resource`** — admin sets it (single URI or list) via the Admin
+   UI "Resource (Audience)" field or via the API. Authoritative and blocking. Global to
+   the gateway.
+2. **Per-user `OAuthToken.learned_aud`** — on each user's OAuth callback, the gateway
+   decodes the access token's `aud` and `iss` claims (best-effort, unverified) and stores
+   them on that user's own token row. Subsequent validation for THAT USER checks their
+   token against their own learned value. Authoritative and blocking for that user only.
+3. **Auto-derived gateway URL origin** — if neither of the above applies, the gateway
+   uses `scheme://netloc` from the gateway URL as an advisory fallback. Most providers
+   (Salesforce, Azure AD, Okta) issue origin-level audiences, so this maximises
+   first-authentication success.
+
+**Why per-user (and not per-gateway)?** The earlier design stored learned audience on
+shared `gateway.oauth_config.resource`. That created two problems: (a) a single gateway
+serving multiple IdP tenants with per-tenant `aud` values would have its `resource` pinned
+by whichever user authenticated first, locking out other tenants; and (b) the OAuth
+callback path only enforces gateway access, not `gateways.update`, so callback-driven
+writes to shared config let users without the update permission mutate global state.
+Per-user storage eliminates both.
+
+**Outbound `resource` parameter.** The RFC 8707 `resource` value sent to the IdP is still
+sourced from `oauth_config.resource` (or the origin fallback if unset). It is not derived
+from any user's learned value — outbound requests are the same regardless of who
+initiated them.
+
+**Advisory vs. blocking audience validation.**
+
+| Expected audience source | Mismatch severity | Behavior |
+|---|---|---|
+| Explicitly configured `oauth_config.resource` | Blocking | `GatewayConnectionError` raised, token not forwarded |
+| Per-user `OAuthToken.learned_aud` | Blocking (for this user) | `GatewayConnectionError` raised, token not forwarded |
+| Auto-derived gateway URL origin (fallback) | Advisory (default) | Warning logged, token forwarded — upstream MCP server is the authority |
+
+The advisory fallback only applies to users with no learned value (first authentication)
+and no admin-configured resource. If you cannot rely on the upstream MCP server to
+validate `aud`, enable strict mode to make even the fallback authoritative:
+
+```bash
+# .env
+OAUTH_REQUIRE_CONFIGURED_RESOURCE=true
+```
+
+**Triggering re-learning.**
+
+- *For one user*: they re-authenticate. The next OAuth callback overwrites their
+  `OAuthToken.learned_aud` with the current audience. No admin action needed.
+- *For admin-configured `oauth_config.resource`*: edit the gateway in the Admin UI and
+  blank the Resource field (or PUT `{"oauth_config": {"resource": null}}` via API).
+
 ---
 
 ## Redirect URI and Callback
@@ -146,6 +224,81 @@ The `audience` parameter:
 - Default callback path: `/oauth/callback`
 - Your provider must whitelist the full redirect URI, e.g. `https://gateway.example.com/oauth/callback`
 - The gateway handles exchanging the authorization code for an access token and applies it as `Authorization: Bearer <token>` when contacting the MCP server
+
+### Popup OAuth Flow (React UI)
+
+The React UI can initiate OAuth in a popup window instead of a full-page redirect:
+
+**Endpoint**: `GET /oauth/authorize/{gateway_id}?popup=true`
+
+**Behavior**:
+- Opens OAuth provider in a popup window
+- Callback responds with `postMessage` instead of HTML page
+- Parent window receives result and closes popup automatically
+
+**postMessage Payload Structure**:
+
+Success:
+```javascript
+{
+  type: "oauth_callback",
+  status: "success",
+  gatewayId: "gateway-uuid",
+  gatewayName: "Gateway Name"
+}
+```
+
+Error:
+```javascript
+{
+  type: "oauth_callback",
+  status: "error",
+  error: "error_code",
+  errorDescription: "Human-readable description"
+}
+```
+
+**Error Codes**:
+- `access_denied` - User denied authorization at provider
+- `missing_code` - Authorization code missing from callback
+- `invalid_state` - State parameter invalid or expired
+- `oauth_error` - OAuth protocol error (see errorDescription)
+- `server_error` - Unexpected server error
+
+**React Integration Pattern**:
+
+```javascript
+// Open popup
+const authWindow = window.open(
+  `/oauth/authorize/${gatewayId}?popup=true`,
+  'oauth-popup',
+  'width=600,height=700'
+);
+
+// Listen for result
+window.addEventListener('message', (event) => {
+  // Security: Validate event.source matches popup
+  if (event.source !== authWindow) return;
+
+  const { type, status, error, errorDescription } = event.data;
+
+  if (type === 'oauth_callback') {
+    if (status === 'success') {
+      // Handle success
+      console.log('OAuth successful');
+    } else {
+      // Handle error
+      console.error(`OAuth failed: ${error} - ${errorDescription}`);
+    }
+  }
+});
+```
+
+**Security Notes**:
+- Callback uses `postMessage(..., '*')` for cross-origin compatibility
+- Receiver MUST validate `event.source === authWindow` (exact popup reference)
+- State token includes `popup.` prefix for callback mode detection
+- CSP nonce is embedded in callback script for strict CSP compliance
 
 Sequence (Authorization Code):
 
@@ -174,7 +327,7 @@ sequenceDiagram
 
 OAuth tokens are stored per gateway and user for the Authorization Code flow to ensure proper security isolation:
 
-- **User-Scoped Tokens**: OAuth tokens are scoped per ContextForge user (using app_user_email field) to prevent token sharing between users
+- **User-Scoped Tokens**: OAuth tokens are scoped per ContextForge user (using `app_user_email` field) to prevent token sharing between users
 - Store tokens per gateway + user combination with unique constraints
 - Auto-refresh using refresh tokens when near expiry
 - Encrypt tokens at rest using `AUTH_ENCRYPTION_SECRET`
@@ -182,6 +335,32 @@ OAuth tokens are stored per gateway and user for the Authorization Code flow to 
 
 !!! important "Security Enhancement"
     OAuth tokens are now user-scoped to prevent token sharing between users. Each Authorization Code flow token is tied to the specific ContextForge user who authorized it, providing better security isolation.
+
+### Token Deletion Policy
+
+Stored tokens are deleted selectively — only when the Authorization Server explicitly signals that the refresh token is permanently invalid:
+
+| Condition | Token action | RFC reference |
+|---|---|---|
+| `error: invalid_grant` from token endpoint | **Deleted** — refresh token revoked or expired | RFC 6749 §5.2 |
+| `error: invalid_client`, `invalid_request`, etc. | **Preserved** — configuration error, not a token failure | RFC 6749 §5.2 |
+| `client_secret` decryption failure | **Preserved** — `AUTH_ENCRYPTION_SECRET` mismatch, not a token failure | — |
+| Network / transient error | **Preserved** — retry on next cycle | — |
+
+!!! tip
+    If a gateway's refresh loop is failing with `invalid_client` after rotating `AUTH_ENCRYPTION_SECRET`, the token is preserved but refresh cannot succeed until the secret is re-encrypted with the current key. Re-save the gateway in the Admin UI to re-encrypt the `client_secret`.
+
+### Health Checks for Authorization Code Gateways
+
+Authorization Code gateways use **per-user** tokens — there is no platform-level service token. Health checks therefore verify **service reachability**, not token ownership:
+
+- If no stored token is available for the health-check user, the probe is sent **unauthenticated**
+- A **401 or 403** response is treated as **"gateway reachable but unauthorized"** — this is the expected response for an unauthenticated probe against a user-only upstream (e.g. Atlassian Remote MCP). The gateway is kept online.
+- A connection failure (timeout, DNS error, TCP reset) is treated as a genuine outage and counts toward `UNHEALTHY_THRESHOLD`
+- If a gateway was previously marked unreachable and then responds with 401/403, it is **automatically reactivated**
+
+!!! note
+    `PLATFORM_ADMIN_EMAIL` is used as the default identity for health-check token lookups. If that user has not completed the OAuth consent flow for a given gateway, the probe proceeds unauthenticated — this is expected behaviour, not an error.
 
 ---
 
@@ -224,6 +403,12 @@ OAuth tokens are stored per gateway and user for the Authorization Code flow to 
 - Rotate client secrets and avoid plaintext storage
 - Restrict who can create/modify OAuth-configured gateways
 - Monitor token fetch errors and rate limits from providers
+
+### AUTH_ENCRYPTION_SECRET and Stored Secrets
+
+- The `client_secret` is **always decrypted before use**; there is no plaintext fallback when encryption is configured
+- If decryption fails (wrong key or corrupted ciphertext), the refresh attempt is **aborted with an explicit error** and the stored token is preserved for the next cycle
+- Changing `AUTH_ENCRYPTION_SECRET` invalidates all stored encrypted secrets (client secrets, access tokens, refresh tokens) — after rotation, re-save every OAuth gateway in the Admin UI to re-encrypt with the new key
 
 See also: [securing.md](./securing.md) for general hardening guidance and [proxy.md](./proxy.md) for fronting the gateway with an auth proxy.
 

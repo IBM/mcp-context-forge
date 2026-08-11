@@ -27,6 +27,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.auth import get_current_user
+from mcpgateway.auth_context import get_user_email
 from mcpgateway.common.query_params import QueryPaginationCursorResults
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
@@ -300,7 +301,7 @@ async def login(login_request: EmailLoginRequest, request: Request, db: Session 
             session_id = payload.get("jti", "")
 
             # Generate CSRF token
-            csrf_token = generate_csrf_token(user_id=user.email, session_id=session_id, secret=settings.csrf_secret_key, expiry=settings.csrf_token_expiry)
+            csrf_token = generate_csrf_token(user_id=user.email, session_id=session_id, secret=settings.csrf_secret_key.get_secret_value(), expiry=settings.csrf_token_expiry)
 
             auth_response = AuthenticationResponse(access_token=access_token, token_type="bearer", expires_in=expires_in, user=EmailUserResponse.from_email_user(user))  # nosec B106 - OAuth2 token type, not a password
             response = ORJSONResponse(content=auth_response.model_dump(mode="json"))
@@ -848,6 +849,7 @@ async def update_user_delegate(user_email: str, user_request: AdminUserUpdateReq
             password_change_required=user_request.password_change_required,
             password=user_request.password,
             admin_origin_source="api",
+            requesting_user_email=get_user_email(current_user_ctx),
         )
 
         logger.info(f"Admin {SecurityValidator.sanitize_log_message(current_user_ctx['email'])} updated user: {SecurityValidator.sanitize_log_message(user.email)}")
