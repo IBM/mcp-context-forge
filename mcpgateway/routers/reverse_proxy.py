@@ -13,10 +13,11 @@ to connect and tunnel their local MCP servers through the gateway.
 import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, assert_never, Dict, Final, Optional
+from typing import Any, assert_never, Dict, Final, Literal, Optional
 import uuid
 
 # Third-Party
+import anyio
 from fastapi import APIRouter, Depends, HTTPException, Request, status, WebSocket, WebSocketDisconnect
 from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials
@@ -33,6 +34,7 @@ from mcpgateway.db import get_db, Permissions
 from mcpgateway.db import Server as DbServer
 from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, PermissionChecker, token_scope_grants
 from mcpgateway.middleware.token_scoping import token_scoping_middleware
+from mcpgateway.services.gateway_service import gateway_service
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.reverse_proxy_catalog import AuthenticatedRegistrationContext, ReverseProxyCatalogConflictError, ReverseProxyCatalogService
 from mcpgateway.services.reverse_proxy_discovery import ReverseProxyDiscoveryService
@@ -46,11 +48,13 @@ from mcpgateway.services.reverse_proxy_protocol import (
     register_ack,
     register_complete,
     RegisterMessage,
+    RegistrationServer,
     RegistrationStatus,
     ResponseMessage,
     UnregisterMessage,
 )
 from mcpgateway.services.reverse_proxy_sessions import get_reverse_proxy_session_manager, LocalSessionId, StableGatewayId
+from mcpgateway.services.server_service import server_service
 from mcpgateway.utils.verify_credentials import require_auth, verify_jwt_token_cached
 
 # Initialize logging
@@ -187,6 +191,26 @@ class ReverseProxyAuthenticatedContext:
     team_id: str | None
 
 
+class _SendLockedWebSocket:
+    """Serialize session-manager sends through the endpoint's send lock.
+
+    The session manager stores the object passed to ``connect`` and sends its
+    request/notification frames through it. Funnelling those sends through the
+    same lock as the endpoint's own frames (heartbeat acks, register frames)
+    keeps every ``websocket.send_text`` on one connection serialized.
+    """
+
+    def __init__(self, websocket: WebSocket, send_lock: anyio.Lock) -> None:
+        """Wrap the raw WebSocket with the connection's shared send lock."""
+        self._websocket = websocket
+        self._send_lock = send_lock
+
+    async def send_text(self, data: str) -> None:
+        """Send one text frame under the shared send lock."""
+        async with self._send_lock:
+            await self._websocket.send_text(data)
+
+
 def _get_websocket_bearer_token(websocket: WebSocket) -> Optional[str]:
     """Extract a bearer token only from the WebSocket Authorization header.
 
@@ -284,6 +308,9 @@ async def websocket_endpoint(
     acknowledged as ``register_ack(processing)`` before catalog persistence
     and MCP discovery run, then ``register_complete(success|error)`` closes
     the registration exchange. Heartbeats are acknowledgements, not pongs.
+    One continuously-running receive pump owns every inbound frame while
+    registration and discovery run as a sibling task, so the client's own
+    JSON-RPC discovery responses always resolve.
 
     Args:
         websocket: WebSocket connection.
@@ -303,71 +330,108 @@ async def websocket_endpoint(
     await websocket.accept()
 
     session_manager = await get_reverse_proxy_session_manager()
-    connection = await session_manager.connect(websocket, LocalSessionId(uuid.uuid4().hex))
+    send_lock = anyio.Lock()
+    connection = await session_manager.connect(_SendLockedWebSocket(websocket, send_lock), LocalSessionId(uuid.uuid4().hex))
     connection_id = connection.connection_id
 
-    # D12: mirror connection metadata in the legacy manager so the HTTP admin
-    # endpoints keep working; the typed manager remains the dispatch authority.
-    await manager.add_session(ReverseProxySession(str(connection_id), websocket, authenticated_context.owner_email))
+    async def send_frame(frame: str) -> None:
+        """Send one endpoint frame serialized through the connection's send lock."""
+        async with send_lock:
+            await websocket.send_text(frame)
 
-    registered = False
     try:
+        # D12: mirror connection metadata in the legacy manager so the HTTP admin
+        # endpoints keep working; the typed manager remains the dispatch authority.
+        await manager.add_session(ReverseProxySession(str(connection_id), websocket, authenticated_context.owner_email))
         LOGGER.info(f"Reverse proxy connected: {connection_id}")
 
-        # Main message loop
-        while True:
-            try:
-                message = parse_client_message(await websocket.receive_text())
-            except WebSocketDisconnect:
-                LOGGER.info(f"WebSocket disconnected: {connection_id}")
-                break
-            except (ValidationError, orjson.JSONDecodeError) as exc:
-                LOGGER.warning(f"Invalid message from connection {connection_id}: {exc}")
-                await websocket.send_text(encode_server_message(error(str(connection_id), "Invalid message format")))
-                continue
+        registration_state: Literal["unregistered", "processing", "registered"] = "unregistered"
 
-            match message:
-                case RegisterMessage():
-                    if registered:
-                        LOGGER.warning(f"Duplicate register on connection {connection_id}")
-                        await websocket.send_text(encode_server_message(error(str(connection_id), "connection already registered")))
-                        await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="connection already registered")
-                        break
-                    await websocket.send_text(encode_server_message(register_ack(str(connection_id))))
-                    try:
-                        # Authority comes only from the authenticated context; the
-                        # register payload carries non-authoritative server metadata.
-                        registration_context = AuthenticatedRegistrationContext(owner_email=authenticated_context.owner_email, team_id=authenticated_context.team_id)
-                        entry = await ReverseProxyCatalogService().register(db, registration_context, message.server)
-                        db_gateway = db.get(DbGateway, entry.stable_id)
-                        db_server = db.get(DbServer, entry.stable_id)
-                        if db_gateway is None or db_server is None:
-                            raise ReverseProxyCatalogConflictError(stable_id=entry.stable_id, reason="catalog pair was not persisted")
-                        await session_manager.attach_stable_id(StableGatewayId(entry.stable_id), connection_id)
-                        await ReverseProxyDiscoveryService().discover_and_reconcile(db, session_manager, connection_id, db_gateway, db_server, timeout_seconds=float(settings.tool_timeout))
-                    except Exception as exc:
-                        LOGGER.error(f"Reverse proxy registration failed for connection {connection_id}: {exc}")
-                        await websocket.send_text(encode_server_message(register_complete(str(connection_id), RegistrationStatus.ERROR, str(exc))))
-                        await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="registration failed")
-                        break
-                    registered = True
-                    LOGGER.info(f"Registered server for connection {connection_id}: {message.server.name}")
-                    await websocket.send_text(encode_server_message(register_complete(str(connection_id), RegistrationStatus.SUCCESS)))
-                case UnregisterMessage():
-                    LOGGER.info(f"Unregistering server for connection {connection_id}")
-                    break
-                case HeartbeatMessage():
-                    await websocket.send_text(encode_server_message(heartbeat(str(connection_id), datetime.now(tz=timezone.utc))))
-                case ResponseMessage():
-                    if not session_manager.resolve_response(connection_id, message):
-                        LOGGER.debug(f"Unmatched response from connection {connection_id}: {message.payload.id}")
-                case NotificationMessage():
-                    LOGGER.debug(f"Received notification from connection {connection_id}: {message.payload.method}")
-                case unreachable:
-                    assert_never(unreachable)
+        async def run_registration(server: RegistrationServer) -> None:
+            """Run catalog registration and MCP discovery as a sibling of the receive pump.
+
+            Authority comes only from the authenticated context; the register
+            payload carries non-authoritative server metadata.
+            """
+            nonlocal registration_state
+            try:
+                registration_context = AuthenticatedRegistrationContext(owner_email=authenticated_context.owner_email, team_id=authenticated_context.team_id)
+                entry = await ReverseProxyCatalogService(gateway_service=gateway_service, server_service=server_service).register(db, registration_context, server)
+                db_gateway = db.get(DbGateway, entry.stable_id)
+                db_server = db.get(DbServer, entry.stable_id)
+                if db_gateway is None or db_server is None:
+                    raise ReverseProxyCatalogConflictError(stable_id=entry.stable_id, reason="catalog pair was not persisted")
+                await session_manager.attach_stable_id(StableGatewayId(entry.stable_id), connection_id)
+                await ReverseProxyDiscoveryService(gateway_service=gateway_service).discover_and_reconcile(
+                    db, session_manager, connection_id, db_gateway, db_server, timeout_seconds=float(settings.tool_timeout)
+                )
+            except Exception:
+                LOGGER.error("Reverse proxy registration failed for connection %s", connection_id, exc_info=True)
+                await send_frame(encode_server_message(register_complete(str(connection_id), RegistrationStatus.ERROR, "registration failed")))
+                await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="registration failed")
+                return
+            registration_state = "registered"
+            LOGGER.info(f"Registered server for connection {connection_id}: {server.name}")
+            await send_frame(encode_server_message(register_complete(str(connection_id), RegistrationStatus.SUCCESS)))
+
+        try:
+            async with anyio.create_task_group() as task_group:
+                try:
+                    # One continuously-running receive pump; registration and
+                    # discovery run in a sibling task so their JSON-RPC
+                    # responses keep resolving here.
+                    while True:
+                        try:
+                            message = parse_client_message(await websocket.receive_text())
+                        except WebSocketDisconnect:
+                            LOGGER.info(f"WebSocket disconnected: {connection_id}")
+                            break
+                        except (ValidationError, orjson.JSONDecodeError) as exc:
+                            LOGGER.warning(f"Invalid message from connection {connection_id}: {exc}")
+                            await send_frame(encode_server_message(error(str(connection_id), "Invalid message format")))
+                            continue
+
+                        match message:
+                            case RegisterMessage():
+                                if registration_state != "unregistered":
+                                    LOGGER.warning(f"Duplicate register on connection {connection_id}")
+                                    await send_frame(encode_server_message(error(str(connection_id), "connection already registered")))
+                                    await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="connection already registered")
+                                    break
+                                registration_state = "processing"
+                                await send_frame(encode_server_message(register_ack(str(connection_id))))
+                                task_group.start_soon(run_registration, message.server)
+                            case UnregisterMessage():
+                                LOGGER.info(f"Unregistering server for connection {connection_id}")
+                                break
+                            case HeartbeatMessage():
+                                await send_frame(encode_server_message(heartbeat(str(connection_id), datetime.now(tz=timezone.utc))))
+                            case ResponseMessage():
+                                if not session_manager.resolve_response(connection_id, message):
+                                    LOGGER.debug(f"Unmatched response from connection {connection_id}: {message.payload.id}")
+                            case NotificationMessage():
+                                LOGGER.debug(f"Received notification from connection {connection_id}: {message.payload.method}")
+                            case unreachable:
+                                assert_never(unreachable)
+                finally:
+                    # Disconnect, unregister, and duplicate-register paths cancel
+                    # any in-flight registration; the task group awaits its
+                    # cancellation on exit.
+                    task_group.cancel_scope.cancel()
+        except ExceptionGroup as group:
+            # anyio wraps a sole pump-loop failure in an ExceptionGroup;
+            # re-raise the original exception unchanged.
+            if len(group.exceptions) == 1:
+                raise group.exceptions[0]
+            raise
     finally:
-        await session_manager.disconnect(connection_id)
-        await manager.remove_session(str(connection_id))
+        # Shield the typed disconnect so cancellation cannot skip cleanup, and
+        # guarantee the legacy mirror removal runs even when it fails.
+        with anyio.CancelScope(shield=True):
+            try:
+                await session_manager.disconnect(connection_id)
+            finally:
+                await manager.remove_session(str(connection_id))
         LOGGER.info(f"Reverse proxy session ended: {connection_id}")
 
 
