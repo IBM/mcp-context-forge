@@ -1,3 +1,4 @@
+import { getAuthHeaders } from "./auth.js";
 import { escapeHtml } from "./security.js";
 import { displayImportPreview } from "./selectiveImport.js";
 import { getAuthToken } from "./tokens.js";
@@ -343,10 +344,7 @@ export const previewImport = async function () {
       (window.ROOT_PATH || "") + "/admin/import/preview",
       {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${await getAuthToken()}`,
-        },
+        headers: await getAuthHeaders(true),
         body: JSON.stringify({ data: window.currentImportData }),
       },
     );
@@ -399,10 +397,7 @@ export const handleImport = async function (dryRun = false) {
       (window.ROOT_PATH || "") + "/admin/import/configuration",
       {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${await getAuthToken()}`,
-        },
+        headers: await getAuthHeaders(true),
         body: JSON.stringify(requestData),
       },
     );
