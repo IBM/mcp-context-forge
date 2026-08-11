@@ -316,7 +316,7 @@ Map GitHub organizations to Gateway teams:
 # Google OAuth Configuration
 SSO_GOOGLE_ENABLED=true
 SSO_GOOGLE_CLIENT_ID=123456789012-abcdefghijklmnop.apps.googleusercontent.com
-SSO_GOOGLE_CLIENT_SECRET=GOCSPX-1234567890abcdefghijklmnop
+SSO_GOOGLE_CLIENT_SECRET=GOCSPX-1234567890abcdefghijklmnop # pragma: allowlist secret
 
 # Google Workspace domain restrictions
 SSO_TRUSTED_DOMAINS=["yourcompany.com"]
