@@ -6103,6 +6103,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             raise GatewayConnectionError(f"User authentication required for OAuth gateway {gateway_name}")
 
         async def _lookup(session: Session) -> tuple:
+            """Fetch the stored OAuth token and learned audience for this user/gateway pair."""
             token_storage = TokenStorageService(session)
             token = await token_storage.get_user_token(gateway_id, user_email)
             if not token:
