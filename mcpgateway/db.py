@@ -5459,6 +5459,7 @@ class GrpcService(Base):
     health_status: Mapped[str] = mapped_column(String(20), default="unknown", nullable=False)
     consecutive_failures: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     last_health_check: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_health_success: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     last_health_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     # Status
