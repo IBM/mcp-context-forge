@@ -13,7 +13,7 @@ to connect and tunnel their local MCP servers through the gateway.
 import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Dict, Final, Optional
+from typing import Any, assert_never, Dict, Final, Optional
 import uuid
 
 # Third-Party
@@ -21,15 +21,36 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status, WebSocke
 from fastapi.responses import StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials
 import orjson
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.auth import get_current_user
 from mcpgateway.auth_context import get_jwt_user_email_from_payload, get_user_email
+from mcpgateway.config import settings
+from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import get_db, Permissions
+from mcpgateway.db import Server as DbServer
 from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, PermissionChecker, token_scope_grants
 from mcpgateway.middleware.token_scoping import token_scoping_middleware
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.reverse_proxy_catalog import AuthenticatedRegistrationContext, ReverseProxyCatalogConflictError, ReverseProxyCatalogService
+from mcpgateway.services.reverse_proxy_discovery import ReverseProxyDiscoveryService
+from mcpgateway.services.reverse_proxy_protocol import (
+    encode_server_message,
+    error,
+    heartbeat,
+    HeartbeatMessage,
+    NotificationMessage,
+    parse_client_message,
+    register_ack,
+    register_complete,
+    RegisterMessage,
+    RegistrationStatus,
+    ResponseMessage,
+    UnregisterMessage,
+)
+from mcpgateway.services.reverse_proxy_sessions import get_reverse_proxy_session_manager, LocalSessionId, StableGatewayId
 from mcpgateway.utils.verify_credentials import require_auth, verify_jwt_token_cached
 
 # Initialize logging
@@ -259,13 +280,14 @@ async def websocket_endpoint(
     """WebSocket endpoint for reverse proxy connections.
 
     Authentication always requires a Bearer token in the Authorization header.
+    The maintained client contract drives the lifecycle: ``register`` is
+    acknowledged as ``register_ack(processing)`` before catalog persistence
+    and MCP discovery run, then ``register_complete(success|error)`` closes
+    the registration exchange. Heartbeats are acknowledgements, not pongs.
 
     Args:
         websocket: WebSocket connection.
         db: Database session.
-
-    Raises:
-        ValueError: If token is missing required subject claim.
     """
     try:
         authenticated_context = await _authenticate_reverse_proxy_websocket(websocket)
@@ -280,61 +302,73 @@ async def websocket_endpoint(
     # Accept only after authentication and both authorization layers succeed.
     await websocket.accept()
 
-    # Generate session ID server-side to prevent session hijacking
-    # Client-supplied X-Session-ID is ignored for security (prevents collision/hijack attacks)
-    session_id = uuid.uuid4().hex
+    session_manager = await get_reverse_proxy_session_manager()
+    connection = await session_manager.connect(websocket, LocalSessionId(uuid.uuid4().hex))
+    connection_id = connection.connection_id
 
-    # Create session with authenticated user
-    session = ReverseProxySession(session_id, websocket, authenticated_context.owner_email)
-    await manager.add_session(session)
+    # D12: mirror connection metadata in the legacy manager so the HTTP admin
+    # endpoints keep working; the typed manager remains the dispatch authority.
+    await manager.add_session(ReverseProxySession(str(connection_id), websocket, authenticated_context.owner_email))
 
+    registered = False
     try:
-        LOGGER.info(f"Reverse proxy connected: {session_id}")
+        LOGGER.info(f"Reverse proxy connected: {connection_id}")
 
         # Main message loop
         while True:
             try:
-                message = await session.receive_message()
-                msg_type = message.get("type")
-
-                if msg_type == "register":
-                    # Register the server
-                    session.server_info = message.get("server", {})
-                    LOGGER.info(f"Registered server for session {session_id}: {session.server_info.get('name')}")
-
-                    # Send acknowledgment
-                    await session.send_message({"type": "register_ack", "sessionId": session_id, "status": "success"})
-
-                elif msg_type == "unregister":
-                    # Unregister the server
-                    LOGGER.info(f"Unregistering server for session {session_id}")
-                    break
-
-                elif msg_type == "heartbeat":
-                    # Respond to heartbeat
-                    await session.send_message({"type": "heartbeat", "sessionId": session_id, "timestamp": datetime.now(tz=timezone.utc).isoformat()})
-
-                elif msg_type in ("response", "notification"):
-                    # Handle MCP response/notification from the proxied server
-                    # TODO: Route to appropriate MCP client
-                    LOGGER.debug(f"Received {msg_type} from session {session_id}")
-
-                else:
-                    LOGGER.warning(f"Unknown message type from session {session_id}: {msg_type}")
-
+                message = parse_client_message(await websocket.receive_text())
             except WebSocketDisconnect:
-                LOGGER.info(f"WebSocket disconnected: {session_id}")
+                LOGGER.info(f"WebSocket disconnected: {connection_id}")
                 break
-            except orjson.JSONDecodeError as e:
-                LOGGER.error(f"Invalid JSON from session {session_id}: {e}")
-                await session.send_message({"type": "error", "message": "Invalid JSON format"})
-            except Exception as e:
-                LOGGER.error(f"Error handling message from session {session_id}: {e}")
-                await session.send_message({"type": "error", "message": str(e)})
+            except (ValidationError, orjson.JSONDecodeError) as exc:
+                LOGGER.warning(f"Invalid message from connection {connection_id}: {exc}")
+                await websocket.send_text(encode_server_message(error(str(connection_id), "Invalid message format")))
+                continue
 
+            match message:
+                case RegisterMessage():
+                    if registered:
+                        LOGGER.warning(f"Duplicate register on connection {connection_id}")
+                        await websocket.send_text(encode_server_message(error(str(connection_id), "connection already registered")))
+                        await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="connection already registered")
+                        break
+                    await websocket.send_text(encode_server_message(register_ack(str(connection_id))))
+                    try:
+                        # Authority comes only from the authenticated context; the
+                        # register payload carries non-authoritative server metadata.
+                        registration_context = AuthenticatedRegistrationContext(owner_email=authenticated_context.owner_email, team_id=authenticated_context.team_id)
+                        entry = await ReverseProxyCatalogService().register(db, registration_context, message.server)
+                        db_gateway = db.get(DbGateway, entry.stable_id)
+                        db_server = db.get(DbServer, entry.stable_id)
+                        if db_gateway is None or db_server is None:
+                            raise ReverseProxyCatalogConflictError(stable_id=entry.stable_id, reason="catalog pair was not persisted")
+                        await session_manager.attach_stable_id(StableGatewayId(entry.stable_id), connection_id)
+                        await ReverseProxyDiscoveryService().discover_and_reconcile(db, session_manager, connection_id, db_gateway, db_server, timeout_seconds=float(settings.tool_timeout))
+                    except Exception as exc:
+                        LOGGER.error(f"Reverse proxy registration failed for connection {connection_id}: {exc}")
+                        await websocket.send_text(encode_server_message(register_complete(str(connection_id), RegistrationStatus.ERROR, str(exc))))
+                        await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="registration failed")
+                        break
+                    registered = True
+                    LOGGER.info(f"Registered server for connection {connection_id}: {message.server.name}")
+                    await websocket.send_text(encode_server_message(register_complete(str(connection_id), RegistrationStatus.SUCCESS)))
+                case UnregisterMessage():
+                    LOGGER.info(f"Unregistering server for connection {connection_id}")
+                    break
+                case HeartbeatMessage():
+                    await websocket.send_text(encode_server_message(heartbeat(str(connection_id), datetime.now(tz=timezone.utc))))
+                case ResponseMessage():
+                    if not session_manager.resolve_response(connection_id, message):
+                        LOGGER.debug(f"Unmatched response from connection {connection_id}: {message.payload.id}")
+                case NotificationMessage():
+                    LOGGER.debug(f"Received notification from connection {connection_id}: {message.payload.method}")
+                case unreachable:
+                    assert_never(unreachable)
     finally:
-        await manager.remove_session(session_id)
-        LOGGER.info(f"Reverse proxy session ended: {session_id}")
+        await session_manager.disconnect(connection_id)
+        await manager.remove_session(str(connection_id))
+        LOGGER.info(f"Reverse proxy session ended: {connection_id}")
 
 
 @router.get("/sessions")

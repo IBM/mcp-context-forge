@@ -18,18 +18,24 @@ from unittest.mock import AsyncMock, call, Mock, patch
 import orjson
 
 # Third-Party
-from fastapi import HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.testclient import TestClient
 import pytest
 
 # First-Party
+from mcpgateway.config import settings
 from mcpgateway.routers.reverse_proxy import (
     manager,
     ReverseProxyManager,
     ReverseProxySession,
     router,
 )
+from mcpgateway.services.reverse_proxy_catalog import AuthenticatedRegistrationContext, ReverseProxyCatalogService
+from mcpgateway.services.reverse_proxy_discovery import ReverseProxyDiscoveryService
+from mcpgateway.services.reverse_proxy_sessions import ConnectionId, LocalSessionId, ReverseProxySessionManager, StableGatewayId
+from mcpgateway.services.reverse_proxy_sessions import ReverseProxySession as ManagedSession
 from mcpgateway.utils.verify_credentials import require_auth
+from tests.helpers.router_helpers import collect_routes
 
 # --------------------------------------------------------------------------- #
 # Test Fixtures                                                              #
@@ -276,222 +282,379 @@ class TestReverseProxyManager:
 
 
 class TestWebSocketEndpoint:
-    """Test WebSocket endpoint functionality.
+    """Test the typed WebSocket lifecycle against the session manager, catalog, and discovery seams.
 
-    Note: These tests disable authentication to test WebSocket message handling.
-    See TestWebSocketAuthentication for authentication tests.
+    Admission is mocked at the ``_authenticate_reverse_proxy_websocket`` seam;
+    deny-path coverage lives in TestWebSocketAuthentication and friends.
     """
+
+    _CONNECTION_ID = ConnectionId("test-connection-id")
+    _STABLE_ID = "stable-test-id"
 
     @pytest.fixture(autouse=True)
     def mock_auth_settings(self):
-        """Authenticate legacy message-loop tests through the admission seam."""
+        """Authenticate lifecycle tests through the admission seam."""
         context = SimpleNamespace(owner_email="test-user@example.com", team_id=None)
         with patch("mcpgateway.routers.reverse_proxy._authenticate_reverse_proxy_websocket", new=AsyncMock(return_value=context)) as authenticate:
             yield authenticate
 
+    @pytest.fixture
+    def session_manager(self, mock_websocket):
+        """Scripted session manager with a fixed server-generated connection id."""
+        fake = Mock(spec=ReverseProxySessionManager)
+        fake.connect.return_value = ManagedSession(connection_id=self._CONNECTION_ID, local_id=LocalSessionId("local-test-id"), websocket=mock_websocket)
+        return fake
+
+    @pytest.fixture(autouse=True)
+    def patch_session_manager(self, session_manager):
+        """Route the endpoint's session-manager singleton to the scripted fake."""
+        with patch("mcpgateway.routers.reverse_proxy.get_reverse_proxy_session_manager", new=AsyncMock(return_value=session_manager)):
+            yield
+
+    @pytest.fixture(autouse=True)
+    def catalog_service(self):
+        """Mock catalog registration at the router import site."""
+        service = Mock(spec=ReverseProxyCatalogService)
+        service.register.return_value = SimpleNamespace(stable_id=self._STABLE_ID, gateway=Mock(), server=Mock())
+        with patch("mcpgateway.routers.reverse_proxy.ReverseProxyCatalogService", return_value=service):
+            yield service
+
+    @pytest.fixture(autouse=True)
+    def discovery_service(self):
+        """Mock MCP discovery at the router import site."""
+        service = Mock(spec=ReverseProxyDiscoveryService)
+        service.discover_and_reconcile.return_value = Mock()
+        with patch("mcpgateway.routers.reverse_proxy.ReverseProxyDiscoveryService", return_value=service):
+            yield service
+
+    @pytest.fixture(autouse=True)
+    def clear_legacy_manager(self):
+        """Keep the legacy observability mirror empty around each test."""
+        manager.sessions.clear()
+        yield
+        manager.sessions.clear()
+
+    @staticmethod
+    def _sent_frames(mock_websocket) -> list[dict]:
+        """Decode every frame the endpoint sent, in send order."""
+        return [orjson.loads(call_args.args[0]) for call_args in mock_websocket.send_text.call_args_list]
+
     @pytest.mark.asyncio
-    async def test_websocket_accept(self, mock_websocket):
-        """Test WebSocket connection acceptance."""
-        mock_websocket.headers = {"X-Session-ID": "test-session"}
-        mock_websocket.receive_text.side_effect = asyncio.CancelledError()
+    async def test_websocket_accept(self, mock_websocket, session_manager):
+        """Accept follows admission, and disconnect cleans up both managers."""
+        mock_websocket.receive_text.side_effect = WebSocketDisconnect()
 
         # First-Party
         from mcpgateway.routers.reverse_proxy import websocket_endpoint
 
-        with patch("mcpgateway.routers.reverse_proxy.get_db") as mock_get_db:
-            mock_get_db.return_value = Mock()
-
-            try:
-                await websocket_endpoint(mock_websocket, Mock())
-            except asyncio.CancelledError:
-                pass
+        await websocket_endpoint(mock_websocket, Mock())
 
         mock_websocket.accept.assert_called_once()
+        session_manager.connect.assert_awaited_once()
+        session_manager.disconnect.assert_awaited_once_with(self._CONNECTION_ID)
+        assert manager.sessions == {}
 
     @pytest.mark.asyncio
-    async def test_websocket_generates_session_id(self, mock_websocket):
+    async def test_websocket_mirrors_legacy_manager_metadata(self, mock_websocket, session_manager):
+        """D12: the legacy manager mirrors connection metadata for the HTTP admin endpoints."""
+        mock_websocket.receive_text.side_effect = WebSocketDisconnect()
+
+        # First-Party
+        from mcpgateway.routers.reverse_proxy import websocket_endpoint
+
+        with patch.object(manager, "add_session", wraps=manager.add_session) as add_spy, patch.object(manager, "remove_session", wraps=manager.remove_session) as remove_spy:
+            await websocket_endpoint(mock_websocket, Mock())
+
+        mirrored = add_spy.call_args.args[0]
+        assert mirrored.session_id == str(self._CONNECTION_ID)
+        assert mirrored.user == "test-user@example.com"
+        remove_spy.assert_called_once_with(str(self._CONNECTION_ID))
+        assert manager.sessions == {}
+
+    @pytest.mark.asyncio
+    async def test_websocket_generates_connection_id_server_side(self, mock_websocket, session_manager, catalog_service, discovery_service):
         """The client-supplied X-Session-ID never becomes connection identity."""
         mock_websocket.headers = {"X-Session-ID": "client-controlled"}
         register_msg = {"type": "register", "server": {"name": "test-server"}}
-        mock_websocket.receive_text.side_effect = [orjson.dumps(register_msg).decode(), asyncio.CancelledError()]
+        mock_websocket.receive_text.side_effect = [orjson.dumps(register_msg).decode(), WebSocketDisconnect()]
 
         # First-Party
         from mcpgateway.routers.reverse_proxy import websocket_endpoint
 
-        with patch("mcpgateway.routers.reverse_proxy.get_db") as mock_get_db, patch("mcpgateway.routers.reverse_proxy.uuid.uuid4") as mock_uuid:
-            mock_get_db.return_value = Mock()
-            mock_uuid.return_value.hex = "generated-session-id"
+        await websocket_endpoint(mock_websocket, Mock())
 
-            try:
-                await websocket_endpoint(mock_websocket, Mock())
-            except asyncio.CancelledError:
-                pass
-
-        mock_uuid.assert_called_once()
-        sent_data = orjson.loads(mock_websocket.send_text.call_args.args[0])
-        assert sent_data["sessionId"] == "generated-session-id"
-        assert sent_data["sessionId"] != "client-controlled"
+        ack = self._sent_frames(mock_websocket)[0]
+        assert ack["sessionId"] == str(self._CONNECTION_ID)
+        assert ack["sessionId"] != "client-controlled"
 
     @pytest.mark.asyncio
-    async def test_websocket_register_message(self, mock_websocket):
-        """Test handling register message."""
-        mock_websocket.headers = {"X-Session-ID": "test-session"}
-        register_msg = {"type": "register", "server": {"name": "test-server", "version": "1.0"}}
-        mock_websocket.receive_text.side_effect = [orjson.dumps(register_msg).decode(), asyncio.CancelledError()]
+    async def test_websocket_register_message(self, mock_websocket, session_manager, catalog_service, discovery_service):
+        """Register drives ack(processing) -> catalog -> stable-id attach -> discovery -> complete(success)."""
+        register_msg = {"type": "register", "server": {"name": "test-server", "description": "Test server", "protocol": "mcp"}}
+        mock_websocket.receive_text.side_effect = [orjson.dumps(register_msg).decode(), WebSocketDisconnect()]
 
         # First-Party
         from mcpgateway.routers.reverse_proxy import websocket_endpoint
 
-        with patch("mcpgateway.routers.reverse_proxy.get_db") as mock_get_db:
-            mock_get_db.return_value = Mock()
+        await websocket_endpoint(mock_websocket, Mock())
 
-            try:
-                await websocket_endpoint(mock_websocket, Mock())
-            except asyncio.CancelledError:
-                pass
+        frames = self._sent_frames(mock_websocket)
+        assert [frame["type"] for frame in frames] == ["register_ack", "register_complete"]
+        assert frames[0]["status"] == "processing"
+        assert frames[0]["sessionId"] == str(self._CONNECTION_ID)
+        assert frames[1]["status"] == "success"
+        assert frames[1]["sessionId"] == str(self._CONNECTION_ID)
 
-        # Should send register acknowledgment
-        mock_websocket.send_text.assert_called()
-        sent_data = orjson.loads(mock_websocket.send_text.call_args[0][0])
-        assert sent_data["type"] == "register_ack"
-        assert sent_data["status"] == "success"
+        catalog_service.register.assert_awaited_once()
+        register_call = catalog_service.register.await_args
+        context = register_call.args[1]
+        assert isinstance(context, AuthenticatedRegistrationContext)
+        assert context.owner_email == "test-user@example.com"
+        assert context.team_id is None
+        assert register_call.args[2].name == "test-server"
+
+        session_manager.attach_stable_id.assert_awaited_once_with(StableGatewayId(self._STABLE_ID), self._CONNECTION_ID)
+
+        discovery_service.discover_and_reconcile.assert_awaited_once()
+        discovery_call = discovery_service.discover_and_reconcile.await_args
+        assert discovery_call.args[1] is session_manager
+        assert discovery_call.args[2] == self._CONNECTION_ID
+        assert discovery_call.args[3] is not None  # db_gateway row
+        assert discovery_call.args[4] is not None  # db_server row
+        assert discovery_call.kwargs["timeout_seconds"] == float(settings.tool_timeout)
+
+        mock_websocket.close.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_websocket_unregister_message(self, mock_websocket):
-        """Test handling unregister message."""
-        mock_websocket.headers = {"X-Session-ID": "test-session"}
+    async def test_websocket_register_catalog_failure_closes_connection(self, mock_websocket, session_manager, catalog_service, discovery_service):
+        """Catalog failure -> register_complete(error) then close 1008; discovery never runs."""
+        catalog_service.register.side_effect = RuntimeError("catalog exploded")
+        register_msg = {"type": "register", "server": {"name": "test-server"}}
+        mock_websocket.receive_text.side_effect = [orjson.dumps(register_msg).decode(), WebSocketDisconnect()]
+
+        # First-Party
+        from mcpgateway.routers.reverse_proxy import websocket_endpoint
+
+        await websocket_endpoint(mock_websocket, Mock())
+
+        frames = self._sent_frames(mock_websocket)
+        assert [frame["type"] for frame in frames] == ["register_ack", "register_complete"]
+        assert frames[1]["status"] == "error"
+        assert "catalog exploded" in frames[1]["message"]
+        mock_websocket.close.assert_awaited_once()
+        assert mock_websocket.close.await_args.kwargs["code"] == 1008
+        session_manager.attach_stable_id.assert_not_awaited()
+        discovery_service.discover_and_reconcile.assert_not_awaited()
+        assert mock_websocket.receive_text.await_count == 1
+        session_manager.disconnect.assert_awaited_once_with(self._CONNECTION_ID)
+
+    @pytest.mark.asyncio
+    async def test_websocket_register_discovery_failure_closes_connection(self, mock_websocket, session_manager, catalog_service, discovery_service):
+        """Discovery failure -> register_complete(error) then close 1008 after catalog persisted."""
+        discovery_service.discover_and_reconcile.side_effect = RuntimeError("discovery exploded")
+        register_msg = {"type": "register", "server": {"name": "test-server"}}
+        mock_websocket.receive_text.side_effect = [orjson.dumps(register_msg).decode(), WebSocketDisconnect()]
+
+        # First-Party
+        from mcpgateway.routers.reverse_proxy import websocket_endpoint
+
+        await websocket_endpoint(mock_websocket, Mock())
+
+        frames = self._sent_frames(mock_websocket)
+        assert [frame["type"] for frame in frames] == ["register_ack", "register_complete"]
+        assert frames[1]["status"] == "error"
+        assert "discovery exploded" in frames[1]["message"]
+        mock_websocket.close.assert_awaited_once()
+        assert mock_websocket.close.await_args.kwargs["code"] == 1008
+        catalog_service.register.assert_awaited_once()
+        session_manager.attach_stable_id.assert_awaited_once_with(StableGatewayId(self._STABLE_ID), self._CONNECTION_ID)
+
+    @pytest.mark.asyncio
+    async def test_websocket_heartbeat_message(self, mock_websocket, session_manager, catalog_service):
+        """Heartbeat is acknowledged with the connection-scoped id and a timestamp."""
+        heartbeat_msg = {"type": "heartbeat"}
+        mock_websocket.receive_text.side_effect = [orjson.dumps(heartbeat_msg).decode(), WebSocketDisconnect()]
+
+        # First-Party
+        from mcpgateway.routers.reverse_proxy import websocket_endpoint
+
+        await websocket_endpoint(mock_websocket, Mock())
+
+        frames = self._sent_frames(mock_websocket)
+        assert len(frames) == 1
+        assert frames[0]["type"] == "heartbeat"
+        assert frames[0]["sessionId"] == str(self._CONNECTION_ID)
+        assert "timestamp" in frames[0]
+        catalog_service.register.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_websocket_response_resolves_pending_request(self, mock_websocket, session_manager):
+        """A response frame resolves the pending request through the connection-scoped id."""
+        response_msg = {"type": "response", "payload": {"jsonrpc": "2.0", "id": "req-1", "result": {"ok": True}}}
+        mock_websocket.receive_text.side_effect = [orjson.dumps(response_msg).decode(), WebSocketDisconnect()]
+
+        # First-Party
+        from mcpgateway.routers.reverse_proxy import websocket_endpoint
+
+        await websocket_endpoint(mock_websocket, Mock())
+
+        session_manager.resolve_response.assert_called_once()
+        resolve_call = session_manager.resolve_response.call_args
+        assert resolve_call.args[0] == self._CONNECTION_ID
+        assert resolve_call.args[1].payload.id == "req-1"
+        mock_websocket.send_text.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_websocket_duplicate_register_closes_connection(self, mock_websocket, session_manager, catalog_service, discovery_service):
+        """D13: a second register on one connection is an error and closes 1008."""
+        register_msg = {"type": "register", "server": {"name": "test-server"}}
+        mock_websocket.receive_text.side_effect = [orjson.dumps(register_msg).decode(), orjson.dumps(register_msg).decode(), WebSocketDisconnect()]
+
+        # First-Party
+        from mcpgateway.routers.reverse_proxy import websocket_endpoint
+
+        await websocket_endpoint(mock_websocket, Mock())
+
+        frames = self._sent_frames(mock_websocket)
+        assert [frame["type"] for frame in frames] == ["register_ack", "register_complete", "error"]
+        assert "already registered" in frames[2]["message"]
+        mock_websocket.close.assert_awaited_once()
+        assert mock_websocket.close.await_args.kwargs["code"] == 1008
+        catalog_service.register.assert_awaited_once()
+        discovery_service.discover_and_reconcile.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_websocket_unregister_message(self, mock_websocket, session_manager):
+        """Unregister ends the connection cleanly without server frames or close."""
         unregister_msg = {"type": "unregister"}
         mock_websocket.receive_text.return_value = orjson.dumps(unregister_msg).decode()
 
         # First-Party
         from mcpgateway.routers.reverse_proxy import websocket_endpoint
 
-        with patch("mcpgateway.routers.reverse_proxy.get_db") as mock_get_db:
-            mock_get_db.return_value = Mock()
+        await websocket_endpoint(mock_websocket, Mock())
 
+        mock_websocket.accept.assert_called_once()
+        mock_websocket.send_text.assert_not_called()
+        mock_websocket.close.assert_not_called()
+        session_manager.disconnect.assert_awaited_once_with(self._CONNECTION_ID)
+        assert manager.sessions == {}
+
+    @pytest.mark.asyncio
+    async def test_websocket_invalid_json(self, mock_websocket, session_manager):
+        """Malformed frames get a typed error frame; the connection stays up."""
+        mock_websocket.receive_text.side_effect = ["invalid json", WebSocketDisconnect()]
+
+        # First-Party
+        from mcpgateway.routers.reverse_proxy import websocket_endpoint
+
+        await websocket_endpoint(mock_websocket, Mock())
+
+        session_manager.connect.assert_awaited_once()
+        frames = self._sent_frames(mock_websocket)
+        assert len(frames) == 1
+        assert frames[0]["type"] == "error"
+        assert frames[0]["sessionId"] == str(self._CONNECTION_ID)
+        mock_websocket.close.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_websocket_unknown_message_type(self, mock_websocket, session_manager):
+        """Frames outside the client contract are rejected with a typed error frame."""
+        unknown_msg = {"type": "unknown", "data": "test"}
+        mock_websocket.receive_text.side_effect = [orjson.dumps(unknown_msg).decode(), WebSocketDisconnect()]
+
+        # First-Party
+        from mcpgateway.routers.reverse_proxy import websocket_endpoint
+
+        await websocket_endpoint(mock_websocket, Mock())
+
+        frames = self._sent_frames(mock_websocket)
+        assert len(frames) == 1
+        assert frames[0]["type"] == "error"
+
+    @pytest.mark.asyncio
+    async def test_websocket_notification_message(self, mock_websocket, session_manager):
+        """Client notifications are accepted without a server reply."""
+        notification_msg = {"type": "notification", "payload": {"jsonrpc": "2.0", "method": "notifications/cancelled", "params": {"requestId": "req-1"}}}
+        mock_websocket.receive_text.side_effect = [orjson.dumps(notification_msg).decode(), WebSocketDisconnect()]
+
+        # First-Party
+        from mcpgateway.routers.reverse_proxy import websocket_endpoint
+
+        await websocket_endpoint(mock_websocket, Mock())
+
+        session_manager.connect.assert_awaited_once()
+        mock_websocket.send_text.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_websocket_unexpected_error_disconnects_both_managers(self, mock_websocket, session_manager):
+        """An unexpected loop error propagates but still disconnects both managers."""
+        mock_websocket.receive_text.side_effect = [RuntimeError("boom"), asyncio.CancelledError()]
+
+        # First-Party
+        from mcpgateway.routers.reverse_proxy import websocket_endpoint
+
+        with pytest.raises(RuntimeError, match="boom"):
             await websocket_endpoint(mock_websocket, Mock())
 
-    @pytest.mark.asyncio
-    async def test_websocket_heartbeat_message(self, mock_websocket):
-        """Test handling heartbeat message."""
-        mock_websocket.headers = {"X-Session-ID": "test-session"}
-        heartbeat_msg = {"type": "heartbeat"}
-        mock_websocket.receive_text.side_effect = [orjson.dumps(heartbeat_msg).decode(), asyncio.CancelledError()]
+        session_manager.disconnect.assert_awaited_once_with(self._CONNECTION_ID)
+        assert manager.sessions == {}
 
+
+class TestReverseProxyFeatureGate:
+    """The v1 router only mounts the reverse-proxy router when the feature flag is on."""
+
+    @staticmethod
+    def _sentinel_router(path: str) -> APIRouter:
+        """Build a router exposing one unique sentinel route."""
+        sentinel = APIRouter()
+        sentinel.add_api_route(path, lambda: path)
+        return sentinel
+
+    def _build_v1_router(self, *, reverse_proxy_enabled: bool) -> APIRouter:
+        """Assemble the real v1 router with the reverse-proxy flag flipped."""
         # First-Party
-        from mcpgateway.routers.reverse_proxy import websocket_endpoint
+        from mcpgateway.api.v1 import build_v1_router
 
-        with patch("mcpgateway.routers.reverse_proxy.get_db") as mock_get_db:
-            mock_get_db.return_value = Mock()
+        feature_flags = SimpleNamespace(
+            mcpgateway_a2a_enabled=False,
+            observability_enabled=False,
+            mcpgateway_reverse_proxy_enabled=reverse_proxy_enabled,
+            toolops_enabled=False,
+            mcpgateway_tool_cancellation_enabled=False,
+            metrics_cleanup_enabled=False,
+            metrics_rollup_enabled=False,
+            email_auth_enabled=False,
+            sso_enabled=False,
+            llmchat_enabled=False,
+            mcpgateway_admin_api_enabled=False,
+        )
+        inline_routers = {
+            "protocol_router": self._sentinel_router("/sentinel-protocol"),
+            "tool_router": self._sentinel_router("/sentinel-tool"),
+            "resource_router": self._sentinel_router("/sentinel-resource"),
+            "prompt_router": self._sentinel_router("/sentinel-prompt"),
+            "gateway_router": self._sentinel_router("/sentinel-gateway"),
+            "root_router": self._sentinel_router("/sentinel-root"),
+            "server_router": self._sentinel_router("/sentinel-server"),
+            "metrics_router": self._sentinel_router("/sentinel-metrics"),
+            "tag_router": self._sentinel_router("/sentinel-tag"),
+            "export_import_router": self._sentinel_router("/sentinel-export"),
+            "a2a_router": self._sentinel_router("/sentinel-a2a"),
+        }
+        return build_v1_router(feature_flags, **inline_routers)
 
-            try:
-                await websocket_endpoint(mock_websocket, Mock())
-            except asyncio.CancelledError:
-                pass
+    def test_reverse_proxy_router_absent_when_feature_disabled(self):
+        """Feature disabled -> no /reverse-proxy routes in the v1 app."""
+        v1_router = self._build_v1_router(reverse_proxy_enabled=False)
+        paths = [path for path, *_ in collect_routes(v1_router)]
+        assert not any(path.startswith("/v1/reverse-proxy") for path in paths)
 
-        # Should send heartbeat response
-        mock_websocket.send_text.assert_called()
-        sent_data = orjson.loads(mock_websocket.send_text.call_args[0][0])
-        assert sent_data["type"] == "heartbeat"
-        assert "timestamp" in sent_data
-
-    @pytest.mark.asyncio
-    async def test_websocket_response_message(self, mock_websocket):
-        """Test handling response message."""
-        mock_websocket.headers = {"X-Session-ID": "test-session"}
-        response_msg = {"type": "response", "id": 1, "result": {"data": "test"}}
-        mock_websocket.receive_text.side_effect = [orjson.dumps(response_msg).decode(), asyncio.CancelledError()]
-
-        # First-Party
-        from mcpgateway.routers.reverse_proxy import websocket_endpoint
-
-        with patch("mcpgateway.routers.reverse_proxy.get_db") as mock_get_db:
-            mock_get_db.return_value = Mock()
-
-            try:
-                await websocket_endpoint(mock_websocket, Mock())
-            except asyncio.CancelledError:
-                pass
-
-    @pytest.mark.asyncio
-    async def test_websocket_notification_message(self, mock_websocket):
-        """Test handling notification message."""
-        mock_websocket.headers = {"X-Session-ID": "test-session"}
-        notification_msg = {"type": "notification", "method": "test/notification"}
-        mock_websocket.receive_text.side_effect = [orjson.dumps(notification_msg).decode(), asyncio.CancelledError()]
-
-        # First-Party
-        from mcpgateway.routers.reverse_proxy import websocket_endpoint
-
-        with patch("mcpgateway.routers.reverse_proxy.get_db") as mock_get_db:
-            mock_get_db.return_value = Mock()
-
-            try:
-                await websocket_endpoint(mock_websocket, Mock())
-            except asyncio.CancelledError:
-                pass
-
-    @pytest.mark.asyncio
-    async def test_websocket_unknown_message_type(self, mock_websocket):
-        """Test handling unknown message type."""
-        mock_websocket.headers = {"X-Session-ID": "test-session"}
-        unknown_msg = {"type": "unknown", "data": "test"}
-        mock_websocket.receive_text.side_effect = [orjson.dumps(unknown_msg).decode(), asyncio.CancelledError()]
-
-        # First-Party
-        from mcpgateway.routers.reverse_proxy import websocket_endpoint
-
-        with patch("mcpgateway.routers.reverse_proxy.get_db") as mock_get_db:
-            mock_get_db.return_value = Mock()
-
-            try:
-                await websocket_endpoint(mock_websocket, Mock())
-            except asyncio.CancelledError:
-                pass
-
-    @pytest.mark.asyncio
-    async def test_websocket_invalid_json(self, mock_websocket):
-        """Test handling invalid JSON."""
-        mock_websocket.headers = {"X-Session-ID": "test-session"}
-        mock_websocket.receive_text.side_effect = ["invalid json", asyncio.CancelledError()]
-
-        # First-Party
-        from mcpgateway.routers.reverse_proxy import websocket_endpoint
-
-        with patch("mcpgateway.routers.reverse_proxy.get_db") as mock_get_db:
-            mock_get_db.return_value = Mock()
-
-            try:
-                await websocket_endpoint(mock_websocket, Mock())
-            except asyncio.CancelledError:
-                pass
-
-        # Should send error message
-        mock_websocket.send_text.assert_called()
-        sent_data = orjson.loads(mock_websocket.send_text.call_args[0][0])
-        assert sent_data["type"] == "error"
-        assert "Invalid JSON format" in sent_data["message"]
-
-    @pytest.mark.asyncio
-    async def test_websocket_general_exception(self, mock_websocket):
-        """Test handling general exception during message processing."""
-        mock_websocket.headers = {"X-Session-ID": "test-session"}
-        # First call succeeds, second call raises exception, third call cancels
-        mock_websocket.receive_text.side_effect = [orjson.dumps({"type": "register", "server": {"name": "test"}}).decode(), Exception("Test exception"), asyncio.CancelledError()]
-
-        # First-Party
-        from mcpgateway.routers.reverse_proxy import websocket_endpoint
-
-        with patch("mcpgateway.routers.reverse_proxy.get_db") as mock_get_db:
-            mock_get_db.return_value = Mock()
-
-            try:
-                await websocket_endpoint(mock_websocket, Mock())
-            except asyncio.CancelledError:
-                pass
-
-        # Should send register ack and error message
-        assert mock_websocket.send_text.call_count >= 2
+    def test_reverse_proxy_router_present_when_feature_enabled(self):
+        """Feature enabled -> the WebSocket endpoint is mounted under /v1."""
+        v1_router = self._build_v1_router(reverse_proxy_enabled=True)
+        paths = [path for path, *_ in collect_routes(v1_router)]
+        assert "/v1/reverse-proxy/ws" in paths
 
 
 class TestWebSocketAuthentication:
