@@ -1,0 +1,53 @@
+syntax = "proto3";
+package grpc_test;
+
+// EchoService provides test RPCs covering unary, streaming, auth, and schema change scenarios.
+service EchoService {
+  // Basic unary echo.
+  rpc Echo(EchoRequest) returns (EchoResponse);
+
+  // Server-streaming echo: returns 5 chunks with incrementing sequence numbers.
+  rpc EchoStream(EchoRequest) returns (stream EchoResponse);
+
+  // Metadata-authenticated echo: requires "authorization: Bearer test-token".
+  rpc EchoWithMetadata(EchoRequest) returns (EchoResponse);
+
+  // Slow echo: 3-second delay for deadline/timeout testing.
+  rpc EchoSlow(EchoRequest) returns (EchoResponse);
+}
+
+message EchoRequest {
+  string message = 1;
+  int32 value = 2;
+}
+
+message EchoResponse {
+  string message = 1;
+  int32 value = 2;
+  string server_id = 3;
+}
+
+// Schema change testing: EchoV1 (2 fields) vs EchoV2 (adds priority).
+message EchoV1Request {
+  string name = 1;
+  int32 value = 2;
+}
+
+message EchoV1Response {
+  string name = 1;
+  int32 value = 2;
+  string result = 3;
+}
+
+message EchoV2Request {
+  string name = 1;
+  int32 value = 2;
+  int32 priority = 3;
+}
+
+message EchoV2Response {
+  string name = 1;
+  int32 value = 2;
+  int32 priority = 3;
+  string result = 4;
+}
