@@ -436,3 +436,84 @@ class TestEnsureEnvFileSecrets:
         )
         assert "AUTH_ENCRYPTION_SECRET" in generated
         assert len(generated["AUTH_ENCRYPTION_SECRET"]) >= 64
+
+    def test_ensure_reads_min_secret_length_from_env_file(self, tmp_path, monkeypatch):
+        """Regression: MIN_SECRET_LENGTH=64 in .env (not os.environ) must size the token correctly."""
+        env = tmp_path / ".env"
+        env.write_text(
+            "JWT_SECRET_KEY=changeme\nAUTH_ENCRYPTION_SECRET=changeme\nMIN_SECRET_LENGTH=64\n",
+            encoding="utf-8",
+        )
+        monkeypatch.delenv("JWT_SECRET_KEY", raising=False)
+        monkeypatch.delenv("AUTH_ENCRYPTION_SECRET", raising=False)
+        monkeypatch.delenv("MIN_SECRET_LENGTH", raising=False)
+        monkeypatch.setenv("MCPGATEWAY_AUTO_INIT_SECRETS", "true")
+
+        generated = ensure_env_file_secrets(env_file=str(env))
+
+        assert len(generated["JWT_SECRET_KEY"]) >= 64, (
+            f"Expected ≥64 chars with MIN_SECRET_LENGTH=64 in .env, got {len(generated['JWT_SECRET_KEY'])}"
+        )
+        assert len(generated["AUTH_ENCRYPTION_SECRET"]) >= 64
+
+    def test_ensure_invalid_min_secret_length_raises_value_error(self, tmp_path, monkeypatch):
+        """Non-numeric MIN_SECRET_LENGTH produces a clear ValueError, not a cryptic int() traceback."""
+        env = tmp_path / ".env"
+        env.write_text("JWT_SECRET_KEY=changeme\nMIN_SECRET_LENGTH=abc\n", encoding="utf-8")
+        monkeypatch.delenv("JWT_SECRET_KEY", raising=False)
+        monkeypatch.delenv("MIN_SECRET_LENGTH", raising=False)
+        monkeypatch.setenv("MCPGATEWAY_AUTO_INIT_SECRETS", "true")
+
+        with pytest.raises(ValueError, match="MIN_SECRET_LENGTH="):
+            ensure_env_file_secrets(env_file=str(env))
+
+
+class TestMainPatchEnv:
+    """Tests for the --patch-env branch of main()."""
+
+    def test_patch_env_generates_and_prints_success(self, tmp_path, monkeypatch, capsys):
+        """--patch-env with a weak .env prints a ✅ message and updates the file."""
+        env = tmp_path / ".env"
+        env.write_text("JWT_SECRET_KEY=changeme\nAUTH_ENCRYPTION_SECRET=changeme\n", encoding="utf-8")
+        monkeypatch.delenv("JWT_SECRET_KEY", raising=False)
+        monkeypatch.delenv("AUTH_ENCRYPTION_SECRET", raising=False)
+        monkeypatch.setenv("MCPGATEWAY_AUTO_INIT_SECRETS", "true")
+
+        with patch("argparse.ArgumentParser.parse_args") as mock_args:
+            mock_args.return_value = argparse.Namespace(
+                output=None, force=False, stdout=False, patch=None, patch_env=str(env)
+            )
+            main()
+
+        out = capsys.readouterr().out
+        assert "✅" in out
+        assert "JWT_SECRET_KEY" in out or "AUTH_ENCRYPTION_SECRET" in out
+        # The weak values must be gone from the file
+        content = env.read_text(encoding="utf-8")
+        assert "changeme" not in content
+
+    def test_patch_env_no_op_when_already_strong(self, tmp_path, monkeypatch, capsys):
+        """--patch-env with an already-strong .env prints ℹ️ and makes no changes."""
+        strong = "a" * 8 + "B" * 8 + "1" * 8 + "!" * 8  # 32 chars, mixed entropy
+        # Use a high-entropy value that passes the entropy gate
+        import secrets as _secrets
+        strong = _secrets.token_urlsafe(32)
+        env = tmp_path / ".env"
+        env.write_text(
+            f"JWT_SECRET_KEY={strong}\nAUTH_ENCRYPTION_SECRET={strong}\nBASIC_AUTH_PASSWORD={strong}\n",
+            encoding="utf-8",
+        )
+        monkeypatch.delenv("JWT_SECRET_KEY", raising=False)
+        monkeypatch.delenv("AUTH_ENCRYPTION_SECRET", raising=False)
+        monkeypatch.setenv("MCPGATEWAY_AUTO_INIT_SECRETS", "true")
+        original = env.read_text(encoding="utf-8")
+
+        with patch("argparse.ArgumentParser.parse_args") as mock_args:
+            mock_args.return_value = argparse.Namespace(
+                output=None, force=False, stdout=False, patch=None, patch_env=str(env)
+            )
+            main()
+
+        out = capsys.readouterr().out
+        assert "ℹ️" in out
+        assert env.read_text(encoding="utf-8") == original

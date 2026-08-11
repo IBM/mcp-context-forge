@@ -236,8 +236,16 @@ def ensure_env_file_secrets(
     file_generated: dict[str, str] = {}
 
     # Honour operator-raised MIN_SECRET_LENGTH floor (e.g. MIN_SECRET_LENGTH=64).
-    # Using max() keeps the constant as the lower bound — never go below 32 bytes.
-    configured_min: int = int(os.environ.get("MIN_SECRET_LENGTH", _MIN_SECRET_LENGTH))
+    # Precedence: os.environ > .env file > built-in constant — mirrors pydantic-settings.
+    # Using max() keeps the constant as the lower bound — never go below 32.
+    _min_raw = os.environ.get("MIN_SECRET_LENGTH") or _env_file_ci.get("min_secret_length") or str(_MIN_SECRET_LENGTH)
+    try:
+        configured_min: int = int(_min_raw)
+    except ValueError:
+        raise ValueError(
+            f"MIN_SECRET_LENGTH={_min_raw!r} is not a valid integer. "
+            "Set it to a whole number (e.g. MIN_SECRET_LENGTH=64)."
+        ) from None
     effective_min: int = max(configured_min, _MIN_SECRET_LENGTH)
 
     for field, nbytes in _SECRET_FIELDS.items():

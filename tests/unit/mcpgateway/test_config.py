@@ -2337,3 +2337,35 @@ def test_csrf_secret_key_is_a_secret_and_falls_back_to_jwt_secret():
         environment="development",
     )
     assert cfg2.csrf_secret_key.get_secret_value() == explicit
+
+
+def test_min_secret_length_below_floor_raises_validation_error():
+    """Regression: MIN_SECRET_LENGTH=0 (or any value < 32) must raise ValidationError at
+    Settings() construction time, not silently pass through to validate_security_combinations().
+
+    The field uses Field(ge=_MIN_SECRET_LENGTH) so the guard lives at the Pydantic layer —
+    the error is ValidationError, not SecurityConfigurationError.
+    """
+    # Standard
+    import os
+
+    # Third-Party
+    from pydantic import ValidationError
+
+    # First-Party
+    from mcpgateway.config import Settings
+
+    strong = "a" * 8 + "B" * 8 + "1" * 8 + "!" * 8  # 32 chars, mixed entropy
+    import secrets as _secrets
+    strong = _secrets.token_urlsafe(32)
+
+    with pytest.raises(ValidationError) as exc_info:
+        Settings(
+            jwt_secret_key=strong,
+            auth_encryption_secret=strong,
+            min_secret_length=0,
+            database_url="sqlite:///:memory:",
+            environment="development",
+        )
+    # Confirm the error is about min_secret_length, not some other field
+    assert "min_secret_length" in str(exc_info.value).lower() or "greater than or equal" in str(exc_info.value).lower()
