@@ -2349,7 +2349,6 @@ class ResourceRead(BaseModelWithConfigDict):
     owner_email: Optional[str] = Field(None, description="Email of the user who owns this resource")
     visibility: Optional[Literal["private", "team", "public"]] = Field(default="public", description="Visibility level: private, team, or public")
 
-
     content: Optional[str] = Field(None, description="Stored text content of the resource, if any")
 
     # MCP protocol fields
