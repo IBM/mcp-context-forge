@@ -331,7 +331,7 @@ class GatewayNameConflictError(GatewayError):
         123
     """
 
-    def __init__(self, name: str, enabled: bool = True, gateway_id: Optional[int] = None, visibility: Optional[str] = "public"):
+    def __init__(self, name: str, enabled: bool = True, gateway_id: Optional[Union[int, str]] = None, visibility: Optional[str] = "public"):
         """Initialize the error with gateway information.
 
         Args:
@@ -596,6 +596,25 @@ class GatewayRegistrationPreparation:
     init_client_cert: Optional[str]
     init_client_key: Optional[str]
     gateway_mode: str
+
+
+@dataclass(frozen=True, slots=True)
+class ReverseProxyGatewayScope:
+    """Trusted catalog scope for an internal reverse-proxy gateway."""
+
+    team_id: str | None
+    visibility: Literal["team", "public"]
+
+
+@dataclass(frozen=True, slots=True)
+class ReverseProxyGatewayRegistration:
+    """Internal reverse-proxy gateway values derived from authenticated context."""
+
+    stable_id: str
+    name: str
+    description: str | None
+    owner_email: str
+    scope: ReverseProxyGatewayScope
 
 
 class GatewayService(BaseService):  # pylint: disable=too-many-instance-attributes
@@ -1632,6 +1651,128 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         logger.info(f"Accepted gateway registration for async initialization: {SecurityValidator.sanitize_log_message(gateway.name)}")
         return self.convert_gateway_to_read(db_gateway)
+
+    async def register_reverse_proxy_gateway(self, db: Session, registration: ReverseProxyGatewayRegistration, *, commit: bool = True) -> GatewayRead:
+        """Create or reconcile an internal PROXIED gateway without network initialization."""
+        internal_url = f"reverse-proxy://catalog/{registration.stable_id}"
+        scope = registration.scope
+        slug_name = slugify(registration.name)
+        scope_conflict = and_(DbGateway.slug == slug_name, DbGateway.visibility == scope.visibility)
+        if scope.visibility == "team":
+            scope_conflict = and_(scope_conflict, DbGateway.team_id == scope.team_id)
+
+        candidates = db.execute(select(DbGateway).where(or_(DbGateway.id == registration.stable_id, DbGateway.url == internal_url, scope_conflict)).with_for_update()).scalars().all()
+        existing = next((candidate for candidate in candidates if candidate.id == registration.stable_id), None)
+        conflicts = [candidate for candidate in candidates if candidate.id != registration.stable_id]
+        if conflicts:
+            conflict = conflicts[0]
+            raise GatewayNameConflictError(conflict.slug, enabled=conflict.enabled, gateway_id=conflict.id, visibility=conflict.visibility)
+
+        if existing is not None:
+            identity_matches = (
+                existing.transport == "PROXIED"
+                and existing.created_via == "reverse_proxy"
+                and existing.url == internal_url
+                and existing.slug == slug_name
+                and existing.name == registration.name
+                and existing.owner_email == registration.owner_email
+                and existing.team_id == scope.team_id
+                and existing.visibility == scope.visibility
+            )
+            if not identity_matches:
+                raise GatewayNameConflictError(existing.slug, enabled=existing.enabled, gateway_id=existing.id, visibility=existing.visibility)
+            existing.description = registration.description
+            existing.enabled = True
+            existing.reachable = True
+            existing.status = "active"
+            existing.status_message = None
+            existing.last_error = None
+            existing.last_seen = datetime.now(timezone.utc)
+            existing.modified_by = registration.owner_email
+            existing.modified_via = "reverse_proxy"
+            if commit:
+                db.commit()
+                db.refresh(existing)
+                await self.finalize_reverse_proxy_gateway(existing, registration, created=False)
+            else:
+                db.flush()
+            return self.convert_gateway_to_read(existing)
+
+        now = datetime.now(timezone.utc)
+        db_gateway = DbGateway(
+            id=registration.stable_id,
+            name=registration.name,
+            slug=slug_name,
+            url=internal_url,
+            description=registration.description,
+            tags=[],
+            transport="PROXIED",
+            capabilities={},
+            last_seen=now,
+            tools=[],
+            resources=[],
+            prompts=[],
+            created_by=registration.owner_email,
+            created_via="reverse_proxy",
+            version=1,
+            team_id=scope.team_id,
+            owner_email=registration.owner_email,
+            visibility=scope.visibility,
+            status="active",
+            enabled=True,
+            reachable=True,
+        )
+        db.add(db_gateway)
+        if not commit:
+            db.flush()
+            return self.convert_gateway_to_read(db_gateway)
+
+        db.commit()
+        db.refresh(db_gateway)
+        await self.finalize_reverse_proxy_gateway(db_gateway, registration, created=True)
+        return self.convert_gateway_to_read(db_gateway)
+
+    async def finalize_reverse_proxy_gateway(self, db_gateway: DbGateway, registration: ReverseProxyGatewayRegistration, *, created: bool) -> None:
+        """Publish reverse-proxy gateway effects after its transaction commits."""
+        cache = _get_registry_cache()
+        if not created:
+            await cache.invalidate_gateways()
+            return
+
+        internal_url = f"reverse-proxy://catalog/{registration.stable_id}"
+        scope = registration.scope
+        await self._notify_gateway_added(db_gateway)
+        await cache.invalidate_gateways()
+        tool_lookup_cache = _get_tool_lookup_cache()
+        await tool_lookup_cache.invalidate_gateway(registration.stable_id)
+
+        # First-Party
+        from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
+
+        await admin_stats_cache.invalidate_tags()
+        audit_trail.log_action(
+            user_id=registration.owner_email,
+            action="create_gateway",
+            resource_type="gateway",
+            resource_id=registration.stable_id,
+            resource_name=registration.name,
+            user_email=registration.owner_email,
+            team_id=scope.team_id,
+            new_values={"name": registration.name, "url": internal_url, "visibility": scope.visibility, "transport": "PROXIED"},
+            context={"created_via": "reverse_proxy"},
+        )
+        structured_logger.log(
+            level="INFO",
+            message="Gateway created successfully",
+            event_type="gateway_created",
+            component="gateway_service",
+            user_id=registration.owner_email,
+            user_email=registration.owner_email,
+            team_id=scope.team_id,
+            resource_type="gateway",
+            resource_id=registration.stable_id,
+            custom_fields={"gateway_name": registration.name, "gateway_url": internal_url, "visibility": scope.visibility, "transport": "PROXIED"},
+        )
 
     async def register_gateway(
         self,

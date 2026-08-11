@@ -311,6 +311,52 @@ class ServerService(BaseService):
         await self._http_client.aclose()
         logger.info("Server service shutdown complete")
 
+    async def finalize_reverse_proxy_server(self, server: DbServer, *, created: bool, user_email: str) -> None:
+        """Publish reverse-proxy server effects after its transaction commits."""
+        if created:
+            await self._notify_server_added(server)
+            action = "create_server"
+            event_type = "server_created"
+            message = "Server created successfully"
+            details = {
+                "server_name": server.name,
+                "visibility": server.visibility,
+                "team_id": server.team_id,
+                "associated_tools_count": len(server.tools),
+                "associated_resources_count": len(server.resources),
+                "associated_prompts_count": len(server.prompts),
+                "associated_a2a_agents_count": len(server.a2a_agents),
+            }
+        else:
+            cache = _get_registry_cache()
+            await cache.invalidate_servers()
+            from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
+
+            await admin_stats_cache.invalidate_tags()
+            await self._notify_server_updated(server)
+            action = "update_server"
+            event_type = "server_updated"
+            message = "Server updated successfully"
+            details = {"server_name": server.name, "changes": "metadata only", "version": server.version}
+
+        self._audit_trail.log_action(
+            user_id=user_email,
+            action=action,
+            resource_type="server",
+            resource_id=server.id,
+            details=details,
+            metadata={"created_via" if created else "modified_via": "reverse_proxy"},
+        )
+        self._structured_logger.log(
+            level="INFO",
+            message=message,
+            event_type=event_type,
+            component="server_service",
+            server_id=server.id,
+            server_name=server.name,
+            user_email=user_email,
+        )
+
     # get_top_server
     async def get_top_servers(self, db: Session, limit: Optional[int] = 5, include_deleted: bool = False) -> List[TopPerformer]:
         """Retrieve the top-performing servers based on execution count.
@@ -524,6 +570,8 @@ class ServerService(BaseService):
         team_id: Optional[str] = None,
         owner_email: Optional[str] = None,
         visibility: Optional[str] = "public",
+        *,
+        commit: bool = True,
     ) -> ServerRead:
         """
         Register a new server in the catalog and validate that all associated items exist.
@@ -549,6 +597,7 @@ class ServerService(BaseService):
             team_id (Optional[str]): Team ID to assign the server to.
             owner_email (Optional[str]): Email of the user who owns this server.
             visibility (str): Server visibility level (private, team, public).
+            commit: Whether this service owns the commit and post-commit effects.
 
         Returns:
             ServerRead: The newly created server, with associated item IDs.
@@ -632,10 +681,16 @@ class ServerService(BaseService):
             _associate_server_entities(db, db_server, server_in)
 
             # Commit the new record and refresh.
-            db.commit()
-            db.refresh(db_server)
+            if commit:
+                db.commit()
+                db.refresh(db_server)
+            else:
+                db.flush()
             # Force load the relationship attributes.
             _ = db_server.tools, db_server.resources, db_server.prompts, db_server.a2a_agents
+
+            if not commit:
+                return self.convert_server_to_read(db_server)
 
             # Assemble response data with associated item IDs.
             server_data = {
@@ -1172,6 +1227,8 @@ class ServerService(BaseService):
         modified_from_ip: Optional[str] = None,
         modified_via: Optional[str] = None,
         modified_user_agent: Optional[str] = None,
+        *,
+        commit: bool = True,
     ) -> ServerRead:
         """Update an existing server.
 
@@ -1184,6 +1241,7 @@ class ServerService(BaseService):
             modified_from_ip: IP address from which modification was made.
             modified_via: Source of modification (api, ui, etc.).
             modified_user_agent: User agent of the client making the modification.
+            commit: Whether this service owns the commit and post-commit effects.
 
         Returns:
             The updated ServerRead object.
@@ -1342,10 +1400,16 @@ class ServerService(BaseService):
             else:
                 server.version = 1
 
-            db.commit()
-            db.refresh(server)
+            if commit:
+                db.commit()
+                db.refresh(server)
+            else:
+                db.flush()
             # Force loading relationships
             _ = server.tools, server.resources, server.prompts
+
+            if not commit:
+                return self.convert_server_to_read(server)
 
             # Invalidate cache after successful update
             cache = _get_registry_cache()
