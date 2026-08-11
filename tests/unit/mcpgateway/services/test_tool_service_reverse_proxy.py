@@ -80,7 +80,6 @@ def tool_service(monkeypatch):
     monkeypatch.setattr("mcpgateway.services.tool_service.settings.ssrf_protection_enabled", False)
     service = ToolService()
     service._http_client = AsyncMock()
-    service.get_plugin_manager = AsyncMock()
     return service
 
 

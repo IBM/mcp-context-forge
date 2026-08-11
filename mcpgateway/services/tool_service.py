@@ -6681,9 +6681,9 @@ class ToolService(BaseService):
                     with create_child_span("tool.gateway_call", {"tool.name": name, "tool.id": tool_id, "tool.integration_type": "MCP"}):
                         tool_call_result = ToolResult(content=[TextContent(text="", type="text")])
                         if gateway_transport == "PROXIED":
-                            # Invariant: a payload carrying "transport" always carries "id" too
-                            # (_build_tool_cache_payload); the direct-proxy payload carries neither.
-                            assert gateway_id_str is not None
+                            if gateway_id_str is None:
+                                # Fail-closed: a PROXIED payload without its stable ID is corrupt; never dispatch.
+                                raise ToolInvocationError("PROXIED gateway payload is missing its stable ID")
                             tool_call_result = await self._invoke_reverse_proxied_tool(gateway_id_str, tool_name_original, arguments, meta_data, effective_timeout)
                         elif transport == "sse":
                             tool_call_result = await connect_to_sse_server(gateway_url, headers=headers)
