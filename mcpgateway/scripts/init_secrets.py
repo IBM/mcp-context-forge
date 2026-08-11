@@ -135,7 +135,8 @@ def _read_env_file(path: str) -> dict[str, str]:
         when the file does not exist.
     """
     try:
-        raw_lines = open(path, encoding="utf-8").readlines()
+        with open(path, encoding="utf-8") as fh:
+            raw_lines = fh.readlines()
     except FileNotFoundError:
         return {}
     keys_with_equals: set[str] = set()
