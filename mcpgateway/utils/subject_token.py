@@ -8,7 +8,10 @@ Extract the inbound user bearer to use as RFC 8693 subject_token.
 
 # Standard
 from http.cookies import CookieError, SimpleCookie
+import logging
 from typing import Dict, Optional
+
+logger = logging.getLogger(__name__)
 
 
 def extract_inbound_bearer(request_headers: Optional[Dict[str, str]]) -> Optional[str]:
@@ -85,7 +88,10 @@ def extract_subject_jwt(request_headers: Optional[Dict[str, str]]) -> Optional[s
     jar = SimpleCookie()
     try:
         jar.load(raw_cookie)
-    except (CookieError, AttributeError, TypeError):
+    except CookieError:
+        return None
+    except (AttributeError, TypeError) as e:
+        logger.debug(f"Unexpected cookie parsing error: {type(e).__name__}: {e}")
         return None
     morsel = jar.get("jwt_token")
     cookie_token = morsel.value if morsel is not None else None
