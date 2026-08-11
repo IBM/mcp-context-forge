@@ -749,6 +749,40 @@ class TokenScopingMiddleware:
         # Default deny for unmatched paths with server restrictions
         return False
 
+    def enforce_non_permission_restrictions(self, payload: dict, request_path: str, client_ip: str) -> None:
+        """Enforce server, network, time, and usage restrictions from a verified token.
+
+        Args:
+            payload: Verified JWT payload.
+            request_path: Canonical request path used for server restriction matching.
+            client_ip: Direct or trusted-proxy-normalized client address.
+
+        Raises:
+            HTTPException: When any non-permission token restriction denies access.
+        """
+        scopes = payload.get("scopes", {})
+
+        server_id = scopes.get("server_id")
+        if not self._check_server_restriction(request_path, server_id):
+            logger.warning(f"Token not authorized for this server. Required: {SecurityValidator.sanitize_log_message(str(server_id))}")
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
+
+        ip_restrictions = scopes.get("ip_restrictions", [])
+        if ip_restrictions and not self._check_ip_restrictions(client_ip, ip_restrictions):
+            logger.warning(f"Request from IP {client_ip} not allowed by token restrictions")
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
+
+        time_restrictions = scopes.get("time_restrictions", {})
+        if not self._check_time_restrictions(time_restrictions):
+            logger.warning("Request not allowed at this time by token restrictions")
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Request not allowed at this time by token restrictions")
+
+        usage_limits = scopes.get("usage_limits", {})
+        usage_allowed, usage_reason = self._check_usage_limits(payload.get("jti"), usage_limits)
+        if not usage_allowed:
+            logger.warning("Token usage limit exceeded for jti %s: %s", payload.get("jti"), usage_reason)
+            raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=usage_reason or "Token usage limit exceeded")
+
     def _check_permission_restrictions(self, request_path: str, request_method: str, permissions: list) -> bool:
         """Check if request is allowed by permission restrictions.
 
@@ -1437,38 +1471,13 @@ class TokenScopingMiddleware:
             # Extract scopes from payload
             scopes = payload.get("scopes", {})
 
-            # Check server ID restriction
-            server_id = scopes.get("server_id")
-            if not self._check_server_restriction(normalized_path, server_id):
-                logger.warning(f"Token not authorized for this server. Required: {SecurityValidator.sanitize_log_message(str(server_id))}")
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
-
-            # Check IP restrictions
-            ip_restrictions = scopes.get("ip_restrictions", [])
-            if ip_restrictions:
-                client_ip = self._get_client_ip(request)
-                if not self._check_ip_restrictions(client_ip, ip_restrictions):
-                    logger.warning(f"Request from IP {client_ip} not allowed by token restrictions")
-                    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
-
-            # Check time restrictions
-            time_restrictions = scopes.get("time_restrictions", {})
-            if not self._check_time_restrictions(time_restrictions):
-                logger.warning("Request not allowed at this time by token restrictions")
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Request not allowed at this time by token restrictions")
+            self.enforce_non_permission_restrictions(payload, normalized_path, self._get_client_ip(request))
 
             # Check permission restrictions
             permissions = scopes.get("permissions", [])
             if not self._check_permission_restrictions(normalized_path, request.method, permissions):
                 logger.warning("Insufficient permissions for this operation")
                 raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
-
-            # Check optional token usage limits.
-            usage_limits = scopes.get("usage_limits", {})
-            usage_allowed, usage_reason = self._check_usage_limits(payload.get("jti"), usage_limits)
-            if not usage_allowed:
-                logger.warning("Token usage limit exceeded for jti %s: %s", payload.get("jti"), usage_reason)
-                raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=usage_reason or "Token usage limit exceeded")
 
             # All scoping checks passed, continue
             return await call_next(request)
