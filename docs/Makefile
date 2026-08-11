@@ -66,8 +66,7 @@ serve:
 .PHONY: build
 build:
 	@/bin/bash -c "source $(VENV_DIR)/bin/activate && mkdocs build > $(HANDBOOK_NAME).html"
-	@/bin/bash -c "sed -i'' -e '1{/^Converting/d;}' $(HANDBOOK_NAME).html"
-	@/bin/bash -c "sed -i'' -e 's#file://$(shell git rev-parse --show-toplevel)/##g' $(HANDBOOK_NAME).html"
+	@/bin/bash -c "sed -i.bak -e '1{/^Converting/d;}' -e 's#file://$(shell git rev-parse --show-toplevel)/##g' $(HANDBOOK_NAME).html && rm -f $(HANDBOOK_NAME).html.bak"
 	@/bin/bash -c "mkdir -p site/out"
 	@/bin/bash -c "pandoc $(HANDBOOK_NAME).html -o $(HANDBOOK_NAME).docx"
 	@/bin/bash -c "mv $(HANDBOOK_NAME).html site/out/"

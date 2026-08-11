@@ -206,4 +206,26 @@ spec:
     {{- end }}
 {{- end }}
 
+{{- if and .Values.praxis.enabled .Values.networkPolicies.praxis.enabled }}
+{{- range .Values.praxis.replicas }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ printf "%s-praxis-%s-egress" $fullName .replicaId }}
+  labels:
+    {{- include "mcp-stack.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: praxis-networkpolicy
+spec:
+  podSelector:
+    matchLabels:
+      app: {{ printf "praxis-%s" .replicaId }}
+      app.kubernetes.io/instance: {{ $.Release.Name }}
+  policyTypes:
+    - Egress
+  egress:
+    {{- toYaml $.Values.networkPolicies.praxis.egress | nindent 4 }}
+{{- end }}
+{{- end }}
+
 {{- end }}

@@ -1,0 +1,106 @@
+services:
+  gateway:
+    deploy:
+      replicas: 1
+    environment:
+      - HOST=0.0.0.0
+      - DATABASE_URL=postgresql+psycopg://postgres:${POSTGRES_PASSWORD:?database password required}@pgbouncer:6432/mcp
+      - REDIS_URL=redis://redis:6379/0
+      - CACHE_TYPE=redis
+      - JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT secret required}
+      - AUTH_ENCRYPTION_SECRET=${AUTH_ENCRYPTION_SECRET:?auth encryption secret required}
+      - AUTH_REQUIRED=true
+      - PLATFORM_ADMIN_EMAIL=admin@example.com
+      - PLATFORM_ADMIN_PASSWORD=${PRAXIS_E2E_ADMIN_PASSWORD:?admin password required}
+      - PLUGINS_CONFIG_FILE=plugins/config.yaml
+      - GUNICORN_WORKERS=1
+      - MCPGATEWAY_SKIP_MIGRATIONS=false
+      - PRAXIS_SHADOW_RENDER_ENABLED=true
+      - PRAXIS_ARTIFACT_DELIVERY_ENABLED=true
+      - PRAXIS_ACTIVATION_ENABLED=true
+      - PRAXIS_TRAFFIC_ENABLED=false
+      - PRAXIS_BUNDLE_ACTIVE_KEY_ID=${PRAXIS_BUNDLE_ACTIVE_KEY_ID:?active bundle key required}
+      - PRAXIS_BUNDLE_ENCRYPTION_KEYS=${PRAXIS_BUNDLE_ENCRYPTION_KEYS:?bundle key ring required}
+      - PRAXIS_E2E_CONTROLS_ENABLED=true
+      - PRAXIS_E2E_CONTROL_DIR=/tmp/praxis-e2e-control
+
+  cert_init:
+    volumes:
+      - type: bind
+        source: ${PRAXIS_E2E_CERT_DIR:?temporary certificate directory required}
+        target: /certs
+
+  nginx_tls:
+    volumes:
+      - type: volume
+        source: nginx_cache
+        target: /var/cache/nginx
+      - type: bind
+        source: ./infra/nginx/nginx-tls.conf
+        target: /etc/nginx/nginx.conf
+        read_only: true
+      - type: bind
+        source: ${PRAXIS_E2E_CERT_DIR:?temporary certificate directory required}
+        target: /app/certs
+        read_only: true
+
+  praxis_a:
+    image: praxis-dataplane:ed46eb5
+    profiles: [praxis-e2e]
+    depends_on:
+      nginx_tls:
+        condition: service_healthy
+    environment:
+      - PRAXIS_CONTROL_PLANE_URL=https://nginx_tls/praxis/v1
+      - PRAXIS_ACTIVATION_CANARY_SECONDS=30
+      - PRAXIS_E2E_CONTROLS_ENABLED=true
+      - PRAXIS_E2E_STALE_AGE_PATH=/run/praxis-e2e/stale-age-seconds
+    volumes:
+      - type: bind
+        source: ${PRAXIS_E2E_TOKEN_A:?replica A token required}
+        target: /run/secrets/praxis/token
+        read_only: true
+      - type: bind
+        source: ${PRAXIS_E2E_CERT_DIR:?temporary certificate directory required}/ca.pem
+        target: /run/secrets/praxis/ca.pem
+        read_only: true
+      - type: bind
+        source: ${PRAXIS_E2E_STALE_AGE:?stale age control required}
+        target: /run/praxis-e2e/stale-age-seconds
+        read_only: true
+    tmpfs:
+      - /var/lib/praxis:uid=65532,gid=65532,mode=0700
+    read_only: true
+    user: 65532:65532
+    group_add:
+      - ${PRAXIS_E2E_SECRET_GID:?host secret group required}
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
+    networks: [mcpnet]
+    stop_grace_period: 45s
+
+  praxis_b:
+    extends: praxis_a
+    volumes:
+      - type: bind
+        source: ${PRAXIS_E2E_TOKEN_B:?replica B token required}
+        target: /run/secrets/praxis/token
+        read_only: true
+      - type: bind
+        source: ${PRAXIS_E2E_CERT_DIR:?temporary certificate directory required}/ca.pem
+        target: /run/secrets/praxis/ca.pem
+        read_only: true
+      - type: bind
+        source: ${PRAXIS_E2E_STALE_AGE:?stale age control required}
+        target: /run/praxis-e2e/stale-age-seconds
+        read_only: true
+
+  praxis_failure:
+    extends: praxis_b
+    environment:
+      - PRAXIS_CONTROL_PLANE_URL=https://nginx_tls/praxis/v1
+      - PRAXIS_ACTIVATION_CANARY_SECONDS=30
+      - PRAXIS_BINARY=/bin/false
+      - PRAXIS_E2E_CONTROLS_ENABLED=true
+      - PRAXIS_E2E_STALE_AGE_PATH=/run/praxis-e2e/stale-age-seconds

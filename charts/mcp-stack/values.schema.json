@@ -205,6 +205,247 @@
       },
       "description": "Optional MCP inspector profile values"
     },
+    "praxis": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "enabled",
+        "image",
+        "controlPlane",
+        "replicas",
+        "storage",
+        "traffic",
+        "terminationGracePeriodSeconds",
+        "podSecurityContext",
+        "containerSecurityContext",
+        "resources"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "default": false
+        },
+        "image": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["repository", "tag", "pullPolicy"],
+          "properties": {
+            "repository": {
+              "type": "string",
+              "minLength": 1
+            },
+            "tag": {
+              "type": "string",
+              "const": "ed46eb5"
+            },
+            "pullPolicy": {
+              "type": "string",
+              "enum": ["Always", "IfNotPresent", "Never"]
+            }
+          }
+        },
+        "controlPlane": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["url", "caSecret"],
+          "properties": {
+            "url": {
+              "type": "string",
+              "pattern": "^(?:$|https://[^\\s]+/praxis/v1)$"
+            },
+            "caSecret": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["name", "key"],
+              "properties": {
+                "name": {
+                  "type": "string"
+                },
+                "key": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "replicas": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["replicaId", "tokenSecret"],
+            "properties": {
+              "replicaId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 40,
+                "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
+              },
+              "tokenSecret": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["name", "key"],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 253,
+                    "pattern": "^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$"
+                  },
+                  "key": {
+                    "type": "string",
+                    "minLength": 1,
+                    "pattern": "^[A-Za-z0-9._-]+$"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "storage": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["type"],
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "emptyDir"
+            }
+          }
+        },
+        "traffic": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled"],
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "const": false
+            }
+          }
+        },
+        "terminationGracePeriodSeconds": {
+          "type": "integer",
+          "const": 45
+        },
+        "podSecurityContext": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["runAsUser", "runAsGroup", "fsGroup", "runAsNonRoot"],
+          "properties": {
+            "runAsUser": {
+              "type": "integer",
+              "const": 65532
+            },
+            "runAsGroup": {
+              "type": "integer",
+              "const": 65532
+            },
+            "fsGroup": {
+              "type": "integer",
+              "const": 65532
+            },
+            "runAsNonRoot": {
+              "type": "boolean",
+              "const": true
+            }
+          }
+        },
+        "containerSecurityContext": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["allowPrivilegeEscalation", "readOnlyRootFilesystem", "runAsNonRoot", "runAsUser", "runAsGroup", "capabilities"],
+          "properties": {
+            "allowPrivilegeEscalation": {
+              "type": "boolean",
+              "const": false
+            },
+            "readOnlyRootFilesystem": {
+              "type": "boolean",
+              "const": true
+            },
+            "runAsNonRoot": {
+              "type": "boolean",
+              "const": true
+            },
+            "runAsUser": {
+              "type": "integer",
+              "const": 65532
+            },
+            "runAsGroup": {
+              "type": "integer",
+              "const": 65532
+            },
+            "capabilities": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["drop"],
+              "properties": {
+                "drop": {
+                  "type": "array",
+                  "const": ["ALL"]
+                }
+              }
+            }
+          }
+        },
+        "resources": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["limits", "requests"],
+          "properties": {
+            "limits": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["cpu", "memory"],
+              "properties": {
+                "cpu": {"type": "string", "minLength": 1},
+                "memory": {"type": "string", "minLength": 1}
+              }
+            },
+            "requests": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["cpu", "memory"],
+              "properties": {
+                "cpu": {"type": "string", "minLength": 1},
+                "memory": {"type": "string", "minLength": 1}
+              }
+            }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "enabled": {"const": true}
+            },
+            "required": ["enabled"]
+          },
+          "then": {
+            "properties": {
+              "controlPlane": {
+                "properties": {
+                  "url": {
+                    "pattern": "^https://[^\\s]+/praxis/v1$"
+                  },
+                  "caSecret": {
+                    "properties": {
+                      "name": {"minLength": 1},
+                      "key": {"minLength": 1}
+                    }
+                  }
+                }
+              },
+              "replicas": {
+                "minItems": 1
+              }
+            }
+          }
+        }
+      ]
+    },
     "mcpContextForge": {
       "type": "object",
       "properties": {
@@ -3379,6 +3620,24 @@
             }
           },
           "description": "MinIO NetworkPolicy controls"
+        },
+        "praxis": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["enabled", "egress"],
+          "properties": {
+            "enabled": {
+              "type": "boolean",
+              "default": false
+            },
+            "egress": {
+              "type": "array",
+              "items": {
+                "type": "object"
+              }
+            }
+          },
+          "description": "Optional egress-only NetworkPolicy controls for Praxis pods"
         },
         "pgbouncer": {
           "type": "object",

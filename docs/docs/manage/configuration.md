@@ -232,6 +232,59 @@ User configuration keys expire after twice the configured snapshot interval plus
 convergence time in test environments; production deployments should retain the default unless their Redis and database
 capacity has been sized for more frequent snapshots.
 
+### Praxis Configuration Delivery
+
+Praxis configuration delivery is a staged, default-off replacement path for the legacy publisher. It uses
+<https://github.com/praxis-proxy/praxis>, pinned to `ed46eb5347d99b7aaf1fe67fa40f8c9178b7aa88`. Images use the immutable
+short revision `ed46eb5`.
+
+| Setting | Default | Contract |
+| --- | --- | --- |
+| `PRAXIS_SHADOW_RENDER_ENABLED` | `false` | Compare rendered routes without delivery. |
+| `PRAXIS_ARTIFACT_DELIVERY_ENABLED` | `false` | Encrypt and serve immutable bundles; requires shadow rendering. |
+| `PRAXIS_ACTIVATION_ENABLED` | `false` | Reconcile launcher reports; requires delivery. |
+| `PRAXIS_TRAFFIC_ENABLED` | `false` | Unsupported; `true` is startup-fatal. |
+| `PRAXIS_BUNDLE_ENCRYPTION_KEYS` | empty | JSON key ID to base64 raw 32-byte AES-256 key. |
+| `PRAXIS_BUNDLE_ACTIVE_KEY_ID` | empty | Key used for new envelopes. |
+
+Rotate encryption by adding a new key, making it active, and keeping old entries as retained decrypt keys while stored
+generations need them. AES-GCM primary and source-sidecar envelopes reserve separate 12-byte nonces. Ciphertext hashes are
+checked before decryption and archive SHA-256 after decryption. Current compatibility is bundle `praxis-bundle/v1`, renderer
+`1.0.0`, Praxis `ed46eb5`, CPEX `cpex/v1`, MCP `2025-11-25`, and minimum launcher `0.1.0`; every value is checked before
+activation. Rendered output excludes secrets, plaintext credentials, upstream headers, tokens, and private
+owner state.
+
+Only platform-public and team-owned state is representable. Owner-private or per-user state is refused, never widened.
+Platform administrators manage targets at `/v1/praxis` and need `praxis.manage`. Machine routes are exactly `/praxis/v1`;
+desired and artifact reads require the exact `praxis.artifacts.read` scope, and reports require `praxis.reports.write`.
+Target and replica identity come only from the persisted credential JTI.
+
+Register each replica separately. At most two active JTIs may overlap during rotation. The launcher rereads its mounted
+token for every physical request, so mount the replacement, observe it, then revoke the old JTI. Replicas must not share a token.
+
+Generation identity is content identity. Every activation, retry, rollback, stop, or same-generation replacement has a new
+rollout ID, directive ID, pointer CAS, and fresh rollout cohort. Source epoch tracks source mutations, policy epoch tracks
+policy changes, and fence rejects stale publishers. Reports are monotonic through `prepared`, `canary_passed`, and `active`.
+Statuses are `rendered`, `desired`, `prepared`, `canary-passed`, `active`, `verified`, `failed`, and
+`blocked_no_eligible_replicas`. Response ETags include the report cursor, so reports change polling identity without changing
+the directive.
+
+Defaults are a `15` seconds desired poll, `60` seconds heartbeat, `30` seconds activation canary, and `180` seconds stale
+replica boundary. LKG lasts `3600` seconds and expires inclusively at `now >= deadline`; rollback is valid only before it.
+Artifacts are limited to 16 MiB. The canary proves parsing, listener readiness, and local policy denial only. It doesn't
+prove authenticated MCP traffic parity.
+
+No hot reload exists for Praxis. Generations are immutable. Candidate failure causes refetch and a fresh retry,
+rollback, or stop. Restart recovery revalidates persisted state. Shutdown sends TERM to the process group for 30 seconds,
+then KILL for 5 seconds; deployment grace is 45 seconds. Praxis has no direct traffic surface.
+
+Legacy readiness requires coverage start and a complete inventory attestation; the 30-day window starts at the later one.
+An empty registry is insufficient. Stable blocker values are `empty_registry`, `preinstrumentation`, `missing_coverage`,
+`missing_attestation`, `coverage_window`, `active_consumer`, `unknown_version`, `unobservable_consumer`, `private_state`,
+`shadow_mismatch`, `failed_e2e`, and `incompatible_launcher`. The gate is report-only and never deletes legacy
+publisher or scaffolding code. Authenticated legacy heartbeats expire after `1` day; compatibility records are retained for
+`90` days so a quiet consumer cannot disappear from the inventory before the removal decision.
+
 ### Direct Proxy Mode
 
 | Setting                              | Description                                    | Default | Options |
