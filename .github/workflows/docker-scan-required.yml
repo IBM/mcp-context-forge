@@ -23,7 +23,6 @@ on:
     paths-ignore:
       - 'Containerfile'
       - 'infra/nginx/**'
-      - 'mcp-servers/python/python_sandbox_server/**'
       - 'mcpgateway/**'
       - 'plugins/**'
       - 'pyproject.toml'
