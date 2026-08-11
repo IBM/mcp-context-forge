@@ -381,7 +381,11 @@ class TestEnsureEnvFileSecrets:
 
     # --- F4 regression: os.environ-only weak values must not write to .env ---
 
-    def test_ensure_does_not_write_env_for_environ_only_weak(self, tmp_path, monkeypatch):
+    def test_ensure_writes_strong_fields_to_env_even_when_weak_value_from_environ(self, tmp_path, monkeypatch):
+        """Strong fields (JWT_SECRET_KEY, AUTH_ENCRYPTION_SECRET) with a weak value in os.environ
+        and absent from .env must be written to .env so the value survives process exit.
+        Only non-strong fields (BASIC_AUTH_PASSWORD) stay environ-only to avoid shadowing
+        container env-var injections."""
         env = tmp_path / ".env"
         env.write_text("OTHER=keep\n", encoding="utf-8")
         monkeypatch.setenv("JWT_SECRET_KEY", "changeme")
@@ -392,7 +396,11 @@ class TestEnsureEnvFileSecrets:
 
         assert "JWT_SECRET_KEY" in generated
         content = env.read_text(encoding="utf-8")
-        assert "JWT_SECRET_KEY" not in content
+        # Strong fields must be persisted — a CLI process exits after patching so
+        # an os.environ-only write would be silently lost.
+        assert f"JWT_SECRET_KEY={generated['JWT_SECRET_KEY']}" in content
+        assert f"AUTH_ENCRYPTION_SECRET={generated['AUTH_ENCRYPTION_SECRET']}" in content
+        assert "OTHER=keep" in content
 
     # --- F6 regression: parser edge cases ---
 
@@ -466,6 +474,36 @@ class TestEnsureEnvFileSecrets:
 
         with pytest.raises(ValueError, match="MIN_SECRET_LENGTH="):
             ensure_env_file_secrets(env_file=str(env))
+
+    def test_ensure_min_secret_length_below_floor_raises_value_error(self, tmp_path, monkeypatch):
+        """Regression: MIN_SECRET_LENGTH=0 must raise ValueError with an actionable message,
+        not silently clamp and produce a token that Settings() then rejects."""
+        env = tmp_path / ".env"
+        env.write_text("JWT_SECRET_KEY=changeme\nAUTH_ENCRYPTION_SECRET=changeme\nMIN_SECRET_LENGTH=0\n", encoding="utf-8")
+        monkeypatch.delenv("JWT_SECRET_KEY", raising=False)
+        monkeypatch.delenv("AUTH_ENCRYPTION_SECRET", raising=False)
+        monkeypatch.delenv("MIN_SECRET_LENGTH", raising=False)
+        monkeypatch.setenv("MCPGATEWAY_AUTO_INIT_SECRETS", "true")
+
+        with pytest.raises(ValueError, match="below the enforced minimum"):
+            ensure_env_file_secrets(env_file=str(env))
+
+    def test_ensure_strong_field_weak_in_environ_writes_to_env_file(self, tmp_path, monkeypatch):
+        """Regression: weak AUTH_ENCRYPTION_SECRET in os.environ (absent from .env) must be
+        written to .env, not discarded into the subprocess environ and silently lost."""
+        env = tmp_path / ".env"
+        # .env exists but does not contain AUTH_ENCRYPTION_SECRET
+        env.write_text("JWT_SECRET_KEY=changeme\n", encoding="utf-8")
+        monkeypatch.setenv("AUTH_ENCRYPTION_SECRET", "changeme")
+        monkeypatch.delenv("JWT_SECRET_KEY", raising=False)
+        monkeypatch.setenv("MCPGATEWAY_AUTO_INIT_SECRETS", "true")
+
+        generated = ensure_env_file_secrets(env_file=str(env))
+
+        assert "AUTH_ENCRYPTION_SECRET" in generated
+        # The value must be persisted to .env, not just os.environ
+        content = env.read_text(encoding="utf-8")
+        assert f"AUTH_ENCRYPTION_SECRET={generated['AUTH_ENCRYPTION_SECRET']}" in content
 
 
 class TestMainPatchEnv:

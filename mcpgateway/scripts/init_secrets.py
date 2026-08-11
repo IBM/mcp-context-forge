@@ -237,13 +237,17 @@ def ensure_env_file_secrets(
 
     # Honour operator-raised MIN_SECRET_LENGTH floor (e.g. MIN_SECRET_LENGTH=64).
     # Precedence: os.environ > .env file > built-in constant — mirrors pydantic-settings.
-    # Using max() keeps the constant as the lower bound — never go below 32.
-    _min_raw = os.environ.get("MIN_SECRET_LENGTH") or _env_file_ci.get("min_secret_length") or str(_MIN_SECRET_LENGTH)
+    # Use is not None so that MIN_SECRET_LENGTH="" (unset in shell) correctly falls through
+    # to the .env value rather than being treated as an empty-string override.
+    _min_env = os.environ.get("MIN_SECRET_LENGTH")
+    _min_raw = _min_env if _min_env is not None else (_env_file_ci.get("min_secret_length") or str(_MIN_SECRET_LENGTH))
     try:
         configured_min: int = int(_min_raw)
     except ValueError:
         raise ValueError(f"MIN_SECRET_LENGTH={_min_raw!r} is not a valid integer. Set it to a whole number (e.g. MIN_SECRET_LENGTH=64).") from None
-    effective_min: int = max(configured_min, _MIN_SECRET_LENGTH)
+    if configured_min < _MIN_SECRET_LENGTH:
+        raise ValueError(f"MIN_SECRET_LENGTH={configured_min} is below the enforced minimum of {_MIN_SECRET_LENGTH}. Settings will reject it at startup — set it to {_MIN_SECRET_LENGTH} or higher.")
+    effective_min: int = configured_min
 
     for field, nbytes in _SECRET_FIELDS.items():
         # os.environ takes priority over .env (mirrors pydantic-settings behaviour)
@@ -259,9 +263,10 @@ def ensure_env_file_secrets(
             # always satisfies Settings.validate_security_combinations() on startup.
             token_bytes = max(nbytes, effective_min) if field in _STRONG_SECRET_FIELDS else nbytes
             new_val = generate_token(token_bytes)
-            if env_val is not None and field.lower() not in _env_file_ci:
-                # Weak value came from os.environ; patching environ is enough.
-                # Writing to .env would shadow subsequent env-var injections (Docker/K8s).
+            if env_val is not None and field.lower() not in _env_file_ci and field not in _STRONG_SECRET_FIELDS:
+                # Non-strong field (e.g. BASIC_AUTH_PASSWORD) with a weak value from
+                # os.environ only — patching environ is enough; writing to .env would
+                # shadow env-var injections in container setups.
                 env_only[field] = new_val
             elif env_val is not None and field in _ROTATION_GUARDED_FIELDS and _is_strong_value(_env_file_ci.get(field.lower(), ""), weak_values):
                 # The shell environment holds a weak value, but .env already contains a
