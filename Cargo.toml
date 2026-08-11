@@ -41,6 +41,7 @@ reqwest = { version = "0.12.28", default-features = false, features = [
     "http2",
     "rustls-tls-native-roots",
 ] }
+nix = { version = "0.31.3", features = ["process", "signal"] }
 
 # Async runtime
 tokio = { version = "1.49", features = ["full"] }

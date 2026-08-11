@@ -1,0 +1,1 @@
+{"filter_chains":[{"filters":[{"filter":"mcp","max_body_bytes":1048576},{"filter":"cpex","policies":[{"config_path":"cpex/platform--server-public.yaml","server_id":"server-public"},{"config_path":"cpex/team-red--server-team.yaml","server_id":"server-team"}]}],"name":"mcp"}],"listeners":[{"address":"0.0.0.0:8080","filter_chains":["mcp"],"name":"mcp"}]}

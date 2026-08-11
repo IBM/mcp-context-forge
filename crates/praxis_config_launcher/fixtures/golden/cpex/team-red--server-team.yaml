@@ -1,0 +1,1 @@
+{"plugin_settings":{"fail_on_plugin_error":true,"routing_enabled":true},"plugins":[],"routes":[{"plugins":[],"tool":"search"},{"plugins":[],"tool":"*"},{"plugins":[],"resource":"*"},{"plugins":[],"prompt":"*"}]}
