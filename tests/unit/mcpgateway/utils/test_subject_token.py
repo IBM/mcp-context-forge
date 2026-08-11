@@ -6,6 +6,10 @@ SPDX-License-Identifier: Apache-2.0
 Tests for mcpgateway.utils.subject_token.
 """
 
+# Standard
+from http.cookies import CookieError
+from unittest.mock import patch
+
 # First-Party
 from mcpgateway.utils.subject_token import extract_subject_jwt
 
@@ -49,4 +53,25 @@ def test_no_jwt_token_cookie():
 
 def test_malformed_cookie_header_returns_none():
     headers = {"cookie": ";;;=;;"}
+    assert extract_subject_jwt(headers) is None
+
+
+def test_unexpected_cookie_parse_error_is_logged_and_returns_none(caplog):
+    headers = {"cookie": f"jwt_token={JWT}"}
+    with patch("mcpgateway.utils.subject_token.SimpleCookie") as mock_jar_cls:
+        mock_jar_cls.return_value.load.side_effect = TypeError("boom")
+        with caplog.at_level("DEBUG", logger="mcpgateway.utils.subject_token"):
+            assert extract_subject_jwt(headers) is None
+    assert "TypeError" in caplog.text
+
+
+def test_cookie_error_returns_none():
+    headers = {"cookie": f"jwt_token={JWT}"}
+    with patch("mcpgateway.utils.subject_token.SimpleCookie") as mock_jar_cls:
+        mock_jar_cls.return_value.load.side_effect = CookieError("bad cookie")
+        assert extract_subject_jwt(headers) is None
+
+
+def test_headers_present_but_no_cookie_key():
+    headers = {"X-Something": "value"}
     assert extract_subject_jwt(headers) is None
