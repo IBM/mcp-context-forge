@@ -1535,9 +1535,10 @@ class Settings(BaseSettings):
             if not val.strip():
                 raise SecurityConfigurationError(f"{field_name}: secret is empty. Set a real value (run 'python -m mcpgateway.scripts.init_secrets').")
 
-            if len(val) < _MIN_SECRET_LENGTH:
+            effective_min = max(self.min_secret_length, _MIN_SECRET_LENGTH)
+            if len(val) < effective_min:
                 raise SecurityConfigurationError(
-                    f"{field_name}: too short ({len(val)} chars, minimum {_MIN_SECRET_LENGTH}). "
+                    f"{field_name}: too short ({len(val)} chars, minimum {effective_min}). "
                     "Run 'python -m mcpgateway.scripts.init_secrets' to generate strong values, "
                     "or use 'make init-secrets-patch-env' to write them directly into .env."
                 )

@@ -115,11 +115,50 @@ def _is_strong_value(val: str, weak_values: frozenset[str]) -> bool:
     return True
 
 
+def _read_env_file(path: str) -> dict[str, str]:
+    """Parse KEY=VALUE pairs from an env file, skipping comments and blank lines.
+
+    Thin compatibility shim backed by ``dotenv_values`` so callers and tests
+    that import ``_read_env_file`` continue to work after the internal refactor
+    to ``dotenv_values``.  The returned dict uses the original key casing from
+    the file (i.e. uppercase-as-written), matching the previous hand-rolled
+    parser semantics.
+
+    Lines that do not contain an ``=`` sign (e.g. bare ``export FOO`` directives)
+    are skipped, preserving the behaviour of the original hand-rolled parser.
+
+    Args:
+        path: Path to the env file.
+
+    Returns:
+        dict: Parsed ``{KEY: value}`` mapping (original casing).  Empty dict
+        when the file does not exist.
+    """
+    try:
+        raw_lines = open(path, encoding="utf-8").readlines()
+    except FileNotFoundError:
+        return {}
+    keys_with_equals: set[str] = set()
+    for line in raw_lines:
+        stripped = line.strip()
+        if stripped.startswith("#") or not stripped:
+            continue
+        if "=" in stripped:
+            key = stripped.split("=", 1)[0].strip()
+            # Strip leading "export " so "export FOO=bar" registers as "FOO"
+            if key.lower().startswith("export "):
+                key = key[len("export ") :].strip()
+            keys_with_equals.add(key)
+    return {k: v for k, v in _dotenv_values(path).items() if k in keys_with_equals}
+
+
 def _merge_env_file(path: str, updates: dict[str, str]) -> None:
     """Merge key=value pairs into an env file.
 
-    Existing keys in *updates* are replaced in-place; new keys are appended.
-    All other content (comments, blanks, other keys) is preserved.
+    Existing keys in *updates* are replaced in-place (case-insensitive match
+    so ``auth_encryption_secret=weak`` is correctly replaced when the update
+    key is ``AUTH_ENCRYPTION_SECRET``); new keys are appended.  All other
+    content (comments, blanks, other keys) is preserved.
     File is written with owner-only permissions (0o600).
     """
     existing_lines: list[str] = []
@@ -129,15 +168,19 @@ def _merge_env_file(path: str, updates: dict[str, str]) -> None:
     except FileNotFoundError:
         pass
 
+    # Build a case-insensitive lookup: lowercase(update_key) → canonical update key
+    updates_ci: dict[str, str] = {k.lower(): k for k in updates}
+
     updated_keys: set[str] = set()
     new_lines: list[str] = []
     for line in existing_lines:
         stripped = line.strip()
         if stripped and not stripped.startswith("#") and "=" in stripped:
-            key = stripped.partition("=")[0].strip()
-            if key in updates:
-                new_lines.append(f"{key}={updates[key]}\n")
-                updated_keys.add(key)
+            file_key = stripped.partition("=")[0].strip()
+            canonical_key = updates_ci.get(file_key.lower())
+            if canonical_key is not None:
+                new_lines.append(f"{canonical_key}={updates[canonical_key]}\n")
+                updated_keys.add(canonical_key)
                 continue
         new_lines.append(line)
 
@@ -317,7 +360,11 @@ def main() -> None:
     # --patch-env: in-place update of an existing env file
     patch_target = args.patch_env
     if patch_target is not None:
-        generated = ensure_env_file_secrets(env_file=patch_target)
+        try:
+            generated = ensure_env_file_secrets(env_file=patch_target)
+        except ValueError as exc:
+            print(f"❌  {exc}", file=sys.stderr)
+            sys.exit(1)
         if generated:
             patched_keys = ", ".join(generated.keys())
             print(f"✅  Patched {patch_target}: generated strong values for {patched_keys}")

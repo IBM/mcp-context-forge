@@ -130,7 +130,7 @@ ContextForge supports multiple database backends with full feature parity across
 | `REQUIRE_USER_IN_DB`        | Require all authenticated users to exist in the database                     | `false`             | bool        |
 | `EMBED_ENVIRONMENT_IN_TOKENS` | Embed environment claim in gateway-issued JWTs                             | `false`             | bool        |
 | `VALIDATE_TOKEN_ENVIRONMENT` | Reject tokens with mismatched environment claim                             | `false`             | bool        |
-| `AUTH_ENCRYPTION_SECRET`    | Passphrase used to derive AES key for encrypting tool auth headers           | `my-test-salt`      | string      |
+| `AUTH_ENCRYPTION_SECRET`    | Passphrase used to derive AES key for encrypting tool auth headers           | *(must be set)*     | string      |
 | `OAUTH_REQUEST_TIMEOUT`     | OAuth request timeout in seconds                                             | `30`                | int > 0     |
 | `OAUTH_MAX_RETRIES`         | Maximum retries for OAuth token requests                                     | `3`                 | int > 0     |
 | `INSECURE_ALLOW_QUERYPARAM_AUTH` | Enable query parameter authentication for gateways (see security warning) | `false`             | bool        |
