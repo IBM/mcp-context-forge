@@ -107,6 +107,15 @@ def _assemble_routers(  # noqa: C901 — deliberate single-function assembly, co
     target_router.include_router(search_router)
     logger.info("Unified search router included (/search)")
 
+    # Observability metrics summaries — always mounted, unlike the full observability
+    # router below (Group C): when OBSERVABILITY_ENABLED=false the handlers return
+    # empty series so the home dashboard renders its "enable observability" state.
+    # First-Party
+    from mcpgateway.routers.observability import observability_metrics_router  # pylint: disable=import-outside-toplevel
+
+    target_router.include_router(observability_metrics_router)
+    logger.info("Observability metrics summary router included (/observability/metrics)")
+
     # -------------------------------------------------------------------------
     # Group B — always-tried optional router (tool plugin bindings)
     # -------------------------------------------------------------------------
