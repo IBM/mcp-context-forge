@@ -39,6 +39,30 @@
       failed_when: confirm.user_input | lower not in ['yes', 'y']
       when: not (skip_confirm | default(false) | bool)
 
+    # Pre-create the gateway secret with Helm ownership labels so the migration
+    # hook pod finds it immediately (before Helm creates regular resources).
+    - name: Load secrets values file
+      ansible.builtin.include_vars:
+        file: "{{ ocp_secrets }}"
+        name: secret_values
+
+    - name: Pre-create gateway secret with Helm ownership labels
+      kubernetes.core.k8s:
+        state: present
+        definition:
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: "{{ ocp_namespace }}-mcp-stack-gateway-secret"
+            namespace: "{{ ocp_namespace }}"
+            labels:
+              app.kubernetes.io/managed-by: Helm
+            annotations:
+              meta.helm.sh/release-name: "{{ ocp_namespace }}"
+              meta.helm.sh/release-namespace: "{{ ocp_namespace }}"
+          stringData: "{{ dict(secret_values.mcpContextForge.secret | dict2items | map(attribute='key') | list | zip(secret_values.mcpContextForge.secret | dict2items | map(attribute='value') | map('string') | list)) }}"
+      no_log: true
+
     - name: Install ContextForge Helm chart
       ansible.builtin.command:
         cmd: >
