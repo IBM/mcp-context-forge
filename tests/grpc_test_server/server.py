@@ -74,6 +74,25 @@ class EchoService(echo_pb2_grpc.EchoServiceServicer):
             server_id=SERVER_ID,
         )
 
+    def EchoV1(self, request, context):
+        """Schema v1: 2-field echo for migration testing."""
+        logger.info("EchoV1: name=%r value=%d", request.name, request.value)
+        return echo_pb2.EchoV1Response(
+            name=request.name,
+            value=request.value,
+            result=f"v1: {request.name}={request.value}",
+        )
+
+    def EchoV2(self, request, context):
+        """Schema v2: 3-field echo with priority for migration testing."""
+        logger.info("EchoV2: name=%r value=%d priority=%d", request.name, request.value, request.priority)
+        return echo_pb2.EchoV2Response(
+            name=request.name,
+            value=request.value,
+            priority=request.priority,
+            result=f"v2: {request.name}={request.value} prio={request.priority}",
+        )
+
 
 def build_server(port, use_tls=False):
     """Build a gRPC server with optional TLS and reflection."""
@@ -117,6 +136,7 @@ def generate_self_signed_cert():
     from cryptography.hazmat.primitives import hashes, serialization
     from cryptography.hazmat.primitives.asymmetric import rsa
     import datetime
+    import ipaddress
 
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
     subject = issuer = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "localhost")])
@@ -128,7 +148,12 @@ def generate_self_signed_cert():
         .serial_number(x509.random_serial_number())
         .not_valid_before(datetime.datetime.utcnow())
         .not_valid_after(datetime.datetime.utcnow() + datetime.timedelta(days=365))
-        .add_extension(x509.SubjectAlternativeName([x509.DNSName("localhost")]), critical=False)
+        .add_extension(
+            x509.SubjectAlternativeName([
+                x509.DNSName("localhost"),
+                x509.IPAddress(ipaddress.IPv4Address("127.0.0.1")),
+            ]), critical=False,
+        )
         .sign(key, hashes.SHA256())
     )
     with open(key_path, "wb") as f:

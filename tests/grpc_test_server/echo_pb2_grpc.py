@@ -55,6 +55,16 @@ class EchoServiceStub:
                 request_serializer=echo__pb2.EchoRequest.SerializeToString,
                 response_deserializer=echo__pb2.EchoResponse.FromString,
                 _registered_method=True)
+        self.EchoV1 = channel.unary_unary(
+                '/grpc_test.EchoService/EchoV1',
+                request_serializer=echo__pb2.EchoV1Request.SerializeToString,
+                response_deserializer=echo__pb2.EchoV1Response.FromString,
+                _registered_method=True)
+        self.EchoV2 = channel.unary_unary(
+                '/grpc_test.EchoService/EchoV2',
+                request_serializer=echo__pb2.EchoV2Request.SerializeToString,
+                response_deserializer=echo__pb2.EchoV2Response.FromString,
+                _registered_method=True)
 
 
 class EchoServiceServicer:
@@ -89,6 +99,20 @@ class EchoServiceServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def EchoV1(self, request, context):
+        """Schema v1: 2-field request for schema migration testing.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def EchoV2(self, request, context):
+        """Schema v2: adds priority field for schema change diff testing.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_EchoServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -111,6 +135,16 @@ def add_EchoServiceServicer_to_server(servicer, server):
                     servicer.EchoSlow,
                     request_deserializer=echo__pb2.EchoRequest.FromString,
                     response_serializer=echo__pb2.EchoResponse.SerializeToString,
+            ),
+            'EchoV1': grpc.unary_unary_rpc_method_handler(
+                    servicer.EchoV1,
+                    request_deserializer=echo__pb2.EchoV1Request.FromString,
+                    response_serializer=echo__pb2.EchoV1Response.SerializeToString,
+            ),
+            'EchoV2': grpc.unary_unary_rpc_method_handler(
+                    servicer.EchoV2,
+                    request_deserializer=echo__pb2.EchoV2Request.FromString,
+                    response_serializer=echo__pb2.EchoV2Response.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -222,6 +256,60 @@ class EchoService:
             '/grpc_test.EchoService/EchoSlow',
             echo__pb2.EchoRequest.SerializeToString,
             echo__pb2.EchoResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def EchoV1(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/grpc_test.EchoService/EchoV1',
+            echo__pb2.EchoV1Request.SerializeToString,
+            echo__pb2.EchoV1Response.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def EchoV2(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/grpc_test.EchoService/EchoV2',
+            echo__pb2.EchoV2Request.SerializeToString,
+            echo__pb2.EchoV2Response.FromString,
             options,
             channel_credentials,
             insecure,

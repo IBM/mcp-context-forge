@@ -14,6 +14,12 @@ service EchoService {
 
   // Slow echo: 3-second delay for deadline/timeout testing.
   rpc EchoSlow(EchoRequest) returns (EchoResponse);
+
+  // Schema v1: 2-field request for schema migration testing.
+  rpc EchoV1(EchoV1Request) returns (EchoV1Response);
+
+  // Schema v2: adds priority field for schema change diff testing.
+  rpc EchoV2(EchoV2Request) returns (EchoV2Response);
 }
 
 message EchoRequest {
