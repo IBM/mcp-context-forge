@@ -1,0 +1,19 @@
+{
+  "content_hash": "dc26730e15280338c01b9714fd9d79a5612c18e1c55274951b36f2db3b90f0c5",
+  "documents": [
+    {
+      "content_utf8": "{\"plugin_settings\":{\"fail_on_plugin_error\":true,\"routing_enabled\":true},\"plugins\":[{\"capabilities\":[],\"conditions\":[],\"config\":{\"destination\":\"tracing\",\"source\":\"task5-golden\"},\"hooks\":[\"cmf.tool_pre_invoke\"],\"kind\":\"audit/logger\",\"mode\":\"sequential\",\"name\":\"native-audit\",\"on_error\":\"fail\",\"priority\":10,\"tags\":[]}],\"routes\":[{\"plugins\":[\"native-audit\"],\"tool\":\"clock\"},{\"plugins\":[],\"tool\":\"*\"},{\"plugins\":[],\"resource\":\"*\"},{\"plugins\":[],\"prompt\":\"*\"}]}\n",
+      "path": "cpex/platform--server-public.yaml"
+    },
+    {
+      "content_utf8": "{\"plugin_settings\":{\"fail_on_plugin_error\":true,\"routing_enabled\":true},\"plugins\":[],\"routes\":[{\"plugins\":[],\"tool\":\"search\"},{\"plugins\":[],\"tool\":\"*\"},{\"plugins\":[],\"resource\":\"*\"},{\"plugins\":[],\"prompt\":\"*\"}]}\n",
+      "path": "cpex/team-red--server-team.yaml"
+    },
+    {
+      "content_utf8": "{\"filter_chains\":[{\"filters\":[{\"filter\":\"mcp\",\"max_body_bytes\":1048576},{\"filter\":\"cpex\",\"policies\":[{\"config_path\":\"cpex/platform--server-public.yaml\",\"server_id\":\"server-public\"},{\"config_path\":\"cpex/team-red--server-team.yaml\",\"server_id\":\"server-team\"}]}],\"name\":\"mcp\"}],\"listeners\":[{\"address\":\"0.0.0.0:8080\",\"filter_chains\":[\"mcp\"],\"name\":\"mcp\"}]}\n",
+      "path": "praxis.yaml"
+    }
+  ],
+  "generation_id": "02004dbe1024a34e6216335dada66dd2e3f550e3eb119c04f77430755485edca",
+  "payload_hash": "304f17ad85c220ef6c94fb43ecc7c9579abad137ee1babb8939f72dae0eff17d"
+}

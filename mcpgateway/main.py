@@ -97,7 +97,7 @@ from mcpgateway.common.models import JSONRPCError as PydanticJSONRPCError
 from mcpgateway.common.models import ListResourceTemplatesResult, LogLevel, Root
 from mcpgateway.common.query_params import QueryGatewayId, QueryPaginationCursor, QueryTeamId, QueryVisibility
 from mcpgateway.common.validators import SecurityValidator
-from mcpgateway.config import get_settings, SecurityConfigurationError, settings
+from mcpgateway.config import get_settings, SecurityConfigurationError, settings, validate_praxis_rollout_configuration
 from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.db import A2APushNotificationConfig
 from mcpgateway.db import A2ATask as DbA2ATask
@@ -131,6 +131,9 @@ from mcpgateway.plugins import (
 )
 from mcpgateway.plugins.violation_codes import PLUGIN_VIOLATION_CODE_MAPPING, PluginViolationCode, VALID_HTTP_STATUS_CODES
 from mcpgateway.routers.openapi_schema_router import router as openapi_schema_router
+from mcpgateway.routers.praxis_config import router as praxis_config_router
+from mcpgateway.routers.praxis_config_machine import router as praxis_config_machine_router
+from mcpgateway.routers.praxis_legacy_telemetry import router as praxis_legacy_telemetry_router
 from mcpgateway.routers.server_well_known import router as server_well_known_router
 from mcpgateway.routers.well_known import router as well_known_router
 from mcpgateway.schemas import (
@@ -178,6 +181,8 @@ from mcpgateway.services.cancellation_service import cancellation_service
 from mcpgateway.services.completion_service import CompletionError, CompletionService
 from mcpgateway.services.content_security import ContentPatternError, ContentSizeError, ContentTypeError, TemplateValidationError
 from mcpgateway.services.dataplane_publisher import DataplanePublisherService
+from mcpgateway.services.praxis_config_runtime import get_praxis_reconciler, get_praxis_source_service, start_praxis_legacy_coverage
+from mcpgateway.services.praxis_shadow_renderer import PraxisReconcilerLifecycleService, PraxisShadowRendererService
 from mcpgateway.services.email_auth_service import EmailAuthService
 from mcpgateway.services.export_service import ExportError, ExportService
 from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayDuplicateConflictError, GatewayError, GatewayLookupConflictError, GatewayNameConflictError, GatewayNotFoundError
@@ -1458,11 +1463,14 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         Exception: Any unhandled error that occurs during service
             initialisation or shutdown is re-raised to the caller.
     """
+    validate_praxis_rollout_configuration(get_settings())
     aggregation_stop_event: Optional[asyncio.Event] = None
     aggregation_loop_task: Optional[asyncio.Task] = None
     aggregation_backfill_task: Optional[asyncio.Task] = None
     siem_export_service: Optional[Any] = None
     dataplane_publisher_service: Optional[Any] = None
+    praxis_shadow_renderer_service: Optional[Any] = None
+    praxis_reconciler_lifecycle_service: Optional[Any] = None
 
     # Initialize logging service FIRST to ensure all logging goes to dual output
     await logging_service.initialize()
@@ -1777,6 +1785,15 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
         refresh_slugs_on_startup()
 
+        start_praxis_legacy_coverage()
+
+        if settings.praxis_shadow_render_enabled:
+            praxis_shadow_renderer_service = PraxisShadowRendererService(SessionLocal, get_praxis_source_service())
+            await praxis_shadow_renderer_service.start()
+        if settings.praxis_activation_enabled:
+            praxis_reconciler_lifecycle_service = PraxisReconcilerLifecycleService(get_praxis_reconciler())
+            await praxis_reconciler_lifecycle_service.start()
+
         # Initialize experimental dataplane publisher to send config data to redis
         if settings.dataplane_publisher:
             dataplane_publisher_service = DataplanePublisherService()
@@ -2006,6 +2023,10 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
         if dataplane_publisher_service is not None:
             services_to_shutdown.insert(3, dataplane_publisher_service)
+        if praxis_reconciler_lifecycle_service is not None:
+            services_to_shutdown.insert(3, praxis_reconciler_lifecycle_service)
+        if praxis_shadow_renderer_service is not None:
+            services_to_shutdown.insert(3, praxis_shadow_renderer_service)
 
         await shutdown_services(services_to_shutdown)
 
@@ -3379,8 +3400,9 @@ app.add_middleware(AdminAuthMiddleware)
 # already being corrected when deriving the default port for scope["server"].
 app.add_middleware(ForwardedHostMiddleware)
 
-# Trust all proxies (or lock down with a list of host patterns)
-app.add_middleware(ProxyHeadersMiddleware, trusted_hosts="*")
+# Uvicorn's standard allowlist defaults to loopback. Deployments with a trusted
+# ingress can widen it explicitly; direct clients cannot forge HTTPS this way.
+app.add_middleware(ProxyHeadersMiddleware, trusted_hosts=os.getenv("FORWARDED_ALLOW_IPS", "127.0.0.1"))
 
 # Add correlation ID middleware if enabled
 # Note: Registered AFTER RequestLoggingMiddleware so correlation ID is available when RequestLoggingMiddleware executes
@@ -12811,7 +12833,10 @@ v1_router = build_v1_router(
     export_import_router=export_import_router,
     a2a_router=a2a_router,
 )
+v1_router.include_router(praxis_config_router)
+v1_router.include_router(praxis_legacy_telemetry_router)
 app.include_router(v1_router)
+app.include_router(praxis_config_machine_router)
 
 # ---------------------------------------------------------------------------
 # Backward-compatible legacy routes (deprecated unversioned aliases for /v1/*)

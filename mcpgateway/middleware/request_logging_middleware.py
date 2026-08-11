@@ -49,6 +49,7 @@ import logging
 import re
 import secrets
 import time
+from collections.abc import Mapping
 from typing import Callable, List, Optional
 
 # Third-Party
@@ -65,6 +66,7 @@ from mcpgateway.middleware.path_filter import should_skip_request_logging
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.utils.correlation_id import get_correlation_id
+from mcpgateway.utils.url_auth import STATIC_SENSITIVE_PARAMS
 from mcpgateway.utils.verify_credentials import get_auth_header_value
 
 # Initialize logging service first
@@ -90,6 +92,7 @@ SENSITIVE_KEYS = frozenset(
         "jwt_token",
         "private_key",
     }
+    | {key.lower() for key in STATIC_SENSITIVE_PARAMS}
 )
 _NON_SENSITIVE_KEY_SUFFIXES = (
     "_count",
@@ -275,6 +278,11 @@ def mask_sensitive_headers(headers):
     return masked_headers
 
 
+def mask_sensitive_query_params(query_params: Mapping[str, str]) -> Mapping[str, str]:
+    """Mask sensitive query values without invoking configurable auth behavior."""
+    return {key: "******" if _is_sensitive_key(key) else value for key, value in query_params.items()}
+
+
 def _mask_json_payload_for_logging(payload: bytes, max_depth: int = 10) -> str:
     """Mask a JSON payload for logging."""
     json_payload = orjson.loads(payload)
@@ -446,6 +454,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
         correlation_id = get_correlation_id()
         user_agent = request.headers.get("user-agent", "unknown")
         client_ip = request.client.host if request.client else "unknown"
+        masked_query_params = mask_sensitive_query_params(request.query_params)
 
         # Only resolve user identity if we're actually going to log boundary events
         # This avoids potential DB queries for skipped paths and detailed-only flows
@@ -473,7 +482,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                     request_path=path,
                     user_agent=user_agent,
                     client_ip=client_ip,
-                    metadata={"event": "request_started", "query_params": str(request.query_params) if request.query_params else None},
+                    metadata={"event": "request_started", "query_params": str(masked_query_params) if masked_query_params else None},
                 )
             except Exception as e:
                 logger.warning(f"Failed to log request start: {e}")
@@ -529,19 +538,13 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                     try:
                         logger.log(
                             log_level,
-                            f"📩 Incoming request: {request.method} {request.url.path}\n"
-                            f"Query params: {dict(request.query_params)}\n"
-                            f"Headers: {masked_headers}\n"
-                            f"Body: <body too large: {content_length} bytes>",
+                            f"📩 Incoming request: {request.method} {request.url.path}\nQuery params: {masked_query_params}\nHeaders: {masked_headers}\nBody: <body too large: {content_length} bytes>",
                             extra={"request_id": request_id},
                         )
                     except TypeError:
                         logger.log(
                             log_level,
-                            f"📩 Incoming request: {request.method} {request.url.path}\n"
-                            f"Query params: {dict(request.query_params)}\n"
-                            f"Headers: {masked_headers}\n"
-                            f"Body: <body too large: {content_length} bytes>",
+                            f"📩 Incoming request: {request.method} {request.url.path}\nQuery params: {masked_query_params}\nHeaders: {masked_headers}\nBody: <body too large: {content_length} bytes>",
                         )
 
                     # Continue with request processing (boundary logging handled below)
@@ -633,7 +636,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                 logger.log(
                     log_level,
                     f"📩 Incoming request: {request.method} {request.url.path}\n"
-                    f"Query params: {dict(request.query_params)}\n"
+                    f"Query params: {masked_query_params}\n"
                     f"Headers: {masked_headers}\n"
                     f"Body: {payload_str}{'... [truncated]' if truncated else ''}",
                     extra={"request_id": request_id},
@@ -643,7 +646,7 @@ class RequestLoggingMiddleware(BaseHTTPMiddleware):
                 logger.log(
                     log_level,
                     f"📩 Incoming request: {request.method} {request.url.path}\n"
-                    f"Query params: {dict(request.query_params)}\n"
+                    f"Query params: {masked_query_params}\n"
                     f"Headers: {masked_headers}\n"
                     f"Body: {payload_str}{'... [truncated]' if truncated else ''}",
                 )

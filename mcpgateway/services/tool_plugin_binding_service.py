@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.db import ToolPluginBinding, utc_now
 from mcpgateway.schemas import ToolPluginBindingRequest, ToolPluginBindingResponse
+from mcpgateway.services.praxis_target_epoch import PraxisTargetEpochService
 
 logger = logging.getLogger(__name__)
 
@@ -231,6 +232,7 @@ class ToolPluginBindingService:
         # Prune stale tool bindings for any (binding_reference_id, plugin_id)
         # pair present in this request — rows whose tool_name is no longer in
         # the authoritative incoming list are deleted.
+        stale_bindings: set[tuple[str, str]] = set()
         for (ref_id, plugin_id_val), incoming_tools in ref_plugin_tool_names.items():
             stale_rows = (
                 db.query(ToolPluginBinding)
@@ -249,8 +251,11 @@ class ToolPluginBindingService:
                     stale.tool_name,
                     plugin_id_val,
                 )
+                stale_bindings.add((stale.team_id, stale.tool_name))
                 db.delete(stale)
 
+        affected_bindings = tuple(sorted(stale_bindings | {(team_id, tool_name) for team_id, team in request.teams.items() for policy in team.policies for tool_name in policy.tool_names}))
+        PraxisTargetEpochService(db).bump_for_bindings(affected_bindings)
         db.flush()  # single flush for all inserts/updates/deletes
         return results
 
@@ -334,6 +339,7 @@ class ToolPluginBindingService:
         if allowed_teams is not None and binding.team_id not in allowed_teams:
             raise ToolPluginBindingForbiddenError(f"Not authorized to delete binding '{binding_id}' for team '{binding.team_id}'")
         response = self._to_response(binding)
+        PraxisTargetEpochService(db).bump_for_bindings(((binding.team_id, binding.tool_name),))
         db.delete(binding)
         db.flush()  # flush so the DELETE is sent before the caller's commit
         logger.debug("Deleted tool plugin binding id=%s", binding_id)
@@ -369,6 +375,8 @@ class ToolPluginBindingService:
             query = query.filter(ToolPluginBinding.team_id.in_(allowed_teams))
         rows = query.all()
         responses = [self._to_response(r) for r in rows]
+        if rows:
+            PraxisTargetEpochService(db).bump_for_bindings(tuple(sorted((row.team_id, row.tool_name) for row in rows)))
         for row in rows:
             logger.debug("Deleted tool plugin binding id=%s ref=%s", row.id, binding_reference_id)
             db.delete(row)

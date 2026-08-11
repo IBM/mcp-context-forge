@@ -494,6 +494,13 @@ async def bootstrap_default_roles(conn: Connection) -> None:
                     ],
                     "is_system_role": True,
                 },
+                {
+                    "name": "praxis_replica",
+                    "description": "Target-bound Praxis replica machine",
+                    "scope": "global",
+                    "permissions": ["praxis.artifacts.read", "praxis.reports.write"],
+                    "is_system_role": True,
+                },
             ]
 
             # Logic to add additional default roles from a json file

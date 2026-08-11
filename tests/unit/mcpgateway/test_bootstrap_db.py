@@ -731,8 +731,8 @@ class TestBootstrapDefaultRoles:
                         with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
                             await bootstrap_default_roles(mock_conn)
 
-                            # Should only create default roles (5 roles: platform_admin, team_admin, developer, viewer, platform_viewer)
-                            assert mock_role_service.create_role.call_count == 5
+                            # Six built-ins include the least-privilege Praxis machine role.
+                            assert mock_role_service.create_role.call_count == 6
                             # Should not log about additional roles
                             assert not any("additional roles" in str(call) for call in mock_logger.info.call_args_list)
 

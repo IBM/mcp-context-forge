@@ -44,6 +44,7 @@ from mcpgateway.services.encryption_service import protect_oauth_config_for_stor
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
 from mcpgateway.services.performance_tracker import get_performance_tracker
+from mcpgateway.services.praxis_target_epoch import PraxisTargetEpochService
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.utils.admin_check import is_admin_bypass_granted
@@ -1342,6 +1343,7 @@ class ServerService(BaseService):
             else:
                 server.version = 1
 
+            PraxisTargetEpochService(db).bump_for_servers((server_id,))
             db.commit()
             db.refresh(server)
             # Force loading relationships
@@ -1532,6 +1534,7 @@ class ServerService(BaseService):
             if server.enabled != activate:
                 server.enabled = activate
                 server.updated_at = datetime.now(timezone.utc)
+                PraxisTargetEpochService(db).bump_for_servers((server_id,))
                 db.commit()
                 db.refresh(server)
 
@@ -1652,6 +1655,7 @@ class ServerService(BaseService):
                 with pause_rollup_during_purge(reason=f"purge_server:{server_id}"):
                     delete_metrics_in_batches(db, ServerMetric, ServerMetric.server_id, server_id)
                     delete_metrics_in_batches(db, ServerMetricsHourly, ServerMetricsHourly.server_id, server_id)
+            PraxisTargetEpochService(db).bump_for_servers((server_id,))
             db.delete(server)
             db.commit()
 

@@ -47,6 +47,8 @@ Examples:
 """
 
 # Standard
+import base64
+import binascii
 from functools import lru_cache
 from importlib.resources import files
 import logging
@@ -3070,6 +3072,55 @@ class Settings(BaseSettings):
         description="Seconds between dataplane publisher snapshots to Redis; UserConfig keys expire after two snapshot intervals plus 10 seconds",
     )
 
+    # Praxis configuration delivery rollout gates and control-plane-only key ring
+    praxis_shadow_render_enabled: bool = Field(
+        default=False,
+        validation_alias=AliasChoices("praxis_shadow_render_enabled", "praxis_config_shadow_enabled"),
+        description="Render and compare Praxis bundles without artifact delivery",
+    )
+    praxis_artifact_delivery_enabled: bool = Field(default=False, description="Enable encrypted Praxis bundle artifact delivery")
+    praxis_activation_enabled: bool = Field(default=False, description="Enable Praxis bundle activation workflows")
+    praxis_traffic_enabled: bool = Field(default=False, description="Reserved gate for direct Praxis traffic; unsupported in this release")
+    praxis_bundle_encryption_keys: SecretStr = Field(default=SecretStr(""), description="JSON key-ID to base64 AES-256 key mapping retained only by the control plane")
+    praxis_bundle_active_key_id: str = Field(default="", description="Key ID used for new Praxis bundle encryption")
+
+    @model_validator(mode="after")
+    def validate_praxis_bundle_security(self) -> Self:
+        """Require a strict active key ring before encrypted artifacts can be used."""
+        if self.praxis_traffic_enabled:
+            raise SecurityConfigurationError("Praxis traffic is not available in this release")
+        encoded_keys = self.praxis_bundle_encryption_keys.get_secret_value()
+        keys_required = self.praxis_artifact_delivery_enabled or self.praxis_activation_enabled
+        if not keys_required and not encoded_keys and not self.praxis_bundle_active_key_id:
+            return self
+        key_ids: set[str] | None = None
+        try:
+            raw_key_ring = orjson.loads(encoded_keys)
+        except orjson.JSONDecodeError:
+            raw_key_ring = None
+        else:
+            if isinstance(raw_key_ring, dict) and raw_key_ring:
+                decoded_ids: set[str] = set()
+                valid = True
+                for key_id, encoded_key in raw_key_ring.items():
+                    if not isinstance(key_id, str) or not isinstance(encoded_key, str) or re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", key_id) is None:
+                        valid = False
+                        break
+                    try:
+                        key = base64.b64decode(encoded_key, validate=True)
+                    except (binascii.Error, ValueError):
+                        valid = False
+                        break
+                    if len(key) != 32:
+                        valid = False
+                        break
+                    decoded_ids.add(key_id)
+                if valid:
+                    key_ids = decoded_ids
+        if key_ids is None or self.praxis_bundle_active_key_id not in key_ids:
+            raise SecurityConfigurationError("Praxis bundle encryption configuration is unavailable") from None
+        return self
+
     # Well-Known URI Configuration
     # ===================================
 
@@ -3982,6 +4033,14 @@ def generate_settings_schema() -> dict[str, Any]:
         dict: A dictionary representing the JSON Schema of the Settings model.
     """
     return Settings.model_json_schema(mode="validation")
+
+
+def validate_praxis_rollout_configuration(configured: Settings) -> None:
+    """Reject invalid staged Praxis rollout dependencies at application startup."""
+    if configured.praxis_artifact_delivery_enabled and not configured.praxis_shadow_render_enabled:
+        raise SecurityConfigurationError("Praxis artifact delivery requires shadow rendering")
+    if configured.praxis_activation_enabled and not configured.praxis_artifact_delivery_enabled:
+        raise SecurityConfigurationError("Praxis activation requires artifact delivery")
 
 
 # Lazy "instance" of settings

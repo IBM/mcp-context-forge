@@ -5952,6 +5952,7 @@ async def test_lifespan_logs_db_pool_warning_with_gunicorn_workers(monkeypatch, 
 
     # Mock bootstrap_db to avoid running migrations
     monkeypatch.setattr("mcpgateway.bootstrap_db.main", AsyncMock())
+    monkeypatch.setattr(main_mod, "start_praxis_legacy_coverage", MagicMock())
 
     main_mod.app.state.update_http_pool_metrics = MagicMock()
 
@@ -6032,6 +6033,7 @@ async def test_lifespan_logs_db_pool_warning_with_gunicorn_cmd_args(monkeypatch,
 
     # Mock bootstrap_db to avoid running migrations
     monkeypatch.setattr("mcpgateway.bootstrap_db.main", AsyncMock())
+    monkeypatch.setattr(main_mod, "start_praxis_legacy_coverage", MagicMock())
 
     main_mod.app.state.update_http_pool_metrics = MagicMock()
 
