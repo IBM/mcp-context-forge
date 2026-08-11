@@ -29,7 +29,6 @@ class TextWebSocket(Protocol):
 
     async def send_text(self, data: str) -> None:
         """Send one serialized protocol frame."""
-        ...
 
 
 class DuplicateLocalSessionError(Exception):
