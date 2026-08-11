@@ -17257,6 +17257,9 @@ async def test_get_gateways_section(monkeypatch, mock_db):
     response = await get_gateways_section(request=mock_request, team_id="team-1", db=mock_db, user={"email": "admin@example.com", "db": mock_db})
     payload = response.body.decode()
     assert "gateways" in payload
+    # The filtering must happen in the service: assert the scope is forwarded, not
+    # re-derived here. Dropping any of these kwargs silently restores the bug.
+    gateway_service.list_gateways.assert_called_once_with(mock_db, include_inactive=True, user_email="admin@example.com", token_teams=[], team_id="team-1")
 
 
 @pytest.mark.asyncio
@@ -17868,6 +17871,9 @@ async def test_get_resources_section_team_filter(mock_list, mock_db, allow_permi
     payload = json.loads(response.body)
     assert payload["team_id"] == "team-1"
     assert len(payload["resources"]) == 1
+    # The filtering must happen in the service: assert the scope is forwarded, not
+    # re-derived here. Dropping any of these kwargs silently restores the bug.
+    mock_list.assert_called_once_with(mock_db, include_inactive=True, user_email="u@example.com", token_teams=[], team_id="team-1")
 
 
 @pytest.mark.asyncio
@@ -17897,6 +17903,9 @@ async def test_get_resources_section_team_filter_with_tuple_result(mock_list, mo
     payload = json.loads(response.body)
     assert payload["team_id"] == "team-1"
     assert len(payload["resources"]) == 1
+    # The filtering must happen in the service: assert the scope is forwarded, not
+    # re-derived here. Dropping any of these kwargs silently restores the bug.
+    mock_list.assert_called_once_with(mock_db, include_inactive=True, user_email="u@example.com", token_teams=[], team_id="team-1")
 
 
 @pytest.mark.asyncio
@@ -17939,6 +17948,9 @@ async def test_get_prompts_section_team_filter(mock_list, mock_db, allow_permiss
     payload = json.loads(response.body)
     assert payload["team_id"] == "team-2"
     assert len(payload["prompts"]) == 1
+    # The filtering must happen in the service: assert the scope is forwarded, not
+    # re-derived here. Dropping any of these kwargs silently restores the bug.
+    mock_list.assert_called_once_with(mock_db, include_inactive=True, user_email="u@example.com", token_teams=[], team_id="team-2")
 
 
 @pytest.mark.asyncio
@@ -17968,6 +17980,9 @@ async def test_get_prompts_section_team_filter_with_tuple_result(mock_list, mock
     payload = json.loads(response.body)
     assert payload["team_id"] == "team-2"
     assert len(payload["prompts"]) == 1
+    # The filtering must happen in the service: assert the scope is forwarded, not
+    # re-derived here. Dropping any of these kwargs silently restores the bug.
+    mock_list.assert_called_once_with(mock_db, include_inactive=True, user_email="u@example.com", token_teams=[], team_id="team-2")
 
 
 @pytest.mark.asyncio
@@ -18007,6 +18022,9 @@ async def test_get_servers_section_team_filter(mock_list, mock_db, allow_permiss
     payload = json.loads(response.body)
     assert payload["team_id"] == "team-3"
     assert len(payload["servers"]) == 1
+    # The filtering must happen in the service: assert the scope is forwarded, not
+    # re-derived here. Dropping any of these kwargs silently restores the bug.
+    mock_list.assert_called_once_with(mock_db, include_inactive=True, user_email="u@example.com", token_teams=[], team_id="team-3")
 
 
 @pytest.mark.asyncio
@@ -18033,6 +18051,9 @@ async def test_get_servers_section_team_filter_with_tuple_result(mock_list, mock
     payload = json.loads(response.body)
     assert payload["team_id"] == "team-3"
     assert len(payload["servers"]) == 1
+    # The filtering must happen in the service: assert the scope is forwarded, not
+    # re-derived here. Dropping any of these kwargs silently restores the bug.
+    mock_list.assert_called_once_with(mock_db, include_inactive=True, user_email="u@example.com", token_teams=[], team_id="team-3")
 
 
 @pytest.mark.asyncio

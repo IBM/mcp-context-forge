@@ -937,7 +937,9 @@ class A2AAgentService(BaseService):
             token_teams: Teams from JWT token. None with user_email=None = anonymous admin bypass (public+team only);
                          None with user_email set = DB admin check (public+team+own-private);
                          [] = public-only; [...] = team-scoped access.
-            team_id: Optional team ID to filter by specific team.
+            team_id: Optional team ID to filter by specific team. Applies to every caller
+                shape, including the admin and anonymous bypasses; globally-public rows
+                from other teams remain visible.
             visibility: Optional visibility filter (private, team, public).
 
         Returns:
