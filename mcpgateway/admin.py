@@ -68,6 +68,7 @@ from mcpgateway.auth import get_current_user, get_user_team_roles
 # Re-export canonical get_user_email from auth_context for backward compatibility.
 from mcpgateway.auth_context import (
     configuration_export_includes_roots,
+    extract_token_team_ids,
     get_scoped_resource_access_context,
     get_token_teams_from_request,
     get_user_email,
@@ -183,7 +184,7 @@ from mcpgateway.services.openapi_service import fetch_and_extract_schemas
 from mcpgateway.services.password_policy_service import PasswordPolicyService
 from mcpgateway.services.performance_service import get_performance_service
 from mcpgateway.services.permission_service import PermissionService
-from mcpgateway.services.plugin_service import get_plugin_service
+from mcpgateway.services.plugin_service import get_plugin_service, sync_plugin_service_from_runtime
 from mcpgateway.services.prompt_service import PromptArgumentsJSONError, PromptNameConflictError, PromptNotFoundError, PromptService
 from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService, ResourceURIConflictError, ResourceValidationError
 from mcpgateway.services.root_service import RootService, RootServiceError, RootServiceNotFoundError, RootServiceValidationError
@@ -1948,18 +1949,9 @@ async def _get_user_team_ids(user: dict, db: Session) -> list:
     if cached is not None:
         return cached
 
-    if "token_teams" in user:
-        token_teams = user.get("token_teams")
-        if token_teams is not None:
-            team_ids: list[str] = []
-            for team in token_teams:
-                if isinstance(team, dict):
-                    team_id = team.get("id")
-                    if isinstance(team_id, str) and team_id:
-                        team_ids.append(team_id)
-                elif isinstance(team, str) and team:
-                    team_ids.append(team)
-            return team_ids
+    team_ids = extract_token_team_ids(user)
+    if team_ids is not None:
+        return team_ids
 
     user_email = get_user_email(user)
     team_service = TeamManagementService(db)
@@ -1999,9 +1991,7 @@ def _is_explicit_token_team_scope(user: Any) -> bool:
     Returns:
         bool: True when ``token_teams`` is present and not ``None``.
     """
-    if not isinstance(user, dict):
-        return False
-    return "token_teams" in user and user.get("token_teams") is not None
+    return extract_token_team_ids(user) is not None
 
 
 def _owner_access_condition(owner_column, team_column, *, user_email: str, team_ids: list[str], user: Any):
@@ -2322,7 +2312,7 @@ async def get_overview_partial(
         # Plugin stats — self-heal the cache so the overview reflects the live
         # shared toggle even on a process that booted with plugins disabled.
         overview_plugin_service = get_plugin_service()
-        await _sync_plugin_service_from_runtime(request, overview_plugin_service)
+        await sync_plugin_service_from_runtime(request, overview_plugin_service)
         plugin_stats = await overview_plugin_service.get_plugin_statistics()
 
         # Infrastructure status (database, cache, uptime)
@@ -5346,13 +5336,14 @@ async def change_password_required_handler(request: Request, db: Session = Depen
 # ============================================================================ #
 
 
-async def _generate_unified_teams_view(team_service, current_user, root_path):  # pylint: disable=unused-argument
+async def _generate_unified_teams_view(team_service, current_user, root_path, scoped_team_ids: Optional[list[str]] = None):  # pylint: disable=unused-argument
     """Generate unified team view with relationship badges.
 
     Args:
         team_service: Service for team operations
         current_user: Current authenticated user
         root_path: Application root path
+        scoped_team_ids: Explicit token team scope to apply to the generated list
 
     Returns:
         HTML string containing the unified teams view
@@ -5362,6 +5353,11 @@ async def _generate_unified_teams_view(team_service, current_user, root_path):  
 
     # Get public teams user can join
     public_teams = await team_service.discover_public_teams(current_user.email)
+
+    if scoped_team_ids is not None:
+        allowed_team_ids = set(scoped_team_ids)
+        user_teams = [team for team in user_teams if str(team.id) in allowed_team_ids]
+        public_teams = [team for team in public_teams if str(team.id) in allowed_team_ids]
 
     # Batch fetch ALL data upfront - 3 queries instead of 3N queries (N+1 elimination)
     user_team_ids = [str(t.id) for t in user_teams]
@@ -5646,10 +5642,7 @@ async def admin_search_teams(
         # the result. The scope is pushed into the query so it applies before
         # pagination (an allowed team must not be dropped for sorting past the
         # first page) and so an explicit scope no longer surfaces the personal team.
-        raw_token_teams = user.get("token_teams")
-        admin_scoped_team_ids: Optional[list[str]] = None
-        if raw_token_teams is not None:
-            admin_scoped_team_ids = [team["id"] if isinstance(team, dict) else team for team in raw_token_teams]
+        admin_scoped_team_ids = extract_token_team_ids(user)
         result = await team_service.list_teams(
             page=1,
             per_page=limit,
@@ -5749,6 +5742,8 @@ async def admin_teams_partial_html(
     if not current_user:
         return HTMLResponse(content='<div class="text-center py-8"><p class="text-red-500">User not found</p></div>', status_code=404)
 
+    scoped_team_ids = extract_token_team_ids(user)
+
     # Get user's teams and public teams for relationship info
     user_teams = await team_service.get_user_teams(user_email, include_personal=True)
     user_team_ids = {str(t.id) for t in user_teams}
@@ -5768,7 +5763,15 @@ async def admin_teams_partial_html(
     if current_user.is_admin and not relationship:
         # Admin sees all non-personal teams plus their own personal team (single query, correct pagination)
         paginated_result = await team_service.list_teams(
-            page=page, per_page=per_page, include_inactive=include_inactive, visibility_filter=visibility, base_url=base_url, include_personal=False, search_query=q, personal_owner_email=user_email
+            page=page,
+            per_page=per_page,
+            include_inactive=include_inactive,
+            visibility_filter=visibility,
+            base_url=base_url,
+            include_personal=False,
+            search_query=q,
+            personal_owner_email=user_email,
+            team_ids=scoped_team_ids,
         )
         data = paginated_result["data"]
         pagination = paginated_result["pagination"]
@@ -5789,6 +5792,10 @@ async def admin_teams_partial_html(
         else:
             # All teams: user's teams + public teams they can join
             all_teams = list(user_teams) + list(public_teams)
+
+        if scoped_team_ids is not None:
+            allowed_team_ids = set(scoped_team_ids)
+            all_teams = [t for t in all_teams if str(t.id) in allowed_team_ids]
 
         # Apply search filter
         if q:
@@ -5968,10 +5975,11 @@ async def admin_list_teams(
             return HTMLResponse(content='<div class="text-center py-8"><p class="text-red-500">User not found</p></div>', status_code=200)
 
         root_path = _resolve_root_path(request)
+        scoped_team_ids = extract_token_team_ids(user)
 
         if unified:
             # Generate unified team view
-            return await _generate_unified_teams_view(team_service, current_user, root_path)
+            return await _generate_unified_teams_view(team_service, current_user, root_path, scoped_team_ids=scoped_team_ids)
 
         # Traditional admin view refactored to use partial logic
         # We can reuse the logic by calling the service directly or redirecting?
@@ -5986,12 +5994,23 @@ async def admin_list_teams(
                 base_url += f"?q={urllib.parse.quote(q, safe='')}"
 
             # Admin sees all non-personal teams plus their own personal team (single query, correct pagination)
-            paginated_result = await team_service.list_teams(page=page, per_page=per_page, base_url=base_url, include_personal=False, search_query=q, personal_owner_email=user_email)
+            paginated_result = await team_service.list_teams(
+                page=page,
+                per_page=per_page,
+                base_url=base_url,
+                include_personal=False,
+                search_query=q,
+                personal_owner_email=user_email,
+                team_ids=scoped_team_ids,
+            )
             data = paginated_result["data"]
             pagination = paginated_result["pagination"]
             links = paginated_result["links"]
         else:
             all_teams = await team_service.get_user_teams(current_user.email, include_personal=True)
+            if scoped_team_ids is not None:
+                allowed_team_ids = set(scoped_team_ids)
+                all_teams = [team for team in all_teams if str(team.id) in allowed_team_ids]
             # Basic pagination for user view
             total = len(all_teams)
             start = (page - 1) * per_page
@@ -17005,16 +17024,13 @@ async def get_resources_section(
         user_email, token_teams = get_scoped_resource_access_context(request, user)
         LOGGER.debug(f"User {user_email} requesting resources section with team_id={team_id}, token_teams={token_teams}")
 
-        # Get all resources with token_teams for proper scoping
-        resources_result = await local_resource_service.list_resources(db, include_inactive=True, user_email=user_email, token_teams=token_teams)
+        # Filter in the service, not here: a strict team_id comparison would drop
+        # globally-public rows owned by other teams.
+        resources_result = await local_resource_service.list_resources(db, include_inactive=True, user_email=user_email, token_teams=token_teams, team_id=team_id)
         if isinstance(resources_result, tuple):
             resources_list = resources_result[0]
         else:
             resources_list = resources_result
-
-        # Apply team filtering if specified
-        if team_id:
-            resources_list = [r for r in resources_list if getattr(r, "team_id", None) == team_id]
 
         # Convert to JSON-serializable format
         resources = []
@@ -17066,16 +17082,13 @@ async def get_prompts_section(
         user_email, token_teams = get_scoped_resource_access_context(request, user)
         LOGGER.debug(f"User {user_email} requesting prompts section with team_id={team_id}, token_teams={token_teams}")
 
-        # Get all prompts with token_teams for proper scoping
-        prompts_result = await local_prompt_service.list_prompts(db, include_inactive=True, user_email=user_email, token_teams=token_teams)
+        # Filter in the service, not here: a strict team_id comparison would drop
+        # globally-public rows owned by other teams.
+        prompts_result = await local_prompt_service.list_prompts(db, include_inactive=True, user_email=user_email, token_teams=token_teams, team_id=team_id)
         if isinstance(prompts_result, tuple):
             prompts_list = prompts_result[0]
         else:
             prompts_list = prompts_result
-
-        # Apply team filtering if specified
-        if team_id:
-            prompts_list = [p for p in prompts_list if getattr(p, "team_id", None) == team_id]
 
         # Convert to JSON-serializable format
         prompts = []
@@ -17107,6 +17120,7 @@ async def get_prompts_section(
 @admin_router.get("/sections/servers")
 @require_permission("servers.read", allow_admin_bypass=False)
 async def get_servers_section(
+    request: Request,
     team_id: Optional[str] = None,
     include_inactive: bool = False,
     db: Session = Depends(get_db),
@@ -17115,6 +17129,7 @@ async def get_servers_section(
     """Get servers data filtered by team.
 
     Args:
+        request: FastAPI request, used to derive the caller's Layer-1 visibility scope
         team_id: Optional team ID to filter by
         include_inactive: Whether to include inactive servers
         db: Database session
@@ -17125,19 +17140,16 @@ async def get_servers_section(
     """
     try:
         local_server_service = ServerService()
-        user_email = get_user_email(user)
-        LOGGER.debug(f"User {user_email} requesting servers section with team_id={team_id}, include_inactive={include_inactive}")
+        user_email, token_teams = get_scoped_resource_access_context(request, user)
+        LOGGER.debug(f"User {user_email} requesting servers section with team_id={team_id}, include_inactive={include_inactive}, token_teams={token_teams}")
 
-        # Get servers with optional include_inactive parameter
-        servers_result = await local_server_service.list_servers(db, include_inactive=include_inactive)
+        # Filter in the service, not here: a strict team_id comparison would drop
+        # globally-public rows owned by other teams.
+        servers_result = await local_server_service.list_servers(db, include_inactive=include_inactive, user_email=user_email, token_teams=token_teams, team_id=team_id)
         if isinstance(servers_result, tuple):
             servers_list = servers_result[0]
         else:
             servers_list = servers_result
-
-        # Apply team filtering if specified
-        if team_id:
-            servers_list = [s for s in servers_list if getattr(s, "team_id", None) == team_id]
 
         # Convert to JSON-serializable format
         servers = []
@@ -17167,6 +17179,7 @@ async def get_servers_section(
 @admin_router.get("/sections/gateways")
 @require_permission("gateways.read", allow_admin_bypass=False)
 async def get_gateways_section(
+    request: Request,
     team_id: Optional[str] = None,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -17174,6 +17187,7 @@ async def get_gateways_section(
     """Get gateways data filtered by team.
 
     Args:
+        request: FastAPI request, used to derive the caller's Layer-1 visibility scope
         team_id: Optional team ID to filter by
         db: Database session
         user: Current authenticated user context
@@ -17183,14 +17197,11 @@ async def get_gateways_section(
     """
     try:
         local_gateway_service = GatewayService()
-        get_user_email(user)
+        user_email, token_teams = get_scoped_resource_access_context(request, user)
 
-        # Get all gateways and filter by team
-        gateways_list, _ = await local_gateway_service.list_gateways(db, include_inactive=True)
-
-        # Apply team filtering if specified
-        if team_id:
-            gateways_list = [g for g in gateways_list if g.team_id == team_id]
+        # Filter in the service, not here: a strict team_id comparison would drop
+        # globally-public rows owned by other teams.
+        gateways_list, _ = await local_gateway_service.list_gateways(db, include_inactive=True, user_email=user_email, token_teams=token_teams, team_id=team_id)
 
         # Convert to JSON-serializable format
         gateways = []
@@ -17230,42 +17241,6 @@ async def get_gateways_section(
 ####################
 
 
-async def _sync_plugin_service_from_runtime(request: Request, plugin_service) -> None:
-    """Self-heal the admin plugin cache from the live framework state.
-
-    The framework's ``get_plugin_manager`` is the single source of truth — it
-    reads the shared toggle (TTL-cached, so this is a cheap call) and returns
-    ``None`` when plugins are globally disabled, even when the disable came
-    from a *remote* node via the Redis toggle.
-
-    Every admin read mirrors that answer back into ``app.state.plugin_manager``
-    and the ``PluginService`` singleton. This closes three gaps:
-
-    1. Processes that booted with plugins disabled never had ``app.state`` set,
-       so admin views returned empty until restart even after the shared
-       toggle was flipped on.
-    2. If ``toggle_plugins_global`` swallowed an admin-cache sync failure, the
-       stale cache would persist forever — now the next GET repairs it.
-    3. A remote disable (``PUT /admin/plugins {"enabled": false}`` on another
-       worker) would leave this worker's ``app.state.plugin_manager``
-       populated from a prior enable, making admin views serve plugin
-       metadata the cluster had already turned off.
-
-    Best-effort: a failure logs a WARNING and leaves ``app.state`` alone. It
-    never raises, so it can't turn a read into a 500.
-    """
-    try:
-        # pylint: disable=import-outside-toplevel
-        # First-Party
-        from mcpgateway.plugins import get_plugin_manager
-
-        plugin_manager = await get_plugin_manager()
-        request.app.state.plugin_manager = plugin_manager
-        plugin_service.set_plugin_manager(plugin_manager)
-    except Exception as sync_exc:
-        LOGGER.warning("Admin plugin-cache self-heal failed (%s) — view may render stale/empty", sync_exc)
-
-
 @admin_router.get("/plugins/partial")
 @require_permission("admin.plugins", allow_admin_bypass=False)
 async def get_plugins_partial(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> HTMLResponse:  # pylint: disable=unused-argument
@@ -17290,7 +17265,7 @@ async def get_plugins_partial(request: Request, db: Session = Depends(get_db), u
         plugin_service = get_plugin_service()
 
         # Self-heal the cache so the partial reflects the live shared toggle.
-        await _sync_plugin_service_from_runtime(request, plugin_service)
+        await sync_plugin_service_from_runtime(request, plugin_service)
 
         # Get plugin data
         plugins = plugin_service.get_all_plugins()
@@ -17355,7 +17330,7 @@ async def get_a2a_plugin_bindings_partial(
 async def _render_a2a_plugin_bindings_partial(request: Request, db: Session, team_id: Optional[str] = None) -> HTMLResponse:
     """Build and return the A2A agent plugin bindings partial template."""
     plugin_service = get_plugin_service()
-    await _sync_plugin_service_from_runtime(request, plugin_service)
+    await sync_plugin_service_from_runtime(request, plugin_service)
     binding_service = A2AAgentPluginBindingService()
     bindings, _ = binding_service.list_bindings(db, team_id=team_id)
     agents = db.query(DbA2AAgent.name).distinct().order_by(DbA2AAgent.name).all()
@@ -17539,7 +17514,7 @@ async def list_plugins(
         plugin_service = get_plugin_service()
 
         # Self-heal the cache from the live framework state.
-        await _sync_plugin_service_from_runtime(request, plugin_service)
+        await sync_plugin_service_from_runtime(request, plugin_service)
 
         # Get filtered plugins
         if any([search, mode, hook, tag]):
@@ -17665,7 +17640,7 @@ async def get_plugin_stats(request: Request, db: Session = Depends(get_db), user
         plugin_service = get_plugin_service()
 
         # Self-heal the cache from the live framework state.
-        await _sync_plugin_service_from_runtime(request, plugin_service)
+        await sync_plugin_service_from_runtime(request, plugin_service)
 
         # Get statistics
         stats = await plugin_service.get_plugin_statistics()
@@ -17725,7 +17700,7 @@ async def get_plugin_details(name: str, request: Request, db: Session = Depends(
         plugin_service = get_plugin_service()
 
         # Self-heal the cache from the live framework state.
-        await _sync_plugin_service_from_runtime(request, plugin_service)
+        await sync_plugin_service_from_runtime(request, plugin_service)
 
         # Get plugin details
         plugin = plugin_service.get_plugin_by_name(name)

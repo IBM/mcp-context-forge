@@ -8,6 +8,20 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- **Python 3.11 no longer supported** - The minimum supported Python version is now **3.12**. Python 3.11 interpreters are rejected at install time via `requires-python = ">=3.12,<3.14"` in `pyproject.toml`. Upgrade to Python 3.12 or 3.13 before updating.
+
+- **uv 0.6.9 or later required** - `pyproject.toml` now declares `required-version = ">=0.6.9"` under `[tool.uv]`. The `exclude-newer = "10 days"` relative duration syntax was introduced in uv 0.6.9; older versions silently fail to parse it, discard the lockfile, and re-resolve freely — which can pull in packages lacking Linux wheels. Upgrade uv before running `uv sync` or `uv lock`.
+
+
+- **Admins see more rows from visibility-filtered endpoints** ([#4451](https://github.com/IBM/mcp-context-forge/issues/4451)) - Layer-1 visibility derivation in `main.py` is now centralized on `get_scoped_resource_access_context()` instead of being re-implemented inline at each call site. Response shapes, error codes, and non-admin visibility are unchanged; what changes is how many rows an **admin** token sees. No configuration or migration step is required, and the boundary that hides *other* users' private rows is unchanged and covered by deny-path tests. Two distinct changes are bundled here:
+
+    - **Basic-auth and dev-mode admins gain admin bypass across every migrated call site** (27 in this change). The superseded inline derivation read `is_admin` only from a verified JWT payload, so an admin authenticating without one - basic auth, or `AUTH_REQUIRED=false` local setups - was narrowed to public-only. Such callers now receive the intended bypass: public + team + their own private rows. This is the wider-reaching of the two changes and affects an entire authentication mode.
+    - **JWT-authenticated admins now see their own private rows on 10 endpoints** that previously discarded the caller's email when granting bypass, which dropped *every* private row including the admin's own: `GET /tags`, `GET /tags/{tag}/entities`, the JSON-RPC `completion/complete` method, the internal MCP `tools/list`, `resources/list`, `resources/read`, `prompts/list`, `prompts/get`, and `completion/complete` handlers, and `POST /appbridge/sessions`. On the AppBridge endpoint the effect was a hard failure rather than a short list: an admin opening a session against a `ui://` resource they own received `404 Resource not found`.
+
+- **Sample Python Sandbox Server** Sample MCP Server has been removed due to security concerns with the example and it will not be maintained as part of the ContextForge project. Note this is not part of the contextforge application.
+
 ## [1.0.7] - 2026-08-04 - Security Hardening, Unified Search, OAuth Improvements, Dataplane Enhancements, and Operational Reliability
 
 ### Overview

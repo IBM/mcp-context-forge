@@ -79,6 +79,8 @@ _TARGETED_MISSING_DELETE_PATTERN = re.compile(r"^/(?:servers|gateways)/(?:[a-f0-
 # Permission map with precompiled patterns
 # Maps (HTTP method, path pattern) to required permission
 _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
+    # Plugin discovery permissions
+    ("GET", re.compile(r"^/plugins(?:$|/)"), Permissions.PLUGINS_READ),
     # Tools permissions
     ("GET", re.compile(r"^/tools(?:$|/)"), Permissions.TOOLS_READ),
     ("POST", re.compile(r"^/tools/?$"), Permissions.TOOLS_CREATE),  # Only exact /tools or /tools/
@@ -130,6 +132,9 @@ _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     ("DELETE", re.compile(r"^/gateways/[^/]+(?:$|/)"), Permissions.GATEWAYS_DELETE),
     # MCP Servers REST API (v1 prefix stripped by middleware before matching)
     ("POST", re.compile(r"^/mcp-servers/test(?:$|/)"), Permissions.GATEWAYS_READ),
+    # MCP registry catalog (v1 prefix stripped by middleware before matching)
+    ("GET", re.compile(r"^/catalog(?:$|/)"), Permissions.SERVERS_READ),
+    ("POST", re.compile(r"^/catalog/[^/]+/register(?:$|/)"), Permissions.SERVERS_CREATE),
     # Metrics permissions
     ("GET", re.compile(r"^/metrics(?:$|/)"), Permissions.ADMIN_METRICS),
     ("POST", re.compile(r"^/metrics/reset(?:$|/)"), Permissions.ADMIN_METRICS),

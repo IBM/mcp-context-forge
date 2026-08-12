@@ -250,6 +250,12 @@ class TestTokenScopingMiddleware:
         result = middleware._check_permission_restrictions("/tools", "POST", ["tools.write"])
         assert result == False, "Should reject non-canonical 'tools.write' permission"
 
+    def test_plugin_discovery_requires_plugins_read(self, middleware):
+        """Versioned plugin discovery uses explicit least-privilege permission."""
+        assert middleware._check_permission_restrictions("/v1/plugins", "GET", [Permissions.PLUGINS_READ]) is True
+        assert middleware._check_permission_restrictions("/plugins", "GET", [Permissions.PLUGINS_READ]) is True
+        assert middleware._check_permission_restrictions("/v1/plugins", "GET", [Permissions.TOOLS_READ]) is False
+
     @pytest.mark.asyncio
     async def test_rpc_endpoint_allowed_with_servers_use_permission(self, middleware):
         """POST /rpc must be reachable for tokens that carry servers.use.
@@ -303,6 +309,45 @@ class TestTokenScopingMiddleware:
         # Token with only non-MCP permissions should still be denied
         result = middleware._check_permission_restrictions("/mcp", "POST", ["gateways.read"])
         assert result is False, "POST /mcp should be denied when token has only non-MCP permissions"
+
+    @pytest.mark.asyncio
+    async def test_catalog_endpoint_allowed_with_servers_read_permission(self, middleware):
+        """GET /catalog must be reachable for tokens that carry servers.read.
+
+        Regression: same root cause as /rpc and /mcp — the endpoint's RBAC is
+        servers.read, but without a _PERMISSION_PATTERNS entry scoped tokens were
+        default-denied at the middleware layer.
+        """
+        result = middleware._check_permission_restrictions("/catalog", "GET", [Permissions.SERVERS_READ])
+        assert result is True, "GET /catalog should be allowed when token has servers.read"
+
+        result = middleware._check_permission_restrictions("/catalog", "GET", ["*"])
+        assert result is True, "GET /catalog should be allowed with wildcard permission"
+
+        result = middleware._check_permission_restrictions("/catalog", "GET", [Permissions.TOOLS_READ])
+        assert result is False, "GET /catalog should be denied when token lacks servers.read"
+
+    @pytest.mark.asyncio
+    async def test_catalog_register_endpoint_requires_servers_create(self, middleware):
+        """POST /catalog/{id}/register is gated on servers.create, with /v1 normalization.
+
+        Layer 1 here gates on servers.create only: the pattern list maps one permission
+        per route. The route's stacked decorators additionally enforce gateways.create.
+        """
+        result = middleware._check_permission_restrictions("/catalog/asana/register", "POST", [Permissions.SERVERS_CREATE])
+        assert result is True, "POST /catalog/{id}/register should be allowed when token has servers.create"
+
+        result = middleware._check_permission_restrictions("/catalog/asana/register", "POST", ["*"])
+        assert result is True, "POST /catalog/{id}/register should be allowed with wildcard permission"
+
+        result = middleware._check_permission_restrictions("/catalog/asana/register", "POST", [Permissions.SERVERS_READ])
+        assert result is False, "POST /catalog/{id}/register should be denied for a read-only scoped token"
+
+        result = middleware._check_permission_restrictions("/v1/catalog/asana/register", "POST", [Permissions.SERVERS_CREATE])
+        assert result is True, "Versioned path should normalize to /catalog before pattern matching"
+
+        result = middleware._check_permission_restrictions("/catalog/foo", "POST", [Permissions.SERVERS_CREATE])
+        assert result is False, "POST /catalog/{id} without the /register suffix must stay default-denied"
 
     @pytest.mark.asyncio
     async def test_sse_endpoint_allowed_with_servers_use_permission(self, middleware):

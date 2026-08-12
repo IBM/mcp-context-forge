@@ -251,6 +251,24 @@ curl -H "Authorization: Bearer $TOKEN" \
   http://localhost:4444/admin/catalog/servers
 ```
 
+### Registering a Catalog Server (API)
+
+Registration requires both `servers.create` and `gateways.create` (a catalog registration
+creates a federated gateway, the same capability as `POST /v1/gateways`). Admin bypass is
+disabled: platform admins need the permissions granted through their roles.
+
+```bash
+curl -X POST -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "{\"name\": \"My Asana\", \"api_key\": \"$ASANA_API_KEY\"}" \
+  http://localhost:4444/v1/catalog/asana/register
+```
+
+The body is optional; `name` and `api_key` override the catalog defaults. Responses:
+`404` unknown catalog id (or catalog feature disabled), `409` already registered,
+`200` with `success: false` and a descriptive `message` for connectivity or auth failures,
+`200` with `success: true` on registration (OAuth servers register disabled until configured).
+
 ### Filtering by Tags
 
 ```bash

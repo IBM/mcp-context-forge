@@ -4,7 +4,7 @@ version = "0.2.0"
 description = "Reference MCP-compliant server (FastMCP) used as ground truth for ContextForge protocol compliance tests."
 license = { text = "Apache-2.0" }
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
     "fastmcp>=3.4.4",
 ]
@@ -33,4 +33,4 @@ asyncio_mode = "auto"
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py312"

@@ -437,6 +437,57 @@ async def test_register_catalog_server_oauth_without_credentials(service):
             db.refresh.assert_called_once()
 
 
+@pytest.mark.asyncio
+async def test_register_forwards_identity_to_gateway_service(service):
+    """Caller identity is forwarded to gateway registration alongside the public visibility."""
+    fake_catalog = {"catalog_servers": [{"id": "1", "name": "srv", "url": "http://a", "description": "desc"}]}
+    register_gateway = AsyncMock(return_value=MagicMock(id=1, name="srv"))
+    with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)):
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = None
+        with patch("mcpgateway.services.catalog_service.select"), patch.object(service._gateway_service, "register_gateway", register_gateway):
+            result = await service.register_catalog_server("1", None, db, created_by="u@x.com", owner_email="u@x.com", team_id="t1")
+
+    assert result.success
+    kwargs = register_gateway.await_args.kwargs
+    assert kwargs["created_by"] == "u@x.com"
+    assert kwargs["owner_email"] == "u@x.com"
+    assert kwargs["team_id"] == "t1"
+    assert kwargs["visibility"] == "public"
+
+
+@pytest.mark.asyncio
+async def test_register_oauth_skip_init_stamps_owner(service):
+    """The OAuth skip-initialization path stamps the caller onto the gateway row."""
+    fake_catalog = {
+        "catalog_servers": [{"id": "oauth-server", "name": "OAuth Server", "url": "https://oauth.example.com/mcp", "description": "OAuth server", "auth_type": "OAuth2.1", "tags": []}]
+    }
+
+    with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)):
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = None
+
+        now = datetime.now(timezone.utc)
+
+        def mock_refresh(obj):
+            obj.id = "test-id"
+            obj.created_at = now
+            obj.updated_at = now
+            obj.reachable = False
+
+        db.refresh = MagicMock(side_effect=mock_refresh)
+
+        with patch("mcpgateway.services.catalog_service.select"), patch("mcpgateway.services.catalog_service.slugify", return_value="oauth-server"):
+            result = await service.register_catalog_server("oauth-server", None, db, created_by="u@x.com", owner_email="u@x.com", team_id="t1")
+
+    assert result.oauth_required is True
+    db_gateway = db.add.call_args[0][0]
+    assert db_gateway.created_by == "u@x.com"
+    assert db_gateway.owner_email == "u@x.com"
+    assert db_gateway.team_id == "t1"
+    assert db_gateway.visibility == "public"
+
+
 # ---------- Exception mapping in register_catalog_server ----------
 
 

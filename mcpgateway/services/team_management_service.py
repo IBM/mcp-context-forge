@@ -1963,6 +1963,7 @@ class TeamManagementService:
         include_personal: bool = False,
         search_query: Optional[str] = None,
         personal_owner_email: Optional[str] = None,
+        team_ids: Optional[List[str]] = None,
     ) -> int:
         """Get total count of teams matching criteria.
 
@@ -1972,6 +1973,7 @@ class TeamManagementService:
             include_personal: Whether to include personal teams
             search_query: Search term for name/slug
             personal_owner_email: When set (and include_personal=False), includes this user's personal team in the count
+            team_ids: When set, restrict the count to these team IDs. An empty list matches no teams.
 
         Returns:
             int: Total count of matching teams
@@ -1984,6 +1986,9 @@ class TeamManagementService:
             search_query=search_query,
             personal_owner_email=personal_owner_email,
         )
+
+        if team_ids is not None:
+            query = query.where(EmailTeam.id.in_(team_ids))
 
         result = self.db.execute(query)
         count = result.scalar() or 0
