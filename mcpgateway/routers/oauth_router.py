@@ -1001,8 +1001,11 @@ async def oauth_callback(
                 extra_body="<p>Authorization successful. This window will close automatically.</p>",
             )
 
-        # Create a temporary session JWT for the user to call fetch-tools endpoint
-        # This JWT is short-lived (5 minutes) and scoped to just this team
+        # Create a temporary session JWT (5 minutes) for the fetch-tools page.
+        # For non-admins: scoped to team_id from the OAuth state (or shared if team_id is None).
+        # For admins: RBAC resolves this to None (admin bypass via resolve_session_teams) as
+        # expected — the raw jwt_teams_claim is used separately by _build_user_context() for
+        # Vault path selection so the correct team-scoped path is preserved for admins too.
         # First-Party
         from mcpgateway.utils.create_jwt_token import create_jwt_token
 
@@ -1447,11 +1450,11 @@ async def fetch_tools_after_oauth(
     except HTTPException:
         raise
     except GatewayConnectionError as e:
-        logger.error("FETCH-TOOLS FAILED [GatewayConnectionError] gateway=%s error=%s", SecurityValidator.sanitize_log_message(gateway_id), e)
-        raise HTTPException(status_code=400, detail=f"Failed to fetch tools: {e}")
+        logger.error("FETCH-TOOLS FAILED [GatewayConnectionError] gateway=%s error=%s", SecurityValidator.sanitize_log_message(gateway_id), e, exc_info=True)
+        raise HTTPException(status_code=400, detail="Failed to fetch tools")
     except Exception as e:
         logger.error("FETCH-TOOLS FAILED [Exception] gateway=%s error=%s", SecurityValidator.sanitize_log_message(gateway_id), e, exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to fetch tools: {e}")
+        raise HTTPException(status_code=500, detail="Failed to fetch tools")
 
 
 # ============================================================================
