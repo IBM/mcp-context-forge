@@ -147,7 +147,7 @@ async def _discover(discovery, test_db, fake: _ScriptedSessionManager, stable_id
 
 
 async def _publish(discovery, test_db, stable_id: str) -> None:
-    """Publish post-commit effects explicitly, as the router does after promotion."""
+    """Publish post-commit effects explicitly, as the router does while still unmapped, before promotion."""
     gateway = test_db.get(DbGateway, stable_id)
     server = test_db.get(DbServer, stable_id)
     assert gateway is not None and server is not None
@@ -557,8 +557,12 @@ async def test_initialize_error_response_raises(discovery, test_db, proxy_pair):
     fake.script_error(-32600, "unsupported protocol version")
 
     # When / Then
-    with pytest.raises(ReverseProxyDiscoveryError, match="unsupported protocol version"):
+    with pytest.raises(ReverseProxyDiscoveryError) as exc_info:
         await _discover(discovery, test_db, fake, proxy_pair)
+    # Code-only: the numeric MCP code diagnoses the failure; the peer's free
+    # text is traceback-logged by the router and must never reach telemetry.
+    assert str(exc_info.value) == "reverse-proxy initialize failed: MCP error -32600"
+    assert "unsupported protocol version" not in str(exc_info.value)
     assert test_db.query(DbTool).count() == 0
 
 

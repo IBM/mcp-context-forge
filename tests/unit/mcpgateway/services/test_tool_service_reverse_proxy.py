@@ -329,25 +329,32 @@ class TestInvokeToolReverseProxied:
 
     @pytest.mark.asyncio
     async def test_mcp_error_response_maps_to_invocation_error(self, tool_service, proxied_tool, test_db):
-        """A JSON-RPC error response names the MCP error code and message."""
+        """A JSON-RPC error response surfaces the MCP error code only; peer free text never escapes."""
         _stub_db_execute(test_db, proxied_tool, proxied_tool.gateway)
         manager = _manager_mock(send_return=_error_response("req-1", code=-32001, message="upstream exploded"))
 
         with (
             patch("mcpgateway.services.tool_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
-            pytest.raises(ToolInvocationError, match=r"MCP error -32001: upstream exploded"),
+            pytest.raises(ToolInvocationError, match=r"MCP error -32001") as exc_info,
         ):
             await tool_service.invoke_tool(test_db, PROXIED_TOOL_NAME, {"param": "value"}, request_headers=None)
 
+        assert "upstream exploded" not in str(exc_info.value)
+
     @pytest.mark.asyncio
     async def test_mcp_error_response_emits_mcp_call_failed(self, tool_service, proxied_tool, test_db, mock_logging_services):
-        """A JSON-RPC error response logs mcp_call_failed with the MCP error code in the message."""
+        """A JSON-RPC error response raises code-only and leaks no peer text to any structured-log sink."""
         _stub_db_execute(test_db, proxied_tool, proxied_tool.gateway)
         manager = _manager_mock(send_return=_error_response("req-1", code=-32001, message="upstream exploded"))
 
+        with patch("mcpgateway.services.tool_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)):
+            with pytest.raises(ToolInvocationError) as direct_exc:
+                await tool_service._invoke_reverse_proxied_tool("proxied-gw-1", PROXIED_ORIGINAL_NAME, {"param": "value"}, None, 30.0)
+        assert str(direct_exc.value) == "MCP error -32001"
+
         with (
             patch("mcpgateway.services.tool_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
-            pytest.raises(ToolInvocationError, match=r"MCP error -32001: upstream exploded"),
+            pytest.raises(ToolInvocationError),
         ):
             await tool_service.invoke_tool(test_db, PROXIED_TOOL_NAME, {"param": "value"}, request_headers=None)
 
@@ -358,7 +365,13 @@ class TestInvokeToolReverseProxied:
         assert failed_call["level"] == "ERROR"
         assert failed_call["error_details"]["error_type"] == "JsonRpcErrorResponse"
         assert failed_call["error_details"]["error_message"] == f"MCP error {-32001}"
-        assert "upstream exploded" not in failed_call["error_details"]["error_message"]
+
+        # Peer-controlled free text must reach no telemetry sink: the outer
+        # invoke_tool handler copies the raised message into spans, metrics,
+        # plugin results, and the structured_logger.error call, so scan every
+        # structured-logger call at any level for the peer message.
+        all_logged_calls = " ".join(repr(logged_call) for logged_call in mock_logging_services["structured_logger"].mock_calls)
+        assert "upstream exploded" not in all_logged_calls
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
