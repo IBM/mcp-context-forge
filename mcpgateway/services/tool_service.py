@@ -4897,7 +4897,7 @@ class ToolService(BaseService):
                 error_details={"error_type": "JsonRpcErrorResponse", "error_message": f"MCP error {mcp_error.code}"},
                 metadata={"event": "mcp_call_failed", "tool_name": tool_name_original, "gateway_id": gateway_id_str, "transport": "proxied"},
             )
-            raise ToolInvocationError(f"MCP error {mcp_error.code}: {mcp_error.message}")
+            raise ToolInvocationError(f"MCP error {mcp_error.code}")
 
         try:
             validated_result = types.CallToolResult.model_validate(response.payload.result)

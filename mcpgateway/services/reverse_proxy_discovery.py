@@ -9,8 +9,9 @@ The reverse-proxy client is a maintained MCP server reached through its
 registration WebSocket. After catalog registration the gateway drives the
 legacy MCP lifecycle itself: ``initialize`` -> ``notifications/initialized``
 -> capability-gated list calls -> catalog sync/reconcile -> virtual-server
-association -> commit. Cache invalidations and subscriber notification are
-published by the caller only after routing promotion succeeds.
+association -> commit. The caller then publishes cache invalidations and
+subscriber notification while the stable ID is still unmapped, and promotes
+routing last.
 """
 
 from dataclasses import dataclass
@@ -96,9 +97,9 @@ class ReverseProxyDiscoveryService:
         The caller's request-scoped ``db`` is reused and committed exactly
         once, after all network interaction has succeeded; any earlier
         failure leaves the catalog untouched. No cache invalidation or
-        subscriber notification happens here: the caller invokes
-        :meth:`publish_post_commit_effects` only after routing promotion
-        succeeds.
+        subscriber notification happens here: after the commit the caller
+        invokes :meth:`publish_post_commit_effects` while the stable ID is
+        still unmapped, then promotes routing last.
 
         Args:
             db: Caller-owned request-scoped database session.
@@ -216,7 +217,7 @@ class ReverseProxyDiscoveryService:
             raise ReverseProxyDiscoveryError(f"reverse-proxy connection lost during {method}: {exc}") from exc
         payload = response.payload
         if isinstance(payload, JsonRpcErrorResponse):
-            raise ReverseProxyDiscoveryError(f"reverse-proxy {method} failed: MCP error {payload.error.code}: {payload.error.message}")
+            raise ReverseProxyDiscoveryError(f"reverse-proxy {method} failed: MCP error {payload.error.code}")
         result = payload.result
         if not isinstance(result, dict):
             raise ReverseProxyDiscoveryError(f"reverse-proxy {method} returned a non-object result")
@@ -316,10 +317,11 @@ class ReverseProxyDiscoveryService:
         metadata-only rediscovery updates rows in place without any add/remove
         counts, so gating on per-type deltas would leave list/catalog APIs stale.
 
-        The caller (the registration router) invokes this only after routing
-        promotion succeeds; ``discover_and_reconcile`` never publishes, so a
-        registration that fails before promotion leaves the committed catalog
-        unpublished and unrouted (fail-closed).
+        The caller (the registration router) invokes this after the commit,
+        while the stable ID is still unmapped, and promotes routing last:
+        once the catalog is committed the stable ID must never route to the
+        incompatible predecessor again, so any failure after this point stays
+        fail-closed (unrouted).
         """
         cache = _get_registry_cache()
         await cache.invalidate_tools()
