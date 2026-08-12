@@ -195,6 +195,9 @@ MOCK_ROOT = {
     "name": "Test Root",
 }
 
+SERVER_CRUD_PREFIXES = ("/servers", "/v1/virtual-servers")
+GATEWAY_CRUD_PREFIXES = ("/gateways", "/v1/mcp-servers")
+
 
 class _ValidationModel(BaseModel):
     value: int
@@ -906,11 +909,12 @@ class TestServerEndpoints:
         assert len(data) == 1 and data[0]["name"] == "test_server"
         mock_list_servers.assert_called_once()
 
+    @pytest.mark.parametrize("path_prefix", SERVER_CRUD_PREFIXES)
     @patch("mcpgateway.main.server_service.get_server")
-    def test_get_server_endpoint(self, mock_get, test_client, auth_headers):
-        """Test retrieving a specific server."""
+    def test_get_server_endpoint(self, mock_get, path_prefix, test_client, auth_headers):
+        """Test retrieving a specific server through old and new path prefixes."""
         mock_get.return_value = ServerRead(**MOCK_SERVER_READ)
-        response = test_client.get("/servers/1", headers=auth_headers)
+        response = test_client.get(f"{path_prefix}/1", headers=auth_headers)
         assert response.status_code == 200
         assert response.json()["name"] == "test_server"
         mock_get.assert_called_once()
@@ -926,12 +930,13 @@ class TestServerEndpoints:
         assert response.status_code == 404
         mock_get.assert_called_once()
 
+    @pytest.mark.parametrize("path_prefix", SERVER_CRUD_PREFIXES)
     @patch("mcpgateway.main.server_service.register_server")
-    def test_create_server_endpoint(self, mock_create, test_client, auth_headers):
-        """Test creating a new server."""
+    def test_create_server_endpoint(self, mock_create, path_prefix, test_client, auth_headers):
+        """Test creating a server through old and new path prefixes."""
         mock_create.return_value = ServerRead(**MOCK_SERVER_READ)
         req = {"server": {"name": "test_server", "description": "A test server"}, "team_id": None, "visibility": "private"}
-        response = test_client.post("/servers/", json=req, headers=auth_headers)
+        response = test_client.post(f"{path_prefix}/", json=req, headers=auth_headers)
         assert response.status_code == 201
         mock_create.assert_called_once()
 
@@ -951,12 +956,13 @@ class TestServerEndpoints:
         detail = response.json()["detail"][0]
         assert "Invalid ID format" in detail["msg"]
 
+    @pytest.mark.parametrize("path_prefix", SERVER_CRUD_PREFIXES)
     @patch("mcpgateway.main.server_service.update_server")
-    def test_update_server_endpoint(self, mock_update, test_client, auth_headers):
-        """Test updating an existing server."""
+    def test_update_server_endpoint(self, mock_update, path_prefix, test_client, auth_headers):
+        """Test updating a server through old and new path prefixes."""
         mock_update.return_value = ServerRead(**MOCK_SERVER_READ)
         req = {"description": "Updated description"}
-        response = test_client.put("/servers/1", json=req, headers=auth_headers)
+        response = test_client.put(f"{path_prefix}/1", json=req, headers=auth_headers)
         assert response.status_code == 200
         mock_update.assert_called_once()
 
@@ -1002,13 +1008,14 @@ class TestServerEndpoints:
         response = test_client.post("/servers/1/state?activate=false", headers=auth_headers)
         assert response.status_code == 404
 
+    @pytest.mark.parametrize("path_prefix", SERVER_CRUD_PREFIXES)
     @patch("mcpgateway.main.server_service.delete_server")
     @patch("mcpgateway.main.server_service.get_server")
-    def test_delete_server_endpoint(self, mock_get, mock_delete, test_client, auth_headers):
-        """Test permanently deleting a server."""
+    def test_delete_server_endpoint(self, mock_get, mock_delete, path_prefix, test_client, auth_headers):
+        """Test deleting a server through old and new path prefixes."""
         mock_get.return_value = ServerRead(**MOCK_SERVER_READ)
         mock_delete.return_value = None
-        response = test_client.delete("/servers/1", headers=auth_headers)
+        response = test_client.delete(f"{path_prefix}/1", headers=auth_headers)
         assert response.status_code == 200
         assert response.json()["status"] == "success"
 
@@ -2228,12 +2235,13 @@ class TestGatewayEndpoints:
         assert len(data) == 1
         mock_list.assert_called_once()
 
+    @pytest.mark.parametrize("path_prefix", GATEWAY_CRUD_PREFIXES)
     @patch("mcpgateway.main.gateway_service.register_gateway")
-    def test_create_gateway_endpoint(self, mock_create, test_client, auth_headers):
-        """Test registering a new gateway."""
+    def test_create_gateway_endpoint(self, mock_create, path_prefix, test_client, auth_headers):
+        """Test creating a gateway through old and new path prefixes."""
         mock_create.return_value = MOCK_GATEWAY_READ
         req = {"name": "test_gateway", "url": "http://example.com"}
-        response = test_client.post("/gateways/", json=req, headers=auth_headers)
+        response = test_client.post(f"{path_prefix}/", json=req, headers=auth_headers)
         assert response.status_code == 200
         mock_create.assert_called_once()
 
@@ -2263,11 +2271,12 @@ class TestGatewayEndpoints:
         data = response.json()
         assert data["skippedTools"] == skipped
 
+    @pytest.mark.parametrize("path_prefix", GATEWAY_CRUD_PREFIXES)
     @patch("mcpgateway.main.gateway_service.get_gateway")
-    def test_get_gateway_endpoint(self, mock_get, test_client, auth_headers):
-        """Test retrieving a specific gateway."""
+    def test_get_gateway_endpoint(self, mock_get, path_prefix, test_client, auth_headers):
+        """Test retrieving a gateway through old and new path prefixes."""
         mock_get.return_value = MOCK_GATEWAY_READ
-        response = test_client.get("/gateways/1", headers=auth_headers)
+        response = test_client.get(f"{path_prefix}/1", headers=auth_headers)
         assert response.status_code == 200
         assert response.json()["name"] == "test_gateway"
         mock_get.assert_called_once()
@@ -2295,12 +2304,13 @@ class TestGatewayEndpoints:
         assert "ambiguous" in response.json()["detail"]
         mock_get.assert_called_once()
 
+    @pytest.mark.parametrize("path_prefix", GATEWAY_CRUD_PREFIXES)
     @patch("mcpgateway.main.gateway_service.update_gateway")
-    def test_update_gateway_endpoint(self, mock_update, test_client, auth_headers):
-        """Test updating an existing gateway."""
+    def test_update_gateway_endpoint(self, mock_update, path_prefix, test_client, auth_headers):
+        """Test updating a gateway through old and new path prefixes."""
         mock_update.return_value = MOCK_GATEWAY_READ
         req = {"description": "Updated description"}
-        response = test_client.put("/gateways/1", json=req, headers=auth_headers)
+        response = test_client.put(f"{path_prefix}/1", json=req, headers=auth_headers)
         assert response.status_code == 200
         mock_update.assert_called_once()
 
@@ -2315,13 +2325,14 @@ class TestGatewayEndpoints:
         assert response.headers["Retry-After"] == "5"
         mock_update.assert_called_once()
 
+    @pytest.mark.parametrize("path_prefix", GATEWAY_CRUD_PREFIXES)
     @patch("mcpgateway.main.gateway_service.delete_gateway")
     @patch("mcpgateway.main.gateway_service.get_gateway")
-    def test_delete_gateway_endpoint(self, mock_get, mock_delete, test_client, auth_headers):
-        """Test deleting a gateway."""
+    def test_delete_gateway_endpoint(self, mock_get, mock_delete, path_prefix, test_client, auth_headers):
+        """Test deleting a gateway through old and new path prefixes."""
         mock_delete.return_value = None
         mock_get.return_value.capabilities = {}
-        response = test_client.delete("/gateways/1", headers=auth_headers)
+        response = test_client.delete(f"{path_prefix}/1", headers=auth_headers)
         assert response.status_code == 200
         assert response.json()["status"] == "success"
 
