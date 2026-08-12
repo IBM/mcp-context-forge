@@ -11,7 +11,8 @@ duplicate local connections. It does not convey ownership or access scope.
 
 from dataclasses import dataclass
 import logging
-from typing import NewType, Protocol, TypeAlias, assert_never
+from types import TracebackType
+from typing import Final, NewType, Protocol, TypeAlias, assert_never
 import uuid
 
 import anyio
@@ -25,6 +26,11 @@ ConnectionId = NewType("ConnectionId", str)
 LocalSessionId = NewType("LocalSessionId", str)
 StableGatewayId = NewType("StableGatewayId", str)  # persistent gateway identity used to locate a live reverse-proxy connection
 PendingKey: TypeAlias = tuple[ConnectionId, JsonRpcId]
+
+# Bounded best-effort socket close when retiring a displaced connection: the
+# close serializes on the connection's own I/O lock, so a close stuck behind a
+# stalled send must never hang the retiring registration.
+_RETIRE_CLOSE_TIMEOUT_SECONDS: Final = 5.0
 
 
 class TextWebSocket(Protocol):
@@ -157,6 +163,59 @@ class _PendingResponse:
                 assert_never(unreachable)
 
 
+class _RegistrationLockEntry:
+    """One per-stable-ID registration lock with its live-reference count."""
+
+    __slots__ = ("lock", "refcount")
+
+    def __init__(self) -> None:
+        """Initialize an unlocked entry with no live references."""
+        self.lock = anyio.Lock()
+        self.refcount = 0
+
+
+class _RegistrationLockGuard:
+    """Async context manager for one acquisition of a per-stable-ID registration lock."""
+
+    def __init__(self, manager: "ReverseProxySessionManager", stable_id: StableGatewayId, entry: _RegistrationLockEntry) -> None:
+        """Bind the guard to its manager, stable ID, and shared lock entry."""
+        self._manager = manager
+        self._stable_id = stable_id
+        self._entry = entry
+
+    async def __aenter__(self) -> None:
+        """Take a live reference, then acquire the lock.
+
+        The refcount increment runs before the first await, so the
+        get-or-create in :meth:`ReverseProxySessionManager.registration_lock`
+        plus this increment are atomic on the event loop: an entry can never be
+        discarded while a caller is queued on it.
+        """
+        entry = self._entry
+        entry.refcount += 1
+        acquired = False
+        try:
+            await entry.lock.acquire()
+            acquired = True
+        finally:
+            if not acquired:
+                # Acquisition abandoned (for example by cancellation): drop the
+                # live reference so the entry can still be discarded.
+                entry.refcount -= 1
+                self._manager._discard_registration_lock_entry(self._stable_id, entry)
+
+    async def __aexit__(self, exc_type: type[BaseException] | None, exc_value: BaseException | None, traceback: TracebackType | None) -> None:
+        """Release the lock and discard the entry once its last reference is gone.
+
+        No awaits after the release: the decrement-and-discard check is atomic
+        on the event loop, so a concurrent acquirer cannot race the pop.
+        """
+        entry = self._entry
+        entry.lock.release()
+        entry.refcount -= 1
+        self._manager._discard_registration_lock_entry(self._stable_id, entry)
+
+
 class ReverseProxySessionManager:
     """Mutable process-local registry for connections and request correlation."""
 
@@ -166,7 +225,7 @@ class ReverseProxySessionManager:
         self._local_connections: dict[LocalSessionId, ConnectionId] = {}
         self._stable_connections: dict[StableGatewayId, ConnectionId] = {}
         self._pending: dict[PendingKey, _PendingResponse] = {}
-        self._registration_locks: dict[StableGatewayId, anyio.Lock] = {}
+        self._registration_locks: dict[StableGatewayId, _RegistrationLockEntry] = {}
         self._lock = anyio.Lock()
 
     async def connect(self, websocket: TextWebSocket, local_id: LocalSessionId) -> ReverseProxySession:
@@ -239,23 +298,42 @@ class ReverseProxySessionManager:
         """Return the outstanding request count for one connection."""
         return sum(key[0] == connection_id for key in self._pending)
 
-    def registration_lock(self, stable_id: StableGatewayId) -> anyio.Lock:
-        """Return the per-stable-ID registration lifecycle lock, creating it on first use.
+    def registration_lock(self, stable_id: StableGatewayId) -> _RegistrationLockGuard:
+        """Return a guard acquiring the per-stable-ID registration lifecycle lock.
 
-        The router holds this lock across discovery, promotion, and catalog
-        publish so two concurrent registrations for one stable identity cannot
-        interleave commit/promote/publish. This method awaits nothing, so the
-        check-and-insert is atomic on the event loop without taking ``_lock``.
+        The router holds the guard across quiesce, discovery, catalog publish,
+        and promotion so two concurrent registrations for one stable identity
+        cannot interleave. The get-or-create below awaits nothing, so it is
+        atomic on the event loop together with the refcount increment at the
+        start of the guard's ``__aenter__``; the guard must be entered
+        immediately after it is created.
 
-        Phase 3 scope is process-local: one retained lock entry per stable ID
-        is acceptable here; stable IDs are bounded by registered reverse-proxy
-        gateways, so the dict cannot grow unboundedly.
+        Entries are reference-counted and discarded once the last acquisition
+        releases, so the dict cannot churn-grow over the process lifetime.
         """
-        lock = self._registration_locks.get(stable_id)
-        if lock is None:
-            lock = anyio.Lock()
-            self._registration_locks[stable_id] = lock
-        return lock
+        entry = self._registration_locks.get(stable_id)
+        if entry is None:
+            entry = _RegistrationLockEntry()
+            self._registration_locks[stable_id] = entry
+        return _RegistrationLockGuard(self, stable_id, entry)
+
+    def _discard_registration_lock_entry(self, stable_id: StableGatewayId, entry: _RegistrationLockEntry) -> None:
+        """Drop the lock entry once no live references remain and the lock is unowned.
+
+        Callers hold no locks; this method awaits nothing, so the check-and-pop
+        is atomic on the event loop.
+        """
+        if entry.refcount == 0 and not entry.lock.locked() and self._registration_locks.get(stable_id) is entry:
+            self._registration_locks.pop(stable_id, None)
+
+    async def quiesce_stable_id(self, stable_id: StableGatewayId) -> ConnectionId | None:
+        """Pop the current stable mapping and return the evicted predecessor, if any.
+
+        From the moment this returns, dispatch for ``stable_id`` fails closed
+        until a later promotion; the evicted connection itself stays live.
+        """
+        async with self._lock:
+            return self._stable_connections.pop(stable_id, None)
 
     async def promote_stable_id(self, stable_id: StableGatewayId, connection_id: ConnectionId) -> ConnectionId | None:
         """Map ``stable_id`` to ``connection_id``, returning the displaced predecessor.
@@ -271,39 +349,48 @@ class ReverseProxySessionManager:
             self._stable_connections[stable_id] = connection_id
             return displaced
 
-    async def restore_stable_id(self, stable_id: StableGatewayId, predecessor: ConnectionId | None, failed_connection_id: ConnectionId) -> None:
-        """Compare-and-swap the mapping back to ``predecessor`` after a post-promotion failure.
+    async def restore_stable_id(self, stable_id: StableGatewayId, predecessor: ConnectionId | None, candidate_connection_id: ConnectionId) -> None:
+        """Compare-and-swap the stable mapping after a registration failure.
 
-        Acts only while the mapping still points at ``failed_connection_id``; a
-        mapping that moved on (for example to a newer registration) is left
-        untouched. The predecessor is restored only when still active; otherwise
-        the mapping is removed so a stale connection is never routed.
+        A mapping pointing at a connection that is neither ``predecessor`` nor
+        ``candidate_connection_id`` has moved on (for example to a newer
+        registration) and is left untouched. Otherwise the mapping is set to
+        ``predecessor`` when one is given and still active - the pre-commit
+        failure case, where the catalog was never replaced and the predecessor
+        stays compatible. Failing that, the mapping is removed whenever it
+        points at the candidate - the post-commit demote case - leaving the
+        stable ID fail-closed rather than routed to an incompatible connection.
         """
         async with self._lock:
-            if self._stable_connections.get(stable_id) != failed_connection_id:
+            current = self._stable_connections.get(stable_id)
+            if current is not None and current not in (predecessor, candidate_connection_id):
                 return
             if predecessor is not None and predecessor in self._sessions:
                 self._stable_connections[stable_id] = predecessor
-            else:
+            elif current == candidate_connection_id:
                 self._stable_connections.pop(stable_id, None)
 
     async def retire_connection(self, connection_id: ConnectionId) -> None:
-        """Disconnect ``connection_id`` and best-effort close its socket wrapper.
+        """Disconnect ``connection_id`` and best-effort close its socket wrapper, bounded.
 
         Used to retire a displaced predecessor after a replacement registration
         is acknowledged. Disconnect semantics are unchanged (idempotent; fails
         pending calls; pops only this connection's stable mappings). The close
-        runs through the stored wrapper, which serializes it on the connection's
-        own I/O lock; close errors are swallowed and debug-logged because a
-        displaced socket may already be lost.
+        runs through the stored wrapper, which serializes it on the
+        connection's own I/O lock, and is bounded by
+        ``_RETIRE_CLOSE_TIMEOUT_SECONDS`` so a close stuck behind a stalled
+        send can never hang the retiring registration. Timeouts and ordinary
+        close errors are debug-logged because a displaced socket may already be
+        lost; cancellation is never swallowed.
         """
         session = self._sessions.get(connection_id)
         await self.disconnect(connection_id)
         if session is None:
             return
         try:
-            await session.websocket.close()
-        except Exception as close_error:  # best-effort: a displaced socket may already be lost
+            with anyio.fail_after(_RETIRE_CLOSE_TIMEOUT_SECONDS):
+                await session.websocket.close()
+        except Exception as close_error:  # best-effort: timeout, or a displaced socket already lost
             logger.debug("Reverse proxy retired connection %s close failed: %s", connection_id, close_error)
 
     def resolve_connection_id(self, stable_id: StableGatewayId) -> ConnectionId | None:
