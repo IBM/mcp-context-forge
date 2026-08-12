@@ -529,7 +529,7 @@ Do not re-implement the global-record admin scope check. Shared helpers in `mcpg
 - `require_unrestricted_platform_admin()` — Callable for conditional guards inside handlers (e.g., `export_includes_roots()` conditions). Checks the same rule; intended for callers that must guard only specific code paths.
 - `require_global_admin_scope_dep` — FastAPI dependency for router-level guards via `dependencies=[...]`. Used when a router guards all its endpoints at declaration time rather than per-endpoint (e.g., `metrics_maintenance.py`).
 
-All three helpers enforce the identical scope rule. Helpers reading `request.state.token_teams` (first two) require endpoints to have a `request` parameter.
+All three helpers enforce the identical scope rule and all read `request.state.token_teams`. The decorator and callable forms (`require_global_admin_permission()`, `require_unrestricted_platform_admin()`) require the endpoint to declare its own `request` parameter; the dependency form (`require_global_admin_scope_dep`) receives `request` automatically via FastAPI injection.
 
 ### Related Tests and Docs
 
