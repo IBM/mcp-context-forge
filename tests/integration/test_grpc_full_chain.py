@@ -122,12 +122,13 @@ def _grpc_settings(monkeypatch, test_db):
 # ══════════════════════════════════════════════════════════════════════
 
 
-def _register(test_db, host, port, **kw):
+def _register(test_db, host, port, name=None, **kw):
     """Register a gRPC service synchronously."""
     from mcpgateway.schemas import GrpcServiceCreate
     svc = GrpcService()
+    svc_name = name or f"echo-{uuid.uuid4().hex[:6]}"
     data = GrpcServiceCreate(
-        name=f"echo-{uuid.uuid4().hex[:6]}",
+        name=svc_name,
         target=f"{host}:{port}",
         description="integration test",
         reflection_enabled=kw.get("reflection_enabled", True),
@@ -475,3 +476,178 @@ class TestSchemaChange:
             test_db, registered.id, left_id=a1.id, right_id=a1.id,
         ))
         assert diff is not None
+
+# ══════════════════════════════════════════════════════════════════════
+# Tests: gRPC Error Codes (via Echo value triggers)
+# ══════════════════════════════════════════════════════════════════════
+
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Tests: gRPC Error Codes (via Echo value triggers)
+# ══════════════════════════════════════════════════════════════════════
+
+
+class TestGrpcErrorCodes:
+
+    def test_invalid_argument(self, test_db, grpc_server):
+        """value < 0 → INVALID_ARGUMENT from server."""
+        host, port = grpc_server
+        registered = _register(test_db, host, port)
+        with pytest.raises(Exception) as exc:
+            _invoke(test_db, registered.id, "grpc_test.EchoService.Echo",
+                    {"message": "bad", "value": -1})
+        assert "INVALID_ARGUMENT" in str(exc.value) or "value must be" in str(exc.value)
+
+    def test_not_found(self, test_db, grpc_server):
+        """value == 0 → NOT_FOUND from server."""
+        host, port = grpc_server
+        registered = _register(test_db, host, port)
+        with pytest.raises(Exception) as exc:
+            _invoke(test_db, registered.id, "grpc_test.EchoService.Echo",
+                    {"message": "missing", "value": 0})
+        assert "NOT_FOUND" in str(exc.value) or "zero value" in str(exc.value)
+
+    def test_resource_exhausted(self, test_db, grpc_server):
+        """value > 100 → RESOURCE_EXHAUSTED from server."""
+        host, port = grpc_server
+        registered = _register(test_db, host, port)
+        with pytest.raises(Exception) as exc:
+            _invoke(test_db, registered.id, "grpc_test.EchoService.Echo",
+                    {"message": "big", "value": 200})
+        assert "RESOURCE_EXHAUSTED" in str(exc.value) or "exceeds limit" in str(exc.value)
+
+    def test_internal_error(self, test_db, grpc_server):
+        """value == 500 → INTERNAL from server."""
+        host, port = grpc_server
+        registered = _register(test_db, host, port)
+        with pytest.raises(Exception) as exc:
+            _invoke(test_db, registered.id, "grpc_test.EchoService.Echo",
+                    {"message": "boom", "value": 500})
+        assert "INTERNAL" in str(exc.value) or "simulated internal error" in str(exc.value)
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Tests: Client-side and Lifecycle Errors
+# ══════════════════════════════════════════════════════════════════════
+
+
+class TestClientErrors:
+
+    def test_method_not_found(self, test_db, grpc_server):
+        """Calling a non-existent method raises an error."""
+        host, port = grpc_server
+        registered = _register(test_db, host, port)
+        with pytest.raises(Exception) as exc:
+            _invoke(test_db, registered.id, "grpc_test.EchoService.NoSuchMethod",
+                    {"message": "x", "value": 1})
+        assert "NoSuchMethod" in str(exc.value) or "UNIMPLEMENTED" in str(exc.value) or "not found" in str(exc.value).lower()
+
+    def test_duplicate_service_name(self, test_db, grpc_server):
+        """Registering the same name twice raises a conflict error."""
+        host, port = grpc_server
+        name = f"dup-{uuid.uuid4().hex[:6]}"
+        _register(test_db, host, port, name=name)
+        with pytest.raises(Exception) as exc:
+            _register(test_db, host, port, name=name)
+        assert "conflict" in str(exc.value).lower() or "already exists" in str(exc.value).lower()
+
+    def test_connection_refused(self, test_db):
+        """Target with a dead port raises UNAVAILABLE."""
+        registered = _register(test_db, "127.0.0.1", 19999,  # unlikely to be listening
+                               reflection_enabled=False, health_check_timeout=2)
+        with pytest.raises(Exception) as exc:
+            _invoke(test_db, registered.id, "grpc_test.EchoService.Echo",
+                    {"message": "x", "value": 1}, timeout=3)
+        err = str(exc.value).lower()
+        assert "unavailable" in err or "refused" in err or "failed to connect" in err
+
+    def test_invalid_target_format(self, test_db):
+        """Malformed target is rejected at Pydantic validation time."""
+        from mcpgateway.schemas import GrpcServiceCreate
+        with pytest.raises(Exception) as exc:
+            GrpcServiceCreate(
+                name=f"bad-target-{uuid.uuid4().hex[:6]}",
+                target="not-a-valid-target",
+                description="bad target",
+                reflection_enabled=False,
+                discovery_mode="artifact",
+                health_check_enabled=True, health_check_interval=60,
+                health_check_timeout=5, health_failure_threshold=3,
+                tags=[], visibility="private",
+            )
+        err = str(exc.value).lower()
+        assert "target" in err or "host:port" in err
+
+    def test_wrong_auth_token(self, test_db, grpc_server):
+        """EchoWithMetadata with wrong auth token → UNAUTHENTICATED."""
+        host, port = grpc_server
+        registered = _register(test_db, host, port,
+                               metadata={"authorization": "Bearer wrong-token"})
+        with pytest.raises(Exception) as exc:
+            _invoke(test_db, registered.id, "grpc_test.EchoService.EchoWithMetadata",
+                    {"message": "x", "value": 1})
+        err = str(exc.value).lower()
+        assert "unauthenticated" in err or "expected" in err
+
+    def test_missing_auth_token(self, test_db, grpc_server):
+        """EchoWithMetadata without auth metadata → UNAUTHENTICATED."""
+        host, port = grpc_server
+        registered = _register(test_db, host, port)
+        with pytest.raises(Exception) as exc:
+            _invoke(test_db, registered.id, "grpc_test.EchoService.EchoWithMetadata",
+                    {"message": "x", "value": 1})
+        err = str(exc.value).lower()
+        assert "unauthenticated" in err or "expected" in err
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Tests: Schema Validation Errors
+# ══════════════════════════════════════════════════════════════════════
+
+
+class TestSchemaErrors:
+
+    def test_import_invalid_proto(self, test_db, grpc_server_no_reflection):
+        """Importing garbage bytes as proto raises an error."""
+        host, port = grpc_server_no_reflection
+        svc = GrpcService()
+        from mcpgateway.schemas import GrpcServiceCreate
+        data = GrpcServiceCreate(
+            name=f"bad-schema-{uuid.uuid4().hex[:6]}",
+            target=f"{host}:{port}",
+            description="bad schema",
+            reflection_enabled=False,
+            discovery_mode="artifact",
+            health_check_enabled=True, health_check_interval=60,
+            health_check_timeout=5, health_failure_threshold=3,
+            tags=[], visibility="private",
+        )
+        registered = _run(svc.register_service(test_db, data, user_email="test@example.com"))
+        with pytest.raises(Exception):
+            _run(svc.import_schema(
+                test_db, registered.id, b"not a valid proto file",
+                "garbage.bin", "test@example.com", activate=True,
+            ))
+
+    def test_import_empty_file(self, test_db, grpc_server_no_reflection):
+        """Importing an empty file raises an error."""
+        host, port = grpc_server_no_reflection
+        svc = GrpcService()
+        from mcpgateway.schemas import GrpcServiceCreate
+        data = GrpcServiceCreate(
+            name=f"empty-schema-{uuid.uuid4().hex[:6]}",
+            target=f"{host}:{port}",
+            description="empty schema",
+            reflection_enabled=False,
+            discovery_mode="artifact",
+            health_check_enabled=True, health_check_interval=60,
+            health_check_timeout=5, health_failure_threshold=3,
+            tags=[], visibility="private",
+        )
+        registered = _run(svc.register_service(test_db, data, user_email="test@example.com"))
+        with pytest.raises(Exception):
+            _run(svc.import_schema(
+                test_db, registered.id, b"",
+                "empty.proto", "test@example.com", activate=True,
+            ))
