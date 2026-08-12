@@ -10,7 +10,7 @@ from collections import deque
 from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import cast
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 import uuid
 
 import pytest
@@ -36,6 +36,7 @@ from mcpgateway.services.reverse_proxy_protocol import (
     ResponseMessage,
 )
 from mcpgateway.services.reverse_proxy_sessions import ConnectionClosedError, ConnectionId
+from mcpgateway.services.server_service import ServerService
 
 
 @dataclass(frozen=True)
@@ -92,7 +93,7 @@ def _initialize_result(capabilities: dict) -> dict:
 
 @pytest.fixture
 def discovery(test_db, monkeypatch):
-    """Discovery service wired to spy caches against a clean catalog."""
+    """Discovery service wired to spy caches and an injected server-service spy."""
     test_db.query(DbTool).delete()
     test_db.query(DbResource).delete()
     test_db.query(DbPrompt).delete()
@@ -103,9 +104,9 @@ def discovery(test_db, monkeypatch):
     tool_lookup_cache = SimpleNamespace(invalidate_gateway=AsyncMock())
     monkeypatch.setattr("mcpgateway.services.reverse_proxy_discovery._get_registry_cache", lambda: registry_cache)
     monkeypatch.setattr("mcpgateway.services.reverse_proxy_discovery._get_tool_lookup_cache", lambda: tool_lookup_cache)
-    service = ReverseProxyDiscoveryService(gateway_service=GatewayService())
-    service._server_service._notify_server_updated = AsyncMock()
-    yield SimpleNamespace(service=service, registry_cache=registry_cache, tool_lookup_cache=tool_lookup_cache)
+    server_service = cast(ServerService, SimpleNamespace(_notify_server_updated=AsyncMock()))
+    service = ReverseProxyDiscoveryService(gateway_service=GatewayService(), server_service=server_service)
+    yield SimpleNamespace(service=service, registry_cache=registry_cache, tool_lookup_cache=tool_lookup_cache, server_service=server_service)
     test_db.query(DbTool).delete()
     test_db.query(DbResource).delete()
     test_db.query(DbPrompt).delete()
@@ -512,4 +513,74 @@ async def test_post_commit_cache_invalidations_and_server_notification(discovery
     discovery.registry_cache.invalidate_tools.assert_awaited_once()
     discovery.registry_cache.invalidate_servers.assert_awaited_once()
     discovery.tool_lookup_cache.invalidate_gateway.assert_awaited_once_with(proxy_pair)
-    discovery.service._server_service._notify_server_updated.assert_awaited_once()
+    discovery.server_service._notify_server_updated.assert_awaited_once()
+
+
+def test_init_uses_process_singleton_without_constructing_server_service(monkeypatch):
+    # Given: the discovery module's ServerService import site and the process-level lazy singleton
+    mock_server_service_class = MagicMock()
+    singleton = cast(ServerService, SimpleNamespace(_notify_server_updated=AsyncMock()))
+    monkeypatch.setattr("mcpgateway.services.reverse_proxy_discovery.ServerService", mock_server_service_class)
+    monkeypatch.setattr("mcpgateway.services.server_service.server_service", singleton, raising=False)
+
+    # When
+    service = ReverseProxyDiscoveryService()
+
+    # Then: no fresh ServerService is constructed; the process singleton is used
+    mock_server_service_class.assert_not_called()
+    assert service._server_service is singleton
+
+
+@pytest.mark.asyncio
+async def test_metadata_only_rediscovery_still_invalidates_tools_cache(discovery, test_db, proxy_pair):
+    # Given: an existing tool whose description changes between passes, with no adds or removes
+    first = _ScriptedSessionManager()
+    first.script_result(_initialize_result({"tools": {}}))
+    first.script_result({"tools": [{"name": "tool-a", "description": "v1"}]})
+    await _discover(discovery, test_db, first, proxy_pair)
+    discovery.registry_cache.invalidate_tools.reset_mock()
+    second = _ScriptedSessionManager()
+    second.script_result(_initialize_result({"tools": {}}))
+    second.script_result({"tools": [{"name": "tool-a", "description": "v2"}]})
+
+    # When
+    result = await _discover(discovery, test_db, second, proxy_pair)
+    # Then: the in-place metadata update still invalidates the tools catalog cache
+    assert result.tools_added == 0 and result.tools_removed == 0
+    test_db.expire_all()
+    row = test_db.query(DbTool).filter_by(original_name="tool-a").one()
+    assert row.original_description == "v2"
+    discovery.registry_cache.invalidate_tools.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_zero_delta_rediscovery_invalidates_all_catalog_caches(discovery, test_db, proxy_pair):
+    # Given: a fully populated catalog rediscovered with an identical payload
+    first = _ScriptedSessionManager()
+    first.script_result(_initialize_result({"tools": {}, "resources": {}, "prompts": {}}))
+    first.script_result({"tools": [{"name": "tool-a"}]})
+    first.script_result({"resources": [{"uri": "file:///readme.txt", "name": "readme"}]})
+    first.script_result({"resourceTemplates": []})
+    first.script_result({"prompts": [{"name": "greet"}]})
+    await _discover(discovery, test_db, first, proxy_pair)
+    discovery.registry_cache.invalidate_tools.reset_mock()
+    discovery.registry_cache.invalidate_resources.reset_mock()
+    discovery.registry_cache.invalidate_prompts.reset_mock()
+    discovery.registry_cache.invalidate_servers.reset_mock()
+    second = _ScriptedSessionManager()
+    second.script_result(_initialize_result({"tools": {}, "resources": {}, "prompts": {}}))
+    second.script_result({"tools": [{"name": "tool-a"}]})
+    second.script_result({"resources": [{"uri": "file:///readme.txt", "name": "readme"}]})
+    second.script_result({"resourceTemplates": []})
+    second.script_result({"prompts": [{"name": "greet"}]})
+
+    # When
+    result = await _discover(discovery, test_db, second, proxy_pair)
+    # Then: zero delta still re-publishes the full catalog state to every registry cache
+    assert result.tools_added == 0 and result.tools_removed == 0
+    assert result.resources_added == 0 and result.resources_removed == 0
+    assert result.prompts_added == 0 and result.prompts_removed == 0
+    discovery.registry_cache.invalidate_tools.assert_awaited_once()
+    discovery.registry_cache.invalidate_resources.assert_awaited_once()
+    discovery.registry_cache.invalidate_prompts.assert_awaited_once()
+    discovery.registry_cache.invalidate_servers.assert_awaited_once()
