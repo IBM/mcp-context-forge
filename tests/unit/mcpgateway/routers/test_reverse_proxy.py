@@ -158,6 +158,39 @@ class DiscoveryAnsweringWebSocket(ScriptedReverseProxyWebSocket):
             self.queue_disconnect()
 
 
+class TrackedRegistrationWebSocket(ScriptedReverseProxyWebSocket):
+    """Scripted client that stays connected after a successful registration."""
+
+    def __init__(self) -> None:
+        """Initialize with a registration-completion signal and an open stream."""
+        super().__init__()
+        self.registration_completed = anyio.Event()
+
+    async def send_text(self, data: str) -> None:
+        """Capture the server frame and signal registration completion."""
+        frame = orjson.loads(data)
+        self.sent_frames.append(frame)
+        if frame.get("type") == "register_complete":
+            self.registration_completed.set()
+
+
+class LostSocketWebSocket(ScriptedReverseProxyWebSocket):
+    """Scripted client whose socket dies while registration is in flight."""
+
+    async def send_text(self, data: str) -> None:
+        """Raise a transport error instead of delivering a register_complete frame."""
+        frame = orjson.loads(data)
+        if frame.get("type") == "register_complete":
+            self._send_stream.close()
+            raise ConnectionError("socket lost during registration")
+        self.sent_frames.append(frame)
+
+    async def close(self, code: int = 1000, reason: str | None = None) -> None:
+        """Record the close attempt, then raise because the socket is already gone."""
+        self.closed_code = code
+        raise ConnectionError("close on a lost socket")
+
+
 # --------------------------------------------------------------------------- #
 # ReverseProxySession Tests                                                  #
 # --------------------------------------------------------------------------- #
@@ -538,7 +571,7 @@ class TestWebSocketEndpoint:
 
     @pytest.mark.asyncio
     async def test_websocket_register_discovery_failure_closes_connection(self, session_manager, catalog_service, discovery_service):
-        """Discovery failure -> register_complete(error) then close 1008 after catalog persisted."""
+        """Discovery failure -> register_complete(error) then close 1008; the stable mapping is never attached."""
         discovery_service.discover_and_reconcile.side_effect = RuntimeError("discovery exploded")
         websocket = ScriptedReverseProxyWebSocket()
         websocket.queue_client_frame({"type": "register", "server": {"name": "test-server"}})
@@ -555,7 +588,7 @@ class TestWebSocketEndpoint:
         assert "discovery exploded" not in frames[1]["message"]
         assert websocket.closed_code == 1008
         catalog_service.register.assert_awaited_once()
-        session_manager.attach_stable_id.assert_awaited_once_with(StableGatewayId(self._STABLE_ID), self._CONNECTION_ID)
+        session_manager.attach_stable_id.assert_not_awaited()
         session_manager.disconnect.assert_awaited_once_with(self._CONNECTION_ID)
 
     @pytest.mark.asyncio
@@ -693,6 +726,62 @@ class TestWebSocketEndpoint:
         session_manager.disconnect.assert_awaited_once_with(self._CONNECTION_ID)
         assert manager.sessions == {}
 
+    @pytest.mark.asyncio
+    async def test_websocket_mirrors_legacy_session_with_connection_io(self, mock_websocket, session_manager):
+        """F4: the legacy mirror stores the same locked connection I/O the typed manager dispatches through."""
+        mock_websocket.receive_text.side_effect = WebSocketDisconnect()
+
+        # First-Party
+        from mcpgateway.routers.reverse_proxy import websocket_endpoint
+
+        with patch.object(manager, "add_session", wraps=manager.add_session) as add_spy:
+            await websocket_endpoint(mock_websocket, Mock())
+
+        connection_io = session_manager.connect.call_args.args[0]
+        mirrored = add_spy.call_args.args[0]
+        assert mirrored.websocket is connection_io
+        assert mirrored.websocket is not mock_websocket
+
+    @pytest.mark.asyncio
+    async def test_websocket_registration_failure_notification_is_best_effort(self, session_manager, catalog_service, discovery_service):
+        """F4: a socket lost mid-registration must not mask the registration failure path."""
+        discovery_service.discover_and_reconcile.side_effect = RuntimeError("discovery exploded")
+        websocket = LostSocketWebSocket()
+        websocket.queue_client_frame({"type": "register", "server": {"name": "test-server"}})
+
+        # First-Party
+        from mcpgateway.routers.reverse_proxy import websocket_endpoint
+
+        with patch("mcpgateway.routers.reverse_proxy.LOGGER.debug") as debug_log:
+            await websocket_endpoint(cast(WebSocket, websocket), Mock())
+
+        assert [frame["type"] for frame in websocket.sent_frames] == ["register_ack"]
+        debug_log.assert_called()
+        session_manager.disconnect.assert_awaited_once_with(self._CONNECTION_ID)
+
+    @pytest.mark.asyncio
+    async def test_websocket_constructs_wrappers_with_both_service_singletons(self, session_manager):
+        """F2: catalog and discovery wrappers both receive the shared gateway and server services."""
+        websocket = ScriptedReverseProxyWebSocket()
+        websocket.queue_client_frame({"type": "register", "server": {"name": "test-server"}})
+
+        # First-Party
+        from mcpgateway.routers.reverse_proxy import websocket_endpoint
+
+        catalog = Mock(spec=ReverseProxyCatalogService)
+        catalog.register.return_value = SimpleNamespace(stable_id="stable-singletons", gateway=Mock(), server=Mock())
+        discovery = Mock(spec=ReverseProxyDiscoveryService)
+        with (
+            patch("mcpgateway.routers.reverse_proxy.ReverseProxyCatalogService", return_value=catalog) as catalog_class,
+            patch("mcpgateway.routers.reverse_proxy.ReverseProxyDiscoveryService", return_value=discovery) as discovery_class,
+        ):
+            await websocket_endpoint(cast(WebSocket, websocket), Mock())
+
+        assert catalog_class.call_args.kwargs.keys() == {"gateway_service", "server_service"}
+        assert discovery_class.call_args.kwargs.keys() == {"gateway_service", "server_service"}
+        assert catalog_class.call_args.kwargs["gateway_service"] is discovery_class.call_args.kwargs["gateway_service"]
+        assert catalog_class.call_args.kwargs["server_service"] is discovery_class.call_args.kwargs["server_service"]
+
 
 class TestWebSocketRegistrationIntegration:
     """Integration regression for the B1 registration deadlock.
@@ -752,6 +841,9 @@ class TestWebSocketRegistrationIntegration:
         against the pre-restructure endpoint.
         """
         registry_cache = MagicMock()
+        registry_cache.invalidate_tools = AsyncMock()
+        registry_cache.invalidate_resources = AsyncMock()
+        registry_cache.invalidate_prompts = AsyncMock()
         registry_cache.invalidate_servers = AsyncMock()
         tool_lookup_cache = MagicMock()
         tool_lookup_cache.invalidate_gateway = AsyncMock()
@@ -811,6 +903,148 @@ class TestWebSocketRegistrationIntegration:
         assert real_session_manager.pending_count(connection_id) == 0
         assert real_session_manager.resolve_connection_id(StableGatewayId(self._STABLE_ID)) is None
         assert manager.sessions == {}
+
+
+class TestStableIdAttachOrdering:
+    """F1: a failed replacement registration must not strand the healthy stable mapping."""
+
+    _STABLE_ID = "stable-shared-id"
+
+    @pytest.fixture(autouse=True)
+    def mock_admission(self):
+        """Authenticate every connection through the admission seam."""
+        context = SimpleNamespace(owner_email="owner@example.com", team_id=None)
+        with patch("mcpgateway.routers.reverse_proxy._authenticate_reverse_proxy_websocket", new=AsyncMock(return_value=context)):
+            yield
+
+    @pytest.fixture
+    def real_session_manager(self):
+        """A fresh REAL session manager so stable-ID mappings behave exactly as in production."""
+        return ReverseProxySessionManager()
+
+    @pytest.fixture(autouse=True)
+    def patch_session_manager_singleton(self, real_session_manager):
+        """Route the endpoint's session-manager singleton to the real instance."""
+        with patch("mcpgateway.routers.reverse_proxy.get_reverse_proxy_session_manager", new=AsyncMock(return_value=real_session_manager)):
+            yield
+
+    @pytest.fixture(autouse=True)
+    def catalog_service(self):
+        """Both connections register the same stable catalog identity."""
+        service = Mock(spec=ReverseProxyCatalogService)
+        service.register.return_value = SimpleNamespace(stable_id=self._STABLE_ID, gateway=Mock(), server=Mock())
+        with patch("mcpgateway.routers.reverse_proxy.ReverseProxyCatalogService", return_value=service):
+            yield service
+
+    @pytest.fixture(autouse=True)
+    def discovery_service(self):
+        """The first (healthy) registration discovers cleanly; the replacement fails mid-flight."""
+        service = Mock(spec=ReverseProxyDiscoveryService)
+        service.discover_and_reconcile.side_effect = [Mock(name="discovery-ok"), RuntimeError("discovery exploded")]
+        with patch("mcpgateway.routers.reverse_proxy.ReverseProxyDiscoveryService", return_value=service):
+            yield service
+
+    @pytest.fixture(autouse=True)
+    def clear_legacy_manager(self):
+        """Keep the legacy observability mirror empty around each test."""
+        manager.sessions.clear()
+        yield
+        manager.sessions.clear()
+
+    @pytest.mark.asyncio
+    async def test_failed_replacement_preserves_healthy_stable_mapping(self, real_session_manager):
+        """Connection B fails discovery after A registered the stable ID: A's mapping survives B's failure and disconnect."""
+        healthy = TrackedRegistrationWebSocket()
+        healthy.queue_client_frame({"type": "register", "server": {"name": "shared-server"}})
+
+        # First-Party
+        from mcpgateway.routers.reverse_proxy import websocket_endpoint
+
+        stable_id = StableGatewayId(self._STABLE_ID)
+        async with anyio.create_task_group() as task_group:
+            task_group.start_soon(websocket_endpoint, cast(WebSocket, healthy), MagicMock())
+            with anyio.fail_after(5):
+                await healthy.registration_completed.wait()
+
+            healthy_connection_id = real_session_manager.resolve_connection_id(stable_id)
+            assert healthy_connection_id is not None
+
+            failing = ScriptedReverseProxyWebSocket()
+            failing.queue_client_frame({"type": "register", "server": {"name": "shared-server"}})
+            await websocket_endpoint(cast(WebSocket, failing), MagicMock())
+
+            assert failing.closed_code == 1008
+            assert real_session_manager.resolve_connection_id(stable_id) == healthy_connection_id
+
+            task_group.cancel_scope.cancel()
+
+
+class TestLockedConnectionIO:
+    """F4: one per-connection lock serializes every send and close on the socket."""
+
+    @pytest.mark.asyncio
+    async def test_send_text_is_serialized_through_the_connection_lock(self):
+        """A concurrent send cannot interleave while the connection lock is held."""
+        # First-Party
+        from mcpgateway.routers.reverse_proxy import _LockedConnectionIO
+
+        websocket = ScriptedReverseProxyWebSocket()
+        io_lock = anyio.Lock()
+        connection_io = _LockedConnectionIO(cast(WebSocket, websocket), io_lock)
+
+        await io_lock.acquire()
+        send_entered = asyncio.Event()
+
+        async def send_concurrently() -> None:
+            send_entered.set()
+            await connection_io.send_text('{"type": "heartbeat"}')
+
+        concurrent_send = asyncio.create_task(send_concurrently())
+        await send_entered.wait()
+        await asyncio.sleep(0)
+        assert websocket.sent_frames == []
+
+        io_lock.release()
+        await asyncio.wait_for(concurrent_send, timeout=1)
+        assert [frame["type"] for frame in websocket.sent_frames] == ["heartbeat"]
+
+    @pytest.mark.asyncio
+    async def test_close_is_serialized_through_the_connection_lock(self):
+        """A concurrent close cannot fire while the connection lock is held."""
+        # First-Party
+        from mcpgateway.routers.reverse_proxy import _LockedConnectionIO
+
+        websocket = ScriptedReverseProxyWebSocket()
+        io_lock = anyio.Lock()
+        connection_io = _LockedConnectionIO(cast(WebSocket, websocket), io_lock)
+
+        await io_lock.acquire()
+        close_entered = asyncio.Event()
+
+        async def close_concurrently() -> None:
+            close_entered.set()
+            await connection_io.close(code=1008, reason="policy")
+
+        concurrent_close = asyncio.create_task(close_concurrently())
+        await close_entered.wait()
+        await asyncio.sleep(0)
+        assert websocket.closed_code is None
+
+        io_lock.release()
+        await asyncio.wait_for(concurrent_close, timeout=1)
+        assert websocket.closed_code == 1008
+
+
+class TestLazyServiceResolution:
+    """F2: the shared service singletons resolve on first endpoint use, not at router import."""
+
+    def test_router_module_does_not_bind_service_singletons_at_import_time(self):
+        """The router module must not carry gateway_service/server_service module attributes."""
+        # First-Party
+        from mcpgateway.routers import reverse_proxy as rp
+
+        assert not hasattr(rp, "gateway_service")
+        assert not hasattr(rp, "server_service")
 
 
 class TestReverseProxyFeatureGate:
@@ -1071,6 +1305,82 @@ class TestWebSocketAuthentication:
         mock_websocket.close.assert_called_once()
         get_current_user.assert_not_awaited()
 
+    @pytest.mark.asyncio
+    async def test_websocket_rejects_api_token_with_revoked_team_membership_before_accept(self, mock_websocket):
+        """B1: an RBAC-passing API token is denied when its team membership was revoked."""
+        payload = {"jti": "membership-revoked", "sub": "canonical@example.com", "teams": ["team-revoked"], "token_use": "api", "scopes": {"permissions": ["*"]}}
+        self._configure_authenticated_websocket(mock_websocket, payload)
+
+        # First-Party
+        from mcpgateway.middleware.token_scoping import token_scoping_middleware
+        from mcpgateway.routers.reverse_proxy import websocket_endpoint
+
+        user = SimpleNamespace(email="canonical@example.com", full_name="Test User", is_admin=False)
+        checker = SimpleNamespace(has_permission=AsyncMock(return_value=True))
+        with (
+            patch("mcpgateway.routers.reverse_proxy.get_current_user", new=AsyncMock(return_value=user)),
+            patch("mcpgateway.routers.reverse_proxy.PermissionChecker", return_value=checker) as permission_checker,
+            patch.object(token_scoping_middleware, "check_team_membership", return_value=False) as membership,
+            patch("mcpgateway.routers.reverse_proxy.LOGGER.warning") as warning,
+        ):
+            await websocket_endpoint(mock_websocket, Mock())
+
+        mock_websocket.accept.assert_not_called()
+        mock_websocket.close.assert_awaited_once()
+        assert mock_websocket.close.call_args.kwargs["code"] == 1008
+        membership.assert_called_once_with(payload)
+        permission_checker.assert_not_called()
+        assert warning.call_args.kwargs["extra"]["status_code"] == 403
+
+    @pytest.mark.asyncio
+    async def test_websocket_rejects_api_token_with_wrong_team_before_accept(self, mock_websocket):
+        """B1: an API token claiming a team the user is not a member of is denied before accept."""
+        payload = {"jti": "wrong-team", "sub": "canonical@example.com", "teams": ["team-other"], "token_use": "api", "scopes": {"permissions": ["*"]}}
+        self._configure_authenticated_websocket(mock_websocket, payload)
+
+        # First-Party
+        from mcpgateway.middleware.token_scoping import token_scoping_middleware
+        from mcpgateway.routers.reverse_proxy import websocket_endpoint
+
+        user = SimpleNamespace(email="canonical@example.com", full_name="Test User", is_admin=False)
+        checker = SimpleNamespace(has_permission=AsyncMock(return_value=True))
+        with (
+            patch("mcpgateway.routers.reverse_proxy.get_current_user", new=AsyncMock(return_value=user)),
+            patch("mcpgateway.routers.reverse_proxy.PermissionChecker", return_value=checker) as permission_checker,
+            patch.object(token_scoping_middleware, "check_team_membership", return_value=False) as membership,
+            patch("mcpgateway.routers.reverse_proxy.LOGGER.warning") as warning,
+        ):
+            await websocket_endpoint(mock_websocket, Mock())
+
+        mock_websocket.accept.assert_not_called()
+        mock_websocket.close.assert_awaited_once()
+        assert mock_websocket.close.call_args.kwargs["code"] == 1008
+        membership.assert_called_once_with(payload)
+        permission_checker.assert_not_called()
+        assert warning.call_args.kwargs["extra"]["status_code"] == 403
+
+    @pytest.mark.asyncio
+    async def test_websocket_session_token_skips_membership_revalidation(self, mock_websocket):
+        """B1: session tokens resolve membership from the DB upstream and skip JWT-team revalidation."""
+        payload = {"jti": "session-token", "sub": "canonical@example.com", "teams": ["team-stale"], "token_use": "session", "scopes": {"permissions": ["*"]}}
+        self._configure_authenticated_websocket(mock_websocket, payload)
+
+        # First-Party
+        from mcpgateway.middleware.token_scoping import token_scoping_middleware
+        from mcpgateway.routers.reverse_proxy import websocket_endpoint
+
+        user = SimpleNamespace(email="canonical@example.com", full_name="Test User", is_admin=False)
+        checker = SimpleNamespace(has_permission=AsyncMock(return_value=True))
+        with (
+            patch("mcpgateway.routers.reverse_proxy.get_current_user", new=AsyncMock(return_value=user)),
+            patch("mcpgateway.routers.reverse_proxy.PermissionChecker", return_value=checker),
+            patch.object(token_scoping_middleware, "check_team_membership", return_value=False) as membership,
+        ):
+            await websocket_endpoint(mock_websocket, Mock())
+
+        membership.assert_not_called()
+        mock_websocket.accept.assert_called_once()
+
 
 # --------------------------------------------------------------------------- #
 # HTTP Endpoint Tests                                                        #
@@ -1185,6 +1495,23 @@ class TestHTTPEndpoints:
         assert response.status_code == 404
         data = response.json()
         assert "not found" in data["detail"]
+
+    def test_disconnect_session_clears_typed_session_state(self, client, mock_auth, mock_websocket):
+        """F4: HTTP disconnect also disconnects the typed session so stable mappings and pending calls clear."""
+        session = ReverseProxySession("test-session", mock_websocket, "test-user")
+        manager.sessions["test-session"] = session
+        typed_manager = Mock(spec=ReverseProxySessionManager)
+
+        try:
+            with patch("mcpgateway.routers.reverse_proxy.get_reverse_proxy_session_manager", new=AsyncMock(return_value=typed_manager)):
+                response = client.delete("/reverse-proxy/sessions/test-session")
+
+            assert response.status_code == 200
+            data = response.json()
+            assert data["status"] == "disconnected"
+            typed_manager.disconnect.assert_awaited_once_with(ConnectionId("test-session"))
+        finally:
+            manager.sessions.clear()
 
     def test_send_request_to_session_success(self, client, mock_auth, mock_websocket):
         """Test sending request to existing session."""

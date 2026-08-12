@@ -34,7 +34,6 @@ from mcpgateway.db import get_db, Permissions
 from mcpgateway.db import Server as DbServer
 from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, PermissionChecker, token_scope_grants
 from mcpgateway.middleware.token_scoping import token_scoping_middleware
-from mcpgateway.services.gateway_service import gateway_service
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.reverse_proxy_catalog import AuthenticatedRegistrationContext, ReverseProxyCatalogConflictError, ReverseProxyCatalogService
 from mcpgateway.services.reverse_proxy_discovery import ReverseProxyDiscoveryService
@@ -53,8 +52,7 @@ from mcpgateway.services.reverse_proxy_protocol import (
     ResponseMessage,
     UnregisterMessage,
 )
-from mcpgateway.services.reverse_proxy_sessions import get_reverse_proxy_session_manager, LocalSessionId, StableGatewayId
-from mcpgateway.services.server_service import server_service
+from mcpgateway.services.reverse_proxy_sessions import ConnectionId, get_reverse_proxy_session_manager, LocalSessionId, StableGatewayId
 from mcpgateway.utils.verify_credentials import require_auth, verify_jwt_token_cached
 
 # Initialize logging
@@ -64,15 +62,44 @@ LOGGER = logging_service.get_logger("mcpgateway.routers.reverse_proxy")
 router = APIRouter(prefix="/reverse-proxy", tags=["reverse-proxy"])
 
 
+class _LockedConnectionIO:
+    """Serialize every send and close on one reverse-proxy connection.
+
+    One per-connection lock funnels the endpoint's own frames (register acks,
+    heartbeat acknowledgements, error frames), the typed session manager's
+    request/notification frames, legacy-mirror HTTP control sends, and all
+    server-initiated closes, so the WebSocket is never touched concurrently.
+    """
+
+    def __init__(self, websocket: WebSocket, io_lock: anyio.Lock) -> None:
+        """Wrap the raw WebSocket with the connection's shared I/O lock."""
+        self._websocket = websocket
+        self._io_lock = io_lock
+
+    async def send_text(self, data: str) -> None:
+        """Send one text frame under the shared I/O lock."""
+        async with self._io_lock:
+            await self._websocket.send_text(data)
+
+    async def receive_text(self) -> str:
+        """Receive one text frame; reads stay unlocked because the receive pump is the sole reader."""
+        return await self._websocket.receive_text()
+
+    async def close(self, code: int = 1000, reason: str | None = None) -> None:
+        """Close the connection under the shared I/O lock."""
+        async with self._io_lock:
+            await self._websocket.close(code=code, reason=reason)
+
+
 class ReverseProxySession:
     """Manages a reverse proxy session."""
 
-    def __init__(self, session_id: str, websocket: WebSocket, user: Optional[str | dict] = None):
+    def __init__(self, session_id: str, websocket: _LockedConnectionIO, user: Optional[str | dict] = None):
         """Initialize reverse proxy session.
 
         Args:
             session_id: Unique session identifier.
-            websocket: WebSocket connection.
+            websocket: Locked connection I/O wrapper for the session's WebSocket.
             user: Authenticated user info (if any).
         """
         self.session_id = session_id
@@ -191,26 +218,6 @@ class ReverseProxyAuthenticatedContext:
     team_id: str | None
 
 
-class _SendLockedWebSocket:
-    """Serialize session-manager sends through the endpoint's send lock.
-
-    The session manager stores the object passed to ``connect`` and sends its
-    request/notification frames through it. Funnelling those sends through the
-    same lock as the endpoint's own frames (heartbeat acks, register frames)
-    keeps every ``websocket.send_text`` on one connection serialized.
-    """
-
-    def __init__(self, websocket: WebSocket, send_lock: anyio.Lock) -> None:
-        """Wrap the raw WebSocket with the connection's shared send lock."""
-        self._websocket = websocket
-        self._send_lock = send_lock
-
-    async def send_text(self, data: str) -> None:
-        """Send one text frame under the shared send lock."""
-        async with self._send_lock:
-            await self._websocket.send_text(data)
-
-
 def _get_websocket_bearer_token(websocket: WebSocket) -> Optional[str]:
     """Extract a bearer token only from the WebSocket Authorization header.
 
@@ -262,6 +269,15 @@ async def _authenticate_reverse_proxy_websocket(websocket: WebSocket) -> Reverse
         token_payload = await verify_jwt_token_cached(auth_token, auth_request)
     else:
         token_payload = {"scopes": {}}
+
+    # Layer-1 parity with HTTP admission: revalidate claimed team membership
+    # for non-session (API/legacy) tokens before restrictions, scopes, and RBAC.
+    if token_payload.get("token_use") != "session" and not token_scoping_middleware.check_team_membership(token_payload):  # nosec B105 - Not a password; token_use is a JWT claim type
+        LOGGER.warning(
+            "Reverse proxy WebSocket admission denied: token team membership is no longer valid",
+            extra={"event": "reverse_proxy.websocket.permission_denied", "owner_email": owner_email, "layer": "team_membership"},
+        )
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Token is invalid: User is no longer a member of the associated team")
     request_path = str(websocket.scope.get("path") or "/reverse-proxy/ws")
     client_ip = websocket.client.host if websocket.client else "unknown"
     token_scoping_middleware.enforce_non_permission_restrictions(token_payload, request_path, client_ip)
@@ -329,20 +345,24 @@ async def websocket_endpoint(
     # Accept only after authentication and both authorization layers succeed.
     await websocket.accept()
 
+    # Resolve the shared service singletons on first endpoint use (they are PEP 562
+    # lazy module attributes), never at router import time.
+    from mcpgateway.services.gateway_service import gateway_service  # pylint: disable=import-outside-toplevel
+    from mcpgateway.services.server_service import server_service  # pylint: disable=import-outside-toplevel
+
     session_manager = await get_reverse_proxy_session_manager()
-    send_lock = anyio.Lock()
-    connection = await session_manager.connect(_SendLockedWebSocket(websocket, send_lock), LocalSessionId(uuid.uuid4().hex))
+    connection_io = _LockedConnectionIO(websocket, anyio.Lock())
+    connection = await session_manager.connect(connection_io, LocalSessionId(uuid.uuid4().hex))
     connection_id = connection.connection_id
 
     async def send_frame(frame: str) -> None:
-        """Send one endpoint frame serialized through the connection's send lock."""
-        async with send_lock:
-            await websocket.send_text(frame)
+        """Send one endpoint frame serialized through the connection's I/O lock."""
+        await connection_io.send_text(frame)
 
     try:
         # D12: mirror connection metadata in the legacy manager so the HTTP admin
         # endpoints keep working; the typed manager remains the dispatch authority.
-        await manager.add_session(ReverseProxySession(str(connection_id), websocket, authenticated_context.owner_email))
+        await manager.add_session(ReverseProxySession(str(connection_id), connection_io, authenticated_context.owner_email))
         LOGGER.info(f"Reverse proxy connected: {connection_id}")
 
         registration_state: Literal["unregistered", "processing", "registered"] = "unregistered"
@@ -361,14 +381,21 @@ async def websocket_endpoint(
                 db_server = db.get(DbServer, entry.stable_id)
                 if db_gateway is None or db_server is None:
                     raise ReverseProxyCatalogConflictError(stable_id=entry.stable_id, reason="catalog pair was not persisted")
-                await session_manager.attach_stable_id(StableGatewayId(entry.stable_id), connection_id)
-                await ReverseProxyDiscoveryService(gateway_service=gateway_service).discover_and_reconcile(
+                await ReverseProxyDiscoveryService(gateway_service=gateway_service, server_service=server_service).discover_and_reconcile(
                     db, session_manager, connection_id, db_gateway, db_server, timeout_seconds=float(settings.tool_timeout)
                 )
+                # Attach the stable mapping only after discovery succeeds: a
+                # failed replacement must never strand the healthy prior mapping.
+                await session_manager.attach_stable_id(StableGatewayId(entry.stable_id), connection_id)
             except Exception:
                 LOGGER.error("Reverse proxy registration failed for connection %s", connection_id, exc_info=True)
-                await send_frame(encode_server_message(register_complete(str(connection_id), RegistrationStatus.ERROR, "registration failed")))
-                await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="registration failed")
+                try:
+                    await send_frame(encode_server_message(register_complete(str(connection_id), RegistrationStatus.ERROR, "registration failed")))
+                    await connection_io.close(code=status.WS_1008_POLICY_VIOLATION, reason="registration failed")
+                except Exception as io_error:
+                    # The socket can already be lost (for example mid-discovery);
+                    # never mask the primary failure with a secondary send error.
+                    LOGGER.debug("Reverse proxy registration-failure notification failed for connection %s: %s", connection_id, io_error)
                 return
             registration_state = "registered"
             LOGGER.info(f"Registered server for connection {connection_id}: {server.name}")
@@ -382,7 +409,7 @@ async def websocket_endpoint(
                     # responses keep resolving here.
                     while True:
                         try:
-                            message = parse_client_message(await websocket.receive_text())
+                            message = parse_client_message(await connection_io.receive_text())
                         except WebSocketDisconnect:
                             LOGGER.info(f"WebSocket disconnected: {connection_id}")
                             break
@@ -396,7 +423,7 @@ async def websocket_endpoint(
                                 if registration_state != "unregistered":
                                     LOGGER.warning(f"Duplicate register on connection {connection_id}")
                                     await send_frame(encode_server_message(error(str(connection_id), "connection already registered")))
-                                    await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="connection already registered")
+                                    await connection_io.close(code=status.WS_1008_POLICY_VIOLATION, reason="connection already registered")
                                     break
                                 registration_state = "processing"
                                 await send_frame(encode_server_message(register_ack(str(connection_id))))
@@ -499,9 +526,13 @@ async def disconnect_session(
     # Validate session ownership
     _validate_session_ownership(session, credentials, "disconnect")
 
-    # Close the WebSocket connection
+    # Close the WebSocket connection, then clear the typed session state so
+    # stable-ID mappings and pending calls fail closed immediately. The typed
+    # disconnect is idempotent; the pump's own cleanup simply no-ops after it.
     await session.websocket.close()
     await manager.remove_session(session_id)
+    session_manager = await get_reverse_proxy_session_manager()
+    await session_manager.disconnect(ConnectionId(session_id))
 
     return {"status": "disconnected", "session_id": session_id}
 
