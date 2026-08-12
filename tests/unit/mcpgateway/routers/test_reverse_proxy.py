@@ -96,6 +96,7 @@ class ScriptedReverseProxyWebSocket:
         self.sent_frames: list[dict] = []
         self.accepted = False
         self.closed_code: int | None = None
+        self.closed = anyio.Event()
         self.headers: dict[str, str] = {}
         self.query_params: dict[str, str] = {}
         self.client = SimpleNamespace(host="127.0.0.1")
@@ -130,6 +131,7 @@ class ScriptedReverseProxyWebSocket:
     async def close(self, code: int = 1000, reason: str | None = None) -> None:
         """Record a server-initiated close and end the client stream."""
         self.closed_code = code
+        self.closed.set()
         self._send_stream.close()
 
 
@@ -448,6 +450,7 @@ class TestWebSocketEndpoint:
         fake = Mock(spec=ReverseProxySessionManager)
         fake.connect.return_value = ManagedSession(connection_id=self._CONNECTION_ID, local_id=LocalSessionId("local-test-id"), websocket=mock_websocket)
         fake.registration_lock.side_effect = lambda stable_id: anyio.Lock()
+        fake.quiesce_stable_id.return_value = None
         fake.promote_stable_id.return_value = None
         return fake
 
@@ -535,7 +538,7 @@ class TestWebSocketEndpoint:
 
     @pytest.mark.asyncio
     async def test_websocket_register_message(self, session_manager, catalog_service, discovery_service):
-        """Register drives ack(processing) -> catalog -> discovery -> promote -> publish -> complete(success)."""
+        """Register drives ack(processing) -> catalog -> quiesce -> discovery -> publish -> promote -> complete(success)."""
         websocket = ScriptedReverseProxyWebSocket()
         websocket.queue_client_frame({"type": "register", "server": {"name": "test-server", "description": "Test server", "protocol": "mcp"}})
 
@@ -1056,11 +1059,14 @@ class TestConcurrentRegistrationPromotion:
                 connection_b = ConnectionId(websocket_b.sent_frames[0]["sessionId"])
                 assert real_session_manager.resolve_connection_id(stable_id) == connection_b
                 assert events == ["discover:A", "publish:A", "discover:B", "publish:B"]
+                # The earlier connection is retired once the later finisher is acknowledged.
+                with anyio.fail_after(5):
+                    await websocket_a.closed.wait()
                 task_group.cancel_scope.cancel()
 
     @pytest.mark.asyncio
-    async def test_success_send_failure_restores_predecessor_mapping(self, real_session_manager):
-        """When register_complete(success) cannot be delivered after promotion, the CAS restore returns the mapping to the still-healthy predecessor."""
+    async def test_success_send_failure_after_commit_demotes_candidate_and_stays_fail_closed(self, real_session_manager):
+        """B's register_complete(success) send fails AFTER commit+publish: the candidate is demoted, the quiesced predecessor is retired, and the stable ID resolves to None - never restored to a catalog-incompatible predecessor."""
         discovery = Mock(spec=ReverseProxyDiscoveryService)
         discovery.discover_and_reconcile.return_value = Mock(name="discovery-ok")
 
@@ -1085,6 +1091,200 @@ class TestConcurrentRegistrationPromotion:
                 websocket_b.queue_client_frame({"type": "register", "server": {"name": "race-server"}})
                 await websocket_endpoint(cast(WebSocket, websocket_b), db_b)
 
+                # The catalog was committed for B, so routing must never fall back
+                # to the catalog-incompatible A: the mapping stays absent
+                # (fail-closed) and the quiesced predecessor is retired.
+                assert real_session_manager.resolve_connection_id(stable_id) is None
+                with anyio.fail_after(5):
+                    await websocket_a.closed.wait()
+                task_group.cancel_scope.cancel()
+
+    @pytest.mark.asyncio
+    async def test_dispatch_fails_closed_during_reregistration_discovery_window(self, real_session_manager):
+        """While B's re-registration discovery runs, the stable ID resolves to None (fail-closed), never to the quiesced predecessor."""
+        discovery_entered = anyio.Event()
+        release_discovery = anyio.Event()
+        discovery_calls = 0
+
+        async def discover(*args, **kwargs):
+            nonlocal discovery_calls
+            discovery_calls += 1
+            if discovery_calls == 2:
+                discovery_entered.set()
+                await release_discovery.wait()
+            return Mock(name="discovery-result")
+
+        discovery = Mock(spec=ReverseProxyDiscoveryService)
+        discovery.discover_and_reconcile.side_effect = discover
+
+        websocket_a = TrackedRegistrationWebSocket()
+        websocket_a.queue_client_frame({"type": "register", "server": {"name": "race-server"}})
+        websocket_b = TrackedRegistrationWebSocket()
+        websocket_b.queue_client_frame({"type": "register", "server": {"name": "race-server"}})
+        db_a, _gateway_a = self._mock_db("gateway-a", "server-a")
+        db_b, _gateway_b = self._mock_db("gateway-b", "server-b")
+
+        # First-Party
+        from mcpgateway.routers.reverse_proxy import websocket_endpoint
+
+        stable_id = StableGatewayId(self._STABLE_ID)
+        with patch("mcpgateway.routers.reverse_proxy.ReverseProxyDiscoveryService", return_value=discovery):
+            async with anyio.create_task_group() as task_group:
+                task_group.start_soon(websocket_endpoint, cast(WebSocket, websocket_a), db_a)
+                with anyio.fail_after(5):
+                    await websocket_a.registration_completed.wait()
+                connection_a = real_session_manager.resolve_connection_id(stable_id)
+                assert connection_a is not None
+
+                task_group.start_soon(websocket_endpoint, cast(WebSocket, websocket_b), db_b)
+                with anyio.fail_after(5):
+                    await discovery_entered.wait()
+                # B quiesced the stable mapping for its discovery window:
+                # dispatch fails closed instead of routing to the predecessor.
+                assert real_session_manager.resolve_connection_id(stable_id) is None
+
+                release_discovery.set()
+                with anyio.fail_after(5):
+                    await websocket_b.registration_completed.wait()
+                connection_b = ConnectionId(websocket_b.sent_frames[0]["sessionId"])
+                assert real_session_manager.resolve_connection_id(stable_id) == connection_b
+                with anyio.fail_after(5):
+                    await websocket_a.closed.wait()
+                task_group.cancel_scope.cancel()
+
+    @pytest.mark.asyncio
+    async def test_cancellation_during_publish_runs_shielded_post_commit_compensation(self, real_session_manager):
+        """Cancelling B's registration mid-publish (post-commit) runs shielded compensation: demote-only restore, mapping stays fail-closed, and the quiesced predecessor is not retired by the cancel path."""
+        publish_entered = anyio.Event()
+        block_publish = False
+
+        async def publish(db_gateway, db_server):
+            if block_publish:
+                publish_entered.set()
+                await anyio.sleep_forever()
+
+        discovery = Mock(spec=ReverseProxyDiscoveryService)
+        discovery.discover_and_reconcile.return_value = Mock(name="discovery-ok")
+        discovery.publish_post_commit_effects.side_effect = publish
+
+        restore_calls: list[tuple] = []
+        original_restore = real_session_manager.restore_stable_id
+
+        async def restore_spy(*args, **kwargs):
+            restore_calls.append(args)
+            return await original_restore(*args, **kwargs)
+
+        websocket_a = TrackedRegistrationWebSocket()
+        websocket_a.queue_client_frame({"type": "register", "server": {"name": "race-server"}})
+        db_a, _gateway_a = self._mock_db("gateway-a", "server-a")
+        db_b, _gateway_b = self._mock_db("gateway-b", "server-b")
+
+        # First-Party
+        from mcpgateway.routers.reverse_proxy import websocket_endpoint
+
+        stable_id = StableGatewayId(self._STABLE_ID)
+        b_done = anyio.Event()
+
+        async def run_b(websocket_b: ScriptedReverseProxyWebSocket) -> None:
+            await websocket_endpoint(cast(WebSocket, websocket_b), db_b)
+            b_done.set()
+
+        with (
+            patch("mcpgateway.routers.reverse_proxy.ReverseProxyDiscoveryService", return_value=discovery),
+            patch.object(real_session_manager, "restore_stable_id", new=restore_spy),
+        ):
+            async with anyio.create_task_group() as task_group:
+                task_group.start_soon(websocket_endpoint, cast(WebSocket, websocket_a), db_a)
+                with anyio.fail_after(5):
+                    await websocket_a.registration_completed.wait()
+                connection_a = real_session_manager.resolve_connection_id(stable_id)
+                assert connection_a is not None
+
+                block_publish = True
+                websocket_b = ScriptedReverseProxyWebSocket()
+                websocket_b.queue_client_frame({"type": "register", "server": {"name": "race-server"}})
+                task_group.start_soon(run_b, websocket_b)
+                with anyio.fail_after(5):
+                    await publish_entered.wait()
+
+                # The client disconnect cancels the in-flight registration mid-publish.
+                websocket_b.queue_disconnect()
+                with anyio.fail_after(5):
+                    await b_done.wait()
+
+                connection_b = ConnectionId(websocket_b.sent_frames[0]["sessionId"])
+                # Shielded post-commit compensation demotes the candidate only:
+                # the catalog was committed, so the predecessor is never restored.
+                assert (stable_id, None, connection_b) in restore_calls
+                assert real_session_manager.resolve_connection_id(stable_id) is None
+                assert not websocket_a.closed.is_set()
+                task_group.cancel_scope.cancel()
+
+    @pytest.mark.asyncio
+    async def test_cancellation_during_discovery_restores_quiesced_predecessor(self, real_session_manager):
+        """Cancelling B's registration mid-discovery (pre-commit) runs shielded compensation that restores the still-healthy predecessor, then re-raises."""
+        discovery_entered = anyio.Event()
+        discovery_calls = 0
+
+        async def discover(*args, **kwargs):
+            nonlocal discovery_calls
+            discovery_calls += 1
+            if discovery_calls == 2:
+                discovery_entered.set()
+                await anyio.sleep_forever()
+            return Mock(name="discovery-result")
+
+        discovery = Mock(spec=ReverseProxyDiscoveryService)
+        discovery.discover_and_reconcile.side_effect = discover
+
+        restore_calls: list[tuple] = []
+        original_restore = real_session_manager.restore_stable_id
+
+        async def restore_spy(*args, **kwargs):
+            restore_calls.append(args)
+            return await original_restore(*args, **kwargs)
+
+        websocket_a = TrackedRegistrationWebSocket()
+        websocket_a.queue_client_frame({"type": "register", "server": {"name": "race-server"}})
+        db_a, _gateway_a = self._mock_db("gateway-a", "server-a")
+        db_b, _gateway_b = self._mock_db("gateway-b", "server-b")
+
+        # First-Party
+        from mcpgateway.routers.reverse_proxy import websocket_endpoint
+
+        stable_id = StableGatewayId(self._STABLE_ID)
+        b_done = anyio.Event()
+
+        async def run_b(websocket_b: ScriptedReverseProxyWebSocket) -> None:
+            await websocket_endpoint(cast(WebSocket, websocket_b), db_b)
+            b_done.set()
+
+        with (
+            patch("mcpgateway.routers.reverse_proxy.ReverseProxyDiscoveryService", return_value=discovery),
+            patch.object(real_session_manager, "restore_stable_id", new=restore_spy),
+        ):
+            async with anyio.create_task_group() as task_group:
+                task_group.start_soon(websocket_endpoint, cast(WebSocket, websocket_a), db_a)
+                with anyio.fail_after(5):
+                    await websocket_a.registration_completed.wait()
+                connection_a = real_session_manager.resolve_connection_id(stable_id)
+                assert connection_a is not None
+
+                websocket_b = ScriptedReverseProxyWebSocket()
+                websocket_b.queue_client_frame({"type": "register", "server": {"name": "race-server"}})
+                task_group.start_soon(run_b, websocket_b)
+                with anyio.fail_after(5):
+                    await discovery_entered.wait()
+
+                # The client disconnect cancels the in-flight registration before commit.
+                websocket_b.queue_disconnect()
+                with anyio.fail_after(5):
+                    await b_done.wait()
+
+                connection_b = ConnectionId(websocket_b.sent_frames[0]["sessionId"])
+                # Shielded pre-commit compensation restores the quiesced predecessor:
+                # the catalog was never replaced, so routing back to A stays consistent.
+                assert (stable_id, connection_a, connection_b) in restore_calls
                 assert real_session_manager.resolve_connection_id(stable_id) == connection_a
                 task_group.cancel_scope.cancel()
 
@@ -1187,7 +1387,7 @@ class TestStableIdPromotionOrdering:
 
     @pytest.mark.asyncio
     async def test_failed_replacement_preserves_healthy_stable_mapping(self, real_session_manager):
-        """Connection B fails discovery after A registered the stable ID: A's mapping survives B's failure and disconnect."""
+        """B's re-registration quiesces A's mapping, then fails discovery pre-commit: the catalog is untouched, so the restore puts the still-healthy A back."""
         healthy = TrackedRegistrationWebSocket()
         healthy.queue_client_frame({"type": "register", "server": {"name": "shared-server"}})
 

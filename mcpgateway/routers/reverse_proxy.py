@@ -374,14 +374,16 @@ async def websocket_endpoint(
             """Run catalog registration and MCP discovery as a sibling of the receive pump.
 
             Authority comes only from the authenticated context; the register
-            payload carries non-authoritative server metadata. Discovery,
-            promotion, and publish are serialized per stable ID through the
-            session manager's registration lock, and a displaced predecessor is
-            retired only after the replacement registration is acknowledged.
+            payload carries non-authoritative server metadata. The stable
+            mapping is quiesced for the whole discovery window and promotion is
+            last, so catalog visibility and routing never split; a displaced
+            predecessor is retired only after the replacement registration is
+            acknowledged.
             """
             nonlocal registration_state
             stable_id: StableGatewayId | None = None
-            displaced: ConnectionId | None = None
+            quiesced: ConnectionId | None = None
+            committed = False
             try:
                 registration_context = AuthenticatedRegistrationContext(owner_email=authenticated_context.owner_email, team_id=authenticated_context.team_id)
                 entry = await ReverseProxyCatalogService(gateway_service=gateway_service, server_service=server_service).register(db, registration_context, server)
@@ -392,28 +394,57 @@ async def websocket_endpoint(
                     raise ReverseProxyCatalogConflictError(stable_id=entry.stable_id, reason="catalog pair was not persisted")
                 discovery = ReverseProxyDiscoveryService(gateway_service=gateway_service, server_service=server_service)
                 async with session_manager.registration_lock(stable_id):
-                    # Commit, promote, and publish under the per-stable-ID lock:
-                    # two same-ID registrations can never interleave these steps.
+                    # Quiesce first: re-registration makes invokes fail closed
+                    # for the discovery window, in exchange for the never-split
+                    # invariant that catalog and routing are always consistent.
+                    quiesced = await session_manager.quiesce_stable_id(stable_id)
+                    # Discovery commits only at its end; a raise leaves the
+                    # catalog untouched, so the predecessor mapping is restored.
                     await discovery.discover_and_reconcile(db, session_manager, connection_id, db_gateway, db_server, timeout_seconds=float(settings.tool_timeout))
-                    # Promote only after discovery commits, and publish cache
-                    # effects only after promotion: a failed replacement must
-                    # never strand the healthy prior mapping or advertise an
-                    # unrouted catalog.
-                    displaced = await session_manager.promote_stable_id(stable_id, connection_id)
+                    committed = True
+                    # Publish while unmapped, then promote last: once the
+                    # catalog is committed the stable ID must never route to
+                    # the incompatible predecessor again, so any later failure
+                    # stays fail-closed.
                     await discovery.publish_post_commit_effects(db_gateway, db_server)
+                    await session_manager.promote_stable_id(stable_id, connection_id)
                 registration_state = "registered"
                 LOGGER.info(f"Registered server for connection {connection_id}: {server.name}")
                 await send_frame(encode_server_message(register_complete(str(connection_id), RegistrationStatus.SUCCESS)))
-                # Retire the displaced predecessor only after the replacement is
-                # acknowledged: an acknowledgement failure must still be able to
-                # restore the live predecessor mapping.
-                if displaced is not None and displaced != connection_id:
-                    await session_manager.retire_connection(displaced)
+                # Retire the quiesced predecessor only after the replacement is
+                # acknowledged, so its client reconnects cleanly.
+                if quiesced is not None and quiesced != connection_id:
+                    await session_manager.retire_connection(quiesced)
+            except anyio.get_cancelled_exc_class():
+                # Task-group cancellation (disconnect, unregister, duplicate
+                # register) still compensates under a shield, then re-raises.
+                with anyio.CancelScope(shield=True):
+                    if stable_id is not None:
+                        if not committed:
+                            # Catalog untouched: restoring the predecessor is safe.
+                            await session_manager.restore_stable_id(stable_id, quiesced, connection_id)
+                        else:
+                            # Post-commit: demote the candidate, stay fail-closed.
+                            await session_manager.restore_stable_id(stable_id, None, connection_id)
+                raise
             except Exception:
                 LOGGER.error("Reverse proxy registration failed for connection %s", connection_id, exc_info=True)
                 if stable_id is not None:
-                    # Compare-and-swap no-op unless this connection's promotion is still current.
-                    await session_manager.restore_stable_id(stable_id, displaced, connection_id)
+                    # Shield the compensation: a registration failure usually means
+                    # the client is gone, so the receive pump is concurrently
+                    # cancelling this task group, and the demote/retire must still
+                    # complete to keep catalog and routing consistent.
+                    with anyio.CancelScope(shield=True):
+                        if not committed:
+                            # Pre-commit failure: restore the catalog-compatible predecessor.
+                            await session_manager.restore_stable_id(stable_id, quiesced, connection_id)
+                        else:
+                            # Post-commit failure: demote the candidate, never restore a
+                            # catalog-incompatible predecessor; retire the quiesced
+                            # predecessor so its client reconnects clean.
+                            await session_manager.restore_stable_id(stable_id, None, connection_id)
+                            if quiesced is not None and quiesced != connection_id:
+                                await session_manager.retire_connection(quiesced)
                 try:
                     await send_frame(encode_server_message(register_complete(str(connection_id), RegistrationStatus.ERROR, "registration failed")))
                     await connection_io.close(code=status.WS_1008_POLICY_VIOLATION, reason="registration failed")
