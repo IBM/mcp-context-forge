@@ -4873,13 +4873,46 @@ class ToolService(BaseService):
             )
             raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s") from timeout_err
         except (ConnectionClosedError, ConnectionNotFoundError) as conn_err:
+            mcp_duration_ms = (time.time() - mcp_start_time) * 1000
+            structured_logger.log(
+                level="ERROR",
+                message=f"MCP tool call failed: {tool_name_original}",
+                component="tool_service",
+                correlation_id=correlation_id,
+                duration_ms=mcp_duration_ms,
+                error_details={"error_type": type(conn_err).__name__, "error_message": str(conn_err)},
+                metadata={"event": "mcp_call_failed", "tool_name": tool_name_original, "gateway_id": gateway_id_str, "transport": "proxied"},
+            )
             raise ToolInvocationError(f"Reverse-proxy connection for gateway '{gateway_id_str}' failed: {conn_err}") from conn_err
 
         if isinstance(response.payload, JsonRpcErrorResponse):
             mcp_error = response.payload.error
+            mcp_duration_ms = (time.time() - mcp_start_time) * 1000
+            structured_logger.log(
+                level="ERROR",
+                message=f"MCP tool call failed: {tool_name_original}",
+                component="tool_service",
+                correlation_id=correlation_id,
+                duration_ms=mcp_duration_ms,
+                error_details={"error_type": "JsonRpcErrorResponse", "error_message": f"MCP error {mcp_error.code}: {mcp_error.message}"},
+                metadata={"event": "mcp_call_failed", "tool_name": tool_name_original, "gateway_id": gateway_id_str, "transport": "proxied"},
+            )
             raise ToolInvocationError(f"MCP error {mcp_error.code}: {mcp_error.message}")
 
-        validated_result = types.CallToolResult.model_validate(response.payload.result)
+        try:
+            validated_result = types.CallToolResult.model_validate(response.payload.result)
+        except ValidationError as validation_err:
+            mcp_duration_ms = (time.time() - mcp_start_time) * 1000
+            structured_logger.log(
+                level="ERROR",
+                message=f"MCP tool call failed: {tool_name_original}",
+                component="tool_service",
+                correlation_id=correlation_id,
+                duration_ms=mcp_duration_ms,
+                error_details={"error_type": "ValidationError", "error_message": "malformed upstream tools/call result"},
+                metadata={"event": "mcp_call_failed", "tool_name": tool_name_original, "gateway_id": gateway_id_str, "transport": "proxied"},
+            )
+            raise validation_err
 
         mcp_duration_ms = (time.time() - mcp_start_time) * 1000
         structured_logger.log(
