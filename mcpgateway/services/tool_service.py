@@ -45,7 +45,6 @@ from cpex.framework import (
 )
 from cpex.framework.constants import GATEWAY_METADATA, TOOL_METADATA
 import httpx
-import jq
 import jsonschema
 from jsonschema import Draft4Validator, Draft6Validator, Draft7Validator, validators
 from mcp import ClientSession, types
@@ -101,6 +100,8 @@ from mcpgateway.utils.display_name import generate_display_name
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access, extract_gateway_id_from_headers
 from mcpgateway.utils.header_filtering import filter_sensitive_headers
 from mcpgateway.utils.identity_propagation import build_identity_headers, build_identity_meta
+from mcpgateway.utils.jq_guard import assert_safe_jq_filter
+from mcpgateway.utils.jq_runner import JqFilterError, JqFilterTimeout, run_jq_filter
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import decode_cursor, encode_cursor, unified_paginate
@@ -636,23 +637,6 @@ def _handle_json_parse_error(response, error, is_error_response: bool = False) -
     return {"response_text": text}
 
 
-@lru_cache(maxsize=256)
-def _compile_jq_filter(jq_filter: str):
-    """Cache compiled jq filter program.
-
-    Args:
-        jq_filter: The jq filter string to compile.
-
-    Returns:
-        Compiled jq program object.
-
-    Raises:
-        ValueError: If the jq filter is invalid.
-    """
-    # pylint: disable=c-extension-no-member
-    return jq.compile(jq_filter)
-
-
 @lru_cache(maxsize=128)
 def _get_validator_class_and_check(schema_json: str) -> Tuple[type, dict]:
     """Cache schema validation and validator class selection.
@@ -788,15 +772,24 @@ def extract_using_jq(data, jq_filter=""):
         # If the input is not a string, dict, or list, raise an error
         return ["Input data must be a JSON string, dictionary, or list."]
 
-    # Apply the jq filter to the data using cached compiled program
+    # Refuse restricted built-ins before execution. This covers rows written
+    # before the schema validator existed, and any writer that bypasses it.
     try:
-        program = _compile_jq_filter(jq_filter)
-        result = program.input(data).all()
+        assert_safe_jq_filter(jq_filter_str)
+    except ValueError as exc:
+        logger.warning("Refused jq filter: %s", exc)
+        return [TextContent(type="text", text="jsonpath filter uses a restricted jq builtin")]
+
+    try:
+        result = run_jq_filter(jq_filter_str, data)
         if result == [None]:
             return [TextContent(type="text", text="Error applying jsonpath filter")]
-    except Exception as e:
-        message = "Error applying jsonpath filter: " + str(e)
-        return [TextContent(type="text", text=message)]
+    except JqFilterTimeout:
+        logger.warning("jq filter exceeded its time limit and was terminated")
+        return [TextContent(type="text", text="jsonpath filter exceeded the execution time limit")]
+    except JqFilterError as exc:
+        logger.warning("jq filter failed: %s", exc)
+        return [TextContent(type="text", text="Error applying jsonpath filter")]
 
     return result
 

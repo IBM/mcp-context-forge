@@ -295,25 +295,20 @@ class TestToolServiceHelpersExtended:
 
     def test_extract_using_jq_handles_none_result(self, monkeypatch):
         """[None] result should map to error message."""
-
-        class DummyProgram:
-            def input(self, _data):
-                return self
-
-            def all(self):
-                return [None]
-
-        monkeypatch.setattr("mcpgateway.services.tool_service._compile_jq_filter", lambda _f: DummyProgram())
+        monkeypatch.setattr("mcpgateway.services.tool_service.run_jq_filter", lambda *_args: [None])
 
         result = extract_using_jq({"a": 1}, ".a")
         assert result == [TextContent(type="text", text="Error applying jsonpath filter")]
 
-    def test_extract_using_jq_returns_exception_message(self, monkeypatch):
-        """Exceptions during jq execution should return list with TextContent error."""
-        monkeypatch.setattr("mcpgateway.services.tool_service._compile_jq_filter", lambda _f: (_ for _ in ()).throw(RuntimeError("boom")))
+    def test_extract_using_jq_hides_engine_error_detail(self, monkeypatch):
+        """Filter engine errors are logged, not returned to the caller."""
+        # First-Party
+        from mcpgateway.utils.jq_runner import JqFilterError
+
+        monkeypatch.setattr("mcpgateway.services.tool_service.run_jq_filter", lambda *_args: (_ for _ in ()).throw(JqFilterError("boom")))
 
         result = extract_using_jq({"a": 1}, ".a")
-        assert result == [TextContent(type="text", text="Error applying jsonpath filter: boom")]
+        assert result == [TextContent(type="text", text="Error applying jsonpath filter")]
 
     def test_tool_service_plugin_env_override(self, monkeypatch):
         """PLUGINS_ENABLED env flag controls whether the plugin factory is available."""
@@ -5522,25 +5517,14 @@ class TestToolService:
 #                               extract_using_jq                              #
 # --------------------------------------------------------------------------- #
 def test_extract_using_jq_happy_path():
-    """Test jq filter extraction works correctly with caching."""
-    # First-Party
-    from mcpgateway.services.tool_service import _compile_jq_filter
-
-    # Clear cache for clean test state
-    _compile_jq_filter.cache_clear()
-
+    """Test jq filter extraction returns correct results through the sandbox."""
     data = {"a": 123, "b": 456}
 
-    # Test actual behavior (no mocking)
     result = extract_using_jq(data, ".a")
     assert result == [123]
 
-    # Verify caching works
     result2 = extract_using_jq({"a": 999}, ".a")
     assert result2 == [999]
-
-    info = _compile_jq_filter.cache_info()
-    assert info.hits == 1  # Second call hit cache
 
 
 def test_extract_using_jq_short_circuits_and_errors():
@@ -5877,21 +5861,21 @@ class TestMappingIntegrationSecurity:
 class TestJqFilterCaching:
     """Tests for jq filter caching (#1813)."""
 
-    def test_jq_caching_works(self):
-        """Verify jq filter compilation is cached."""
+    def test_jq_caching_works(self, monkeypatch):
+        """Verify jq filter compilation is cached within an executing process (#1813)."""
         # First-Party
-        from mcpgateway.services.tool_service import _compile_jq_filter
+        from mcpgateway.config import settings
+        from mcpgateway.utils.jq_runner import _compile_jq_filter
 
+        # Caching lives with the compiler. In sandbox mode that is the worker
+        # process, so assert it in the mode where the cache is observable.
+        monkeypatch.setattr(settings, "jq_filter_execution", "inprocess")
         _compile_jq_filter.cache_clear()
 
-        result1 = extract_using_jq({"a": 1}, ".a")
-        assert result1 == [1]
+        assert extract_using_jq({"a": 1}, ".a") == [1]
+        assert extract_using_jq({"a": 99}, ".a") == [99]
 
-        result2 = extract_using_jq({"a": 99}, ".a")
-        assert result2 == [99]
-
-        info = _compile_jq_filter.cache_info()
-        assert info.hits == 1
+        assert _compile_jq_filter.cache_info().hits == 1
 
     def test_empty_filter_bypasses_cache(self):
         """Empty filter should return data directly without caching."""
