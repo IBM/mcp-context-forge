@@ -250,6 +250,73 @@ class TestTokenScopingMiddleware:
         result = middleware._check_permission_restrictions("/tools", "POST", ["tools.write"])
         assert result == False, "Should reject non-canonical 'tools.write' permission"
 
+    def test_versioned_virtual_server_restriction_checks_alias_id(self, middleware):
+        """Server-scoped tokens must enforce the ID in versioned virtual-server paths."""
+        path = "/v1/virtual-servers/server-123/tools"
+
+        assert middleware._check_server_restriction(path, "server-123") is True
+        assert middleware._check_server_restriction(path, "server-456") is False
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "/v1/virtual-servers/a1b2c3d4-e5f6-0000-1111-222233334444",
+            "/v1/mcp-servers/a1b2c3d4-e5f6-0000-1111-222233334444",
+        ],
+    )
+    def test_versioned_server_aliases_enforce_resource_ownership(self, middleware, path):
+        """Versioned aliases must resolve to an owned server or gateway resource."""
+        db = MagicMock()
+        resource = MagicMock()
+        resource.visibility = "team"
+        resource.team_id = "team-1"
+        db.execute.return_value.scalar_one_or_none.return_value = resource
+
+        allowed = middleware._check_resource_team_ownership(path, ["team-1"], db=db, _user_email="user@example.com")
+        denied = middleware._check_resource_team_ownership(path, ["team-2"], db=db, _user_email="user@example.com")
+
+        assert allowed is ResourceOwnershipResult.ALLOWED
+        assert denied is ResourceOwnershipResult.DENIED
+        assert db.execute.call_count == 2
+
+    @pytest.mark.parametrize(
+        "method,path,permission",
+        [
+            ("GET", "/v1/virtual-servers", Permissions.SERVERS_READ),
+            ("POST", "/v1/virtual-servers", Permissions.SERVERS_CREATE),
+            ("GET", "/v1/virtual-servers/server-1", Permissions.SERVERS_READ),
+            ("PUT", "/v1/virtual-servers/server-1", Permissions.SERVERS_UPDATE),
+            ("DELETE", "/v1/virtual-servers/server-1", Permissions.SERVERS_DELETE),
+            ("GET", "/v1/virtual-servers/server-1/tools", Permissions.TOOLS_READ),
+            ("POST", "/v1/virtual-servers/server-1/tools/tool-1/call", Permissions.TOOLS_EXECUTE),
+            ("GET", "/v1/virtual-servers/server-1/resources", Permissions.RESOURCES_READ),
+            ("GET", "/v1/virtual-servers/server-1/prompts", Permissions.SERVERS_READ),
+            ("GET", "/v1/virtual-servers/server-1/sse", Permissions.SERVERS_USE),
+            ("POST", "/v1/virtual-servers/server-1/message", Permissions.SERVERS_USE),
+            ("POST", "/v1/virtual-servers/server-1/mcp", Permissions.SERVERS_USE),
+            ("POST", "/v1/virtual-servers/server-1/state", Permissions.SERVERS_UPDATE),
+            ("POST", "/v1/virtual-servers/server-1/toggle", Permissions.SERVERS_UPDATE),
+            ("GET", "/v1/mcp-servers", Permissions.GATEWAYS_READ),
+            ("POST", "/v1/mcp-servers", Permissions.GATEWAYS_CREATE),
+            ("GET", "/v1/mcp-servers/gateway-1", Permissions.GATEWAYS_READ),
+            ("PUT", "/v1/mcp-servers/gateway-1", Permissions.GATEWAYS_UPDATE),
+            ("DELETE", "/v1/mcp-servers/gateway-1", Permissions.GATEWAYS_DELETE),
+            ("POST", "/v1/mcp-servers/gateway-1/state", Permissions.GATEWAYS_UPDATE),
+            ("POST", "/v1/mcp-servers/gateway-1/toggle", Permissions.GATEWAYS_UPDATE),
+            ("POST", "/v1/mcp-servers/gateway-1/tools/refresh", Permissions.GATEWAYS_UPDATE),
+        ],
+    )
+    def test_versioned_server_aliases_require_matching_permission(self, middleware, method, path, permission):
+        """Versioned server aliases must mirror the legacy route permission mapping."""
+        assert middleware._check_permission_restrictions(path, method, [permission]) is True
+        assert middleware._check_permission_restrictions(path, method, [Permissions.TOKENS_READ]) is False
+
+    @pytest.mark.parametrize("path", ["/v1/mcp-servers/test", "/v1/mcp-servers/test/"])
+    def test_versioned_mcp_server_test_route_keeps_read_permission(self, middleware, path):
+        """The connectivity test route must not be classified as an update sub-resource."""
+        assert middleware._check_permission_restrictions(path, "POST", [Permissions.GATEWAYS_READ]) is True
+        assert middleware._check_permission_restrictions(path, "POST", [Permissions.GATEWAYS_UPDATE]) is False
+
     def test_plugin_discovery_requires_plugins_read(self, middleware):
         """Versioned plugin discovery uses explicit least-privilege permission."""
         assert middleware._check_permission_restrictions("/v1/plugins", "GET", [Permissions.PLUGINS_READ]) is True
