@@ -314,6 +314,21 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
                         logger.debug(f"Could not lookup proxy user in DB: {e}")
                         # Continue with is_admin=False if lookup fails
 
+                # Resolve Layer-1 token_teams so request.state.token_teams agrees with the
+                # other proxy entry point (_resolve_proxy_payload in verify_credentials.py):
+                # None = unrestricted admin bypass, [] = public-only, list = team-scoped.
+                # Without this, get_token_teams_from_request() falls through to its []
+                # secure default for every proxy-authenticated caller, including admins,
+                # which the global-record scope guard reads as narrowed/public-only.
+                try:
+                    # First-Party
+                    from mcpgateway.auth import _resolve_teams_from_db  # pylint: disable=import-outside-toplevel
+
+                    request.state.token_teams = await _resolve_teams_from_db(proxy_user, {"is_admin": is_admin})
+                except Exception as e:
+                    logger.debug(f"Could not resolve proxy user teams: {e}")
+                    request.state.token_teams = []  # Secure default: public-only
+
                 _set_trace_context_for_identity(email=proxy_user, is_admin=is_admin, auth_method="proxy")
 
                 # Populate UserContext for proxy auth
@@ -481,6 +496,10 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
         # AUTH_REQUIRED=false no longer implies admin access.
         # Preserve explicit unsafe override for local-only compatibility.
         if not settings.auth_required and getattr(settings, "allow_unauthenticated_admin", False) is True:
+            # Unrestricted platform-admin bypass: None mirrors the JWT `teams: null` +
+            # `is_admin: true` admin-bypass row so global-record scope guards don't
+            # read this synthetic identity as narrowed/public-only.
+            request.state.token_teams = None
             _set_trace_context_for_identity(email=settings.platform_admin_email, is_admin=True, auth_method="disabled")
             return {
                 "email": settings.platform_admin_email,
@@ -1167,7 +1186,7 @@ async def require_unrestricted_platform_admin(request: Any, user: Any, db: Any) 
         # First-Party
         from mcpgateway.auth_context import get_token_teams_from_request  # pylint: disable=import-outside-toplevel
 
-        resolved = get_token_teams_from_request(request) if request is not None else None
+        resolved = get_token_teams_from_request(request) if request is not None else "<no request>"
         _log_global_scope_denial(user.get("email") if isinstance(user, dict) else user, request, resolved)
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_GLOBAL_SCOPE_DENIED_MSG)
 
@@ -1225,7 +1244,7 @@ def require_global_admin_permission():
                 # First-Party
                 from mcpgateway.auth_context import get_token_teams_from_request  # pylint: disable=import-outside-toplevel
 
-                resolved = get_token_teams_from_request(request) if request is not None else None
+                resolved = get_token_teams_from_request(request) if request is not None else "<no request>"
                 _log_global_scope_denial(user_context["email"], request, resolved)
                 raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_GLOBAL_SCOPE_DENIED_MSG)
 
@@ -1261,7 +1280,7 @@ async def require_global_admin_scope_dep(
         # First-Party
         from mcpgateway.auth_context import get_token_teams_from_request  # pylint: disable=import-outside-toplevel
 
-        resolved = get_token_teams_from_request(request) if request is not None else None
+        resolved = get_token_teams_from_request(request) if request is not None else "<no request>"
         _log_global_scope_denial(user.get("email") if isinstance(user, dict) else user, request, resolved)
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_GLOBAL_SCOPE_DENIED_MSG)
 

@@ -1544,6 +1544,9 @@ async def test_proxy_user_is_platform_admin(no_cookie_request):
     assert result["email"] == "admin@platform.com"
     assert result["is_admin"] is True
     assert result["full_name"] == "Platform Admin"
+    # Issue #6183: proxy-authenticated admins must resolve to token_teams=None
+    # (unrestricted bypass) so global-record scope guards don't deny them.
+    assert mock_request.state.token_teams is None
 
 
 @pytest.mark.asyncio
@@ -1571,6 +1574,66 @@ async def test_proxy_user_db_lookup_succeeds(no_cookie_request):
     assert result["email"] == "user@test.com"
     assert result["is_admin"] is True
     assert result["full_name"] == "Test User"
+    assert mock_request.state.token_teams is None
+
+
+@pytest.mark.asyncio
+async def test_proxy_user_non_admin_gets_resolved_token_teams(no_cookie_request):
+    """Issue #6183: non-admin proxy users get their real DB team scope, not the
+
+    ``[]`` fallback that ``get_token_teams_from_request`` would otherwise apply
+    when ``request.state.token_teams`` is left unset.
+    """
+    mock_request = no_cookie_request
+    mock_request.headers = {"x-forwarded-user": "user@test.com", "user-agent": "test"}
+    mock_request.client = MagicMock(host="127.0.0.1")
+    mock_request.state = SimpleNamespace(plugin_context_table=None, plugin_global_context=None, request_id="req1", team_id=None)
+
+    mock_settings = MagicMock()
+    mock_settings.mcp_client_auth_enabled = False
+    mock_settings.trust_proxy_auth = True
+    mock_settings.trust_proxy_auth_dangerously = True
+    mock_settings.proxy_user_header = "x-forwarded-user"
+    mock_settings.platform_admin_email = "admin@platform.com"
+
+    mock_db_user = MagicMock(is_admin=False, full_name="Test User")
+    mock_db = MagicMock()
+    mock_db.execute.return_value.scalar_one_or_none.return_value = mock_db_user
+
+    with (
+        patch("mcpgateway.middleware.rbac.settings", mock_settings),
+        patch("mcpgateway.middleware.rbac.fresh_db_session", _make_fresh_db(mock_db)),
+        patch("mcpgateway.auth._resolve_teams_from_db", AsyncMock(return_value=["team-a"])),
+    ):
+        result = await rbac.get_current_user_with_permissions(mock_request, credentials=None, jwt_token=None)
+
+    assert result["is_admin"] is False
+    assert mock_request.state.token_teams == ["team-a"]
+
+
+@pytest.mark.asyncio
+async def test_proxy_user_team_resolution_failure_falls_back_to_public_only(no_cookie_request):
+    """Issue #6183: a team-resolution failure fails closed to ``[]``, not unset."""
+    mock_request = no_cookie_request
+    mock_request.headers = {"x-forwarded-user": "admin@platform.com", "user-agent": "test"}
+    mock_request.client = MagicMock(host="127.0.0.1")
+    mock_request.state = SimpleNamespace(plugin_context_table=None, plugin_global_context=None, request_id="req1", team_id=None)
+
+    mock_settings = MagicMock()
+    mock_settings.mcp_client_auth_enabled = False
+    mock_settings.trust_proxy_auth = True
+    mock_settings.trust_proxy_auth_dangerously = True
+    mock_settings.proxy_user_header = "x-forwarded-user"
+    mock_settings.platform_admin_email = "admin@platform.com"
+
+    with (
+        patch("mcpgateway.middleware.rbac.settings", mock_settings),
+        patch("mcpgateway.auth._resolve_teams_from_db", AsyncMock(side_effect=Exception("resolution failed"))),
+    ):
+        result = await rbac.get_current_user_with_permissions(mock_request, credentials=None, jwt_token=None)
+
+    assert result["is_admin"] is True
+    assert mock_request.state.token_teams == []
 
 
 @pytest.mark.asyncio
@@ -1725,6 +1788,9 @@ async def test_no_token_auth_disabled_platform_admin():
     assert result["email"] == "admin@platform.com"
     assert result["is_admin"] is True
     assert result["auth_method"] == "disabled"
+    # Issue #6183: the synthetic unrestricted platform admin must resolve to
+    # token_teams=None so global-record scope guards don't deny it.
+    assert mock_request.state.token_teams is None
 
 
 @pytest.mark.asyncio
@@ -3300,3 +3366,19 @@ class TestCheckPermissionInline:
         result = await decorated(user={"email": "user@test.com", "db": MagicMock()})
 
         assert result == "reached"
+
+
+# --- Global-record scope denial logging (issue #6183 review) ---
+
+
+def test_global_scope_denial_log_uses_sentinel_for_missing_request(caplog):
+    """A denial with no request must log a distinct sentinel, not the shape
+
+    (``token_teams=None``) that the guard treats as *unrestricted*, or an
+    operator reading the log could misread the denial reason.
+    """
+    with caplog.at_level("WARNING", logger="mcpgateway.middleware.rbac"):
+        rbac._log_global_scope_denial("user@example.com", None, "<no request>")
+
+    assert "token_teams='<no request>'" in caplog.text
+    assert "token_teams=None" not in caplog.text
