@@ -128,6 +128,61 @@ async def test_list_roles_shows_everything_to_unrestricted_admin(monkeypatch):
     assert len(result) == 2
 
 
+def _user_role_row(role_id, scope, scope_id=None):
+    """Build a row satisfying every UserRoleResponse field."""
+    return SimpleNamespace(
+        id=f"ur-{role_id}",
+        user_email="member@example.com",
+        role_id=role_id,
+        role_name=role_id,
+        scope=scope,
+        scope_id=scope_id,
+        granted_by="admin@example.com",
+        granted_at=_NOW,
+        expires_at=None,
+        is_active=True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_get_user_roles_hides_global_assignment_from_narrowed_admin(monkeypatch):
+    """A narrowed admin must not enumerate who holds a global role assignment (e.g. platform_admin)."""
+    rows = [_user_role_row("platform_admin", "global"), _user_role_row("team_admin", "team", "team-a")]
+    permission_service = MagicMock()
+    permission_service.get_user_roles = AsyncMock(return_value=rows)
+    monkeypatch.setattr(rbac_router, "PermissionService", lambda db: permission_service)
+
+    result = await rbac_router.get_user_roles(
+        "member@example.com",
+        scope=None,
+        active_only=True,
+        user=admin_user_context(["team-a"]),
+        db=MagicMock(),
+        request=_jwt_scoped_request(["team-a"], path="/rbac/users/member@example.com/roles"),
+    )
+
+    assert {r.scope for r in result} == {"team"}
+
+
+@pytest.mark.asyncio
+async def test_get_user_roles_shows_everything_to_unrestricted_admin(monkeypatch):
+    rows = [_user_role_row("platform_admin", "global"), _user_role_row("team_admin", "team", "team-a")]
+    permission_service = MagicMock()
+    permission_service.get_user_roles = AsyncMock(return_value=rows)
+    monkeypatch.setattr(rbac_router, "PermissionService", lambda db: permission_service)
+
+    result = await rbac_router.get_user_roles(
+        "member@example.com",
+        scope=None,
+        active_only=True,
+        user=admin_user_context(None),
+        db=MagicMock(),
+        request=_jwt_scoped_request(None, path="/rbac/users/member@example.com/roles"),
+    )
+
+    assert len(result) == 2
+
+
 @pytest.mark.asyncio
 async def test_get_global_role_returns_404_for_narrowed_admin(monkeypatch):
     """404, not 403 — do not confirm the existence of a role the caller may not enumerate."""
@@ -204,6 +259,113 @@ async def test_assignment_scope_matrix(scope, scope_id, target, expected_denied)
         assert exc.value.status_code == 403
     else:
         assert await rbac_router._authorize_assignment_scope(request, user, MagicMock(), scope, scope_id, target) is None
+
+
+def _role_with_permissions(permissions):
+    """Build a minimal role row with only the ``permissions`` field used by containment checks."""
+    return SimpleNamespace(id="r1", permissions=permissions)
+
+
+def _db_with_member(is_member: bool):
+    """Build a MagicMock db whose EmailTeamMember query resolves to present/absent."""
+    db = MagicMock()
+    db.query.return_value.filter.return_value.first.return_value = SimpleNamespace(id="m1") if is_member else None
+    return db
+
+
+@pytest.mark.asyncio
+async def test_team_assignment_denies_role_exceeding_callers_own_permissions(monkeypatch):
+    """A team_admin holding only admin.user_management must not grant a role carrying '*'.
+
+    RoleCreateRequest.permissions is an unvalidated List[str], so a scope="team"
+    role definition can legally carry a wildcard. Without delegation-containment,
+    granting such a role is the self-escalation path this closes.
+    """
+    role_service = MagicMock()
+    role_service.get_role_by_id = AsyncMock(return_value=_role_with_permissions(["*"]))
+    monkeypatch.setattr(rbac_router, "RoleService", lambda db: role_service)
+
+    permission_service = MagicMock()
+    permission_service.get_user_permissions = AsyncMock(return_value={"admin.user_management"})
+    monkeypatch.setattr(rbac_router, "PermissionService", lambda db: permission_service)
+
+    request = _jwt_scoped_request(["team-a"], path="/rbac/users/x/roles")
+    user = admin_user_context(["team-a"])
+
+    with pytest.raises(HTTPException) as exc:
+        await rbac_router._authorize_assignment_scope(request, user, _db_with_member(True), "team", "team-a", "member@example.com", role_id="r1")
+    assert exc.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_team_assignment_allows_role_covered_by_callers_own_permissions(monkeypatch):
+    """A team_admin may grant a role whose permissions are a subset of their own."""
+    role_service = MagicMock()
+    role_service.get_role_by_id = AsyncMock(return_value=_role_with_permissions(["tools.read"]))
+    monkeypatch.setattr(rbac_router, "RoleService", lambda db: role_service)
+
+    permission_service = MagicMock()
+    permission_service.get_user_permissions = AsyncMock(return_value={"admin.user_management", "tools.read"})
+    monkeypatch.setattr(rbac_router, "PermissionService", lambda db: permission_service)
+
+    request = _jwt_scoped_request(["team-a"], path="/rbac/users/x/roles")
+    user = admin_user_context(["team-a"])
+
+    result = await rbac_router._authorize_assignment_scope(request, user, _db_with_member(True), "team", "team-a", "member@example.com", role_id="r1")
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_team_assignment_denies_target_not_an_active_team_member(monkeypatch):
+    """UserRole.scope_id is not a team foreign key; membership must be checked explicitly."""
+    role_service = MagicMock()
+    role_service.get_role_by_id = AsyncMock(return_value=_role_with_permissions(["tools.read"]))
+    monkeypatch.setattr(rbac_router, "RoleService", lambda db: role_service)
+
+    permission_service = MagicMock()
+    permission_service.get_user_permissions = AsyncMock(return_value={"tools.read"})
+    monkeypatch.setattr(rbac_router, "PermissionService", lambda db: permission_service)
+
+    request = _jwt_scoped_request(["team-a"], path="/rbac/users/x/roles")
+    user = admin_user_context(["team-a"])
+
+    with pytest.raises(HTTPException) as exc:
+        await rbac_router._authorize_assignment_scope(request, user, _db_with_member(False), "team", "team-a", "outsider@example.com", role_id="r1")
+    assert exc.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_personal_assignment_denies_role_exceeding_callers_own_permissions(monkeypatch):
+    """Unconditional self-assignment must not bypass containment for a wildcard role."""
+    role_service = MagicMock()
+    role_service.get_role_by_id = AsyncMock(return_value=_role_with_permissions(["admin.system_config"]))
+    monkeypatch.setattr(rbac_router, "RoleService", lambda db: role_service)
+
+    permission_service = MagicMock()
+    permission_service.get_user_permissions = AsyncMock(return_value={"tools.read"})
+    monkeypatch.setattr(rbac_router, "PermissionService", lambda db: permission_service)
+
+    request = _jwt_scoped_request(["team-a"], path="/rbac/users/x/roles")
+    user = admin_user_context(["team-a"])
+
+    with pytest.raises(HTTPException) as exc:
+        await rbac_router._authorize_assignment_scope(request, user, MagicMock(), "personal", None, "admin@example.com", role_id="r1")
+    assert exc.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_revoke_does_not_run_delegation_containment():
+    """Revocation only reduces privilege; it must not be gated by role_id containment.
+
+    _authorize_assignment_scope's role_id parameter defaults to None precisely so
+    the revoke call site (which never passes it) skips the assign-only checks —
+    otherwise a team_admin could be blocked from revoking a wildcard-carrying
+    assignment they don't personally hold.
+    """
+    request = _jwt_scoped_request(["team-a"], path="/rbac/users/x/roles/r1")
+    user = admin_user_context(["team-a"])
+
+    assert await rbac_router._authorize_assignment_scope(request, user, MagicMock(), "team", "team-a", "member@example.com") is None
 
 
 @pytest.mark.asyncio

@@ -28,7 +28,7 @@ from sqlalchemy.orm import Session
 from mcpgateway.auth_context import get_scoped_resource_access_context
 from mcpgateway.common.query_params import QueryIdentifierDotted, QueryScopeId, QueryTeamContext
 from mcpgateway.common.validators import SecurityValidator
-from mcpgateway.db import Permissions, SessionLocal, UserRole
+from mcpgateway.db import EmailTeamMember, Permissions, SessionLocal, UserRole
 from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, get_current_user_with_permissions, require_global_admin_permission, require_permission, require_unrestricted_platform_admin
 from mcpgateway.schemas import PermissionCheckRequest, PermissionCheckResponse, PermissionListResponse, RoleCreateRequest, RoleResponse, RoleUpdateRequest, UserRoleAssignRequest, UserRoleResponse
 from mcpgateway.services.permission_service import PermissionService
@@ -80,7 +80,7 @@ def get_db() -> Generator[Session, None, None]:
 
 @router.post("/roles", response_model=RoleResponse)
 @require_global_admin_permission()
-async def create_role(role_data: RoleCreateRequest, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db), request: Request = None):
+async def create_role(role_data: RoleCreateRequest, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db), request: Request = None):  # pylint: disable=unused-argument
     """Create a new role.
 
     Requires admin permissions to create roles.
@@ -164,8 +164,9 @@ async def list_roles(
         roles = await role_service.list_roles(scope=scope)
 
         # Layer 1: a narrowed or public-only admin must not enumerate global roles.
-        # Filtered rather than denied — a 403 on this route would break the admin
-        # UI role picker for every narrowed token.
+        # Filtered rather than denied — a 403 on this list route has no legitimate
+        # caller to serve; a narrowed admin's own request is simply missing the
+        # global-scope rows it isn't authorized to see.
         _, token_teams = get_scoped_resource_access_context(request, user)
         if token_teams is not None:
             roles = [role for role in roles if role.scope != "global"]
@@ -229,7 +230,7 @@ async def get_role(role_id: str, user=Depends(get_current_user_with_permissions)
 
 @router.put("/roles/{role_id}", response_model=RoleResponse)
 @require_global_admin_permission()
-async def update_role(role_id: str, role_data: RoleUpdateRequest, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db), request: Request = None):
+async def update_role(role_id: str, role_data: RoleUpdateRequest, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db), request: Request = None):  # pylint: disable=unused-argument
     """Update an existing role.
 
     Args:
@@ -277,7 +278,7 @@ async def update_role(role_id: str, role_data: RoleUpdateRequest, user=Depends(g
 
 @router.delete("/roles/{role_id}")
 @require_global_admin_permission()
-async def delete_role(role_id: str, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db), request: Request = None):
+async def delete_role(role_id: str, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db), request: Request = None):  # pylint: disable=unused-argument
     """Delete a role.
 
     Args:
@@ -367,7 +368,72 @@ def _load_assignment(db: Session, user_email: str, role_id: str, scope: Optional
     return query.first()
 
 
-async def _authorize_assignment_scope(request, user, db: Session, scope: str, scope_id: Optional[str], target_email: str) -> None:
+def _permission_covered(caller_permissions: set, role_permission: str) -> bool:
+    """Whether ``caller_permissions`` covers ``role_permission`` (wildcard-aware).
+
+    Mirrors ``TokenCatalogService._validate_scope_containment()``'s per-permission
+    semantics (exact match, ``*``, or ``<category>.*`` category wildcard), applied
+    here to role-assignment delegation rather than token-scope delegation.
+
+    Args:
+        caller_permissions: The delegating caller's own effective permissions.
+        role_permission: A single permission string from the role being assigned.
+
+    Returns:
+        bool: True when the caller's permissions grant ``role_permission``.
+    """
+    if "*" in caller_permissions or role_permission in caller_permissions:
+        return True
+    if "." in role_permission:
+        category = role_permission.split(".", 1)[0]
+        if f"{category}.*" in caller_permissions:
+            return True
+    return False
+
+
+async def _authorize_delegated_permissions(db: Session, user, role_id: str, team_id: Optional[str]) -> None:
+    """Require the caller's own effective permissions to cover the role being granted.
+
+    Without this, a narrowed team_admin holding only ``admin.user_management``
+    could assign a role definition carrying arbitrary permissions (including
+    ``*``) to themselves or anyone else — ``RoleCreateRequest.permissions`` is an
+    unvalidated ``List[str]``, so nothing at role-creation time stops a
+    ``scope="team"`` role from carrying wildcard or ``admin.*`` permissions.
+    Only relevant to granting (assign), never to revoking: revocation only ever
+    reduces privilege, so gating it identically would block a team_admin from
+    cleaning up a wildcard-carrying assignment they don't personally hold.
+
+    Args:
+        db: Database session.
+        user: Authenticated caller context.
+        role_id: The role being assigned.
+        team_id: Team context to evaluate the caller's permissions in, or
+            ``None`` for a personal (self-)assignment.
+
+    Raises:
+        HTTPException: 403 when the caller's permissions don't cover the role.
+    """
+    role_service = RoleService(db)
+    role = await role_service.get_role_by_id(role_id)
+    if role is None:
+        # Let the assignment call below raise the real "role not found" error;
+        # this check's job is containment, not existence.
+        return
+
+    permission_service = PermissionService(db)
+    caller_permissions = await permission_service.get_user_permissions(user["email"], team_id=team_id)
+    for permission in role.permissions or []:
+        if not _permission_covered(caller_permissions, permission):
+            logger.warning(
+                "Role assignment denied: user=%s lacks permission=%s required by role=%s",
+                SecurityValidator.sanitize_log_message(user.get("email", "")),
+                SecurityValidator.sanitize_log_message(permission),
+                SecurityValidator.sanitize_log_message(role_id),
+            )
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
+
+
+async def _authorize_assignment_scope(request, user, db: Session, scope: str, scope_id: Optional[str], target_email: str, role_id: Optional[str] = None) -> None:
     """Authorize a role assignment or revocation against the caller's Layer-1 scope.
 
     A narrowed admin may only act within the teams their token covers, and may
@@ -381,6 +447,10 @@ async def _authorize_assignment_scope(request, user, db: Session, scope: str, sc
         scope: Assignment scope — ``global``, ``team`` or ``personal``.
         scope_id: Team identifier for team-scoped assignments.
         target_email: The user the assignment applies to.
+        role_id: The role being granted. Only passed by the assign path — its
+            presence is what enables the delegation-containment and
+            active-membership checks below; the revoke path omits it since
+            revoking never grants new authority.
 
     Raises:
         HTTPException: 403 when the caller's token does not cover the assignment.
@@ -396,11 +466,20 @@ async def _authorize_assignment_scope(request, user, db: Session, scope: str, sc
     if scope == "team":
         if not scope_id or scope_id not in token_teams:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
+        if role_id is not None:
+            await _authorize_delegated_permissions(db, user, role_id, team_id=scope_id)
+            # SECURITY: the assignment target must actually belong to the team —
+            # UserRole.scope_id is not a team foreign key, so nothing else enforces this.
+            member = db.query(EmailTeamMember).filter(EmailTeamMember.team_id == scope_id, EmailTeamMember.user_email == target_email, EmailTeamMember.is_active.is_(True)).first()
+            if member is None:
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
         return
 
     if scope == "personal":
         if target_email != user.get("email"):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
+        if role_id is not None:
+            await _authorize_delegated_permissions(db, user, role_id, team_id=None)
         return
 
     # Unknown scope values fail closed.
@@ -431,7 +510,7 @@ async def assign_role_to_user(user_email: str, assignment_data: UserRoleAssignRe
         True
     """
     try:
-        await _authorize_assignment_scope(request, user, db, assignment_data.scope, assignment_data.scope_id, user_email)
+        await _authorize_assignment_scope(request, user, db, assignment_data.scope, assignment_data.scope_id, user_email, role_id=assignment_data.role_id)
 
         role_service = RoleService(db)
         user_role = await role_service.assign_role_to_user(
@@ -471,6 +550,7 @@ async def get_user_roles(
     active_only: bool = Query(True, description="Show only active assignments"),
     user=Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
+    request: Request = None,
 ):
     """Get roles assigned to a user.
 
@@ -480,6 +560,7 @@ async def get_user_roles(
         active_only: Whether to show only active assignments
         user: Current authenticated user
         db: Database session
+        request: Incoming request, used to resolve Layer-1 token scope.
 
     Returns:
         List[UserRoleResponse]: User's role assignments
@@ -495,6 +576,13 @@ async def get_user_roles(
     try:
         permission_service = PermissionService(db)
         user_roles = await permission_service.get_user_roles(user_email=user_email, scope=scope, include_expired=not active_only)
+
+        # Layer 1: a narrowed or public-only admin must not enumerate global role
+        # assignments (e.g. who holds platform_admin) — same filter-not-deny
+        # rationale as list_roles() above, applied to the assignment sibling.
+        _, token_teams = get_scoped_resource_access_context(request, user)
+        if token_teams is not None:
+            user_roles = [user_role for user_role in user_roles if user_role.scope != "global"]
 
         result = [UserRoleResponse.model_validate(user_role) for user_role in user_roles]
         db.commit()

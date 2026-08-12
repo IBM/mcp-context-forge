@@ -500,6 +500,73 @@ The definitive, up-to-date manifest of all admin routes and their classification
 
 **Migrated routes** (A.1) use the canonical shared helpers and are covered by per-context deny tests. **Deferred routes** (A.2/A.4) are identified and classified but keep their own guards pending follow-up issue 1 — the drift guard ensures none regress unclassified. **Exempt surfaces** (A.3) are documented with a rationale.
 
+### Full Classification (Appendix A)
+
+Every route below manages a record whose ORM model has no `team_id` column, so all of them are global records by definition. Paths are the final mounted path (resolved from `app.routes`), not the router-local path.
+
+#### A.1 — Migrated to the canonical rule
+
+| Method + path | Class |
+|---|---|
+| roots — 26 call sites in `admin.py` / `main.py` | global-only (dedupe only, no behavior change) |
+| `GET /compliance/frameworks` | global-only |
+| `POST /compliance/reports` | global-only |
+| `GET /compliance/reports` | global-only |
+| `GET /compliance/reports/{report_id}` | global-only |
+| `GET /compliance/reports/{report_id}/export` | global-only |
+| `POST /rbac/roles` | global-only |
+| `PUT /rbac/roles/{role_id}` | global-only |
+| `DELETE /rbac/roles/{role_id}` | global-only |
+| `GET /rbac/roles` | filtered-read |
+| `GET /rbac/roles/{role_id}` | filtered-read |
+| `GET /rbac/users/{user_email}/roles` | team-scopable |
+| `POST /rbac/users/{user_email}/roles` | team-scopable |
+| `DELETE /rbac/users/{user_email}/roles/{role_id}` | team-scopable |
+| `GET /version` | global-only |
+
+#### A.2 — Classified, not yet migrated (`@require_permission("admin.<something>")`)
+
+A team-narrowed admin token receives full access through this decorator (`check_admin_permission()` in `permission_service.py` treats any non-empty `token_teams` as admin-bypass-eligible). Tracked in the `GLOBAL_ONLY_DEFERRED` manifest so the drift guard covers them immediately; changing their guard is a separate, larger follow-up (see follow-up issue tracked from this PR) — roughly 14x the blast radius of A.1.
+
+| Router (prefix) | Routes | Guard | Records |
+|---|---|---|---|
+| `llm_config_router` | 13 | `admin.system_config` | `LLMProvider`, `LLMModel` |
+| `llm_admin_router` | 13 | `admin.system_config` | `LLMProvider`, `LLMModel` |
+| `observability` (`/observability`) | 8 | `admin.system_config` | `ObservabilityTrace/Span/SavedQuery` |
+| `sso` (`/auth/sso`) | 7 | `admin.sso_providers:*`, `admin.user_management` | `SSOProvider`, `PendingUserApproval` |
+| `siem` (`/admin/siem`) | 5 | `admin.security_audit` | `SecurityEvent`, destinations |
+| `log_search` (`/api/logs`) | 5 | `logs:read`, `security:read`, `audit:read`, `metrics:read` | `StructuredLogEntry`, `SecurityEvent`, `PerformanceMetric` |
+| `runtime_admin_router` | 4 | `admin.system_config` | global runtime mode |
+| `toolops_router` (`/toolops`) | 3 | `admin.system_config` | `ToolOpsTestCases` |
+| `rbac` (`/rbac`) | 2 | `admin.security_audit` | permission introspection |
+
+**60 routes.**
+
+#### A.3 — Exempt (documented non-admin surfaces)
+
+| Method + path | Reason |
+|---|---|
+| `GET /auth/sso/providers` | Login-page provider list; must be reachable pre-authentication |
+| `GET /auth/sso/login/{provider_id}` | SSO initiation; pre-authentication by definition |
+| `GET /auth/sso/callback/{provider_id}` | SSO callback; authenticated by the IdP handshake, not by a gateway token |
+| `GET /rbac/permissions/available` | Static catalogue of permission strings; no record data |
+| `GET /rbac/my/roles` | Self-scoped — returns only the caller's own assignments |
+| `GET /rbac/my/permissions` | Self-scoped — same |
+| `GET /llm/gateway/models` | Feeds the LLM Chat model selector. Authenticated but deliberately not admin-scoped; returns only enabled, chat-capable models |
+
+#### A.4 — Router-level guard (a sixth pattern)
+
+`routers/metrics_maintenance.py` carries no per-route decorator; the router itself declares `dependencies=[Depends(require_admin_auth)]`. `require_admin_auth` returns a plain email string and checks only the DB `is_admin` flag — it never consults `token_teams`, so a team-narrowed admin token passes exactly as it does on the A.2 routes.
+
+| Method + path | Effective guard |
+|---|---|
+| `POST /api/metrics/cleanup` | router-level `require_admin_auth` |
+| `POST /api/metrics/rollup` | router-level `require_admin_auth` |
+| `GET /api/metrics/stats` | router-level `require_admin_auth` |
+| `GET /api/metrics/config` | router-level `require_admin_auth` |
+
+Classified as global-only, deferred, alongside A.2.
+
 ### Implementation Helpers
 
 Do not re-implement the global-record admin scope check. Shared helpers in `mcpgateway/middleware/rbac.py` are the single policy point:
@@ -512,7 +579,6 @@ Both helpers read Layer-1 narrowing from `request.state.token_teams`, so decorat
 ### Related Tests and Docs
 
 - **Test manifest**: `tests/unit/mcpgateway/test_global_record_scope.py` — the authoritative, living source of truth
-- **Design spec**: `docs/superpowers/specs/2026-08-06-global-record-admin-scope-design.md` — rationale and full classification details
 - **Invariant**: See Security Invariants (Required) in `CLAUDE.md` for the do-not-reimplement rule
 
 ---

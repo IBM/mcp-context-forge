@@ -369,11 +369,24 @@ def test_compliance_non_admin_forbidden():
 
     app.dependency_overrides[get_current_user_with_permissions] = non_admin_user
 
-    # Mock the platform admin permission check to return False for non-admins
-    with patch("mcpgateway.services.permission_service.PermissionService.check_platform_admin_permission", new_callable=AsyncMock, return_value=False):
-        client = TestClient(app)
-        response = client.get("/compliance/frameworks")
-        assert response.status_code == 403
+    try:
+        # Mock the platform admin permission check to return False for non-admins
+        with patch("mcpgateway.services.permission_service.PermissionService.check_platform_admin_permission", new_callable=AsyncMock, return_value=False):
+            client = TestClient(app)
+            response = client.get("/compliance/frameworks")
+            assert response.status_code == 403
+    finally:
+        # Restore the invariant established at module import (lines 23-28 above):
+        # mcpgateway.middleware.rbac's live decorator attributes point at the real
+        # implementations, but this file's own `compliance_router` import is baked
+        # with the mock (so the handler-level tests below keep working without a
+        # live DB). A finally block — not a bare tail call whose return value gets
+        # discarded — so a failure above still restores this, and so the shared
+        # sys.modules entry for compliance_router doesn't leak the real-decorated
+        # version to every test file that imports it later in the same session.
+        if "mcpgateway.routers.compliance_router" in sys.modules:
+            del sys.modules["mcpgateway.routers.compliance_router"]
+        _real_decorators = patch_rbac_decorators()
+        import mcpgateway.routers.compliance_router  # noqa: F401  # pylint: disable=unused-import,import-outside-toplevel
 
-    # Re-patch decorators for remaining tests
-    patch_rbac_decorators()
+        restore_rbac_decorators(_real_decorators)

@@ -296,7 +296,12 @@ async def test_get_user_roles_success(monkeypatch):
     monkeypatch.setattr(rbac_router, "PermissionService", lambda db: perm_service)
 
     db = MagicMock()
-    result = await rbac_router.get_user_roles("user@example.com", scope=None, active_only=True, user={"email": "admin@example.com"}, db=db)
+    # is_admin=True + an unrestricted (None) request scope resolve get_user_roles'
+    # Layer-1 filtering to "unrestricted admin" so the mock assignment below isn't
+    # filtered out — this test isn't exercising narrowing (see test_rbac_scope.py).
+    result = await rbac_router.get_user_roles(
+        "user@example.com", scope=None, active_only=True, user={"email": "admin@example.com", "is_admin": True}, db=db, request=scoped_request(None)
+    )
     assert result[0].role_id == "r1"
     db.commit.assert_called_once()
     db.close.assert_called_once()

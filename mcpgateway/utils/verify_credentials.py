@@ -1695,6 +1695,24 @@ async def require_admin_auth(
                             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Account disabled")
 
                         if current_user and current_user.is_admin:
+                            # SECURITY: this dependency never consulted Layer-1 narrowing
+                            # (request.state.token_teams stayed unset), so a global-record
+                            # scope check reading that state — e.g. version.py's
+                            # is_unrestricted_platform_admin() — always saw the secure-default
+                            # [] and denied every caller through this path, not just narrowed
+                            # ones. Resolve and set it the same way get_current_user() does,
+                            # so downstream Layer-1 checks see a real signal instead of the
+                            # fallback default.
+                            # First-Party
+                            from mcpgateway.auth import resolve_session_teams  # pylint: disable=import-outside-toplevel
+                            from mcpgateway.auth_context import normalize_token_teams  # pylint: disable=import-outside-toplevel
+
+                            token_use = payload.get("token_use")
+                            request.state.token_use = token_use
+                            if token_use == "session":  # nosec B105 - Not a password; token_use is a JWT claim type
+                                request.state.token_teams = await resolve_session_teams(payload, current_user.email, current_user)
+                            else:
+                                request.state.token_teams = normalize_token_teams(payload)
                             return current_user.email
                         elif current_user:
                             # User is authenticated but not admin - check if this is a browser request
@@ -1735,7 +1753,16 @@ async def require_admin_auth(
                     detail="Basic authentication is disabled for API endpoints. Use JWT or API tokens instead.",
                     headers={"WWW-Authenticate": "Bearer"},
                 )
-            return await verify_basic_credentials(basic_credentials)
+            result = await verify_basic_credentials(basic_credentials)
+            # SECURITY: HTTP Basic auth authenticates the single configured platform
+            # superadmin (BASIC_AUTH_USER/PASSWORD) — there is no JWT teams claim to
+            # narrow, and no token for the caller to reissue. Set the unrestricted
+            # signal explicitly so global-record scope checks (e.g. version.py) don't
+            # fall through to the secure-default [] and deny an operator who has no
+            # remediation available to them.
+            request.state.token_teams = None
+            request.state.token_use = None
+            return result
         else:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,

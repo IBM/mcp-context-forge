@@ -6,9 +6,8 @@ SPDX-License-Identifier: Apache-2.0
 Drift guard for admin routes over global records.
 
 Every admin route that manages a record with no team association must appear in
-exactly one manifest below. See
-docs/superpowers/specs/2026-08-06-global-record-admin-scope-design.md Appendix A
-and docs/docs/manage/rbac.md.
+exactly one manifest below. See docs/docs/manage/rbac.md ("Full Classification
+(Appendix A)") for the rationale and full route-by-route classification.
 """
 
 # Third-Party
@@ -210,6 +209,18 @@ def _has_admin_guard(route, include_deps) -> bool:
     (``/admin/tools``, ``/admin/teams``, etc.) that are out of scope for this
     guard.
 
+    Deliberately does NOT detect ``@require_permission(...)`` — that
+    decorator is not a FastAPI dependency (it wraps the endpoint function
+    directly, so it never appears in ``route.dependencies``), and it is used
+    for hundreds of ordinary team-scoped routes (``teams.create``,
+    ``tools.read``, ...) alongside the ~65 global-record routes tracked in
+    ``GLOBAL_ONLY_DEFERRED``/``FILTERED_READ``/``TEAM_SCOPABLE``. The same
+    permission string (e.g. ``admin.system_config``) is reused by both
+    global-record routes and ordinary per-team admin.py routes, so it cannot
+    be told apart syntactically — see
+    ``test_deferred_filtered_team_scopable_routes_carry_a_guard`` below for
+    the regression coverage this function cannot provide for that decorator.
+
     Args:
         route: A leaf route.
         include_deps: Dependencies accumulated from enclosing routers.
@@ -226,6 +237,27 @@ def _has_admin_guard(route, include_deps) -> bool:
         if "admin" in repr(dep).lower():
             return True
     return False
+
+
+def _has_required_permission_guard(route) -> bool:
+    """Whether a route's endpoint is wrapped by ``@require_permission(...)``.
+
+    ``require_permission()`` (mcpgateway/middleware/rbac.py) stamps
+    ``_required_permission`` on its wrapper for introspection. Unlike
+    ``_has_admin_guard``, this is intentionally not folded into
+    ``test_every_admin_route_is_classified``'s new-route detection — see the
+    docstring on ``_has_admin_guard`` for why that would flood the assertion
+    with unrelated team-scoped routes. It exists solely so
+    ``test_deferred_filtered_team_scopable_routes_carry_a_guard`` can detect
+    *removal* of the guard from an already-classified route.
+
+    Args:
+        route: A leaf route.
+
+    Returns:
+        bool: ``True`` when the endpoint carries a ``require_permission`` guard.
+    """
+    return getattr(getattr(route, "endpoint", None), "_required_permission", None) is not None
 
 
 def test_collect_routes_actually_finds_routes():
@@ -267,7 +299,31 @@ def test_deferred_bucket_only_shrinks():
 
 
 def test_every_admin_route_is_classified():
-    """No admin route over a global record may be left unclassified."""
+    """No admin route over a global record may be left unclassified.
+
+    Only catches new routes guarded by a FastAPI dependency (matches
+    ``_has_admin_guard``'s scope) — it cannot see new
+    ``@require_permission(...)``-guarded routes; see that helper's docstring.
+    """
     classified = GLOBAL_ONLY | GLOBAL_ONLY_DEFERRED | FILTERED_READ | TEAM_SCOPABLE | set(EXEMPT)
     unclassified = {(m, p) for m, p, route, deps in _routes() if (m, p) not in classified and _has_admin_guard(route, deps)}
     assert not unclassified, f"Unclassified admin routes: {sorted(unclassified)}\nClassify each in tests/unit/mcpgateway/test_global_record_scope.py per docs/docs/manage/rbac.md"
+
+
+def test_deferred_filtered_team_scopable_routes_carry_a_guard():
+    """Every route in the deferred/filtered/team-scopable manifests must still be guarded.
+
+    ``_has_admin_guard`` cannot see ``@require_permission(...)`` (see its
+    docstring), so a route silently losing that decorator was previously
+    invisible to this file entirely — this is the regression coverage for
+    that blind spot, scoped to the manifest's own known routes rather than
+    attempting (and false-positiving on) blanket new-route detection.
+    """
+    seen = {(m, p): (route, deps) for m, p, route, deps in _routes()}
+    tracked = GLOBAL_ONLY_DEFERRED | FILTERED_READ | TEAM_SCOPABLE
+    mounted = {entry: rd for entry, rd in seen.items() if entry in tracked}
+    assert mounted, "No deferred/filtered/team-scopable routes are mounted — the regression check below would be vacuous"
+    # A.4's metrics_maintenance routes carry a router-level Depends(require_admin_auth)
+    # instead of @require_permission — _has_admin_guard catches that pattern instead.
+    unguarded = {entry for entry, (route, deps) in mounted.items() if not _has_required_permission_guard(route) and not _has_admin_guard(route, deps)}
+    assert not unguarded, f"Routes lost their require_permission guard: {sorted(unguarded)}\nSee docs/docs/manage/rbac.md"
