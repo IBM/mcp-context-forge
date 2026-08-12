@@ -5025,7 +5025,7 @@ class ToolService(BaseService):
                 component="tool_service",
                 correlation_id=correlation_id,
                 duration_ms=mcp_duration_ms,
-                error_details={"error_type": "JsonRpcErrorResponse", "error_message": f"MCP error {mcp_error.code}: {mcp_error.message}"},
+                error_details={"error_type": "JsonRpcErrorResponse", "error_message": f"MCP error {mcp_error.code}"},
                 metadata={"event": "mcp_call_failed", "tool_name": tool_name_original, "gateway_id": gateway_id_str, "transport": "proxied"},
             )
             raise ToolInvocationError(f"MCP error {mcp_error.code}: {mcp_error.message}")

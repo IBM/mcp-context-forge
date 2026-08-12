@@ -357,8 +357,8 @@ class TestInvokeToolReverseProxied:
         assert failed_call is not None
         assert failed_call["level"] == "ERROR"
         assert failed_call["error_details"]["error_type"] == "JsonRpcErrorResponse"
-        assert "-32001" in failed_call["error_details"]["error_message"]
-        assert "upstream exploded" in failed_call["error_details"]["error_message"]
+        assert failed_call["error_details"]["error_message"] == f"MCP error {-32001}"
+        assert "upstream exploded" not in failed_call["error_details"]["error_message"]
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
