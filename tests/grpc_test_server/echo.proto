@@ -20,6 +20,9 @@ service EchoService {
 
   // Schema v2: adds priority field for schema change diff testing.
   rpc EchoV2(EchoV2Request) returns (EchoV2Response);
+
+  // Large payload echo for big message testing.
+  rpc EchoLarge(LargePayload) returns (LargePayload);
 }
 
 message EchoRequest {
@@ -56,4 +59,11 @@ message EchoV2Response {
   int32 value = 2;
   int32 priority = 3;
   string result = 4;
+}
+
+// Large payload for big message and concurrency stress testing.
+message LargePayload {
+  bytes data = 1;
+  int32 size = 2;
+  string marker = 3;
 }

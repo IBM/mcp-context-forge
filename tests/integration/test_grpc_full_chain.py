@@ -174,7 +174,7 @@ class TestPlaintextReflectionFullChain:
         host, port = grpc_server
         registered = _register(test_db, host, port)
         assert registered.name is not None
-        assert registered.method_count == 6  # Echo, EchoStream, EchoWithMetadata, EchoSlow, EchoV1, EchoV2
+        assert registered.method_count == 7  # Echo, EchoStream, EchoWithMetadata, EchoSlow, EchoV1, EchoV2
 
         tools = _tools_for(test_db, registered.id)
         names = {t.original_name for t in tools}
@@ -404,7 +404,7 @@ class TestTls:
         tools = _tools_for(test_db, registered.id)
         names = {t.original_name for t in tools}
         assert "grpc_test.EchoService.Echo" in names, f"Got tools: {names}"
-        assert len(names) == 6  # all RPCs
+        assert len(names) == 7  # all RPCs incl EchoLarge
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -651,3 +651,228 @@ class TestSchemaErrors:
                 test_db, registered.id, b"",
                 "empty.proto", "test@example.com", activate=True,
             ))
+
+# ══════════════════════════════════════════════════════════════════════
+# Tests: Concurrent Calls
+# ══════════════════════════════════════════════════════════════════════
+
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Tests: Concurrent Calls
+# ══════════════════════════════════════════════════════════════════════
+
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Tests: Concurrent Calls
+# ══════════════════════════════════════════════════════════════════════
+
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Tests: Concurrent Calls
+# ══════════════════════════════════════════════════════════════════════
+
+
+class TestConcurrency:
+
+    @pytest.mark.asyncio
+    async def test_same_method_10_concurrent(self, test_db, grpc_server):
+        """10 concurrent calls to the same method — all succeed, no races."""
+        host, port = grpc_server
+        registered = _register(test_db, host, port)
+        svc = GrpcService()
+
+        async def _call(i):
+            return await svc.invoke_method(
+                test_db, registered.id, "grpc_test.EchoService.Echo",
+                {"message": f"c-{i}", "value": i}, timeout=10,
+            )
+
+        results = await asyncio.gather(*(_call(i) for i in range(1, 11)))
+        assert len(results) == 10
+        for idx, r in enumerate(results):
+            assert r["value"] == (idx + 1) * 2
+
+    @pytest.mark.asyncio
+    async def test_cross_method_5_concurrent(self, test_db, grpc_server):
+        """5 concurrent calls to different methods — all complete."""
+        host, port = grpc_server
+        registered = _register(test_db, host, port)
+        svc = GrpcService()
+
+        results = await asyncio.gather(
+            svc.invoke_method(test_db, registered.id, "grpc_test.EchoService.Echo",
+                              {"message": "a", "value": 1}, timeout=10),
+            svc.invoke_method(test_db, registered.id, "grpc_test.EchoService.EchoV1",
+                              {"name": "b", "value": 2}, timeout=10),
+            svc.invoke_method(test_db, registered.id, "grpc_test.EchoService.EchoV2",
+                              {"name": "c", "value": 3, "priority": 1}, timeout=10),
+            svc.invoke_method(test_db, registered.id, "grpc_test.EchoService.Echo",
+                              {"message": "d", "value": 4}, timeout=10),
+            svc.invoke_method(test_db, registered.id, "grpc_test.EchoService.EchoSlow",
+                              {"message": "e", "value": 5}, timeout=10),
+            return_exceptions=True,
+        )
+        assert len(results) == 5
+        for r in results:
+            assert not isinstance(r, Exception), f"Unexpected error: {r}"
+
+    @pytest.mark.asyncio
+    async def test_cross_service_concurrent(self, test_db, grpc_server):
+        """2 registered services invoked concurrently."""
+        host, port = grpc_server
+        svc1 = _register(test_db, host, port, name=f"s1-{uuid.uuid4().hex[:4]}")
+        svc2 = _register(test_db, host, port, name=f"s2-{uuid.uuid4().hex[:4]}")
+        svc = GrpcService()
+
+        results = await asyncio.gather(
+            svc.invoke_method(test_db, svc1.id, "grpc_test.EchoService.Echo",
+                              {"message": "x", "value": 1}, timeout=10),
+            svc.invoke_method(test_db, svc2.id, "grpc_test.EchoService.Echo",
+                              {"message": "x", "value": 1}, timeout=10),
+        )
+        assert len(results) == 2
+        assert results[0]["message"] == "echo: x"
+        assert results[1]["message"] == "echo: x"
+
+    @pytest.mark.asyncio
+    async def test_streaming_and_unary_mixed(self, test_db, grpc_server):
+        """Server streaming + unary calls interleaved."""
+        host, port = grpc_server
+        registered = _register(test_db, host, port)
+        svc = GrpcService()
+
+        results = await asyncio.gather(
+            svc.invoke_method(test_db, registered.id, "grpc_test.EchoService.EchoStream",
+                              {"message": "s", "value": 1}, timeout=10),
+            svc.invoke_method(test_db, registered.id, "grpc_test.EchoService.Echo",
+                              {"message": "u", "value": 7}, timeout=10),
+            svc.invoke_method(test_db, registered.id, "grpc_test.EchoService.Echo",
+                              {"message": "v", "value": 7}, timeout=10),
+        )
+        stream_result = results[0]
+        items = stream_result.get("items", [stream_result])
+        assert len(items) == 5
+        assert results[1]["message"] == "echo: u"
+        assert results[2]["message"] == "echo: v"
+
+    @pytest.mark.asyncio
+    async def test_register_then_concurrent_invoke(self, test_db, grpc_server):
+        """Race: register service then immediately invoke 8 concurrent calls."""
+        host, port = grpc_server
+        registered = _register(test_db, host, port)
+        svc = GrpcService()
+
+        async def _call(i):
+            return await svc.invoke_method(
+                test_db, registered.id, "grpc_test.EchoService.Echo",
+                {"message": f"r-{i}", "value": i}, timeout=10,
+            )
+
+        results = await asyncio.gather(*(_call(i) for i in range(1, 9)))
+        assert len(results) == 8
+        for r in results:
+            assert "echo:" in r["message"]
+
+    @pytest.mark.asyncio
+    async def test_channel_pool_pressure(self, test_db, grpc_server):
+        """25 concurrent calls — channel pool handles pressure without leaks."""
+        host, port = grpc_server
+        registered = _register(test_db, host, port)
+        svc = GrpcService()
+
+        async def _call(i):
+            return await svc.invoke_method(
+                test_db, registered.id, "grpc_test.EchoService.Echo",
+                {"message": f"p-{i}", "value": i}, timeout=15,
+            )
+
+        results = await asyncio.gather(*(_call(i) for i in range(1, 26)))
+        assert len(results) == 25
+        for idx, r in enumerate(results):
+            assert r["value"] == (idx + 1) * 2
+
+
+# ══════════════════════════════════════════════════════════════════════
+# Tests: Large Messages
+# ══════════════════════════════════════════════════════════════════════
+
+
+class TestLargeMessages:
+
+    @staticmethod
+    def _large_payload(size_bytes):
+        return {"data": b"A" * size_bytes, "size": size_bytes, "marker": f"payload-{size_bytes}"}
+
+    def test_large_request_1mb(self, test_db, grpc_server):
+        """1MB request — echoed back with matching marker."""
+        host, port = grpc_server
+        registered = _register(test_db, host, port)
+        size = 1024 * 1024
+        result = _invoke(test_db, registered.id, "grpc_test.EchoService.EchoLarge",
+                         self._large_payload(size), timeout=30)
+        assert result["size"] > 0
+        assert "echoed:" in result["marker"]
+
+    def test_large_request_4mb_near_limit(self, test_db, grpc_server):
+        """4MB near the default max message size — succeeds."""
+        host, port = grpc_server
+        registered = _register(test_db, host, port)
+        size = 4 * 1024 * 1024
+        result = _invoke(test_db, registered.id, "grpc_test.EchoService.EchoLarge",
+                         self._large_payload(size), timeout=30)
+        assert result["size"] > 0
+        assert "echoed:" in result["marker"]
+
+    def test_large_response_echo_1mb(self, test_db, grpc_server):
+        """Server returns echoed data of ~1MB."""
+        host, port = grpc_server
+        registered = _register(test_db, host, port)
+        size = 1024 * 1024
+        result = _invoke(test_db, registered.id, "grpc_test.EchoService.EchoLarge",
+                         self._large_payload(size), timeout=30)
+        assert result["size"] > 0
+        assert "echoed:" in result["marker"]
+        assert len(result.get("data", b"")) > 0
+
+    @pytest.mark.asyncio
+    async def test_batch_5_large_messages(self, test_db, grpc_server):
+        """5 sequential 256KB calls — no leaks, all succeed."""
+        host, port = grpc_server
+        registered = _register(test_db, host, port)
+        svc = GrpcService()
+        size = 256 * 1024
+
+        results = []
+        for i in range(5):
+            r = await svc.invoke_method(
+                test_db, registered.id, "grpc_test.EchoService.EchoLarge",
+                {"data": b"B" * size, "size": size, "marker": f"batch-{i}"},
+                timeout=15,
+            )
+            results.append(r)
+        assert len(results) == 5
+        for r in results:
+            assert r["size"] > 0
+
+    @pytest.mark.asyncio
+    async def test_concurrent_large_messages(self, test_db, grpc_server):
+        """3 concurrent 256KB calls — all succeed."""
+        host, port = grpc_server
+        registered = _register(test_db, host, port)
+        svc = GrpcService()
+        size = 256 * 1024
+
+        async def _call(i):
+            return await svc.invoke_method(
+                test_db, registered.id, "grpc_test.EchoService.EchoLarge",
+                {"data": b"C" * size, "size": size, "marker": f"big-{i}"},
+                timeout=30,
+            )
+
+        results = await asyncio.gather(*(_call(i) for i in range(1, 4)))
+        assert len(results) == 3
+        for r in results:
+            assert r["size"] > 0
