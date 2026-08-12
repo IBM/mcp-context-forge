@@ -26,9 +26,6 @@ from typing import Any
 import jq
 import orjson
 
-# First-Party
-from mcpgateway.config import settings
-
 logger = logging.getLogger(__name__)
 
 __all__ = ["JqFilterError", "JqFilterTimeout", "run_jq_filter"]
