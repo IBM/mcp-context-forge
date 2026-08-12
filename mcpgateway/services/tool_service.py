@@ -723,7 +723,11 @@ def extract_using_jq(data, jq_filter=""):
     """
     Extracts data from a given input (string, dict, or list) using a jq filter string.
 
-    Uses cached compiled jq programs for performance.
+    The filter is refused if it uses a restricted jq built-in, then delegated to
+    the sandboxed runner in :mod:`mcpgateway.utils.jq_runner`, which owns program
+    compilation, caching, and the worker pool. A refusal, a timeout, or an
+    execution failure comes back as a single ``TextContent`` in a list, which
+    callers must treat as an error result rather than as tool output.
 
     Args:
         data (str, dict, list): The input JSON data. Can be a string, dict, or list.
@@ -792,6 +796,25 @@ def extract_using_jq(data, jq_filter=""):
         return [TextContent(type="text", text="Error applying jsonpath filter")]
 
     return result
+
+
+def _is_jq_filter_error(filtered_response) -> bool:
+    """Report whether ``extract_using_jq`` returned an error rather than data.
+
+    Refusals, timeouts, and execution failures come back as a list holding a
+    single ``TextContent``. Filter output never contains ``TextContent``
+    instances on either sink: the REST sink filters ``response.json()`` and the
+    MCP passthrough sink filters a ``model_dump(mode="json")`` payload, both of
+    which are plain JSON data by the time the filter runs.
+
+    Args:
+        filtered_response: Whatever ``extract_using_jq`` returned.
+
+    Returns:
+        True when the value is an error result that must not be reported as a
+        successful invocation.
+    """
+    return isinstance(filtered_response, list) and len(filtered_response) > 0 and isinstance(filtered_response[0], TextContent)
 
 
 _VALID_HTTP_HEADER_NAME = re.compile(r"^[!#$%&'*+\-.0-9A-Z^_`a-z|~]+$")
@@ -5720,7 +5743,7 @@ class ToolService(BaseService):
                             logger.debug("REST API tool response: %s", result)
                             filtered_response = await asyncio.to_thread(extract_using_jq, result, tool_jsonpath_filter)
                             # Check if extract_using_jq returned an error (list of TextContent objects)
-                            if isinstance(filtered_response, list) and len(filtered_response) > 0 and isinstance(filtered_response[0], TextContent):
+                            if _is_jq_filter_error(filtered_response):
                                 # Error case - use the TextContent directly
                                 tool_result = ToolResult(content=filtered_response, is_error=True)
                                 success = False
@@ -6405,6 +6428,12 @@ class ToolService(BaseService):
                             is_err = getattr(tool_call_result, "is_error", None)
                             if is_err is None:
                                 is_err = getattr(tool_call_result, "isError", False)
+                            # A refused or timed-out filter must be reported as an error here
+                            # too. Without this the refusal string was recorded as a successful
+                            # invocation carrying it as if it were real tool output.
+                            if _is_jq_filter_error(filtered_response):
+                                is_err = True
+                                structured = None
                             tool_result = ToolResult(content=filtered_response, structured_content=structured, is_error=is_err, meta=getattr(tool_call_result, "meta", None))
                             success = not is_err
                             logger.debug("Final tool_result: %s", tool_result)
