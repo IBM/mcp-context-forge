@@ -4280,6 +4280,12 @@ class ToolService(BaseService):
             if not server_match:
                 raise ToolNotFoundError(f"Tool not found: {name}")
 
+        gateway_transport = gateway_payload.get("transport") if gateway_payload else None
+        if gateway_transport == "PROXIED":
+            # PROXIED gateways dispatch over the reverse-proxy session, never a direct
+            # upstream connection; the tool request_type is only a schema placeholder.
+            return {"eligible": False, "fallbackReason": "reverse-proxy-transport"}
+
         tool_integration_type = tool_payload.get("integration_type")
         if tool_integration_type != "MCP":
             return {"eligible": False, "fallbackReason": f"unsupported-integration:{tool_integration_type or 'unknown'}"}
@@ -4873,6 +4879,8 @@ class ToolService(BaseService):
             mcp_error = response.payload.error
             raise ToolInvocationError(f"MCP error {mcp_error.code}: {mcp_error.message}")
 
+        validated_result = types.CallToolResult.model_validate(response.payload.result)
+
         mcp_duration_ms = (time.time() - mcp_start_time) * 1000
         structured_logger.log(
             level="INFO",
@@ -4882,7 +4890,7 @@ class ToolService(BaseService):
             duration_ms=mcp_duration_ms,
             metadata={"event": "mcp_call_completed", "tool_name": tool_name_original, "gateway_id": gateway_id_str, "transport": "proxied", "success": True},
         )
-        return types.CallToolResult.model_validate(response.payload.result)
+        return validated_result
 
     async def invoke_tool(
         self,
