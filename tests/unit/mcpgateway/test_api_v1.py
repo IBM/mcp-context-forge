@@ -139,13 +139,17 @@ class TestBuildV1RouterGroupA:
         settings = _settings()
         kwargs = _required_kwargs()
         v1 = build_v1_router(settings, **kwargs)
-        assert "/v1/sentinel-gateway" in _route_paths(v1)
+        paths = _route_paths(v1)
+        assert "/v1/gateways/sentinel-gateway" in paths
+        assert "/v1/mcp-servers/sentinel-gateway" in paths
 
     def test_server_router_included(self):
         settings = _settings()
         kwargs = _required_kwargs()
         v1 = build_v1_router(settings, **kwargs)
-        assert "/v1/sentinel-server" in _route_paths(v1)
+        paths = _route_paths(v1)
+        assert "/v1/servers/sentinel-server" in paths
+        assert "/v1/virtual-servers/sentinel-server" in paths
 
     def test_metrics_router_included(self):
         settings = _settings()
