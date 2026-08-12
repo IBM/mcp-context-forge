@@ -189,6 +189,98 @@ def test_run_jq_filter_reasserts_the_static_gate(monkeypatch):
         run_jq_filter("$ENV", {"a": 1})
 
 
+def test_start_jq_pool_warns_once_when_sandbox_unavailable(monkeypatch):
+    """A disabled sandbox logs a warning on first call and stays silent after."""
+    # First-Party
+    from mcpgateway.utils import jq_runner
+
+    monkeypatch.setattr(jq_runner, "subprocess_mode_available", lambda: False)
+    monkeypatch.setattr(jq_runner, "_FALLBACK_WARNED", False)
+    calls = []
+    monkeypatch.setattr(jq_runner.logger, "warning", lambda *a, **k: calls.append(a))
+
+    start_jq_pool()
+    start_jq_pool()
+
+    assert len(calls) == 1
+    assert jq_runner._FALLBACK_WARNED is True  # pylint: disable=protected-access
+
+
+def test_start_jq_pool_cleans_up_on_warmup_failure(monkeypatch):
+    """A pool that fails its warm-up submit is shut down, and the failure propagates."""
+    # First-Party
+    from mcpgateway.utils import jq_runner
+
+    shutdown_jq_pool()
+    monkeypatch.setattr(jq_runner, "subprocess_mode_available", lambda: True)
+
+    class _FailingFuture:
+        def result(self, timeout=None):  # pylint: disable=unused-argument
+            raise TimeoutError("warm-up never completed")
+
+    class _FailingPool:
+        def __init__(self):
+            self.shutdown_calls = []
+
+        def submit(self, *_args, **_kwargs):
+            return _FailingFuture()
+
+        def shutdown(self, wait=False, cancel_futures=False):  # pylint: disable=unused-argument
+            self.shutdown_calls.append((wait, cancel_futures))
+
+    failing_pool = _FailingPool()
+    monkeypatch.setattr(jq_runner, "_build_pool", lambda: failing_pool)
+
+    with pytest.raises(TimeoutError):
+        start_jq_pool()
+
+    assert failing_pool.shutdown_calls == [(False, True)]
+    assert jq_runner._POOL is None  # pylint: disable=protected-access
+
+
+def test_kill_workers_logs_when_process_kill_raises(monkeypatch):
+    """A process that refuses to die is logged, not left to crash the caller."""
+    # First-Party
+    from mcpgateway.utils import jq_runner
+
+    class _StubbornProcess:
+        def kill(self):
+            raise OSError("no such process")
+
+    class _StubPool:
+        def __init__(self):
+            self._processes = {1: _StubbornProcess()}
+            self.shutdown_calls = []
+
+        def shutdown(self, wait=False, cancel_futures=False):  # pylint: disable=unused-argument
+            self.shutdown_calls.append((wait, cancel_futures))
+
+    warnings = []
+    monkeypatch.setattr(jq_runner.logger, "warning", lambda *a, **k: warnings.append(a))
+
+    pool = _StubPool()
+    jq_runner._kill_workers(pool)  # pylint: disable=protected-access
+
+    assert len(warnings) == 1
+    assert pool.shutdown_calls == [(False, True)]
+
+
+def test_run_jq_filter_wraps_a_generic_submit_failure(monkeypatch):
+    """An exception from submit/result that isn't a timeout or a broken pool is still wrapped."""
+    # First-Party
+    from mcpgateway.utils import jq_runner
+
+    class _BrokenSubmitPool:
+        def submit(self, *_args, **_kwargs):
+            raise RuntimeError("cannot schedule new futures after shutdown")
+
+    monkeypatch.setattr(jq_runner, "subprocess_mode_available", lambda: True)
+    monkeypatch.setattr(jq_runner, "_ensure_pool", lambda: _BrokenSubmitPool())
+
+    with pytest.raises(JqFilterError):
+        run_jq_filter(".a", {"a": 1})
+
+
 def _worker_processes():
     """Return the live ``Process`` objects of the current pool.
 

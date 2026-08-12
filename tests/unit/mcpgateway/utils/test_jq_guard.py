@@ -111,3 +111,9 @@ def test_unquoted_object_keys_are_refused(jq_filter):
 def test_quoted_object_key_is_the_workaround():
     """The quoted form of the same filter is accepted."""
     assert assert_safe_jq_filter('{"env": .a}') is None
+
+
+def test_plain_string_escape_is_not_interpolation():
+    """A backslash escape that is not '\\(' stays inside the string, not code."""
+    assert scan_jq_tokens('"a\\tb\\"c"') == set()
+    assert assert_safe_jq_filter('"a\\tb\\"c"') is None
