@@ -608,6 +608,8 @@ class TokenScopingMiddleware:
         Returns:
             Parsed positive integer limit, or ``None`` when invalid/non-positive.
         """
+        if not isinstance(value, (str, bytes, bytearray, int, float)):
+            return None
         try:
             parsed = int(value)
         except (TypeError, ValueError):
@@ -945,13 +947,32 @@ class TokenScopingMiddleware:
                 finally:
                     db.close()
 
+    def check_team_membership(self, payload: dict, db=None) -> bool:
+        """Validate token team membership through the single admission policy point.
+
+        Thin public wrapper over the HTTP-admission membership rule so non-HTTP
+        admission paths (for example the reverse-proxy WebSocket handshake)
+        enforce the identical policy instead of re-implementing it. Callers
+        apply it to non-session (API/legacy) tokens only; session tokens
+        resolve membership from the database via ``resolve_session_teams``.
+
+        Args:
+            payload: Decoded JWT payload containing teams
+            db: Optional database session. If provided, caller manages lifecycle.
+                If None, creates and manages its own session.
+
+        Returns:
+            bool: True if team membership is valid, False otherwise
+        """
+        return self._check_team_membership(payload, db=db)
+
     def _is_targeted_missing_resource_delete(self, request_path: str, method: str) -> bool:
         """Return whether request is an exact server or gateway DELETE path."""
         normalized_path = self._normalize_path_for_matching(request_path)
         return method == "DELETE" and bool(_TARGETED_MISSING_DELETE_PATTERN.fullmatch(normalized_path))
 
     def _check_resource_team_ownership(  # noqa: PLR0911  # pylint: disable=too-many-return-statements
-        self, request_path: str, token_teams: list, db=None, _user_email: str = None
+        self, request_path: str, token_teams: list, db=None, _user_email: str | None = None
     ) -> ResourceOwnershipResult:
         """
         Check if the requested resource is accessible by the token.

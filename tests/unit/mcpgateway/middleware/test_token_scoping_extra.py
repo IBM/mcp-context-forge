@@ -192,6 +192,52 @@ def test_check_team_membership_public_token():
     assert middleware._check_team_membership(payload) is True
 
 
+def test_check_team_membership_public_helper_public_token():
+    """The public membership policy point admits public-only tokens without a DB lookup."""
+    middleware = TokenScopingMiddleware()
+    payload = {"teams": [], "sub": "user@example.com"}
+    assert middleware.check_team_membership(payload) is True
+
+
+def test_check_team_membership_public_helper_missing_email_denies():
+    """The public membership policy point denies team-scoped tokens without a user email."""
+    middleware = TokenScopingMiddleware()
+    payload = {"teams": ["team-1"]}
+    assert middleware.check_team_membership(payload) is False
+
+
+def test_check_team_membership_public_helper_revoked_membership_denies(monkeypatch):
+    """The public membership policy point denies tokens whose claimed team membership is gone."""
+    middleware = TokenScopingMiddleware()
+    payload = {"sub": "user@example.com", "teams": ["team-1", "team-2"]}
+
+    cache = MagicMock()
+    cache.get_team_membership_valid_sync.return_value = None
+    monkeypatch.setattr("mcpgateway.cache.auth_cache.get_auth_cache", lambda: cache)
+
+    db = MagicMock()
+    result_proxy = MagicMock()
+    result_proxy.scalars.return_value.all.return_value = ["team-1"]
+    db.execute.return_value = result_proxy
+
+    def _get_db():
+        yield db
+
+    monkeypatch.setattr("mcpgateway.db.get_db", _get_db)
+    assert middleware.check_team_membership(payload) is False
+    cache.set_team_membership_valid_sync.assert_called_with("user@example.com", ["team-1", "team-2"], False)
+
+
+def test_check_team_membership_public_helper_delegates_to_private_policy():
+    """The public helper is a thin wrapper over the HTTP-admission membership rule."""
+    middleware = TokenScopingMiddleware()
+    payload = {"sub": "user@example.com", "teams": ["team-1"]}
+    sentinel_db = MagicMock(name="sentinel_db")
+    with patch.object(middleware, "_check_team_membership", return_value=True) as private_policy:
+        assert middleware.check_team_membership(payload, db=sentinel_db) is True
+    private_policy.assert_called_once_with(payload, db=sentinel_db)
+
+
 def test_check_resource_team_ownership_no_resource():
     middleware = TokenScopingMiddleware()
     assert middleware._check_resource_team_ownership("/health", [], db=None, _user_email=None) is ResourceOwnershipResult.ALLOWED
