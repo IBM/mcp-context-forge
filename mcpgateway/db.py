@@ -1394,6 +1394,10 @@ class Permissions:
     ADMIN_SSO_PROVIDERS_UPDATE = "admin.sso_providers:update"
     ADMIN_SSO_PROVIDERS_DELETE = "admin.sso_providers:delete"
 
+    # OAuth DCR registered-client management (global rows, no team scope)
+    ADMIN_OAUTH_CLIENTS_READ = "admin.oauth_clients:read"
+    ADMIN_OAUTH_CLIENTS_DELETE = "admin.oauth_clients:delete"
+
     # Observability and audit read permissions
     LOGS_READ = "logs:read"
     METRICS_READ = "metrics:read"

@@ -2378,6 +2378,85 @@ class TestMultiTeamSessionTokenDerivation:
         assert mock_perm_service.check_permission.call_args.kwargs["check_any_team"] is True
 
 
+class TestGlobalOnlyPermission:
+    """Tests for require_permission(global_only=True) — used by routes managing
+    globally-scoped resources with no team column (e.g. OAuth registered-client
+    management), where the normal per-request team derivation would let a
+    team-scoped role grant access to a resource it has no business touching.
+    """
+
+    @pytest.mark.asyncio
+    async def test_global_only_ignores_derivable_resource_team(self, monkeypatch):
+        """global_only=True must not derive team_id from a resource kwarg, even
+        when _derive_team_from_resource would otherwise resolve one."""
+
+        async def dummy_func(user=None, db=None, gateway_id=None):
+            return "ok"
+
+        mock_db = MagicMock()
+        mock_user = {"email": "user@test.com", "db": mock_db, "token_use": "session"}
+        mock_perm_service = AsyncMock()
+        mock_perm_service.check_permission.return_value = True
+        monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+        with (
+            patch("mcpgateway.middleware.rbac._derive_team_from_resource", return_value="team-derived"),
+            patch("mcpgateway.plugins.get_plugin_manager", return_value=None),
+        ):
+            decorated = rbac.require_permission("admin.oauth_clients:read", global_only=True)(dummy_func)
+            result = await decorated(user=mock_user, db=mock_db, gateway_id="gateway-1")
+
+        assert result == "ok"
+        assert mock_perm_service.check_permission.call_args.kwargs["team_id"] is None
+        assert mock_perm_service.check_permission.call_args.kwargs["check_any_team"] is False
+
+    @pytest.mark.asyncio
+    async def test_global_only_ignores_user_context_team_id(self, monkeypatch):
+        """global_only=True must not use a team_id present on the user context."""
+
+        async def dummy_func(user=None, db=None):
+            return "ok"
+
+        mock_db = MagicMock()
+        mock_user = {"email": "user@test.com", "db": mock_db, "token_use": "session", "team_id": "team-1"}
+        mock_perm_service = AsyncMock()
+        mock_perm_service.check_permission.return_value = True
+        monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+        with patch("mcpgateway.plugins.get_plugin_manager", return_value=None):
+            decorated = rbac.require_permission("admin.oauth_clients:delete", global_only=True)(dummy_func)
+            result = await decorated(user=mock_user, db=mock_db)
+
+        assert result == "ok"
+        assert mock_perm_service.check_permission.call_args.kwargs["team_id"] is None
+        assert mock_perm_service.check_permission.call_args.kwargs["check_any_team"] is False
+
+    @pytest.mark.asyncio
+    async def test_global_only_false_by_default_still_aggregates(self, monkeypatch):
+        """Sanity check: omitting global_only preserves the pre-existing check_any_team
+        aggregation behavior (regression guard against changing the default)."""
+
+        async def dummy_func(user=None, db=None):
+            return "ok"
+
+        mock_db = MagicMock()
+        mock_user = {"email": "user@test.com", "db": mock_db, "token_use": "session"}
+        mock_perm_service = AsyncMock()
+        mock_perm_service.check_permission.return_value = True
+        monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+        with (
+            patch("mcpgateway.middleware.rbac._derive_team_from_resource", return_value=None),
+            patch("mcpgateway.middleware.rbac._derive_team_from_payload", new_callable=AsyncMock, return_value=None),
+            patch("mcpgateway.plugins.get_plugin_manager", return_value=None),
+        ):
+            decorated = rbac.require_permission("admin.oauth_clients:read")(dummy_func)
+            result = await decorated(user=mock_user, db=mock_db)
+
+        assert result == "ok"
+        assert mock_perm_service.check_permission.call_args.kwargs["check_any_team"] is True
+
+
 class TestMultiTeamSessionTokenDerivationAnyPermission:
     """Tests for multi-team session token team derivation in require_any_permission."""
 
