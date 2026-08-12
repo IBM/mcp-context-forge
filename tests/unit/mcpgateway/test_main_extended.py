@@ -120,6 +120,9 @@ from mcpgateway.services.tool_service import ToolError, ToolNotFoundError
 from mcpgateway.transports.streamablehttp_transport import user_context_var
 from mcpgateway.validation.jsonrpc import JSONRPCError
 
+# Local
+from tests.helpers.router_helpers import collect_routes
+
 
 def _make_request(
     path: str,
@@ -3061,6 +3064,13 @@ class TestAdminAuthMiddleware:
 class TestMCPPathRewriteMiddleware:
     """Cover MCPPathRewriteMiddleware branches."""
 
+    def test_versioned_virtual_server_well_known_alias_registered(self):
+        """The per-server well-known router is available under the new v1 alias."""
+        paths = {path for path, *_ in collect_routes(app.router)}
+
+        assert "/v1/virtual-servers/{server_id}/.well-known/oauth-protected-resource" in paths
+        assert "/v1/virtual-servers/{server_id}/.well-known/{filename:path}" in paths
+
     @pytest.mark.asyncio
     async def test_rewrite_exact_mcp_path_prevents_mount_redirect(self):
         """Exact /mcp is internally normalized so Starlette Mount cannot emit 307."""
@@ -3266,6 +3276,28 @@ class TestMCPPathRewriteMiddleware:
         app_mock.assert_called_once_with(scope, receive, send)
 
     @pytest.mark.asyncio
+    async def test_rewrite_virtual_server_alias_preserves_server_id(self):
+        """The v1 alias rewrites to /mcp/ while retaining canonical server scope."""
+        app_mock = AsyncMock()
+        middleware = MCPPathRewriteMiddleware(app_mock)
+        scope = {
+            "type": "http",
+            "path": "/v1/virtual-servers/server-123/mcp",
+            "raw_path": b"/v1/virtual-servers/server-123/mcp",
+            "headers": [],
+        }
+        receive = AsyncMock()
+        send = AsyncMock()
+
+        with patch("mcpgateway.main.streamable_http_auth", new=AsyncMock(return_value=True)):
+            await middleware._call_streamable_http(scope, receive, send)
+
+        assert scope["modified_path"] == "/servers/server-123/mcp"
+        assert scope["path"] == "/mcp/"
+        assert scope["raw_path"] == b"/mcp/"
+        app_mock.assert_called_once_with(scope, receive, send)
+
+    @pytest.mark.asyncio
     async def test_rewrite_auth_failure(self):
         app_mock = AsyncMock()
         middleware = MCPPathRewriteMiddleware(app_mock)
@@ -3310,11 +3342,12 @@ class TestMCPPathRewriteMiddleware:
         app_mock.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_rewrite_rejects_empty_server_id_segment(self):
-        """Middleware returns 404 for /servers//mcp (empty server ID)."""
+    @pytest.mark.parametrize("path", ["/servers//mcp", "/v1/virtual-servers//mcp"])
+    async def test_rewrite_rejects_empty_server_id_segment(self, path):
+        """Middleware returns 404 for recognised MCP paths with an empty server ID."""
         app_mock = AsyncMock()
         middleware = MCPPathRewriteMiddleware(app_mock)
-        scope = {"type": "http", "path": "/servers//mcp", "headers": []}
+        scope = {"type": "http", "path": path, "headers": []}
         receive = AsyncMock()
         sent = []
 

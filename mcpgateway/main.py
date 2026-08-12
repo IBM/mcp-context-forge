@@ -3074,7 +3074,8 @@ class MCPPathRewriteMiddleware:
     Middleware that rewrites paths ending with '/mcp' to '/mcp/', after performing authentication.
 
     - Rewrites exact '/mcp' to '/mcp/' so Starlette's mount does not emit a 307 redirect.
-    - Rewrites paths like '/servers/<server_id>/mcp' to '/mcp/'.
+    - Rewrites '/servers/<server_id>/mcp' and
+      '/v1/virtual-servers/<server_id>/mcp' to '/mcp/'.
     - Keeps ASGI ``raw_path`` aligned with rewritten paths when present.
     - Only exact '/mcp' and server-scoped MCP transport paths are rewritten.
     - Authentication is performed before any path rewriting.
@@ -3212,7 +3213,7 @@ class MCPPathRewriteMiddleware:
         # Strip root_path prefix before pattern matching.
         # In reverse proxy deployments, scope["path"] may contain the full path
         # including the proxy prefix (e.g., "/dev/mcp-gateway/service/gateway/servers/123/mcp").
-        # We need to strip this prefix to correctly match the /servers/ pattern.
+        # We need to strip this prefix to correctly match server-scoped patterns.
         root_path = (scope.get("root_path") or settings.app_root_path or "").rstrip("/")
         app_path = _normalize_scope_path(original_path, root_path)
 
@@ -3228,7 +3229,9 @@ class MCPPathRewriteMiddleware:
                 await self.application(scope, receive, send)
                 return
             if app_path.endswith("/mcp") or (app_path.endswith("/mcp/") and app_path != "/mcp/"):
-                # SECURITY: Only rewrite recognised MCP paths — /servers/{id}/mcp.
+                # SECURITY: Only rewrite recognised MCP paths — /servers/{id}/mcp
+                # and its versioned product-language alias
+                # /v1/virtual-servers/{id}/mcp.
                 # Arbitrary prefixes (e.g. /foo/mcp) must NOT be rewritten to
                 # /mcp/ as that would expose the global MCP transport under
                 # undocumented aliases, broadening the externally reachable
@@ -3237,15 +3240,26 @@ class MCPPathRewriteMiddleware:
                     # Validate that a non-empty server_id segment is present.
                     # Without this check, paths like /servers//mcp (empty ID)
                     # would be rewritten and silently fall through (#3891).
-                    _srv_match = re.match(r"/servers/([^/]+)/mcp", app_path)
-                    if not _srv_match:
-                        response = ORJSONResponse({"detail": "Invalid server identifier"}, status_code=404)
-                        await response(scope, receive, send)
-                        return
+                    _srv_match = re.fullmatch(r"/servers/([^/]+)/mcp/?", app_path)
+                elif app_path.startswith("/v1/virtual-servers/"):
+                    _srv_match = re.fullmatch(r"/v1/virtual-servers/([^/]+)/mcp/?", app_path)
                 else:
-                    # Not a /servers/ path — do not rewrite, pass through
+                    # Not a recognised server-scoped path — do not rewrite.
                     await self.application(scope, receive, send)
                     return
+
+                if not _srv_match:
+                    response = ORJSONResponse({"detail": "Invalid server identifier"}, status_code=404)
+                    await response(scope, receive, send)
+                    return
+
+                if app_path.startswith("/v1/virtual-servers/"):
+                    # Downstream Python and Rust MCP transports extract the
+                    # server ID from the canonical /servers/{id}/mcp shape.
+                    # Preserve that scoped identity while rewriting the public
+                    # alias to the shared /mcp/ mount.
+                    trailing_slash = "/" if app_path.endswith("/") else ""
+                    scope["modified_path"] = f"/servers/{_srv_match.group(1)}/mcp{trailing_slash}"
                 # Rewrite to /mcp/ and continue through middleware (lets CORSMiddleware handle preflight)
                 # Preserve root_path prefix when rewriting
                 self._apply_mcp_rewrite(scope, root_path)
@@ -3558,10 +3572,10 @@ protocol_router = APIRouter(prefix="/protocol", tags=["Protocol"])
 tool_router = APIRouter(prefix="/tools", tags=["Tools"])
 resource_router = APIRouter(prefix="/resources", tags=["Resources"])
 prompt_router = APIRouter(prefix="/prompts", tags=["Prompts"])
-gateway_router = APIRouter(prefix="/gateways", tags=["Gateways"])
+gateway_router = APIRouter(tags=["Gateways"])
 root_router = APIRouter(prefix="/roots", tags=["Roots"])
 utility_router = APIRouter(tags=["Utilities"])
-server_router = APIRouter(prefix="/servers", tags=["Servers"])
+server_router = APIRouter(tags=["Servers"])
 metrics_router = APIRouter(prefix="/metrics", tags=["Metrics"])
 tag_router = APIRouter(prefix="/tags", tags=["Tags"])
 export_import_router = APIRouter(tags=["Export/Import"])
@@ -12875,8 +12889,9 @@ app.include_router(utility_router)
 # RFC well-known endpoints (/.well-known/*)
 app.include_router(well_known_router)
 
-# Per-server well-known endpoints (/servers/{id}/.well-known/*)
+# Per-server well-known endpoints and their versioned product-language aliases.
 app.include_router(server_well_known_router, prefix="/servers")
+app.include_router(server_well_known_router, prefix="/v1/virtual-servers")
 
 # OpenAPI schema generation (/v1/tools/generate-schemas-from-openapi)
 # prefix="/v1/tools" is hardcoded in the router — not versioned via v1_router to avoid /v1/v1/tools
