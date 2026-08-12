@@ -9,7 +9,8 @@ The reverse-proxy client is a maintained MCP server reached through its
 registration WebSocket. After catalog registration the gateway drives the
 legacy MCP lifecycle itself: ``initialize`` -> ``notifications/initialized``
 -> capability-gated list calls -> catalog sync/reconcile -> virtual-server
-association -> commit -> cache invalidations.
+association -> commit. Cache invalidations and subscriber notification are
+published by the caller only after routing promotion succeeds.
 """
 
 from dataclasses import dataclass
@@ -94,7 +95,10 @@ class ReverseProxyDiscoveryService:
 
         The caller's request-scoped ``db`` is reused and committed exactly
         once, after all network interaction has succeeded; any earlier
-        failure leaves the catalog untouched.
+        failure leaves the catalog untouched. No cache invalidation or
+        subscriber notification happens here: the caller invokes
+        :meth:`publish_post_commit_effects` only after routing promotion
+        succeeds.
 
         Args:
             db: Caller-owned request-scoped database session.
@@ -157,8 +161,6 @@ class ReverseProxyDiscoveryService:
         db_server.resources = list(db_gateway.resources)
         db_server.prompts = list(db_gateway.prompts)
         db.commit()
-
-        await self._publish_post_commit_effects(db_gateway, db_server)
 
         return ReverseProxyDiscoveryResult(
             capabilities=capabilities,
@@ -228,13 +230,20 @@ class ReverseProxyDiscoveryService:
         result_key: str,
         timeout_seconds: float,
     ) -> list[dict[str, Any]]:
-        """Fetch every page of one list endpoint, bounded against hostile cursors."""
+        """Fetch every page of one list endpoint, bounded against hostile cursors.
+
+        A result object missing the list member is rejected outright: treating
+        it as an empty page would let a malformed peer prune the entire
+        catalog during reconciliation.
+        """
         items: list[dict[str, Any]] = []
         cursor: str | None = None
         for _ in range(MAX_LIST_PAGES):
             params: JsonObject = {"cursor": cursor} if cursor is not None else {}
             result = await self._rpc_call(session_manager, connection_id, method, params, timeout_seconds)
-            page = result.get(result_key, [])
+            if result_key not in result:
+                raise ReverseProxyDiscoveryError(f"reverse-proxy {method} returned a result missing required member {result_key!r}")
+            page = result[result_key]
             if not isinstance(page, list):
                 raise ReverseProxyDiscoveryError(f"reverse-proxy {method} returned a non-array {result_key}")
             for page_index, entry in enumerate(page):
@@ -299,13 +308,18 @@ class ReverseProxyDiscoveryService:
                 prompts.append(PromptCreate(name=str(data.get("name", "")), description=data.get("description"), template=str(data.get("template", ""))))
         return prompts
 
-    async def _publish_post_commit_effects(self, db_gateway: DbGateway, db_server: DbServer) -> None:
+    async def publish_post_commit_effects(self, db_gateway: DbGateway, db_server: DbServer) -> None:
         """Invalidate caches and notify subscribers after the commit succeeds.
 
         The advertised catalog categories are invalidated unconditionally:
         registration discovery re-publishes the full catalog state, and a
         metadata-only rediscovery updates rows in place without any add/remove
         counts, so gating on per-type deltas would leave list/catalog APIs stale.
+
+        The caller (the registration router) invokes this only after routing
+        promotion succeeds; ``discover_and_reconcile`` never publishes, so a
+        registration that fails before promotion leaves the committed catalog
+        unpublished and unrouted (fail-closed).
         """
         cache = _get_registry_cache()
         await cache.invalidate_tools()
