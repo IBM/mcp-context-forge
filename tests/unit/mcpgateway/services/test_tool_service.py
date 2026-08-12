@@ -6203,6 +6203,75 @@ class TestRestToolNonJsonResponses:
             assert "Failed to parse JSON error response" in caplog.text
 
     @pytest.mark.asyncio
+    async def test_rest_tool_handles_json_error_with_error_key(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """HTTP error response with JSON containing 'error' key (covers line 5706-5707)."""
+        # Third-Party
+        import httpx
+
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "GET"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_value = None
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        mock_response = AsyncMock()
+        mock_request = Mock(spec=httpx.Request)
+        mock_request.url = "https://api.example.com/test"
+        mock_response.raise_for_status = Mock(
+            side_effect=httpx.HTTPStatusError("Server Error", request=mock_request, response=mock_response)
+        )
+        mock_response.status_code = 500
+        mock_response.text = '{"error": "Internal server error", "code": "ERR_500"}'
+        mock_response.json = Mock(return_value={"error": "Internal server error", "code": "ERR_500"})
+
+        tool_service._http_client.get = AsyncMock(return_value=mock_response)
+
+        mock_metrics_buffer = Mock()
+        mock_metrics_buffer.record_tool_metric = Mock()
+        with patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer):
+            result = await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
+
+            assert result.is_error is True
+            # Error message should extract the "error" value (line 5707)
+            assert "Internal server error" in result.content[0].text
+
+    @pytest.mark.asyncio
+    async def test_rest_tool_handles_json_error_without_error_key(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """HTTP error response with JSON but no 'error' key (covers line 5709-5710)."""
+        # Third-Party
+        import httpx
+
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "GET"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_value = None
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        mock_response = AsyncMock()
+        mock_request = Mock(spec=httpx.Request)
+        mock_request.url = "https://api.example.com/test"
+        mock_response.raise_for_status = Mock(
+            side_effect=httpx.HTTPStatusError("Not Found", request=mock_request, response=mock_response)
+        )
+        mock_response.status_code = 404
+        mock_response.text = '{"message": "Resource not found", "path": "/api/test"}'
+        mock_response.json = Mock(return_value={"message": "Resource not found", "path": "/api/test"})
+
+        tool_service._http_client.get = AsyncMock(return_value=mock_response)
+
+        mock_metrics_buffer = Mock()
+        mock_metrics_buffer.record_tool_metric = Mock()
+        with patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer):
+            result = await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
+
+            assert result.is_error is True
+            # Error message should use fallback format (line 5709)
+            assert "HTTP 404:" in result.content[0].text
+            assert "Resource not found" in result.content[0].text
+
+    @pytest.mark.asyncio
     async def test_rest_tool_handles_plain_text_response(self, tool_service, mock_tool, mock_global_config_obj, test_db, caplog):
         """REST tool handles plain text responses without crashing."""
         mock_tool.integration_type = "REST"
