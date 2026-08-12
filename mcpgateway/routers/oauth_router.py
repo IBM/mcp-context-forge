@@ -32,7 +32,7 @@ from mcpgateway.auth_context import get_user_email
 from mcpgateway.common.query_params import QueryErrorCode
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
-from mcpgateway.db import Gateway, get_db
+from mcpgateway.db import Gateway, get_db, Permissions
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.middleware.token_scoping import ResourceOwnershipResult, token_scoping_middleware
 from mcpgateway.schemas import EmailUserResponse
@@ -1143,6 +1143,7 @@ async def fetch_tools_after_oauth(
 
 
 @oauth_router.get("/registered-clients")
+@require_permission(Permissions.ADMIN_OAUTH_CLIENTS_READ, allow_admin_bypass=False, global_only=True)
 async def list_registered_oauth_clients(request: Request, current_user: EmailUserResponse = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> Dict[str, Any]:  # noqa: ARG001
     """List all registered OAuth clients (created via DCR).
 
@@ -1151,7 +1152,7 @@ async def list_registered_oauth_clients(request: Request, current_user: EmailUse
 
     Args:
         request: The FastAPI request object.
-        current_user: The authenticated user (admin access required)
+        current_user: The authenticated user (requires ``admin.oauth_clients:read`` and un-narrowed admin scope)
         db: Database session
 
     Returns:
@@ -1196,6 +1197,7 @@ async def list_registered_oauth_clients(request: Request, current_user: EmailUse
 
 
 @oauth_router.get("/registered-clients/{gateway_id}")
+@require_permission(Permissions.ADMIN_OAUTH_CLIENTS_READ, allow_admin_bypass=False, global_only=True)
 async def get_registered_client_for_gateway(
     gateway_id: str,
     request: Request,
@@ -1207,7 +1209,7 @@ async def get_registered_client_for_gateway(
     Args:
         gateway_id: The gateway ID to lookup
         request: The FastAPI request object.
-        current_user: The authenticated user
+        current_user: The authenticated user (requires ``admin.oauth_clients:read`` and un-narrowed admin scope)
         db: Database session
 
     Returns:
@@ -1251,6 +1253,7 @@ async def get_registered_client_for_gateway(
 
 
 @oauth_router.delete("/registered-clients/{client_id}")
+@require_permission(Permissions.ADMIN_OAUTH_CLIENTS_DELETE, allow_admin_bypass=False, global_only=True)
 async def delete_registered_client(client_id: str, request: Request, current_user: EmailUserResponse = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> Dict[str, Any]:  # noqa: ARG001
     """Delete a registered OAuth client.
 
@@ -1261,7 +1264,7 @@ async def delete_registered_client(client_id: str, request: Request, current_use
     Args:
         client_id: The registered client ID to delete
         request: The FastAPI request object.
-        current_user: The authenticated user (admin access required)
+        current_user: The authenticated user (requires ``admin.oauth_clients:delete`` and un-narrowed admin scope)
         db: Database session
 
     Returns:

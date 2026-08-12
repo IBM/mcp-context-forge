@@ -1251,6 +1251,8 @@ def test_permissions_helpers():
     assert "llm.invoke" in permissions
     assert "admin.metrics" in permissions
     assert "admin.sso_providers:read" in permissions
+    assert "admin.oauth_clients:read" in permissions
+    assert "admin.oauth_clients:delete" in permissions
     assert "logs:read" in permissions
     assert db.Permissions.ALL_PERMISSIONS not in permissions
 
@@ -1261,6 +1263,9 @@ def test_permissions_helpers():
     assert "llm.read" in by_resource["llm"]
     assert "logs" in by_resource
     assert "logs:read" in by_resource["logs"]
+    assert "admin" in by_resource
+    assert "admin.oauth_clients:read" in by_resource["admin"]
+    assert "admin.oauth_clients:delete" in by_resource["admin"]
 
 
 def test_permissions_helpers_without_separator(monkeypatch):

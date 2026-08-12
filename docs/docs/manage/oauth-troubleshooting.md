@@ -77,11 +77,11 @@ state_data = {
 | `/oauth/callback` | GET | Handles OAuth callback, exchanges code for tokens |
 | `/oauth/status/{gateway_id}` | GET | Returns OAuth configuration status |
 | `/oauth/fetch-tools/{gateway_id}` | POST | Fetches tools from MCP server after OAuth completion |
-| `/oauth/registered-clients` | GET | Lists all DCR-registered OAuth clients. Requires un-narrowed platform admin access |
-| `/oauth/registered-clients/{gateway_id}` | GET | Gets registered client for specific gateway. Requires un-narrowed platform admin access |
-| `/oauth/registered-clients/{client_id}` | DELETE | Deletes a registered OAuth client. Requires un-narrowed platform admin access |
+| `/oauth/registered-clients` | GET | Lists all DCR-registered OAuth clients. Requires `admin.oauth_clients:read` and un-narrowed platform admin access |
+| `/oauth/registered-clients/{gateway_id}` | GET | Gets registered client for specific gateway. Requires `admin.oauth_clients:read` and un-narrowed platform admin access |
+| `/oauth/registered-clients/{client_id}` | DELETE | Deletes a registered OAuth client. Requires `admin.oauth_clients:delete` and un-narrowed platform admin access |
 
-> **Note**: The three `/oauth/registered-clients*` endpoints manage DCR client records that are stored globally, with no team association. Because there is no team scope to narrow into, these endpoints require an un-narrowed admin token — an admin API/legacy token carrying a `token_teams` narrowing claim (or a public-only admin token) receives `403 Forbidden` with `"OAuth client management requires un-narrowed admin access"`. Admin session tokens (e.g. the interactive Admin UI) resolve their teams from the database and cannot be narrowed, so this does not change UI behavior.
+> **Note**: The three `/oauth/registered-clients*` endpoints manage DCR client records that are stored globally, with no team association. Because there is no team scope to narrow into, these endpoints require an un-narrowed admin token — an admin API/legacy token carrying a `token_teams` narrowing claim (or a public-only admin token) receives `403 Forbidden` with `"OAuth client management requires un-narrowed admin access"`. Admin session tokens (e.g. the interactive Admin UI) resolve their teams from the database and cannot be narrowed, so this does not change UI behavior. These routes also require a named RBAC permission — `admin.oauth_clients:read` for the two `GET` routes and `admin.oauth_clients:delete` for `DELETE` — with admin bypass disabled, so the caller's roles must actually carry the permission (the `platform_admin` role does, via `*`).
 
 ---
 
