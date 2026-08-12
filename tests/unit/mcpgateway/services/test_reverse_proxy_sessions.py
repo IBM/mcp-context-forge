@@ -7,6 +7,7 @@ Tests for process-local reverse-proxy sessions and pending responses.
 """
 
 import anyio
+from anyio.lowlevel import checkpoint
 import pytest
 
 from mcpgateway.services.reverse_proxy_protocol import JsonRpcNotification, JsonRpcRequest, JsonRpcSuccessResponse, ResponseMessage
@@ -27,15 +28,22 @@ class RecordingWebSocket:
     def __init__(self) -> None:
         self.frames: list[str] = []
         self.sent = anyio.Event()
+        self.close_calls = 0
 
     async def send_text(self, data: str) -> None:
         self.frames.append(data)
         self.sent.set()
 
+    async def close(self) -> None:
+        self.close_calls += 1
+
 
 class FailingWebSocket:
     async def send_text(self, data: str) -> None:
         raise WebSocketSendError(data)
+
+    async def close(self) -> None:
+        return None
 
 
 class WebSocketSendError(Exception):
@@ -55,6 +63,9 @@ class ImmediateResponseWebSocket:
         response = ResponseMessage(type="response", payload=JsonRpcSuccessResponse.model_validate({"jsonrpc": "2.0", "id": 0, "result": "ok"}))
         assert self.manager.resolve_response(self.connection_id, response) is True
 
+    async def close(self) -> None:
+        return None
+
 
 class CountingWebSocket:
     def __init__(self, expected_sends: int) -> None:
@@ -67,6 +78,9 @@ class CountingWebSocket:
         self.send_count += 1
         if self.send_count == self.expected_sends:
             self.all_sent.set()
+
+    async def close(self) -> None:
+        return None
 
 
 class BlockingWebSocket:
@@ -81,6 +95,21 @@ class BlockingWebSocket:
             await anyio.sleep_forever()
         finally:
             self.cancelled.set()
+
+    async def close(self) -> None:
+        return None
+
+
+class CloseFailingWebSocket:
+    def __init__(self) -> None:
+        self.close_calls = 0
+
+    async def send_text(self, data: str) -> None:
+        del data
+
+    async def close(self) -> None:
+        self.close_calls += 1
+        raise ConnectionError("close on a lost socket")
 
 
 def _request_payload(request_id: str | int) -> JsonRpcRequest:
@@ -349,14 +378,15 @@ async def test_disconnect_allows_local_id_to_reconnect() -> None:
 
 
 @pytest.mark.asyncio
-async def test_attach_stable_id_then_resolve_returns_connection_id() -> None:
-    """Given an active connection, when a stable ID is attached, then resolve returns the connection ID."""
+async def test_promote_stable_id_then_resolve_returns_connection_id() -> None:
+    """Given an active connection, when a stable ID is promoted to it, then resolve returns the connection ID and nothing is displaced."""
     manager = ReverseProxySessionManager()
     session = await manager.connect(RecordingWebSocket(), LocalSessionId("local-1"))
     stable_id = StableGatewayId("stable-1")
 
-    await manager.attach_stable_id(stable_id, session.connection_id)
+    displaced = await manager.promote_stable_id(stable_id, session.connection_id)
 
+    assert displaced is None
     assert manager.resolve_connection_id(stable_id) == session.connection_id
 
 
@@ -370,11 +400,11 @@ async def test_resolve_unknown_stable_id_returns_none() -> None:
 
 @pytest.mark.asyncio
 async def test_disconnect_clears_stable_mapping() -> None:
-    """Given an attached stable ID, when the connection disconnects, then the stable ID resolves to None."""
+    """Given a promoted stable ID, when the connection disconnects, then the stable ID resolves to None."""
     manager = ReverseProxySessionManager()
     session = await manager.connect(RecordingWebSocket(), LocalSessionId("local-1"))
     stable_id = StableGatewayId("stable-1")
-    await manager.attach_stable_id(stable_id, session.connection_id)
+    await manager.promote_stable_id(stable_id, session.connection_id)
 
     await manager.disconnect(session.connection_id)
 
@@ -382,16 +412,17 @@ async def test_disconnect_clears_stable_mapping() -> None:
 
 
 @pytest.mark.asyncio
-async def test_reattach_stable_id_replaces_mapping() -> None:
-    """Given a stable ID attached to connection A, when re-attached to connection B, then resolve returns B."""
+async def test_promote_stable_id_replaces_mapping_and_returns_displaced_predecessor() -> None:
+    """Given a stable ID promoted to A, when promoted to B, then resolve returns B and the promotion reports A as displaced."""
     manager = ReverseProxySessionManager()
     first = await manager.connect(RecordingWebSocket(), LocalSessionId("local-1"))
     second = await manager.connect(RecordingWebSocket(), LocalSessionId("local-2"))
     stable_id = StableGatewayId("stable-1")
-    await manager.attach_stable_id(stable_id, first.connection_id)
+    await manager.promote_stable_id(stable_id, first.connection_id)
 
-    await manager.attach_stable_id(stable_id, second.connection_id)
+    displaced = await manager.promote_stable_id(stable_id, second.connection_id)
 
+    assert displaced == first.connection_id
     assert manager.resolve_connection_id(stable_id) == second.connection_id
     assert first.connection_id != second.connection_id
 
@@ -404,8 +435,8 @@ async def test_stable_mapping_is_isolated_per_connection() -> None:
     second = await manager.connect(RecordingWebSocket(), LocalSessionId("local-2"))
     stable_a = StableGatewayId("stable-a")
     stable_b = StableGatewayId("stable-b")
-    await manager.attach_stable_id(stable_a, first.connection_id)
-    await manager.attach_stable_id(stable_b, second.connection_id)
+    await manager.promote_stable_id(stable_a, first.connection_id)
+    await manager.promote_stable_id(stable_b, second.connection_id)
 
     assert manager.resolve_connection_id(stable_a) == first.connection_id
     assert manager.resolve_connection_id(stable_b) == second.connection_id
@@ -413,12 +444,12 @@ async def test_stable_mapping_is_isolated_per_connection() -> None:
 
 @pytest.mark.asyncio
 async def test_disconnect_still_raises_connection_closed_for_pending_calls() -> None:
-    """Given a pending request and an attached stable ID, when disconnect occurs, then callers get ConnectionClosedError and the mapping clears."""
+    """Given a pending request and a promoted stable ID, when disconnect occurs, then callers get ConnectionClosedError and the mapping clears."""
     manager = ReverseProxySessionManager()
     websocket = BlockingWebSocket()
     session = await manager.connect(websocket, LocalSessionId("local-1"))
     stable_id = StableGatewayId("stable-1")
-    await manager.attach_stable_id(stable_id, session.connection_id)
+    await manager.promote_stable_id(stable_id, session.connection_id)
     disconnected = anyio.Event()
 
     async def send() -> None:
@@ -437,12 +468,12 @@ async def test_disconnect_still_raises_connection_closed_for_pending_calls() -> 
 
 
 @pytest.mark.asyncio
-async def test_attach_stable_id_rejects_inactive_connection() -> None:
-    """Given no active connection, when attaching a stable ID to it, then ConnectionNotFoundError is raised."""
+async def test_promote_stable_id_rejects_inactive_connection() -> None:
+    """Given no active connection, when promoting a stable ID to it, then ConnectionNotFoundError is raised."""
     manager = ReverseProxySessionManager()
 
     with pytest.raises(ConnectionNotFoundError):
-        await manager.attach_stable_id(StableGatewayId("stable-1"), ConnectionId("inactive"))
+        await manager.promote_stable_id(StableGatewayId("stable-1"), ConnectionId("inactive"))
 
 
 @pytest.mark.asyncio
@@ -452,3 +483,182 @@ async def test_get_reverse_proxy_session_manager_returns_singleton() -> None:
     second = await get_reverse_proxy_session_manager()
 
     assert first is second
+
+
+@pytest.mark.asyncio
+async def test_registration_lock_is_shared_per_stable_id_and_distinct_across_ids() -> None:
+    """Given a stable ID, when its registration lock is requested twice, then the same lock is returned; another ID gets a different lock."""
+    manager = ReverseProxySessionManager()
+
+    first = manager.registration_lock(StableGatewayId("stable-1"))
+
+    assert first is manager.registration_lock(StableGatewayId("stable-1"))
+    assert manager.registration_lock(StableGatewayId("stable-2")) is not first
+
+
+@pytest.mark.asyncio
+async def test_registration_lock_serializes_same_stable_id() -> None:
+    """Given one stable ID, when a second task requests its registration lock while held, then the second task waits for the first to release."""
+    manager = ReverseProxySessionManager()
+    stable_id = StableGatewayId("stable-1")
+    entered = anyio.Event()
+    acquired = anyio.Event()
+
+    async def second() -> None:
+        entered.set()
+        async with manager.registration_lock(stable_id):
+            acquired.set()
+
+    async with anyio.create_task_group() as task_group:
+        async with manager.registration_lock(stable_id):
+            task_group.start_soon(second)
+            await entered.wait()
+            await checkpoint()
+            assert not acquired.is_set()
+            async with manager.registration_lock(StableGatewayId("stable-2")):
+                pass  # a distinct stable ID is never blocked by the held lock
+        await acquired.wait()
+
+
+@pytest.mark.asyncio
+async def test_restore_stable_id_restores_still_active_predecessor() -> None:
+    """Given B displaced A, when B's post-promotion failure is restored, then the mapping returns to the still-active A."""
+    manager = ReverseProxySessionManager()
+    first = await manager.connect(RecordingWebSocket(), LocalSessionId("local-1"))
+    second = await manager.connect(RecordingWebSocket(), LocalSessionId("local-2"))
+    stable_id = StableGatewayId("stable-1")
+    await manager.promote_stable_id(stable_id, first.connection_id)
+    displaced = await manager.promote_stable_id(stable_id, second.connection_id)
+
+    await manager.restore_stable_id(stable_id, displaced, second.connection_id)
+
+    assert manager.resolve_connection_id(stable_id) == first.connection_id
+
+
+@pytest.mark.asyncio
+async def test_restore_stable_id_pops_mapping_when_predecessor_inactive() -> None:
+    """Given B displaced A and A disconnected, when B's failure is restored, then the mapping is removed rather than routed to the dead predecessor."""
+    manager = ReverseProxySessionManager()
+    first = await manager.connect(RecordingWebSocket(), LocalSessionId("local-1"))
+    second = await manager.connect(RecordingWebSocket(), LocalSessionId("local-2"))
+    stable_id = StableGatewayId("stable-1")
+    await manager.promote_stable_id(stable_id, first.connection_id)
+    displaced = await manager.promote_stable_id(stable_id, second.connection_id)
+    await manager.disconnect(first.connection_id)
+
+    await manager.restore_stable_id(stable_id, displaced, second.connection_id)
+
+    assert manager.resolve_connection_id(stable_id) is None
+
+
+@pytest.mark.asyncio
+async def test_restore_stable_id_pops_mapping_when_no_predecessor() -> None:
+    """Given a first-time promotion with no predecessor, when its failure is restored, then the mapping is removed."""
+    manager = ReverseProxySessionManager()
+    session = await manager.connect(RecordingWebSocket(), LocalSessionId("local-1"))
+    stable_id = StableGatewayId("stable-1")
+    await manager.promote_stable_id(stable_id, session.connection_id)
+
+    await manager.restore_stable_id(stable_id, None, session.connection_id)
+
+    assert manager.resolve_connection_id(stable_id) is None
+
+
+@pytest.mark.asyncio
+async def test_restore_stable_id_is_noop_when_mapping_moved_on() -> None:
+    """Given C displaced B after B displaced A, when B's stale failure is restored, then the mapping still routes to C."""
+    manager = ReverseProxySessionManager()
+    first = await manager.connect(RecordingWebSocket(), LocalSessionId("local-1"))
+    second = await manager.connect(RecordingWebSocket(), LocalSessionId("local-2"))
+    third = await manager.connect(RecordingWebSocket(), LocalSessionId("local-3"))
+    stable_id = StableGatewayId("stable-1")
+    await manager.promote_stable_id(stable_id, first.connection_id)
+    displaced = await manager.promote_stable_id(stable_id, second.connection_id)
+    await manager.promote_stable_id(stable_id, third.connection_id)
+
+    await manager.restore_stable_id(stable_id, displaced, second.connection_id)
+
+    assert manager.resolve_connection_id(stable_id) == third.connection_id
+
+
+@pytest.mark.asyncio
+async def test_disconnect_pops_only_own_stable_mappings() -> None:
+    """Given B displaced A, when A disconnects, then the stable mapping still routes to B."""
+    manager = ReverseProxySessionManager()
+    first = await manager.connect(RecordingWebSocket(), LocalSessionId("local-1"))
+    second = await manager.connect(RecordingWebSocket(), LocalSessionId("local-2"))
+    stable_id = StableGatewayId("stable-1")
+    await manager.promote_stable_id(stable_id, first.connection_id)
+    await manager.promote_stable_id(stable_id, second.connection_id)
+
+    await manager.disconnect(first.connection_id)
+
+    assert manager.resolve_connection_id(stable_id) == second.connection_id
+
+
+@pytest.mark.asyncio
+async def test_retire_connection_fails_pending_clears_mapping_and_closes_socket() -> None:
+    """Given a promoted connection with a pending call, when retired, then the caller fails, the mapping clears, and the socket close is attempted."""
+    manager = ReverseProxySessionManager()
+    websocket = RecordingWebSocket()
+    session = await manager.connect(websocket, LocalSessionId("local-1"))
+    stable_id = StableGatewayId("stable-1")
+    await manager.promote_stable_id(stable_id, session.connection_id)
+    disconnected = anyio.Event()
+
+    async def send() -> None:
+        with pytest.raises(ConnectionClosedError):
+            await manager.send_request(session.connection_id, _request_payload("request-1"), timeout_seconds=10)
+        disconnected.set()
+
+    async with anyio.create_task_group() as task_group:
+        task_group.start_soon(send)
+        await websocket.sent.wait()
+        await manager.retire_connection(session.connection_id)
+        await disconnected.wait()
+
+    assert manager.resolve_connection_id(stable_id) is None
+    assert websocket.close_calls == 1
+    assert manager.pending_count(session.connection_id) == 0
+
+
+@pytest.mark.asyncio
+async def test_retire_connection_keeps_replacement_mapping() -> None:
+    """Given B displaced A, when A is retired, then the mapping still routes to B and only A's socket is closed."""
+    manager = ReverseProxySessionManager()
+    first_websocket = RecordingWebSocket()
+    second_websocket = RecordingWebSocket()
+    first = await manager.connect(first_websocket, LocalSessionId("local-1"))
+    second = await manager.connect(second_websocket, LocalSessionId("local-2"))
+    stable_id = StableGatewayId("stable-1")
+    await manager.promote_stable_id(stable_id, first.connection_id)
+    await manager.promote_stable_id(stable_id, second.connection_id)
+
+    await manager.retire_connection(first.connection_id)
+
+    assert manager.resolve_connection_id(stable_id) == second.connection_id
+    assert first_websocket.close_calls == 1
+    assert second_websocket.close_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_retire_connection_swallows_close_errors() -> None:
+    """Given a socket whose close raises, when its connection is retired, then cleanup completes and the close error does not propagate."""
+    manager = ReverseProxySessionManager()
+    websocket = CloseFailingWebSocket()
+    session = await manager.connect(websocket, LocalSessionId("local-1"))
+    stable_id = StableGatewayId("stable-1")
+    await manager.promote_stable_id(stable_id, session.connection_id)
+
+    await manager.retire_connection(session.connection_id)
+
+    assert websocket.close_calls == 1
+    assert manager.resolve_connection_id(stable_id) is None
+
+
+@pytest.mark.asyncio
+async def test_retire_connection_is_idempotent_for_unknown_connection() -> None:
+    """Given an inactive connection, when retired, then nothing happens and no error is raised."""
+    manager = ReverseProxySessionManager()
+
+    await manager.retire_connection(ConnectionId("inactive"))
