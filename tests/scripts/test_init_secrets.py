@@ -311,17 +311,11 @@ class TestEnsureEnvFileSecrets:
     def test_weak_env_var_short_env_file_value_raises_for_rotation_guarded_field(self, tmp_path, monkeypatch):
         """Weak shell var + ANY pre-existing .env value must raise for rotation-guarded fields.
 
-        Regression test for madhu's finding: the original guard only fired when the .env
-        value was *strong* (_is_strong_value returned True).  A short-but-non-default value
-        in .env (e.g. ``abcd`` — not in WEAK_VALUES, not a placeholder, but only 4 chars)
-        bypassed the guard and silently rotated the AES key.
-
-        The fixed condition is ``(_env_file_ci.get(field.lower()) or "").strip()`` — any
-        non-empty pre-existing .env value must block rotation.
+        A short-but-non-default value in .env (e.g. ``abcd`` — not in WEAK_VALUES, not a
+        placeholder, but only 4 chars) must still block rotation.  The guard condition is
+        ``(_env_file_ci.get(field.lower()) or "").strip()`` — any non-empty pre-existing
+        .env value blocks auto-rotation, not only values that pass the full strength predicate.
         """
-        # "abcd" is 4 chars — short, but NOT in WEAK_VALUES and NOT a placeholder.
-        # Under the old guard (_is_strong_value check) this would fall through to
-        # file_generated and silently overwrite the .env value.
         short_non_default = "abcd"  # nosec B105  # pragma: allowlist secret
         env = tmp_path / ".env"
         env.write_text(f"AUTH_ENCRYPTION_SECRET={short_non_default}\n", encoding="utf-8")  # pragma: allowlist secret
