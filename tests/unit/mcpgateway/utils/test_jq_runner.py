@@ -281,6 +281,26 @@ def test_run_jq_filter_wraps_a_generic_submit_failure(monkeypatch):
         run_jq_filter(".a", {"a": 1})
 
 
+def test_run_jq_filter_does_not_double_wrap_a_jq_filter_error(monkeypatch):
+    """A JqFilterError raised directly from the pool is re-raised, not re-wrapped."""
+    # First-Party
+    from mcpgateway.utils import jq_runner
+
+    original = JqFilterError("already the right shape")
+
+    class _DirectlyFailingPool:
+        def submit(self, *_args, **_kwargs):
+            raise original
+
+    monkeypatch.setattr(jq_runner, "subprocess_mode_available", lambda: True)
+    monkeypatch.setattr(jq_runner, "_ensure_pool", lambda: _DirectlyFailingPool())
+
+    with pytest.raises(JqFilterError) as excinfo:
+        run_jq_filter(".a", {"a": 1})
+
+    assert excinfo.value is original
+
+
 def _worker_processes():
     """Return the live ``Process`` objects of the current pool.
 

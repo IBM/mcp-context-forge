@@ -117,3 +117,10 @@ def test_plain_string_escape_is_not_interpolation():
     """A backslash escape that is not '\\(' stays inside the string, not code."""
     assert scan_jq_tokens('"a\\tb\\"c"') == set()
     assert assert_safe_jq_filter('"a\\tb\\"c"') is None
+
+
+def test_lone_dollar_advances_without_forming_a_token():
+    """A '$' not followed by an identifier is not valid jq and yields no token."""
+    assert scan_jq_tokens("$") == set()
+    assert scan_jq_tokens("$)") == set()
+    assert assert_safe_jq_filter("$)") is None
