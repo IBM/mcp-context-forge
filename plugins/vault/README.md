@@ -74,6 +74,41 @@ Where:
    - Token name: `TOKEN` (default name)
    - Uses OAuth2 bearer token handling
 
+## Destination Binding (`mcpServer`)
+
+Each vault token entry (the value under a token key in the `X-Vault-Tokens` JSON) can be
+either of two shapes:
+
+1. **Legacy plain string** — the secret itself, unbound to any destination. Trusted purely
+   because the caller's `system:<host>` tag matched:
+
+   ```json
+   {"github.com": "ghp_xxxxxxxxxxxx"}
+   ```
+
+2. **Object with an optional `mcpServer` binding** — carries `secretValue` (required) and an
+   optional `mcpServer` URL. When `mcpServer` is present, the plugin only injects the secret if
+   it matches the target's actual registered destination — `Gateway.url` for MCP tools,
+   `A2AAgent.endpoint_url` for A2A agents:
+
+   ```json
+   {"github.com": {"secretValue": "ghp_xxxxxxxxxxxx", "mcpServer": "https://api.githubcopilot.com/mcp/"}}
+   ```
+
+This prevents a token that is scoped to one destination from being replayed against a
+different one just because both happen to share the same `system:<host>` tag (e.g. two
+gateways both tagged `system:github.com` but pointing at different URLs). If `mcpServer` does
+not match, or the real destination can't be determined, the secret is withheld — the
+`X-Vault-Tokens` header is still stripped, but no `Authorization`/custom header is injected,
+so any pre-existing (unrelated) auth header on the request passes through untouched instead of
+being overwritten with a leaked secret.
+
+A `mcpServer` value of `null` (or the key omitted) behaves like the legacy unbound string —
+no destination check is performed.
+
+URL comparison is normalized (lowercased scheme/host, trailing slash ignored) so incidental
+formatting differences don't cause false mismatches.
+
 ## Token Type Handling
 
 ### PAT (Personal Access Token)
@@ -251,3 +286,72 @@ curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
          }' \
      http://localhost:4444/tools/invoke
 ```
+
+## E2E Throwaway Test Harness
+
+`plugins/vault/echo_mcp.py` (SSE MCP server) and `plugins/vault/echo_a2a.py` (FastAPI A2A
+agent) are throwaway servers used to exercise both hooks end-to-end without needing a real
+upstream like GitHub. Both reflect the headers they receive so the injected `Authorization`
+header and the stripped `X-Vault-Tokens` header can be asserted on directly.
+
+`plugins/vault/config_vault_e2e.yaml` registers the plugin on both `tool_pre_invoke` and
+`agent_pre_invoke` in one config, so a single gateway run covers both paths.
+
+### Classic MCP server (`tool_pre_invoke`)
+
+```bash
+# Start the echo MCP server (port 8001)
+nohup uv run python plugins/vault/echo_mcp.py > /tmp/echo_mcp.log 2>&1 &
+
+# Register it as a Gateway, tagged for vault system resolution
+curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" -H "Content-Type: application/json" \
+     -d '{
+           "name": "echo_mcp",
+           "url": "http://127.0.0.1:8001/sse",
+           "tags": ["system:localecho"],
+           "passthrough_headers": ["X-Vault-Tokens", "Authorization"]
+         }' \
+     http://localhost:4444/gateways
+
+# Invoke the whoami tool, which returns the received Authorization header directly
+# in its JSON-RPC response (rather than only logging it) — a assertable proof point.
+curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" -H "Content-Type: application/json" \
+     -H 'X-Vault-Tokens: {"localecho": "legacy-plain-secret-123"}' \
+     -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"echo-mcp-whoami","arguments":{}}}' \
+     http://localhost:4444/rpc
+# => structuredContent.authorization == "Bearer legacy-plain-secret-123"
+```
+
+For the `mcpServer`-bound shape, set `X-Vault-Tokens` to
+`{"localecho": {"secretValue": "...", "mcpServer": "http://127.0.0.1:8001/sse"}}` (matches
+`Gateway.url` → injected) or point `mcpServer` at a different URL (mismatch → withheld, no
+leak). `/tmp/echo_mcp.log` also shows the same headers via `print()`, for the `echo`/`add`/`hello`
+tools that don't return them in the response body.
+
+### A2A agent (`agent_pre_invoke`)
+
+```bash
+# Start the echo A2A agent (port 8002)
+nohup uv run python plugins/vault/echo_a2a.py > /tmp/echo_a2a.log 2>&1 &
+
+# Register it as an A2A agent
+curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" -H "Content-Type: application/json" \
+     -d '{"agent": {
+           "name": "echo-agent",
+           "endpoint_url": "http://127.0.0.1:8002/invoke",
+           "tags": ["system:localecho"],
+           "passthrough_headers": ["X-Vault-Tokens", "Authorization"]
+         }}' \
+     http://localhost:4444/a2a
+
+# Invoke — echo_a2a.py reflects received_headers directly in its response body
+curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" -H "Content-Type: application/json" \
+     -H 'X-Vault-Tokens: {"localecho": "a2a-legacy-secret-111"}' \
+     -d '{"message": "hi"}' \
+     http://localhost:4444/a2a/echo-agent/invoke
+# => received_headers.authorization == "Bearer a2a-legacy-secret-111"
+```
+
+Same `mcpServer` match/mismatch behavior applies, bound against `A2AAgent.endpoint_url`
+instead of `Gateway.url`. In all cases `x-vault-tokens` must be absent from
+`received_headers`/the server logs — confirming it never reaches the downstream target.

@@ -64,6 +64,24 @@ def echo(message: str) -> str:
     return message
 
 
+@mcp.tool
+def whoami() -> dict:
+    """Return the received Authorization header, proving the bearer token reached the server.
+
+    Unlike ``echo``/``add`` (which only print headers to stdout), this tool returns the
+    Authorization header value directly in the tool response, so a test can assert on it.
+
+    Returns:
+        Dict with the raw 'authorization' header value (or None if absent) and whether
+        an X-Vault-Tokens header leaked through (should always be False).
+    """
+    headers = get_http_headers(include_all=True)
+    return {
+        "authorization": headers.get("authorization"),
+        "vault_header_leaked": "x-vault-tokens" in headers,
+    }
+
+
 # Static resource
 @mcp.resource("config://version")
 def get_version(ctx: Context):

@@ -2287,6 +2287,7 @@ class A2AAgentService(BaseService):
                     oauth_config=agent_oauth_config,
                     passthrough_headers=agent_passthrough_headers,
                     auth_type=agent_auth_type,
+                    endpoint_url=agent_endpoint_url,
                 )
                 if content_type:
                     agent_metadata.content_type = content_type
@@ -2356,6 +2357,13 @@ class A2AAgentService(BaseService):
             except Exception as e:
                 logger.error("Pre-invoke plugin error for A2A agent %s: %s", agent_id, e)
                 raise A2AAgentError(f"Pre-invoke plugin error: {e}") from e
+
+        # Defense in depth: strip X-Vault-Tokens (case-insensitive) from outbound
+        # headers. The Vault plugin removes this header when it processes the token,
+        # but stripping unconditionally prevents leakage when the plugin is disabled,
+        # errors in permissive mode, or the header is mistakenly in passthrough_headers.
+        for existing_key in [hk for hk in prepared.headers if hk.lower() == "x-vault-tokens"]:
+            del prepared.headers[existing_key]
 
         span_attributes = {
             "a2a.agent.name": agent_name,

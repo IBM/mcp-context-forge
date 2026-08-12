@@ -98,6 +98,69 @@ class Vault(Plugin):
         # Normalize vault header name to lowercase for case-insensitive lookup (ASGI headers are lowercase)
         self._vault_header_key = self._sconfig.vault_header_name.lower()
 
+    @staticmethod
+    def _normalize_server_url(url: str) -> str:
+        """Normalize a URL for destination-binding comparison.
+
+        Lowercases scheme/host, drops a trailing slash, and ignores userinfo/fragment
+        so equivalent URLs compare equal regardless of incidental formatting differences.
+
+        Args:
+            url: URL to normalize.
+
+        Returns:
+            Normalized ``scheme://host[:port]/path`` string (no trailing slash).
+        """
+        parsed = urlparse(url)
+        scheme = (parsed.scheme or "").lower()
+        netloc = (parsed.netloc or "").lower()
+        path = (parsed.path or "").rstrip("/")
+        return f"{scheme}://{netloc}{path}"
+
+    def _resolve_token_value(self, raw_value: object, destination_url: str | None) -> str | None:
+        """Resolve the actual secret from a vault token entry, enforcing destination binding.
+
+        Supports both the legacy shape (plain string secret, unbound) and the newer shape
+        (a JSON object carrying ``secretValue`` and an optional ``mcpServer`` binding). When
+        ``mcpServer`` is present, the token is only usable if it matches the target's actual
+        registered URL (``Gateway.url`` for tools, ``A2AAgent.endpoint_url`` for agents) —
+        this prevents a token scoped to one destination from being replayed against another
+        just because both share the same ``system:<host>`` tag.
+
+        Args:
+            raw_value: The raw value stored under the matched vault token key.
+            destination_url: The real, server-verified destination URL for this invocation.
+
+        Returns:
+            The secret string to use, or ``None`` if the entry is malformed or its
+            ``mcpServer`` binding does not match ``destination_url``.
+        """
+        if isinstance(raw_value, str):
+            return raw_value
+
+        if isinstance(raw_value, dict):
+            secret_value = raw_value.get("secretValue")
+            if not isinstance(secret_value, str):
+                logger.error("Vault token entry missing string 'secretValue'")
+                return None
+
+            mcp_server = raw_value.get("mcpServer")
+            if mcp_server is None:
+                return secret_value
+
+            if not destination_url:
+                logger.warning("Vault token entry is bound to mcpServer=%s but the actual destination could not be determined", mcp_server)
+                return None
+
+            if self._normalize_server_url(str(mcp_server)) != self._normalize_server_url(destination_url):
+                logger.warning("Vault token mcpServer binding '%s' does not match actual destination '%s'", mcp_server, destination_url)
+                return None
+
+            return secret_value
+
+        logger.error("Vault token entry has unsupported type: %s", type(raw_value).__name__)
+        return None
+
     def _parse_vault_token_key(self, key: str) -> tuple[str, str | None, str | None, str | None]:
         """Parse vault token key in format: system[:scope][:token_type][:token_name].
 
@@ -194,6 +257,7 @@ class Vault(Plugin):
         payload: ToolPreInvokePayload | AgentPreInvokePayload,
         system_key: str | None,
         auth_header: str | None,
+        destination_url: str | None = None,
     ) -> HttpHeaderPayload | None:
         """Match a vault token for *system_key* and inject the appropriate auth header.
 
@@ -205,6 +269,9 @@ class Vault(Plugin):
             payload: The pre-invoke payload carrying request headers.
             system_key: Resolved system identifier, or ``None`` if undeterminable.
             auth_header: Optional custom header name for PAT tokens.
+            destination_url: Real, server-verified destination URL (``Gateway.url`` or
+                ``A2AAgent.endpoint_url``) used to validate a token entry's ``mcpServer``
+                binding, when present.
 
         Returns:
             A new ``HttpHeaderPayload`` when the payload's headers must be replaced, or ``None``
@@ -252,15 +319,20 @@ class Vault(Plugin):
         token_value: str | None = None
         token_key_used: str | None = None
         if system_key in vault_tokens:
-            token_value = str(vault_tokens[system_key])
-            token_key_used = str(system_key)
-            logger.debug("Found exact match for system key: %s", system_key)
+            resolved = self._resolve_token_value(vault_tokens[system_key], destination_url)
+            if resolved is not None:
+                token_value = resolved
+                token_key_used = str(system_key)
+                logger.debug("Found exact match for system key: %s", system_key)
         else:
             # Try to find a key that starts with system_key (complex key format)
             for key in vault_tokens.keys():
                 parsed_system, scope, token_type, token_name = self._parse_vault_token_key(key)
                 if parsed_system == system_key:
-                    token_value = vault_tokens[key]
+                    resolved = self._resolve_token_value(vault_tokens[key], destination_url)
+                    if resolved is None:
+                        continue
+                    token_value = resolved
                     token_key_used = key
                     logger.debug("Found matching token with complex key for system: %s", parsed_system)
                     break
@@ -318,6 +390,8 @@ class Vault(Plugin):
         logger.debug("Gateway metadata for server %s", context.global_context.server_id)
 
         gateway_metadata = context.global_context.metadata.get("gateway")
+        destination_url = get_attr(gateway_metadata, "url", None)
+        destination_url = str(destination_url) if destination_url else None
 
         system_key: str | None = None
         auth_header: str | None = None
@@ -326,7 +400,7 @@ class Vault(Plugin):
         elif self._sconfig.system_handling == SystemHandling.OAUTH2_CONFIG:
             system_key = await self._resolve_system_from_oauth2_config(context.global_context.server_id)
 
-        new_headers = self._apply_vault_token(payload, system_key, auth_header)
+        new_headers = self._apply_vault_token(payload, system_key, auth_header, destination_url)
         if new_headers is None:
             return ToolPreInvokeResult()
         payload = payload.model_copy(update={"headers": new_headers})
@@ -350,6 +424,8 @@ class Vault(Plugin):
         logger.debug("A2A agent metadata for server %s", context.global_context.server_id)
 
         agent_metadata = context.global_context.metadata.get("a2a_agent")
+        destination_url = get_attr(agent_metadata, "endpoint_url", None)
+        destination_url = str(destination_url) if destination_url else None
 
         system_key: str | None = None
         auth_header: str | None = None
@@ -358,7 +434,7 @@ class Vault(Plugin):
         else:
             logger.warning("system_handling='%s' is not supported for A2A agents; only 'tag' mode is available. Vault header will be stripped.", self._sconfig.system_handling.value)
 
-        new_headers = self._apply_vault_token(payload, system_key, auth_header)
+        new_headers = self._apply_vault_token(payload, system_key, auth_header, destination_url)
         if new_headers is None:
             return AgentPreInvokeResult()
         payload = payload.model_copy(update={"headers": new_headers})
