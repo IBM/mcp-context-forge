@@ -34,8 +34,17 @@ class EchoService(echo_pb2_grpc.EchoServiceServicer):
     """Implementation of all EchoService RPCs."""
 
     def Echo(self, request, context):
-        """Basic unary echo."""
+        """Basic unary echo. Negative value → INVALID_ARGUMENT, 0 → NOT_FOUND,
+        >100 → RESOURCE_EXHAUSTED, 500 → INTERNAL."""
         logger.info("Echo: message=%r value=%d", request.message, request.value)
+        if request.value < 0:
+            context.abort(grpc.StatusCode.INVALID_ARGUMENT, f"value must be >= 0, got {request.value}")
+        if request.value == 0:
+            context.abort(grpc.StatusCode.NOT_FOUND, "zero value not found")
+        if request.value > 100 and request.value != 500:
+            context.abort(grpc.StatusCode.RESOURCE_EXHAUSTED, f"value {request.value} exceeds limit 100")
+        if request.value == 500:
+            context.abort(grpc.StatusCode.INTERNAL, "simulated internal error")
         return echo_pb2.EchoResponse(
             message=f"echo: {request.message}",
             value=request.value * 2,
