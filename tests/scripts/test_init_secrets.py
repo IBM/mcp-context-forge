@@ -18,8 +18,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 # First-Party
+from mcpgateway._security_constants import calculate_entropy
 from mcpgateway.scripts.init_secrets import (
     _WEAK_VALUES,
+    _is_strong_value,
     _merge_env_file,
     _read_env_file,
     ensure_env_file_secrets,
@@ -555,3 +557,80 @@ class TestMainPatchEnv:
         out = capsys.readouterr().out
         assert "ℹ️" in out
         assert env.read_text(encoding="utf-8") == original
+
+
+    def test_patch_env_value_error_exits_1(self, tmp_path, monkeypatch, capsys):
+        """--patch-env must exit 1 with a clean message when ensure_env_file_secrets raises ValueError.
+
+        Covers init_secrets.py lines 384-386: the except ValueError branch in the
+        --patch-env section of main().
+        """
+        env = tmp_path / ".env"
+        # A strong AUTH_ENCRYPTION_SECRET in .env with a weak value in os.environ
+        # triggers the rotation-guard ValueError inside ensure_env_file_secrets.
+        strong = "x3Kp_mQ8rZvN2wLsA5dYfB7cEjGhTuIo_X3K"  # pragma: allowlist secret
+        env.write_text(f"AUTH_ENCRYPTION_SECRET={strong}\n", encoding="utf-8")  # pragma: allowlist secret
+        monkeypatch.setenv("AUTH_ENCRYPTION_SECRET", "changeme")  # pragma: allowlist secret
+        monkeypatch.setenv("MCPGATEWAY_AUTO_INIT_SECRETS", "true")
+
+        with patch("argparse.ArgumentParser.parse_args") as mock_args:
+            mock_args.return_value = argparse.Namespace(
+                output=None, force=False, stdout=False, patch=None, patch_env=str(env)
+            )
+            with pytest.raises(SystemExit) as cm:
+                main()
+
+        assert cm.value.code == 1
+        err = capsys.readouterr().err
+        assert "AUTH_ENCRYPTION_SECRET" in err
+
+
+class TestIsStrongValue:
+    """Unit tests for the _is_strong_value helper (init_secrets.py lines 103-115)."""
+
+    def test_empty_string_is_not_strong(self):
+        """Empty / whitespace-only values must return False (line 109-110)."""
+        assert _is_strong_value("", _WEAK_VALUES) is False
+        assert _is_strong_value("   ", _WEAK_VALUES) is False
+
+    def test_known_weak_value_is_not_strong(self):
+        """Values in WEAK_VALUES must return False (line 111-112)."""
+        assert _is_strong_value("changeme", _WEAK_VALUES) is False
+
+    def test_replace_me_placeholder_is_not_strong(self):
+        """__REPLACE_ME__ prefixed values must return False (line 111-112)."""
+        assert _is_strong_value("__REPLACE_ME__init-secrets", _WEAK_VALUES) is False
+
+    def test_short_but_high_entropy_is_not_strong(self):
+        """Values shorter than MIN_SECRET_LENGTH must return False (line 113-114)."""
+        # 8 chars is below the 32-byte minimum; token_urlsafe(6) gives high entropy
+        import secrets as _secrets
+        short_val = _secrets.token_urlsafe(6)  # ~8 chars, high entropy
+        assert _is_strong_value(short_val, _WEAK_VALUES) is False
+
+    def test_long_low_entropy_is_not_strong(self):
+        """Values with entropy < MIN_ENTROPY must return False (line 113-114)."""
+        low_entropy = "a" * 40  # 40 chars but zero entropy
+        assert _is_strong_value(low_entropy, _WEAK_VALUES) is False
+
+    def test_strong_value_returns_true(self):
+        """A fully compliant value must return True (line 115)."""
+        import secrets as _secrets
+        strong = _secrets.token_urlsafe(32)  # 43 chars, high entropy
+        assert _is_strong_value(strong, _WEAK_VALUES) is True
+
+
+class TestCalculateEntropy:
+    """Tests for calculate_entropy in _security_constants.py."""
+
+    def test_empty_string_returns_zero(self):
+        """Empty string must return 0.0 (line 29 of _security_constants.py)."""
+        assert calculate_entropy("") == 0.0
+
+    def test_single_char_string_returns_zero(self):
+        """Single unique character has zero entropy."""
+        assert calculate_entropy("aaaa") == 0.0
+
+    def test_high_entropy_string(self):
+        """Mixed string should return a positive entropy value."""
+        assert calculate_entropy("aAbBcC123!@#") > 3.0
