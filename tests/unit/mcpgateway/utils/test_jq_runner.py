@@ -54,8 +54,15 @@ def jq_pool():
 
 
 @linux_only
-def test_worker_environment_is_scrubbed(jq_pool, monkeypatch):
+def test_worker_environment_is_scrubbed(monkeypatch):
     """A worker cannot see the gateway's secrets even without the static gate.
+
+    Deliberately does not use the ``jq_pool`` fixture: ``start_jq_pool`` now warms
+    the pool by forking a worker before returning, so the fork must happen *after*
+    the canary variables are set, not before. Otherwise a worker forked by the
+    fixture (before this test's ``monkeypatch.setenv`` calls) would never see the
+    canaries in the first place, and the assertions below would pass even with
+    ``_worker_init``'s ``os.environ.clear()`` removed entirely.
 
     Asserts absence of the parent's values rather than an exactly empty mapping.
     Under pytest the child reliably comes back with terminal-geometry variables
@@ -67,11 +74,15 @@ def test_worker_environment_is_scrubbed(jq_pool, monkeypatch):
     monkeypatch.setenv("JQ_RUNNER_CANARY", "LEAKED")
     monkeypatch.setenv("JWT_SECRET_KEY", "sentinel-value-must-not-appear")
 
-    worker_env = run_jq_filter("$ENV", {"a": 1})[0]
+    start_jq_pool()
+    try:
+        worker_env = run_jq_filter("$ENV", {"a": 1})[0]
 
-    assert "JQ_RUNNER_CANARY" not in worker_env
-    assert "JWT_SECRET_KEY" not in worker_env
-    assert "sentinel-value-must-not-appear" not in str(worker_env)
+        assert "JQ_RUNNER_CANARY" not in worker_env
+        assert "JWT_SECRET_KEY" not in worker_env
+        assert "sentinel-value-must-not-appear" not in str(worker_env)
+    finally:
+        shutdown_jq_pool()
 
 
 @linux_only
@@ -93,8 +104,11 @@ def test_runaway_filter_times_out_and_pool_recovers(jq_pool, monkeypatch):
 def test_private_processes_attribute_still_exists(jq_pool):
     """The kill path depends on a private CPython attribute; fail loudly if it moves.
 
-    ``ProcessPoolExecutor`` starts workers lazily, so ``_processes`` is an empty
-    dict until the first submit. Run a filter before asserting.
+    ``ProcessPoolExecutor`` starts workers lazily, so ``_processes`` would be an
+    empty dict until the first submit — ``start_jq_pool``'s warm-up submit already
+    populates it by the time the ``jq_pool`` fixture returns, but this still runs
+    a filter of its own before asserting so the check does not depend on that
+    warm-up behavior.
     """
     # First-Party
     from mcpgateway.utils import jq_runner

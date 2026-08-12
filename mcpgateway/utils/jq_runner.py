@@ -110,7 +110,18 @@ def start_jq_pool() -> None:
     with _POOL_LOCK:
         if _POOL is not None and _POOL_PID == os.getpid():
             return
-        _POOL = _build_pool()
+        pool = _build_pool()
+        # ProcessPoolExecutor with the fork start method spawns workers lazily on
+        # first submit, not at construction. Force that fork to happen now, while
+        # the process still has the fewest threads, rather than mid-request on the
+        # first attacker-triggered filter. This also proves the initializer (the
+        # environment scrub) actually ran before we call the pool ready.
+        try:
+            pool.submit(_apply_filter, ".", b"null").result(timeout=settings.jq_filter_timeout_seconds)
+        except Exception:
+            pool.shutdown(wait=False, cancel_futures=True)
+            raise
+        _POOL = pool
         _POOL_PID = os.getpid()
         logger.info("jq filter sandbox started with %s worker(s)", settings.jq_filter_workers)
 
@@ -121,6 +132,12 @@ def shutdown_jq_pool() -> None:
 
     with _POOL_LOCK:
         if _POOL is None:
+            return
+        if _POOL_PID != os.getpid():
+            # Inherited from a parent via fork; this process never owned these
+            # workers, so drop the reference without touching the parent's pool.
+            _POOL = None
+            _POOL_PID = None
             return
         _POOL.shutdown(wait=False, cancel_futures=True)
         _POOL = None
@@ -140,14 +157,24 @@ def _kill_pool_workers() -> None:
     pool = _POOL
     if pool is None:
         return
-    for process in list(getattr(pool, "_processes", {}).values()):
-        try:
-            process.kill()
-        except Exception:  # pylint: disable=broad-except
-            logger.warning("Failed to kill a jq worker process", exc_info=True)
-    pool.shutdown(wait=False, cancel_futures=True)
-    _POOL = None
-    _POOL_PID = None
+    with _POOL_LOCK:
+        if _POOL is not pool:
+            # Another thread already rebuilt or dropped the pool; leave it alone.
+            return
+        if _POOL_PID != os.getpid():
+            # Inherited from a parent via fork; these Process objects reference
+            # the parent's workers. Never kill processes we don't own.
+            _POOL = None
+            _POOL_PID = None
+            return
+        for process in list(getattr(pool, "_processes", {}).values()):
+            try:
+                process.kill()
+            except Exception:  # pylint: disable=broad-except
+                logger.warning("Failed to kill a jq worker process", exc_info=True)
+        pool.shutdown(wait=False, cancel_futures=True)
+        _POOL = None
+        _POOL_PID = None
 
 
 def _ensure_pool() -> ProcessPoolExecutor:
@@ -243,8 +270,8 @@ def run_jq_filter(jq_filter: str, data: Any) -> Any:
         return _run_inprocess(jq_filter, data)
 
     pool = _ensure_pool()
-    future = pool.submit(_apply_filter, jq_filter, orjson.dumps(data))
     try:
+        future = pool.submit(_apply_filter, jq_filter, orjson.dumps(data))
         return orjson.loads(future.result(timeout=settings.jq_filter_timeout_seconds))
     except FutureTimeoutError as exc:
         logger.warning("jq filter exceeded %ss limit; killing worker", settings.jq_filter_timeout_seconds)
