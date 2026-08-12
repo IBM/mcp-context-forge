@@ -102,6 +102,16 @@ class EchoService(echo_pb2_grpc.EchoServiceServicer):
             result=f"v2: {request.name}={request.value} prio={request.priority}",
         )
 
+    def EchoLarge(self, request, context):
+        """Echo back large payload with size verification."""
+        logger.info("EchoLarge: size=%d marker=%r", request.size, request.marker)
+        actual_size = len(request.data)
+        return echo_pb2.LargePayload(
+            data=request.data,
+            size=actual_size,
+            marker=f"echoed: {request.marker}",
+        )
+
 
 def build_server(port, use_tls=False):
     """Build a gRPC server with optional TLS and reflection."""

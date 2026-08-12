@@ -65,6 +65,11 @@ class EchoServiceStub:
                 request_serializer=echo__pb2.EchoV2Request.SerializeToString,
                 response_deserializer=echo__pb2.EchoV2Response.FromString,
                 _registered_method=True)
+        self.EchoLarge = channel.unary_unary(
+                '/grpc_test.EchoService/EchoLarge',
+                request_serializer=echo__pb2.LargePayload.SerializeToString,
+                response_deserializer=echo__pb2.LargePayload.FromString,
+                _registered_method=True)
 
 
 class EchoServiceServicer:
@@ -113,6 +118,13 @@ class EchoServiceServicer:
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def EchoLarge(self, request, context):
+        """Large payload echo for big message testing.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_EchoServiceServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -145,6 +157,11 @@ def add_EchoServiceServicer_to_server(servicer, server):
                     servicer.EchoV2,
                     request_deserializer=echo__pb2.EchoV2Request.FromString,
                     response_serializer=echo__pb2.EchoV2Response.SerializeToString,
+            ),
+            'EchoLarge': grpc.unary_unary_rpc_method_handler(
+                    servicer.EchoLarge,
+                    request_deserializer=echo__pb2.LargePayload.FromString,
+                    response_serializer=echo__pb2.LargePayload.SerializeToString,
             ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
@@ -310,6 +327,33 @@ class EchoService:
             '/grpc_test.EchoService/EchoV2',
             echo__pb2.EchoV2Request.SerializeToString,
             echo__pb2.EchoV2Response.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def EchoLarge(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/grpc_test.EchoService/EchoLarge',
+            echo__pb2.LargePayload.SerializeToString,
+            echo__pb2.LargePayload.FromString,
             options,
             channel_credentials,
             insecure,

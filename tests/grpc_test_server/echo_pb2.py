@@ -24,7 +24,7 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\necho.proto\x12\tgrpc_test\"-\n\x0b\x45\x63hoRequest\x12\x0f\n\x07message\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\x05\"A\n\x0c\x45\x63hoResponse\x12\x0f\n\x07message\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\x05\x12\x11\n\tserver_id\x18\x03 \x01(\t\",\n\rEchoV1Request\x12\x0c\n\x04name\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\x05\"=\n\x0e\x45\x63hoV1Response\x12\x0c\n\x04name\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\x05\x12\x0e\n\x06result\x18\x03 \x01(\t\">\n\rEchoV2Request\x12\x0c\n\x04name\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\x05\x12\x10\n\x08priority\x18\x03 \x01(\x05\"O\n\x0e\x45\x63hoV2Response\x12\x0c\n\x04name\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\x05\x12\x10\n\x08priority\x18\x03 \x01(\x05\x12\x0e\n\x06result\x18\x04 \x01(\t2\x87\x03\n\x0b\x45\x63hoService\x12\x37\n\x04\x45\x63ho\x12\x16.grpc_test.EchoRequest\x1a\x17.grpc_test.EchoResponse\x12?\n\nEchoStream\x12\x16.grpc_test.EchoRequest\x1a\x17.grpc_test.EchoResponse0\x01\x12\x43\n\x10\x45\x63hoWithMetadata\x12\x16.grpc_test.EchoRequest\x1a\x17.grpc_test.EchoResponse\x12;\n\x08\x45\x63hoSlow\x12\x16.grpc_test.EchoRequest\x1a\x17.grpc_test.EchoResponse\x12=\n\x06\x45\x63hoV1\x12\x18.grpc_test.EchoV1Request\x1a\x19.grpc_test.EchoV1Response\x12=\n\x06\x45\x63hoV2\x12\x18.grpc_test.EchoV2Request\x1a\x19.grpc_test.EchoV2Responseb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\necho.proto\x12\tgrpc_test\"-\n\x0b\x45\x63hoRequest\x12\x0f\n\x07message\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\x05\"A\n\x0c\x45\x63hoResponse\x12\x0f\n\x07message\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\x05\x12\x11\n\tserver_id\x18\x03 \x01(\t\",\n\rEchoV1Request\x12\x0c\n\x04name\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\x05\"=\n\x0e\x45\x63hoV1Response\x12\x0c\n\x04name\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\x05\x12\x0e\n\x06result\x18\x03 \x01(\t\">\n\rEchoV2Request\x12\x0c\n\x04name\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\x05\x12\x10\n\x08priority\x18\x03 \x01(\x05\"O\n\x0e\x45\x63hoV2Response\x12\x0c\n\x04name\x18\x01 \x01(\t\x12\r\n\x05value\x18\x02 \x01(\x05\x12\x10\n\x08priority\x18\x03 \x01(\x05\x12\x0e\n\x06result\x18\x04 \x01(\t\":\n\x0cLargePayload\x12\x0c\n\x04\x64\x61ta\x18\x01 \x01(\x0c\x12\x0c\n\x04size\x18\x02 \x01(\x05\x12\x0e\n\x06marker\x18\x03 \x01(\t2\xc6\x03\n\x0b\x45\x63hoService\x12\x37\n\x04\x45\x63ho\x12\x16.grpc_test.EchoRequest\x1a\x17.grpc_test.EchoResponse\x12?\n\nEchoStream\x12\x16.grpc_test.EchoRequest\x1a\x17.grpc_test.EchoResponse0\x01\x12\x43\n\x10\x45\x63hoWithMetadata\x12\x16.grpc_test.EchoRequest\x1a\x17.grpc_test.EchoResponse\x12;\n\x08\x45\x63hoSlow\x12\x16.grpc_test.EchoRequest\x1a\x17.grpc_test.EchoResponse\x12=\n\x06\x45\x63hoV1\x12\x18.grpc_test.EchoV1Request\x1a\x19.grpc_test.EchoV1Response\x12=\n\x06\x45\x63hoV2\x12\x18.grpc_test.EchoV2Request\x1a\x19.grpc_test.EchoV2Response\x12=\n\tEchoLarge\x12\x17.grpc_test.LargePayload\x1a\x17.grpc_test.LargePayloadb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
@@ -43,6 +43,8 @@ if not _descriptor._USE_C_DESCRIPTORS:
   _globals['_ECHOV2REQUEST']._serialized_end=310
   _globals['_ECHOV2RESPONSE']._serialized_start=312
   _globals['_ECHOV2RESPONSE']._serialized_end=391
-  _globals['_ECHOSERVICE']._serialized_start=394
-  _globals['_ECHOSERVICE']._serialized_end=785
+  _globals['_LARGEPAYLOAD']._serialized_start=393
+  _globals['_LARGEPAYLOAD']._serialized_end=451
+  _globals['_ECHOSERVICE']._serialized_start=454
+  _globals['_ECHOSERVICE']._serialized_end=908
 # @@protoc_insertion_point(module_scope)
