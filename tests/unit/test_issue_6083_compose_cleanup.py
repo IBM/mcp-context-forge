@@ -1,4 +1,10 @@
-"""Regression coverage for issue #6083 duplicate backend removal."""
+# -*- coding: utf-8 -*-
+"""Location: ./tests/unit/test_issue_6083_compose_cleanup.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+
+Regression coverage for issue #6083 duplicate backend removal.
+"""
 
 from pathlib import Path
 
