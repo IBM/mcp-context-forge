@@ -10,12 +10,15 @@ duplicate local connections. It does not convey ownership or access scope.
 """
 
 from dataclasses import dataclass
+import logging
 from typing import NewType, Protocol, TypeAlias, assert_never
 import uuid
 
 import anyio
 
 from mcpgateway.services.reverse_proxy_protocol import JsonRpcId, JsonRpcNotification, JsonRpcRequest, ResponseMessage, encode_server_message, request
+
+logger = logging.getLogger(__name__)
 
 
 ConnectionId = NewType("ConnectionId", str)
@@ -29,6 +32,9 @@ class TextWebSocket(Protocol):
 
     async def send_text(self, data: str) -> None:
         """Send one serialized protocol frame."""
+
+    async def close(self) -> None:
+        """Close the transport; used when retiring a displaced connection."""
 
 
 class DuplicateLocalSessionError(Exception):
@@ -160,6 +166,7 @@ class ReverseProxySessionManager:
         self._local_connections: dict[LocalSessionId, ConnectionId] = {}
         self._stable_connections: dict[StableGatewayId, ConnectionId] = {}
         self._pending: dict[PendingKey, _PendingResponse] = {}
+        self._registration_locks: dict[StableGatewayId, anyio.Lock] = {}
         self._lock = anyio.Lock()
 
     async def connect(self, websocket: TextWebSocket, local_id: LocalSessionId) -> ReverseProxySession:
@@ -232,16 +239,72 @@ class ReverseProxySessionManager:
         """Return the outstanding request count for one connection."""
         return sum(key[0] == connection_id for key in self._pending)
 
-    async def attach_stable_id(self, stable_id: StableGatewayId, connection_id: ConnectionId) -> None:
-        """Map a stable gateway identity to an active process-local connection.
+    def registration_lock(self, stable_id: StableGatewayId) -> anyio.Lock:
+        """Return the per-stable-ID registration lifecycle lock, creating it on first use.
 
-        Replaces any existing mapping for ``stable_id`` (last-writer-wins).
+        The router holds this lock across discovery, promotion, and catalog
+        publish so two concurrent registrations for one stable identity cannot
+        interleave commit/promote/publish. This method awaits nothing, so the
+        check-and-insert is atomic on the event loop without taking ``_lock``.
+
+        Phase 3 scope is process-local: one retained lock entry per stable ID
+        is acceptable here; stable IDs are bounded by registered reverse-proxy
+        gateways, so the dict cannot grow unboundedly.
+        """
+        lock = self._registration_locks.get(stable_id)
+        if lock is None:
+            lock = anyio.Lock()
+            self._registration_locks[stable_id] = lock
+        return lock
+
+    async def promote_stable_id(self, stable_id: StableGatewayId, connection_id: ConnectionId) -> ConnectionId | None:
+        """Map ``stable_id`` to ``connection_id``, returning the displaced predecessor.
+
         Raises ``ConnectionNotFoundError`` when ``connection_id`` is not active.
+        The caller owns the displaced predecessor's lifecycle: retire it after
+        the replacement is acknowledged, or restore it on post-promotion failure.
         """
         async with self._lock:
             if connection_id not in self._sessions:
                 raise ConnectionNotFoundError(connection_id=connection_id)
+            displaced = self._stable_connections.get(stable_id)
             self._stable_connections[stable_id] = connection_id
+            return displaced
+
+    async def restore_stable_id(self, stable_id: StableGatewayId, predecessor: ConnectionId | None, failed_connection_id: ConnectionId) -> None:
+        """Compare-and-swap the mapping back to ``predecessor`` after a post-promotion failure.
+
+        Acts only while the mapping still points at ``failed_connection_id``; a
+        mapping that moved on (for example to a newer registration) is left
+        untouched. The predecessor is restored only when still active; otherwise
+        the mapping is removed so a stale connection is never routed.
+        """
+        async with self._lock:
+            if self._stable_connections.get(stable_id) != failed_connection_id:
+                return
+            if predecessor is not None and predecessor in self._sessions:
+                self._stable_connections[stable_id] = predecessor
+            else:
+                self._stable_connections.pop(stable_id, None)
+
+    async def retire_connection(self, connection_id: ConnectionId) -> None:
+        """Disconnect ``connection_id`` and best-effort close its socket wrapper.
+
+        Used to retire a displaced predecessor after a replacement registration
+        is acknowledged. Disconnect semantics are unchanged (idempotent; fails
+        pending calls; pops only this connection's stable mappings). The close
+        runs through the stored wrapper, which serializes it on the connection's
+        own I/O lock; close errors are swallowed and debug-logged because a
+        displaced socket may already be lost.
+        """
+        session = self._sessions.get(connection_id)
+        await self.disconnect(connection_id)
+        if session is None:
+            return
+        try:
+            await session.websocket.close()
+        except Exception as close_error:  # best-effort: a displaced socket may already be lost
+            logger.debug("Reverse proxy retired connection %s close failed: %s", connection_id, close_error)
 
     def resolve_connection_id(self, stable_id: StableGatewayId) -> ConnectionId | None:
         """Return the live connection identifier for ``stable_id`` or ``None`` when unknown."""

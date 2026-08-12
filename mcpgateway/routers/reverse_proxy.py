@@ -208,6 +208,9 @@ class ReverseProxyManager:
 manager = ReverseProxyManager()
 
 _REVERSE_PROXY_CONNECT_PERMISSIONS: Final = (Permissions.GATEWAYS_CREATE, Permissions.SERVERS_CREATE)
+# Bounded best-effort socket close for HTTP-initiated disconnects: cleanup of
+# typed session state and the legacy mirror must never wait on a stalled socket.
+_HTTP_DISCONNECT_CLOSE_TIMEOUT_SECONDS: Final = 5.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -371,24 +374,46 @@ async def websocket_endpoint(
             """Run catalog registration and MCP discovery as a sibling of the receive pump.
 
             Authority comes only from the authenticated context; the register
-            payload carries non-authoritative server metadata.
+            payload carries non-authoritative server metadata. Discovery,
+            promotion, and publish are serialized per stable ID through the
+            session manager's registration lock, and a displaced predecessor is
+            retired only after the replacement registration is acknowledged.
             """
             nonlocal registration_state
+            stable_id: StableGatewayId | None = None
+            displaced: ConnectionId | None = None
             try:
                 registration_context = AuthenticatedRegistrationContext(owner_email=authenticated_context.owner_email, team_id=authenticated_context.team_id)
                 entry = await ReverseProxyCatalogService(gateway_service=gateway_service, server_service=server_service).register(db, registration_context, server)
+                stable_id = StableGatewayId(entry.stable_id)
                 db_gateway = db.get(DbGateway, entry.stable_id)
                 db_server = db.get(DbServer, entry.stable_id)
                 if db_gateway is None or db_server is None:
                     raise ReverseProxyCatalogConflictError(stable_id=entry.stable_id, reason="catalog pair was not persisted")
-                await ReverseProxyDiscoveryService(gateway_service=gateway_service, server_service=server_service).discover_and_reconcile(
-                    db, session_manager, connection_id, db_gateway, db_server, timeout_seconds=float(settings.tool_timeout)
-                )
-                # Attach the stable mapping only after discovery succeeds: a
-                # failed replacement must never strand the healthy prior mapping.
-                await session_manager.attach_stable_id(StableGatewayId(entry.stable_id), connection_id)
+                discovery = ReverseProxyDiscoveryService(gateway_service=gateway_service, server_service=server_service)
+                async with session_manager.registration_lock(stable_id):
+                    # Commit, promote, and publish under the per-stable-ID lock:
+                    # two same-ID registrations can never interleave these steps.
+                    await discovery.discover_and_reconcile(db, session_manager, connection_id, db_gateway, db_server, timeout_seconds=float(settings.tool_timeout))
+                    # Promote only after discovery commits, and publish cache
+                    # effects only after promotion: a failed replacement must
+                    # never strand the healthy prior mapping or advertise an
+                    # unrouted catalog.
+                    displaced = await session_manager.promote_stable_id(stable_id, connection_id)
+                    await discovery.publish_post_commit_effects(db_gateway, db_server)
+                registration_state = "registered"
+                LOGGER.info(f"Registered server for connection {connection_id}: {server.name}")
+                await send_frame(encode_server_message(register_complete(str(connection_id), RegistrationStatus.SUCCESS)))
+                # Retire the displaced predecessor only after the replacement is
+                # acknowledged: an acknowledgement failure must still be able to
+                # restore the live predecessor mapping.
+                if displaced is not None and displaced != connection_id:
+                    await session_manager.retire_connection(displaced)
             except Exception:
                 LOGGER.error("Reverse proxy registration failed for connection %s", connection_id, exc_info=True)
+                if stable_id is not None:
+                    # Compare-and-swap no-op unless this connection's promotion is still current.
+                    await session_manager.restore_stable_id(stable_id, displaced, connection_id)
                 try:
                     await send_frame(encode_server_message(register_complete(str(connection_id), RegistrationStatus.ERROR, "registration failed")))
                     await connection_io.close(code=status.WS_1008_POLICY_VIOLATION, reason="registration failed")
@@ -397,9 +422,6 @@ async def websocket_endpoint(
                     # never mask the primary failure with a secondary send error.
                     LOGGER.debug("Reverse proxy registration-failure notification failed for connection %s: %s", connection_id, io_error)
                 return
-            registration_state = "registered"
-            LOGGER.info(f"Registered server for connection {connection_id}: {server.name}")
-            await send_frame(encode_server_message(register_complete(str(connection_id), RegistrationStatus.SUCCESS)))
 
         try:
             async with anyio.create_task_group() as task_group:
@@ -526,13 +548,17 @@ async def disconnect_session(
     # Validate session ownership
     _validate_session_ownership(session, credentials, "disconnect")
 
-    # Close the WebSocket connection, then clear the typed session state so
-    # stable-ID mappings and pending calls fail closed immediately. The typed
-    # disconnect is idempotent; the pump's own cleanup simply no-ops after it.
-    await session.websocket.close()
-    await manager.remove_session(session_id)
+    # Clear typed session state and the legacy mirror FIRST so stable mappings
+    # and pending calls fail closed immediately, then close the socket bounded
+    # and best-effort: a stalled or already-lost connection cannot block cleanup.
     session_manager = await get_reverse_proxy_session_manager()
     await session_manager.disconnect(ConnectionId(session_id))
+    await manager.remove_session(session_id)
+    try:
+        with anyio.fail_after(_HTTP_DISCONNECT_CLOSE_TIMEOUT_SECONDS):
+            await session.websocket.close()
+    except Exception as close_error:
+        LOGGER.debug("Reverse proxy HTTP disconnect close for session %s failed: %s", session_id, close_error)
 
     return {"status": "disconnected", "session_id": session_id}
 
