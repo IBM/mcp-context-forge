@@ -2,6 +2,7 @@
 """Tests for sandboxed jq filter execution."""
 
 # Standard
+import os
 import sys
 
 # Third-Party
@@ -133,3 +134,23 @@ def test_pool_failure_fails_closed(monkeypatch):
     monkeypatch.setattr(jq_runner, "_build_pool", lambda: (_ for _ in ()).throw(OSError("no fork for you")))
     with pytest.raises(JqFilterError):
         run_jq_filter(".a", {"a": 1})
+
+
+def test_pool_is_reused_within_a_process(jq_pool):
+    """Repeated startup calls do not churn the pool."""
+    # First-Party
+    from mcpgateway.utils import jq_runner
+
+    first = jq_runner._POOL  # pylint: disable=protected-access
+    start_jq_pool()
+    assert jq_runner._POOL is first  # pylint: disable=protected-access
+
+
+def test_pool_is_rebuilt_after_pid_change(jq_pool, monkeypatch):
+    """A pool inherited across a fork is discarded rather than reused."""
+    # First-Party
+    from mcpgateway.utils import jq_runner
+
+    monkeypatch.setattr(jq_runner, "_POOL_PID", -1)
+    assert run_jq_filter(".a", {"a": 5}) == [5]
+    assert jq_runner._POOL_PID == os.getpid()  # pylint: disable=protected-access

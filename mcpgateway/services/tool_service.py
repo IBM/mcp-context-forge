@@ -5718,7 +5718,7 @@ class ToolService(BaseService):
                             except (json.JSONDecodeError, orjson.JSONDecodeError, UnicodeDecodeError, AttributeError) as e:
                                 result = _handle_json_parse_error(response, e, is_error_response=False)
                             logger.debug("REST API tool response: %s", result)
-                            filtered_response = extract_using_jq(result, tool_jsonpath_filter)
+                            filtered_response = await asyncio.to_thread(extract_using_jq, result, tool_jsonpath_filter)
                             # Check if extract_using_jq returned an error (list of TextContent objects)
                             if isinstance(filtered_response, list) and len(filtered_response) > 0 and isinstance(filtered_response[0], TextContent):
                                 # Error case - use the TextContent directly
@@ -6400,7 +6400,7 @@ class ToolService(BaseService):
                             content = dump.get("content", [])
                             # Accept both alias and pythonic names for structured content
                             structured = dump.get("structuredContent") or dump.get("structured_content")
-                            filtered_response = extract_using_jq(content, tool_jsonpath_filter)
+                            filtered_response = await asyncio.to_thread(extract_using_jq, content, tool_jsonpath_filter)
 
                             is_err = getattr(tool_call_result, "is_error", None)
                             if is_err is None:
