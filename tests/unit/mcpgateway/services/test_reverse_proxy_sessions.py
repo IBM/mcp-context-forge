@@ -6,6 +6,8 @@ SPDX-License-Identifier: Apache-2.0
 Tests for process-local reverse-proxy sessions and pending responses.
 """
 
+from unittest.mock import patch
+
 import anyio
 from anyio.lowlevel import checkpoint
 import pytest
@@ -110,6 +112,24 @@ class CloseFailingWebSocket:
     async def close(self) -> None:
         self.close_calls += 1
         raise ConnectionError("close on a lost socket")
+
+
+class CloseStallingWebSocket:
+    """Fake whose close suspends forever, as if stuck behind a stalled send."""
+
+    def __init__(self) -> None:
+        self.close_entered = anyio.Event()
+        self.close_cancelled = anyio.Event()
+
+    async def send_text(self, data: str) -> None:
+        del data
+
+    async def close(self) -> None:
+        self.close_entered.set()
+        try:
+            await anyio.sleep_forever()
+        finally:
+            self.close_cancelled.set()
 
 
 def _request_payload(request_id: str | int) -> JsonRpcRequest:
@@ -487,13 +507,148 @@ async def test_get_reverse_proxy_session_manager_returns_singleton() -> None:
 
 @pytest.mark.asyncio
 async def test_registration_lock_is_shared_per_stable_id_and_distinct_across_ids() -> None:
-    """Given a stable ID, when its registration lock is requested twice, then the same lock is returned; another ID gets a different lock."""
+    """Given a stable ID, when registration guards are requested twice, then both share one lock entry; another ID gets its own entry."""
     manager = ReverseProxySessionManager()
 
     first = manager.registration_lock(StableGatewayId("stable-1"))
+    second = manager.registration_lock(StableGatewayId("stable-1"))
+    other = manager.registration_lock(StableGatewayId("stable-2"))
 
-    assert first is manager.registration_lock(StableGatewayId("stable-1"))
-    assert manager.registration_lock(StableGatewayId("stable-2")) is not first
+    assert first._entry is second._entry
+    assert other._entry is not first._entry
+
+
+@pytest.mark.asyncio
+async def test_registration_lock_entry_is_discarded_after_last_release() -> None:
+    """Given a completed registration-lock acquisition, when the guard exits, then the per-stable-ID entry is discarded rather than retained."""
+    manager = ReverseProxySessionManager()
+    stable_id = StableGatewayId("stable-1")
+
+    async with manager.registration_lock(stable_id):
+        assert manager._registration_locks.get(stable_id) is not None
+
+    assert manager._registration_locks.get(stable_id) is None
+
+
+@pytest.mark.asyncio
+async def test_registration_lock_cancelled_acquisition_does_not_leak_entry() -> None:
+    """Given a waiter cancelled while acquiring the registration lock, when the holder releases, then the entry is still discarded."""
+    manager = ReverseProxySessionManager()
+    stable_id = StableGatewayId("stable-1")
+
+    async def waiter() -> None:
+        async with manager.registration_lock(stable_id):
+            pass  # never reached: the holder keeps the lock until the waiter is cancelled
+
+    async with manager.registration_lock(stable_id):
+        async with anyio.create_task_group() as task_group:
+            task_group.start_soon(waiter)
+            await checkpoint()
+            task_group.cancel_scope.cancel()
+        assert manager._registration_locks.get(stable_id) is not None
+
+    assert manager._registration_locks.get(stable_id) is None
+
+
+@pytest.mark.asyncio
+async def test_quiesce_stable_id_returns_evicted_predecessor_and_unmaps() -> None:
+    """Given A promoted, when the stable ID is quiesced, then A's connection ID is returned and the stable ID resolves to None while A stays connected."""
+    manager = ReverseProxySessionManager()
+    session = await manager.connect(RecordingWebSocket(), LocalSessionId("local-1"))
+    stable_id = StableGatewayId("stable-1")
+    await manager.promote_stable_id(stable_id, session.connection_id)
+
+    evicted = await manager.quiesce_stable_id(stable_id)
+
+    assert evicted == session.connection_id
+    assert manager.resolve_connection_id(stable_id) is None
+
+
+@pytest.mark.asyncio
+async def test_quiesce_stable_id_returns_none_when_unmapped() -> None:
+    """Given no mapping, when an unknown stable ID is quiesced, then None is returned without raising."""
+    manager = ReverseProxySessionManager()
+
+    assert await manager.quiesce_stable_id(StableGatewayId("unknown")) is None
+
+
+@pytest.mark.asyncio
+async def test_restore_stable_id_restores_predecessor_into_quiesced_mapping() -> None:
+    """Given A quiesced (mapping absent), when a pre-commit failure restores, then the mapping points back at the still-active A."""
+    manager = ReverseProxySessionManager()
+    session = await manager.connect(RecordingWebSocket(), LocalSessionId("local-1"))
+    stable_id = StableGatewayId("stable-1")
+    await manager.promote_stable_id(stable_id, session.connection_id)
+    evicted = await manager.quiesce_stable_id(stable_id)
+
+    await manager.restore_stable_id(stable_id, evicted, ConnectionId("candidate-never-promoted"))
+
+    assert manager.resolve_connection_id(stable_id) == session.connection_id
+
+
+@pytest.mark.asyncio
+async def test_restore_stable_id_keeps_mapping_absent_when_predecessor_inactive() -> None:
+    """Given A quiesced and then disconnected, when a pre-commit failure restores, then the mapping stays absent rather than routing to the dead predecessor."""
+    manager = ReverseProxySessionManager()
+    session = await manager.connect(RecordingWebSocket(), LocalSessionId("local-1"))
+    stable_id = StableGatewayId("stable-1")
+    await manager.promote_stable_id(stable_id, session.connection_id)
+    evicted = await manager.quiesce_stable_id(stable_id)
+    await manager.disconnect(session.connection_id)
+
+    await manager.restore_stable_id(stable_id, evicted, ConnectionId("candidate-never-promoted"))
+
+    assert manager.resolve_connection_id(stable_id) is None
+
+
+@pytest.mark.asyncio
+async def test_restore_stable_id_demotes_candidate_without_predecessor_restore() -> None:
+    """Given the mapping points at the promoted candidate, when a post-commit failure restores with no predecessor, then the mapping is popped (fail-closed)."""
+    manager = ReverseProxySessionManager()
+    first = await manager.connect(RecordingWebSocket(), LocalSessionId("local-1"))
+    second = await manager.connect(RecordingWebSocket(), LocalSessionId("local-2"))
+    stable_id = StableGatewayId("stable-1")
+    await manager.promote_stable_id(stable_id, first.connection_id)
+    await manager.quiesce_stable_id(stable_id)
+    await manager.promote_stable_id(stable_id, second.connection_id)
+
+    await manager.restore_stable_id(stable_id, None, second.connection_id)
+
+    assert manager.resolve_connection_id(stable_id) is None
+
+
+@pytest.mark.asyncio
+async def test_promote_stable_id_after_quiesce_displaces_nothing() -> None:
+    """Given a quiesced stable ID, when the candidate promotes, then nothing is displaced because the mapping was already absent."""
+    manager = ReverseProxySessionManager()
+    first = await manager.connect(RecordingWebSocket(), LocalSessionId("local-1"))
+    second = await manager.connect(RecordingWebSocket(), LocalSessionId("local-2"))
+    stable_id = StableGatewayId("stable-1")
+    await manager.promote_stable_id(stable_id, first.connection_id)
+    await manager.quiesce_stable_id(stable_id)
+
+    displaced = await manager.promote_stable_id(stable_id, second.connection_id)
+
+    assert displaced is None
+    assert manager.resolve_connection_id(stable_id) == second.connection_id
+
+
+@pytest.mark.asyncio
+async def test_retire_connection_bounds_a_stalled_close() -> None:
+    """Given a close stuck behind the connection's I/O, when the connection is retired, then the close is cancelled by the retire timeout and cleanup still completes."""
+    manager = ReverseProxySessionManager()
+    websocket = CloseStallingWebSocket()
+    session = await manager.connect(websocket, LocalSessionId("local-1"))
+    stable_id = StableGatewayId("stable-1")
+    await manager.promote_stable_id(stable_id, session.connection_id)
+
+    with patch("mcpgateway.services.reverse_proxy_sessions._RETIRE_CLOSE_TIMEOUT_SECONDS", 0.05):
+        with anyio.fail_after(5):
+            await manager.retire_connection(session.connection_id)
+
+    assert websocket.close_entered.is_set()
+    assert websocket.close_cancelled.is_set()
+    assert manager.resolve_connection_id(stable_id) is None
 
 
 @pytest.mark.asyncio
