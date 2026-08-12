@@ -44,6 +44,25 @@ MCP_CLIENT_PROTOCOL_VERSION: Final = "2024-11-05"
 MCP_CLIENT_NAME: Final = "mcp-context-forge"
 MAX_LIST_PAGES: Final = 100
 REVERSE_PROXY_CREATED_VIA: Final = "reverse_proxy"
+PEER_AUTHORITY_FIELDS: Final = ("visibility", "team_id", "teamId", "owner_email", "ownerEmail", "gateway_id", "gatewayId")
+
+
+def _strip_peer_authority_fields(data: dict[str, Any]) -> None:
+    """Drop peer-selected ownership and visibility keys from one upstream item.
+
+    The reverse-proxy peer is a user-controlled connection, so a team-scoped
+    client advertising ``"visibility": "public"`` (or someone else's
+    ``team_id``/``owner_email``) on a listed tool, resource, or prompt would
+    otherwise widen that catalog row past its own authenticated scope. Team
+    ownership and visibility are always derived from the registration-time
+    gateway row instead. Both the snake_case field names and the camelCase
+    aliases are removed, since the prompt schema accepts either spelling.
+
+    Args:
+        data: One raw upstream catalog item, mutated in place.
+    """
+    for field in PEER_AUTHORITY_FIELDS:
+        data.pop(field, None)
 
 
 class ReverseProxyDiscoveryError(Exception):
@@ -261,6 +280,8 @@ class ReverseProxyDiscoveryService:
 
     def _build_tools(self, tool_dicts: list[dict[str, Any]]) -> tuple[list[ToolCreate], list[str]]:
         """Validate upstream tool dicts, translating total failure into discovery failure."""
+        for data in tool_dicts:
+            _strip_peer_authority_fields(data)
         try:
             return self._gateway_service._validate_tools(tool_dicts, context="reverse-proxy")  # pylint: disable=protected-access
         except GatewayConnectionError as exc:
@@ -271,6 +292,7 @@ class ReverseProxyDiscoveryService:
         resources: list[ResourceCreate] = []
         for data in resource_dicts:
             merge_mcp_protocol_meta(data)
+            _strip_peer_authority_fields(data)
             if "content" not in data:
                 data["content"] = ""
             try:
@@ -289,6 +311,7 @@ class ReverseProxyDiscoveryService:
                 )
         for data in template_dicts:
             merge_mcp_protocol_meta(data)
+            _strip_peer_authority_fields(data)
             if "uriTemplate" in data:
                 data["uri_template"] = str(data["uriTemplate"])
                 data["uri"] = str(data["uriTemplate"])
@@ -301,6 +324,7 @@ class ReverseProxyDiscoveryService:
         """Build prompt schemas with the minimal-fallback used for SSE discovery."""
         prompts: list[PromptCreate] = []
         for data in prompt_dicts:
+            _strip_peer_authority_fields(data)
             if "template" not in data:
                 data["template"] = ""
             try:

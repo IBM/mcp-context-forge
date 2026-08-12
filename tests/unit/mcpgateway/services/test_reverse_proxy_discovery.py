@@ -138,6 +138,37 @@ def proxy_pair(test_db):
     return stable_id
 
 
+@pytest.fixture
+def team_scoped_proxy_pair(test_db):
+    """Persisted team-scoped PROXIED gateway/server pair sharing one stable ID."""
+    stable_id = uuid.uuid4().hex
+    gateway = DbGateway(
+        id=stable_id,
+        name="team-scoped-proxy",
+        slug="team-scoped-proxy",
+        url=f"reverse-proxy://catalog/{stable_id}",
+        transport="PROXIED",
+        capabilities={},
+        tags=[],
+        team_id="trusted-team-id",
+        owner_email="owner@example.com",
+        visibility="team",
+        created_via="reverse_proxy",
+        reachable=False,
+    )
+    server = DbServer(
+        id=stable_id,
+        name="team-scoped-proxy",
+        team_id="trusted-team-id",
+        owner_email="owner@example.com",
+        visibility="team",
+        created_via="reverse_proxy",
+    )
+    test_db.add_all([gateway, server])
+    test_db.commit()
+    return stable_id
+
+
 async def _discover(discovery, test_db, fake: _ScriptedSessionManager, stable_id: str) -> ReverseProxyDiscoveryResult:
     """Run discovery for the persisted pair through the scripted connection."""
     gateway = test_db.get(DbGateway, stable_id)
@@ -675,3 +706,101 @@ async def test_discover_and_reconcile_alone_performs_no_post_commit_effects(disc
     discovery.registry_cache.invalidate_servers.assert_not_awaited()
     discovery.tool_lookup_cache.invalidate_gateway.assert_not_awaited()
     discovery.server_service._notify_server_updated.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_peer_supplied_resource_scope_is_ignored_in_favour_of_gateway_scope(discovery, test_db, team_scoped_proxy_pair):
+    # Given: a team-scoped peer advertising public visibility and someone else's team ownership
+    fake = _ScriptedSessionManager()
+    fake.script_result(_initialize_result({"resources": {}}))
+    fake.script_result(
+        {
+            "resources": [
+                {
+                    "uri": "file:///readme.txt",
+                    "name": "readme",
+                    "visibility": "public",
+                    "team_id": "attacker-team-id",
+                    "owner_email": "attacker@example.com",
+                    "gateway_id": "attacker-gateway-id",
+                }
+            ]
+        }
+    )
+    fake.script_result({"resourceTemplates": []})
+
+    # When
+    await _discover(discovery, test_db, fake, team_scoped_proxy_pair)
+
+    # Then: the persisted row carries the registration-time gateway scope, not the peer's
+    test_db.expire_all()
+    row = test_db.query(DbResource).one()
+    assert row.visibility == "team"
+    assert row.team_id == "trusted-team-id"
+    assert row.owner_email == "owner@example.com"
+    assert row.gateway_id == team_scoped_proxy_pair
+
+
+@pytest.mark.asyncio
+async def test_peer_supplied_prompt_scope_is_ignored_in_favour_of_gateway_scope(discovery, test_db, team_scoped_proxy_pair):
+    # Given: a team-scoped peer advertising a wider scope in both snake_case and camelCase spellings
+    fake = _ScriptedSessionManager()
+    fake.script_result(_initialize_result({"prompts": {}}))
+    fake.script_result(
+        {
+            "prompts": [
+                {
+                    "name": "greet",
+                    "visibility": "public",
+                    "team_id": "attacker-team-id",
+                    "teamId": "attacker-team-id",
+                    "owner_email": "attacker@example.com",
+                    "ownerEmail": "attacker@example.com",
+                    "gateway_id": "attacker-gateway-id",
+                    "gatewayId": "attacker-gateway-id",
+                }
+            ]
+        }
+    )
+
+    # When
+    await _discover(discovery, test_db, fake, team_scoped_proxy_pair)
+
+    # Then: the persisted row carries the registration-time gateway scope, not the peer's
+    test_db.expire_all()
+    row = test_db.query(DbPrompt).one()
+    assert row.visibility == "team"
+    assert row.team_id == "trusted-team-id"
+    assert row.owner_email == "owner@example.com"
+    assert row.gateway_id == team_scoped_proxy_pair
+
+
+@pytest.mark.asyncio
+async def test_peer_supplied_tool_scope_is_ignored_in_favour_of_gateway_scope(discovery, test_db, team_scoped_proxy_pair):
+    # Given: a team-scoped peer advertising public visibility on a listed tool
+    fake = _ScriptedSessionManager()
+    fake.script_result(_initialize_result({"tools": {}}))
+    fake.script_result(
+        {
+            "tools": [
+                {
+                    "name": "tool-a",
+                    "visibility": "public",
+                    "team_id": "attacker-team-id",
+                    "owner_email": "attacker@example.com",
+                    "gateway_id": "attacker-gateway-id",
+                }
+            ]
+        }
+    )
+
+    # When
+    await _discover(discovery, test_db, fake, team_scoped_proxy_pair)
+
+    # Then: the persisted row carries the registration-time gateway scope, not the peer's
+    test_db.expire_all()
+    row = test_db.query(DbTool).one()
+    assert row.visibility == "team"
+    assert row.team_id == "trusted-team-id"
+    assert row.owner_email == "owner@example.com"
+    assert row.gateway_id == team_scoped_proxy_pair
