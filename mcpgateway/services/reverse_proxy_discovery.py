@@ -26,7 +26,6 @@ from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Server as DbServer
 from mcpgateway.schemas import PromptCreate, ResourceCreate, ToolCreate
 from mcpgateway.services.gateway_service import (
-    GatewayCatalogReconcileResult,
     GatewayConnectionError,
     GatewayService,
     _get_registry_cache,
@@ -66,10 +65,21 @@ class ReverseProxyDiscoveryResult:
 class ReverseProxyDiscoveryService:
     """Drive MCP discovery and catalog reconciliation for one reverse-proxy connection."""
 
-    def __init__(self, gateway_service: GatewayService | None = None) -> None:
-        """Initialize with the shared gateway catalog service."""
+    def __init__(self, gateway_service: GatewayService | None = None, server_service: ServerService | None = None) -> None:
+        """Initialize with the shared gateway catalog and server services.
+
+        When ``server_service`` is not injected, the process-level lazy
+        singleton from ``mcpgateway.services.server_service`` is used; a fresh
+        ``ServerService`` is never constructed here, since that would leak an
+        ``httpx.AsyncClient`` and publish events with no process subscribers.
+        """
         self._gateway_service = gateway_service or GatewayService()
-        self._server_service = ServerService()
+        if server_service is not None:
+            self._server_service = server_service
+        else:
+            from mcpgateway.services.server_service import server_service as process_server_service  # pylint: disable=import-outside-toplevel,no-name-in-module
+
+            self._server_service = process_server_service
 
     async def discover_and_reconcile(
         self,
@@ -148,7 +158,7 @@ class ReverseProxyDiscoveryService:
         db_server.prompts = list(db_gateway.prompts)
         db.commit()
 
-        await self._publish_post_commit_effects(db_gateway, db_server, reconcile)
+        await self._publish_post_commit_effects(db_gateway, db_server)
 
         return ReverseProxyDiscoveryResult(
             capabilities=capabilities,
@@ -289,15 +299,18 @@ class ReverseProxyDiscoveryService:
                 prompts.append(PromptCreate(name=str(data.get("name", "")), description=data.get("description"), template=str(data.get("template", ""))))
         return prompts
 
-    async def _publish_post_commit_effects(self, db_gateway: DbGateway, db_server: DbServer, reconcile: GatewayCatalogReconcileResult) -> None:
-        """Invalidate caches and notify subscribers after the commit succeeds."""
+    async def _publish_post_commit_effects(self, db_gateway: DbGateway, db_server: DbServer) -> None:
+        """Invalidate caches and notify subscribers after the commit succeeds.
+
+        The advertised catalog categories are invalidated unconditionally:
+        registration discovery re-publishes the full catalog state, and a
+        metadata-only rediscovery updates rows in place without any add/remove
+        counts, so gating on per-type deltas would leave list/catalog APIs stale.
+        """
         cache = _get_registry_cache()
-        if reconcile.tools_added or reconcile.tools_removed:
-            await cache.invalidate_tools()
-        if reconcile.resources_added or reconcile.resources_removed:
-            await cache.invalidate_resources()
-        if reconcile.prompts_added or reconcile.prompts_removed:
-            await cache.invalidate_prompts()
+        await cache.invalidate_tools()
+        await cache.invalidate_resources()
+        await cache.invalidate_prompts()
         await cache.invalidate_servers()
         tool_lookup_cache = _get_tool_lookup_cache()
         await tool_lookup_cache.invalidate_gateway(str(db_gateway.id))
