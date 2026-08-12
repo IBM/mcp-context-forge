@@ -141,6 +141,8 @@ class MCPProtocolVersionMiddleware(BaseHTTPMiddleware):
         - /rpc and /rpc/ (gateway JSON-RPC endpoint)
         - /servers/*/sse (SSE transport)
         - /servers/*/ws (WebSocket transport)
+        - /v1/virtual-servers/*/sse (versioned SSE transport alias)
+        - /v1/virtual-servers/*/ws (versioned WebSocket transport alias)
 
         Non-MCP endpoints (admin, health, openapi, etc.) are excluded.
 
@@ -155,7 +157,7 @@ class MCPProtocolVersionMiddleware(BaseHTTPMiddleware):
             return True
 
         # Prefix matches for SSE/WebSocket/Server endpoints
-        if path.startswith("/servers/") and (path.endswith("/sse") or path.endswith("/ws")):
+        if path.startswith(("/servers/", "/v1/virtual-servers/")) and (path.endswith("/sse") or path.endswith("/ws")):
             return True
 
         return False
