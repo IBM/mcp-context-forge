@@ -195,6 +195,15 @@ def _structured_log_events(mock_logger):
     return {logged_call.kwargs["metadata"].get("event"): logged_call.kwargs["metadata"] for logged_call in mock_logger.log.call_args_list if isinstance(logged_call.kwargs.get("metadata"), dict)}
 
 
+def _structured_log_call_kwargs(mock_logger, event_name):
+    """Return kwargs for the first matching structured-log event, or None."""
+    for logged_call in mock_logger.log.call_args_list:
+        metadata = logged_call.kwargs.get("metadata")
+        if isinstance(metadata, dict) and metadata.get("event") == event_name:
+            return logged_call.kwargs
+    return None
+
+
 class TestInvokeToolReverseProxied:
     """PROXIED gateway dispatch through the reverse-proxy session manager."""
 
@@ -227,6 +236,7 @@ class TestInvokeToolReverseProxied:
         assert events["mcp_call_started"]["transport"] == "proxied"
         assert events["mcp_call_completed"]["transport"] == "proxied"
         assert events["mcp_call_completed"]["success"] is True
+        assert "mcp_call_failed" not in events
 
     @pytest.mark.asyncio
     async def test_dispatch_forwards_meta_and_propagates_result_envelope(self, tool_service, proxied_tool, test_db):
@@ -295,6 +305,7 @@ class TestInvokeToolReverseProxied:
         events = _structured_log_events(mock_logging_services["structured_logger"])
         assert events["tool_timeout"]["transport"] == "proxied"
         assert events["tool_timeout"]["tool_name"] == PROXIED_ORIGINAL_NAME
+        assert "mcp_call_failed" not in events
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -327,6 +338,56 @@ class TestInvokeToolReverseProxied:
             pytest.raises(ToolInvocationError, match=r"MCP error -32001: upstream exploded"),
         ):
             await tool_service.invoke_tool(test_db, PROXIED_TOOL_NAME, {"param": "value"}, request_headers=None)
+
+    @pytest.mark.asyncio
+    async def test_mcp_error_response_emits_mcp_call_failed(self, tool_service, proxied_tool, test_db, mock_logging_services):
+        """A JSON-RPC error response logs mcp_call_failed with the MCP error code in the message."""
+        _stub_db_execute(test_db, proxied_tool, proxied_tool.gateway)
+        manager = _manager_mock(send_return=_error_response("req-1", code=-32001, message="upstream exploded"))
+
+        with (
+            patch("mcpgateway.services.tool_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
+            pytest.raises(ToolInvocationError, match=r"MCP error -32001: upstream exploded"),
+        ):
+            await tool_service.invoke_tool(test_db, PROXIED_TOOL_NAME, {"param": "value"}, request_headers=None)
+
+        events = _structured_log_events(mock_logging_services["structured_logger"])
+        assert "mcp_call_failed" in events
+        failed_call = _structured_log_call_kwargs(mock_logging_services["structured_logger"], "mcp_call_failed")
+        assert failed_call is not None
+        assert failed_call["level"] == "ERROR"
+        assert failed_call["error_details"]["error_type"] == "JsonRpcErrorResponse"
+        assert "-32001" in failed_call["error_details"]["error_message"]
+        assert "upstream exploded" in failed_call["error_details"]["error_message"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "connection_error, expected_error_type",
+        [
+            (ConnectionClosedError(connection_id=ConnectionId("conn-1")), "ConnectionClosedError"),
+            (ConnectionNotFoundError(connection_id=ConnectionId("conn-1")), "ConnectionNotFoundError"),
+        ],
+        ids=["connection_closed", "connection_not_found"],
+    )
+    async def test_connection_failure_emits_mcp_call_failed(self, tool_service, proxied_tool, test_db, mock_logging_services, connection_error, expected_error_type):
+        """Dropped or stale connections log mcp_call_failed once with the connection error type."""
+        _stub_db_execute(test_db, proxied_tool, proxied_tool.gateway)
+        manager = _manager_mock(send_side_effect=connection_error)
+
+        with (
+            patch("mcpgateway.services.tool_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
+            pytest.raises(ToolInvocationError, match=r"Reverse-proxy connection for gateway 'proxied-gw-1'"),
+        ):
+            await tool_service.invoke_tool(test_db, PROXIED_TOOL_NAME, {"param": "value"}, request_headers=None)
+
+        events = _structured_log_events(mock_logging_services["structured_logger"])
+        assert "mcp_call_failed" in events
+        assert events["mcp_call_failed"]["transport"] == "proxied"
+        assert events["mcp_call_failed"]["tool_name"] == PROXIED_ORIGINAL_NAME
+        failed_call = _structured_log_call_kwargs(mock_logging_services["structured_logger"], "mcp_call_failed")
+        assert failed_call is not None
+        assert failed_call["level"] == "ERROR"
+        assert failed_call["error_details"]["error_type"] == expected_error_type
 
     @pytest.mark.asyncio
     async def test_dispatch_occurs_inside_gateway_call_span(self, tool_service, proxied_tool, test_db):
@@ -423,8 +484,8 @@ class TestInvokeToolReverseProxied:
         manager_factory.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_malformed_upstream_result_raises_before_success_telemetry(self, tool_service, mock_logging_services):
-        """A malformed upstream CallToolResult fails validation before any success telemetry is emitted."""
+    async def test_malformed_upstream_result_emits_mcp_call_failed(self, tool_service, mock_logging_services):
+        """A malformed upstream CallToolResult logs mcp_call_failed with ValidationError and no completed event."""
         manager = _manager_mock(send_return=_success_response("req-1", {"isError": False}))  # missing required content
 
         with (
@@ -436,6 +497,12 @@ class TestInvokeToolReverseProxied:
         events = _structured_log_events(mock_logging_services["structured_logger"])
         assert events["mcp_call_started"]["transport"] == "proxied"
         assert "mcp_call_completed" not in events
+        assert "mcp_call_failed" in events
+        failed_call = _structured_log_call_kwargs(mock_logging_services["structured_logger"], "mcp_call_failed")
+        assert failed_call is not None
+        assert failed_call["level"] == "ERROR"
+        assert failed_call["error_details"]["error_type"] == "ValidationError"
+        assert failed_call["error_details"]["error_message"] == "malformed upstream tools/call result"
 
 
 class TestPrepareRustMcpToolExecutionReverseProxied:
