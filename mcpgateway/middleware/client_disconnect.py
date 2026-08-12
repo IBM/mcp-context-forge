@@ -37,13 +37,16 @@ logger = LoggingService().get_logger(__name__)
 def _is_server_streaming_path(path: str) -> bool:
     """Return whether path is a server-scoped SSE or MCP streaming endpoint.
 
-    Matches ``/servers/{id}/sse`` and ``/servers/{id}/mcp`` (with or without
-    trailing slash) while NOT matching regular REST endpoints like
-    ``/servers/{id}`` or ``/servers/{id}/tools``.
+    Matches ``/servers/{id}/sse``, ``/servers/{id}/mcp``, and their
+    ``/v1/virtual-servers`` aliases (with or without trailing slash) while NOT
+    matching regular REST endpoints like ``/servers/{id}`` or
+    ``/v1/virtual-servers/{id}/tools``.
     """
     normalized = path.rstrip("/")
     parts = normalized.split("/")
-    return len(parts) == 4 and parts[1] == "servers" and parts[3] in ("sse", "mcp")
+    if len(parts) == 4:
+        return parts[1] == "servers" and parts[3] in ("sse", "mcp")
+    return len(parts) == 5 and parts[1:3] == ["v1", "virtual-servers"] and parts[4] in ("sse", "mcp")
 
 
 # Paths that manage their own disconnect handling (SSE, WebSocket, streaming)
