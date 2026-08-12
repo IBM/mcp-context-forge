@@ -15,7 +15,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import HTTPException
 
-# Pattern B — see "Test Isolation Patterns" above.
+# Rebind fresh: another suite may have imported this module under RBAC mocks;
+# pop and re-import so this file always binds freshly-applied, REAL decorators
+# regardless of collection order.
 sys.modules.pop("mcpgateway.routers.observability", None)
 
 # First-Party

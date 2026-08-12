@@ -16,9 +16,9 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi import HTTPException
 
-# Pattern B — see "Test Isolation Patterns" above. test_rbac_router.py imports
-# mcpgateway.routers.rbac under patch_rbac_decorators(), so this file must rebind
-# all three modules to fresh, really-decorated copies.
+# Rebind fresh: test_rbac_router.py imports mcpgateway.routers.rbac under
+# patch_rbac_decorators(), so this file must rebind all three modules to
+# fresh, really-decorated copies regardless of collection order.
 for _name in ("mcpgateway.routers.rbac", "mcpgateway.routers.runtime_admin_router", "mcpgateway.routers.toolops_router"):
     sys.modules.pop(_name, None)
 
