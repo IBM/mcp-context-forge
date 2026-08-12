@@ -2239,7 +2239,9 @@ class TestToolService:
         mock_response = AsyncMock()
         mock_response.raise_for_status = Mock()  # HTTP response raise_for_status is synchronous
         mock_response.status_code = 205
-        mock_response.json = Mock(return_value=ToolResult(content=[TextContent(type="text", text="Tool error encountered")]))
+        # For error responses, json() should raise or return dict with "error" key
+        mock_response.text = "Tool error encountered"
+        mock_response.json = Mock(return_value={"error": "Tool error encountered"})
 
         tool_service._http_client.get = AsyncMock(return_value=mock_response)
 
@@ -2250,7 +2252,7 @@ class TestToolService:
             # -------------- invoke -----------------
             result = await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
 
-        assert result.content[0].text == "Tool error encountered"
+        assert "Tool error encountered" in result.content[0].text
 
     @pytest.mark.asyncio
     async def test_invoke_tool_rest_post(self, tool_service, mock_tool, mock_global_config_obj, test_db):
@@ -6317,7 +6319,11 @@ class TestRestToolNonJsonResponses:
 
     @pytest.mark.asyncio
     async def test_rest_tool_truncates_large_response_text(self, tool_service, mock_tool, mock_global_config_obj, test_db, caplog):
-        """REST tool truncates response text exceeding REST_RESPONSE_TEXT_MAX_LENGTH."""
+        """REST tool truncates response text exceeding REST_RESPONSE_TEXT_MAX_LENGTH.
+
+        After fix for #XXXX: truncated responses now return error TextContent instead of
+        dict with response_text key, and are marked as is_error=True.
+        """
         mock_tool.integration_type = "REST"
         mock_tool.request_type = "GET"
         mock_tool.jsonpath_filter = ""
@@ -6342,15 +6348,23 @@ class TestRestToolNonJsonResponses:
         with patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer):
             result = await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
 
+            # After fix: truncation returns error TextContent, not dict with response_text
             assert result.content[0].text is not None
-            result_data = orjson.loads(result.content[0].text)
-            assert "response_text" in result_data
-            assert len(result_data["response_text"]) == settings.rest_response_text_max_length
+            assert result.is_error is True  # Marked as error
+            assert "JSON parse error" in result.content[0].text
+            # Error message includes truncation details
+            assert f"Response was {len(large_text)} characters but truncated to {settings.rest_response_text_max_length} characters" in result.content[0].text
+            # Truncated content is included in error message
+            assert "X" * settings.rest_response_text_max_length in result.content[0].text
             assert f"Response truncated from {len(large_text)} to {settings.rest_response_text_max_length} characters" in caplog.text
 
     @pytest.mark.asyncio
     async def test_rest_tool_does_not_truncate_small_response(self, tool_service, mock_tool, mock_global_config_obj, test_db, caplog):
-        """REST tool does not truncate response text below the limit."""
+        """REST tool does not truncate response text below the limit.
+
+        After fix for #XXXX: non-truncated responses still become error TextContent
+        (JSON parse failed), but without truncation message.
+        """
         mock_tool.integration_type = "REST"
         mock_tool.request_type = "GET"
         mock_tool.jsonpath_filter = ""
@@ -6375,13 +6389,21 @@ class TestRestToolNonJsonResponses:
         with patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer):
             result = await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
 
-            result_data = orjson.loads(result.content[0].text)
-            assert result_data["response_text"] == small_text
+            # After fix: still returns error TextContent (JSON parse failed)
+            assert result.is_error is True
+            assert "JSON parse error" in result.content[0].text
+            # But no truncation message since response was small
+            assert "truncated" not in result.content[0].text.lower()
+            # Full response is included
+            assert small_text in result.content[0].text
             assert "Response truncated" not in caplog.text
 
     @pytest.mark.asyncio
     async def test_rest_tool_truncation_respects_config_value(self, tool_service, mock_tool, mock_global_config_obj, test_db, caplog):
-        """REST tool truncation uses the configured REST_RESPONSE_TEXT_MAX_LENGTH value."""
+        """REST tool truncation uses the configured REST_RESPONSE_TEXT_MAX_LENGTH value.
+
+        After fix for #XXXX: error message includes the configured limit value.
+        """
         mock_tool.integration_type = "REST"
         mock_tool.request_type = "GET"
         mock_tool.jsonpath_filter = ""
@@ -6410,8 +6432,13 @@ class TestRestToolNonJsonResponses:
         ):
             result = await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
 
-            result_data = orjson.loads(result.content[0].text)
-            assert len(result_data["response_text"]) == 2000
+            # After fix: error message includes configured limit
+            assert result.is_error is True
+            assert "JSON parse error" in result.content[0].text
+            # Error message shows the patched limit (2000), not default (5000)
+            assert "Response was 6000 characters but truncated to 2000 characters" in result.content[0].text
+            # Truncated content is 2000 chars (matches patched setting)
+            assert "Y" * 2000 in result.content[0].text
             assert "Response truncated from 6000 to 2000 characters" in caplog.text
 
 
