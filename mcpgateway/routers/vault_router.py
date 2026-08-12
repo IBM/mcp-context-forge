@@ -26,6 +26,7 @@ from sqlalchemy.orm import Session
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.db import Gateway, Server, Tool, get_db, server_tool_association
 from mcpgateway.middleware.rbac import get_current_user_with_permissions
+from mcpgateway.routers.oauth_router import _enforce_gateway_access
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.token_storage_service import TokenStorageService
 from mcpgateway.utils.paths import resolve_root_path
@@ -148,6 +149,18 @@ async def vault_authorize(
                 status_code=400,
                 detail="Gateway OAuth configuration is incomplete.",
             )
+
+        # SECURITY: Enforce the same gateway access rules as /oauth/authorize/{gateway_id}.
+        # Checks Layer-1 token scoping, admin bypass, visibility, and team membership.
+        # Without this, any authenticated user could start an OAuth flow against a private
+        # gateway they are not a member of and obtain working upstream credentials.
+        await _enforce_gateway_access(
+            gateway.id,
+            gateway,
+            current_user,
+            db,
+            request=request,
+        )
 
         # Build user context for token storage (uses already-resolved token_teams).
         # SECURITY: token_teams is the authoritative scope from resolve_session_teams()

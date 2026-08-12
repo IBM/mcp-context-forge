@@ -17,7 +17,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = '12d4a0c7789c'  # pragma: allowlist secret
-down_revision: Union[str, Sequence[str], None] = 'c9f8e7d6a4b3'  # pragma: allowlist secret
+down_revision: Union[str, Sequence[str], None] = 'e4f5a6b7c8d9'  # pragma: allowlist secret
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
