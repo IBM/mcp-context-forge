@@ -41,7 +41,7 @@ pytestmark = pytest.mark.e2e
 REPO = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 PYBIN = sys.executable
 BASE_URL = "http://localhost:4444"
-JWT_SECRET = "my-test-key"  # pragma: allowlist secret
+JWT_SECRET = "vlt-e2e-9c3f7a1b6d8e4f2a0c5b9d7e3f1a8b6c"  # pragma: allowlist secret
 MCP_ACCEPT = "application/json, text/event-stream"
 SYSTEM_TAG = "system:echo.local"
 TOOL_TOKEN = "tok-tool-e2e"  # pragma: allowlist secret
@@ -156,7 +156,7 @@ def test_tool_path_injects_token_and_strips_vault_header(live_stack):
 
         tools = client.get("/tools", headers=auth).json()
         items = tools.get("items", tools) if isinstance(tools, dict) else tools
-        echo_tool = next((t for t in items if "echo" in str(t.get("name", "")).lower()), None)
+        echo_tool = next((t for t in items if str(t.get("name", "")).lower().endswith("-echo")), None)
         assert echo_tool, "echo tool not discovered from registered gateway"
 
         r = client.post("/servers", headers={**auth, "Content-Type": "application/json"}, json={"server": {"name": "vault_e2e_server", "associated_tools": [echo_tool["id"]]}})
