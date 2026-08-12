@@ -52,6 +52,26 @@ def test_parse_allowed_origins_json_and_csv():
     assert s_csv.allowed_origins == {"https://x.com", "https://y.com"}
 
 
+@pytest.mark.parametrize(
+    ("url", "message"),
+    [
+        ("https://user:password@ui.example.com", "credentials"),  # pragma: allowlist secret
+        ("https://ui.example.com/app?tenant=one", "query string"),
+        ("https://ui.example.com/app#fragment", "fragment"),
+    ],
+)
+def test_ui_base_url_rejects_unsafe_components(url, message):
+    """Frontend base URL must not carry credentials or URL suffix state."""
+    with pytest.raises(ValueError, match=message):
+        Settings(ui_base_url=url, environment="development", _env_file=None)
+
+
+def test_ui_base_url_allows_path_prefix():
+    """Frontend base URL may include a deployment path prefix."""
+    configured = Settings(ui_base_url="https://ui.example.com/contextforge", environment="development", _env_file=None)
+    assert str(configured.ui_base_url) == "https://ui.example.com/contextforge"
+
+
 # --------------------------------------------------------------------------- #
 #                         SSO field validators                            #
 # --------------------------------------------------------------------------- #

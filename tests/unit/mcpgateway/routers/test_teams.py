@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 
 from mcpgateway.db import EmailTeam, EmailTeamInvitation, EmailTeamJoinRequest, EmailTeamMember, EmailUser
 from mcpgateway.schemas import (
+    EmailDeliveryStatus,
     EmailUserResponse,
     TeamCreateRequest,
     TeamInviteRequest,
@@ -25,7 +26,7 @@ from mcpgateway.schemas import (
     TeamMemberUpdateRequest,
     TeamUpdateRequest,
 )
-from mcpgateway.services.team_invitation_service import TeamInvitationService
+from mcpgateway.services.team_invitation_service import InvitationDeliveryResult, TeamInvitationService
 from mcpgateway.services.team_management_service import SeededInvitation, SeededMember, TeamManagementService, TeamMemberLimitExceededError, TeamSeedResult
 
 from tests.utils.rbac_mocks import patch_rbac_decorators, restore_rbac_decorators
@@ -1146,6 +1147,12 @@ class TestTeamsRouter:
 
             mock_invite_service = AsyncMock(spec=TeamInvitationService)
             mock_invite_service.create_invitation = AsyncMock(return_value=mock_invitation)
+            mock_invite_service.deliver_invitation_email = AsyncMock(
+                return_value=InvitationDeliveryResult(
+                    invitation_url=f"https://ui.example/accept-invitation/{mock_invitation.token}",
+                    status=EmailDeliveryStatus.DISABLED,
+                )
+            )
             MockInviteService.return_value = mock_invite_service
 
             from mcpgateway.routers.teams import invite_team_member
@@ -1156,6 +1163,42 @@ class TestTeamsRouter:
             assert result.email == mock_invitation.email
             assert result.role == mock_invitation.role
             assert result.team_name == mock_team.name
+            assert result.email_delivery_status == "disabled"
+            assert result.warning is None
+            assert result.invitation_url.endswith(f"/accept-invitation/{mock_invitation.token}")
+
+    @pytest.mark.asyncio
+    async def test_invite_team_member_reports_delivery_failure_after_commit(self, mock_user_context, mock_db, mock_invitation, mock_team):
+        """Committed invitation survives best-effort SMTP failure."""
+        request = TeamInviteRequest(email="invited@example.com", role="member")
+
+        with (
+            patch("mcpgateway.routers.teams.TeamManagementService") as MockTeamService,
+            patch("mcpgateway.routers.teams.TeamInvitationService") as MockInviteService,
+        ):
+            team_service = AsyncMock(spec=TeamManagementService)
+            team_service.get_user_role_in_team = AsyncMock(return_value="owner")
+            team_service.get_team_by_id = AsyncMock(return_value=mock_team)
+            MockTeamService.return_value = team_service
+            invitation_service = AsyncMock(spec=TeamInvitationService)
+            invitation_service.create_invitation = AsyncMock(return_value=mock_invitation)
+            invitation_service.deliver_invitation_email = AsyncMock(
+                return_value=InvitationDeliveryResult(
+                    invitation_url=f"https://ui.example/accept-invitation/{mock_invitation.token}",
+                    status=EmailDeliveryStatus.FAILED,
+                    warning="Invitation created, but the email could not be delivered.",
+                )
+            )
+            MockInviteService.return_value = invitation_service
+
+            from mcpgateway.routers.teams import invite_team_member
+
+            result = await invite_team_member(mock_team.id, request, current_user=mock_user_context, db=mock_db)
+
+        assert result.email_delivery_status == "failed"
+        assert result.warning == "Invitation created, but the email could not be delivered."
+        mock_db.commit.assert_called()
+        invitation_service.deliver_invitation_email.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_invite_team_member_insufficient_permissions(self, mock_user_context, mock_db):

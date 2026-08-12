@@ -41,6 +41,7 @@ from mcpgateway.schemas import (
     TeamCreateRequest,
     TeamCreateResponse,
     TeamDiscoveryResponse,
+    TeamInvitationCreateResponse,
     TeamInvitationResponse,
     TeamInviteRequest,
     TeamJoinRequest,
@@ -735,9 +736,9 @@ async def remove_team_member(team_id: str, user_email: str, current_user: dict =
 # ---------------------------------------------------------------------------
 
 
-@teams_router.post("/{team_id}/invitations", response_model=TeamInvitationResponse, status_code=status.HTTP_201_CREATED)
+@teams_router.post("/{team_id}/invitations", response_model=TeamInvitationCreateResponse, status_code=status.HTTP_201_CREATED)
 @require_permission("teams.manage_members")
-async def invite_team_member(team_id: str, request: TeamInviteRequest, current_user: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> TeamInvitationResponse:
+async def invite_team_member(team_id: str, request: TeamInviteRequest, current_user: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> TeamInvitationCreateResponse:
     """Invite a user to join a team.
 
     Args:
@@ -747,7 +748,7 @@ async def invite_team_member(team_id: str, request: TeamInviteRequest, current_u
         db: Database session
 
     Returns:
-        TeamInvitationResponse: Created invitation data
+        TeamInvitationCreateResponse: Created invitation and email delivery data
 
     Raises:
         HTTPException: If team not found, access denied, or invitation fails
@@ -773,8 +774,14 @@ async def invite_team_member(team_id: str, request: TeamInviteRequest, current_u
         team_name = team.name if team else "Unknown Team"
 
         db.commit()
+        delivery = await invitation_service.deliver_invitation_email(
+            invitation=invitation,
+            team_name=team_name,
+            inviter_name=current_user.get("full_name") or current_user["email"],
+        )
+
         db.close()
-        return TeamInvitationResponse(
+        return TeamInvitationCreateResponse(
             id=invitation.id,
             team_id=invitation.team_id,
             team_name=team_name,
@@ -786,6 +793,9 @@ async def invite_team_member(team_id: str, request: TeamInviteRequest, current_u
             token=invitation.token,
             is_active=invitation.is_active,
             is_expired=invitation.is_expired(),
+            invitation_url=delivery.invitation_url,
+            email_delivery_status=delivery.status,
+            warning=delivery.warning,
         )
     except HTTPException:
         raise

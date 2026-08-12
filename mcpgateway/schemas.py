@@ -7130,6 +7130,22 @@ class TeamInvitationResponse(BaseModel):
     is_expired: bool = Field(..., description="Whether the invitation has expired")
 
 
+class EmailDeliveryStatus(str, Enum):
+    """Outcome of a best-effort notification email delivery."""
+
+    SENT = "sent"
+    FAILED = "failed"
+    DISABLED = "disabled"
+
+
+class TeamInvitationCreateResponse(TeamInvitationResponse):
+    """Schema for a newly created invitation and its email-delivery outcome."""
+
+    invitation_url: str = Field(..., description="Trusted frontend URL for accepting the invitation")
+    email_delivery_status: EmailDeliveryStatus = Field(..., description="Invitation email delivery outcome")
+    warning: Optional[str] = Field(default=None, description="Safe client-facing delivery warning")
+
+
 class TeamMemberAddRequest(BaseModel):
     """Schema for adding a team member.
 

@@ -1186,6 +1186,34 @@ class Settings(BaseSettings):
 
     # Domain configuration
     app_domain: HttpUrl = Field(default=HttpUrl("http://localhost:4444"))
+    ui_base_url: Optional[HttpUrl] = Field(
+        default=None,
+        description="Trusted base URL for browser-facing UI links. Falls back to APP_DOMAIN plus APP_ROOT_PATH when unset.",
+    )
+
+    @field_validator("ui_base_url")
+    @classmethod
+    def validate_ui_base_url(cls, value: Optional[HttpUrl]) -> Optional[HttpUrl]:
+        """Reject URL components unsuitable for a trusted frontend base.
+
+        Args:
+            value: Configured frontend base URL.
+
+        Returns:
+            Optional[HttpUrl]: Validated frontend base URL.
+
+        Raises:
+            ValueError: If credentials, query parameters, or fragments are present.
+        """
+        if value is None:
+            return None
+        if value.username or value.password:
+            raise ValueError("UI_BASE_URL must not contain credentials")
+        if value.query:
+            raise ValueError("UI_BASE_URL must not contain a query string")
+        if value.fragment:
+            raise ValueError("UI_BASE_URL must not contain a fragment")
+        return value
 
     # Security settings
     secure_cookies: bool = Field(default=True)

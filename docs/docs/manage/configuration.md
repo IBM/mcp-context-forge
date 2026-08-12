@@ -98,6 +98,7 @@ ContextForge supports multiple database backends with full feature parity across
 | `CLIENT_MODE`      | Client-only mode for gateway-as-client   | `false`                | bool                   |
 | `DATABASE_URL`     | SQLAlchemy connection URL                | `sqlite:///./mcp.db`   | any SQLAlchemy dialect |
 | `APP_ROOT_PATH`    | Subpath prefix for app (e.g. `/gateway`) | (empty)                | string                 |
+| `UI_BASE_URL`      | Trusted base URL for browser-facing links in invitation and password emails | (unset) | HTTP/HTTPS URL |
 | `TEMPLATES_DIR`    | Path to Jinja2 templates                 | `mcpgateway/templates` | path                   |
 | `STATIC_DIR`       | Path to static files                     | `mcpgateway/static`    | path                   |
 | `PROTOCOL_VERSION` | MCP protocol version supported           | `2025-06-18`           | string                 |
@@ -105,6 +106,27 @@ ContextForge supports multiple database backends with full feature parity across
 
 !!! tip "Subpath Deployment"
     Use `APP_ROOT_PATH=/foo` if reverse-proxying under a subpath like `https://host.com/foo/`.
+
+### Browser-facing email links
+
+Set `UI_BASE_URL` when the React client is deployed at a different origin or path from the gateway:
+
+```bash
+UI_BASE_URL=https://ui.example.com/contextforge
+```
+
+ContextForge uses this trusted base to generate these browser-facing email links:
+
+- `https://ui.example.com/contextforge/accept-invitation/{token}`
+- `https://ui.example.com/contextforge/reset-password/{token}`
+- `https://ui.example.com/contextforge/forgot-password`
+
+When `UI_BASE_URL` is unset, links use `APP_DOMAIN + APP_ROOT_PATH`. ContextForge never derives these links from
+the inbound `Host` header. Tokens are URL-encoded as individual path segments.
+
+`UI_BASE_URL` controls links only; it does not configure browser access to gateway APIs. For a React client on a
+different origin, add that exact origin to `ALLOWED_ORIGINS`. Deployments using cross-origin cookies must also set
+appropriate secure-cookie, SameSite, credential, and CSRF configuration.
 
 ### Authentication
 

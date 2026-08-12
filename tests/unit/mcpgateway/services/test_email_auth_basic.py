@@ -225,15 +225,27 @@ class TestEmailAuthBasic:
 
     def test_build_password_reset_urls(self, service):
         """Build forgot/reset URLs from app settings."""
-        with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
+        with patch("mcpgateway.services.email_notification_service.settings") as mock_settings:
+            mock_settings.ui_base_url = None
             mock_settings.app_domain = "https://gateway.example.com/"
             mock_settings.app_root_path = "/root/"
 
             forgot_url = service._build_forgot_password_url()
             reset_url = service._build_reset_password_url("tok en")
 
-        assert forgot_url == "https://gateway.example.com/root/admin/forgot-password"
-        assert reset_url.endswith("/admin/reset-password/tok%20en")
+        assert forgot_url == "https://gateway.example.com/root/forgot-password"
+        assert reset_url == "https://gateway.example.com/root/reset-password/tok%20en"
+
+    def test_build_password_reset_urls_use_configured_ui_base(self, service):
+        """Configured React base URL preserves its path prefix."""
+        with patch("mcpgateway.services.email_notification_service.settings") as mock_settings:
+            mock_settings.ui_base_url = "https://ui.example.com/contextforge/"
+
+            forgot_url = service._build_forgot_password_url()
+            reset_url = service._build_reset_password_url("tok/en")
+
+        assert forgot_url == "https://ui.example.com/contextforge/forgot-password"
+        assert reset_url == "https://ui.example.com/contextforge/reset-password/tok%2Fen"
 
     def test_recent_password_reset_request_count(self, service, mock_db):
         """Count helper returns integer count from query scalar."""

@@ -21,6 +21,7 @@ import pytest
 from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam, EmailTeamInvitation, EmailTeamMember, EmailTeamMemberHistory, EmailUser, utc_now
 from mcpgateway.schemas import MAX_TEAM_MEMBER_SEEDS, TeamMemberSeed
+from mcpgateway.services.team_invitation_service import TeamInvitationService
 from mcpgateway.services.team_management_service import TeamManagementService, TeamMemberLimitExceededError, TeamMemberSeedError
 
 CREATOR = "creator@example.com"
@@ -605,6 +606,41 @@ class TestSeededInvitationTokens:
         # URL-safe base64 alphabet (secrets.token_urlsafe): letters, digits, '-' and '_'.
         assert all(re.fullmatch(r"[A-Za-z0-9_-]+", token) for token in tokens)
         assert len(set(tokens)) == len(tokens), "tokens must be unique across invitations"
+
+
+class TestSeededInvitationDelivery:
+    """Seeded invitation email starts only after outer transaction commit."""
+
+    @pytest.mark.asyncio
+    async def test_delivery_occurs_after_commit(self, service, test_db):
+        """commit=False invitation creation never sends before team commit."""
+        events = []
+        original_commit = test_db.commit
+
+        def tracked_commit():
+            events.append("commit")
+            return original_commit()
+
+        async def tracked_delivery(invitations, team_name, inviter_name):
+            events.append("delivery")
+            assert invitations[0].id
+            assert team_name == "Engineering"
+            assert inviter_name
+            return []
+
+        with (
+            patch.object(test_db, "commit", side_effect=tracked_commit),
+            patch.object(TeamInvitationService, "deliver_invitation_emails", new=AsyncMock(side_effect=tracked_delivery)),
+        ):
+            await service.create_team_with_members(
+                name="Engineering",
+                description=None,
+                created_by=CREATOR,
+                visibility="private",
+                members=[TeamMemberSeed(email="external@partner.com", role="member")],
+            )
+
+        assert events[:2] == ["commit", "delivery"]
 
 
 class TestCreateTeamUnchanged:

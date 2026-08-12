@@ -873,6 +873,16 @@ class TeamManagementService:
 
             team_id = str(team.id)
 
+            # Invitations were flushed with commit=False above. Delivery starts
+            # only after the outer team transaction commits successfully.
+            if invitations:
+                inviter = self.db.query(EmailUser).filter(EmailUser.email == created_by).first()
+                inviter_name = inviter.get_display_name() if inviter else created_by
+                # First-Party
+                from mcpgateway.services.team_invitation_service import TeamInvitationService  # pylint: disable=import-outside-toplevel,cyclic-import,reimported
+
+                await TeamInvitationService(self.db).deliver_invitation_emails(invitations, team.name, inviter_name)
+
             # Post-commit bookkeeping for each seeded member, matching add_member_to_team()
             for member, action in memberships:
                 self._log_team_member_action(member.id, team_id, member.user_email, member.role, action, created_by)
