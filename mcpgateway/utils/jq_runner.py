@@ -22,6 +22,7 @@ from __future__ import annotations
 # Standard
 from concurrent.futures import ProcessPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
+from concurrent.futures.process import BrokenProcessPool
 from functools import lru_cache
 import logging
 import multiprocessing
@@ -36,6 +37,7 @@ import orjson
 
 # First-Party
 from mcpgateway.config import settings
+from mcpgateway.utils.jq_guard import assert_safe_jq_filter
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +56,17 @@ _POOL: Optional[ProcessPoolExecutor] = None
 _POOL_PID: Optional[int] = None
 _POOL_LOCK = threading.Lock()
 _FALLBACK_WARNED = False
+
+# Attribute stamped on each executor with the PID that built it. Ownership has
+# to be decidable from the pool object alone: a pool can be replaced (or its
+# global reference cleared by ``shutdown_jq_pool``) while one of its workers is
+# still running a hostile filter, and that worker must still be killable.
+_OWNER_PID_ATTR = "_mcpgateway_owner_pid"
+
+# Lower bound on how long ``start_jq_pool`` waits for the warm-up filter. The
+# per-filter timeout is only validated as ``gt=0``, so an aggressively short
+# value must not also shrink the startup budget and turn a boot into a failure.
+_WARMUP_MIN_SECONDS = 10.0
 
 
 def subprocess_mode_available() -> bool:
@@ -84,13 +97,51 @@ def _build_pool() -> ProcessPoolExecutor:
     """Create a forked worker pool with a scrubbed environment.
 
     Returns:
-        The new executor.
+        The new executor, stamped with the PID that created it.
     """
-    return ProcessPoolExecutor(
+    pool = ProcessPoolExecutor(
         max_workers=settings.jq_filter_workers,
         mp_context=multiprocessing.get_context("fork"),
         initializer=_worker_init,
     )
+    setattr(pool, _OWNER_PID_ATTR, os.getpid())
+    return pool
+
+
+def _pool_is_owned(pool: ProcessPoolExecutor) -> bool:
+    """Report whether this process forked the given pool's workers.
+
+    Args:
+        pool: The executor to test.
+
+    Returns:
+        True when the pool was built by this process, so killing its worker
+        processes is safe. False for a pool inherited across a fork, whose
+        ``Process`` objects reference the parent's children.
+    """
+    return getattr(pool, _OWNER_PID_ATTR, None) == os.getpid()
+
+
+def _kill_workers(pool: ProcessPoolExecutor) -> None:
+    """Kill every worker process belonging to a pool this process owns.
+
+    ``ProcessPoolExecutor`` cannot cancel a task that is already running, and
+    the public ``terminate_workers``/``kill_workers`` methods are Python 3.14
+    while this project targets 3.12. The private ``_processes`` mapping is the
+    only route; it is read defensively and pinned by a test.
+
+    Args:
+        pool: The executor whose workers should be killed. Callers must have
+            confirmed ownership via :func:`_pool_is_owned` first.
+    """
+    # ``shutdown`` sets ``_processes`` to None to release file descriptors, so a
+    # pool that has already been shut down elsewhere must not blow up here.
+    for process in list((getattr(pool, "_processes", None) or {}).values()):
+        try:
+            process.kill()
+        except Exception:  # pylint: disable=broad-except
+            logger.warning("Failed to kill a jq worker process", exc_info=True)
+    pool.shutdown(wait=False, cancel_futures=True)
 
 
 def start_jq_pool() -> None:
@@ -98,6 +149,13 @@ def start_jq_pool() -> None:
 
     Call from application startup, after any fork performed by the server, so
     that each gateway worker owns its own pool.
+
+    Raises:
+        Exception: Whatever the warm-up submit raises when the sandbox cannot be
+            brought up (``BrokenProcessPool``, ``TimeoutError``, ``OSError``).
+            This is deliberately left to propagate: on Linux with subprocess
+            mode a pool that will not start is a hard startup failure, since the
+            alternative is booting a gateway whose filter sandbox is absent.
     """
     global _POOL, _POOL_PID, _FALLBACK_WARNED  # pylint: disable=global-statement
 
@@ -121,7 +179,7 @@ def start_jq_pool() -> None:
         # first attacker-triggered filter. This also proves the initializer (the
         # environment scrub) actually ran before we call the pool ready.
         try:
-            pool.submit(_apply_filter, ".", b"null").result(timeout=settings.jq_filter_timeout_seconds)
+            pool.submit(_apply_filter, ".", b"null").result(timeout=max(_WARMUP_MIN_SECONDS, settings.jq_filter_timeout_seconds))
         except Exception:
             pool.shutdown(wait=False, cancel_futures=True)
             raise
@@ -131,54 +189,54 @@ def start_jq_pool() -> None:
 
 
 def shutdown_jq_pool() -> None:
-    """Tear down the jq worker pool for this process."""
-    global _POOL, _POOL_PID  # pylint: disable=global-statement
+    """Tear down the jq worker pool for this process.
 
-    with _POOL_LOCK:
-        if _POOL is None:
-            return
-        if _POOL_PID != os.getpid():
-            # Inherited from a parent via fork; this process never owned these
-            # workers, so drop the reference without touching the parent's pool.
-            _POOL = None
-            _POOL_PID = None
-            return
-        _POOL.shutdown(wait=False, cancel_futures=True)
-        _POOL = None
-        _POOL_PID = None
+    Kills the pool's worker processes rather than only cancelling queued work.
+    ``ProcessPoolExecutor.shutdown(wait=False, cancel_futures=True)`` drops
+    *pending* futures but cannot stop a worker already mid-filter, and the
+    executor's own ``atexit`` hook then blocks interpreter exit trying to join a
+    worker that is running a non-terminating jq program.
+    """
+    _discard_pool(None)
 
 
-def _kill_pool_workers() -> None:
-    """Kill every worker in the current pool and drop it.
+def _discard_pool(pool: Optional[ProcessPoolExecutor]) -> None:
+    """Kill a pool's workers and clear the module globals if they still name it.
 
-    ``ProcessPoolExecutor`` cannot cancel a task that is already running, and
-    the public ``terminate_workers``/``kill_workers`` methods are Python 3.14
-    while this project targets 3.12. The private ``_processes`` mapping is the
-    only route; it is read defensively and pinned by a test.
+    Killing is decided per pool object, not from the global ``_POOL`` pointer.
+    A pool whose worker is running a hostile filter must stay killable even if
+    another thread (application shutdown, a concurrent rebuild) has already
+    moved ``_POOL`` on to something else — otherwise the runaway worker is
+    orphaned and wedges interpreter exit. Conversely, a pool inherited across a
+    fork is never killed: its ``Process`` objects belong to the parent.
+
+    Args:
+        pool: The executor to discard, or None to discard whichever pool
+            ``_POOL`` currently names.
     """
     global _POOL, _POOL_PID  # pylint: disable=global-statement
 
-    pool = _POOL
-    if pool is None:
-        return
     with _POOL_LOCK:
-        if _POOL is not pool:
-            # Another thread already rebuilt or dropped the pool; leave it alone.
+        target = pool if pool is not None else _POOL
+        if target is None:
             return
-        if _POOL_PID != os.getpid():
-            # Inherited from a parent via fork; these Process objects reference
-            # the parent's workers. Never kill processes we don't own.
+        if _pool_is_owned(target):
+            _kill_workers(target)
+        # Only stand down the shared globals if they still point at the exact
+        # pool just handled; a newer pool built by another thread is left alone.
+        if _POOL is target:
             _POOL = None
             _POOL_PID = None
-            return
-        for process in list(getattr(pool, "_processes", {}).values()):
-            try:
-                process.kill()
-            except Exception:  # pylint: disable=broad-except
-                logger.warning("Failed to kill a jq worker process", exc_info=True)
-        pool.shutdown(wait=False, cancel_futures=True)
-        _POOL = None
-        _POOL_PID = None
+
+
+def _kill_pool_workers(pool: Optional[ProcessPoolExecutor] = None) -> None:
+    """Kill the workers of a pool that overran its limit and drop it.
+
+    Args:
+        pool: The executor the overrunning filter was submitted to. Defaults to
+            whichever pool ``_POOL`` currently names.
+    """
+    _discard_pool(pool)
 
 
 def _ensure_pool() -> ProcessPoolExecutor:
@@ -267,9 +325,17 @@ def run_jq_filter(jq_filter: str, data: Any) -> Any:
         The filter result as plain Python data.
 
     Raises:
+        ValueError: If the filter uses a restricted jq built-in.
         JqFilterError: If compilation or execution fails, or the sandbox is unavailable.
         JqFilterTimeout: If the filter exceeds its wall-clock limit.
     """
+    # Defence in depth. This module's contract is that the static gate has
+    # already run, which is true today only because ``extract_using_jq`` is the
+    # sole caller. Re-asserting it here keeps that contract true for any future
+    # caller of this exported function. ValueError is left to propagate
+    # unchanged so callers see the same exception the gate always raised.
+    assert_safe_jq_filter(jq_filter)
+
     if not subprocess_mode_available():
         return _run_inprocess(jq_filter, data)
 
@@ -279,8 +345,17 @@ def run_jq_filter(jq_filter: str, data: Any) -> Any:
         return orjson.loads(future.result(timeout=settings.jq_filter_timeout_seconds))
     except FutureTimeoutError as exc:
         logger.warning("jq filter exceeded %ss limit; killing worker", settings.jq_filter_timeout_seconds)
-        _kill_pool_workers()
+        _kill_pool_workers(pool)
         raise JqFilterTimeout("jq filter exceeded the execution time limit") from exc
+    except BrokenProcessPool as exc:
+        # A worker died without the timeout firing — the kernel OOM-killing a
+        # filter that allocated without bound is the realistic trigger, and
+        # nothing here bounds worker memory. The executor is permanently broken
+        # afterwards: every later submit() raises. Drop it so the next call
+        # rebuilds, instead of bricking filtering for this whole process.
+        logger.warning("jq worker pool broke (worker died abnormally); discarding it so the next filter rebuilds")
+        _discard_pool(pool)
+        raise JqFilterError(str(exc)) from exc
     except JqFilterError:
         raise
     except Exception as exc:  # pylint: disable=broad-except
