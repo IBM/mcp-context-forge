@@ -125,9 +125,7 @@ class TeamInvitationService:
         warning = _DELIVERY_WARNING if status == EmailDeliveryStatus.FAILED else None
         return InvitationDeliveryResult(invitation_url=invitation_url, status=status, warning=warning)
 
-    async def deliver_invitation_emails(
-        self, invitations: Sequence[EmailTeamInvitation], team_name: str, inviter_name: str
-    ) -> List[InvitationDeliveryResult]:
+    async def deliver_invitation_emails(self, invitations: Sequence[EmailTeamInvitation], team_name: str, inviter_name: str) -> List[InvitationDeliveryResult]:
         """Deliver persisted invitations with bounded SMTP concurrency.
 
         Args:
