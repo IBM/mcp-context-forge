@@ -268,18 +268,20 @@ def ensure_env_file_secrets(
                 # os.environ only — patching environ is enough; writing to .env would
                 # shadow env-var injections in container setups.
                 env_only[field] = new_val
-            elif env_val is not None and field in _ROTATION_GUARDED_FIELDS and _is_strong_value(_env_file_ci.get(field.lower(), ""), weak_values):
-                # The shell environment holds a weak value, but .env already contains a
-                # strong value for a rotation-guarded key (AUTH_ENCRYPTION_SECRET).
-                # Overwriting the .env value would silently rotate the AES encryption key
-                # and make all stored encrypted credentials permanently unreadable.
-                # Raise an actionable error instead of proceeding.
+            elif env_val is not None and field in _ROTATION_GUARDED_FIELDS and (_env_file_ci.get(field.lower()) or "").strip():
+                # The shell environment holds a weak/non-compliant value, but .env already
+                # contains *any* pre-existing value for a rotation-guarded key
+                # (AUTH_ENCRYPTION_SECRET).  Overwriting it — even to replace a short value
+                # with a strong one — silently rotates the AES encryption key and makes all
+                # stored encrypted credentials permanently unreadable.  Raise an actionable
+                # error for every case, not just when the existing .env value is already
+                # strong.
                 raise ValueError(
                     f"{field}: shell environment holds a weak/non-compliant value that would "
-                    f"overwrite the strong value already present in {env_file!r}. "
+                    f"overwrite the value already present in {env_file!r}. "
                     "Silently rotating this key would make all stored encrypted credentials "
                     "permanently unreadable. To fix, choose one of:\n"
-                    f"  unset {field}           # let the strong .env value take effect\n"
+                    f"  unset {field}           # let the .env value take effect\n"
                     f"  export {field}=<strong> # set a strong value in your shell that matches {env_file!r}\n"
                     "  run a migration-aware key rotation before changing this secret"
                 )

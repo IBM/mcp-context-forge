@@ -308,6 +308,33 @@ class TestEnsureEnvFileSecrets:
         content = env.read_text(encoding="utf-8")
         assert strong in content
 
+    def test_weak_env_var_short_env_file_value_raises_for_rotation_guarded_field(self, tmp_path, monkeypatch):
+        """Weak shell var + ANY pre-existing .env value must raise for rotation-guarded fields.
+
+        Regression test for madhu's finding: the original guard only fired when the .env
+        value was *strong* (_is_strong_value returned True).  A short-but-non-default value
+        in .env (e.g. ``abcd`` — not in WEAK_VALUES, not a placeholder, but only 4 chars)
+        bypassed the guard and silently rotated the AES key.
+
+        The fixed condition is ``(_env_file_ci.get(field.lower()) or "").strip()`` — any
+        non-empty pre-existing .env value must block rotation.
+        """
+        # "abcd" is 4 chars — short, but NOT in WEAK_VALUES and NOT a placeholder.
+        # Under the old guard (_is_strong_value check) this would fall through to
+        # file_generated and silently overwrite the .env value.
+        short_non_default = "abcd"  # nosec B105  # pragma: allowlist secret
+        env = tmp_path / ".env"
+        env.write_text(f"AUTH_ENCRYPTION_SECRET={short_non_default}\n", encoding="utf-8")  # pragma: allowlist secret
+        monkeypatch.setenv("AUTH_ENCRYPTION_SECRET", "changeme")  # pragma: allowlist secret
+        monkeypatch.setenv("MCPGATEWAY_AUTO_INIT_SECRETS", "true")
+
+        with pytest.raises(ValueError, match="AUTH_ENCRYPTION_SECRET"):
+            ensure_env_file_secrets(env_file=str(env))
+
+        # The .env file must be unchanged — the short value must not have been rotated.
+        content = env.read_text(encoding="utf-8")
+        assert short_non_default in content
+
     def test_ensure_disabled_by_env_var(self, tmp_path, monkeypatch):
         env = tmp_path / ".env"
         env.write_text("JWT_SECRET_KEY=changeme\n", encoding="utf-8")

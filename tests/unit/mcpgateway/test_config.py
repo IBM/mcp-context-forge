@@ -2159,6 +2159,41 @@ def test_weak_auth_encryption_secret_raises_in_development():
     assert "too short" in msg or "known-weak/default value" in msg
 
 
+def test_weak_auth_encryption_secret_long_enough_raises_in_development():
+    """Known-weak auth_encryption_secret that is ≥32 chars is still rejected in development.
+
+    Exercises the ``is_weak`` branch of ``validate_security_combinations`` for
+    ``auth_encryption_secret``.  ``"my-test-key-but-now-longer-than-32-bytes"`` is in
+    ``WEAK_VALUES`` and is long enough to pass the length floor, so the rejection reason
+    must be ``"known-weak/default value"``, not ``"too short"``.
+    """
+    from mcpgateway.config import SecurityConfigurationError
+
+    with pytest.raises(SecurityConfigurationError, match="known-weak/default value"):
+        Settings(
+            auth_encryption_secret="my-test-key-but-now-longer-than-32-bytes",  # nosec B106  # pragma: allowlist secret
+            environment="development",
+            _env_file=None,
+        )
+
+
+def test_placeholder_auth_encryption_secret_raises_in_development():
+    """__REPLACE_ME__ placeholder on auth_encryption_secret is rejected in development.
+
+    Exercises the ``is_placeholder`` branch of ``validate_security_combinations`` for
+    ``auth_encryption_secret`` specifically.  Uses a value ≥32 chars so the length floor
+    is not hit first.
+    """
+    from mcpgateway.config import SecurityConfigurationError
+
+    with pytest.raises(SecurityConfigurationError, match="unset placeholder"):
+        Settings(
+            auth_encryption_secret="__REPLACE_ME__padding-to-reach-32-chars-x",  # nosec B106
+            environment="development",
+            _env_file=None,
+        )
+
+
 def test_strong_secrets_accepted_in_all_envs():
     """Strong, non-placeholder secrets pass validation in every environment."""
     strong_jwt = "a-strong-jwt-secret-that-is-long-enough-and-unique-xxxx"  # nosec B105
