@@ -106,6 +106,20 @@ async def enforce_fetch_tools_csrf(request: Request) -> None:
         raise HTTPException(status_code=403, detail="CSRF validation failed")
 
 
+def _default_redirect_uri() -> str:
+    """Build the gateway's own global OAuth callback URL from the configured app domain.
+
+    Used when a gateway's stored ``oauth_config`` carries no ``redirect_uri`` (API-created
+    or legacy rows), so the authorization-code paths never hand an incomplete credentials
+    dict to :class:`~mcpgateway.services.oauth_manager.OAuthManager`.
+
+    Returns:
+        Absolute callback URL, e.g. ``https://gateway.example.com/oauth/callback``.
+    """
+    # str() of a pydantic HttpUrl appends a trailing slash; rstrip keeps the path single-slashed.
+    return f"{str(settings.app_domain).rstrip('/')}/oauth/callback"
+
+
 def _is_well_formed_audience(value: Any) -> bool:
     """Return True if *value* is a usable audience claim shape.
 
@@ -521,6 +535,12 @@ async def initiate_oauth_flow(
             if origin:
                 oauth_config["resource"] = origin
 
+        # API-created and legacy configs may carry no redirect_uri; OAuthManager's PKCE
+        # paths index it directly, so default it here (before DCR, so registration and
+        # the authorization request agree on the callback).
+        if not oauth_config.get("redirect_uri"):
+            oauth_config["redirect_uri"] = _default_redirect_uri()
+
         # Phase 1.4: Auto-trigger DCR if credentials are missing
         # Check if gateway has issuer but no client_id (DCR scenario)
         issuer = oauth_config.get("issuer")
@@ -793,6 +813,11 @@ async def oauth_callback(
             origin = derive_resource_origin(gateway.url)
             if origin:
                 oauth_config_with_resource["resource"] = origin
+
+        # Mirror the authorize-side default so the token exchange sends the same
+        # redirect_uri the authorization request used (RFC 6749 §4.1.3 requires the match).
+        if not oauth_config_with_resource.get("redirect_uri"):
+            oauth_config_with_resource["redirect_uri"] = _default_redirect_uri()
 
         result = await oauth_manager.complete_authorization_code_flow(
             gateway_id, code, state, oauth_config_with_resource, ca_certificate=gateway.ca_certificate, client_cert=gateway.client_cert, client_key=gateway.client_key
