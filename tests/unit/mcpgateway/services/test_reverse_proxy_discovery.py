@@ -146,6 +146,14 @@ async def _discover(discovery, test_db, fake: _ScriptedSessionManager, stable_id
     return await discovery.service.discover_and_reconcile(test_db, fake, ConnectionId("conn-1"), gateway, server, timeout_seconds=5.0)
 
 
+async def _publish(discovery, test_db, stable_id: str) -> None:
+    """Publish post-commit effects explicitly, as the router does after promotion."""
+    gateway = test_db.get(DbGateway, stable_id)
+    server = test_db.get(DbServer, stable_id)
+    assert gateway is not None and server is not None
+    await discovery.service.publish_post_commit_effects(gateway, server)
+
+
 @pytest.mark.asyncio
 async def test_initialize_precedes_initialized_and_lists(discovery, test_db, proxy_pair):
     # Given
@@ -293,6 +301,61 @@ async def test_non_string_next_cursor_raises(discovery, test_db, proxy_pair):
     with pytest.raises(ReverseProxyDiscoveryError, match="non-string nextCursor"):
         await _discover(discovery, test_db, fake, proxy_pair)
     assert test_db.query(DbTool).count() == 0
+
+
+@pytest.mark.asyncio
+async def test_missing_tools_member_raises_and_leaves_catalog_unchanged(discovery, test_db, proxy_pair):
+    # Given: a populated tools catalog from a first successful pass
+    first = _ScriptedSessionManager()
+    first.script_result(_initialize_result({"tools": {}}))
+    first.script_result({"tools": [{"name": "tool-a"}, {"name": "tool-b"}]})
+    await _discover(discovery, test_db, first, proxy_pair)
+    second = _ScriptedSessionManager()
+    second.script_result(_initialize_result({"tools": {}}))
+    second.script_result({})
+
+    # When / Then: a result with no "tools" member is not a valid empty page, so nothing is pruned
+    with pytest.raises(ReverseProxyDiscoveryError, match="tools/list returned a result missing required member 'tools'"):
+        await _discover(discovery, test_db, second, proxy_pair)
+    test_db.expire_all()
+    assert {row.original_name for row in test_db.query(DbTool)} == {"tool-a", "tool-b"}
+
+
+@pytest.mark.asyncio
+async def test_missing_resources_member_raises_and_leaves_catalog_unchanged(discovery, test_db, proxy_pair):
+    # Given: a populated resources catalog from a first successful pass
+    first = _ScriptedSessionManager()
+    first.script_result(_initialize_result({"resources": {}}))
+    first.script_result({"resources": [{"uri": "file:///readme.txt", "name": "readme"}]})
+    first.script_result({"resourceTemplates": []})
+    await _discover(discovery, test_db, first, proxy_pair)
+    second = _ScriptedSessionManager()
+    second.script_result(_initialize_result({"resources": {}}))
+    second.script_result({})
+
+    # When / Then: a result with no "resources" member is not a valid empty page, so nothing is pruned
+    with pytest.raises(ReverseProxyDiscoveryError, match="resources/list returned a result missing required member 'resources'"):
+        await _discover(discovery, test_db, second, proxy_pair)
+    test_db.expire_all()
+    assert {row.uri for row in test_db.query(DbResource)} == {"file:///readme.txt"}
+
+
+@pytest.mark.asyncio
+async def test_missing_prompts_member_raises_and_leaves_catalog_unchanged(discovery, test_db, proxy_pair):
+    # Given: a populated prompts catalog from a first successful pass
+    first = _ScriptedSessionManager()
+    first.script_result(_initialize_result({"prompts": {}}))
+    first.script_result({"prompts": [{"name": "greet"}]})
+    await _discover(discovery, test_db, first, proxy_pair)
+    second = _ScriptedSessionManager()
+    second.script_result(_initialize_result({"prompts": {}}))
+    second.script_result({})
+
+    # When / Then: a result with no "prompts" member is not a valid empty page, so nothing is pruned
+    with pytest.raises(ReverseProxyDiscoveryError, match="prompts/list returned a result missing required member 'prompts'"):
+        await _discover(discovery, test_db, second, proxy_pair)
+    test_db.expire_all()
+    assert {row.original_name for row in test_db.query(DbPrompt)} == {"greet"}
 
 
 @pytest.mark.asyncio
@@ -508,6 +571,7 @@ async def test_post_commit_cache_invalidations_and_server_notification(discovery
 
     # When
     await _discover(discovery, test_db, fake, proxy_pair)
+    await _publish(discovery, test_db, proxy_pair)
 
     # Then
     discovery.registry_cache.invalidate_tools.assert_awaited_once()
@@ -545,6 +609,7 @@ async def test_metadata_only_rediscovery_still_invalidates_tools_cache(discovery
 
     # When
     result = await _discover(discovery, test_db, second, proxy_pair)
+    await _publish(discovery, test_db, proxy_pair)
     # Then: the in-place metadata update still invalidates the tools catalog cache
     assert result.tools_added == 0 and result.tools_removed == 0
     test_db.expire_all()
@@ -576,6 +641,7 @@ async def test_zero_delta_rediscovery_invalidates_all_catalog_caches(discovery, 
 
     # When
     result = await _discover(discovery, test_db, second, proxy_pair)
+    await _publish(discovery, test_db, proxy_pair)
     # Then: zero delta still re-publishes the full catalog state to every registry cache
     assert result.tools_added == 0 and result.tools_removed == 0
     assert result.resources_added == 0 and result.resources_removed == 0
@@ -584,3 +650,24 @@ async def test_zero_delta_rediscovery_invalidates_all_catalog_caches(discovery, 
     discovery.registry_cache.invalidate_resources.assert_awaited_once()
     discovery.registry_cache.invalidate_prompts.assert_awaited_once()
     discovery.registry_cache.invalidate_servers.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_discover_and_reconcile_alone_performs_no_post_commit_effects(discovery, test_db, proxy_pair):
+    # Given
+    fake = _ScriptedSessionManager()
+    fake.script_result(_initialize_result({"tools": {}}))
+    fake.script_result({"tools": [{"name": "tool-a"}]})
+
+    # When: discovery runs without the caller's explicit post-promotion publish
+    result = await _discover(discovery, test_db, fake, proxy_pair)
+
+    # Then: the catalog is committed but nothing is published yet
+    assert result.tools_added == 1
+    assert test_db.query(DbTool).count() == 1
+    discovery.registry_cache.invalidate_tools.assert_not_awaited()
+    discovery.registry_cache.invalidate_resources.assert_not_awaited()
+    discovery.registry_cache.invalidate_prompts.assert_not_awaited()
+    discovery.registry_cache.invalidate_servers.assert_not_awaited()
+    discovery.tool_lookup_cache.invalidate_gateway.assert_not_awaited()
+    discovery.server_service._notify_server_updated.assert_not_awaited()
