@@ -424,8 +424,12 @@ async def websocket_endpoint(
                             # Catalog untouched: restoring the predecessor is safe.
                             await session_manager.restore_stable_id(stable_id, quiesced, connection_id)
                         else:
-                            # Post-commit: demote the candidate, stay fail-closed.
+                            # Post-commit: demote the candidate, stay fail-closed, and
+                            # retire the quiesced predecessor so its client reconnects
+                            # clean - mirrors the ordinary post-commit failure branch.
                             await session_manager.restore_stable_id(stable_id, None, connection_id)
+                            if quiesced is not None and quiesced != connection_id:
+                                await session_manager.retire_connection(quiesced)
                 raise
             except Exception:
                 LOGGER.error("Reverse proxy registration failed for connection %s", connection_id, exc_info=True)

@@ -1154,7 +1154,7 @@ class TestConcurrentRegistrationPromotion:
 
     @pytest.mark.asyncio
     async def test_cancellation_during_publish_runs_shielded_post_commit_compensation(self, real_session_manager):
-        """Cancelling B's registration mid-publish (post-commit) runs shielded compensation: demote-only restore, mapping stays fail-closed, and the quiesced predecessor is not retired by the cancel path."""
+        """Cancelling B's registration mid-publish (post-commit) runs shielded compensation: demote-only restore keeps the mapping fail-closed, the quiesced predecessor is retired (pending calls fail, socket close attempted), and the cancellation still propagates."""
         publish_entered = anyio.Event()
         block_publish = False
 
@@ -1174,7 +1174,7 @@ class TestConcurrentRegistrationPromotion:
             restore_calls.append(args)
             return await original_restore(*args, **kwargs)
 
-        websocket_a = TrackedRegistrationWebSocket()
+        websocket_a = PendingTrackedWebSocket()
         websocket_a.queue_client_frame({"type": "register", "server": {"name": "race-server"}})
         db_a, _gateway_a = self._mock_db("gateway-a", "server-a")
         db_b, _gateway_b = self._mock_db("gateway-b", "server-b")
@@ -1200,6 +1200,21 @@ class TestConcurrentRegistrationPromotion:
                 connection_a = real_session_manager.resolve_connection_id(stable_id)
                 assert connection_a is not None
 
+                pending_failed = anyio.Event()
+
+                async def pending_call() -> None:
+                    with pytest.raises(ConnectionClosedError):
+                        await real_session_manager.send_request(
+                            connection_a,
+                            JsonRpcRequest.model_validate({"jsonrpc": "2.0", "id": "tool-1", "method": "tools/call"}),
+                            timeout_seconds=30,
+                        )
+                    pending_failed.set()
+
+                task_group.start_soon(pending_call)
+                with anyio.fail_after(5):
+                    await websocket_a.request_sent.wait()
+
                 block_publish = True
                 websocket_b = ScriptedReverseProxyWebSocket()
                 websocket_b.queue_client_frame({"type": "register", "server": {"name": "race-server"}})
@@ -1217,7 +1232,15 @@ class TestConcurrentRegistrationPromotion:
                 # the catalog was committed, so the predecessor is never restored.
                 assert (stable_id, None, connection_b) in restore_calls
                 assert real_session_manager.resolve_connection_id(stable_id) is None
-                assert not websocket_a.closed.is_set()
+                # ...but the quiesced predecessor IS retired, mirroring the ordinary
+                # post-commit failure branch: its pending calls fail and its socket closes.
+                with anyio.fail_after(5):
+                    await pending_failed.wait()
+                    await websocket_a.closed.wait()
+                assert websocket_a.closed_code is not None
+                # The cancellation still propagates: B is never told the registration
+                # completed - only the register ack went out.
+                assert [frame["type"] for frame in websocket_b.sent_frames] == ["register_ack"]
                 task_group.cancel_scope.cancel()
 
     @pytest.mark.asyncio
