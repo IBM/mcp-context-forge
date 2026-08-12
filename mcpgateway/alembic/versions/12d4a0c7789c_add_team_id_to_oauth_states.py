@@ -6,7 +6,7 @@ SPDX-License-Identifier: Apache-2.0
 add_team_id_to_oauth_states
 
 Revision ID: 12d4a0c7789c
-Revises: c9f8e7d6a4b3
+Revises: e4f5a6b7c8d9
 Create Date: 2026-07-10 17:57:41.233008
 """
 from typing import Sequence, Union
