@@ -19,6 +19,7 @@ from urllib.parse import urlparse
 
 # Third-Party
 import pytest
+from pydantic import ValidationError
 
 # First-Party
 from mcpgateway.cache.tool_lookup_cache import tool_lookup_cache
@@ -420,3 +421,94 @@ class TestInvokeToolReverseProxied:
             )
 
         manager_factory.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_malformed_upstream_result_raises_before_success_telemetry(self, tool_service, mock_logging_services):
+        """A malformed upstream CallToolResult fails validation before any success telemetry is emitted."""
+        manager = _manager_mock(send_return=_success_response("req-1", {"isError": False}))  # missing required content
+
+        with (
+            patch("mcpgateway.services.tool_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
+            pytest.raises(ValidationError),
+        ):
+            await tool_service._invoke_reverse_proxied_tool("proxied-gw-1", PROXIED_ORIGINAL_NAME, {"param": "value"}, None, 30.0)
+
+        events = _structured_log_events(mock_logging_services["structured_logger"])
+        assert events["mcp_call_started"]["transport"] == "proxied"
+        assert "mcp_call_completed" not in events
+
+
+class TestPrepareRustMcpToolExecutionReverseProxied:
+    """PROXIED tools must never be planned for Rust direct execution (gateway transport is the authority)."""
+
+    @staticmethod
+    def _proxied_cache_payload():
+        """Cache payload for a PROXIED-synced tool: SSE placeholder request_type, PROXIED gateway transport."""
+        return {
+            "status": "active",
+            "tool": {
+                "id": "tool-1",
+                "name": PROXIED_TOOL_NAME,
+                "original_name": PROXIED_ORIGINAL_NAME,
+                "enabled": True,
+                "reachable": True,
+                "integration_type": "MCP",
+                "request_type": "SSE",  # D7: schema-valid placeholder; dispatch keys off gateway transport
+                "gateway_id": "proxied-gw-1",
+                "jsonpath_filter": None,
+                "timeout_ms": None,
+            },
+            "gateway": {
+                "id": "proxied-gw-1",
+                "name": "proxied_gateway",
+                "url": "reverse-proxy://local",
+                "transport": "PROXIED",
+                "auth_type": None,
+                "auth_value": None,
+                "auth_query_params": None,
+                "oauth_config": None,
+                "ca_certificate": None,
+                "ca_certificate_sig": None,
+                "passthrough_headers": [],
+            },
+        }
+
+    @staticmethod
+    def _cache_mock(payload):
+        """Enabled tool-lookup cache mock returning a fixed payload."""
+        mock_cache = AsyncMock()
+        mock_cache.enabled = True
+        mock_cache.get = AsyncMock(return_value=payload)
+        mock_cache.set = AsyncMock()
+        mock_cache.set_negative = AsyncMock()
+        return mock_cache
+
+    @pytest.mark.asyncio
+    async def test_proxied_gateway_transport_is_ineligible_for_rust_direct_execution(self, tool_service):
+        """A persisted PROXIED gateway transport forces fallback to the Python PROXIED seam."""
+        cache = self._cache_mock(self._proxied_cache_payload())
+
+        with patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache):
+            plan = await tool_service.prepare_rust_mcp_tool_execution(MagicMock(), PROXIED_TOOL_NAME)
+
+        assert plan == {"eligible": False, "fallbackReason": "reverse-proxy-transport"}
+
+    @pytest.mark.asyncio
+    async def test_non_proxied_gateway_transport_remains_eligible(self, tool_service):
+        """Regression guard: non-PROXIED MCP gateways keep their Rust direct-execution eligibility."""
+        payload = self._proxied_cache_payload()
+        payload["tool"]["request_type"] = "streamablehttp"
+        payload["gateway"]["transport"] = "STREAMABLEHTTP"
+        payload["gateway"]["url"] = "http://gateway.example/mcp"
+        cache = self._cache_mock(payload)
+        tool_service._plugin_manager = None
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),
+            patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
+            patch("mcpgateway.services.tool_service.global_config_cache", MagicMock(get_passthrough_headers=MagicMock(return_value=[]))),
+        ):
+            plan = await tool_service.prepare_rust_mcp_tool_execution(MagicMock(), PROXIED_TOOL_NAME)
+
+        assert plan["eligible"] is True
+        assert plan["transport"] == "streamablehttp"
