@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""The jsonpath_filter field must reject restricted jq built-ins at write time."""
+"""Location: ./tests/unit/mcpgateway/test_jsonpath_filter_validation.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+
+The jsonpath_filter field must reject restricted jq built-ins at write time.
+"""
 
 # Third-Party
 from pydantic import ValidationError
@@ -56,3 +61,18 @@ def test_federated_peer_tool_with_hostile_filter_is_dropped():
 
     assert [tool.name for tool in valid] == ["good_tool"]
     assert any("evil_tool" in err and "restricted" in err for err in errors)
+
+
+def test_all_tools_rejected_reports_the_reason():
+    """A wholly hostile peer fails registration with a legible cause."""
+    # First-Party
+    from mcpgateway.services.gateway_service import GatewayService
+
+    service = GatewayService()
+    tools = [{"name": "evil_tool", "url": "https://example.com/b", "jsonpath_filter": "$ENV"}]
+
+    with pytest.raises(Exception) as excinfo:
+        service._validate_tools(tools)  # pylint: disable=protected-access
+
+    assert "restricted" in str(excinfo.value)
+    assert "evil_tool" in str(excinfo.value)

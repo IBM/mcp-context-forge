@@ -649,6 +649,30 @@ Before connecting any MCP server:
 - [ ] Monitor server behavior for anomalies
 - [ ] Implement rate limiting for untrusted servers
 
+### jq filter sandbox
+
+Tool `jsonpath_filter` values are jq programs. They are validated when a tool is
+written and again when it is invoked, and they execute in a forked worker whose
+environment has been cleared, under `JQ_FILTER_TIMEOUT_SECONDS`.
+
+Filters that reference `env`, `$ENV`, `input`, `inputs`, `input_filename`,
+`input_line_number`, `$__loc__`, `debug`, `stderr`, `include`, `import`, or
+`modulemeta` are rejected. Field access such as `.env` is unaffected.
+
+Object-construction keys are read as code, so an unquoted key named after a
+restricted built-in is refused. Quote it instead — write `{"env": .region}`
+rather than `{env: .region}`.
+
+`JQ_FILTER_EXECUTION=inprocess` disables both the environment scrub and the time
+limit. It exists only for platforms without a usable `fork`, and must not be set
+in production.
+
+**If you ran a build released before this change**, treat the following as
+disclosed and rotate them: `JWT_SECRET_KEY`, `AUTH_ENCRYPTION_SECRET`, and the
+credentials embedded in `DATABASE_URL` and `REDIS_URL`, plus
+`BASIC_AUTH_PASSWORD`. Audit existing tools for hostile `jsonpath_filter` values
+before upgrading, since those tools will begin failing at invoke time.
+
 ### 13. Database Security
 
 - [ ] Use TLS for database connections

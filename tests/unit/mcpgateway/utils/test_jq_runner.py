@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Tests for sandboxed jq filter execution."""
+"""Location: ./tests/unit/mcpgateway/utils/test_jq_runner.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+
+Tests for sandboxed jq filter execution.
+"""
 
 # Standard
 import os

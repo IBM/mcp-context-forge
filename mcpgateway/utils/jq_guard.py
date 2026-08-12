@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Static safety gate for user-supplied jq filters.
+"""Location: ./mcpgateway/utils/jq_guard.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+
+Static safety gate for user-supplied jq filters.
 
 Tool ``jsonpath_filter`` values are compiled and executed by the gateway. jq
 exposes built-ins that read the host process environment (``env``, ``$ENV``),

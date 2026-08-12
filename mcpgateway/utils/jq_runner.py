@@ -1,5 +1,9 @@
 # -*- coding: utf-8 -*-
-"""Sandboxed execution of user-supplied jq filters.
+"""Location: ./mcpgateway/utils/jq_runner.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+
+Sandboxed execution of user-supplied jq filters.
 
 Tool ``jsonpath_filter`` programs are attacker-influenced input. python-jq
 offers no timeout and holds the GIL for the duration of a run, so a filter that
