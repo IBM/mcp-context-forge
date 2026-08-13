@@ -977,3 +977,232 @@ describe("initResourceSelect - Select All respects search filter", () => {
     vi.unstubAllGlobals();
   });
 });
+
+// ---------------------------------------------------------------------------
+// viewResource - content rendering 
+// ---------------------------------------------------------------------------
+describe("viewResource - content rendering", () => {
+  beforeEach(() => {
+    window.ROOT_PATH = "";
+  });
+
+  test("renders Content block when resource.content is present", async () => {
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    const details = document.createElement("div");
+    details.id = "resource-details";
+    document.body.appendChild(details);
+
+    fetchWithTimeout.mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          resource: {
+            id: "r-content",
+            name: "content-resource",
+            uri: "res://r-content",
+            content: "hello from stored content",
+          },
+        }),
+    });
+
+    await viewResource("r-content");
+
+    expect(details.innerHTML).toContain("Content:");
+    expect(details.innerHTML).toContain("hello from stored content");
+    consoleSpy.mockRestore();
+  });
+
+  test("does not render Content block when resource.content is null", async () => {
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    const details = document.createElement("div");
+    details.id = "resource-details";
+    document.body.appendChild(details);
+
+    fetchWithTimeout.mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          resource: {
+            id: "r-no-content",
+            name: "no-content-resource",
+            uri: "res://r-no-content",
+            content: null,
+          },
+        }),
+    });
+
+    await viewResource("r-no-content");
+
+    expect(details.innerHTML).not.toContain("Content:");
+    consoleSpy.mockRestore();
+  });
+
+  test("does not render Content block when resource.content is empty string", async () => {
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    const details = document.createElement("div");
+    details.id = "resource-details";
+    document.body.appendChild(details);
+
+    fetchWithTimeout.mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          resource: {
+            id: "r-empty-content",
+            name: "empty-content-resource",
+            uri: "res://r-empty-content",
+            content: "   ",
+          },
+        }),
+    });
+
+    await viewResource("r-empty-content");
+
+    expect(details.innerHTML).not.toContain("Content:");
+    consoleSpy.mockRestore();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// editResource - content rendering 
+// ---------------------------------------------------------------------------
+describe("editResource - content rendering", () => {
+  beforeEach(() => {
+    window.ROOT_PATH = "";
+    delete window.location;
+    window.location = { href: "http://localhost/admin" };
+  });
+
+  function buildEditFormWithContent() {
+    const form = document.createElement("form");
+    form.id = "edit-resource-form";
+    document.body.appendChild(form);
+
+    const hiddenField = document.createElement("input");
+    hiddenField.type = "hidden";
+    hiddenField.id = "edit-resource-show-inactive";
+    document.body.appendChild(hiddenField);
+
+    ["edit-resource-name", "edit-resource-uri", "edit-resource-description",
+      "edit-resource-mime-type", "edit-resource-tags"].forEach((id) => {
+      const input = document.createElement("input");
+      input.id = id;
+      document.body.appendChild(input);
+    });
+    ["public", "team", "private"].forEach((v) => {
+      const radio = document.createElement("input");
+      radio.type = "radio";
+      radio.id = `edit-resource-visibility-${v}`;
+      document.body.appendChild(radio);
+    });
+    const textarea = document.createElement("textarea");
+    textarea.id = "edit-resource-content";
+    document.body.appendChild(textarea);
+  }
+
+  test("sets textarea value when resource.content is present", async () => {
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    buildEditFormWithContent();
+
+    fetchWithTimeout.mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          resource: {
+            id: "r1",
+            name: "my-res",
+            uri: "res://r1",
+            content: "stored text body",
+          },
+        }),
+    });
+
+    await editResource("r1");
+
+    expect(document.getElementById("edit-resource-content").value).toBe("stored text body");
+    consoleSpy.mockRestore();
+  });
+
+  test("sets textarea to empty string when resource.content is null", async () => {
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    buildEditFormWithContent();
+
+    fetchWithTimeout.mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          resource: {
+            id: "r1",
+            name: "my-res",
+            uri: "res://r1",
+            content: null,
+          },
+        }),
+    });
+
+    await editResource("r1");
+
+    expect(document.getElementById("edit-resource-content").value).toBe("");
+    consoleSpy.mockRestore();
+  });
+
+  test("calls editResourceContentEditor.setValue with content when editor is present", async () => {
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    buildEditFormWithContent();
+
+    const mockEditor = { setValue: vi.fn(), refresh: vi.fn() };
+    window.editResourceContentEditor = mockEditor;
+
+    fetchWithTimeout.mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          resource: {
+            id: "r1",
+            name: "my-res",
+            uri: "res://r1",
+            content: "codemirror content",
+          },
+        }),
+    });
+
+    await editResource("r1");
+
+    expect(mockEditor.setValue).toHaveBeenCalledWith("codemirror content");
+    expect(mockEditor.refresh).toHaveBeenCalled();
+
+    delete window.editResourceContentEditor;
+    consoleSpy.mockRestore();
+  });
+
+  test("calls editResourceContentEditor.setValue with empty string when content is null", async () => {
+    const consoleSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    buildEditFormWithContent();
+
+    const mockEditor = { setValue: vi.fn(), refresh: vi.fn() };
+    window.editResourceContentEditor = mockEditor;
+
+    fetchWithTimeout.mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          resource: {
+            id: "r1",
+            name: "my-res",
+            uri: "res://r1",
+            content: null,
+          },
+        }),
+    });
+
+    await editResource("r1");
+
+    expect(mockEditor.setValue).toHaveBeenCalledWith("");
+
+    delete window.editResourceContentEditor;
+    consoleSpy.mockRestore();
+  });
+});

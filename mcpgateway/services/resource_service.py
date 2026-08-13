@@ -314,7 +314,7 @@ class ResourceService(BaseService):
 
         return top_performers
 
-    def convert_resource_to_read(self, resource: DbResource, include_metrics: bool = False) -> ResourceRead:
+    def convert_resource_to_read(self, resource: DbResource, include_metrics: bool = False, include_content: bool = False) -> ResourceRead:
         """
         Converts a DbResource instance into a ResourceRead model, optionally including aggregated metrics.
 
@@ -322,6 +322,9 @@ class ResourceService(BaseService):
             resource (DbResource): The ORM instance of the resource.
             include_metrics (bool): Whether to include metrics in the result. Defaults to False.
                 Set to False for list operations to avoid N+1 query issues.
+            include_content (bool): Whether to include stored text content. Defaults to False.
+                Set to True only on single-resource detail paths (view/edit modals, GET /resources/{id})
+                to keep list payloads lean
 
         Returns:
             ResourceRead: The Pydantic model representing the resource, optionally including aggregated metrics.
@@ -363,7 +366,7 @@ class ResourceService(BaseService):
         resource_dict["updated_at"] = getattr(resource, "updated_at", resource_dict.get("updated_at"))
         resource_dict["is_active"] = getattr(resource, "is_active", resource_dict.get("is_active"))
         resource_dict["enabled"] = getattr(resource, "enabled", resource_dict.get("enabled"))
-        resource_dict["content"] = getattr(resource, "text_content", None)
+        resource_dict["content"] = getattr(resource, "text_content", None) if include_content else None
 
         # Compute aggregated metrics from the resource's metrics list (only if requested)
         if include_metrics:
@@ -3725,7 +3728,7 @@ class ResourceService(BaseService):
                 )
                 raise ResourceNotFoundError(f"Resource not found: {resource_id}")
 
-            resource_read = self.convert_resource_to_read(resource)
+            resource_read = self.convert_resource_to_read(resource, include_content=True)
 
             structured_logger.log(
                 level="INFO",
