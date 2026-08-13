@@ -117,7 +117,7 @@ from mcpgateway.utils.retry_manager import ResilientHttpClient
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 from mcpgateway.utils.ssl_context_cache import get_cached_ssl_context
-from mcpgateway.utils.subject_token import extract_inbound_bearer, looks_like_jwt
+from mcpgateway.utils.subject_token import extract_subject_jwt
 from mcpgateway.utils.token_exchange_audit import audit_token_exchange
 from mcpgateway.utils.url_auth import apply_query_param_auth, sanitize_exception_message, sanitize_url_for_logging
 from mcpgateway.utils.validate_signature import validate_signature
@@ -950,11 +950,16 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             logger.debug("token-exchange short-circuited by negative cache for gateway %s", gateway_name, extra={"gateway_id": gateway_id})
             raise GatewayConnectionError(f"Token exchange unavailable for gateway '{gateway_name}'. Contact your administrator.")
 
-        subject_token = extract_inbound_bearer(request_headers or {})
-        if subject_token and not looks_like_jwt(subject_token):
-            subject_token = None
+        # Subject token: Authorization bearer first, then the HttpOnly jwt_token
+        # cookie (Admin UI sessions cannot attach a bearer header). Both routes
+        # sit behind CSRF enforcement at the endpoint/middleware layer.
+        subject_token = extract_subject_jwt(request_headers or {})
         if not subject_token:
             raise GatewayConnectionError(f"User authentication required for token-exchange gateway '{gateway_name}'.")
+
+        rh = request_headers or {}
+        correlation_id = rh.get("x-correlation-id") or rh.get("X-Correlation-ID")
+        request_id = rh.get("x-request-id") or rh.get("X-Request-ID")
 
         async with self._token_exchange_cache.lock(gateway_id, user_key, audience):
             cached = await self._token_exchange_cache.get(gateway_id, user_key, audience)
@@ -990,8 +995,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     upstream=gateway_name,
                     error=safe_reason,
                     latency_ms=latency_ms,
-                    correlation_id=None,
-                    request_id=None,
+                    correlation_id=correlation_id,
+                    request_id=request_id,
                 )
                 sec_logger.log(
                     level="WARNING",
@@ -1017,8 +1022,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 upstream=gateway_name,
                 error=None,
                 latency_ms=latency_ms,
-                correlation_id=None,
-                request_id=None,
+                correlation_id=correlation_id,
+                request_id=request_id,
             )
             sec_logger.log(
                 level="INFO",

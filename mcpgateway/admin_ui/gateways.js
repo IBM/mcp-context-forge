@@ -1,4 +1,4 @@
-import { loadAuthHeaders, updateAuthHeadersJSON } from "./auth.js";
+import { getAuthHeaders, loadAuthHeaders, updateAuthHeadersJSON } from "./auth.js";
 import { MASKED_AUTH_VALUE } from "./constants.js";
 import { closeModal, openModal } from "./modals.js";
 import { initPromptSelect } from "./prompts.js";
@@ -1811,12 +1811,13 @@ export const refreshGatewayTools = async function (gatewayId, gatewayName, butto
   }
 
   try {
+    const authHeaders = await getAuthHeaders(false);
     const response = await fetch(
       `${window.ROOT_PATH}/gateways/${gatewayId}/tools/refresh`,
       {
         method: "POST",
         credentials: "include", // pragma: allowlist secret
-        headers: { Accept: "application/json" },
+        headers: { Accept: "application/json", ...authHeaders },
       }
     );
 
@@ -1896,6 +1897,7 @@ export const refreshToolsForSelectedGateways = async function(buttonEl) {
   let removed = 0;
   let failed = 0;
 
+  const authHeaders = await getAuthHeaders(false);
   await Promise.allSettled(
     realGwIds.map(async (gid) => {
       try {
@@ -1904,7 +1906,7 @@ export const refreshToolsForSelectedGateways = async function(buttonEl) {
           {
             method: "POST",
             credentials: "include", // pragma: allowlist secret
-            headers: { Accept: "application/json" },
+            headers: { Accept: "application/json", ...authHeaders },
           }
         );
         const data = await res.json();

@@ -17,7 +17,7 @@ import json
 import logging
 import re
 import secrets
-from typing import Annotated, Any, Dict
+from typing import Annotated, Any, Dict, Optional
 from urllib.parse import urlparse
 
 # Third-Party
@@ -52,6 +52,7 @@ logger = logging.getLogger(__name__)
 
 ADMIN_CSRF_COOKIE_NAME = "mcpgateway_csrf_token"
 ADMIN_CSRF_HEADER_NAME = "x-csrf-token"
+GRANT_TYPE_TOKEN_EXCHANGE = "token-exchange"
 
 
 async def enforce_fetch_tools_csrf(request: Request) -> None:
@@ -1083,6 +1084,79 @@ async def get_oauth_status(
         raise HTTPException(status_code=500, detail="Failed to get OAuth status")
 
 
+async def _fetch_tools_via_token_exchange(
+    gateway_id: str,
+    gateway_service: Any,
+    requester_email: Optional[str],
+    request: Request,
+    *,
+    gateway_not_found_error: type,
+    gateway_connection_error: type,
+    gateway_error: type,
+) -> Dict[str, Any]:
+    """Fetch tools for a token-exchange gateway via the manual-refresh pipeline.
+
+    Token-exchange has no consent step: delegate to the manual-refresh pipeline,
+    which exchanges the caller's inbound JWT (bearer header or jwt_token cookie)
+    via ``_resolve_token_exchange_header`` (issue #5382). Exception order matters:
+    ``GatewayNotFoundError`` and ``GatewayConnectionError`` both subclass
+    ``GatewayError`` — a bare ``GatewayError`` clause first would misclassify
+    not-found and connection failures as 409 instead of 404/400.
+
+    Blast radius note: ``extract_subject_jwt()`` only checks the inbound JWT's
+    compact-serialization *shape*, not its ``exp`` claim. An expired jwt_token
+    cookie still passes that check, gets forwarded as the RFC 8693 subject_token,
+    and is rejected by the Authorization Server -- which trips
+    ``_resolve_token_exchange_header()``'s ``set_failure()`` negative cache for
+    the ``(gateway_id, user, audience)`` key. Until that cache entry's TTL
+    drains, every subsequent call here for the same user+gateway+audience
+    short-circuits via ``is_failed()``, even after the user re-authenticates
+    with a fresh cookie. A future increase to the negative-cache TTL widens
+    this window and should account for it.
+
+    Args:
+        gateway_id: ID of the gateway to fetch tools for.
+        gateway_service: GatewayService instance used to perform the refresh.
+        requester_email: Email of the requesting user, or None.
+        request: Incoming request, forwarded so the subject token can be resolved.
+        gateway_not_found_error: The caller's ``GatewayNotFoundError`` class, passed
+            in rather than re-imported here so both scopes reference the same
+            exception object the outer handler's ``except`` clauses were built with.
+        gateway_connection_error: The caller's ``GatewayConnectionError`` class, same rationale.
+        gateway_error: The caller's ``GatewayError`` class, same rationale.
+
+    Returns:
+        Dict containing success status and message with number of tools fetched.
+
+    Raises:
+        HTTPException: If the gateway is not found (404), the connection fails
+            (re-raised for the caller to map to 400), a refresh is already in
+            progress (409), or the refresh otherwise fails (400).
+    """
+    try:
+        refresh_result = await gateway_service.refresh_gateway_manually(
+            gateway_id=gateway_id,
+            include_resources=True,
+            include_prompts=True,
+            user_email=requester_email,
+            request_headers=dict(request.headers),
+        )
+    except gateway_not_found_error:
+        raise HTTPException(status_code=404, detail=f"Gateway not found: {gateway_id}")
+    except gateway_connection_error:
+        raise  # outer handler maps to 400
+    except gateway_error as ge:
+        logger.warning(f"Token-exchange tool refresh conflict for gateway {SecurityValidator.sanitize_log_message(gateway_id)}: {SecurityValidator.sanitize_log_message(str(ge))}")
+        raise HTTPException(status_code=409, detail="Refresh already in progress for this gateway")
+
+    if refresh_result.get("success") is False:
+        logger.error(f"Token-exchange tool fetch failed for gateway {SecurityValidator.sanitize_log_message(gateway_id)}: {SecurityValidator.sanitize_log_message(str(refresh_result.get('error')))}")
+        raise HTTPException(status_code=400, detail="Failed to fetch tools")
+
+    fetched = int(refresh_result.get("tools_added", 0)) + int(refresh_result.get("tools_updated", 0))
+    return {"success": True, "message": f"Successfully fetched and created {fetched} tools"}
+
+
 @oauth_router.post("/fetch-tools/{gateway_id}")
 @require_permission("gateways.update")
 async def fetch_tools_after_oauth(
@@ -1092,7 +1166,7 @@ async def fetch_tools_after_oauth(
     current_user: EmailUserResponse = Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
 ) -> Dict[str, Any]:
-    """Fetch tools from MCP server after OAuth completion for Authorization Code flow.
+    """Fetch tools from the MCP server after OAuth completion (authorization_code) or via on-demand token exchange (token-exchange).
 
     Args:
         gateway_id: ID of the gateway to fetch tools for
@@ -1118,9 +1192,22 @@ async def fetch_tools_after_oauth(
         await _enforce_gateway_access(gateway_id, gateway, current_user, db, request=request)
 
         # First-Party
-        from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayService
+        from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayError, GatewayNotFoundError, GatewayService
 
         gateway_service = GatewayService()
+
+        grant_type = gateway.oauth_config.get("grant_type") if isinstance(gateway.oauth_config, dict) else None
+        if grant_type == GRANT_TYPE_TOKEN_EXCHANGE:
+            return await _fetch_tools_via_token_exchange(
+                gateway_id,
+                gateway_service,
+                requester_email,
+                request,
+                gateway_not_found_error=GatewayNotFoundError,
+                gateway_connection_error=GatewayConnectionError,
+                gateway_error=GatewayError,
+            )
+
         result = await gateway_service.fetch_tools_after_oauth(db, gateway_id, requester_email)
         tools_count = len(result.get("tools", []))
 
