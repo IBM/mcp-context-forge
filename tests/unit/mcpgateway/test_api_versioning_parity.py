@@ -55,7 +55,6 @@ def test_legacy_prefixes_match_assembled_routers():
     test_router = APIRouter()
 
     # Create minimal mock routers with at least one route each
-    # Gateway and server prefixes are applied during router assembly.
     mock_routers = {}
     router_prefixes = {
         "protocol": "/protocol",

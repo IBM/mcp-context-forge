@@ -197,6 +197,58 @@ MOCK_ROOT = {
 
 SERVER_CRUD_PREFIXES = ("/servers", "/v1/virtual-servers")
 GATEWAY_CRUD_PREFIXES = ("/gateways", "/v1/mcp-servers")
+MISSING_ALIAS_RESOURCE_ID = "cccccccccccccccccccccccccccccccc"
+ALIAS_RESPONSE_CASES = (
+    pytest.param("GET", "/gateways", "/v1/mcp-servers", None, id="list-mcp-servers"),
+    pytest.param("POST", "/gateways", "/v1/mcp-servers", {}, id="create-mcp-server"),
+    pytest.param("GET", f"/gateways/{MISSING_ALIAS_RESOURCE_ID}", f"/v1/mcp-servers/{MISSING_ALIAS_RESOURCE_ID}", None, id="read-mcp-server"),
+    pytest.param("PUT", f"/gateways/{MISSING_ALIAS_RESOURCE_ID}", f"/v1/mcp-servers/{MISSING_ALIAS_RESOURCE_ID}", {}, id="update-mcp-server"),
+    pytest.param("DELETE", f"/gateways/{MISSING_ALIAS_RESOURCE_ID}", f"/v1/mcp-servers/{MISSING_ALIAS_RESOURCE_ID}", None, id="delete-mcp-server"),
+    pytest.param(
+        "POST",
+        f"/gateways/{MISSING_ALIAS_RESOURCE_ID}/state?activate=false",
+        f"/v1/mcp-servers/{MISSING_ALIAS_RESOURCE_ID}/state?activate=false",
+        None,
+        id="set-mcp-server-state",
+    ),
+    pytest.param(
+        "POST",
+        f"/gateways/{MISSING_ALIAS_RESOURCE_ID}/tools/refresh",
+        f"/v1/mcp-servers/{MISSING_ALIAS_RESOURCE_ID}/tools/refresh",
+        None,
+        id="refresh-mcp-server-tools",
+    ),
+    pytest.param("GET", "/servers", "/v1/virtual-servers", None, id="list-virtual-servers"),
+    pytest.param("POST", "/servers", "/v1/virtual-servers", {}, id="create-virtual-server"),
+    pytest.param("GET", f"/servers/{MISSING_ALIAS_RESOURCE_ID}", f"/v1/virtual-servers/{MISSING_ALIAS_RESOURCE_ID}", None, id="read-virtual-server"),
+    pytest.param("PUT", f"/servers/{MISSING_ALIAS_RESOURCE_ID}", f"/v1/virtual-servers/{MISSING_ALIAS_RESOURCE_ID}", {}, id="update-virtual-server"),
+    pytest.param("DELETE", f"/servers/{MISSING_ALIAS_RESOURCE_ID}", f"/v1/virtual-servers/{MISSING_ALIAS_RESOURCE_ID}", None, id="delete-virtual-server"),
+    pytest.param(
+        "POST",
+        f"/servers/{MISSING_ALIAS_RESOURCE_ID}/state?activate=false",
+        f"/v1/virtual-servers/{MISSING_ALIAS_RESOURCE_ID}/state?activate=false",
+        None,
+        id="set-virtual-server-state",
+    ),
+    pytest.param("GET", f"/servers/{MISSING_ALIAS_RESOURCE_ID}/sse", f"/v1/virtual-servers/{MISSING_ALIAS_RESOURCE_ID}/sse", None, id="virtual-server-sse"),
+    pytest.param(
+        "POST",
+        f"/servers/{MISSING_ALIAS_RESOURCE_ID}/message?session_id=alias-parity",
+        f"/v1/virtual-servers/{MISSING_ALIAS_RESOURCE_ID}/message?session_id=alias-parity",
+        {"jsonrpc": "2.0", "method": "ping"},
+        id="virtual-server-message",
+    ),
+    pytest.param("GET", f"/servers/{MISSING_ALIAS_RESOURCE_ID}/tools", f"/v1/virtual-servers/{MISSING_ALIAS_RESOURCE_ID}/tools", None, id="virtual-server-tools"),
+    pytest.param("GET", f"/servers/{MISSING_ALIAS_RESOURCE_ID}/resources", f"/v1/virtual-servers/{MISSING_ALIAS_RESOURCE_ID}/resources", None, id="virtual-server-resources"),
+    pytest.param("GET", f"/servers/{MISSING_ALIAS_RESOURCE_ID}/prompts", f"/v1/virtual-servers/{MISSING_ALIAS_RESOURCE_ID}/prompts", None, id="virtual-server-prompts"),
+    pytest.param(
+        "GET",
+        f"/servers/{MISSING_ALIAS_RESOURCE_ID}/.well-known/robots.txt",
+        f"/v1/virtual-servers/{MISSING_ALIAS_RESOURCE_ID}/.well-known/robots.txt",
+        None,
+        id="virtual-server-well-known",
+    ),
+)
 
 
 class _ValidationModel(BaseModel):
@@ -2356,6 +2408,24 @@ class TestGatewayEndpoints:
         response = test_client.post("/gateways/1/state?activate=false", headers=auth_headers)
         assert response.status_code == 200
         assert response.json()["status"] == "success"
+
+
+class TestProductAliasResponseParity:
+    """Verify every product-language alias matches its legacy HTTP response."""
+
+    @pytest.mark.parametrize("method,legacy_path,alias_path,json_body", ALIAS_RESPONSE_CASES)
+    def test_alias_response_matches_legacy(self, method, legacy_path, alias_path, json_body, test_client, auth_headers):
+        """Compare status, body, and content type while ignoring legacy deprecation headers."""
+        request_kwargs = {"headers": auth_headers, "follow_redirects": False}
+        if json_body is not None:
+            request_kwargs["json"] = json_body
+
+        legacy_response = test_client.request(method, legacy_path, **request_kwargs)
+        alias_response = test_client.request(method, alias_path, **request_kwargs)
+
+        assert alias_response.status_code == legacy_response.status_code
+        assert alias_response.content == legacy_response.content
+        assert alias_response.headers.get("content-type") == legacy_response.headers.get("content-type")
 
 
 # ----------------------------------------------------- #
