@@ -41,6 +41,16 @@ vi.mock("../../../mcpgateway/admin_ui/security.js", () => ({
 vi.mock("../../../mcpgateway/admin_ui/utils", () => ({
   decodeHtml: vi.fn((s) => s || ""),
   fetchWithTimeout: vi.fn(),
+  // Real cookie-reading implementation (mirrors utils.getCookie) so the CSRF
+  // spread in runPromptTest is exercised against jsdom's document.cookie.
+  getCookie: vi.fn((name) => {
+    const value = `; ${document.cookie}`;
+    const parts = value.split(`; ${name}=`);
+    if (parts.length === 2) {
+      return parts.pop().split(";").shift();
+    }
+    return "";
+  }),
   getCurrentTeamId: vi.fn(() => null),
   handleFetchError: vi.fn((e) => e.message),
   isInactiveChecked: vi.fn(() => false),
@@ -944,6 +954,110 @@ describe("runPromptTest - Extended", () => {
     expect(result.innerHTML).not.toContain("Error");
 
     consoleSpy.mockRestore();
+    logSpy.mockRestore();
+    vi.unstubAllGlobals();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// runPromptTest — CSRF header (#6072)
+//
+// Regression guard: the "Render Prompt" test action POSTs to /prompts/{id} and
+// must attach X-CSRF-Token from the mcpgateway_csrf_token cookie so it survives
+// CSRF validation, following the canonical utils.js:150-158 spread pattern.
+// Without the cookie the header must be absent (the spread yields nothing).
+//
+// runPromptTest reads promptTestState.currentTestPrompt, which is populated by
+// testPrompt(id) (the GET that opens the modal). Each test therefore drives
+// testPrompt first, then runPromptTest, and asserts against the POST call.
+// Unique prompt IDs per test sidestep testPrompt's 1000ms per-id debounce.
+// ---------------------------------------------------------------------------
+describe("runPromptTest CSRF header", () => {
+  const CSRF_COOKIE_VALUE = "prompt-render-csrf-token";
+
+  afterEach(() => {
+    document.cookie =
+      "mcpgateway_csrf_token=; expires=Thu, 01 Jan 1970 00:00:00 GMT";
+  });
+
+  function setupPromptTestDOM() {
+    const form = document.createElement("form");
+    form.id = "prompt-test-form";
+    document.body.appendChild(form);
+
+    for (const id of ["prompt-test-loading", "prompt-test-result"]) {
+      const el = document.createElement("div");
+      el.id = id;
+      document.body.appendChild(el);
+    }
+  }
+
+  // Two fetches: [0] testPrompt GET prompt details, [1] runPromptTest POST render.
+  function stubFetchSequence() {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({ id: "will-be-overridden", name: "p", arguments: [] }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            messages: [{ role: "user", content: { text: "rendered" } }],
+          }),
+      });
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  test("POST /prompts/{id} includes X-CSRF-Token from the cookie", async () => {
+    window.ROOT_PATH = "";
+    document.cookie = `mcpgateway_csrf_token=${CSRF_COOKIE_VALUE}`;
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    setupPromptTestDOM();
+
+    const fetchMock = stubFetchSequence();
+    const { testPrompt, runPromptTest } = await import(
+      "../../../mcpgateway/admin_ui/prompts.js"
+    );
+
+    await testPrompt("csrf-prompt-1");
+    await runPromptTest();
+
+    // The second fetch is the render POST; assert its CSRF header.
+    const postCall = fetchMock.mock.calls[1];
+    expect(postCall[1]).toEqual(
+      expect.objectContaining({
+        method: "POST",
+        headers: expect.objectContaining({
+          "X-CSRF-Token": CSRF_COOKIE_VALUE,
+        }),
+      })
+    );
+
+    logSpy.mockRestore();
+    vi.unstubAllGlobals();
+  });
+
+  test("omits X-CSRF-Token when no cookie is set", async () => {
+    window.ROOT_PATH = "";
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    setupPromptTestDOM();
+
+    const fetchMock = stubFetchSequence();
+    const { testPrompt, runPromptTest } = await import(
+      "../../../mcpgateway/admin_ui/prompts.js"
+    );
+
+    await testPrompt("csrf-prompt-2");
+    await runPromptTest();
+
+    const postCall = fetchMock.mock.calls[1];
+    expect(postCall[1].method).toBe("POST");
+    expect(postCall[1].headers).not.toHaveProperty("X-CSRF-Token");
+
     logSpy.mockRestore();
     vi.unstubAllGlobals();
   });
