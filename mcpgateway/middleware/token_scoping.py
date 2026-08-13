@@ -1360,8 +1360,9 @@ class TokenScopingMiddleware:
             if any(normalized_path.startswith(path) for path in skip_paths):
                 return await call_next(request)
 
-            # Skip server-specific well-known endpoints (RFC 9728)
-            if re.match(r"^/servers/[^/]+/\.well-known/", normalized_path):
+            # Skip server-specific well-known endpoints (RFC 9728), including
+            # the versioned product-language alias.
+            if re.match(r"^/(?:servers|v1/virtual-servers)/[^/]+/\.well-known/", normalized_path):
                 return await call_next(request)
 
             # Extract full token payload (not just scopes)
