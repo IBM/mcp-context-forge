@@ -1003,16 +1003,13 @@ def main() -> None:
         _weak_set = frozenset(v.lower() for v in _WEAK_VALUES)
         if len(new_key) < _MIN_SECRET_LENGTH:
             print(
-                f"❌  --new-key is too short ({len(new_key)} chars, minimum {_MIN_SECRET_LENGTH}). "
-                f"Generate a strong key with: make init-secrets-patch-env  "
-                f"(or pass --force to skip this check)",
+                f"❌  --new-key is too short ({len(new_key)} chars, minimum {_MIN_SECRET_LENGTH}). Generate a strong key with: make init-secrets-patch-env  (or pass --force to skip this check)",
                 file=sys.stderr,
             )
             sys.exit(1)
         if new_key.lower() in _weak_set or new_key.lower().startswith("__replace_me__"):
             print(
-                "❌  --new-key is a known-weak value. Generate a strong key with: make init-secrets-patch-env  "
-                "(or pass --force to skip this check)",
+                "❌  --new-key is a known-weak value. Generate a strong key with: make init-secrets-patch-env  (or pass --force to skip this check)",
                 file=sys.stderr,
             )
             sys.exit(1)
