@@ -609,38 +609,21 @@ class TestSeededInvitationTokens:
 
 
 class TestSeededInvitationDelivery:
-    """Seeded invitation email starts only after outer transaction commit."""
+    """Seeded invitations are returned for post-session email delivery."""
 
     @pytest.mark.asyncio
-    async def test_delivery_occurs_after_commit(self, service, test_db):
-        """commit=False invitation creation never sends before team commit."""
-        events = []
-        original_commit = test_db.commit
+    async def test_persisted_invitation_is_returned_for_delivery(self, service):
+        """The router can close its DB session before starting SMTP delivery."""
+        result = await service.create_team_with_members(
+            name="Engineering",
+            description=None,
+            created_by=CREATOR,
+            visibility="private",
+            members=[TeamMemberSeed(email="external@partner.com", role="member")],
+        )
 
-        def tracked_commit():
-            events.append("commit")
-            return original_commit()
-
-        async def tracked_delivery(invitations, team_name, inviter_name):
-            events.append("delivery")
-            assert invitations[0].id
-            assert team_name == "Engineering"
-            assert inviter_name
-            return []
-
-        with (
-            patch.object(test_db, "commit", side_effect=tracked_commit),
-            patch.object(TeamInvitationService, "deliver_invitation_emails", new=AsyncMock(side_effect=tracked_delivery)),
-        ):
-            await service.create_team_with_members(
-                name="Engineering",
-                description=None,
-                created_by=CREATOR,
-                visibility="private",
-                members=[TeamMemberSeed(email="external@partner.com", role="member")],
-            )
-
-        assert events[:2] == ["commit", "delivery"]
+        assert len(result.invitations_to_deliver) == 1
+        assert result.invitations_to_deliver[0].id == result.invitations_sent[0].invitation_id
 
 
 class TestCreateTeamUnchanged:

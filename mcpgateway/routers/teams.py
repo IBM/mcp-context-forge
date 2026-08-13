@@ -148,8 +148,16 @@ async def create_team(request: TeamCreateRequest, current_user_ctx: dict = Depen
             members_added=[SeededMemberResponse(email=member.email, role=member.role) for member in result.members_added],
             invitations_sent=[SeededInvitationResponse(email=invite.email, role=invite.role, invitation_id=invite.invitation_id) for invite in result.invitations_sent],
         )
+        invitation_service = TeamInvitationService(db) if result.invitations_to_deliver else None
         db.commit()
         db.close()
+
+        if invitation_service:
+            await invitation_service.deliver_invitation_emails(
+                result.invitations_to_deliver,
+                team.name,
+                current_user_ctx.get("full_name") or current_user_ctx["email"],
+            )
         return response
     except HTTPException:
         raise
@@ -774,13 +782,13 @@ async def invite_team_member(team_id: str, request: TeamInviteRequest, current_u
         team_name = team.name if team else "Unknown Team"
 
         db.commit()
+        db.close()
         delivery = await invitation_service.deliver_invitation_email(
             invitation=invitation,
             team_name=team_name,
             inviter_name=current_user.get("full_name") or current_user["email"],
         )
 
-        db.close()
         return TeamInvitationCreateResponse(
             id=invitation.id,
             team_id=invitation.team_id,

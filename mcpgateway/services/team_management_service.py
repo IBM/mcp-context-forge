@@ -268,11 +268,13 @@ class TeamSeedResult:
         team: The created (or reactivated) team.
         members_added: Seeds that resolved to a direct membership.
         invitations_sent: Seeds that resolved to an invitation.
+        invitations_to_deliver: Persisted invitations awaiting best-effort email delivery.
     """
 
     team: EmailTeam
     members_added: List[SeededMember] = field(default_factory=list)
     invitations_sent: List[SeededInvitation] = field(default_factory=list)
+    invitations_to_deliver: List[EmailTeamInvitation] = field(default_factory=list, repr=False)
 
 
 class _Unset:
@@ -873,16 +875,6 @@ class TeamManagementService:
 
             team_id = str(team.id)
 
-            # Invitations were flushed with commit=False above. Delivery starts
-            # only after the outer team transaction commits successfully.
-            if invitations:
-                inviter = self.db.query(EmailUser).filter(EmailUser.email == created_by).first()
-                inviter_name = inviter.get_display_name() if inviter else created_by
-                # First-Party
-                from mcpgateway.services.team_invitation_service import TeamInvitationService  # pylint: disable=import-outside-toplevel,cyclic-import,reimported
-
-                await TeamInvitationService(self.db).deliver_invitation_emails(invitations, team.name, inviter_name)
-
             # Post-commit bookkeeping for each seeded member, matching add_member_to_team()
             for member, action in memberships:
                 self._log_team_member_action(member.id, team_id, member.user_email, member.role, action, created_by)
@@ -907,6 +899,7 @@ class TeamManagementService:
                 team=team,
                 members_added=[SeededMember(email=member.user_email, role=member.role) for member, _ in memberships],
                 invitations_sent=[SeededInvitation(email=invitation.email, role=invitation.role, invitation_id=invitation.id) for invitation in invitations],
+                invitations_to_deliver=invitations,
             )
 
         except Exception as e:

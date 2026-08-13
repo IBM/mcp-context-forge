@@ -250,8 +250,8 @@ class TestTeamsRouter:
             )
 
     @pytest.mark.asyncio
-    async def test_create_team_reports_seeded_members_and_invitations(self, mock_user_context, mock_team, mock_db):
-        """Seeded members are reported back so the form can confirm without re-querying."""
+    async def test_create_team_reports_seeded_members_and_invitations(self, mock_user_context, mock_team, mock_invitation, mock_db):
+        """Seeded members are reported and email delivery starts after DB close."""
         request = TeamCreateRequest(
             name="New Team",
             visibility="private",
@@ -265,12 +265,24 @@ class TestTeamsRouter:
             team=mock_team,
             members_added=[SeededMember(email="alice@example.com", role="member")],
             invitations_sent=[SeededInvitation(email="external@partner.com", role="owner", invitation_id="inv-1")],
+            invitations_to_deliver=[mock_invitation],
         )
 
-        with mock_permission_check(is_admin=False), patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+        async def deliver_after_close(*_args):
+            assert mock_db.close.called
+            return []
+
+        with (
+            mock_permission_check(is_admin=False),
+            patch("mcpgateway.routers.teams.TeamManagementService") as MockService,
+            patch("mcpgateway.routers.teams.TeamInvitationService") as MockInvitationService,
+        ):
             mock_service = AsyncMock(spec=TeamManagementService)
             mock_service.create_team_with_members = AsyncMock(return_value=seed_result)
             MockService.return_value = mock_service
+            invitation_service = AsyncMock(spec=TeamInvitationService)
+            invitation_service.deliver_invitation_emails = AsyncMock(side_effect=deliver_after_close)
+            MockInvitationService.return_value = invitation_service
 
             from mcpgateway.routers.teams import create_team
 
@@ -283,6 +295,7 @@ class TestTeamsRouter:
             assert [(i.email, i.role, i.invitation_id) for i in result.invitations_sent] == [("external@partner.com", "owner", "inv-1")]
 
             assert mock_service.create_team_with_members.call_args.kwargs["members"] == request.members
+            invitation_service.deliver_invitation_emails.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_create_team_with_explicit_empty_members(self, mock_user_context, mock_team, mock_db):
@@ -1182,13 +1195,15 @@ class TestTeamsRouter:
             MockTeamService.return_value = team_service
             invitation_service = AsyncMock(spec=TeamInvitationService)
             invitation_service.create_invitation = AsyncMock(return_value=mock_invitation)
-            invitation_service.deliver_invitation_email = AsyncMock(
-                return_value=InvitationDeliveryResult(
+            async def deliver_after_close(**_kwargs):
+                assert mock_db.close.called
+                return InvitationDeliveryResult(
                     invitation_url=f"https://ui.example/accept-invitation/{mock_invitation.token}",
                     status=EmailDeliveryStatus.FAILED,
                     warning="Invitation created, but the email could not be delivered.",
                 )
-            )
+
+            invitation_service.deliver_invitation_email = AsyncMock(side_effect=deliver_after_close)
             MockInviteService.return_value = invitation_service
 
             from mcpgateway.routers.teams import invite_team_member
