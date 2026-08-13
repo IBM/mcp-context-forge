@@ -39,9 +39,6 @@ import logging
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
-# Third-Party
-from cpex.framework import ControlExecutionRecord, ControlExecutionStatus  # noqa: F401
-
 # First-Party
 from mcpgateway.plugins.utils import _IDENTIFIER_RE  # re-use the same identifier validator
 
