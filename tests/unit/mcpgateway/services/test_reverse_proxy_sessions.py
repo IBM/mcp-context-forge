@@ -6,13 +6,14 @@ SPDX-License-Identifier: Apache-2.0
 Tests for process-local reverse-proxy sessions and pending responses.
 """
 
+import json
 from unittest.mock import patch
 
 import anyio
 from anyio.lowlevel import checkpoint
 import pytest
 
-from mcpgateway.services.reverse_proxy_protocol import JsonRpcNotification, JsonRpcRequest, JsonRpcSuccessResponse, ResponseMessage
+from mcpgateway.services.reverse_proxy_protocol import DownstreamAuth, JsonRpcNotification, JsonRpcRequest, JsonRpcSuccessResponse, ResponseMessage
 from mcpgateway.services.reverse_proxy_sessions import (
     ConnectionClosedError,
     ConnectionId,
@@ -347,6 +348,59 @@ async def test_same_request_id_resolves_independently_on_two_connections() -> No
         assert manager.resolve_response(second.connection_id, _response("same-id")) is True
 
     assert set(received) == {first.connection_id, second.connection_id}
+
+
+@pytest.mark.asyncio
+async def test_send_request_attaches_downstream_auth_to_envelope() -> None:
+    """send_request with auth must serialize authentication/authType into the request frame."""
+    manager = ReverseProxySessionManager()
+    websocket = RecordingWebSocket()
+    session = await manager.connect(websocket, LocalSessionId("local-1"))
+    received: list[ResponseMessage] = []
+
+    async def send() -> None:
+        """Send one authed request and capture the correlated response."""
+        received.append(
+            await manager.send_request(
+                session.connection_id,
+                _request_payload("auth-request"),
+                timeout_seconds=1,
+                auth=DownstreamAuth(headers={"Authorization": "Bearer downstream-secret"}, auth_type="bearer"),
+            )
+        )
+
+    async with anyio.create_task_group() as task_group:
+        task_group.start_soon(send)
+        await websocket.sent.wait()
+        assert manager.resolve_response(session.connection_id, _response("auth-request")) is True
+
+    assert received[0].payload.id == "auth-request"
+    frame = json.loads(websocket.frames[0])
+    assert frame["authentication"] == {"Authorization": "Bearer downstream-secret"}
+    assert frame["authType"] == "bearer"
+
+
+@pytest.mark.asyncio
+async def test_send_request_without_downstream_auth_omits_authentication_fields() -> None:
+    """send_request without auth must keep authentication/authType absent from the frame."""
+    manager = ReverseProxySessionManager()
+    websocket = RecordingWebSocket()
+    session = await manager.connect(websocket, LocalSessionId("local-1"))
+    received: list[ResponseMessage] = []
+
+    async def send() -> None:
+        """Send one unauthed request and capture the correlated response."""
+        received.append(await manager.send_request(session.connection_id, _request_payload("plain-request"), timeout_seconds=1))
+
+    async with anyio.create_task_group() as task_group:
+        task_group.start_soon(send)
+        await websocket.sent.wait()
+        assert manager.resolve_response(session.connection_id, _response("plain-request")) is True
+
+    assert received[0].payload.id == "plain-request"
+    frame = json.loads(websocket.frames[0])
+    assert "authentication" not in frame
+    assert "authType" not in frame
 
 
 @pytest.mark.asyncio
