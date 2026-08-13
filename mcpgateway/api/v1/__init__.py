@@ -371,8 +371,6 @@ def build_v1_router(
     )
 
     # Product-language aliases for the existing gateway and virtual-server APIs.
-    # These are v1-only additions; the unversioned compatibility routes retain
-    # their established /gateways and /servers paths.
     v1_router.include_router(gateway_router, prefix="/mcp-servers")
     v1_router.include_router(server_router, prefix="/virtual-servers")
 

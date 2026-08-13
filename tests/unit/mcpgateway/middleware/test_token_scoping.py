@@ -2267,6 +2267,8 @@ async def test_team_scoped_resource_denied(monkeypatch):
         ("/gateways/aabbccdd-eeff-0011-2233-445566778899", []),
         ("/v1/servers/aabbccddeeff00112233445566778899", ["team-1"]),
         ("/v1/gateways/aabbccddeeff00112233445566778899", []),
+        ("/v1/virtual-servers/aabbccddeeff00112233445566778899", ["team-1"]),  # pragma: allowlist secret
+        ("/v1/mcp-servers/aabbccddeeff00112233445566778899", []),
     ],
 )
 async def test_missing_targeted_delete_returns_404(monkeypatch, path, token_teams):

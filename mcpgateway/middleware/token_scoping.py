@@ -51,7 +51,6 @@ logger = logging_service.get_logger(__name__)
 # Server path extraction patterns
 _SERVER_PATH_PATTERNS: List[Pattern[str]] = [
     re.compile(r"^/servers/([^/]+)(?:$|/)"),
-    # /v1 is optional because request paths are normalized before matching.
     re.compile(r"^/(?:v1/)?virtual-servers/([^/]+)(?:$|/)"),
     re.compile(r"^/sse/([^/?]+)(?:$|\?)"),
     re.compile(r"^/ws/([^/?]+)(?:$|\?)"),
@@ -78,7 +77,7 @@ class ResourceOwnershipResult(Enum):
     DENIED = auto()
 
 
-_TARGETED_MISSING_DELETE_PATTERN = re.compile(r"^/(?:servers|gateways)/(?:[a-f0-9]{32}|[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12})/?$")
+_TARGETED_MISSING_DELETE_PATTERN = re.compile(r"^/(?:servers|virtual-servers|gateways|mcp-servers)/(?:[a-f0-9]{32}|[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12})/?$")
 
 # Permission map with precompiled patterns
 # Maps (HTTP method, path pattern) to required permission
@@ -1374,8 +1373,7 @@ class TokenScopingMiddleware:
             if any(normalized_path.startswith(path) for path in skip_paths):
                 return await call_next(request)
 
-            # Skip server-specific well-known endpoints (RFC 9728), including
-            # the versioned product-language alias.
+            # Skip server-specific well-known endpoints (RFC 9728)
             if re.match(r"^/(?:servers|v1/virtual-servers)/[^/]+/\.well-known/", normalized_path):
                 return await call_next(request)
 
