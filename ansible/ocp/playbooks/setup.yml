@@ -65,10 +65,12 @@
       ansible.builtin.debug:
         msg: "Namespace: {{ 'created' if ns_result.changed else 'already exists' }}"
 
-    # Step 2b: Grant anyuid SCC to default service account (required for Redis UID 999)
-    - name: Grant anyuid SCC to default service account
+    # Step 2b: Grant nonroot-v2 SCC to default service account (required for Redis UID 999).
+    # nonroot-v2 allows any non-root UID (covers 999) and still permits seccompProfile,
+    # so it is narrower than anyuid and avoids root-escalation risk (CWE-250).
+    - name: Grant nonroot-v2 SCC to default service account
       ansible.builtin.command:
-        cmd: oc adm policy add-scc-to-user anyuid -z default -n {{ ocp_namespace }}
+        cmd: oc adm policy add-scc-to-user nonroot-v2 -z default -n {{ ocp_namespace }}
       changed_when: false
 
     # Step 3: Apply PostgresCluster CR
