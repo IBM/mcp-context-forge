@@ -511,6 +511,16 @@ class TestBuildV1RouterGroupF:
         admin_mod.set_logging_service = MagicMock()
         admin_mod.validate_section_permissions = MagicMock()
 
+        # _assemble_routers imports enforce_admin_csrf from mcpgateway.admin to guard
+        # the runtime-admin mount. It must be a real callable, not a MagicMock:
+        # FastAPI inspects a dependency's signature when the router is included, and
+        # omitting it entirely makes the whole admin `try` block raise ImportError,
+        # silently dropping the runtime-admin and well-known includes that follow it.
+        async def _noop_enforce_admin_csrf() -> None:
+            return None
+
+        admin_mod.enforce_admin_csrf = _noop_enforce_admin_csrf
+
         runtime_admin_mod = ModuleType("_mock_runtime_admin")
         runtime_admin_mod.runtime_admin_router = _sentinel_router("/sentinel-runtime-admin")
 

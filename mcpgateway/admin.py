@@ -1857,10 +1857,15 @@ async def enforce_admin_csrf(request: Request) -> None:
     if request.method.upper() in {"GET", "HEAD", "OPTIONS", "TRACE"}:
         return
 
-    jwt_cookie = request.cookies.get("jwt_token")
-    if not jwt_cookie:
+    session_cookie = request.cookies.get("jwt_token") or request.cookies.get("access_token")
+    request_path = getattr(request.url, "path", "") or ""
+    is_login_post = request_path.rstrip("/").endswith("/admin/login")
+    if not session_cookie and not is_login_post:
         # CSRF is relevant only for browser cookie auth. Token-auth API calls
-        # without session cookies are not subject to browser CSRF.
+        # without session cookies are not subject to browser CSRF. The login
+        # POST is the one exception: it is pre-auth (no session cookie exists
+        # yet) but still a state-changing browser action, so it is validated
+        # against the pre-auth nonce minted by admin_login_page's GET.
         return
 
     if not _request_origin_matches(request):
@@ -4629,8 +4634,15 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
             if needs_password_change:
                 LOGGER.info(f"User {email} requires password change - redirecting to change password page")
 
+                # Mint the session id up front so the CSRF cookie can be HMAC-bound to
+                # the exact JWT we are about to set. Without it the cookie falls back to
+                # an opaque value that passes enforce_admin_csrf but fails
+                # CSRFMiddleware, so /admin/** and /v1/admin/** diverge until the
+                # dashboard rotates the cookie.
+                session_jti = str(uuid.uuid4())
+
                 # Create temporary JWT token for password change process
-                token, _ = await create_access_token(user)
+                token, _ = await create_access_token(user, jti=session_jti)
 
                 # Create redirect response to password change page
                 response = RedirectResponse(url=f"{root_path}/admin/change-password-required", status_code=303)
@@ -4644,11 +4656,16 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
                         status_code=303,
                     )
 
-                _set_admin_csrf_cookie(request, response)
+                _set_admin_csrf_cookie(request, response, user_id=user.email, session_id=session_jti)
                 return response
 
+            # Mint the session id up front so the CSRF cookie is HMAC-bound to this
+            # exact JWT from the first request of the session, matching routers/auth.py
+            # and routers/email_auth.py.
+            session_jti = str(uuid.uuid4())
+
             # Create JWT token with proper audience and issuer claims
-            token, _ = await create_access_token(user)  # expires_seconds not needed here
+            token, _ = await create_access_token(user, jti=session_jti)  # expires_seconds not needed here
 
             # Create redirect response
             response = RedirectResponse(url=f"{root_path}/admin", status_code=303)
@@ -4662,7 +4679,7 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
                     status_code=303,
                 )
 
-            _set_admin_csrf_cookie(request, response)
+            _set_admin_csrf_cookie(request, response, user_id=user.email, session_id=session_jti)
             LOGGER.info(f"Admin user {email} logged in successfully")
             return response
 
@@ -5291,8 +5308,13 @@ async def change_password_required_handler(request: Request, db: Session = Depen
                     LOGGER.error(f"Failed to re-attach user {user_email} to session: {e} - password changed but token creation skipped")
                     return RedirectResponse(url=f"{root_path}/admin/login?message=password_changed", status_code=303)
 
+                # Bind the CSRF cookie to the replacement session. The password change
+                # mints a new jti, which invalidates the HMAC bound to the login-time
+                # jti in admin_login_handler's password-change branch.
+                session_jti = str(uuid.uuid4())
+
                 # Create new JWT token
-                token, _ = await create_access_token(current_user)
+                token, _ = await create_access_token(current_user, jti=session_jti)
 
                 # Create redirect response to admin panel
                 response = RedirectResponse(url=f"{root_path}/admin", status_code=303)
@@ -5305,6 +5327,8 @@ async def change_password_required_handler(request: Request, db: Session = Depen
                         url=f"{root_path}/admin/login?error=token_too_large",
                         status_code=303,
                     )
+
+                _set_admin_csrf_cookie(request, response, user_id=current_user.email, session_id=session_jti)
 
                 LOGGER.info(f"User {current_user.email} successfully changed their expired password")
                 return response

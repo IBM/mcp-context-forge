@@ -1279,6 +1279,9 @@ curl -s -X POST \
   $BASE_URL/v1/admin/llm/providers/provider-123/state
 ```
 
+!!! tip "Capturing `$CSRF_COOKIE`"
+    The `mcpgateway_csrf_token` cookie is HMAC-bound to your session from the moment you log in, so capture it straight from the `POST /admin/login` response — there is no need to load `/admin/` first. Before [#5978](https://github.com/IBM/mcp-context-forge/issues/5978) the login response returned an unbound token that the `/v1/admin/**` mount rejected until a dashboard load rotated it.
+
 ### Check Provider Health
 
 Verify provider API connectivity and response time.
