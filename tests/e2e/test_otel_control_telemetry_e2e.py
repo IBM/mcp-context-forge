@@ -123,6 +123,7 @@ from mcpgateway.utils.verify_credentials import require_admin_auth, require_auth
 
 # Local
 from tests.helpers.auth import make_auth_headers, make_test_jwt  # noqa: E402
+from tests.helpers.observability import drain_span_writer_queue  # noqa: E402
 from tests.utils.rbac_mocks import MockPermissionService, create_mock_email_user, create_mock_user_context  # noqa: E402
 
 # ---------------------------------------------------------------------------
@@ -345,6 +346,7 @@ async def control_telemetry_app(monkeypatch, tmp_path):
     test_app.dependency_overrides.clear()
     await shutdown_plugin_manager_factory()
     enable_plugins(False)
+    drain_span_writer_queue()
     engine.dispose()
 
 
@@ -792,6 +794,7 @@ async def denying_plugin_app(monkeypatch, tmp_path):
     test_app.dependency_overrides.clear()
     await shutdown_plugin_manager_factory()
     enable_plugins(False)
+    drain_span_writer_queue()
     engine.dispose()
 
 
