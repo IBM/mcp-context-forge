@@ -301,7 +301,7 @@ JWT_SECRET_KEY=your-secret-key
 BASIC_AUTH_USER=admin
 BASIC_AUTH_PASSWORD=changeme
 AUTH_REQUIRED=true                   # Set false ONLY for development
-AUTH_ENCRYPTION_SECRET=my-test-salt  # For encrypting stored secrets
+AUTH_ENCRYPTION_SECRET=             # REQUIRED: generate with: make init-secrets-patch-env
 
 # Features
 MCPGATEWAY_UI_ENABLED=false          # .env.example sets true

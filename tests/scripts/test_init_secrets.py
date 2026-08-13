@@ -18,8 +18,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 # First-Party
+from mcpgateway._security_constants import calculate_entropy
 from mcpgateway.scripts.init_secrets import (
     _WEAK_VALUES,
+    _is_strong_value,
     _merge_env_file,
     _read_env_file,
     ensure_env_file_secrets,
@@ -228,11 +230,9 @@ class TestEnsureEnvFileSecrets:
 
         generated = ensure_env_file_secrets(env_file=str(env))
 
-        # JWT_SECRET_KEY is always auto-patched when weak.
         assert "JWT_SECRET_KEY" in generated
+        assert "AUTH_ENCRYPTION_SECRET" in generated
         assert len(generated["JWT_SECRET_KEY"]) == 43  # 32-byte token_urlsafe
-        # AUTH_ENCRYPTION_SECRET is intentionally NOT auto-patched (dev-mode leniency).
-        assert "AUTH_ENCRYPTION_SECRET" not in generated
 
     def test_ensure_patches_os_environ(self, tmp_path, monkeypatch):
         import os as _os
@@ -284,6 +284,51 @@ class TestEnsureEnvFileSecrets:
 
         assert generated == {}
 
+    def test_weak_env_var_strong_env_file_raises_for_rotation_guarded_field(self, tmp_path, monkeypatch):
+        """Weak shell var + strong .env must raise, not silently overwrite AES key.
+
+        Regression test for the data-loss defect where ensure_env_file_secrets()
+        evaluated os.environ precedence first (current = env_val = weak), detected
+        is_non_compliant=True, then fell through to file_generated because
+        field IN env_file_values — silently overwriting the strong .env value with a
+        freshly generated key.  For AUTH_ENCRYPTION_SECRET that rotation makes every
+        stored encrypted credential permanently unreadable.
+        """
+        strong = "x3Kp_mQ8rZvN2wLsA5dYfB7cEjGhTuIo_X3K"  # pragma: allowlist secret
+        env = tmp_path / ".env"
+        env.write_text(f"AUTH_ENCRYPTION_SECRET={strong}\n", encoding="utf-8")  # pragma: allowlist secret
+        # Shell carries a weak / non-compliant value for the guarded field.
+        monkeypatch.setenv("AUTH_ENCRYPTION_SECRET", "changeme")  # pragma: allowlist secret
+        monkeypatch.setenv("MCPGATEWAY_AUTO_INIT_SECRETS", "true")
+
+        with pytest.raises(ValueError, match="AUTH_ENCRYPTION_SECRET"):
+            ensure_env_file_secrets(env_file=str(env))
+
+        # The .env file must be unchanged — the strong key must not have been rotated.
+        content = env.read_text(encoding="utf-8")
+        assert strong in content
+
+    def test_weak_env_var_short_env_file_value_raises_for_rotation_guarded_field(self, tmp_path, monkeypatch):
+        """Weak shell var + ANY pre-existing .env value must raise for rotation-guarded fields.
+
+        A short-but-non-default value in .env (e.g. ``abcd`` — not in WEAK_VALUES, not a
+        placeholder, but only 4 chars) must still block rotation.  The guard condition is
+        ``(_env_file_ci.get(field.lower()) or "").strip()`` — any non-empty pre-existing
+        .env value blocks auto-rotation, not only values that pass the full strength predicate.
+        """
+        short_non_default = "abcd"  # nosec B105  # pragma: allowlist secret
+        env = tmp_path / ".env"
+        env.write_text(f"AUTH_ENCRYPTION_SECRET={short_non_default}\n", encoding="utf-8")  # pragma: allowlist secret
+        monkeypatch.setenv("AUTH_ENCRYPTION_SECRET", "changeme")  # pragma: allowlist secret
+        monkeypatch.setenv("MCPGATEWAY_AUTO_INIT_SECRETS", "true")
+
+        with pytest.raises(ValueError, match="AUTH_ENCRYPTION_SECRET"):
+            ensure_env_file_secrets(env_file=str(env))
+
+        # The .env file must be unchanged — the short value must not have been rotated.
+        content = env.read_text(encoding="utf-8")
+        assert short_non_default in content
+
     def test_ensure_disabled_by_env_var(self, tmp_path, monkeypatch):
         env = tmp_path / ".env"
         env.write_text("JWT_SECRET_KEY=changeme\n", encoding="utf-8")
@@ -306,10 +351,8 @@ class TestEnsureEnvFileSecrets:
 
         generated = ensure_env_file_secrets(env_file=str(env))
 
-        # JWT_SECRET_KEY placeholder is always auto-patched.
         assert "JWT_SECRET_KEY" in generated
-        # AUTH_ENCRYPTION_SECRET is intentionally NOT auto-patched — operators set it manually.
-        assert "AUTH_ENCRYPTION_SECRET" not in generated
+        assert "AUTH_ENCRYPTION_SECRET" in generated
 
     def test_ensure_creates_env_file_when_missing(self, tmp_path, monkeypatch):
         env = tmp_path / ".env"
@@ -361,7 +404,11 @@ class TestEnsureEnvFileSecrets:
 
     # --- F4 regression: os.environ-only weak values must not write to .env ---
 
-    def test_ensure_does_not_write_env_for_environ_only_weak(self, tmp_path, monkeypatch):
+    def test_ensure_writes_strong_fields_to_env_even_when_weak_value_from_environ(self, tmp_path, monkeypatch):
+        """Strong fields (JWT_SECRET_KEY, AUTH_ENCRYPTION_SECRET) with a weak value in os.environ
+        and absent from .env must be written to .env so the value survives process exit.
+        Only non-strong fields (BASIC_AUTH_PASSWORD) stay environ-only to avoid shadowing
+        container env-var injections."""
         env = tmp_path / ".env"
         env.write_text("OTHER=keep\n", encoding="utf-8")
         monkeypatch.setenv("JWT_SECRET_KEY", "changeme")
@@ -372,7 +419,11 @@ class TestEnsureEnvFileSecrets:
 
         assert "JWT_SECRET_KEY" in generated
         content = env.read_text(encoding="utf-8")
-        assert "JWT_SECRET_KEY" not in content
+        # Strong fields must be persisted — a CLI process exits after patching so
+        # an os.environ-only write would be silently lost.
+        assert f"JWT_SECRET_KEY={generated['JWT_SECRET_KEY']}" in content
+        assert f"AUTH_ENCRYPTION_SECRET={generated['AUTH_ENCRYPTION_SECRET']}" in content
+        assert "OTHER=keep" in content
 
     # --- F6 regression: parser edge cases ---
 
@@ -385,3 +436,222 @@ class TestEnsureEnvFileSecrets:
         env = tmp_path / ".env"
         env.write_text("JWT_SECRET_KEY=changeme # generated\n", encoding="utf-8")
         assert _read_env_file(str(env))["JWT_SECRET_KEY"] == "changeme"
+
+    def test_merge_env_file_case_insensitive_key_replaced_in_place(self, tmp_path):
+        """Regression: lowercase key in .env must be replaced in-place, not duplicated."""
+        env = tmp_path / ".env"
+        env.write_text("auth_encryption_secret=weak\nOTHER=keep\n", encoding="utf-8")
+        _merge_env_file(str(env), {"AUTH_ENCRYPTION_SECRET": "strong-new-value-here-long-enough"})
+        content = env.read_text(encoding="utf-8")
+        # The weak lowercase line must be gone; the strong value written with canonical casing
+        assert "weak" not in content
+        assert "AUTH_ENCRYPTION_SECRET=strong-new-value-here-long-enough" in content
+        # No duplication: key must appear exactly once
+        assert content.count("ENCRYPTION_SECRET=") == 1
+        assert "OTHER=keep" in content
+
+    def test_ensure_respects_min_secret_length_env_var(self, tmp_path, monkeypatch):
+        """Regression: MIN_SECRET_LENGTH=64 must result in a generated token >= 64 chars."""
+        env = tmp_path / ".env"
+        env.write_text("JWT_SECRET_KEY=changeme\nAUTH_ENCRYPTION_SECRET=changeme\n", encoding="utf-8")
+        monkeypatch.delenv("JWT_SECRET_KEY", raising=False)
+        monkeypatch.delenv("AUTH_ENCRYPTION_SECRET", raising=False)
+        monkeypatch.setenv("MCPGATEWAY_AUTO_INIT_SECRETS", "true")
+        monkeypatch.setenv("MIN_SECRET_LENGTH", "64")
+
+        generated = ensure_env_file_secrets(env_file=str(env))
+
+        assert "JWT_SECRET_KEY" in generated
+        assert len(generated["JWT_SECRET_KEY"]) >= 64, (
+            f"Expected token >= 64 chars with MIN_SECRET_LENGTH=64, got {len(generated['JWT_SECRET_KEY'])}"
+        )
+        assert "AUTH_ENCRYPTION_SECRET" in generated
+        assert len(generated["AUTH_ENCRYPTION_SECRET"]) >= 64
+
+    def test_ensure_reads_min_secret_length_from_env_file(self, tmp_path, monkeypatch):
+        """Regression: MIN_SECRET_LENGTH=64 in .env (not os.environ) must size the token correctly."""
+        env = tmp_path / ".env"
+        env.write_text(
+            "JWT_SECRET_KEY=changeme\nAUTH_ENCRYPTION_SECRET=changeme\nMIN_SECRET_LENGTH=64\n",
+            encoding="utf-8",
+        )
+        monkeypatch.delenv("JWT_SECRET_KEY", raising=False)
+        monkeypatch.delenv("AUTH_ENCRYPTION_SECRET", raising=False)
+        monkeypatch.delenv("MIN_SECRET_LENGTH", raising=False)
+        monkeypatch.setenv("MCPGATEWAY_AUTO_INIT_SECRETS", "true")
+
+        generated = ensure_env_file_secrets(env_file=str(env))
+
+        assert len(generated["JWT_SECRET_KEY"]) >= 64, (
+            f"Expected ≥64 chars with MIN_SECRET_LENGTH=64 in .env, got {len(generated['JWT_SECRET_KEY'])}"
+        )
+        assert len(generated["AUTH_ENCRYPTION_SECRET"]) >= 64
+
+    def test_ensure_invalid_min_secret_length_raises_value_error(self, tmp_path, monkeypatch):
+        """Non-numeric MIN_SECRET_LENGTH produces a clear ValueError, not a cryptic int() traceback."""
+        env = tmp_path / ".env"
+        env.write_text("JWT_SECRET_KEY=changeme\nMIN_SECRET_LENGTH=abc\n", encoding="utf-8")
+        monkeypatch.delenv("JWT_SECRET_KEY", raising=False)
+        monkeypatch.delenv("MIN_SECRET_LENGTH", raising=False)
+        monkeypatch.setenv("MCPGATEWAY_AUTO_INIT_SECRETS", "true")
+
+        with pytest.raises(ValueError, match="MIN_SECRET_LENGTH="):
+            ensure_env_file_secrets(env_file=str(env))
+
+    def test_ensure_min_secret_length_below_floor_raises_value_error(self, tmp_path, monkeypatch):
+        """Regression: MIN_SECRET_LENGTH=0 must raise ValueError with an actionable message,
+        not silently clamp and produce a token that Settings() then rejects."""
+        env = tmp_path / ".env"
+        env.write_text("JWT_SECRET_KEY=changeme\nAUTH_ENCRYPTION_SECRET=changeme\nMIN_SECRET_LENGTH=0\n", encoding="utf-8")
+        monkeypatch.delenv("JWT_SECRET_KEY", raising=False)
+        monkeypatch.delenv("AUTH_ENCRYPTION_SECRET", raising=False)
+        monkeypatch.delenv("MIN_SECRET_LENGTH", raising=False)
+        monkeypatch.setenv("MCPGATEWAY_AUTO_INIT_SECRETS", "true")
+
+        with pytest.raises(ValueError, match="below the enforced minimum"):
+            ensure_env_file_secrets(env_file=str(env))
+
+    def test_ensure_strong_field_weak_in_environ_writes_to_env_file(self, tmp_path, monkeypatch):
+        """Regression: weak AUTH_ENCRYPTION_SECRET in os.environ (absent from .env) must be
+        written to .env, not discarded into the subprocess environ and silently lost."""
+        env = tmp_path / ".env"
+        # .env exists but does not contain AUTH_ENCRYPTION_SECRET
+        env.write_text("JWT_SECRET_KEY=changeme\n", encoding="utf-8")
+        monkeypatch.setenv("AUTH_ENCRYPTION_SECRET", "changeme")
+        monkeypatch.delenv("JWT_SECRET_KEY", raising=False)
+        monkeypatch.setenv("MCPGATEWAY_AUTO_INIT_SECRETS", "true")
+
+        generated = ensure_env_file_secrets(env_file=str(env))
+
+        assert "AUTH_ENCRYPTION_SECRET" in generated
+        # The value must be persisted to .env, not just os.environ
+        content = env.read_text(encoding="utf-8")
+        assert f"AUTH_ENCRYPTION_SECRET={generated['AUTH_ENCRYPTION_SECRET']}" in content
+
+
+class TestMainPatchEnv:
+    """Tests for the --patch-env branch of main()."""
+
+    def test_patch_env_generates_and_prints_success(self, tmp_path, monkeypatch, capsys):
+        """--patch-env with a weak .env prints a ✅ message and updates the file."""
+        env = tmp_path / ".env"
+        env.write_text("JWT_SECRET_KEY=changeme\nAUTH_ENCRYPTION_SECRET=changeme\n", encoding="utf-8")
+        monkeypatch.delenv("JWT_SECRET_KEY", raising=False)
+        monkeypatch.delenv("AUTH_ENCRYPTION_SECRET", raising=False)
+        monkeypatch.setenv("MCPGATEWAY_AUTO_INIT_SECRETS", "true")
+
+        with patch("argparse.ArgumentParser.parse_args") as mock_args:
+            mock_args.return_value = argparse.Namespace(
+                output=None, force=False, stdout=False, patch=None, patch_env=str(env)
+            )
+            main()
+
+        out = capsys.readouterr().out
+        assert "✅" in out
+        assert "JWT_SECRET_KEY" in out or "AUTH_ENCRYPTION_SECRET" in out
+        # The weak values must be gone from the file
+        content = env.read_text(encoding="utf-8")
+        assert "changeme" not in content
+
+    def test_patch_env_no_op_when_already_strong(self, tmp_path, monkeypatch, capsys):
+        """--patch-env with an already-strong .env prints ℹ️ and makes no changes."""
+        strong = "a" * 8 + "B" * 8 + "1" * 8 + "!" * 8  # 32 chars, mixed entropy
+        # Use a high-entropy value that passes the entropy gate
+        import secrets as _secrets
+        strong = _secrets.token_urlsafe(32)
+        env = tmp_path / ".env"
+        env.write_text(
+            f"JWT_SECRET_KEY={strong}\nAUTH_ENCRYPTION_SECRET={strong}\nBASIC_AUTH_PASSWORD={strong}\n",
+            encoding="utf-8",
+        )
+        monkeypatch.delenv("JWT_SECRET_KEY", raising=False)
+        monkeypatch.delenv("AUTH_ENCRYPTION_SECRET", raising=False)
+        monkeypatch.setenv("MCPGATEWAY_AUTO_INIT_SECRETS", "true")
+        original = env.read_text(encoding="utf-8")
+
+        with patch("argparse.ArgumentParser.parse_args") as mock_args:
+            mock_args.return_value = argparse.Namespace(
+                output=None, force=False, stdout=False, patch=None, patch_env=str(env)
+            )
+            main()
+
+        out = capsys.readouterr().out
+        assert "ℹ️" in out
+        assert env.read_text(encoding="utf-8") == original
+
+
+    def test_patch_env_value_error_exits_1(self, tmp_path, monkeypatch, capsys):
+        """--patch-env must exit 1 with a clean message when ensure_env_file_secrets raises ValueError.
+
+        Covers init_secrets.py lines 384-386: the except ValueError branch in the
+        --patch-env section of main().
+        """
+        env = tmp_path / ".env"
+        # A strong AUTH_ENCRYPTION_SECRET in .env with a weak value in os.environ
+        # triggers the rotation-guard ValueError inside ensure_env_file_secrets.
+        strong = "x3Kp_mQ8rZvN2wLsA5dYfB7cEjGhTuIo_X3K"  # pragma: allowlist secret
+        env.write_text(f"AUTH_ENCRYPTION_SECRET={strong}\n", encoding="utf-8")  # pragma: allowlist secret
+        monkeypatch.setenv("AUTH_ENCRYPTION_SECRET", "changeme")  # pragma: allowlist secret
+        monkeypatch.setenv("MCPGATEWAY_AUTO_INIT_SECRETS", "true")
+
+        with patch("argparse.ArgumentParser.parse_args") as mock_args:
+            mock_args.return_value = argparse.Namespace(
+                output=None, force=False, stdout=False, patch=None, patch_env=str(env)
+            )
+            with pytest.raises(SystemExit) as cm:
+                main()
+
+        assert cm.value.code == 1
+        err = capsys.readouterr().err
+        assert "AUTH_ENCRYPTION_SECRET" in err
+
+
+class TestIsStrongValue:
+    """Unit tests for the _is_strong_value helper (init_secrets.py lines 103-115)."""
+
+    def test_empty_string_is_not_strong(self):
+        """Empty / whitespace-only values must return False (line 109-110)."""
+        assert _is_strong_value("", _WEAK_VALUES) is False
+        assert _is_strong_value("   ", _WEAK_VALUES) is False
+
+    def test_known_weak_value_is_not_strong(self):
+        """Values in WEAK_VALUES must return False (line 111-112)."""
+        assert _is_strong_value("changeme", _WEAK_VALUES) is False
+
+    def test_replace_me_placeholder_is_not_strong(self):
+        """__REPLACE_ME__ prefixed values must return False (line 111-112)."""
+        assert _is_strong_value("__REPLACE_ME__init-secrets", _WEAK_VALUES) is False
+
+    def test_short_but_high_entropy_is_not_strong(self):
+        """Values shorter than MIN_SECRET_LENGTH must return False (line 113-114)."""
+        # 8 chars is below the 32-byte minimum; token_urlsafe(6) gives high entropy
+        import secrets as _secrets
+        short_val = _secrets.token_urlsafe(6)  # ~8 chars, high entropy
+        assert _is_strong_value(short_val, _WEAK_VALUES) is False
+
+    def test_long_low_entropy_is_not_strong(self):
+        """Values with entropy < MIN_ENTROPY must return False (line 113-114)."""
+        low_entropy = "a" * 40  # 40 chars but zero entropy
+        assert _is_strong_value(low_entropy, _WEAK_VALUES) is False
+
+    def test_strong_value_returns_true(self):
+        """A fully compliant value must return True (line 115)."""
+        import secrets as _secrets
+        strong = _secrets.token_urlsafe(32)  # 43 chars, high entropy
+        assert _is_strong_value(strong, _WEAK_VALUES) is True
+
+
+class TestCalculateEntropy:
+    """Tests for calculate_entropy in _security_constants.py."""
+
+    def test_empty_string_returns_zero(self):
+        """Empty string must return 0.0 (line 29 of _security_constants.py)."""
+        assert calculate_entropy("") == 0.0
+
+    def test_single_char_string_returns_zero(self):
+        """Single unique character has zero entropy."""
+        assert calculate_entropy("aaaa") == 0.0
+
+    def test_high_entropy_string(self):
+        """Mixed string should return a positive entropy value."""
+        assert calculate_entropy("aAbBcC123!@#") > 3.0
