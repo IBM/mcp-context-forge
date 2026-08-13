@@ -301,7 +301,7 @@ describe("validateJson", () => {
   test("returns error for invalid JSON", () => {
     const result = validateJson("{not valid json}");
     expect(result.valid).toBe(false);
-    expect(result.error).toContain("Invalid");
+    expect(result.error).toContain("Cannot parse");
   });
 
   test("includes field name in error message", () => {

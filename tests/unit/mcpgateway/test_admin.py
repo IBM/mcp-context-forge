@@ -16601,7 +16601,7 @@ async def test_admin_test_gateway_rejects_private_ssrf_target(monkeypatch, mock_
     response = await admin_test_gateway(request, None, user={"email": "user@example.com", "db": mock_db}, db=mock_db)
 
     assert response.status_code == 400
-    assert response.body["error"] == "Invalid gateway URL"
+    assert response.body["error"] == "The MCP server URL is not allowed for testing. Confirm the URL is correct and the host is permitted by your test policy."
     assert "details" not in response.body
 
 
@@ -16633,7 +16633,7 @@ async def test_admin_test_gateway_oauth_authorization_code_missing_user_email(mo
     # Satisfy RBAC wrapper ("email" key must exist) while still exercising admin_test_gateway's missing-email branch.
     response = await admin_test_gateway(request, None, user={"email": "user@example.com", "db": mock_db}, db=mock_db)
     assert response.status_code == 401
-    assert "authentication required" in (response.body.get("error") or "").lower()
+    assert "email-bound account" in (response.body.get("error") or "").lower()
 
 
 @pytest.mark.asyncio
