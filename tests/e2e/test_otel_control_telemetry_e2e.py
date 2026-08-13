@@ -116,6 +116,7 @@ from mcpgateway.plugins import (  # noqa: E402
     shutdown_plugin_manager_factory,
 )
 from mcpgateway.plugins.policy import HOOK_PAYLOAD_POLICIES  # noqa: E402
+import mcpgateway.routers.observability as observability_mod  # noqa: E402
 from mcpgateway.routers.observability import router as observability_router  # noqa: E402
 from mcpgateway.services.observability_service import ObservabilityService  # noqa: E402
 from mcpgateway.utils.create_jwt_token import get_jwt_token  # noqa: E402
@@ -227,7 +228,12 @@ async def control_telemetry_app(monkeypatch, tmp_path):
     monkeypatch.setattr(db_mod, "SessionLocal", TestSessionLocal, raising=False)
     monkeypatch.setattr(main_mod, "SessionLocal", TestSessionLocal, raising=False)
     monkeypatch.setattr("mcpgateway.services.observability_service.SessionLocal", TestSessionLocal, raising=False)
-    monkeypatch.setattr("mcpgateway.routers.observability.SessionLocal", TestSessionLocal, raising=False)
+    # Patch the module OBJECT directly (not the string path) so this survives another
+    # test file's sys.modules.pop("mcpgateway.routers.observability") + reimport
+    # later in the same worker: string-path patching re-resolves via sys.modules at
+    # patch time and would silently land on that other file's fresh module copy,
+    # never touching the one observability_router (imported above) is bound to.
+    monkeypatch.setattr(observability_mod, "SessionLocal", TestSessionLocal, raising=False)
     # Patch control_telemetry's SessionLocal so _emit_db_spans writes to the same DB
     monkeypatch.setattr("mcpgateway.plugins.control_telemetry.SessionLocal", TestSessionLocal, raising=False)
     for patch_target in (
@@ -674,7 +680,12 @@ async def denying_plugin_app(monkeypatch, tmp_path):
     monkeypatch.setattr(db_mod, "SessionLocal", TestSessionLocal, raising=False)
     monkeypatch.setattr(main_mod, "SessionLocal", TestSessionLocal, raising=False)
     monkeypatch.setattr("mcpgateway.services.observability_service.SessionLocal", TestSessionLocal, raising=False)
-    monkeypatch.setattr("mcpgateway.routers.observability.SessionLocal", TestSessionLocal, raising=False)
+    # Patch the module OBJECT directly (not the string path) so this survives another
+    # test file's sys.modules.pop("mcpgateway.routers.observability") + reimport
+    # later in the same worker: string-path patching re-resolves via sys.modules at
+    # patch time and would silently land on that other file's fresh module copy,
+    # never touching the one observability_router (imported above) is bound to.
+    monkeypatch.setattr(observability_mod, "SessionLocal", TestSessionLocal, raising=False)
     monkeypatch.setattr("mcpgateway.plugins.control_telemetry.SessionLocal", TestSessionLocal, raising=False)
     for patch_target in (
         "mcpgateway.middleware.auth_middleware.SessionLocal",
