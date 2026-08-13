@@ -508,7 +508,7 @@ Every route below manages a record whose ORM model has no `team_id` column, so a
 
 | Method + path | Class |
 |---|---|
-| roots — 26 call sites in `admin.py` / `main.py` | global-only (dedupe only, no behavior change) |
+| roots — 26 call sites in `admin.py` / `main.py` | global-only (dedupe onto the shared helper; the 403 detail string changed to match the other A.1 routes, no other behavior change) |
 | `GET /compliance/frameworks` | global-only |
 | `POST /compliance/reports` | global-only |
 | `GET /compliance/reports` | global-only |
@@ -556,7 +556,7 @@ A team-narrowed admin token receives full access through this decorator (`check_
 
 #### A.4 — Router-level guard (a sixth pattern)
 
-`routers/metrics_maintenance.py` carries no per-route decorator; the router itself declares `dependencies=[Depends(require_admin_auth)]`. `require_admin_auth` returns a plain email string and checks only the DB `is_admin` flag — it never consults `token_teams`, so a team-narrowed admin token passes exactly as it does on the A.2 routes.
+`routers/metrics_maintenance.py` carries no per-route decorator; the router itself declares `dependencies=[Depends(require_admin_auth)]`. `require_admin_auth` returns a canonical email string and checks only the DB `is_admin` flag — it sets `request.state.token_teams` for other callers' benefit (e.g. `/version`'s out-of-band scope check) but does not itself narrow on it, so a team-narrowed admin token passes exactly as it does on the A.2 routes.
 
 | Method + path | Effective guard |
 |---|---|

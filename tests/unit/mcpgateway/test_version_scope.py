@@ -82,16 +82,25 @@ async def test_basic_auth_through_real_dependency_chain_reaches_version(monkeypa
     the scope check would read the secure-default [] and deny every Basic-auth
     caller, with no token for them to reissue. Runs require_admin_auth() for real
     (not mocked) so the fix that sets request.state.token_teams there is actually
-    exercised, then feeds the same request into version_endpoint. Only the DB-backed
-    platform-admin predicate is mocked - everything else is the real code path.
+    exercised, then feeds the same request into version_endpoint.
+
+    ``basic_auth_user`` is deliberately kept distinct from ``platform_admin_email``
+    (the default DB/config values already differ: "admin" vs "admin@example.com").
+    The Basic username is a credential identifier, not an RBAC principal - if
+    require_admin_auth() returned it verbatim instead of canonicalizing to
+    platform_admin_email, is_user_admin()'s fast path (and the DB lookup behind
+    it, since no EmailUser row exists for the raw username) would reject it and
+    this test would catch the regression. check_platform_admin_permission() runs
+    for real - only the DB session is a bare MagicMock, since the fast path never
+    touches it once the identity resolves to platform_admin_email.
     """
     from mcpgateway.config import settings
-    from mcpgateway.services import permission_service as permission_service_mod
 
     monkeypatch.setattr(settings, "api_allow_basic_auth", True, raising=False)
     monkeypatch.setattr(settings, "email_auth_enabled", False, raising=False)
     monkeypatch.setattr(settings, "basic_auth_user", "admin", raising=False)
-    monkeypatch.setattr(permission_service_mod.PermissionService, "check_platform_admin_permission", AsyncMock(return_value=True))
+    monkeypatch.setattr(settings, "platform_admin_email", "admin@example.com", raising=False)
+    monkeypatch.setattr("mcpgateway.db.fresh_db_session", lambda: _NullContext(MagicMock()))
     monkeypatch.setattr("mcpgateway.version._build_payload", MagicMock(return_value={"ok": True}))
 
     request = MagicMock()
@@ -105,7 +114,21 @@ async def test_basic_auth_through_real_dependency_chain_reaches_version(monkeypa
         basic_credentials=HTTPBasicCredentials(username="admin", password=settings.basic_auth_password.get_secret_value()),
     )
     assert request.state.token_teams is None, "require_admin_auth must set an unrestricted signal for Basic auth"
+    assert email == "admin@example.com", "Basic auth identity must canonicalize to platform_admin_email, not the raw username"
 
     response = await version_endpoint(request, _user=email)
 
     assert response.status_code == 200
+
+
+class _NullContext:
+    """Minimal sync context manager standing in for fresh_db_session() in tests."""
+
+    def __init__(self, value):
+        self._value = value
+
+    def __enter__(self):
+        return self._value
+
+    def __exit__(self, *exc_info):
+        return False

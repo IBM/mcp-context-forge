@@ -1753,16 +1753,27 @@ async def require_admin_auth(
                     detail="Basic authentication is disabled for API endpoints. Use JWT or API tokens instead.",
                     headers={"WWW-Authenticate": "Bearer"},
                 )
-            result = await verify_basic_credentials(basic_credentials)
+            await verify_basic_credentials(basic_credentials)
             # SECURITY: HTTP Basic auth authenticates the single configured platform
             # superadmin (BASIC_AUTH_USER/PASSWORD) — there is no JWT teams claim to
             # narrow, and no token for the caller to reissue. Set the unrestricted
             # signal explicitly so global-record scope checks (e.g. version.py) don't
             # fall through to the secure-default [] and deny an operator who has no
             # remediation available to them.
+            #
+            # The Basic username is a credential identifier, not an RBAC principal —
+            # it need not (and by default does not) match settings.platform_admin_email,
+            # so downstream admin checks (is_user_admin's platform_admin_email fast
+            # path) would reject it. Canonicalize to the platform-admin email, the
+            # same identity the bootstrap and unauthenticated-compat paths synthesize.
             request.state.token_teams = None
             request.state.token_use = None
-            return result
+            request.state.auth_method = "basic"
+            # Clear any stale cached JWT verification so a Basic success after a
+            # failed JWT attempt on this request can't be misread downstream as
+            # JWT-authenticated.
+            request.state._jwt_verified_payload = None  # pylint: disable=protected-access
+            return settings.platform_admin_email
         else:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
