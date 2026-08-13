@@ -105,6 +105,23 @@ class BlockingWebSocket:
         return None
 
 
+class DisconnectAfterSendWebSocket:
+    """Socket that disconnects its typed session after accepting one frame."""
+
+    def __init__(self, manager: ReverseProxySessionManager) -> None:
+        self.manager = manager
+        self.connection_id: ConnectionId | None = None
+        self.frames: list[str] = []
+
+    async def send_text(self, data: str) -> None:
+        self.frames.append(data)
+        assert self.connection_id is not None
+        await self.manager.disconnect(self.connection_id)
+
+    async def close(self) -> None:
+        return None
+
+
 class CloseFailingWebSocket:
     def __init__(self) -> None:
         self.close_calls = 0
@@ -157,6 +174,136 @@ async def test_connect_generates_server_owned_id_and_rejects_duplicate_local_id(
     assert first.connection_id != ConnectionId(local_id)
     with pytest.raises(DuplicateLocalSessionError):
         await manager.connect(RecordingWebSocket(), local_id)
+
+
+@pytest.mark.asyncio
+async def test_session_metadata_is_typed_aware_and_updates_at_io_boundaries() -> None:
+    """A typed session is the authoritative source for HTTP-list metadata."""
+    manager = ReverseProxySessionManager()
+    websocket = RecordingWebSocket()
+    connected_at = datetime(2026, 8, 13, 12, tzinfo=timezone.utc)
+    sent_at = connected_at + timedelta(seconds=1)
+    received_at = sent_at + timedelta(seconds=1)
+    session = await manager.connect(websocket, LocalSessionId("metadata"), owner_email="owner@test.com", now=connected_at)
+
+    await manager.record_server_info(session.connection_id, {"name": "typed-server"})
+
+    async def send() -> None:
+        await manager.send_request(session.connection_id, _request_payload("metadata-request"), timeout_seconds=1, now=sent_at)
+
+    async with anyio.create_task_group() as task_group:
+        task_group.start_soon(send)
+        await websocket.sent.wait()
+        manager.record_received(session.connection_id, character_count=17, now=received_at)
+        assert manager.resolve_response(session.connection_id, _response("metadata-request")) is True
+
+    listed = manager.list_sessions()
+    assert len(listed) == 1
+    current = listed[0]
+    assert current.owner_email == "owner@test.com"
+    assert current.connected_at == connected_at
+    assert current.last_activity == received_at
+    assert current.last_activity.tzinfo is timezone.utc
+    assert current.message_count == 1
+    assert current.bytes_transferred == len(websocket.frames[0]) + 17
+    assert current.server_info == {"name": "typed-server"}
+
+
+@pytest.mark.asyncio
+async def test_get_session_returns_none_after_repeated_disconnect() -> None:
+    """Typed lookup and repeated deletion are idempotent without stale state."""
+    manager = ReverseProxySessionManager()
+    session = await manager.connect(RecordingWebSocket(), LocalSessionId("delete"), owner_email="owner@test.com")
+
+    assert manager.get_session(session.connection_id) is session
+    assert await manager.disconnect(session.connection_id) == ()
+    assert await manager.disconnect(session.connection_id) == ()
+    assert manager.get_session(session.connection_id) is None
+
+
+@pytest.mark.asyncio
+async def test_session_timestamps_reject_naive_input() -> None:
+    """Session metadata never stores ambiguous naive timestamps."""
+    manager = ReverseProxySessionManager()
+
+    with pytest.raises(ValueError, match="timezone-aware"):
+        await manager.connect(RecordingWebSocket(), LocalSessionId("naive"), now=datetime(2026, 8, 13, 12))
+
+
+@pytest.mark.asyncio
+async def test_unicode_accounting_uses_text_characters_not_encoded_bytes() -> None:
+    """Inbound and outbound accounting preserve the text-frame character contract."""
+    manager = ReverseProxySessionManager()
+    websocket = RecordingWebSocket()
+    session = await manager.connect(websocket, LocalSessionId("unicode"))
+    inbound = '{"method":"工具/列表"}'
+
+    async def send() -> None:
+        await manager.send_request(session.connection_id, JsonRpcRequest(jsonrpc="2.0", id="unicode", method="工具/列表"), timeout_seconds=1)
+
+    async with anyio.create_task_group() as task_group:
+        task_group.start_soon(send)
+        await websocket.sent.wait()
+        manager.record_received(session.connection_id, character_count=len(inbound))
+        assert manager.resolve_response(session.connection_id, _response("unicode")) is True
+
+    current = manager.get_session(session.connection_id)
+    assert current is not None
+    assert current.message_count == 1
+    assert current.bytes_transferred == len(websocket.frames[0]) + len(inbound)
+    assert current.bytes_transferred < len(websocket.frames[0].encode()) + len(inbound.encode())
+
+
+@pytest.mark.asyncio
+async def test_disconnect_after_successful_send_surfaces_connection_closed() -> None:
+    """A disconnect after socket acceptance remains the authoritative request result."""
+    manager = ReverseProxySessionManager()
+    websocket = DisconnectAfterSendWebSocket(manager)
+    session = await manager.connect(websocket, LocalSessionId("disconnect-after-send"))
+    websocket.connection_id = session.connection_id
+
+    with pytest.raises(ConnectionClosedError):
+        await manager.send_request(session.connection_id, _request_payload("race"), timeout_seconds=1)
+
+    assert manager.pending_count(session.connection_id) == 0
+
+
+@pytest.mark.asyncio
+async def test_notification_disconnect_after_send_surfaces_connection_closed() -> None:
+    """Uncorrelated notification sends report a typed close when accounting finds eviction."""
+    manager = ReverseProxySessionManager()
+    websocket = DisconnectAfterSendWebSocket(manager)
+    session = await manager.connect(websocket, LocalSessionId("notification-race"))
+    websocket.connection_id = session.connection_id
+
+    with pytest.raises(ConnectionClosedError):
+        await manager.send_notification(session.connection_id, _notification_payload(), timeout_seconds=1)
+
+    assert manager.pending_count(session.connection_id) == 0
+
+
+@pytest.mark.asyncio
+async def test_inbound_and_outbound_snapshot_updates_preserve_each_other() -> None:
+    """Back-to-back frame accounting retains both immutable snapshot updates."""
+    manager = ReverseProxySessionManager()
+    session = await manager.connect(RecordingWebSocket(), LocalSessionId("snapshot"))
+
+    manager.record_sent(session.connection_id, character_count=7)
+    manager.record_received(session.connection_id, character_count=11)
+
+    current = manager.get_session(session.connection_id)
+    assert current is not None
+    assert current.message_count == 1
+    assert current.bytes_transferred == 18
+
+
+@pytest.mark.asyncio
+async def test_direct_accounting_rejects_inactive_session() -> None:
+    """Only send-boundary race handling tolerates eviction; direct misuse remains strict."""
+    manager = ReverseProxySessionManager()
+
+    with pytest.raises(ConnectionNotFoundError):
+        manager.record_sent(ConnectionId("inactive"), character_count=1)
 
 
 @pytest.mark.asyncio

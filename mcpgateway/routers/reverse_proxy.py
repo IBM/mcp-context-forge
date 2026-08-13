@@ -13,7 +13,7 @@ to connect and tunnel their local MCP servers through the gateway.
 import asyncio
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, assert_never, Dict, Final, Literal, Optional
+from typing import Any, assert_never, Final, Literal, Optional
 import uuid
 
 # Third-Party
@@ -42,6 +42,8 @@ from mcpgateway.services.reverse_proxy_protocol import (
     error,
     heartbeat,
     HeartbeatMessage,
+    JsonRpcRequest,
+    JsonValue,
     NotificationMessage,
     parse_client_message,
     register_ack,
@@ -52,7 +54,7 @@ from mcpgateway.services.reverse_proxy_protocol import (
     ResponseMessage,
     UnregisterMessage,
 )
-from mcpgateway.services.reverse_proxy_sessions import ConnectionId, get_reverse_proxy_session_manager, LocalSessionId, StableGatewayId
+from mcpgateway.services.reverse_proxy_sessions import ConnectionId, get_reverse_proxy_session_manager, LocalSessionId, ReverseProxySession, StableGatewayId
 from mcpgateway.utils.verify_credentials import require_auth, verify_jwt_token_cached
 
 # Initialize logging
@@ -77,8 +79,8 @@ class _LockedConnectionIO:
 
     One per-connection lock funnels the endpoint's own frames (register acks,
     heartbeat acknowledgements, error frames), the typed session manager's
-    request/notification frames, legacy-mirror HTTP control sends, and all
-    server-initiated closes, so the WebSocket is never touched concurrently.
+    request/notification frames and all server-initiated closes, so the
+    WebSocket is never touched concurrently.
     """
 
     def __init__(self, websocket: WebSocket, io_lock: anyio.Lock) -> None:
@@ -101,125 +103,9 @@ class _LockedConnectionIO:
             await self._websocket.close(code=code, reason=reason)
 
 
-class ReverseProxySession:
-    """Manages a reverse proxy session."""
-
-    def __init__(self, session_id: str, websocket: _LockedConnectionIO, user: Optional[str | dict] = None):
-        """Initialize reverse proxy session.
-
-        Args:
-            session_id: Unique session identifier.
-            websocket: Locked connection I/O wrapper for the session's WebSocket.
-            user: Authenticated user info (if any).
-        """
-        self.session_id = session_id
-        self.websocket = websocket
-        self.user = user
-        self.server_info: Dict[str, Any] = {}
-        self.connected_at = datetime.now(tz=timezone.utc)
-        self.last_activity = datetime.now(tz=timezone.utc)
-        self.message_count = 0
-        self.bytes_transferred = 0
-
-    async def send_message(self, message: Dict[str, Any]) -> None:
-        """Send message to the client.
-
-        Args:
-            message: Message dictionary to send.
-        """
-        data = orjson.dumps(message).decode()
-        await self.websocket.send_text(data)
-        self.bytes_transferred += len(data)
-        self.last_activity = datetime.now(tz=timezone.utc)
-
-    async def receive_message(self) -> Dict[str, Any]:
-        """Receive message from the client.
-
-        Returns:
-            Parsed message dictionary.
-        """
-        data = await self.websocket.receive_text()
-        self.bytes_transferred += len(data)
-        self.message_count += 1
-        self.last_activity = datetime.now(tz=timezone.utc)
-        return orjson.loads(data)
-
-
-class ReverseProxyManager:
-    """Manages all reverse proxy sessions."""
-
-    def __init__(self):
-        """Initialize the manager."""
-        self.sessions: Dict[str, ReverseProxySession] = {}
-        self._lock = asyncio.Lock()
-
-    async def add_session(self, session: ReverseProxySession) -> None:
-        """Add a new session.
-
-        Args:
-            session: Session to add.
-        """
-        async with self._lock:
-            self.sessions[session.session_id] = session
-            LOGGER.info(f"Added reverse proxy session: {session.session_id}")
-
-    async def remove_session(self, session_id: str) -> None:
-        """Remove a session.
-
-        Args:
-            session_id: Session ID to remove.
-        """
-        async with self._lock:
-            if session_id in self.sessions:
-                del self.sessions[session_id]
-                LOGGER.info(f"Removed reverse proxy session: {session_id}")
-
-    def get_session(self, session_id: str) -> Optional[ReverseProxySession]:
-        """Get a session by ID.
-
-        Args:
-            session_id: Session ID to get.
-
-        Returns:
-            Session if found, None otherwise.
-        """
-        return self.sessions.get(session_id)
-
-    def list_sessions(self) -> list[Dict[str, Any]]:
-        """List all active sessions.
-
-        Returns:
-            List of session information dictionaries.
-
-        Examples:
-            >>> from fastapi import WebSocket
-            >>> manager = ReverseProxyManager()
-            >>> sessions = manager.list_sessions()
-            >>> sessions
-            []
-            >>> isinstance(sessions, list)
-            True
-        """
-        return [
-            {
-                "session_id": session.session_id,
-                "server_info": session.server_info,
-                "connected_at": session.connected_at.isoformat(),
-                "last_activity": session.last_activity.isoformat(),
-                "message_count": session.message_count,
-                "bytes_transferred": session.bytes_transferred,
-                "user": _get_session_owner(session.user),
-            }
-            for session in self.sessions.values()
-        ]
-
-
-# Global manager instance
-manager = ReverseProxyManager()
-
 _REVERSE_PROXY_CONNECT_PERMISSIONS: Final = (Permissions.GATEWAYS_CREATE, Permissions.SERVERS_CREATE)
-# Bounded best-effort socket close for HTTP-initiated disconnects: cleanup of
-# typed session state and the legacy mirror must never wait on a stalled socket.
+# Bounded best-effort socket close for HTTP-initiated disconnects: authoritative
+# typed session cleanup must never wait on a stalled socket.
 _HTTP_DISCONNECT_CLOSE_TIMEOUT_SECONDS: Final = 5.0
 
 
@@ -365,17 +251,15 @@ async def websocket_endpoint(
 
     session_manager = await get_reverse_proxy_session_manager()
     connection_io = _LockedConnectionIO(websocket, anyio.Lock())
-    connection = await session_manager.connect(connection_io, LocalSessionId(uuid.uuid4().hex))
+    connection = await session_manager.connect(connection_io, LocalSessionId(uuid.uuid4().hex), owner_email=authenticated_context.owner_email)
     connection_id = connection.connection_id
 
     async def send_frame(frame: str) -> None:
         """Send one endpoint frame serialized through the connection's I/O lock."""
         await connection_io.send_text(frame)
+        session_manager.record_sent(connection_id, character_count=len(frame))
 
     try:
-        # D12: mirror connection metadata in the legacy manager so the HTTP admin
-        # endpoints keep working; the typed manager remains the dispatch authority.
-        await manager.add_session(ReverseProxySession(str(connection_id), connection_io, authenticated_context.owner_email))
         LOGGER.info(f"Reverse proxy connected: {connection_id}")
 
         registration_state: Literal["unregistered", "processing", "registered"] = "unregistered"
@@ -396,6 +280,7 @@ async def websocket_endpoint(
             committed = False
             try:
                 registration_context = AuthenticatedRegistrationContext(owner_email=authenticated_context.owner_email, team_id=authenticated_context.team_id)
+                await session_manager.record_server_info(connection_id, server.model_dump(exclude_none=True))
                 entry = await ReverseProxyCatalogService(gateway_service=gateway_service, server_service=server_service).register(db, registration_context, server)
                 stable_id = StableGatewayId(entry.stable_id)
                 db_gateway = db.get(DbGateway, entry.stable_id)
@@ -476,7 +361,9 @@ async def websocket_endpoint(
                     # responses keep resolving here.
                     while True:
                         try:
-                            message = parse_client_message(await connection_io.receive_text())
+                            frame = await connection_io.receive_text()
+                            session_manager.record_received(connection_id, character_count=len(frame))
+                            message = parse_client_message(frame)
                         except WebSocketDisconnect:
                             LOGGER.info(f"WebSocket disconnected: {connection_id}")
                             break
@@ -520,14 +407,10 @@ async def websocket_endpoint(
                 raise group.exceptions[0]
             raise
     finally:
-        # Shield the typed disconnect so cancellation cannot skip cleanup, and
-        # guarantee the legacy mirror removal runs even when it fails.
+        # Shield typed disconnect so cancellation cannot skip authoritative cleanup.
         with anyio.CancelScope(shield=True):
-            try:
-                disconnected_stable_ids = await session_manager.disconnect(connection_id)
-                await _persist_unreachable_best_effort(session_manager, disconnected_stable_ids)
-            finally:
-                await manager.remove_session(str(connection_id))
+            disconnected_stable_ids = await session_manager.disconnect(connection_id)
+            await _persist_unreachable_best_effort(session_manager, disconnected_stable_ids)
         LOGGER.info(f"Reverse proxy session ended: {connection_id}")
 
 
@@ -549,21 +432,24 @@ async def list_sessions(
         List of session information (filtered by ownership).
     """
     requesting_user, is_admin = _get_user_from_credentials(credentials)
+    session_manager = await get_reverse_proxy_session_manager()
+    sessions = session_manager.list_sessions()
+    visible = sessions if is_admin else tuple(session for session in sessions if not session.owner_email or session.owner_email == requesting_user)
+    payload = [_session_payload(session) for session in visible]
+    return {"sessions": payload, "total": len(payload)}
 
-    # Admins see all sessions
-    if is_admin:
-        return {"sessions": manager.list_sessions(), "total": len(manager.sessions)}
 
-    # Regular users see only their own sessions
-    all_sessions = manager.list_sessions()
-    owned_sessions = []
-    for session_info in all_sessions:
-        session_owner = session_info.get("user")
-        # Include if: user owns the session, or session has no owner (anonymous)
-        if not session_owner or session_owner == requesting_user:
-            owned_sessions.append(session_info)
-
-    return {"sessions": owned_sessions, "total": len(owned_sessions)}
+def _session_payload(session: ReverseProxySession) -> dict[str, JsonValue]:
+    """Serialize typed session metadata using the established list response shape."""
+    return {
+        "session_id": str(session.connection_id),
+        "server_info": dict(session.server_info),
+        "connected_at": session.connected_at.isoformat(),
+        "last_activity": session.last_activity.isoformat(),
+        "message_count": session.message_count,
+        "bytes_transferred": session.bytes_transferred,
+        "user": session.owner_email,
+    }
 
 
 @router.delete("/sessions/{session_id}")
@@ -588,27 +474,24 @@ async def disconnect_session(
     Raises:
         HTTPException: If session is not found or user is not authorized.
     """
-    session = manager.get_session(session_id)
+    session_manager = await get_reverse_proxy_session_manager()
+    session = session_manager.get_session(ConnectionId(session_id))
     if not session:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
 
     # Validate session ownership
     _validate_session_ownership(session, credentials, "disconnect")
 
-    # Clear typed session state and the legacy mirror FIRST so stable mappings
-    # and pending calls fail closed immediately, then close the socket bounded
+    # Clear typed session state first so stable mappings and pending calls fail
+    # closed immediately, then close the socket bounded
     # and best-effort: a stalled or already-lost connection cannot block cleanup.
-    session_manager = await get_reverse_proxy_session_manager()
     disconnected_stable_ids = await session_manager.disconnect(ConnectionId(session_id))
     await _persist_unreachable_best_effort(session_manager, disconnected_stable_ids)
     try:
-        await manager.remove_session(session_id)
-    finally:
-        try:
-            with anyio.fail_after(_HTTP_DISCONNECT_CLOSE_TIMEOUT_SECONDS):
-                await session.websocket.close()
-        except Exception as close_error:
-            LOGGER.debug("Reverse proxy HTTP disconnect close for session %s failed: %s", session_id, close_error)
+        with anyio.fail_after(_HTTP_DISCONNECT_CLOSE_TIMEOUT_SECONDS):
+            await session.websocket.close()
+    except Exception as close_error:
+        LOGGER.debug("Reverse proxy HTTP disconnect close for session %s failed: %s", session_id, close_error)
 
     return {"status": "disconnected", "session_id": session_id}
 
@@ -616,7 +499,7 @@ async def disconnect_session(
 @router.post("/sessions/{session_id}/request")
 async def send_request_to_session(
     session_id: str,
-    mcp_request: Dict[str, Any],
+    mcp_request: JsonRpcRequest,
     request: Request,
     credentials: str | dict = Depends(require_auth),
 ):
@@ -637,18 +520,16 @@ async def send_request_to_session(
     Raises:
         HTTPException: If session is not found, user is not authorized, or request fails.
     """
-    session = manager.get_session(session_id)
+    session_manager = await get_reverse_proxy_session_manager()
+    session = session_manager.get_session(ConnectionId(session_id))
     if not session:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
 
     # Validate session ownership
     _validate_session_ownership(session, credentials, "send request to")
 
-    # Wrap the request in reverse proxy envelope
-    message = {"type": "request", "sessionId": session_id, "payload": mcp_request}
-
     try:
-        await session.send_message(message)
+        await session_manager.send_request(ConnectionId(session_id), mcp_request, timeout_seconds=float(settings.tool_timeout))
         return {"status": "sent", "session_id": session_id}
     except Exception:
         LOGGER.error("Failed to send request to session %s", session_id, exc_info=True)
@@ -676,15 +557,6 @@ def _get_user_from_credentials(credentials: str | dict[str, Any] | None) -> tupl
     return None, False
 
 
-def _get_session_owner(session_user: str | dict[str, Any] | None) -> str | None:
-    """Extract a comparable owner email from stored reverse-proxy session user data."""
-    if isinstance(session_user, str):
-        return session_user
-    if isinstance(session_user, dict):
-        return get_jwt_user_email_from_payload(session_user)
-    return None
-
-
 def _validate_session_ownership(session: ReverseProxySession, credentials: str | dict[str, Any] | None, action: str) -> None:
     """Validate that the requesting user owns the session or is admin.
 
@@ -696,7 +568,7 @@ def _validate_session_ownership(session: ReverseProxySession, credentials: str |
     Raises:
         HTTPException: 403 if user is not authorized for the session
     """
-    if not session.user:
+    if not session.owner_email:
         # Session was created without auth - allow access
         return
 
@@ -707,7 +579,7 @@ def _validate_session_ownership(session: ReverseProxySession, credentials: str |
         return
 
     # Session owner can access their own session
-    session_owner = _get_session_owner(session.user)
+    session_owner = session.owner_email
     if requesting_user and session_owner and requesting_user == session_owner:
         return
 
@@ -738,7 +610,8 @@ async def sse_endpoint(
     Raises:
         HTTPException: If session is not found or user is not authorized.
     """
-    session = manager.get_session(session_id)
+    session_manager = await get_reverse_proxy_session_manager()
+    session = session_manager.get_session(ConnectionId(session_id))
     if not session:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
 
