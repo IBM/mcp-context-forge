@@ -42,6 +42,7 @@ logger = logging_service.get_logger(__name__)
 
 _INVITATION_EMAIL_CONCURRENCY = 5
 _DELIVERY_WARNING = "Invitation created, but the email could not be delivered."
+_DELIVERY_DISABLED_WARNING = "Invitation created, but email delivery is disabled."
 
 
 @dataclass(frozen=True)
@@ -51,6 +52,18 @@ class InvitationDeliveryResult:
     invitation_url: str
     status: EmailDeliveryStatus
     warning: Optional[str] = None
+
+
+def failed_invitation_delivery_result(invitation_url: str = "") -> InvitationDeliveryResult:
+    """Build a safe result for an unexpected best-effort delivery failure.
+
+    Args:
+        invitation_url: Trusted URL if construction succeeded.
+
+    Returns:
+        InvitationDeliveryResult: Non-throwing failed delivery result.
+    """
+    return InvitationDeliveryResult(invitation_url=invitation_url, status=EmailDeliveryStatus.FAILED, warning=_DELIVERY_WARNING)
 
 
 class TeamInvitationService:
@@ -106,8 +119,9 @@ class TeamInvitationService:
         Returns:
             InvitationDeliveryResult: Trusted URL and safe delivery outcome.
         """
-        invitation_url = build_frontend_url("/accept-invitation", invitation.token)
+        invitation_url = ""
         try:
+            invitation_url = build_frontend_url("/accept-invitation", invitation.token)
             status = await self.email_notification_service.deliver_team_invitation_email(
                 invitation_id=invitation.id,
                 to_email=invitation.email,
@@ -119,10 +133,13 @@ class TeamInvitationService:
                 token=invitation.token,
             )
         except Exception:  # pragma: no cover - defensive boundary around best-effort delivery
-            status = EmailDeliveryStatus.FAILED
             logger.warning("Team invitation email delivery failed for invitation %s", SecurityValidator.sanitize_log_message(invitation.id))
+            return failed_invitation_delivery_result(invitation_url)
 
-        warning = _DELIVERY_WARNING if status == EmailDeliveryStatus.FAILED else None
+        warning = {
+            EmailDeliveryStatus.FAILED: _DELIVERY_WARNING,
+            EmailDeliveryStatus.DISABLED: _DELIVERY_DISABLED_WARNING,
+        }.get(status)
         return InvitationDeliveryResult(invitation_url=invitation_url, status=status, warning=warning)
 
     async def deliver_invitation_emails(self, invitations: Sequence[EmailTeamInvitation], team_name: str, inviter_name: str) -> List[InvitationDeliveryResult]:
@@ -144,11 +161,7 @@ class TeamInvitationService:
                     return await self.deliver_invitation_email(invitation, team_name, inviter_name)
                 except Exception:  # pragma: no cover - defensive isolation between batch items
                     logger.warning("Team invitation email delivery failed for invitation %s", SecurityValidator.sanitize_log_message(invitation.id))
-                    return InvitationDeliveryResult(
-                        invitation_url=build_frontend_url("/accept-invitation", invitation.token),
-                        status=EmailDeliveryStatus.FAILED,
-                        warning=_DELIVERY_WARNING,
-                    )
+                    return failed_invitation_delivery_result()
 
         return list(await asyncio.gather(*(deliver(invitation) for invitation in invitations)))
 

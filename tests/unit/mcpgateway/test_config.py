@@ -72,6 +72,12 @@ def test_ui_base_url_allows_path_prefix():
     assert str(configured.ui_base_url) == "https://ui.example.com/contextforge"
 
 
+def test_ui_base_url_treats_blank_string_as_unset():
+    """Blank environment override preserves gateway UI fallback behavior."""
+    configured = Settings(ui_base_url="", environment="development", _env_file=None)
+    assert configured.ui_base_url is None
+
+
 # --------------------------------------------------------------------------- #
 #                         SSO field validators                            #
 # --------------------------------------------------------------------------- #

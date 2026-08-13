@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
-from fastapi import HTTPException, status
+from fastapi import BackgroundTasks, HTTPException, status
 import pytest
 from sqlalchemy.orm import Session
 
@@ -234,7 +234,7 @@ class TestTeamsRouter:
             # Import the function to test
             from mcpgateway.routers.teams import create_team
 
-            result = await create_team(request, current_user_ctx=mock_user_context, db=mock_db)
+            result = await create_team(request, BackgroundTasks(), current_user_ctx=mock_user_context, db=mock_db)
 
             assert result.id == mock_team.id
             assert result.name == mock_team.name
@@ -286,7 +286,10 @@ class TestTeamsRouter:
 
             from mcpgateway.routers.teams import create_team
 
-            result = await create_team(request, current_user_ctx=mock_user_context, db=mock_db)
+            background_tasks = BackgroundTasks()
+            result = await create_team(request, background_tasks, current_user_ctx=mock_user_context, db=mock_db)
+            invitation_service.deliver_invitation_emails.assert_not_awaited()
+            await background_tasks()
 
             # The team fields stay at the top level, so existing clients keep working
             assert result.id == mock_team.id
@@ -309,7 +312,7 @@ class TestTeamsRouter:
 
             from mcpgateway.routers.teams import create_team
 
-            result = await create_team(request, current_user_ctx=mock_user_context, db=mock_db)
+            result = await create_team(request, BackgroundTasks(), current_user_ctx=mock_user_context, db=mock_db)
 
             assert result.members_added == []
             assert result.invitations_sent == []
@@ -328,7 +331,7 @@ class TestTeamsRouter:
             from mcpgateway.routers.teams import create_team
 
             with pytest.raises(HTTPException) as exc_info:
-                await create_team(request, current_user_ctx=mock_user_context, db=mock_db)
+                await create_team(request, BackgroundTasks(), current_user_ctx=mock_user_context, db=mock_db)
 
             assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
             assert "exceeding the maximum" in str(exc_info.value.detail)
@@ -352,7 +355,7 @@ class TestTeamsRouter:
             from mcpgateway.routers.teams import create_team
 
             with pytest.raises(HTTPException) as exc_info:
-                await create_team(request, current_user_ctx=mock_user_context, db=mock_db)
+                await create_team(request, BackgroundTasks(), current_user_ctx=mock_user_context, db=mock_db)
 
             assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
             assert "Service validation error" in str(exc_info.value.detail)
@@ -371,7 +374,7 @@ class TestTeamsRouter:
             from mcpgateway.routers.teams import create_team
 
             with pytest.raises(HTTPException) as exc_info:
-                await create_team(request, current_user_ctx=mock_user_context, db=mock_db)
+                await create_team(request, BackgroundTasks(), current_user_ctx=mock_user_context, db=mock_db)
 
             assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
             assert "Failed to create team" in str(exc_info.value.detail)
@@ -705,7 +708,7 @@ class TestTeamsRouter:
 
             from mcpgateway.routers.teams import create_team
 
-            result = await create_team(request, current_user_ctx=mock_sso_platform_admin_context, db=mock_db)
+            result = await create_team(request, BackgroundTasks(), current_user_ctx=mock_sso_platform_admin_context, db=mock_db)
 
             # Should succeed despite allow_team_creation=False
             assert result.id == mock_team.id
@@ -1216,6 +1219,34 @@ class TestTeamsRouter:
         invitation_service.deliver_invitation_email.assert_awaited_once()
 
     @pytest.mark.asyncio
+    async def test_invite_team_member_contains_delivery_exception_after_commit(self, mock_user_context, mock_db, mock_invitation, mock_team):
+        """Unexpected post-commit delivery error returns created invitation, not HTTP 500."""
+        request = TeamInviteRequest(email="invited@example.com", role="member")
+
+        with (
+            patch("mcpgateway.routers.teams.TeamManagementService") as MockTeamService,
+            patch("mcpgateway.routers.teams.TeamInvitationService") as MockInviteService,
+        ):
+            team_service = AsyncMock(spec=TeamManagementService)
+            team_service.get_user_role_in_team = AsyncMock(return_value="owner")
+            team_service.get_team_by_id = AsyncMock(return_value=mock_team)
+            MockTeamService.return_value = team_service
+            invitation_service = AsyncMock(spec=TeamInvitationService)
+            invitation_service.create_invitation = AsyncMock(return_value=mock_invitation)
+            invitation_service.deliver_invitation_email = AsyncMock(side_effect=RuntimeError("unexpected delivery error"))
+            MockInviteService.return_value = invitation_service
+
+            from mcpgateway.routers.teams import invite_team_member
+
+            result = await invite_team_member(mock_team.id, request, current_user=mock_user_context, db=mock_db)
+
+        assert result.id == mock_invitation.id
+        assert result.email_delivery_status == EmailDeliveryStatus.FAILED
+        assert result.warning == "Invitation created, but the email could not be delivered."
+        mock_db.commit.assert_called_once()
+        mock_db.close.assert_called_once()
+
+    @pytest.mark.asyncio
     async def test_invite_team_member_insufficient_permissions(self, mock_user_context, mock_db):
         """Test inviting a user without owner permissions."""
         team_id = str(uuid4())
@@ -1610,7 +1641,7 @@ class TestTeamsRouter:
             from mcpgateway.routers.teams import create_team
 
             with pytest.raises(HTTPException) as exc_info:
-                await create_team(request, current_user_ctx=mock_user_context, db=mock_db)
+                await create_team(request, BackgroundTasks(), current_user_ctx=mock_user_context, db=mock_db)
 
             assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
             assert "max_members cannot exceed" in str(exc_info.value.detail)
@@ -1630,7 +1661,7 @@ class TestTeamsRouter:
 
             from mcpgateway.routers.teams import create_team
 
-            result = await create_team(request, current_user_ctx=mock_user_context, db=mock_db)
+            result = await create_team(request, BackgroundTasks(), current_user_ctx=mock_user_context, db=mock_db)
             assert result.id == mock_team.id
 
     @pytest.mark.asyncio
@@ -1647,7 +1678,7 @@ class TestTeamsRouter:
 
             from mcpgateway.routers.teams import create_team
 
-            result = await create_team(request, current_user_ctx=mock_admin_context, db=mock_db)
+            result = await create_team(request, BackgroundTasks(), current_user_ctx=mock_admin_context, db=mock_db)
             assert result.id == mock_team.id
             mock_service.create_team_with_members.assert_called_once()
 

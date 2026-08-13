@@ -1191,6 +1191,21 @@ class Settings(BaseSettings):
         description="Trusted base URL for browser-facing UI links. Falls back to APP_DOMAIN plus APP_ROOT_PATH when unset.",
     )
 
+    @field_validator("ui_base_url", mode="before")
+    @classmethod
+    def normalize_ui_base_url(cls, value: object) -> object:
+        """Treat an empty environment override as unset.
+
+        Args:
+            value: Raw configured frontend base URL.
+
+        Returns:
+            object: ``None`` for blank strings, otherwise the original value.
+        """
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
     @field_validator("ui_base_url")
     @classmethod
     def validate_ui_base_url(cls, value: Optional[HttpUrl]) -> Optional[HttpUrl]:

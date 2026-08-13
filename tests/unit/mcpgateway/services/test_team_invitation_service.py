@@ -1212,6 +1212,40 @@ class TestTeamInvitationService:
         )
 
     @pytest.mark.asyncio
+    async def test_deliver_invitation_email_contains_url_build_failure(self, service):
+        """Malformed URL configuration cannot escape best-effort delivery boundary."""
+        invitation = MagicMock(spec=EmailTeamInvitation)
+        invitation.id = "invite-id"
+        invitation.token = "token"
+        service.email_notification_service.deliver_team_invitation_email = AsyncMock()
+
+        with patch("mcpgateway.services.team_invitation_service.build_frontend_url", side_effect=ValueError("bad URL")):
+            result = await service.deliver_invitation_email(invitation, "Engineering", "Alice")
+
+        assert result == InvitationDeliveryResult(
+            invitation_url="",
+            status=EmailDeliveryStatus.FAILED,
+            warning="Invitation created, but the email could not be delivered.",
+        )
+        service.email_notification_service.deliver_team_invitation_email.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_deliver_invitation_email_warns_when_smtp_disabled(self, service):
+        """Disabled SMTP remains a visible non-delivery outcome."""
+        invitation = MagicMock(spec=EmailTeamInvitation)
+        invitation.id = "invite-id"
+        invitation.email = "invitee@example.com"
+        invitation.role = "member"
+        invitation.token = "token"
+        invitation.expires_at = datetime(2026, 8, 20, tzinfo=timezone.utc)
+        service.email_notification_service.deliver_team_invitation_email = AsyncMock(return_value=EmailDeliveryStatus.DISABLED)
+
+        result = await service.deliver_invitation_email(invitation, "Engineering", "Alice")
+
+        assert result.status == EmailDeliveryStatus.DISABLED
+        assert result.warning == "Invitation created, but email delivery is disabled."
+
+    @pytest.mark.asyncio
     async def test_batch_delivery_is_bounded_and_failure_isolated(self, service):
         """Batch delivery limits SMTP fan-out and preserves remaining results."""
         active = 0

@@ -22,7 +22,7 @@ Examples:
 from typing import Any, cast, List, Optional, Union
 
 # Third-Party
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -55,7 +55,7 @@ from mcpgateway.schemas import (
 )
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.permission_service import PermissionService
-from mcpgateway.services.team_invitation_service import TeamInvitationService
+from mcpgateway.services.team_invitation_service import failed_invitation_delivery_result, TeamInvitationService
 from mcpgateway.services.team_management_service import (
     InvalidRoleError,
     JoinRequestNotFoundError,
@@ -83,7 +83,9 @@ teams_router = APIRouter()
 
 @teams_router.post("/", response_model=TeamCreateResponse, status_code=status.HTTP_201_CREATED)
 @require_permission("teams.create")
-async def create_team(request: TeamCreateRequest, current_user_ctx: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> TeamCreateResponse:
+async def create_team(
+    request: TeamCreateRequest, background_tasks: BackgroundTasks, current_user_ctx: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)
+) -> TeamCreateResponse:
     """Create a new team, optionally seeding it with members.
 
     Members supplied in the request are routed by the server: an address that
@@ -94,6 +96,7 @@ async def create_team(request: TeamCreateRequest, current_user_ctx: dict = Depen
 
     Args:
         request: Team creation request data
+        background_tasks: Response-scoped background task scheduler
         current_user_ctx: Currently authenticated user context
         db: Database session
 
@@ -153,7 +156,8 @@ async def create_team(request: TeamCreateRequest, current_user_ctx: dict = Depen
         db.close()
 
         if invitation_service:
-            await invitation_service.deliver_invitation_emails(
+            background_tasks.add_task(
+                invitation_service.deliver_invitation_emails,
                 result.invitations_to_deliver,
                 team.name,
                 current_user_ctx.get("full_name") or current_user_ctx["email"],
@@ -783,11 +787,15 @@ async def invite_team_member(team_id: str, request: TeamInviteRequest, current_u
 
         db.commit()
         db.close()
-        delivery = await invitation_service.deliver_invitation_email(
-            invitation=invitation,
-            team_name=team_name,
-            inviter_name=current_user.get("full_name") or current_user["email"],
-        )
+        try:
+            delivery = await invitation_service.deliver_invitation_email(
+                invitation=invitation,
+                team_name=team_name,
+                inviter_name=current_user.get("full_name") or current_user["email"],
+            )
+        except Exception:  # pragma: no cover - final boundary after persistence
+            logger.warning("Team invitation email delivery failed for invitation %s", SecurityValidator.sanitize_log_message(invitation.id))
+            delivery = failed_invitation_delivery_result()
 
         return TeamInvitationCreateResponse(
             id=invitation.id,
