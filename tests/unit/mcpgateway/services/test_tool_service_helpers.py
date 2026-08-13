@@ -74,3 +74,15 @@ def test_extract_using_jq_reports_timeout_distinctly(monkeypatch):
     monkeypatch.setattr(tool_service, "run_jq_filter", lambda *_args: (_ for _ in ()).throw(JqFilterTimeout("too slow")))
     result = tool_service.extract_using_jq({"a": 1}, ".a")
     assert result == [TextContent(type="text", text="jsonpath filter exceeded the execution time limit")]
+
+
+def test_extract_using_jq_reports_busy_distinctly_from_timeout(monkeypatch):
+    """A full pool with no free worker is distinguishable from a genuine timeout."""
+    # First-Party
+    from mcpgateway.common.models import TextContent
+    from mcpgateway.services import tool_service
+    from mcpgateway.utils.jq_runner import JqFilterBusy
+
+    monkeypatch.setattr(tool_service, "run_jq_filter", lambda *_args: (_ for _ in ()).throw(JqFilterBusy("no free worker")))
+    result = tool_service.extract_using_jq({"a": 1}, ".a")
+    assert result == [TextContent(type="text", text="jsonpath filter sandbox is busy, try again")]

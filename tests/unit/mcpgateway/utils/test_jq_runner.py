@@ -18,7 +18,7 @@ import pytest
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.utils.jq_runner import JqFilterError, JqFilterTimeout, run_jq_filter, shutdown_jq_pool, start_jq_pool, subprocess_mode_available
+from mcpgateway.utils.jq_runner import JqFilterBusy, JqFilterError, JqFilterTimeout, run_jq_filter, shutdown_jq_pool, start_jq_pool, subprocess_mode_available
 
 linux_only = pytest.mark.skipif(not sys.platform.startswith("linux"), reason="fork-based sandbox is Linux-only")
 
@@ -271,6 +271,9 @@ def test_run_jq_filter_wraps_a_generic_submit_failure(monkeypatch):
     from mcpgateway.utils import jq_runner
 
     class _BrokenSubmitPool:
+        def __init__(self):
+            setattr(self, jq_runner._GATE_ATTR, threading.Semaphore(1))  # pylint: disable=protected-access
+
         def submit(self, *_args, **_kwargs):
             raise RuntimeError("cannot schedule new futures after shutdown")
 
@@ -289,6 +292,9 @@ def test_run_jq_filter_does_not_double_wrap_a_jq_filter_error(monkeypatch):
     original = JqFilterError("already the right shape")
 
     class _DirectlyFailingPool:
+        def __init__(self):
+            setattr(self, jq_runner._GATE_ATTR, threading.Semaphore(1))  # pylint: disable=protected-access
+
         def submit(self, *_args, **_kwargs):
             raise original
 
@@ -439,3 +445,69 @@ def test_shutdown_kills_a_worker_running_a_runaway_filter(monkeypatch):
         assert errors and isinstance(errors[0], JqFilterError)
     finally:
         shutdown_jq_pool()
+
+
+@linux_only
+def test_a_full_pool_fails_fast_instead_of_queueing(monkeypatch):
+    """A submission with no free worker is refused immediately, not queued.
+
+    Reproduces the reported race precisely: with every worker already running
+    a filter, a further call must not sit in ProcessPoolExecutor's internal
+    queue consuming the same wall-clock budget meant for runaway detection --
+    it must fail fast with JqFilterBusy, and it must not touch the pool.
+    """
+    shutdown_jq_pool()
+    monkeypatch.setattr(settings, "jq_filter_workers", 1)
+    monkeypatch.setattr(settings, "jq_filter_timeout_seconds", 5.0)
+    start_jq_pool()
+    processes_before = _worker_processes()
+
+    busy_thread_result = []
+
+    def _occupy_the_only_worker():
+        try:
+            run_jq_filter("reduce range(100000000000) as $i (0; .+1)", {"a": 1})
+        except Exception as exc:  # pylint: disable=broad-except
+            busy_thread_result.append(exc)
+
+    occupier = threading.Thread(target=_occupy_the_only_worker, daemon=True)
+    occupier.start()
+    try:
+        assert _wait_until(lambda: all(p.is_alive() for p in processes_before), timeout=5.0)
+        time.sleep(0.3)  # let the occupier's filter actually start running
+
+        start = time.monotonic()
+        with pytest.raises(JqFilterBusy):
+            run_jq_filter(".a", {"a": 1})
+        elapsed = time.monotonic() - start
+
+        # Fails fast: nowhere near the 5s per-filter timeout budget.
+        assert elapsed < 1.0, f"a full pool should fail immediately, took {elapsed}s"
+
+        # The occupier's worker was never touched by the second call.
+        assert all(p.is_alive() for p in processes_before)
+    finally:
+        occupier.join(timeout=10.0)
+        shutdown_jq_pool()
+
+    assert busy_thread_result and isinstance(busy_thread_result[0], JqFilterTimeout)
+
+
+@linux_only
+def test_gate_is_released_after_a_normal_call(jq_pool):
+    """A completed call frees its slot for the next one, even with one worker."""
+    # First-Party
+    from mcpgateway.utils import jq_runner
+
+    gate = getattr(jq_runner._POOL, jq_runner._GATE_ATTR)  # pylint: disable=protected-access
+    for _ in range(3):
+        assert run_jq_filter(".a", {"a": 1}) == [1]
+    # Every acquire in the loop above was matched by a release.
+    assert gate.acquire(blocking=False)
+    gate.release()
+
+
+def test_jq_filter_busy_is_a_jq_filter_error():
+    """JqFilterBusy is catchable alongside every other jq failure mode."""
+    assert issubclass(JqFilterBusy, JqFilterError)
+    assert not issubclass(JqFilterBusy, JqFilterTimeout)

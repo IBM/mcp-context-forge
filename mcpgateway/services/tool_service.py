@@ -101,7 +101,7 @@ from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_ga
 from mcpgateway.utils.header_filtering import filter_sensitive_headers
 from mcpgateway.utils.identity_propagation import build_identity_headers, build_identity_meta
 from mcpgateway.utils.jq_guard import assert_safe_jq_filter
-from mcpgateway.utils.jq_runner import JqFilterError, JqFilterTimeout, run_jq_filter
+from mcpgateway.utils.jq_runner import JqFilterBusy, JqFilterError, JqFilterTimeout, run_jq_filter
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import decode_cursor, encode_cursor, unified_paginate
@@ -791,6 +791,9 @@ def extract_using_jq(data, jq_filter=""):
     except JqFilterTimeout:
         logger.warning("jq filter exceeded its time limit and was terminated")
         return [TextContent(type="text", text="jsonpath filter exceeded the execution time limit")]
+    except JqFilterBusy:
+        logger.warning("jq filter sandbox had no free worker")
+        return [TextContent(type="text", text="jsonpath filter sandbox is busy, try again")]
     except JqFilterError as exc:
         logger.warning("jq filter failed: %s", exc)
         return [TextContent(type="text", text="Error applying jsonpath filter")]

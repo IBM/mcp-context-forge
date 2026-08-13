@@ -41,7 +41,7 @@ from mcpgateway.utils.jq_guard import assert_safe_jq_filter
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["JqFilterError", "JqFilterTimeout", "run_jq_filter", "start_jq_pool", "shutdown_jq_pool", "subprocess_mode_available"]
+__all__ = ["JqFilterBusy", "JqFilterError", "JqFilterTimeout", "run_jq_filter", "start_jq_pool", "shutdown_jq_pool", "subprocess_mode_available"]
 
 
 class JqFilterError(Exception):
@@ -49,7 +49,23 @@ class JqFilterError(Exception):
 
 
 class JqFilterTimeout(JqFilterError):
-    """Raised when a jq filter exceeds its wall-clock limit."""
+    """Raised when a jq filter exceeds its wall-clock limit.
+
+    Only raised for a submission that is known to have started running
+    immediately (the submit gate guarantees a free worker was available), so
+    this always reflects a filter that is genuinely still executing past its
+    budget, never queueing pressure from ordinary concurrent load.
+    """
+
+
+class JqFilterBusy(JqFilterError):
+    """Raised when every worker is already busy running another filter.
+
+    Distinct from :class:`JqFilterTimeout`: no filter has overrun anything,
+    there simply wasn't a free worker slot for this call right now. Safe to
+    retry, and does not indicate a hostile or hung filter, so it never kills
+    the pool.
+    """
 
 
 _POOL: Optional[ProcessPoolExecutor] = None
@@ -62,6 +78,18 @@ _FALLBACK_WARNED = False
 # global reference cleared by ``shutdown_jq_pool``) while one of its workers is
 # still running a hostile filter, and that worker must still be killable.
 _OWNER_PID_ATTR = "_mcpgateway_owner_pid"
+
+# Attribute stamped on each executor with a Semaphore sized to that pool's own
+# worker count. ``ProcessPoolExecutor.submit()`` queues a task the moment a
+# free work slot doesn't exist -- ``Future.result(timeout=...)`` then times
+# queue wait and execution together, and a task that never even started
+# running is indistinguishable from a genuine runaway once the timeout fires.
+# Gating admission at this semaphore keeps every submission that actually
+# reaches the pool guaranteed to start immediately, so a timeout on it is a
+# real signal a filter is hung -- not queueing pressure from ordinary
+# concurrent load. Stamped on the pool object, not read fresh from settings,
+# so it always matches the worker count that pool was actually built with.
+_GATE_ATTR = "_mcpgateway_submit_gate"
 
 # Lower bound on how long ``start_jq_pool`` waits for the warm-up filter. The
 # per-filter timeout is only validated as ``gt=0``, so an aggressively short
@@ -105,6 +133,7 @@ def _build_pool() -> ProcessPoolExecutor:
         initializer=_worker_init,
     )
     setattr(pool, _OWNER_PID_ATTR, os.getpid())
+    setattr(pool, _GATE_ATTR, threading.Semaphore(settings.jq_filter_workers))
     return pool
 
 
@@ -327,6 +356,7 @@ def run_jq_filter(jq_filter: str, data: Any) -> Any:
     Raises:
         ValueError: If the filter uses a restricted jq built-in.
         JqFilterError: If compilation or execution fails, or the sandbox is unavailable.
+        JqFilterBusy: If every worker is already running another filter.
         JqFilterTimeout: If the filter exceeds its wall-clock limit.
     """
     # Defence in depth. This module's contract is that the static gate has
@@ -340,23 +370,36 @@ def run_jq_filter(jq_filter: str, data: Any) -> Any:
         return _run_inprocess(jq_filter, data)
 
     pool = _ensure_pool()
+    gate = getattr(pool, _GATE_ATTR)
+
+    # ProcessPoolExecutor queues a task the instant every worker is busy, and
+    # future.result(timeout=...) below cannot tell "still queued" apart from
+    # "running past its budget" -- both look like a timeout. Reserving a slot
+    # here first means a submission only ever reaches the pool when a worker
+    # is actually free, so a timeout on it is never queueing pressure.
+    if not gate.acquire(blocking=False):
+        raise JqFilterBusy("jq filter sandbox has no free worker")
+
     try:
-        future = pool.submit(_apply_filter, jq_filter, orjson.dumps(data))
-        return orjson.loads(future.result(timeout=settings.jq_filter_timeout_seconds))
-    except FutureTimeoutError as exc:
-        logger.warning("jq filter exceeded %ss limit; killing worker", settings.jq_filter_timeout_seconds)
-        _kill_pool_workers(pool)
-        raise JqFilterTimeout("jq filter exceeded the execution time limit") from exc
-    except BrokenProcessPool as exc:
-        # A worker died without the timeout firing — the kernel OOM-killing a
-        # filter that allocated without bound is the realistic trigger, and
-        # nothing here bounds worker memory. The executor is permanently broken
-        # afterwards: every later submit() raises. Drop it so the next call
-        # rebuilds, instead of bricking filtering for this whole process.
-        logger.warning("jq worker pool broke (worker died abnormally); discarding it so the next filter rebuilds")
-        _discard_pool(pool)
-        raise JqFilterError(str(exc)) from exc
-    except JqFilterError:
-        raise
-    except Exception as exc:  # pylint: disable=broad-except
-        raise JqFilterError(str(exc)) from exc
+        try:
+            future = pool.submit(_apply_filter, jq_filter, orjson.dumps(data))
+            return orjson.loads(future.result(timeout=settings.jq_filter_timeout_seconds))
+        except FutureTimeoutError as exc:
+            logger.warning("jq filter exceeded %ss limit; killing worker", settings.jq_filter_timeout_seconds)
+            _kill_pool_workers(pool)
+            raise JqFilterTimeout("jq filter exceeded the execution time limit") from exc
+        except BrokenProcessPool as exc:
+            # A worker died without the timeout firing — the kernel OOM-killing a
+            # filter that allocated without bound is the realistic trigger, and
+            # nothing here bounds worker memory. The executor is permanently broken
+            # afterwards: every later submit() raises. Drop it so the next call
+            # rebuilds, instead of bricking filtering for this whole process.
+            logger.warning("jq worker pool broke (worker died abnormally); discarding it so the next filter rebuilds")
+            _discard_pool(pool)
+            raise JqFilterError(str(exc)) from exc
+        except JqFilterError:
+            raise
+        except Exception as exc:  # pylint: disable=broad-except
+            raise JqFilterError(str(exc)) from exc
+    finally:
+        gate.release()
