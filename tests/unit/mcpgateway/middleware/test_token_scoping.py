@@ -317,6 +317,67 @@ class TestTokenScopingMiddleware:
         assert middleware._check_permission_restrictions(path, "POST", [Permissions.GATEWAYS_READ]) is True
         assert middleware._check_permission_restrictions(path, "POST", [Permissions.GATEWAYS_UPDATE]) is False
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "/v1/virtual-servers/a1b2c3d4-e5f6-0000-1111-222233334444/mcp",
+            "/v1/mcp-servers/a1b2c3d4-e5f6-0000-1111-222233334444",
+        ],
+    )
+    async def test_versioned_server_aliases_deny_wrong_team(self, middleware, mock_request, monkeypatch, path):
+        """A team-scoped token must not access either v1 alias for another team."""
+        mock_request.url.path = path
+        mock_request.scope["path"] = path
+        mock_request.method = "POST" if path.endswith("/mcp") else "GET"
+        mock_request.headers = {"Authorization": "Bearer token"}
+        payload = {"sub": "user@example.com", "teams": ["team-1"], "scopes": {"permissions": ["*"]}}
+        db = MagicMock()
+        resource = MagicMock(visibility="team", team_id="team-2", owner_email="owner@example.com")
+        db.execute.return_value.scalar_one_or_none.return_value = resource
+        monkeypatch.setattr("mcpgateway.db.get_db", lambda: iter([db]))
+
+        with (
+            patch.object(middleware, "_extract_token_scopes", new=AsyncMock(return_value=payload)),
+            patch.object(middleware, "_check_team_membership", return_value=True),
+            patch.object(middleware, "_check_resource_team_ownership", wraps=middleware._check_resource_team_ownership) as ownership_check,
+        ):
+            call_next = AsyncMock()
+            response = await middleware(mock_request, call_next)
+
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+        ownership_check.assert_called_once_with(path, ["team-1"], db=db, _user_email="user@example.com")
+        call_next.assert_not_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("method", "path"),
+        [
+            ("POST", "/v1/virtual-servers"),
+            ("POST", "/v1/virtual-servers/server-123/mcp"),
+            ("POST", "/v1/mcp-servers"),
+        ],
+    )
+    async def test_versioned_server_aliases_deny_insufficient_permissions(self, middleware, mock_request, method, path):
+        """An unrelated token permission must not reach a v1 alias handler."""
+        mock_request.url.path = path
+        mock_request.scope["path"] = path
+        mock_request.method = method
+        mock_request.headers = {"Authorization": "Bearer token"}
+        payload = {
+            "sub": "admin@example.com",
+            "teams": None,
+            "is_admin": True,
+            "scopes": {"permissions": [Permissions.TOKENS_READ]},
+        }
+
+        with patch.object(middleware, "_extract_token_scopes", new=AsyncMock(return_value=payload)):
+            call_next = AsyncMock()
+            response = await middleware(mock_request, call_next)
+
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+        call_next.assert_not_called()
+
     def test_plugin_discovery_requires_plugins_read(self, middleware):
         """Versioned plugin discovery uses explicit least-privilege permission."""
         assert middleware._check_permission_restrictions("/v1/plugins", "GET", [Permissions.PLUGINS_READ]) is True

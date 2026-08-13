@@ -3276,23 +3276,25 @@ class TestMCPPathRewriteMiddleware:
         app_mock.assert_called_once_with(scope, receive, send)
 
     @pytest.mark.asyncio
-    async def test_rewrite_virtual_server_alias_preserves_server_id(self):
-        """The v1 alias rewrites to /mcp/ while retaining canonical server scope."""
+    @pytest.mark.parametrize("trailing_slash", ["", "/"])
+    async def test_rewrite_virtual_server_alias_preserves_server_id(self, trailing_slash):
+        """The public v1 alias rewrites while retaining canonical server scope."""
         app_mock = AsyncMock()
         middleware = MCPPathRewriteMiddleware(app_mock)
+        public_path = f"/v1/virtual-servers/server-123/mcp{trailing_slash}"
         scope = {
             "type": "http",
-            "path": "/v1/virtual-servers/server-123/mcp",
-            "raw_path": b"/v1/virtual-servers/server-123/mcp",
+            "path": public_path,
+            "raw_path": public_path.encode(),
             "headers": [],
         }
         receive = AsyncMock()
         send = AsyncMock()
 
         with patch("mcpgateway.main.streamable_http_auth", new=AsyncMock(return_value=True)):
-            await middleware._call_streamable_http(scope, receive, send)
+            await middleware(scope, receive, send)
 
-        assert scope["modified_path"] == "/servers/server-123/mcp"
+        assert scope["modified_path"] == f"/servers/server-123/mcp{trailing_slash}"
         assert scope["path"] == "/mcp/"
         assert scope["raw_path"] == b"/mcp/"
         app_mock.assert_called_once_with(scope, receive, send)
