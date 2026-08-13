@@ -1831,6 +1831,28 @@ def test_reverse_proxy_feature_default_false():
     assert s.mcpgateway_reverse_proxy_enabled is False
 
 
+def test_reverse_proxy_heartbeat_timeout_defaults_to_90_seconds():
+    """The reverse-proxy heartbeat timeout defaults to the maintained client's documented tolerance."""
+    s = Settings(environment="development", _env_file=None)
+    assert s.mcpgateway_reverse_proxy_heartbeat_timeout == 90.0
+
+
+def test_reverse_proxy_heartbeat_timeout_zero_disables_reaping():
+    """Zero explicitly disables stale-session reaping while negative values are rejected."""
+    disabled = Settings(mcpgateway_reverse_proxy_heartbeat_timeout=0, environment="development", _env_file=None)
+    assert disabled.mcpgateway_reverse_proxy_heartbeat_timeout == 0
+
+    with pytest.raises(ValidationError):
+        Settings(mcpgateway_reverse_proxy_heartbeat_timeout=-1, environment="development", _env_file=None)
+
+
+@pytest.mark.parametrize("invalid_timeout", [float("nan"), float("inf"), float("-inf"), 5e-324])
+def test_reverse_proxy_heartbeat_timeout_rejects_non_finite_or_tiny_positive(invalid_timeout):
+    """Enabled reaping must always derive a finite, nonzero scheduling interval."""
+    with pytest.raises(ValidationError):
+        Settings(mcpgateway_reverse_proxy_heartbeat_timeout=invalid_timeout, environment="development", _env_file=None)
+
+
 def test_hot_server_check_interval_property():
     """hot_server_check_interval should be auto-derived from gateway_auto_refresh_interval."""
     # First-Party

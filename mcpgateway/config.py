@@ -2474,6 +2474,21 @@ class Settings(BaseSettings):
     # Transport
     mcpgateway_ws_relay_enabled: bool = Field(default=False, description="Enable WebSocket JSON-RPC relay endpoint at /ws")
     mcpgateway_reverse_proxy_enabled: bool = Field(default=False, description="Enable reverse-proxy transport endpoints under /reverse-proxy/*")
+    mcpgateway_reverse_proxy_heartbeat_timeout: float = Field(
+        default=90.0,
+        ge=0.0,
+        allow_inf_nan=False,
+        description="Seconds without a reverse-proxy heartbeat before eviction; 0 disables stale-session reaping",
+    )
+
+    @field_validator("mcpgateway_reverse_proxy_heartbeat_timeout")
+    @classmethod
+    def validate_reverse_proxy_heartbeat_timeout(cls, value: float) -> float:
+        """Allow disabled zero or a scheduling-safe timeout of at least one second."""
+        if value != 0 and value < 1:
+            raise ValueError("reverse-proxy heartbeat timeout must be 0 or at least 1 second")
+        return value
+
     transport_type: str = "all"  # http, ws, sse, all
     websocket_ping_interval: int = 30  # seconds
     sse_retry_timeout: int = 5000  # milliseconds - client retry interval on disconnect
