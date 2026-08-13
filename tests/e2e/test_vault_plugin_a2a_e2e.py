@@ -120,6 +120,10 @@ def live_stack():
                 "DATABASE_URL": f"sqlite:///{E2E_DB}",
                 "AUTH_REQUIRED": "true",
                 "EXPOSE_ERROR_DETAILS": "true",
+                # The echo backends run on localhost; SSRF protection blocks
+                # localhost gateway/agent URLs by default (SSRF_ALLOW_LOCALHOST
+                # defaults to false), which CI hits since it has no dev .env.
+                "SSRF_ALLOW_LOCALHOST": "true",
             }
         )
         procs.append(subprocess.Popen([PYBIN, "-m", "uvicorn", "mcpgateway.main:app", "--host", "127.0.0.1", "--port", "4444"], cwd=REPO, stdout=logs[2], stderr=subprocess.STDOUT, env=env))
