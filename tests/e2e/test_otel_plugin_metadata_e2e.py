@@ -174,6 +174,7 @@ from mcpgateway.plugins import (  # noqa: E402
     shutdown_plugin_manager_factory,
 )
 from mcpgateway.plugins.policy import HOOK_PAYLOAD_POLICIES  # noqa: E402
+import mcpgateway.routers.observability as observability_mod  # noqa: E402
 from mcpgateway.routers.observability import router as observability_router  # noqa: E402
 from mcpgateway.services.observability_service import ObservabilityService  # noqa: E402
 from mcpgateway.utils.create_jwt_token import get_jwt_token  # noqa: E402
@@ -293,7 +294,12 @@ async def traced_app(monkeypatch, tmp_path):
     # mcpgateway/routers/observability.py defines its own local get_db() bound to a
     # module-level `SessionLocal` name captured at import time -- patch it directly too,
     # otherwise GET /observability/traces/{trace_id} reads from the wrong (schema-less) DB.
-    monkeypatch.setattr("mcpgateway.routers.observability.SessionLocal", TestSessionLocal, raising=False)
+    # Patch the module OBJECT directly (not the string path) so this survives another
+    # test file's sys.modules.pop("mcpgateway.routers.observability") + reimport
+    # later in the same worker: string-path patching re-resolves via sys.modules at
+    # patch time and would silently land on that other file's fresh module copy,
+    # never touching the one observability_router (imported above) is bound to.
+    monkeypatch.setattr(observability_mod, "SessionLocal", TestSessionLocal, raising=False)
     try:
         monkeypatch.setattr("mcpgateway.middleware.auth_middleware.SessionLocal", TestSessionLocal, raising=False)
     except Exception:  # noqa: BLE001
@@ -475,7 +481,12 @@ async def traced_app_secrets_detection(monkeypatch, tmp_path):
     monkeypatch.setattr(db_mod, "SessionLocal", TestSessionLocal, raising=False)
     monkeypatch.setattr(main_mod, "SessionLocal", TestSessionLocal, raising=False)
     monkeypatch.setattr("mcpgateway.services.observability_service.SessionLocal", TestSessionLocal, raising=False)
-    monkeypatch.setattr("mcpgateway.routers.observability.SessionLocal", TestSessionLocal, raising=False)
+    # Patch the module OBJECT directly (not the string path) so this survives another
+    # test file's sys.modules.pop("mcpgateway.routers.observability") + reimport
+    # later in the same worker: string-path patching re-resolves via sys.modules at
+    # patch time and would silently land on that other file's fresh module copy,
+    # never touching the one observability_router (imported above) is bound to.
+    monkeypatch.setattr(observability_mod, "SessionLocal", TestSessionLocal, raising=False)
     try:
         monkeypatch.setattr("mcpgateway.middleware.auth_middleware.SessionLocal", TestSessionLocal, raising=False)
     except Exception:  # noqa: BLE001
@@ -653,7 +664,12 @@ async def _build_traced_app(monkeypatch, tmp_path, *, app_title: str, plugin_nam
     monkeypatch.setattr(db_mod, "SessionLocal", TestSessionLocal, raising=False)
     monkeypatch.setattr(main_mod, "SessionLocal", TestSessionLocal, raising=False)
     monkeypatch.setattr("mcpgateway.services.observability_service.SessionLocal", TestSessionLocal, raising=False)
-    monkeypatch.setattr("mcpgateway.routers.observability.SessionLocal", TestSessionLocal, raising=False)
+    # Patch the module OBJECT directly (not the string path) so this survives another
+    # test file's sys.modules.pop("mcpgateway.routers.observability") + reimport
+    # later in the same worker: string-path patching re-resolves via sys.modules at
+    # patch time and would silently land on that other file's fresh module copy,
+    # never touching the one observability_router (imported above) is bound to.
+    monkeypatch.setattr(observability_mod, "SessionLocal", TestSessionLocal, raising=False)
     for patch_target in (
         "mcpgateway.middleware.auth_middleware.SessionLocal",
         "mcpgateway.services.security_logger.SessionLocal",
@@ -875,7 +891,12 @@ async def traced_app_url_reputation(monkeypatch, tmp_path):
     monkeypatch.setattr(db_mod, "SessionLocal", TestSessionLocal, raising=False)
     monkeypatch.setattr(main_mod, "SessionLocal", TestSessionLocal, raising=False)
     monkeypatch.setattr("mcpgateway.services.observability_service.SessionLocal", TestSessionLocal, raising=False)
-    monkeypatch.setattr("mcpgateway.routers.observability.SessionLocal", TestSessionLocal, raising=False)
+    # Patch the module OBJECT directly (not the string path) so this survives another
+    # test file's sys.modules.pop("mcpgateway.routers.observability") + reimport
+    # later in the same worker: string-path patching re-resolves via sys.modules at
+    # patch time and would silently land on that other file's fresh module copy,
+    # never touching the one observability_router (imported above) is bound to.
+    monkeypatch.setattr(observability_mod, "SessionLocal", TestSessionLocal, raising=False)
     for patch_target in (
         "mcpgateway.middleware.auth_middleware.SessionLocal",
         "mcpgateway.services.security_logger.SessionLocal",
