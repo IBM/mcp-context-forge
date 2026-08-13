@@ -77,6 +77,22 @@ class TestUnauthenticatedDenied:
             f"Expected 401 for unauthenticated GET {path}, got {response.status_code}"
         )
 
+    @pytest.mark.parametrize(
+        ("method", "path"),
+        [
+            ("GET", "/v1/virtual-servers"),
+            ("GET", "/v1/mcp-servers"),
+            ("POST", "/v1/virtual-servers/server-123/mcp"),
+        ],
+    )
+    def test_product_alias_unauthenticated(self, client: TestClient, method: str, path: str) -> None:
+        """Product aliases must authenticate before reaching handlers or rewriting."""
+        response = client.request(method, path, content=b"{}", follow_redirects=False)
+
+        assert response.status_code == 401, (
+            f"Expected 401 for unauthenticated {method} {path}, got {response.status_code}"
+        )
+
     @pytest.mark.parametrize("path", ADMIN_V1_ROUTES)
     def test_admin_route_unauthenticated(self, client: TestClient, path: str) -> None:
         response = client.get(path, follow_redirects=False)
