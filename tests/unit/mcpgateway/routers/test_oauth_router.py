@@ -3637,3 +3637,229 @@ class TestPersistLearnedAudience:
 
         assert original == {"issuer": "https://idp.example.com"}
         assert gateway.oauth_config is not original
+
+
+class TestUseDcrFlagGate:
+    """Per-gateway ``use_dcr`` flag overrides the global DCR settings (Phase 1.4)."""
+
+    def _gateway(self, oauth_config: dict):
+        mock_gateway = Mock(spec=Gateway)
+        mock_gateway.id = "gateway123"
+        mock_gateway.name = "Gateway"
+        mock_gateway.url = "https://mcp.example.com"
+        mock_gateway.visibility = "public"
+        mock_gateway.team_id = None
+        mock_gateway.auth_type = None
+        mock_gateway.oauth_config = oauth_config
+        return mock_gateway
+
+    def _base_oauth_config(self, use_dcr: object = None) -> dict:
+        config = {
+            "grant_type": "authorization_code",
+            "issuer": "https://issuer.example.com",
+            "redirect_uri": "https://gateway.example.com/oauth/callback",
+        }
+        if use_dcr is not None:
+            config["use_dcr"] = use_dcr
+        return config
+
+    def _patch_dcr_success(self):
+        class _Registered:
+            client_id = "client-123"
+            client_secret_encrypted = None
+            token_endpoint_auth_method = "client_secret_post"
+
+        class _FakeDcrService:
+            async def get_or_register_client(self, **_kwargs):
+                return _Registered()
+
+            async def discover_as_metadata(self, _issuer):
+                return {"authorization_endpoint": "https://issuer.example.com/auth", "token_endpoint": "https://issuer.example.com/token"}
+
+        return patch("mcpgateway.routers.oauth_router.DcrService", return_value=_FakeDcrService())
+
+    def _patch_oauth_manager(self, auth_data):
+        def _patcher(mock_oauth_mgr):
+            mock_mgr = Mock()
+            mock_mgr.initiate_authorization_code_flow = AsyncMock(return_value=auth_data)
+            mock_oauth_mgr.return_value = mock_mgr
+            return mock_mgr
+
+        return _patcher
+
+    def _load_handler(self):
+        from mcpgateway.routers.oauth_router import initiate_oauth_flow
+
+        return initiate_oauth_flow
+
+    @pytest.mark.asyncio
+    async def test_use_dcr_true_registers_when_global_auto_register_off(self, mock_db, mock_request, mock_current_user):
+        """Force-enable: use_dcr=true overrides dcr_auto_register_on_missing_credentials=false."""
+        mock_gateway = self._gateway(self._base_oauth_config(use_dcr=True))
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+
+        with self._patch_dcr_success():
+            with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_mgr:
+                self._patch_oauth_manager({"authorization_url": "https://issuer.example.com/auth"})(mock_oauth_mgr)
+                with patch("mcpgateway.routers.oauth_router.TokenStorageService"):
+                    with patch("mcpgateway.routers.oauth_router.settings") as mock_settings:
+                        mock_settings.dcr_enabled = True
+                        mock_settings.dcr_auto_register_on_missing_credentials = False
+                        mock_settings.dcr_default_scopes = ["openid"]
+
+                        result = await self._load_handler()("gateway123", mock_request, mock_current_user, mock_db)
+
+        assert isinstance(result, RedirectResponse)
+        assert mock_gateway.oauth_config["client_id"] == "client-123"
+        mock_db.commit.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_use_dcr_false_skips_dcr_when_global_auto_register_on(self, mock_db, mock_request, mock_current_user):
+        """Explicit opt-out: use_dcr=false (string form) skips DCR even when global auto-register is on."""
+        mock_gateway = self._gateway(self._base_oauth_config(use_dcr="false"))
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+
+        with patch("mcpgateway.routers.oauth_router.DcrService") as mock_dcr:
+            with patch("mcpgateway.routers.oauth_router.settings") as mock_settings:
+                mock_settings.dcr_enabled = True
+                mock_settings.dcr_auto_register_on_missing_credentials = True
+
+                with pytest.raises(HTTPException) as exc_info:
+                    await self._load_handler()("gateway123", mock_request, mock_current_user, mock_db)
+
+        assert exc_info.value.status_code == 400
+        assert "use_dcr=false" in str(exc_info.value.detail)
+        mock_dcr.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_use_dcr_true_requires_global_dcr_enabled(self, mock_db, mock_request, mock_current_user):
+        """Master switch: use_dcr=true cannot re-enable a globally disabled DCR deployment."""
+        mock_gateway = self._gateway(self._base_oauth_config(use_dcr=True))
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+
+        with patch("mcpgateway.routers.oauth_router.DcrService") as mock_dcr:
+            with patch("mcpgateway.routers.oauth_router.settings") as mock_settings:
+                mock_settings.dcr_enabled = False
+                mock_settings.dcr_auto_register_on_missing_credentials = True
+
+                with pytest.raises(HTTPException) as exc_info:
+                    await self._load_handler()("gateway123", mock_request, mock_current_user, mock_db)
+
+        assert exc_info.value.status_code == 400
+        assert "MCPGATEWAY_DCR_ENABLED=false" in str(exc_info.value.detail)
+        assert "Cannot honor use_dcr=true" in str(exc_info.value.detail)
+        mock_dcr.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_invalid_use_dcr_runtime_treated_as_absent(self, mock_db, mock_request, mock_current_user):
+        """Read-time safety net: malformed legacy values log a warning and behave as absent."""
+        mock_gateway = self._gateway(self._base_oauth_config(use_dcr="tru"))
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+
+        with self._patch_dcr_success():
+            with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_mgr:
+                self._patch_oauth_manager({"authorization_url": "https://issuer.example.com/auth"})(mock_oauth_mgr)
+                with patch("mcpgateway.routers.oauth_router.TokenStorageService"):
+                    with patch("mcpgateway.routers.oauth_router.settings") as mock_settings:
+                        mock_settings.dcr_enabled = True
+                        mock_settings.dcr_auto_register_on_missing_credentials = True
+                        mock_settings.dcr_default_scopes = ["openid"]
+
+                        result = await self._load_handler()("gateway123", mock_request, mock_current_user, mock_db)
+
+        assert isinstance(result, RedirectResponse)
+        assert mock_gateway.oauth_config["client_id"] == "client-123"
+
+    @pytest.mark.asyncio
+    async def test_use_dcr_absent_preserves_current_behavior(self, mock_db, mock_request, mock_current_user):
+        """Backward-compat pin: a gateway without use_dcr follows the global settings exactly."""
+        mock_gateway = self._gateway(self._base_oauth_config(use_dcr=None))
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+
+        with self._patch_dcr_success():
+            with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_mgr:
+                self._patch_oauth_manager({"authorization_url": "https://issuer.example.com/auth"})(mock_oauth_mgr)
+                with patch("mcpgateway.routers.oauth_router.TokenStorageService"):
+                    with patch("mcpgateway.routers.oauth_router.settings") as mock_settings:
+                        mock_settings.dcr_enabled = True
+                        mock_settings.dcr_auto_register_on_missing_credentials = True
+                        mock_settings.dcr_default_scopes = ["openid"]
+
+                        result = await self._load_handler()("gateway123", mock_request, mock_current_user, mock_db)
+
+        assert isinstance(result, RedirectResponse)
+        assert mock_gateway.oauth_config["client_id"] == "client-123"
+
+    @pytest.mark.asyncio
+    async def test_per_gateway_token_auth_method_forwarded_to_registration(self, mock_db, mock_request, mock_current_user):
+        """Per-gateway token_endpoint_auth_method reaches the DCR registration call."""
+        captured = {}
+
+        class _Registered:
+            client_id = "client-123"
+            client_secret_encrypted = None
+            token_endpoint_auth_method = "client_secret_post"
+
+        class _FakeDcrService:
+            async def get_or_register_client(self, **_kwargs):
+                captured.update(_kwargs)
+                return _Registered()
+
+            async def discover_as_metadata(self, _issuer):
+                return {"authorization_endpoint": "https://issuer.example.com/auth", "token_endpoint": "https://issuer.example.com/token"}
+
+        config = self._base_oauth_config(use_dcr=True)
+        config["token_endpoint_auth_method"] = "client_secret_post"
+        mock_gateway = self._gateway(config)
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+
+        with patch("mcpgateway.routers.oauth_router.DcrService", return_value=_FakeDcrService()):
+            with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_mgr:
+                self._patch_oauth_manager({"authorization_url": "https://issuer.example.com/auth"})(mock_oauth_mgr)
+                with patch("mcpgateway.routers.oauth_router.TokenStorageService"):
+                    with patch("mcpgateway.routers.oauth_router.settings") as mock_settings:
+                        mock_settings.dcr_enabled = True
+                        mock_settings.dcr_auto_register_on_missing_credentials = False
+                        mock_settings.dcr_default_scopes = ["openid"]
+
+                        result = await self._load_handler()("gateway123", mock_request, mock_current_user, mock_db)
+
+        assert isinstance(result, RedirectResponse)
+        assert captured["token_endpoint_auth_method"] == "client_secret_post"
+
+    @pytest.mark.asyncio
+    async def test_invalid_token_auth_method_runtime_treated_as_absent(self, mock_db, mock_request, mock_current_user):
+        """Read-time safety net: malformed token_endpoint_auth_method defers to the global default."""
+        captured = {}
+
+        class _Registered:
+            client_id = "client-123"
+            client_secret_encrypted = None
+            token_endpoint_auth_method = "client_secret_basic"
+
+        class _FakeDcrService:
+            async def get_or_register_client(self, **_kwargs):
+                captured.update(_kwargs)
+                return _Registered()
+
+            async def discover_as_metadata(self, _issuer):
+                return {"authorization_endpoint": "https://issuer.example.com/auth", "token_endpoint": "https://issuer.example.com/token"}
+
+        config = self._base_oauth_config(use_dcr=True)
+        config["token_endpoint_auth_method"] = "none"
+        mock_gateway = self._gateway(config)
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+
+        with patch("mcpgateway.routers.oauth_router.DcrService", return_value=_FakeDcrService()):
+            with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_mgr:
+                self._patch_oauth_manager({"authorization_url": "https://issuer.example.com/auth"})(mock_oauth_mgr)
+                with patch("mcpgateway.routers.oauth_router.TokenStorageService"):
+                    with patch("mcpgateway.routers.oauth_router.settings") as mock_settings:
+                        mock_settings.dcr_enabled = True
+                        mock_settings.dcr_auto_register_on_missing_credentials = False
+                        mock_settings.dcr_default_scopes = ["openid"]
+
+                        result = await self._load_handler()("gateway123", mock_request, mock_current_user, mock_db)
+
+        assert isinstance(result, RedirectResponse)
+        assert captured["token_endpoint_auth_method"] is None

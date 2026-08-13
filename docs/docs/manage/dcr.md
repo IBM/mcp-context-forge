@@ -216,6 +216,132 @@ Note: No `client_secret` - PKCE provides security.
 
 ---
 
+## Per-Gateway Control (`use_dcr`)
+
+DCR is normally governed by two **deployment-global** environment variables
+(`MCPGATEWAY_DCR_ENABLED`, `MCPGATEWAY_DCR_AUTO_REGISTER_ON_MISSING_CREDENTIALS`).
+For fleets where different authorization servers need different behavior, set
+`oauth_config.use_dcr` **per gateway** to override the global auto-register
+setting for that gateway alone:
+
+| `oauth_config.use_dcr` | `MCPGATEWAY_DCR_ENABLED` | `MCPGATEWAY_DCR_AUTO_REGISTER_ON_MISSING_CREDENTIALS` | Result when gateway has `issuer` but no `client_id` |
+|------------------------|--------------------------|--------------------------------------------------------|-----------------------------------------------------|
+| absent                 | `true`                   | `true`                                                 | DCR (default behavior)                              |
+| absent                 | any                      | `false`                                                | 400 - provide credentials manually                  |
+| `true`                 | `true`                   | any                                                    | DCR (forces registration)                           |
+| `true`                 | `false`                  | any                                                    | 400 - DCR disabled globally                         |
+| `false`                | any                      | any                                                    | never DCR - 400 - provide credentials manually      |
+| invalid value          | any                      | any                                                    | rejected at create/update (400); treated as absent at runtime |
+
+- `use_dcr` accepts native booleans or the strings `"true"`/`"false"`
+  (case-insensitive) for interop with clients that serialize booleans to strings.
+- `None`, `""`, or whitespace-only values are treated as **absent**
+  (same empty-means-unset convention as every other `oauth_config` field).
+- `use_dcr: true` cannot re-enable DCR when the deployment master switch
+  `MCPGATEWAY_DCR_ENABLED=false` - the global flag always wins.
+- The flag is read only when a gateway has an `issuer` and no `client_id`.
+  Gateways with full credentials are unaffected.
+
+### Example: force DCR for one gateway while the global auto-register is off
+
+```json
+{
+  "name": "Force-DCR Gateway",
+  "url": "https://mcp.example.com/sse",
+  "auth_type": "oauth",
+  "oauth_config": {
+    "grant_type": "authorization_code",
+    "issuer": "https://keycloak.example.com/realms/mcp",
+    "redirect_uri": "https://gateway.example.com/oauth/callback",
+    "use_dcr": true
+  }
+}
+```
+
+### Example: explicit opt-out - never auto-register this gateway
+
+```json
+{
+  "name": "Manual-Only Gateway",
+  "url": "https://mcp.example.com/sse",
+  "auth_type": "oauth",
+  "oauth_config": {
+    "grant_type": "authorization_code",
+    "issuer": "https://auth.saas-provider.com",
+    "client_id": "pre-provisioned-client",
+    "client_secret": "pre-provisioned-secret",
+    "authorization_url": "https://auth.saas-provider.com/authorize",
+    "token_url": "https://auth.saas-provider.com/token",
+    "redirect_uri": "https://gateway.example.com/oauth/callback",
+    "use_dcr": false
+  }
+}
+```
+
+### Example: absent - defer to global settings (default)
+
+Omit `use_dcr` entirely; behavior matches the global environment variables
+exactly (see the [Automatic Registration](#automatic-registration-recommended)
+and [Manual Client Credentials](#manual-client-credentials-fallback) examples).
+
+### Migrating from global-only to per-gateway control
+
+1. Audit existing gateways that would be affected by DCR:
+
+   ```sql
+   SELECT id, name, oauth_config
+   FROM gateways
+   WHERE oauth_config->>'issuer' IS NOT NULL
+     AND oauth_config->>'client_id' IS NULL;
+   ```
+
+2. For each gateway, decide and set `use_dcr`:
+
+   - `true` if the authorization server supports RFC 7591 and the gateway
+     should keep auto-registering;
+   - `false` if credentials are provisioned out-of-band and registration must
+     never happen.
+
+3. Flip the global default:
+
+   ```bash
+   MCPGATEWAY_DCR_AUTO_REGISTER_ON_MISSING_CREDENTIALS=false
+   ```
+
+4. Update each gateway via the admin API (`PUT /gateways/{id}`) and verify
+   first-use registration works for the `use_dcr: true` gateways.
+
+---
+
+## Per-Gateway Token Endpoint Auth Method (`token_endpoint_auth_method`)
+
+`oauth_config.token_endpoint_auth_method` overrides the global
+`MCPGATEWAY_DCR_TOKEN_ENDPOINT_AUTH_METHOD` setting for a single gateway's
+DCR registration request (RFC 7591).
+
+| `oauth_config.token_endpoint_auth_method` | Registration behavior |
+|---|---|
+| `client_secret_basic` | Registers the client with `token_endpoint_auth_method: client_secret_basic` |
+| `client_secret_post` | Registers the client with `token_endpoint_auth_method: client_secret_post` |
+| absent / empty | Registration uses the global `MCPGATEWAY_DCR_TOKEN_ENDPOINT_AUTH_METHOD` |
+
+- Only `client_secret_basic` and `client_secret_post` are accepted.
+  `none`, `private_key_jwt`, and any other value are rejected at create/update
+  time: the gateway runtime authenticates DCR-registered clients with a client
+  secret, so public-client (`none`) registration is not supported yet.
+- The authorization server's registration response is authoritative: the
+  `token_endpoint_auth_method` the AS confirms is what gets stored back into
+  `oauth_config` and used for subsequent token requests.
+- UIs that send the ICA-style boolean `useClientSecretTokenAuthMethod` should
+  map it here: `true` -> `client_secret_basic`. The 1.0-style `false` ->
+  `none` (public PKCE client) mapping is a separate follow-up; ContextForge
+  does not currently support token endpoint auth method `none`.
+- Invalid values in an existing gateway row (for example, written before the
+  validation landed) are treated as absent at registration time, deferring to
+  the global setting.
+
+---
+
 ## Database Schema
 
 DCR uses three tables:
