@@ -331,8 +331,7 @@ install-dev: venv
 	@echo "🔑  Next step — choose one:"
 	@echo "    make setup           # recommended: auto-creates .env and patches secrets in-place"
 	@echo "    make init-secrets    # writes secrets to .env.secrets so you can review before copying"
-	@echo "    JWT_SECRET_KEY must be strong in every environment."
-	@echo "    AUTH_ENCRYPTION_SECRET: weak values (e.g. my-test-salt) are allowed in ENVIRONMENT=development."
+	@echo "    The gateway will not start until JWT_SECRET_KEY and AUTH_ENCRYPTION_SECRET are set."
 
 # help: build-ui              - Build Admin UI CSS and JS bundles (requires npm; set SKIP_UI_BUILD=1 to bypass)
 .PHONY: build-ui
@@ -376,7 +375,7 @@ check-env-dev:
 
 # help: init-secrets          - Generate secrets → .env.secrets for manual review; copy values into .env when ready
 # help: init-secrets-force    - Regenerate .env.secrets unconditionally (no prompt)
-# help: init-secrets-patch-env - Patch JWT_SECRET_KEY/BASIC_AUTH_PASSWORD into .env; AUTH_ENCRYPTION_SECRET written to .env.secrets only
+# help: init-secrets-patch-env - Write generated secrets directly into .env (in-place, preserves other values)
 .PHONY: init-secrets init-secrets-force init-secrets-patch-env
 init-secrets:                   ## 🔑 Generate secrets → .env.secrets (prompts if file exists)
 	$(UV_BIN) run python3 -m mcpgateway.scripts.init_secrets
@@ -384,7 +383,7 @@ init-secrets:                   ## 🔑 Generate secrets → .env.secrets (promp
 init-secrets-force:             ## 🔑 Regenerate .env.secrets unconditionally (--force)
 	$(UV_BIN) run python3 -m mcpgateway.scripts.init_secrets --force
 
-init-secrets-patch-env:         ## 🔑 Patch JWT_SECRET_KEY into .env; AUTH_ENCRYPTION_SECRET written to .env.secrets only (--patch-env)
+init-secrets-patch-env:         ## 🔑 Patch weak/placeholder secrets directly into .env (--patch-env)
 	$(UV_BIN) run python3 -m mcpgateway.scripts.init_secrets --patch-env .env
 
 # First-time setup: works before make dev, make serve, and make compose-up.
@@ -2724,7 +2723,9 @@ MCP_BENCHMARK_TOOLS_MASTER_PORT ?= 5569
 MCP_BENCHMARK_LOCUST_LOG_LEVEL ?= ERROR
 MCP_BENCHMARK_TOOL_POOL_SIZE ?= 0
 MCP_BENCHMARK_TOOL_DENYLIST ?= schema_error,flaky
-MCP_BENCHMARK_WORKER_LOG_DIR ?= reports/mcp_benchmark_workers
+MCP_BENCHMARK_WORKER_LOG_DIR      ?= reports/mcp_benchmark_workers
+MCP_BENCHMARK_TOOLS_HTML_REPORT   ?= reports/benchmark_mcp_tools.html
+MCP_BENCHMARK_TOOLS_CSV_PREFIX    ?= reports/benchmark_mcp_tools
 RL_LIMIT_PER_MIN ?= 30
 
 load-test-mcp-protocol:                    ## MCP Streamable HTTP protocol test (150 users, 2min)
@@ -2793,6 +2794,7 @@ benchmark-mcp-tools:                        ## Quick tools-only MCP benchmark ag
 	@echo "   Server: $(MCP_BENCHMARK_SERVER_ID)"
 	@echo "   Users: $(MCP_BENCHMARK_USERS), Spawn: $(MCP_BENCHMARK_SPAWN_RATE)/s, Duration: $(MCP_BENCHMARK_RUN_TIME)"
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@mkdir -p reports
 	@/bin/bash -eu -o pipefail -c 'source $(VENV_DIR)/bin/activate && \
 		LOCUST_LOG_LEVEL=$(MCP_BENCHMARK_LOCUST_LOG_LEVEL) MCP_SERVER_ID=$(MCP_BENCHMARK_SERVER_ID) \
 		MCP_BENCHMARK_TOOL_POOL_SIZE=$(MCP_BENCHMARK_TOOL_POOL_SIZE) \
@@ -2803,8 +2805,13 @@ benchmark-mcp-tools:                        ## Quick tools-only MCP benchmark ag
 			--spawn-rate=$(MCP_BENCHMARK_SPAWN_RATE) \
 			--run-time=$(MCP_BENCHMARK_RUN_TIME) \
 			--headless \
+			--html=$(MCP_BENCHMARK_TOOLS_HTML_REPORT) \
+			--csv=$(MCP_BENCHMARK_TOOLS_CSV_PREFIX) \
 			--only-summary \
 			MCPToolCallerUser'
+	@echo ""
+	@echo "📄 HTML Report: $(MCP_BENCHMARK_TOOLS_HTML_REPORT)"
+	@echo "📊 CSV Reports: $(MCP_BENCHMARK_TOOLS_CSV_PREFIX)_stats.csv"
 
 # help: benchmark-rate-limiter   - Rate limiter correctness test: unique users, controlled pacing
 .PHONY: benchmark-rate-limiter

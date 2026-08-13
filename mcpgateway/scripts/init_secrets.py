@@ -31,8 +31,14 @@ import os
 import secrets
 import sys
 
+# Third-Party
+from dotenv import dotenv_values as _dotenv_values
+
 # First-Party
+from mcpgateway._security_constants import MIN_ENTROPY as _MIN_ENTROPY
+from mcpgateway._security_constants import MIN_SECRET_LENGTH as _MIN_SECRET_LENGTH
 from mcpgateway._security_constants import WEAK_VALUES as _CANONICAL_WEAK_VALUES
+from mcpgateway._security_constants import calculate_entropy
 
 
 def _secure_open_flags(force: bool) -> int:
@@ -82,52 +88,78 @@ _SECRET_FIELDS: dict[str, int] = {
     "BASIC_AUTH_PASSWORD": 18,  # nosec B105 — patched when "changeme" or placeholder; 18 bytes → 24 chars
 }
 
-# Fields that are written to .env.secrets (--output / --stdout) but are NOT
-# patched into .env by --patch-env / ensure_env_file_secrets().
-# AUTH_ENCRYPTION_SECRET is intentionally excluded from auto-patching: in
-# ENVIRONMENT=development a weak value (e.g. my-test-salt) is allowed, so
-# operators should set it deliberately rather than having it silently replaced.
-_PATCH_ENV_SKIP_FIELDS: frozenset[str] = frozenset({"AUTH_ENCRYPTION_SECRET"})
+# Fields subject to the full compliance predicate (startup hard-fail): length + entropy enforced.
+# BASIC_AUTH_PASSWORD is excluded — Settings only warns on it, never hard-fails.
+_STRONG_SECRET_FIELDS: frozenset[str] = frozenset({"JWT_SECRET_KEY", "AUTH_ENCRYPTION_SECRET"})
+
+# Fields where auto-rotation without a data-migration is irreversible.
+# If the shell environment carries a weak value but .env already holds a strong
+# value for one of these fields, ensure_env_file_secrets() must NOT silently
+# overwrite the .env value — doing so rotates the AES key and makes all stored
+# encrypted credentials permanently unreadable.
+_ROTATION_GUARDED_FIELDS: frozenset[str] = frozenset({"AUTH_ENCRYPTION_SECRET"})
+
+
+def _is_strong_value(val: str, weak_values: frozenset[str]) -> bool:
+    """Return True when *val* passes all startup compliance checks.
+
+    Mirrors the predicate in :func:`ensure_env_file_secrets` so the rotation-guard
+    check uses identical criteria.
+    """
+    if not val.strip():
+        return False
+    if val.lower() in weak_values or val.lower().startswith("__replace_me__"):
+        return False
+    if len(val) < _MIN_SECRET_LENGTH or calculate_entropy(val) < _MIN_ENTROPY:
+        return False
+    return True
 
 
 def _read_env_file(path: str) -> dict[str, str]:
     """Parse KEY=VALUE pairs from an env file, skipping comments and blank lines.
 
-    Handles: quoted values, ``export KEY=val`` prefix, inline ``# comments``,
-    and spaces around ``=``.  Matches python-dotenv parsing semantics so that
-    weak-value detection fires on the same string pydantic-settings would see.
+    Thin compatibility shim backed by ``dotenv_values`` so callers and tests
+    that import ``_read_env_file`` continue to work after the internal refactor
+    to ``dotenv_values``.  The returned dict uses the original key casing from
+    the file (i.e. uppercase-as-written), matching the previous hand-rolled
+    parser semantics.
+
+    Lines that do not contain an ``=`` sign (e.g. bare ``export FOO`` directives)
+    are skipped, preserving the behaviour of the original hand-rolled parser.
+
+    Args:
+        path: Path to the env file.
+
+    Returns:
+        dict: Parsed ``{KEY: value}`` mapping (original casing).  Empty dict
+        when the file does not exist.
     """
-    result: dict[str, str] = {}
     try:
         with open(path, encoding="utf-8") as fh:
-            for line in fh:
-                line = line.strip()
-                if not line or line.startswith("#"):
-                    continue
-                if line.startswith("export "):
-                    line = line[len("export ") :]
-                if "=" not in line:
-                    continue
-                key, _, val = line.partition("=")
-                key = key.strip()
-                val = val.strip()
-                # Strip inline comment (space + #)
-                if " #" in val:
-                    val = val[: val.index(" #")].strip()
-                # Strip matching surrounding quotes
-                if len(val) >= 2 and val[0] == val[-1] and val[0] in ('"', "'"):
-                    val = val[1:-1]
-                result[key] = val
+            raw_lines = fh.readlines()
     except FileNotFoundError:
-        pass
-    return result
+        return {}
+    keys_with_equals: set[str] = set()
+    for line in raw_lines:
+        stripped = line.strip()
+        if stripped.startswith("#") or not stripped:
+            continue
+        if "=" in stripped:
+            key = stripped.split("=", 1)[0].strip()
+            # Strip leading "export " so "export FOO=bar" registers as "FOO"
+            if key.lower().startswith("export "):
+                key = key[len("export ") :].strip()
+            keys_with_equals.add(key)
+    return {k: v for k, v in _dotenv_values(path).items() if k in keys_with_equals}
 
 
 def _merge_env_file(path: str, updates: dict[str, str]) -> None:
     """Merge key=value pairs into an env file.
 
-    Existing keys in *updates* are replaced in-place; new keys are appended.
-    All other content (comments, blanks, other keys) is preserved.
+    Existing keys in *updates* are replaced in-place (case-insensitive match
+    so ``auth_encryption_secret=weak`` is correctly replaced when the update
+    key is ``AUTH_ENCRYPTION_SECRET``); new keys are appended.  All other
+    content (comments, blanks, other keys) is preserved.
     File is written with owner-only permissions (0o600).
     """
     existing_lines: list[str] = []
@@ -137,15 +169,19 @@ def _merge_env_file(path: str, updates: dict[str, str]) -> None:
     except FileNotFoundError:
         pass
 
+    # Build a case-insensitive lookup: lowercase(update_key) → canonical update key
+    updates_ci: dict[str, str] = {k.lower(): k for k in updates}
+
     updated_keys: set[str] = set()
     new_lines: list[str] = []
     for line in existing_lines:
         stripped = line.strip()
         if stripped and not stripped.startswith("#") and "=" in stripped:
-            key = stripped.partition("=")[0].strip()
-            if key in updates:
-                new_lines.append(f"{key}={updates[key]}\n")
-                updated_keys.add(key)
+            file_key = stripped.partition("=")[0].strip()
+            canonical_key = updates_ci.get(file_key.lower())
+            if canonical_key is not None:
+                new_lines.append(f"{canonical_key}={updates[canonical_key]}\n")
+                updated_keys.add(canonical_key)
                 continue
         new_lines.append(line)
 
@@ -171,16 +207,11 @@ def ensure_env_file_secrets(
     env_file: str = ".env",
     weak_values: frozenset[str] | None = None,
 ) -> dict[str, str]:
-    """Check JWT_SECRET_KEY and BASIC_AUTH_PASSWORD for weak or placeholder values.
+    """Check JWT_SECRET_KEY, AUTH_ENCRYPTION_SECRET, and BASIC_AUTH_PASSWORD for weak or placeholder values.
 
     If weak values are detected, generates cryptographically strong replacements,
     merges them into *env_file* (creating the file if it does not exist), and
     patches ``os.environ`` so the running process picks them up without restart.
-
-    AUTH_ENCRYPTION_SECRET is intentionally NOT patched by this function.
-    In ENVIRONMENT=development a weak value (e.g. ``my-test-salt``) is allowed,
-    so operators should set it deliberately.  Strong values for it are still
-    written to .env.secrets by the --output / --stdout paths.
 
     Set ``MCPGATEWAY_AUTO_INIT_SECRETS=false`` to disable this behaviour (e.g.
     when secrets are injected via Vault or Kubernetes secrets and disk writes
@@ -195,24 +226,65 @@ def ensure_env_file_secrets(
     if weak_values is None:
         weak_values = _WEAK_VALUES
 
-    env_file_values = _read_env_file(env_file)
+    env_file_values = dict(_dotenv_values(env_file))  # expands ${VAR} refs, matches pydantic-settings semantics
+    # Normalize keys for case-insensitive lookups — mirrors Settings case_sensitive=False so that
+    # 'auth_encryption_secret' and 'AUTH_ENCRYPTION_SECRET' in .env are treated as the same key.
+    _env_file_ci: dict[str, str] = {k.lower(): v for k, v in env_file_values.items()}
     # Keys whose weak value came from os.environ only — patch environ, skip disk write.
     env_only: dict[str, str] = {}
     # Keys whose weak value came from .env (or was absent) — write to disk + environ.
     file_generated: dict[str, str] = {}
 
+    # Honour operator-raised MIN_SECRET_LENGTH floor (e.g. MIN_SECRET_LENGTH=64).
+    # Precedence: os.environ > .env file > built-in constant — mirrors pydantic-settings.
+    # Use is not None so that MIN_SECRET_LENGTH="" (unset in shell) correctly falls through
+    # to the .env value rather than being treated as an empty-string override.
+    _min_env = os.environ.get("MIN_SECRET_LENGTH")
+    _min_raw = _min_env if _min_env is not None else (_env_file_ci.get("min_secret_length") or str(_MIN_SECRET_LENGTH))
+    try:
+        configured_min: int = int(_min_raw)
+    except ValueError:
+        raise ValueError(f"MIN_SECRET_LENGTH={_min_raw!r} is not a valid integer. Set it to a whole number (e.g. MIN_SECRET_LENGTH=64).") from None
+    if configured_min < _MIN_SECRET_LENGTH:
+        raise ValueError(f"MIN_SECRET_LENGTH={configured_min} is below the enforced minimum of {_MIN_SECRET_LENGTH}. Settings will reject it at startup — set it to {_MIN_SECRET_LENGTH} or higher.")
+    effective_min: int = configured_min
+
     for field, nbytes in _SECRET_FIELDS.items():
-        if field in _PATCH_ENV_SKIP_FIELDS:
-            continue  # never auto-patched into .env (see _PATCH_ENV_SKIP_FIELDS)
         # os.environ takes priority over .env (mirrors pydantic-settings behaviour)
         env_val = os.environ.get(field)
-        current = env_val if env_val is not None else env_file_values.get(field, "changeme")
-        if current.lower() in weak_values or current.lower().startswith("__replace_me__"):
-            new_val = generate_token(nbytes)
-            if env_val is not None and field not in env_file_values:
-                # Weak value came from os.environ; patching environ is enough.
-                # Writing to .env would shadow subsequent env-var injections (Docker/K8s).
+        current = env_val if env_val is not None else _env_file_ci.get(field.lower(), "changeme")
+        # Base checks apply to all fields: empty, known-weak name, placeholder.
+        is_non_compliant = not current.strip() or current.lower() in weak_values or current.lower().startswith("__replace_me__")
+        # Length and entropy checks apply only to secrets that Settings hard-fails on startup.
+        if not is_non_compliant and field in _STRONG_SECRET_FIELDS:
+            is_non_compliant = len(current) < effective_min or calculate_entropy(current) < _MIN_ENTROPY
+        if is_non_compliant:
+            # Size the generated token against the operator-configured floor so it
+            # always satisfies Settings.validate_security_combinations() on startup.
+            token_bytes = max(nbytes, effective_min) if field in _STRONG_SECRET_FIELDS else nbytes
+            new_val = generate_token(token_bytes)
+            if env_val is not None and field.lower() not in _env_file_ci and field not in _STRONG_SECRET_FIELDS:
+                # Non-strong field (e.g. BASIC_AUTH_PASSWORD) with a weak value from
+                # os.environ only — patching environ is enough; writing to .env would
+                # shadow env-var injections in container setups.
                 env_only[field] = new_val
+            elif env_val is not None and field in _ROTATION_GUARDED_FIELDS and (_env_file_ci.get(field.lower()) or "").strip():
+                # The shell environment holds a weak/non-compliant value, but .env already
+                # contains *any* pre-existing value for a rotation-guarded key
+                # (AUTH_ENCRYPTION_SECRET).  Overwriting it — even to replace a short value
+                # with a strong one — silently rotates the AES encryption key and makes all
+                # stored encrypted credentials permanently unreadable.  Raise an actionable
+                # error for every case, not just when the existing .env value is already
+                # strong.
+                raise ValueError(
+                    f"{field}: shell environment holds a weak/non-compliant value that would "
+                    f"overwrite the value already present in {env_file!r}. "
+                    "Silently rotating this key would make all stored encrypted credentials "
+                    "permanently unreadable. To fix, choose one of:\n"
+                    f"  unset {field}           # let the .env value take effect\n"
+                    f"  export {field}=<strong> # set a strong value in your shell that matches {env_file!r}\n"
+                    "  run a migration-aware key rotation before changing this secret"
+                )
             else:
                 file_generated[field] = new_val
 
@@ -299,11 +371,9 @@ def main() -> None:
         metavar="ENV_FILE",
         default=None,
         help=(
-            "Patch an existing env file in-place: replace only the JWT_SECRET_KEY "
-            "and BASIC_AUTH_PASSWORD lines that still hold placeholder or weak values; "
-            "all other lines are preserved unchanged. No-ops if those keys are already strong. "
-            "AUTH_ENCRYPTION_SECRET is NOT patched — set it manually or use --stdout / "
-            "--output to get a strong value for .env.secrets."
+            "Patch an existing env file in-place: replace only the JWT_SECRET_KEY and "
+            "AUTH_ENCRYPTION_SECRET lines that still hold placeholder or weak values; "
+            "all other lines are preserved unchanged. No-ops if those keys are already strong."
         ),
     )
     args = parser.parse_args()
@@ -311,7 +381,11 @@ def main() -> None:
     # --patch-env: in-place update of an existing env file
     patch_target = args.patch_env
     if patch_target is not None:
-        generated = ensure_env_file_secrets(env_file=patch_target)
+        try:
+            generated = ensure_env_file_secrets(env_file=patch_target)
+        except ValueError as exc:
+            print(f"❌  {exc}", file=sys.stderr)
+            sys.exit(1)
         if generated:
             patched_keys = ", ".join(generated.keys())
             print(f"✅  Patched {patch_target}: generated strong values for {patched_keys}")
