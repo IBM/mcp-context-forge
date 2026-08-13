@@ -24,8 +24,8 @@ Point it at any MCP-compliant endpoint &mdash; a live Gateway **SSE** stream or 
 
 | Use-case | One-liner | What happens |
 |----------|-----------|--------------|
-| **1. Connect to Gateway (SSE)** |<br/>```bash<br/>npx @modelcontextprotocol/inspector \\<br/>  --url http://localhost:4444/servers/UUID_OF_SERVER_1/sse \\<br/>  --header "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN"<br/>``` | Inspector opens `http://localhost:5173` and attaches **directly** to the gateway stream. |
-| **2. Connect to Gateway (Streamable HTTP)** |<br/>```bash<br/>npx @modelcontextprotocol/inspector \\<br/>  --url http://localhost:4444/servers/UUID_OF_SERVER_1/mcp/ \\<br/>  --header "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN"<br/>``` | Inspector opens `http://localhost:5173` and attaches **directly** to the gateway stream. |
+| **1. Connect to Gateway (SSE)** |<br/>```bash<br/>npx @modelcontextprotocol/inspector \\<br/>  --server-url http://localhost:4444/servers/UUID_OF_SERVER_1/sse \\<br/>  --transport sse \\<br/>  --header "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN"<br/>``` | Inspector opens `http://localhost:5173` and attaches **directly** to the gateway stream. |
+| **2. Connect to Gateway (Streamable HTTP)** |<br/>```bash<br/>npx @modelcontextprotocol/inspector \\<br/>  --server-url http://localhost:4444/servers/UUID_OF_SERVER_1/mcp/ \\<br/>  --transport http \\<br/>  --header "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN"<br/>``` | Inspector opens `http://localhost:5173` and attaches **directly** to the gateway stream. |
 
 ---
 
