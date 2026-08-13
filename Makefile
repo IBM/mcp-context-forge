@@ -454,7 +454,7 @@ js-build:                        ## Install npm dependencies and build JS bundle
 		echo ""; \
 	elif command -v npm >/dev/null 2>&1; then \
 		npm install --no-audit --no-fund && npm run build:css && npm run vite:build && \
-		CACHE_TYPE=memory python -c \
+		CACHE_TYPE=memory $(VENV_DIR)/bin/python -c \
 		  "import json; from mcpgateway.main import app; open('client/openapi.json', 'w').write(json.dumps(app.openapi(), indent=2))" && \
 		echo "OpenAPI spec exported to client/openapi.json" && \
 		cd client && npm install --no-audit --no-fund && npm run build; \
