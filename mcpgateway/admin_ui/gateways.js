@@ -1690,7 +1690,6 @@ const handleGatewayTestSubmit = async function (e) {
       result.statusCode && result.statusCode >= 200 && result.statusCode < 300;
 
     const alertType = isSuccess ? "success" : "error";
-    const icon = isSuccess ? "✅" : "❌";
     const title = isSuccess ? "Connection Successful" : "Connection Failed";
     const statusCode = result.statusCode || "Unknown";
     const latency = result.latencyMs != null ? `${result.latencyMs}ms` : "NA";
@@ -1703,7 +1702,7 @@ const handleGatewayTestSubmit = async function (e) {
 
     responseDiv.innerHTML = `
         <div class="alert alert-${alertType}">
-            <h4><strong>${icon} ${title}</strong></h4>
+            <h4><strong>${title}</strong></h4>
             <p><strong>Status Code:</strong> ${statusCode}</p>
             <p><strong>Response Time:</strong> ${latency}</p>
             ${body}
@@ -1714,7 +1713,7 @@ const handleGatewayTestSubmit = async function (e) {
     if (responseDiv) {
       const errorDiv = document.createElement("div");
       errorDiv.className = "text-red-600 p-4";
-      errorDiv.textContent = `❌ Error: ${error.message}`;
+      errorDiv.textContent = `Error: ${error.message}`;
       responseDiv.innerHTML = "";
       responseDiv.appendChild(errorDiv);
     }
