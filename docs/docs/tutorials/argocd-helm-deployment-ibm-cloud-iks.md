@@ -63,7 +63,7 @@ flowchart TD
     kms    -- "encryption"    --> iks
     logs   -- "audit logs"    --> iks
     gateway-- "SSE/HTTP"      --> vscode
-    gateway-- "stdio wrapper" --> claude
+    gateway-- "Streamable HTTP" --> claude
     gateway-- "HTTP API"      --> langchain
 ```
 

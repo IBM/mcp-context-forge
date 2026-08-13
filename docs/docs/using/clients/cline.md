@@ -44,9 +44,9 @@ To integrate Cline with your ContextForge:
    - Add a new MCP server with the following configuration under mcpServers as shown below:
 
      ```json
-     "servers": {
+     "mcpServers": {
          "contextforge": {
-            "type": "http",
+            "type": "streamableHttp",
             "url": "http://localhost:4444/servers/UUID_OF_SERVER_1/mcp/",
             "headers": {
                "Authorization": "Bearer REPLACE_WITH_MCPGATEWAY_BEARER_TOKEN"
