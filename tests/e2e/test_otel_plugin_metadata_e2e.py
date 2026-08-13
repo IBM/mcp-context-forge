@@ -181,6 +181,7 @@ from mcpgateway.utils.verify_credentials import require_admin_auth, require_auth
 
 # Local
 from tests.helpers.auth import make_auth_headers, make_test_jwt  # noqa: E402
+from tests.helpers.observability import drain_span_writer_queue  # noqa: E402
 from tests.utils.rbac_mocks import create_mock_email_user, create_mock_user_context, MockPermissionService  # noqa: E402
 
 # ---------------------------------------------------------------------------
@@ -428,6 +429,7 @@ async def traced_app(monkeypatch, tmp_path):
     test_app.dependency_overrides.clear()
     await shutdown_plugin_manager_factory()
     enable_plugins(False)
+    drain_span_writer_queue()
     engine.dispose()
 
 
@@ -603,6 +605,7 @@ async def traced_app_secrets_detection(monkeypatch, tmp_path):
     test_app.dependency_overrides.clear()
     await shutdown_plugin_manager_factory()
     enable_plugins(False)
+    drain_span_writer_queue()
     engine.dispose()
 
 
@@ -772,6 +775,7 @@ async def _build_traced_app(monkeypatch, tmp_path, *, app_title: str, plugin_nam
     test_app.dependency_overrides.clear()
     await shutdown_plugin_manager_factory()
     enable_plugins(False)
+    drain_span_writer_queue()
     engine.dispose()
 
 
@@ -989,6 +993,7 @@ async def traced_app_url_reputation(monkeypatch, tmp_path):
     test_app.dependency_overrides.clear()
     await shutdown_plugin_manager_factory()
     enable_plugins(False)
+    drain_span_writer_queue()
     engine.dispose()
     # monkeypatch has now reverted settings.observability_include_paths to the shipped
     # default; clear the caches again so path_filter functions recompute against it instead
