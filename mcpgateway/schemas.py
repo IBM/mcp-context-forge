@@ -38,7 +38,7 @@ from mcpgateway.common.models import Resource as MCPResource
 from mcpgateway.common.models import ResourceContent, TextContent
 from mcpgateway.common.models import Tool as MCPTool
 from mcpgateway.common.oauth import OAUTH_SENSITIVE_KEYS
-from mcpgateway.common.validators import SecurityValidator, parse_use_dcr_flag, validate_core_url
+from mcpgateway.common.validators import SecurityValidator, parse_token_endpoint_auth_method, parse_use_dcr_flag, validate_core_url
 from mcpgateway.config import settings
 from mcpgateway.utils.base_models import BaseModelWithConfigDict
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
@@ -165,10 +165,13 @@ def _validate_oauth_config_urls(v: Optional[Dict[str, Any]]) -> Optional[Dict[st
 
 
 def _validate_oauth_config_flags(v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-    """Validate boolean-flag entries in OAuth config dicts.
+    """Validate boolean-flag and enumerated entries in OAuth config dicts.
 
     Currently validates ``use_dcr`` (per-gateway Dynamic Client Registration
-    control) via [`parse_use_dcr_flag`](mcpgateway/common/validators.py).
+    control) via [`parse_use_dcr_flag`](mcpgateway/common/validators.py) and
+    ``token_endpoint_auth_method`` (per-gateway token endpoint auth method for
+    DCR registration) via
+    [`parse_token_endpoint_auth_method`](mcpgateway/common/validators.py).
 
     Args:
         v: OAuth configuration dict or ``None``.
@@ -177,12 +180,14 @@ def _validate_oauth_config_flags(v: Optional[Dict[str, Any]]) -> Optional[Dict[s
         The original dict when valid.
 
     Raises:
-        ValueError: If a flag field has an invalid value.
+        ValueError: If a flag or enumerated field has an invalid value.
     """
     if v is None or not isinstance(v, dict):
         return v
     if "use_dcr" in v:
         parse_use_dcr_flag(v["use_dcr"])
+    if "token_endpoint_auth_method" in v:
+        parse_token_endpoint_auth_method(v["token_endpoint_auth_method"])
     return v
 
 

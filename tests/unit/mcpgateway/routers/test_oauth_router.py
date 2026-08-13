@@ -3789,3 +3789,77 @@ class TestUseDcrFlagGate:
 
         assert isinstance(result, RedirectResponse)
         assert mock_gateway.oauth_config["client_id"] == "client-123"
+
+    @pytest.mark.asyncio
+    async def test_per_gateway_token_auth_method_forwarded_to_registration(self, mock_db, mock_request, mock_current_user):
+        """Per-gateway token_endpoint_auth_method reaches the DCR registration call."""
+        captured = {}
+
+        class _Registered:
+            client_id = "client-123"
+            client_secret_encrypted = None
+            token_endpoint_auth_method = "client_secret_post"
+
+        class _FakeDcrService:
+            async def get_or_register_client(self, **_kwargs):
+                captured.update(_kwargs)
+                return _Registered()
+
+            async def discover_as_metadata(self, _issuer):
+                return {"authorization_endpoint": "https://issuer.example.com/auth", "token_endpoint": "https://issuer.example.com/token"}
+
+        config = self._base_oauth_config(use_dcr=True)
+        config["token_endpoint_auth_method"] = "client_secret_post"
+        mock_gateway = self._gateway(config)
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+
+        with patch("mcpgateway.routers.oauth_router.DcrService", return_value=_FakeDcrService()):
+            with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_mgr:
+                self._patch_oauth_manager({"authorization_url": "https://issuer.example.com/auth"})(mock_oauth_mgr)
+                with patch("mcpgateway.routers.oauth_router.TokenStorageService"):
+                    with patch("mcpgateway.routers.oauth_router.settings") as mock_settings:
+                        mock_settings.dcr_enabled = True
+                        mock_settings.dcr_auto_register_on_missing_credentials = False
+                        mock_settings.dcr_default_scopes = ["openid"]
+
+                        result = await self._load_handler()("gateway123", mock_request, mock_current_user, mock_db)
+
+        assert isinstance(result, RedirectResponse)
+        assert captured["token_endpoint_auth_method"] == "client_secret_post"
+
+    @pytest.mark.asyncio
+    async def test_invalid_token_auth_method_runtime_treated_as_absent(self, mock_db, mock_request, mock_current_user):
+        """Read-time safety net: malformed token_endpoint_auth_method defers to the global default."""
+        captured = {}
+
+        class _Registered:
+            client_id = "client-123"
+            client_secret_encrypted = None
+            token_endpoint_auth_method = "client_secret_basic"
+
+        class _FakeDcrService:
+            async def get_or_register_client(self, **_kwargs):
+                captured.update(_kwargs)
+                return _Registered()
+
+            async def discover_as_metadata(self, _issuer):
+                return {"authorization_endpoint": "https://issuer.example.com/auth", "token_endpoint": "https://issuer.example.com/token"}
+
+        config = self._base_oauth_config(use_dcr=True)
+        config["token_endpoint_auth_method"] = "none"
+        mock_gateway = self._gateway(config)
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+
+        with patch("mcpgateway.routers.oauth_router.DcrService", return_value=_FakeDcrService()):
+            with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_mgr:
+                self._patch_oauth_manager({"authorization_url": "https://issuer.example.com/auth"})(mock_oauth_mgr)
+                with patch("mcpgateway.routers.oauth_router.TokenStorageService"):
+                    with patch("mcpgateway.routers.oauth_router.settings") as mock_settings:
+                        mock_settings.dcr_enabled = True
+                        mock_settings.dcr_auto_register_on_missing_credentials = False
+                        mock_settings.dcr_default_scopes = ["openid"]
+
+                        result = await self._load_handler()("gateway123", mock_request, mock_current_user, mock_db)
+
+        assert isinstance(result, RedirectResponse)
+        assert captured["token_endpoint_auth_method"] is None

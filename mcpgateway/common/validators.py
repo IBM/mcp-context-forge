@@ -2445,6 +2445,43 @@ def parse_use_dcr_flag(value: Any) -> Optional[bool]:
     raise ValueError(f"oauth_config.use_dcr must be a boolean or 'true'/'false' string, got type {type(value).__name__}")
 
 
+_SUPPORTED_TOKEN_ENDPOINT_AUTH_METHODS = frozenset({"client_secret_basic", "client_secret_post"})
+
+
+def parse_token_endpoint_auth_method(value: Any) -> Optional[str]:
+    """Parse the per-gateway ``token_endpoint_auth_method`` from an oauth_config value.
+
+    Accepts the two token endpoint auth methods the gateway runtime actually
+    executes at the token endpoint (see ``OAuthManager._client_credentials_flow``):
+    ``client_secret_basic`` and ``client_secret_post``. ``None`` and
+    empty/whitespace-only strings are treated as absent, matching the
+    empty-means-unset convention used for other oauth_config fields (see
+    ``_validate_oauth_config_urls`` in schemas.py).
+
+    Args:
+        value: Raw ``oauth_config["token_endpoint_auth_method"]`` value.
+
+    Returns:
+        ``None`` when absent, the normalized method string when valid.
+
+    Raises:
+        ValueError: If the value is not a string or is not one of the supported
+            methods (e.g. ``none``, ``private_key_jwt``, integers, lists).
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return None
+        lowered = stripped.lower()
+        if lowered in _SUPPORTED_TOKEN_ENDPOINT_AUTH_METHODS:
+            return lowered
+        supported = ", ".join(sorted(_SUPPORTED_TOKEN_ENDPOINT_AUTH_METHODS))
+        raise ValueError(f"oauth_config.token_endpoint_auth_method must be one of: {supported}; got: {value!r}")
+    raise ValueError(f"oauth_config.token_endpoint_auth_method must be a string, got type {type(value).__name__}")
+
+
 # CWE-400: Limits for user-supplied meta_data forwarded to upstream MCP servers.
 # Keeps arbitrarily large dicts from amplifying into downstream network/DB load.
 # These are now read from config (settings.meta_max_keys, etc.) but kept as

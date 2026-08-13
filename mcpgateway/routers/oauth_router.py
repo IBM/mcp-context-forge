@@ -30,7 +30,7 @@ from sqlalchemy.orm import Session
 from mcpgateway.auth import normalize_token_teams
 from mcpgateway.auth_context import get_user_email
 from mcpgateway.common.query_params import QueryErrorCode
-from mcpgateway.common.validators import SecurityValidator, parse_use_dcr_flag
+from mcpgateway.common.validators import SecurityValidator, parse_token_endpoint_auth_method, parse_use_dcr_flag
 from mcpgateway.config import settings
 from mcpgateway.db import Gateway, get_db, Permissions
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
@@ -535,6 +535,15 @@ async def initiate_oauth_flow(
                 use_dcr_flag = None
                 logger.warning(f"Gateway {SecurityValidator.sanitize_log_message(gateway_id)} has invalid use_dcr value ({use_dcr_err}); treating as absent")
 
+            # Per-gateway token_endpoint_auth_method with the same read-time
+            # safety net as use_dcr: invalid values (e.g. legacy rows) are
+            # logged and treated as absent, deferring to the global setting.
+            try:
+                token_endpoint_auth_method = parse_token_endpoint_auth_method(oauth_config.get("token_endpoint_auth_method"))
+            except ValueError as auth_method_err:
+                token_endpoint_auth_method = None
+                logger.warning(f"Gateway {SecurityValidator.sanitize_log_message(gateway_id)} has invalid token_endpoint_auth_method value ({auth_method_err}); treating as absent")
+
             if use_dcr_flag is False:
                 # Explicit per-gateway opt-out: never auto-register.
                 logger.warning(f"Gateway {SecurityValidator.sanitize_log_message(gateway_id)} has issuer but no client_id, and use_dcr=false")
@@ -578,6 +587,7 @@ async def initiate_oauth_flow(
                         issuer=issuer,
                         redirect_uri=oauth_config.get("redirect_uri"),
                         scopes=oauth_config.get("scopes", settings.dcr_default_scopes),
+                        token_endpoint_auth_method=token_endpoint_auth_method,
                         db=db,
                     )
 

@@ -19,7 +19,7 @@ import pytest
 
 # First-Party
 from mcpgateway.common.models import ResourceContent
-from mcpgateway.common.validators import SecurityValidator, parse_use_dcr_flag
+from mcpgateway.common.validators import SecurityValidator, parse_token_endpoint_auth_method, parse_use_dcr_flag
 from mcpgateway.config import settings
 from mcpgateway.schemas import (
     _coerce_visibility,
@@ -1590,3 +1590,56 @@ class TestUseDcrSchemaValidation:
     def test_gateway_update_rejects_invalid_use_dcr(self):
         with pytest.raises(ValidationError):
             GatewayUpdate(oauth_config={"use_dcr": "tru"})
+
+
+class TestParseTokenEndpointAuthMethod:
+    """Unit tests for parse_token_endpoint_auth_method() in common/validators."""
+
+    @pytest.mark.parametrize(
+        "value,expected",
+        [
+            (None, None),
+            ("client_secret_basic", "client_secret_basic"),
+            ("client_secret_post", "client_secret_post"),
+            ("CLIENT_SECRET_BASIC", "client_secret_basic"),
+            ("  client_secret_post  ", "client_secret_post"),
+            ("", None),
+            ("   ", None),
+        ],
+    )
+    def test_valid_values(self, value, expected):
+        assert parse_token_endpoint_auth_method(value) == expected
+
+    @pytest.mark.parametrize("value", ["none", "private_key_jwt", "client-secret-basic", "basic", 1, 3.14, [], {}, {"a": 1}])
+    def test_invalid_values_raise(self, value):
+        with pytest.raises(ValueError):
+            parse_token_endpoint_auth_method(value)
+
+
+class TestTokenEndpointAuthMethodSchemaValidation:
+    """Write-time validation of oauth_config.token_endpoint_auth_method on GatewayCreate/GatewayUpdate."""
+
+    def _gateway(self, oauth_config):
+        return GatewayCreate(
+            name="test-gateway",
+            url="https://mcp.example.com",
+            oauth_config=oauth_config,
+        )
+
+    @pytest.mark.parametrize("value", ["none", "private_key_jwt", "client-secret-basic", 1, 0, [], {"a": 1}])
+    def test_invalid_token_endpoint_auth_method_rejected(self, value):
+        with pytest.raises(ValidationError):
+            self._gateway({"token_endpoint_auth_method": value})
+
+    @pytest.mark.parametrize("value", ["client_secret_basic", "client_secret_post", "CLIENT_SECRET_POST", "", "   "])
+    def test_valid_token_endpoint_auth_method_accepted(self, value):
+        gateway = self._gateway({"token_endpoint_auth_method": value})
+        assert gateway.oauth_config["token_endpoint_auth_method"] == value
+
+    def test_gateway_update_accepts_token_endpoint_auth_method(self):
+        update = GatewayUpdate(oauth_config={"token_endpoint_auth_method": "client_secret_basic"})
+        assert update.oauth_config["token_endpoint_auth_method"] == "client_secret_basic"
+
+    def test_gateway_update_rejects_invalid_token_endpoint_auth_method(self):
+        with pytest.raises(ValidationError):
+            GatewayUpdate(oauth_config={"token_endpoint_auth_method": "none"})

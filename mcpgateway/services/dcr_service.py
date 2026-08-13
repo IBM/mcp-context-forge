@@ -14,7 +14,7 @@ This module handles OAuth 2.0 Dynamic Client Registration (DCR) including:
 # Standard
 from datetime import datetime, timezone
 import logging
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from urllib.parse import urlsplit
 
 # Third-Party
@@ -150,7 +150,9 @@ class DcrService:
         except httpx.HTTPError as e:
             raise DcrError(f"Failed to discover AS metadata for {normalized_issuer}: {e}")
 
-    async def register_client(self, gateway_id: str, gateway_name: str, issuer: str, redirect_uri: str, scopes: List[str], db: Session) -> RegisteredOAuthClient:
+    async def register_client(
+        self, gateway_id: str, gateway_name: str, issuer: str, redirect_uri: str, scopes: List[str], db: Session, token_endpoint_auth_method: Optional[str] = None
+    ) -> RegisteredOAuthClient:
         """Register as OAuth client with upstream AS (RFC 7591).
 
         Args:
@@ -160,6 +162,9 @@ class DcrService:
             redirect_uri: OAuth redirect URI
             scopes: List of OAuth scopes
             db: Database session
+            token_endpoint_auth_method: Per-gateway token endpoint auth method
+                override; ``None`` defers to the global
+                ``dcr_token_endpoint_auth_method`` setting.
 
         Returns:
             RegisteredOAuthClient record
@@ -205,7 +210,7 @@ class DcrService:
             "redirect_uris": [redirect_uri],
             "grant_types": requested_grant_types,
             "response_types": ["code"],
-            "token_endpoint_auth_method": self.settings.dcr_token_endpoint_auth_method,
+            "token_endpoint_auth_method": token_endpoint_auth_method or self.settings.dcr_token_endpoint_auth_method,
             "scope": " ".join(scopes),
         }
 
@@ -250,7 +255,7 @@ class DcrService:
             grant_types=orjson.dumps(registration_response.get("grant_types", requested_grant_types)).decode(),
             response_types=orjson.dumps(registration_response.get("response_types", ["code"])).decode(),
             scope=registration_response.get("scope", " ".join(scopes)),
-            token_endpoint_auth_method=registration_response.get("token_endpoint_auth_method", self.settings.dcr_token_endpoint_auth_method),
+            token_endpoint_auth_method=registration_response.get("token_endpoint_auth_method", token_endpoint_auth_method or self.settings.dcr_token_endpoint_auth_method),
             registration_client_uri=registration_response.get("registration_client_uri"),
             registration_access_token_encrypted=registration_access_token_encrypted,
             created_at=datetime.now(timezone.utc),
@@ -271,7 +276,9 @@ class DcrService:
 
         return registered_client
 
-    async def get_or_register_client(self, gateway_id: str, gateway_name: str, issuer: str, redirect_uri: str, scopes: List[str], db: Session) -> RegisteredOAuthClient:
+    async def get_or_register_client(
+        self, gateway_id: str, gateway_name: str, issuer: str, redirect_uri: str, scopes: List[str], db: Session, token_endpoint_auth_method: Optional[str] = None
+    ) -> RegisteredOAuthClient:
         """Get existing registered client or register new one.
 
         Args:
@@ -281,6 +288,9 @@ class DcrService:
             redirect_uri: OAuth redirect URI
             scopes: List of OAuth scopes
             db: Database session
+            token_endpoint_auth_method: Per-gateway token endpoint auth method
+                override; ``None`` defers to the global
+                ``dcr_token_endpoint_auth_method`` setting.
 
         Returns:
             RegisteredOAuthClient record
@@ -312,7 +322,7 @@ class DcrService:
         logger.info(
             "No existing client found for gateway %s, registering new client with %s", SecurityValidator.sanitize_log_message(gateway_id), SecurityValidator.sanitize_log_message(normalized_issuer)
         )
-        return await self.register_client(gateway_id, gateway_name, normalized_issuer, redirect_uri, scopes, db)
+        return await self.register_client(gateway_id, gateway_name, normalized_issuer, redirect_uri, scopes, db, token_endpoint_auth_method)
 
     async def update_client_registration(self, client_record: RegisteredOAuthClient, db: Session) -> RegisteredOAuthClient:
         """Update existing client registration (RFC 7591 section 4.2).

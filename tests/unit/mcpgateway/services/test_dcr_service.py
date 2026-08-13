@@ -530,6 +530,69 @@ class TestRegisterClient:
             assert request_json["scope"] == "mcp:read"
 
     @pytest.mark.asyncio
+    async def test_register_client_uses_per_gateway_token_auth_method(self, test_db):
+        """Per-gateway token_endpoint_auth_method is sent in the registration request."""
+        dcr_service = DcrService()
+
+        mock_metadata = {"registration_endpoint": "https://as.example.com/register"}
+
+        mock_response = MagicMock()
+        mock_response.status_code = 201
+        mock_response.json = MagicMock(return_value={"client_id": "test", "redirect_uris": []})
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        with patch.object(dcr_service, "discover_as_metadata") as mock_discover, patch.object(dcr_service, "_get_client", return_value=mock_client):
+            mock_discover.return_value = mock_metadata
+
+            await dcr_service.register_client(
+                gateway_id="test-gw-tea",
+                gateway_name="Test Gateway",
+                issuer="https://as.example.com",
+                redirect_uri="http://localhost:4444/callback",
+                scopes=["mcp:read"],
+                token_endpoint_auth_method="client_secret_post",
+                db=test_db,
+            )
+
+            call_kwargs = mock_client.post.call_args[1]
+            request_json = call_kwargs["json"]
+
+            assert request_json["token_endpoint_auth_method"] == "client_secret_post"
+
+    @pytest.mark.asyncio
+    async def test_register_client_defaults_token_auth_method_to_global(self, test_db):
+        """Absent per-gateway value defers to the global dcr_token_endpoint_auth_method setting."""
+        dcr_service = DcrService()
+
+        mock_metadata = {"registration_endpoint": "https://as.example.com/register"}
+
+        mock_response = MagicMock()
+        mock_response.status_code = 201
+        mock_response.json = MagicMock(return_value={"client_id": "test", "redirect_uris": []})
+
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        with patch.object(dcr_service, "discover_as_metadata") as mock_discover, patch.object(dcr_service, "_get_client", return_value=mock_client):
+            mock_discover.return_value = mock_metadata
+
+            await dcr_service.register_client(
+                gateway_id="test-gw-default",
+                gateway_name="Test Gateway",
+                issuer="https://as.example.com",
+                redirect_uri="http://localhost:4444/callback",
+                scopes=["mcp:read"],
+                db=test_db,
+            )
+
+            call_kwargs = mock_client.post.call_args[1]
+            request_json = call_kwargs["json"]
+
+            assert request_json["token_endpoint_auth_method"] == dcr_service.settings.dcr_token_endpoint_auth_method
+
+    @pytest.mark.asyncio
     async def test_register_client_includes_refresh_token_when_supported(self, test_db):
         """Test that refresh_token is included when AS advertises support."""
         dcr_service = DcrService()
