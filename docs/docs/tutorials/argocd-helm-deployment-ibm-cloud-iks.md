@@ -713,13 +713,12 @@ Add to your Claude Desktop configuration:
 
 ```json
 {
-  "mcpServers": {
+  "servers": {
     "mcp-gateway": {
-      "command": "python",
-      "args": ["-m", "mcpgateway.wrapper"],
-      "env": {
-        "MCP_AUTH": "<MCPGATEWAY_BEARER_TOKEN>",
-        "MCP_SERVER_URL": "https://mcp-gateway.<CLUSTER_INGRESS_SUBDOMAIN>/servers/UUID_OF_SERVER_1/mcp"
+      "type": "http",
+      "url": "https://mcp-gateway.<CLUSTER_INGRESS_SUBDOMAIN>/servers/UUID_OF_SERVER_1/mcp/",
+      "headers": {
+        "Authorization": "Bearer <MCPGATEWAY_BEARER_TOKEN>"
       }
     }
   }

@@ -25,10 +25,6 @@ url = "https://raw.githubusercontent.com/mozilla/supply-chain/main/audits.toml"
 [imports.zcash]
 url = "https://raw.githubusercontent.com/zcash/rust-ecosystem/main/supply-chain/audits.toml"
 
-[[exemptions.actson]]
-version = "2.1.0"
-criteria = "safe-to-deploy"
-
 [[exemptions.arc-swap]]
 version = "1.9.1"
 criteria = "safe-to-deploy"
@@ -65,10 +61,6 @@ criteria = "safe-to-deploy"
 version = "0.12.1"
 criteria = "safe-to-deploy"
 
-[[exemptions.btoi]]
-version = "0.5.0"
-criteria = "safe-to-deploy"
-
 [[exemptions.cc]]
 version = "1.2.64"
 criteria = "safe-to-deploy"
@@ -77,24 +69,12 @@ criteria = "safe-to-deploy"
 version = "0.5.4"
 criteria = "safe-to-deploy"
 
-[[exemptions.colored]]
-version = "3.1.1"
-criteria = "safe-to-run"
-
 [[exemptions.combine]]
 version = "4.6.7"
 criteria = "safe-to-deploy"
 
 [[exemptions.core-foundation]]
 version = "0.10.1"
-criteria = "safe-to-deploy"
-
-[[exemptions.crossbeam-channel]]
-version = "0.5.4"
-criteria = "safe-to-deploy"
-
-[[exemptions.crossbeam-utils]]
-version = "0.8.8"
 criteria = "safe-to-deploy"
 
 [[exemptions.crypto-common]]
@@ -125,10 +105,6 @@ criteria = "safe-to-deploy"
 version = "0.2.6"
 criteria = "safe-to-deploy"
 
-[[exemptions.dotenvy]]
-version = "0.15.7"
-criteria = "safe-to-deploy"
-
 [[exemptions.fastrand]]
 version = "2.4.1"
 criteria = "safe-to-deploy"
@@ -139,10 +115,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.flagset]]
 version = "0.4.7"
-criteria = "safe-to-deploy"
-
-[[exemptions.flume]]
-version = "0.12.0"
 criteria = "safe-to-deploy"
 
 [[exemptions.fs_extra]]
@@ -233,14 +205,6 @@ criteria = "safe-to-deploy"
 version = "0.3.102"
 criteria = "safe-to-deploy"
 
-[[exemptions.jsonrpc-core]]
-version = "18.0.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.libmimalloc-sys]]
-version = "0.1.49"
-criteria = "safe-to-deploy"
-
 [[exemptions.libredox]]
 version = "0.1.17"
 criteria = "safe-to-deploy"
@@ -259,22 +223,6 @@ criteria = "safe-to-deploy"
 
 [[exemptions.md-5]]
 version = "0.11.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.mimalloc]]
-version = "0.1.52"
-criteria = "safe-to-deploy"
-
-[[exemptions.minimal-lexical]]
-version = "0.2.1"
-criteria = "safe-to-deploy"
-
-[[exemptions.mockito]]
-version = "1.7.2"
-criteria = "safe-to-run"
-
-[[exemptions.nix]]
-version = "0.31.3"
 criteria = "safe-to-deploy"
 
 [[exemptions.objc2-system-configuration]]
@@ -369,10 +317,6 @@ criteria = "safe-to-deploy"
 version = "1.0.3"
 criteria = "safe-to-deploy"
 
-[[exemptions.spin]]
-version = "0.9.4"
-criteria = "safe-to-deploy"
-
 [[exemptions.sse-stream]]
 version = "0.2.3"
 criteria = "safe-to-deploy"
@@ -381,24 +325,8 @@ criteria = "safe-to-deploy"
 version = "1.2.1"
 criteria = "safe-to-deploy"
 
-[[exemptions.symlink]]
-version = "0.1.0"
-criteria = "safe-to-deploy"
-
 [[exemptions.sync_wrapper]]
 version = "0.1.2"
-criteria = "safe-to-deploy"
-
-[[exemptions.tempfile]]
-version = "3.3.0"
-criteria = "safe-to-deploy"
-
-[[exemptions.time]]
-version = "0.3.49"
-criteria = "safe-to-deploy"
-
-[[exemptions.time-macros]]
-version = "0.2.29"
 criteria = "safe-to-deploy"
 
 [[exemptions.tinyvec]]
@@ -420,14 +348,6 @@ criteria = "safe-to-deploy"
 [[exemptions.tracing-opentelemetry]]
 version = "0.32.1"
 criteria = "safe-to-deploy"
-
-[[exemptions.tracing-test]]
-version = "0.2.6"
-criteria = "safe-to-run"
-
-[[exemptions.tracing-test-macro]]
-version = "0.2.6"
-criteria = "safe-to-run"
 
 [[exemptions.typenum]]
 version = "1.20.1"
