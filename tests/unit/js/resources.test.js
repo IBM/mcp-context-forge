@@ -979,7 +979,7 @@ describe("initResourceSelect - Select All respects search filter", () => {
 });
 
 // ---------------------------------------------------------------------------
-// viewResource - content rendering 
+// viewResource - content rendering
 // ---------------------------------------------------------------------------
 describe("viewResource - content rendering", () => {
   beforeEach(() => {
@@ -1067,7 +1067,7 @@ describe("viewResource - content rendering", () => {
 });
 
 // ---------------------------------------------------------------------------
-// editResource - content rendering 
+// editResource - content rendering
 // ---------------------------------------------------------------------------
 describe("editResource - content rendering", () => {
   beforeEach(() => {
