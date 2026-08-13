@@ -26,7 +26,7 @@ from sqlalchemy.orm import Session
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.db import Gateway, Server, Tool, get_db, server_tool_association
 from mcpgateway.middleware.rbac import get_current_user_with_permissions
-from mcpgateway.routers.oauth_router import _enforce_gateway_access
+from mcpgateway.routers.oauth_router import _build_user_context, _enforce_gateway_access
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.token_storage_service import TokenStorageService
 from mcpgateway.utils.paths import resolve_root_path
@@ -162,16 +162,11 @@ async def vault_authorize(
             request=request,
         )
 
-        # Build user context for token storage (uses already-resolved token_teams).
-        # SECURITY: token_teams is the authoritative scope from resolve_session_teams()
-        # or normalize_token_teams() — do NOT re-query database to avoid scope widening.
-        # A missing "token_teams" key means Admin UI session → None (shared Vault path).
-        token_teams_value = current_user.get("token_teams") if "token_teams" in current_user else None
-        user_context = {
-            "email": current_user["email"],
-            "teams": token_teams_value,  # Keep as-is: None/[]/["team"] all have distinct meanings
-            "is_admin": current_user.get("is_admin", False),
-        }
+        # Use the shared helper so session-token admins get jwt_teams_claim for
+        # Vault path selection (token_teams is None for admins due to admin bypass
+        # in resolve_session_teams, which would incorrectly route them to the shared
+        # path even when their JWT carries teams=["engineering"]).
+        user_context = _build_user_context(current_user)
 
         # Initialize OAuth manager with Vault-backed token storage
         oauth_manager = OAuthManager(token_storage=TokenStorageService(db, user_context))

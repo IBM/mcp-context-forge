@@ -294,12 +294,19 @@ class VaultTokenBackend(AbstractTokenBackend):
 
         now = datetime.now(timezone.utc)
 
-        # Preserve created_at from any existing record so that audit history and
-        # max-age policies see the original issuance timestamp, not the refresh time.
+        # Preserve created_at and learned_aud/learned_iss from any existing record.
+        # created_at: audit history and max-age policies see the original issuance timestamp.
+        # learned_aud/iss: avoid erasing previously-learned values when caller passes None
+        # (matches the DB backend's conditional-update pattern for consistency).
         existing = await self._vault_request("GET", path)
         original_created_at: str | None = None
+        existing_learned_aud: str | None = None
+        existing_learned_iss: str | None = None
         if existing and "data" in existing and "data" in existing["data"]:
-            original_created_at = existing["data"]["data"].get("created_at")
+            existing_data = existing["data"]["data"]
+            original_created_at = existing_data.get("created_at")
+            existing_learned_aud = existing_data.get("learned_aud")
+            existing_learned_iss = existing_data.get("learned_iss")
 
         # Build payload (nested token object for cleaner structure)
         payload = {
@@ -315,8 +322,9 @@ class VaultTokenBackend(AbstractTokenBackend):
                 "user_id": user_id,
                 "token_type": "Bearer",
                 "expires_at": expires_at.isoformat() if expires_at else None,
-                "learned_aud": learned_aud,
-                "learned_iss": learned_iss,
+                # Preserve existing learned values when caller passes None (matches DB backend)
+                "learned_aud": learned_aud if learned_aud is not None else existing_learned_aud,
+                "learned_iss": learned_iss if learned_iss is not None else existing_learned_iss,
                 "created_at": original_created_at or now.isoformat(),
                 "updated_at": now.isoformat(),
             }
@@ -825,7 +833,10 @@ class VaultTokenBackend(AbstractTokenBackend):
                         SecurityValidator.sanitize_log_message(gateway_id),
                     )
 
-            # Store refreshed tokens back to Vault
+            # Store refreshed tokens back to Vault.
+            # Round-trip the previously-learned audience/issuer so they are not
+            # erased by the refresh cycle — the refresh response never carries
+            # aud/iss, and store_tokens guards with `if not None`.
             await self.store_tokens(
                 gateway_id=gateway_id,
                 team_id=team_id,
@@ -835,6 +846,8 @@ class VaultTokenBackend(AbstractTokenBackend):
                 refresh_token=new_refresh_token,
                 expires_in=expires_in,
                 scopes=vault_data["token"]["scopes"],
+                learned_aud=vault_data.get("learned_aud"),
+                learned_iss=vault_data.get("learned_iss"),
             )
 
             logger.info("Successfully refreshed token in Vault for gateway %s, user %s", gateway_id, app_user_email)

@@ -6210,6 +6210,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         oauth_config: Dict[str, Any],
         user_email: Optional[str],
         db: Optional[Session] = None,
+        user_context: Optional[Dict[str, Any]] = None,
     ) -> AuthCodeRefreshHeaders:
         """Build the Authorization header for refreshing an authorization_code OAuth gateway.
 
@@ -6224,6 +6225,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             user_email: Authenticated caller's email; required to locate the stored token.
             db: Optional caller-owned session to reuse for the token lookup. When omitted, a
                 short-lived ``fresh_db_session()`` is opened and closed here instead.
+            user_context: Optional user context dict (email, teams, is_admin) for Vault path
+                selection. When omitted, TokenStorageService defaults to the shared path which
+                is correct for the database backend but wrong for team-scoped Vault users.
 
         Returns:
             The resolved ``Authorization`` bearer header plus any advisory (non-blocking)
@@ -6242,7 +6246,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         async def _lookup(session: Session) -> tuple:
             """Fetch the stored OAuth token and learned audience for this user/gateway pair."""
-            token_storage = TokenStorageService(session)
+            token_storage = TokenStorageService(session, user_context=user_context)
             token = await token_storage.get_user_token(gateway_id, user_email)
             if not token:
                 raise GatewayConnectionError(
@@ -6283,6 +6287,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         gateway: Optional[DbGateway] = None,
         include_resources: bool = True,
         include_prompts: bool = True,
+        user_context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, int]:
         """Refresh tools, resources, and prompts for a gateway from the background health
         check, a manual API-triggered refresh, or the notification service.
@@ -6306,6 +6311,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             gateway: Optional DbGateway object to avoid redundant DB lookup
             include_resources: Whether to include resources in the refresh
             include_prompts: Whether to include prompts in the refresh
+            user_context: Optional user context dict (email, teams, is_admin) forwarded to
+                token storage for Vault path selection on authorization_code gateways.
 
         Returns:
             Dict with counts: {tools_added, tools_removed, resources_added,
@@ -6471,6 +6478,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     gateway_url=gateway_base_url,
                     oauth_config=gateway_oauth_config,
                     user_email=user_email,
+                    user_context=user_context,
                 )
                 pre_auth_headers = {**(pre_auth_headers or {}), **oauth_result.headers}
 
@@ -6659,6 +6667,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         include_prompts: bool = True,
         user_email: Optional[str] = None,
         request_headers: Optional[Dict[str, str]] = None,
+        user_context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Manually trigger a refresh of tools/resources/prompts for a gateway.
 
@@ -6672,6 +6681,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             include_prompts: Whether to include prompts in the refresh
             user_email: Email of the user triggering the refresh
             request_headers: Optional request headers for passthrough authentication
+            user_context: Optional user context dict (email, teams, is_admin) forwarded to
+                token storage for Vault path selection on authorization_code gateways.
 
         Returns:
             Dict with counts: {tools_added, tools_updated, tools_removed,
@@ -6764,6 +6775,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 gateway=gateway,
                 include_resources=include_resources,
                 include_prompts=include_prompts,
+                user_context=user_context,
             )
             # Note: last_refresh_at is updated inside _refresh_gateway_tools_resources_prompts on success
 
