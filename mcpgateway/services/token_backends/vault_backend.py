@@ -121,8 +121,10 @@ class VaultTokenBackend(AbstractTokenBackend):
         """
         server_id = self._hash_server_id(mcp_url)
         email_encoded = quote(app_user_email, safe="")
-        # Use "shared" path when team_id is None (fallback for sessions without team context)
-        team_segment = team_id if team_id else "shared"
+        # URL-encode team_id to prevent path traversal if a future caller passes a slug
+        # or display name containing '/' or other path separators. UUIDs (current callers)
+        # are unaffected — quote("uuid-string", safe="") is a no-op for hex-dash strings.
+        team_segment = quote(team_id, safe="") if team_id else "shared"
         return f"{self.mount}/data/{self.prefix}/{team_segment}/{server_id}/{email_encoded}"
 
     def _construct_metadata_path(self, team_id: str | None, mcp_url: str, app_user_email: str) -> str:
@@ -139,7 +141,8 @@ class VaultTokenBackend(AbstractTokenBackend):
         """
         server_id = self._hash_server_id(mcp_url)
         email_encoded = quote(app_user_email, safe="")
-        team_segment = team_id if team_id else "shared"
+        # URL-encode team_id for the same reason as _construct_vault_path above.
+        team_segment = quote(team_id, safe="") if team_id else "shared"
         return f"{self.mount}/metadata/{self.prefix}/{team_segment}/{server_id}/{email_encoded}"
 
     def _construct_credentials_path(self, team_id: str | None, mcp_url: str) -> str:
