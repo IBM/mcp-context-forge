@@ -58,12 +58,15 @@ from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_service
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
+from mcpgateway.services.reverse_proxy_protocol import JsonRpcErrorResponse, JsonRpcRequest
+from mcpgateway.services.reverse_proxy_sessions import ConnectionClosedError, ConnectionNotFoundError, get_reverse_proxy_session_manager, StableGatewayId
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.services.upstream_session_registry import downstream_session_id_from_request_context as _downstream_session_id_from_request
 from mcpgateway.services.upstream_session_registry import get_upstream_session_registry, RegistryNotInitializedError, TransportType
 from mcpgateway.utils.admin_check import is_admin_bypass_granted, is_user_admin
 from mcpgateway.utils.create_slug import slugify
+from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import unified_paginate
@@ -419,6 +422,12 @@ class PromptService(BaseService):
         prompt_arguments = arguments or None
         # CWE-400: Validate meta_data limits before forwarding to upstream
         _validate_meta_data(meta_data)
+        if transport == "proxied":
+            # PROXIED gateways persist no reachable URL: dispatch over the reverse-proxy
+            # WebSocket session instead. The helper raises typed PromptError mappings
+            # (fail-closed), so this branch stays ahead of the SSE/streamable try/except
+            # that would re-wrap them into generic gateway-fetch errors.
+            return await self._get_reverse_proxied_prompt(gateway_id, remote_name, prompt_arguments, meta_data, prompt)
 
         try:
             # #4205: Use the upstream session registry when a downstream Mcp-Session-Id
@@ -468,6 +477,138 @@ class PromptService(BaseService):
         except Exception as exc:
             sanitized_error = sanitize_exception_message(str(exc), auth_query_params_decrypted)
             raise PromptError(f"Failed to fetch prompt '{remote_name}' from gateway: {sanitized_error}") from exc
+
+    async def _get_reverse_proxied_prompt(
+        self,
+        gateway_id_str: str,
+        prompt_name_original: str,
+        arguments: Optional[Dict[str, str]],
+        meta_data: Optional[Dict[str, Any]],
+        prompt: DbPrompt,
+    ) -> PromptResult:
+        """Dispatch ``prompts/get`` to a PROXIED gateway over its reverse-proxy session.
+
+        The request resolves the process-local connection for the persisted stable
+        gateway ID and sends the persisted ``original_name`` (never the namespaced
+        public name) downstream. No gateway identity or auth headers are attached
+        to the downstream call (Phase 3 decision): PROXIED gateways persist no
+        auth material and the downstream MCP server is operator-local.
+
+        Args:
+            gateway_id_str: Stable gateway identifier used to resolve the live connection.
+            prompt_name_original: Persisted upstream prompt name sent as ``params.name``.
+            arguments: Optional prompt-rendering arguments sent as ``params.arguments``.
+            meta_data: Optional MCP ``_meta`` merged into the request params.
+            prompt: Gateway-backed prompt record; its description is the fallback when
+                the upstream result carries none.
+
+        Returns:
+            Prompt result normalized into ContextForge models, mirroring the
+            SSE/streamable-HTTP branches' return contract.
+
+        Raises:
+            PromptError: If no live connection exists for the gateway, the call
+                exceeds the health-check timeout budget, the connection drops
+                mid-call, or the downstream server returns a JSON-RPC error
+                (surfaced as the MCP error code only; peer free text never
+                reaches exceptions or telemetry).
+            ValidationError: If the upstream ``prompts/get`` result is malformed.
+        """
+        session_manager = await get_reverse_proxy_session_manager()
+        connection_id = session_manager.resolve_connection_id(StableGatewayId(gateway_id_str))
+        if connection_id is None:
+            raise PromptError(f"No active reverse-proxy connection for gateway '{gateway_id_str}'")
+
+        # Omit unset optional members: the MCP SDK serializes prompts/get params without
+        # "arguments" when none are supplied, and strict downstreams may reject an explicit null.
+        params: Dict[str, Any] = {"name": prompt_name_original}
+        if arguments is not None:
+            params["arguments"] = arguments
+        if meta_data is not None:
+            params["_meta"] = meta_data
+        request_payload = JsonRpcRequest(jsonrpc="2.0", id=uuid.uuid4().hex, method="prompts/get", params=params)
+
+        # Match the upstream-call budget the SSE/streamable branches use for prompt fetches.
+        effective_timeout = float(settings.health_check_timeout)
+        correlation_id = get_correlation_id()
+        mcp_start_time = time.time()
+        structured_logger.log(
+            level="INFO",
+            message=f"MCP prompt get started: {prompt_name_original}",
+            component="prompt_service",
+            correlation_id=correlation_id,
+            metadata={"event": "mcp_call_started", "prompt_name": prompt_name_original, "gateway_id": gateway_id_str, "transport": "proxied"},
+        )
+        try:
+            response = await session_manager.send_request(connection_id, request_payload, timeout_seconds=effective_timeout)
+        except TimeoutError as timeout_err:
+            mcp_duration_ms = (time.time() - mcp_start_time) * 1000
+            structured_logger.log(
+                level="WARNING",
+                message=f"MCP proxied prompt get timed out: {prompt_name_original}",
+                component="prompt_service",
+                correlation_id=correlation_id,
+                duration_ms=mcp_duration_ms,
+                metadata={"event": "prompt_timeout", "prompt_name": prompt_name_original, "gateway_id": gateway_id_str, "transport": "proxied", "timeout_seconds": effective_timeout},
+            )
+            raise PromptError(f"Prompt fetch timed out after {effective_timeout}s") from timeout_err
+        except (ConnectionClosedError, ConnectionNotFoundError) as conn_err:
+            mcp_duration_ms = (time.time() - mcp_start_time) * 1000
+            structured_logger.log(
+                level="ERROR",
+                message=f"MCP prompt get failed: {prompt_name_original}",
+                component="prompt_service",
+                correlation_id=correlation_id,
+                duration_ms=mcp_duration_ms,
+                error_details={"error_type": type(conn_err).__name__, "error_message": str(conn_err)},
+                metadata={"event": "mcp_call_failed", "prompt_name": prompt_name_original, "gateway_id": gateway_id_str, "transport": "proxied"},
+            )
+            raise PromptError(f"Reverse-proxy connection for gateway '{gateway_id_str}' failed: {conn_err}") from conn_err
+
+        if isinstance(response.payload, JsonRpcErrorResponse):
+            mcp_error = response.payload.error
+            mcp_duration_ms = (time.time() - mcp_start_time) * 1000
+            structured_logger.log(
+                level="ERROR",
+                message=f"MCP prompt get failed: {prompt_name_original}",
+                component="prompt_service",
+                correlation_id=correlation_id,
+                duration_ms=mcp_duration_ms,
+                error_details={"error_type": "JsonRpcErrorResponse", "error_message": f"MCP error {mcp_error.code}"},
+                metadata={"event": "mcp_call_failed", "prompt_name": prompt_name_original, "gateway_id": gateway_id_str, "transport": "proxied"},
+            )
+            raise PromptError(f"MCP error {mcp_error.code}")
+
+        try:
+            remote_result = types.GetPromptResult.model_validate(response.payload.result)
+        except ValidationError as validation_err:
+            mcp_duration_ms = (time.time() - mcp_start_time) * 1000
+            structured_logger.log(
+                level="ERROR",
+                message=f"MCP prompt get failed: {prompt_name_original}",
+                component="prompt_service",
+                correlation_id=correlation_id,
+                duration_ms=mcp_duration_ms,
+                error_details={"error_type": "ValidationError", "error_message": "malformed upstream prompts/get result"},
+                metadata={"event": "mcp_call_failed", "prompt_name": prompt_name_original, "gateway_id": gateway_id_str, "transport": "proxied"},
+            )
+            raise validation_err
+
+        mcp_duration_ms = (time.time() - mcp_start_time) * 1000
+        structured_logger.log(
+            level="INFO",
+            message=f"MCP prompt get completed: {prompt_name_original}",
+            component="prompt_service",
+            correlation_id=correlation_id,
+            duration_ms=mcp_duration_ms,
+            metadata={"event": "mcp_call_completed", "prompt_name": prompt_name_original, "gateway_id": gateway_id_str, "transport": "proxied", "success": True},
+        )
+        return PromptResult(
+            messages=[
+                Message.model_validate(message.model_dump(by_alias=True, exclude_none=True) if hasattr(message, "model_dump") else message) for message in getattr(remote_result, "messages", []) or []
+            ],
+            description=getattr(remote_result, "description", None) or prompt.description,
+        )
 
     @staticmethod
     def validate_arguments_json(args_value: Any, context: str = "") -> List[Dict[str, Any]]:
