@@ -331,6 +331,59 @@ re-apply the higher floor at startup.
 > owns before re-running the migration. Use `--dry-run` with both key orders to see
 > the error counts, then contact the team before proceeding.
 
+### Rolling back to a previous (weaker) key — `--force`
+
+> ⚠️ **Use only when you intentionally need to decrypt back to a key that does not
+> meet the strength requirements** (e.g. reverting a key rotation in a test
+> environment, or undoing a migration before re-doing it with a different key).
+> After a `--force` rollback the database will contain credentials encrypted under a
+> weak key.  **Do not start the 1.0.8 gateway with a weak
+> `AUTH_ENCRYPTION_SECRET`** — it will refuse to start.
+
+By default the script rejects `--new-key` values that are too short, known-weak, or
+low-entropy — the same guardrail the gateway enforces at startup.  Pass `--force` to
+bypass all three checks:
+
+```bash
+# Roll back from a strong key to a previously-used weak key
+uv run python3 -m mcpgateway.scripts.migrate_enc_secret \
+    --old-key <current-strong-key> \
+    --new-key <previous-weak-key> \
+    --force
+
+# Re-encrypt in the opposite direction again (back to strong) — --force not needed
+uv run python3 -m mcpgateway.scripts.migrate_enc_secret \
+    --old-key <previous-weak-key> \
+    --new-key <current-strong-key>
+```
+
+`--force` also works when **both** keys are weak (e.g. re-keying between two legacy
+short keys):
+
+```bash
+uv run python3 -m mcpgateway.scripts.migrate_enc_secret \
+    --old-key <weak-key-a> \
+    --new-key <weak-key-b> \
+    --force
+```
+
+A warning is always printed to stderr when `--force` is active:
+
+```
+⚠️   --force: new-key strength validation skipped
+```
+
+`--force` can be combined with `--dry-run` to preview what would be re-encrypted
+before committing:
+
+```bash
+uv run python3 -m mcpgateway.scripts.migrate_enc_secret \
+    --old-key <strong-key> \
+    --new-key <weak-key> \
+    --force \
+    --dry-run
+```
+
 ---
 
 ## Troubleshooting
@@ -338,7 +391,7 @@ re-apply the higher floor at startup.
 | Error message | Cause | Fix |
 |---------------|-------|-----|
 | `SecurityConfigurationError: auth_encryption_secret: too short` | Gateway started before generating a strong key | Stop gateway. Run Step 3, then Step 5, then restart. |
-| `❌ --new-key is too short` | Weak value passed as `--new-key` | Generate a strong value (see Step 3), pass it as `--new-key`. |
+| `❌ --new-key is too short` | Weak value passed as `--new-key` | Generate a strong value (see Step 3), pass it as `--new-key`. Or pass `--force` if a weak target key is intentional (rollback scenario). |
 | `❌ --old-key and --new-key are identical` | Both arguments have the same value | Verify you are using the old key as `--old-key` and the newly generated value as `--new-key`. |
 | `Errors: N` in dry-run output | Some rows encrypted with a third key | Identify previous key rotation history; re-run with the correct `--old-key` for each batch. |
 | `AUTH_ENCRYPTION_SECRET: shell environment holds a weak/non-compliant value…` | `AUTH_ENCRYPTION_SECRET=changeme` exported in shell, strong value already in `.env` | Run `unset AUTH_ENCRYPTION_SECRET`, then retry. |

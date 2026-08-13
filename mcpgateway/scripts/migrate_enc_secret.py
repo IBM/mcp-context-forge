@@ -658,6 +658,7 @@ def run_migration(
     dry_run: bool = False,
     *,
     _engine=None,
+    _force: bool = False,
 ) -> int:
     """Orchestrate the full re-encryption migration pass.
 
@@ -673,6 +674,8 @@ def run_migration(
         dry_run: When True, reads and reports but does not write any changes.
         _engine: Optional pre-built SQLAlchemy engine (used in tests to share an
             in-memory SQLite instance across calls).
+        _force: When True, ``new_key`` may be weak/short; a compliant placeholder is
+            used for the Settings import so the validator does not reject the key.
 
     Returns:
         int: Exit code — ``0`` on success, ``1`` on any failure.
@@ -687,13 +690,22 @@ def run_migration(
     # We pin MIN_SECRET_LENGTH=32 for the import so that an operator-raised floor
     # (e.g. MIN_SECRET_LENGTH=64) does not cause a false SecurityConfigurationError
     # when new_key is a valid 43-char token that satisfies the absolute minimum.
+    #
+    # When _force=True one of the two keys may be weak/short and would fail Settings
+    # validation.  Pick whichever key satisfies the absolute minimum length as the
+    # placeholder for the import; both keys are passed directly to
+    # get_encryption_service() after the import, so Settings never sees the weak one.
+    if _force:
+        _import_enc_key = old_key if len(old_key) >= _MIN_SECRET_LENGTH else new_key  # nosec
+    else:
+        _import_enc_key = new_key  # nosec
     _prev_enc = os.environ.get("AUTH_ENCRYPTION_SECRET")
     _prev_jwt = os.environ.get("JWT_SECRET_KEY")
     _prev_min = os.environ.get("MIN_SECRET_LENGTH")
-    os.environ["AUTH_ENCRYPTION_SECRET"] = new_key  # nosec
+    os.environ["AUTH_ENCRYPTION_SECRET"] = _import_enc_key  # nosec
     os.environ["MIN_SECRET_LENGTH"] = str(_MIN_SECRET_LENGTH)  # pin to absolute floor for import
     if not _prev_jwt or len(_prev_jwt) < _MIN_SECRET_LENGTH:
-        os.environ["JWT_SECRET_KEY"] = new_key  # nosec — migration tool only, not persisted
+        os.environ["JWT_SECRET_KEY"] = _import_enc_key  # nosec — migration tool only, not persisted
     try:
         # First-Party
         from mcpgateway.services.encryption_service import get_encryption_service  # pylint: disable=import-outside-toplevel
@@ -1023,7 +1035,7 @@ def main() -> None:
         print("  ⚠️   --force: new-key strength validation skipped", file=sys.stderr)
     print()
 
-    rc = run_migration(database_url, old_key, new_key, dry_run=args.dry_run)
+    rc = run_migration(database_url, old_key, new_key, dry_run=args.dry_run, _force=args.force)
     sys.exit(rc)
 
 
