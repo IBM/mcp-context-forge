@@ -446,20 +446,23 @@ async def test_csrf_fallback_preserves_existing_user_id():
 CSRF_COOKIE = "mcpgateway_csrf_token"  # ADMIN_CSRF_COOKIE_NAME (admin.py)
 CSRF_HEADER = "x-csrf-token"  # ADMIN_CSRF_HEADER_NAME (admin.py)
 ADMIN_URL = "http://localhost:4444/admin/llm/providers/e2e-nonexistent-provider/state"
+LOGIN_URL = "http://localhost:4444/admin/login"
 DOUBLE_SUBMIT_TOKEN = "double-submit-token-value-0123456789"  # pragma: allowlist secret
 
 
-def _make_admin_request(*, method="POST", cookies=None, headers=None, form=None):
+def _make_admin_request(*, method="POST", cookies=None, headers=None, form=None, url=ADMIN_URL):
     """Build a mocked Request for direct ``enforce_admin_csrf`` calls.
 
     Args:
         method: HTTP method (safe methods short-circuit the check).
-        cookies: Cookie dict; ``jwt_token`` presence is what makes CSRF
-            relevant at all.
+        cookies: Cookie dict; ``jwt_token``/``access_token`` presence is what
+            makes CSRF relevant at all (or the request path being the login
+            POST route, which is pre-auth and has no session cookie yet).
         headers: Header dict; origin/referer/host feed
             ``_request_origin_matches``.
         form: When provided, ``request.form()`` returns this dict (for the
             form-encoded token fallback).
+        url: Request URL; defaults to a generic protected admin route.
 
     Returns:
         A ``MagicMock(spec=Request)`` with a real ``URL`` so scheme/netloc
@@ -469,7 +472,7 @@ def _make_admin_request(*, method="POST", cookies=None, headers=None, form=None)
     request.method = method
     request.cookies = dict(cookies or {})
     request.headers = dict(headers or {})
-    request.url = URL(ADMIN_URL)
+    request.url = URL(url)
     if form is not None:
         request.form = AsyncMock(return_value=form)
     return request
@@ -631,6 +634,107 @@ async def test_enforce_admin_csrf_bypassed_without_session_cookie():
     from mcpgateway.admin import enforce_admin_csrf
 
     request = _make_admin_request(cookies={}, headers={})
+
+    await enforce_admin_csrf(request)  # must not raise
+
+
+@pytest.mark.asyncio
+async def test_enforce_admin_csrf_triggers_on_access_token_cookie_alone():
+    """An ``access_token`` cookie with no ``jwt_token`` still makes CSRF relevant.
+
+    PR #6111 review finding: the auth stack accepts ``access_token`` as an
+    ambient session cookie (see ``admin.py``'s own ``jwt_token`` / ``access_token``
+    fallback reads), but ``enforce_admin_csrf`` only checked ``jwt_token``. A
+    browser authenticated solely via ``access_token`` could submit
+    state-changing admin requests with no Origin or double-submit validation.
+    """
+    # First-Party
+    from mcpgateway.admin import enforce_admin_csrf
+
+    request = _make_admin_request(cookies={"access_token": "admin-session-jwt"}, headers={})
+
+    with pytest.raises(HTTPException) as exc_info:
+        await enforce_admin_csrf(request)
+
+    assert exc_info.value.status_code == 403
+    assert exc_info.value.detail == "CSRF origin validation failed"
+
+
+@pytest.mark.asyncio
+async def test_enforce_admin_csrf_access_token_cookie_passes_with_valid_pair():
+    """Happy path for the ``access_token``-only session: matching CSRF pair + Origin passes."""
+    # First-Party
+    from mcpgateway.admin import enforce_admin_csrf
+
+    cookies = {"access_token": "admin-session-jwt", CSRF_COOKIE: DOUBLE_SUBMIT_TOKEN}
+    request = _make_admin_request(cookies=cookies, headers=_good_headers())
+
+    await enforce_admin_csrf(request)  # must not raise
+
+
+@pytest.mark.asyncio
+async def test_enforce_admin_csrf_login_post_rejected_without_preauth_nonce():
+    """POST /admin/login with no session cookie is *not* exempt from CSRF.
+
+    PR #6111 review finding: ``/admin/login`` is middleware-exempt and, before
+    this fix, ``enforce_admin_csrf`` returned early whenever no session cookie
+    was present — which is always true for a fresh, unauthenticated login POST.
+    A cross-site form could force a victim browser to submit attacker
+    credentials into the login endpoint with no CSRF control at all (login
+    CSRF / session confusion). The login route is the one exception where
+    CSRF must be validated pre-auth, against the nonce ``admin_login_page``
+    mints on GET.
+    """
+    # First-Party
+    from mcpgateway.admin import enforce_admin_csrf
+
+    request = _make_admin_request(method="POST", cookies={}, headers={}, url=LOGIN_URL)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await enforce_admin_csrf(request)
+
+    assert exc_info.value.status_code == 403
+    assert exc_info.value.detail == "CSRF origin validation failed"
+
+
+@pytest.mark.asyncio
+async def test_enforce_admin_csrf_login_post_rejected_missing_preauth_cookie():
+    """Good Origin but no pre-auth CSRF cookie on login POST -> still rejected."""
+    # First-Party
+    from mcpgateway.admin import enforce_admin_csrf
+
+    request = _make_admin_request(
+        method="POST",
+        cookies={},
+        headers={"origin": "http://localhost:4444", "host": "localhost:4444"},
+        url=LOGIN_URL,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        await enforce_admin_csrf(request)
+
+    assert exc_info.value.status_code == 403
+    assert exc_info.value.detail == "CSRF token cookie missing"
+
+
+@pytest.mark.asyncio
+async def test_enforce_admin_csrf_login_post_passes_with_valid_preauth_nonce():
+    """Login POST with the pre-auth nonce (cookie + matching form field) passes with no session cookie."""
+    # First-Party
+    from mcpgateway.admin import enforce_admin_csrf
+
+    headers = {
+        "origin": "http://localhost:4444",
+        "host": "localhost:4444",
+        "content-type": "application/x-www-form-urlencoded",
+    }
+    request = _make_admin_request(
+        method="POST",
+        cookies={CSRF_COOKIE: DOUBLE_SUBMIT_TOKEN},
+        headers=headers,
+        form={"csrf_token": DOUBLE_SUBMIT_TOKEN},
+        url=LOGIN_URL,
+    )
 
     await enforce_admin_csrf(request)  # must not raise
 

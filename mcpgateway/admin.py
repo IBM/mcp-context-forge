@@ -1857,10 +1857,15 @@ async def enforce_admin_csrf(request: Request) -> None:
     if request.method.upper() in {"GET", "HEAD", "OPTIONS", "TRACE"}:
         return
 
-    jwt_cookie = request.cookies.get("jwt_token")
-    if not jwt_cookie:
+    session_cookie = request.cookies.get("jwt_token") or request.cookies.get("access_token")
+    request_path = getattr(request.url, "path", "") or ""
+    is_login_post = request_path.rstrip("/").endswith("/admin/login")
+    if not session_cookie and not is_login_post:
         # CSRF is relevant only for browser cookie auth. Token-auth API calls
-        # without session cookies are not subject to browser CSRF.
+        # without session cookies are not subject to browser CSRF. The login
+        # POST is the one exception: it is pre-auth (no session cookie exists
+        # yet) but still a state-changing browser action, so it is validated
+        # against the pre-auth nonce minted by admin_login_page's GET.
         return
 
     if not _request_origin_matches(request):
