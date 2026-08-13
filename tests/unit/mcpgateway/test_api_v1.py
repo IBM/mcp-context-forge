@@ -559,12 +559,18 @@ class TestBuildV1RouterGroupF:
         # Group A intact even when admin cluster fails
         assert "/v1/sentinel-protocol" in _route_paths(v1)
 
-    def test_set_logging_service_called_when_admin_enabled(self):
+    def test_admin_logging_service_not_overridden_when_admin_enabled(self):
+        """Router assembly must leave the admin module's LoggingService alone (#6068).
+
+        api.v1 owns an uninitialized LoggingService for its own logger; injecting it
+        into mcpgateway.admin left the admin routes without log storage forever.
+        main.py wires the lifespan-initialized instance instead.
+        """
         settings = _settings(mcpgateway_admin_api_enabled=True)
         mods = self._admin_modules()
         with patch.dict(sys.modules, mods):
             build_v1_router(settings, **_required_kwargs())
-        mods["mcpgateway.admin"].set_logging_service.assert_called_once()
+        mods["mcpgateway.admin"].set_logging_service.assert_not_called()
 
     def test_validate_section_permissions_called_when_admin_enabled(self):
         settings = _settings(mcpgateway_admin_api_enabled=True)

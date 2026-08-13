@@ -12844,6 +12844,16 @@ if settings.legacy_api_enabled:
 else:  # pragma: no cover
     logger.info("Legacy route shims disabled (LEGACY_API_ENABLED=false)")
 
+if settings.mcpgateway_admin_api_enabled:
+    # The admin module must observe the LoggingService that lifespan initializes,
+    # not the throwaway instance mcpgateway.api.v1 uses for its own logger — an
+    # uninitialized service has no storage, so the Logs tab stays empty and log
+    # export always returns 503 (#6068).
+    # First-Party
+    from mcpgateway.admin import set_logging_service  # pylint: disable=import-outside-toplevel  # noqa: E402
+
+    set_logging_service(logging_service)
+
 # ---------------------------------------------------------------------------
 # Unversioned routes — mounted directly on app (no /v1 prefix)
 # ---------------------------------------------------------------------------
