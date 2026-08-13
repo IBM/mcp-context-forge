@@ -121,53 +121,41 @@ class TestAccumulatorAdd:
     def test_add_pre_only(self):
         acc = ControlTelemetryAccumulator()
         result = _make_result([_make_rec()])
-        with patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True):
-            acc.add(result, hook="pre")
+        acc.add(result, hook="pre")
         assert len(acc.records) == 1
         assert acc.records[0][0] == "pre"
 
     def test_add_post_only(self):
         acc = ControlTelemetryAccumulator()
         result = _make_result([_make_rec()])
-        with patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True):
-            acc.add(result, hook="post")
+        acc.add(result, hook="post")
         assert len(acc.records) == 1
         assert acc.records[0][0] == "post"
 
     def test_add_pre_and_post(self):
         acc = ControlTelemetryAccumulator()
-        with patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True):
-            acc.add(_make_result([_make_rec()]), hook="pre")
-            acc.add(_make_result([_make_rec()]), hook="post")
+        acc.add(_make_result([_make_rec()]), hook="pre")
+        acc.add(_make_result([_make_rec()]), hook="post")
         assert len(acc.records) == 2
-
-    def test_noop_when_records_unsupported(self):
-        acc = ControlTelemetryAccumulator()
-        with patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=False):
-            acc.add(_make_result([_make_rec()]), hook="pre")
-        assert acc.records == []
 
     def test_noop_on_none_result(self):
         acc = ControlTelemetryAccumulator()
-        with patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True):
-            acc.add(None, hook="pre")
+        acc.add(None, hook="pre")
         assert acc.records == []
 
 
 class TestAccumulatorCap:
     def test_cap_enforced_at_max_records_per_call(self):
         acc = ControlTelemetryAccumulator()
-        with patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True):
-            for _ in range(_MAX_RECORDS_PER_CALL + 5):
-                acc.add(_make_result([_make_rec()]), hook="pre")
+        for _ in range(_MAX_RECORDS_PER_CALL + 5):
+            acc.add(_make_result([_make_rec()]), hook="pre")
         assert len(acc.records) == _MAX_RECORDS_PER_CALL
         assert acc.truncated == 5
 
     def test_truncated_counter(self):
         acc = ControlTelemetryAccumulator()
-        with patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True):
-            for _ in range(_MAX_RECORDS_PER_CALL + 3):
-                acc.add(_make_result([_make_rec()]), hook="pre")
+        for _ in range(_MAX_RECORDS_PER_CALL + 3):
+            acc.add(_make_result([_make_rec()]), hook="pre")
         assert acc.truncated == 3
 
 
@@ -175,16 +163,14 @@ class TestAccumulatorDenied:
     def test_pre_denied_flag(self):
         acc = ControlTelemetryAccumulator()
         result = _make_result([], continue_processing=False)
-        with patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True):
-            acc.add(result, hook="pre")
+        acc.add(result, hook="pre")
         assert acc.pre_denied is True
         assert acc.post_denied is False
 
     def test_post_denied_flag(self):
         acc = ControlTelemetryAccumulator()
         result = _make_result([], continue_processing=False)
-        with patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True):
-            acc.add(result, hook="post")
+        acc.add(result, hook="post")
         assert acc.post_denied is True
         assert acc.pre_denied is False
 
@@ -195,15 +181,13 @@ class TestAccumulatorDenied:
     def test_effective_allowed_false_when_pre_denied(self):
         acc = ControlTelemetryAccumulator()
         result = _make_result([], continue_processing=False)
-        with patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True):
-            acc.add(result, hook="pre")
+        acc.add(result, hook="pre")
         assert acc.effective_allowed is False
 
     def test_effective_allowed_false_when_post_denied(self):
         acc = ControlTelemetryAccumulator()
         result = _make_result([], continue_processing=False)
-        with patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True):
-            acc.add(result, hook="post")
+        acc.add(result, hook="post")
         assert acc.effective_allowed is False
 
 
@@ -215,9 +199,8 @@ class TestAccumulatorDenied:
 class TestAggregate:
     def _make_acc_with_records(self, recs):
         acc = ControlTelemetryAccumulator()
-        with patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True):
-            for hook, rec in recs:
-                acc.add(_make_result([rec]), hook=hook)
+        for hook, rec in recs:
+            acc.add(_make_result([rec]), hook=hook)
         return acc
 
     def test_invocation_count(self):
@@ -268,14 +251,12 @@ class TestAggregate:
 
     def test_result_allowed_false_when_pre_denied(self):
         acc = ControlTelemetryAccumulator()
-        with patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True):
-            acc.add(_make_result([], continue_processing=False), hook="pre")
+        acc.add(_make_result([], continue_processing=False), hook="pre")
         assert acc.aggregate()["cpex.control.result.allowed"] is False
 
     def test_result_allowed_false_when_post_denied(self):
         acc = ControlTelemetryAccumulator()
-        with patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True):
-            acc.add(_make_result([], continue_processing=False), hook="post")
+        acc.add(_make_result([], continue_processing=False), hook="post")
         assert acc.aggregate()["cpex.control.result.allowed"] is False
 
     def test_malformed_record_skipped_without_raising(self):
@@ -485,8 +466,7 @@ class TestGetMaxResultsExceptionPath:
 class TestBuildFlattenedAttributes:
     def test_basic_flatten(self):
         acc = ControlTelemetryAccumulator()
-        with patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True):
-            acc.add(_make_result([_make_rec(plugin_name="pii_guard", status="completed", effective_allow=True, duration_ns=1000)]), hook="pre")
+        acc.add(_make_result([_make_rec(plugin_name="pii_guard", status="completed", effective_allow=True, duration_ns=1000)]), hook="pre")
         flat = _build_flattened_attributes(acc, 32)
         assert "cpex.control.results.pii_guard.status" in flat
         assert flat["cpex.control.results.pii_guard.status"] == "completed"
@@ -739,9 +719,8 @@ class TestMarkDenied:
         """mark_denied does not break subsequent add() calls for partial records."""
         acc = ControlTelemetryAccumulator()
         acc.mark_denied(hook="pre")
-        with patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True):
-            result = _make_result([_make_rec(status="completed")])
-            acc.add(result, hook="pre")
+        result = _make_result([_make_rec(status="completed")])
+        acc.add(result, hook="pre")
         assert len(acc.records) == 1
         assert acc.pre_denied is True
 
@@ -761,9 +740,8 @@ class TestPerHookTruncationCounter:
         acc = ControlTelemetryAccumulator()
         # Build 70 records — 64 allowed per hook, 6 should be truncated
         records = [_make_rec(plugin_name=f"ctrl{i}") for i in range(70)]
-        with patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True):
-            result = _make_result(records)
-            acc.add(result, hook="pre")
+        result = _make_result(records)
+        acc.add(result, hook="pre")
         assert len(acc.records) == 64
         assert acc.truncated == 6
 
@@ -771,8 +749,7 @@ class TestPerHookTruncationCounter:
         """Exactly _MAX_RECORDS_PER_HOOK records — no truncation."""
         acc = ControlTelemetryAccumulator()
         records = [_make_rec(plugin_name=f"ctrl{i}") for i in range(64)]
-        with patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True):
-            acc.add(_make_result(records), hook="pre")
+        acc.add(_make_result(records), hook="pre")
         assert acc.truncated == 0
         assert len(acc.records) == 64
 
@@ -783,10 +760,9 @@ class TestPerHookTruncationCounter:
         first_batch = [_make_rec(plugin_name=f"pre{i}") for i in range(64)]
         second_batch = [_make_rec(plugin_name=f"post{i}") for i in range(64)]
         extra_batch = [_make_rec(plugin_name=f"extra{i}") for i in range(10)]
-        with patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True):
-            acc.add(_make_result(first_batch), hook="pre")
-            acc.add(_make_result(second_batch), hook="post")
-            acc.add(_make_result(extra_batch), hook="post")
+        acc.add(_make_result(first_batch), hook="pre")
+        acc.add(_make_result(second_batch), hook="post")
+        acc.add(_make_result(extra_batch), hook="post")
         assert len(acc.records) == _MAX_RECORDS_PER_CALL
         assert acc.truncated == 10
 
@@ -844,7 +820,6 @@ class TestExportCapTruncation:
         mock_settings.cpex_control_telemetry_max_results = 3  # cap at 3 out of 10
 
         with (
-            patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True),
             patch("mcpgateway.services.observability_service.ObservabilityService", return_value=mock_service),
             patch("mcpgateway.db.SessionLocal"),
             patch("mcpgateway.plugins.control_telemetry._emit_otel_spans"),
@@ -879,7 +854,6 @@ class TestExportCapTruncation:
         mock_settings.cpex_control_telemetry_max_results = 32
 
         with (
-            patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True),
             patch("mcpgateway.services.observability_service.ObservabilityService", return_value=mock_service),
             patch("mcpgateway.db.SessionLocal"),
             patch("mcpgateway.plugins.control_telemetry._emit_otel_spans"),
@@ -920,9 +894,8 @@ class TestAggregateRecordsReceived:
 
     def _make_acc(self, n: int, status: str = "completed") -> ControlTelemetryAccumulator:
         acc = ControlTelemetryAccumulator()
-        with patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True):
-            for i in range(n):
-                acc.add(_make_result([_make_rec(plugin_name=f"ctrl{i}", status=status)]), hook="pre")
+        for i in range(n):
+            acc.add(_make_result([_make_rec(plugin_name=f"ctrl{i}", status=status)]), hook="pre")
         return acc
 
     def test_records_received_equals_accumulated_count(self):
@@ -938,13 +911,12 @@ class TestAggregateRecordsReceived:
     def test_records_received_includes_skipped_disabled_cancelled(self):
         """records_received counts ALL accumulated records, including non-active statuses."""
         acc = ControlTelemetryAccumulator()
-        with patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True):
-            acc.add(_make_result([
-                _make_rec(plugin_name="a", status="completed"),
-                _make_rec(plugin_name="b", status="skipped"),
-                _make_rec(plugin_name="c", status="disabled"),
-                _make_rec(plugin_name="d", status="cancelled"),
-            ]), hook="pre")
+        acc.add(_make_result([
+            _make_rec(plugin_name="a", status="completed"),
+            _make_rec(plugin_name="b", status="skipped"),
+            _make_rec(plugin_name="c", status="disabled"),
+            _make_rec(plugin_name="d", status="cancelled"),
+        ]), hook="pre")
         agg = acc.aggregate()
         assert agg["cpex.control.records_received"] == 4
         # invocation_count only counts active statuses
@@ -1119,7 +1091,6 @@ class TestMarkPluginError:
         mock_settings.cpex_control_telemetry_max_results = 32
 
         with (
-            patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True),
             patch("mcpgateway.services.observability_service.ObservabilityService", return_value=mock_service),
             patch("mcpgateway.db.SessionLocal"),
             patch("mcpgateway.plugins.control_telemetry._emit_otel_spans"),

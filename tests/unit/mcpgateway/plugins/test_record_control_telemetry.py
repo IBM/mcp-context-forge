@@ -79,22 +79,20 @@ def _make_rec(
 def _acc_with_pre_records(recs):
     """Build a ControlTelemetryAccumulator with pre-hook records."""
     acc = ControlTelemetryAccumulator()
-    with patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True):
-        result = MagicMock()
-        result.executions = recs
-        result.continue_processing = True
-        acc.add(result, hook="pre")
+    result = MagicMock()
+    result.executions = recs
+    result.continue_processing = True
+    acc.add(result, hook="pre")
     return acc
 
 
 def _acc_pre_denied():
     """Build an accumulator where pre-hook was denied (no records)."""
     acc = ControlTelemetryAccumulator()
-    with patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True):
-        result = MagicMock()
-        result.executions = []
-        result.continue_processing = False
-        acc.add(result, hook="pre")
+    result = MagicMock()
+    result.executions = []
+    result.continue_processing = False
+    acc.add(result, hook="pre")
     return acc
 
 
@@ -123,24 +121,15 @@ def _enabled_settings(**kwargs):
 class TestRecordControlTelemetryNoop:
     def test_noop_when_no_trace_id(self):
         acc = ControlTelemetryAccumulator()
-        with patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True):
-            with patch("mcpgateway.plugins.control_telemetry._emit_db_spans") as mock_db:
-                record_control_telemetry(None, acc)
-                mock_db.assert_not_called()
-
-    def test_noop_when_cpex_records_unavailable(self):
-        acc = ControlTelemetryAccumulator()
-        with patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=False):
-            with patch("mcpgateway.plugins.control_telemetry._emit_db_spans") as mock_db:
-                record_control_telemetry("trace-1", acc)
-                mock_db.assert_not_called()
+        with patch("mcpgateway.plugins.control_telemetry._emit_db_spans") as mock_db:
+            record_control_telemetry(None, acc)
+            mock_db.assert_not_called()
 
     def test_noop_when_accumulator_empty_and_not_denied(self):
         acc = ControlTelemetryAccumulator()
-        with patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True):
-            with patch("mcpgateway.plugins.control_telemetry._emit_db_spans") as mock_db:
-                record_control_telemetry("trace-1", acc)
-                mock_db.assert_not_called()
+        with patch("mcpgateway.plugins.control_telemetry._emit_db_spans") as mock_db:
+            record_control_telemetry("trace-1", acc)
+            mock_db.assert_not_called()
 
     def test_noop_when_feature_disabled(self):
         """Feature flag CPEX_CONTROL_TELEMETRY_ENABLED=false skips all emission."""
@@ -150,7 +139,6 @@ class TestRecordControlTelemetryNoop:
         mock_settings.cpex_control_telemetry_db_enabled = True
 
         with (
-            patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True),
             patch("mcpgateway.plugins.control_telemetry._emit_db_spans") as mock_db,
             patch("mcpgateway.plugins.control_telemetry._emit_otel_spans"),
         ):
@@ -181,12 +169,11 @@ class TestRecordControlTelemetryTruncated:
         from mcpgateway.plugins.control_telemetry import _MAX_RECORDS_PER_CALL  # noqa: PLC0415
 
         acc = ControlTelemetryAccumulator()
-        with patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True):
-            for i in range(_MAX_RECORDS_PER_CALL + 2):
-                r = MagicMock()
-                r.executions = [_make_rec(plugin_name=f"p{i}")]
-                r.continue_processing = True
-                acc.add(r, hook="pre")
+        for i in range(_MAX_RECORDS_PER_CALL + 2):
+            r = MagicMock()
+            r.executions = [_make_rec(plugin_name=f"p{i}")]
+            r.continue_processing = True
+            acc.add(r, hook="pre")
 
         # Tier-1/2 drops only at this point (export cap not yet applied)
         assert acc._truncated == 2  # pylint: disable=protected-access
@@ -199,7 +186,6 @@ class TestRecordControlTelemetryTruncated:
         try:
             cfg_mod.settings = _enabled_settings()
             with (
-                patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True),
                 patch("mcpgateway.plugins.control_telemetry._emit_db_spans", side_effect=capture_db),
                 patch("mcpgateway.plugins.control_telemetry._emit_otel_spans"),
             ):
@@ -236,7 +222,6 @@ class TestRecordControlTelemetryFlatten:
         try:
             cfg_mod.settings = mock_settings
             with (
-                patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True),
                 patch("mcpgateway.plugins.control_telemetry._emit_db_spans", side_effect=capture_db),
                 patch("mcpgateway.plugins.control_telemetry._emit_otel_spans"),
             ):
@@ -265,7 +250,6 @@ class TestRecordControlTelemetryDB:
         try:
             cfg_mod.settings = _enabled_settings()
             with (
-                patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True),
                 patch("mcpgateway.plugins.control_telemetry._emit_db_spans") as mock_db,
                 patch("mcpgateway.plugins.control_telemetry._emit_otel_spans"),
             ):
@@ -281,7 +265,6 @@ class TestRecordControlTelemetryDB:
         try:
             cfg_mod.settings = _enabled_settings()
             with (
-                patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True),
                 patch("mcpgateway.plugins.control_telemetry._emit_db_spans") as mock_db,
                 patch("mcpgateway.plugins.control_telemetry._emit_otel_spans"),
             ):
@@ -299,7 +282,6 @@ class TestRecordControlTelemetryDB:
         try:
             cfg_mod.settings = _enabled_settings()
             with (
-                patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True),
                 patch("mcpgateway.plugins.control_telemetry._emit_db_spans", side_effect=RuntimeError("DB is down")),
                 patch("mcpgateway.plugins.control_telemetry._emit_otel_spans"),
             ):
@@ -314,7 +296,6 @@ class TestRecordControlTelemetryDB:
         try:
             cfg_mod.settings = _enabled_settings()
             with (
-                patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True),
                 patch("mcpgateway.plugins.control_telemetry._emit_db_spans"),
                 patch("mcpgateway.plugins.control_telemetry._emit_otel_spans", side_effect=RuntimeError("OTel explode")),
             ):
@@ -334,7 +315,6 @@ class TestRecordControlTelemetryDB:
         try:
             cfg_mod.settings = _enabled_settings()
             with (
-                patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True),
                 patch("mcpgateway.plugins.control_telemetry._emit_db_spans", side_effect=capture_db),
                 patch("mcpgateway.plugins.control_telemetry._emit_otel_spans"),
             ):
@@ -355,7 +335,6 @@ class TestRecordControlTelemetryDB:
         try:
             cfg_mod.settings = _enabled_settings()
             with (
-                patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True),
                 patch("mcpgateway.plugins.control_telemetry._emit_db_spans", side_effect=capture_db),
                 patch("mcpgateway.plugins.control_telemetry._emit_otel_spans"),
             ):
@@ -376,7 +355,6 @@ class TestRecordControlTelemetryDB:
         try:
             cfg_mod.settings = _enabled_settings()
             with (
-                patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True),
                 patch("mcpgateway.plugins.control_telemetry._emit_db_spans", side_effect=capture_db),
                 patch("mcpgateway.plugins.control_telemetry._emit_otel_spans"),
                 patch("mcpgateway.plugins.control_telemetry._get_max_results", return_value=3),
@@ -399,10 +377,7 @@ class TestEmitDbSpansExceptionPaths:
         # Inject a record that will produce empty attrs
         acc._records.append(("pre", MagicMock(spec=[])))  # pylint: disable=protected-access
 
-        with (
-            patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True),
-            patch("mcpgateway.plugins.control_telemetry._emit_otel_spans"),
-        ):
+        with patch("mcpgateway.plugins.control_telemetry._emit_otel_spans"):
             # Must not raise; the bad record is silently skipped
             record_control_telemetry("trace-skip", acc)
 
@@ -455,7 +430,6 @@ class TestEmitOtelSpansActivePath:
                 pass
 
         with (
-            patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True),
             patch("mcpgateway.plugins.control_telemetry._emit_db_spans"),
             patch("mcpgateway.observability.otel_tracing_enabled", return_value=True),
             patch("mcpgateway.observability.otel_context_active", return_value=True),
@@ -597,16 +571,15 @@ class TestConcurrencyIsolation:
         acc1 = ControlTelemetryAccumulator()
         acc2 = ControlTelemetryAccumulator()
 
-        with patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True):
-            r1 = MagicMock()
-            r1.executions = [_make_rec(plugin_name="alpha")]
-            r1.continue_processing = True
-            acc1.add(r1, hook="pre")
+        r1 = MagicMock()
+        r1.executions = [_make_rec(plugin_name="alpha")]
+        r1.continue_processing = True
+        acc1.add(r1, hook="pre")
 
-            r2 = MagicMock()
-            r2.executions = [_make_rec(plugin_name="beta"), _make_rec(plugin_name="gamma")]
-            r2.continue_processing = True
-            acc2.add(r2, hook="post")
+        r2 = MagicMock()
+        r2.executions = [_make_rec(plugin_name="beta"), _make_rec(plugin_name="gamma")]
+        r2.continue_processing = True
+        acc2.add(r2, hook="post")
 
         assert len(acc1.records) == 1
         assert len(acc2.records) == 2
@@ -616,11 +589,10 @@ class TestConcurrencyIsolation:
         acc1 = ControlTelemetryAccumulator()
         acc2 = ControlTelemetryAccumulator()
 
-        with patch("mcpgateway.plugins.control_telemetry.execution_records_supported", return_value=True):
-            r = MagicMock()
-            r.executions = [_make_rec()]
-            r.continue_processing = False
-            acc1.add(r, hook="pre")
+        r = MagicMock()
+        r.executions = [_make_rec()]
+        r.continue_processing = False
+        acc1.add(r, hook="pre")
 
         assert acc1.pre_denied is True
         assert acc2.pre_denied is False

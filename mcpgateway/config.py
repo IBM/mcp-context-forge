@@ -2006,8 +2006,7 @@ class Settings(BaseSettings):
     plugin_metrics_max_numeric_per_call: int = Field(default=16, ge=0, description="Max numeric ObservabilityMetric rows written per invoke_hook() call, across all plugins")
 
     # CPEX control-execution telemetry (G2: ControlExecutionRecord -> observability).
-    # Enabled only when the installed CPEX version exposes ControlExecutionRecord (>=0.1.2).
-    # A no-op when execution_records_supported() returns False (older CPEX build).
+    # Requires CPEX >= 0.1.2 (declared minimum since #5785).
     cpex_control_telemetry_enabled: bool = Field(
         default=False,
         description=(
@@ -2015,7 +2014,6 @@ class Settings(BaseSettings):
             "Disabled by default — each traced tool call creates up to 1 summary + "
             "CPEX_CONTROL_TELEMETRY_MAX_RESULTS result DB spans. Enable only after "
             "reviewing storage and cardinality implications. "
-            "No-op when CPEX execution records are unavailable (CPEX < 0.1.2). "
             "Env: CPEX_CONTROL_TELEMETRY_ENABLED."
         ),
     )

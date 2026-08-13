@@ -4782,19 +4782,13 @@ class TestToolService:
         tool_service._http_client.request.return_value = mock_response
 
         # Mock plugin manager with invoke_hook
-        mock_post_result = Mock()
-        mock_post_result.continue_processing = True
-        mock_post_result.violation = None
-        mock_post_result.modified_payload = None
-        mock_post_result.retry_delay_ms = 0
-
         mock_pm = Mock()
 
         def invoke_hook_side_effect(hook_type, payload, global_context, local_contexts=None, **kwargs):
             if hook_type == ToolHookType.TOOL_PRE_INVOKE:
                 return (PluginResult(continue_processing=True, violation=None, modified_payload=None), None)
             # POST_INVOKE
-            return (mock_post_result, None)
+            return (PluginResult(continue_processing=True, violation=None, modified_payload=None, retry_delay_ms=0), None)
 
         mock_pm.invoke_hook = AsyncMock(side_effect=invoke_hook_side_effect)
 
@@ -4880,12 +4874,6 @@ class TestToolService:
         mock_modified_payload = Mock()
         mock_modified_payload.result = {"content": [{"type": "text", "text": "Modified by plugin"}], "isError": True}
 
-        mock_post_result = Mock()
-        mock_post_result.continue_processing = True
-        mock_post_result.violation = None
-        mock_post_result.modified_payload = mock_modified_payload
-        mock_post_result.retry_delay_ms = 0
-
         # Third-Party
         from cpex.framework import PluginResult, ToolHookType
 
@@ -4895,7 +4883,7 @@ class TestToolService:
             if hook_type == ToolHookType.TOOL_PRE_INVOKE:
                 return (PluginResult(continue_processing=True, violation=None, modified_payload=None), None)
             # POST_INVOKE
-            return (mock_post_result, None)
+            return (PluginResult(continue_processing=True, violation=None, modified_payload=mock_modified_payload, retry_delay_ms=0), None)
 
         mock_pm.invoke_hook = AsyncMock(side_effect=invoke_hook_side_effect)
 
@@ -4934,12 +4922,6 @@ class TestToolService:
         mock_modified_payload = Mock()
         mock_modified_payload.result = "Invalid format - not a dict"
 
-        mock_post_result = Mock()
-        mock_post_result.continue_processing = True
-        mock_post_result.violation = None
-        mock_post_result.modified_payload = mock_modified_payload
-        mock_post_result.retry_delay_ms = 0
-
         # Third-Party
         from cpex.framework import ToolHookType
         from cpex.framework.models import PluginResult
@@ -4950,7 +4932,7 @@ class TestToolService:
             if hook_type == ToolHookType.TOOL_PRE_INVOKE:
                 return (PluginResult(continue_processing=True, violation=None, modified_payload=None), None)
             # POST_INVOKE
-            return (mock_post_result, None)
+            return (PluginResult(continue_processing=True, violation=None, modified_payload=mock_modified_payload, retry_delay_ms=0), None)
 
         mock_pm.invoke_hook = AsyncMock(side_effect=invoke_hook_side_effect)
 
