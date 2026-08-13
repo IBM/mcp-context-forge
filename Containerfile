@@ -273,6 +273,8 @@ COPY --chmod=0755 scripts/verify-native-extensions.py /tmp/verify-native-extensi
 #  - Upgrade pip, setuptools, wheel, uv
 #  - Install project dependencies and package
 #  - Include observability packages for OpenTelemetry support
+#  - Include gRPC packages because the Admin UI imports the gRPC management
+#    service even when the experimental runtime feature is disabled
 #  - Install plugins from PyPI (cpex-* packages)
 #  - Install local native extensions from pre-built wheels (if built)
 #  - Optionally install profiling tools (memray, py-spy) if ENABLE_PROFILING=true
@@ -288,9 +290,9 @@ RUN set -euo pipefail \
     && /app/.venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel uv \
     && if [ -n "$(ls -A /tmp/wheels/*.whl 2>/dev/null)" ]; then \
         echo "📦 Hermetic install from prebuilt wheel closure"; \
-        /app/.venv/bin/uv pip install --no-index --find-links=/tmp/wheels ".[redis,observability,plugins,llmchat]" "psycopg[c]>=3.3.3"; \
+        /app/.venv/bin/uv pip install --no-index --find-links=/tmp/wheels ".[redis,observability,plugins,llmchat,grpc]" "psycopg[c]>=3.3.3"; \
     else \
-        /app/.venv/bin/uv pip install ".[redis,postgres,observability,plugins,llmchat]"; \
+        /app/.venv/bin/uv pip install ".[redis,postgres,observability,plugins,llmchat,grpc]"; \
     fi \
     && echo "✅ Plugins installed from PyPI via [plugins] extra" \
     && if [ "$ENABLE_RUST" = "true" ] && ls "/tmp/local-native-extension-wheels/"*.whl 1> /dev/null 2>&1; then \
