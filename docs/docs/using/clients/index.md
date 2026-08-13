@@ -9,7 +9,6 @@ ContextForge is compatible with any client that speaks the [Model Context Protoc
 There are two ways clients typically connect:
 
 - **Direct to Gateway** (HTTP/SSE/WS)
-- **Via `mcpgateway-wrapper`** (stdio transport, especially for LLM apps)
 
 ---
 
@@ -17,7 +16,7 @@ There are two ways clients typically connect:
 
 | Client | Type | Notes |
 |--------|------|-------|
-| [Claude Desktop](claude-desktop.md) | UI | Configure to launch `mcpgateway.wrapper` via JSON |
+| [Claude Desktop](claude-desktop.md) | UI | Configure via Streamable HTTP JSON |
 | [Cline](cline.md) | CLI | Supports stdio or direct MCP over HTTP |
 | [Continue](continue.md) | VSCode plugin | MCP plugin support |
 | [MCP Inspector](mcp-inspector.md) | Web debugger | Great for manual testing and exploring protocol features |

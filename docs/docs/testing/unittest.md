@@ -639,5 +639,4 @@ The remaining ~93% is DOM manipulation, fetch calls, Chart.js rendering, and HTM
 | mcpgateway/validation/jsonrpc.py                                               |       58 |        0 |       34 |        0 |    100% |           |
 | mcpgateway/validation/tags.py                                                  |       72 |        3 |       38 |        3 |     95% |167, 257, 265 |
 | mcpgateway/version.py                                                          |      137 |       16 |       24 |        3 |     87% |84-85, 89-96, 835-840, 845-853 |
-| mcpgateway/wrapper.py                                                          |      307 |        0 |      134 |        0 |    100% |           |
 | **TOTAL**                                                                      | **51431** | **1792** | **15600** | **1308** | **95%** |           |
