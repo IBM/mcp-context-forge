@@ -207,13 +207,17 @@ authenticated triggers populate it afterwards:
   button. For token-exchange gateways this delegates to the same
   manual-refresh pipeline.
 
-The subject token is resolved from the `Authorization: Bearer` header first,
-falling back to the HttpOnly `jwt_token` session cookie (Admin UI sessions
-cannot attach a bearer header). Both routes are CSRF-protected for
-cookie-credentialed callers, and both fail closed: a caller without a
-structurally valid JWT gets an error — the raw credential is never forwarded
-upstream. Every exchange attempt (success or failure) is audited via the
-structured `token-exchange` event with the request's correlation id.
+The subject token is resolved from the `Authorization: Bearer` header if one
+is present; the HttpOnly `jwt_token` session cookie is only consulted when no
+bearer credential was presented at all (Admin UI sessions cannot attach a
+bearer header). A bearer credential that isn't a structurally valid JWT never
+falls back to the cookie — that cookie could belong to a different principal
+than the one the bearer already authenticated the request as, so the request
+fails closed instead of silently swapping identities. Both routes are
+CSRF-protected for cookie-credentialed callers, and both fail closed: a caller
+without a structurally valid JWT gets an error — the raw credential is never
+forwarded upstream. Every exchange attempt (success or failure) is audited via
+the structured `token-exchange` event with the request's correlation id.
 
 There is no `🔐 Authorize` step for token-exchange gateways — no user
 consent flow exists, and the Admin UI hides that action for them.

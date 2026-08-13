@@ -66,6 +66,13 @@ def extract_subject_jwt(request_headers: Optional[Dict[str, str]]) -> Optional[s
     Each candidate must structurally be a compact-serialization JWT (H2:
     an opaque CF session/API token is never forwarded to an external AS).
 
+    Fail-closed on a mixed credential: if a bearer credential is present at
+    all, it is the one the auth dependency already authenticated the request
+    against, so a non-JWT-shaped bearer must not fall back to the cookie --
+    that cookie may belong to a different principal than the one the bearer
+    authenticated (CWE-287/CWE-346). The cookie is only consulted when no
+    bearer credential was presented.
+
     Args:
         request_headers: Inbound request headers, or None.
 
@@ -74,8 +81,8 @@ def extract_subject_jwt(request_headers: Optional[Dict[str, str]]) -> Optional[s
         structurally valid JWT is present.
     """
     token = extract_inbound_bearer(request_headers)
-    if token and looks_like_jwt(token):
-        return token
+    if token is not None:
+        return token if looks_like_jwt(token) else None
     if not request_headers:
         return None
     raw_cookie = None

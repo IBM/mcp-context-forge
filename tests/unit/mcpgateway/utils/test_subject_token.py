@@ -31,9 +31,19 @@ def test_cookie_header_case_insensitive():
     assert extract_subject_jwt(headers) == JWT
 
 
-def test_opaque_bearer_falls_through_to_cookie():
+def test_opaque_bearer_does_not_fall_back_to_cookie():
+    """Deny-path regression for CWE-287/CWE-346: an opaque bearer must not be
+    silently swapped for a same- or different-principal cookie JWT."""
     headers = {"Authorization": "Bearer opaque-session-token", "cookie": f"jwt_token={JWT}"}
-    assert extract_subject_jwt(headers) == JWT
+    assert extract_subject_jwt(headers) is None
+
+
+def test_opaque_bearer_does_not_fall_back_to_other_principal_cookie():
+    """Mixed-credential deny path: bearer authenticates principal A, cookie
+    carries a JWT for principal B -- must fail closed, never forward B's token."""
+    other_principal_jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJiIn0.sig2"  # pragma: allowlist secret
+    headers = {"Authorization": "Bearer opaque-session-token-for-principal-a", "cookie": f"jwt_token={other_principal_jwt}"}
+    assert extract_subject_jwt(headers) is None
 
 
 def test_opaque_cookie_rejected():
