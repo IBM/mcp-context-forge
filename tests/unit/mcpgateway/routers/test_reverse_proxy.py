@@ -10,7 +10,7 @@ session management, and HTTP endpoints.
 
 # Standard
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 import math
 from types import SimpleNamespace
 from typing import cast
@@ -39,7 +39,7 @@ from mcpgateway.routers.reverse_proxy import (
 from mcpgateway.services.reverse_proxy_catalog import AuthenticatedRegistrationContext, ReverseProxyCatalogService
 from mcpgateway.services.reverse_proxy_discovery import ReverseProxyDiscoveryService
 from mcpgateway.services.reverse_proxy_protocol import JsonRpcRequest
-from mcpgateway.services.reverse_proxy_sessions import ConnectionClosedError, ConnectionId, LocalSessionId, ReverseProxySessionManager, StableGatewayId
+from mcpgateway.services.reverse_proxy_sessions import ConnectionClosedError, ConnectionId, LocalSessionId, ReverseProxyEviction, ReverseProxySessionManager, StableGatewayId
 from mcpgateway.services.reverse_proxy_sessions import ReverseProxySession as ManagedSession
 from mcpgateway.utils.verify_credentials import require_auth
 from tests.helpers.router_helpers import collect_routes
@@ -448,10 +448,11 @@ class TestWebSocketEndpoint:
     def session_manager(self, mock_websocket):
         """Scripted session manager with a fixed server-generated connection id."""
         fake = Mock(spec=ReverseProxySessionManager)
-        fake.connect.return_value = ManagedSession(connection_id=self._CONNECTION_ID, local_id=LocalSessionId("local-test-id"), websocket=mock_websocket)
+        fake.connect.return_value = ManagedSession(connection_id=self._CONNECTION_ID, local_id=LocalSessionId("local-test-id"), websocket=mock_websocket, last_heartbeat=datetime.now(tz=timezone.utc))
         fake.registration_lock.side_effect = lambda stable_id: anyio.Lock()
         fake.quiesce_stable_id.return_value = None
         fake.promote_stable_id.return_value = None
+        fake.disconnect.return_value = ()
         return fake
 
     @pytest.fixture(autouse=True)
@@ -638,6 +639,8 @@ class TestWebSocketEndpoint:
         assert frames[0]["type"] == "heartbeat"
         assert frames[0]["sessionId"] == str(self._CONNECTION_ID)
         assert "timestamp" in frames[0]
+        session_manager.record_heartbeat.assert_awaited_once()
+        assert session_manager.record_heartbeat.await_args.args[0] == self._CONNECTION_ID
         catalog_service.register.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -689,16 +692,25 @@ class TestWebSocketEndpoint:
         """Unregister ends the connection cleanly without server frames or close."""
         unregister_msg = {"type": "unregister"}
         mock_websocket.receive_text.return_value = orjson.dumps(unregister_msg).decode()
+        session_manager.disconnect.return_value = (ReverseProxyEviction(StableGatewayId(self._STABLE_ID), self._CONNECTION_ID),)
 
         # First-Party
         from mcpgateway.routers.reverse_proxy import websocket_endpoint
 
-        await websocket_endpoint(mock_websocket, Mock())
+        db = Mock()
+        from mcpgateway.services.gateway_service import gateway_service
+
+        gateway_service.mark_reverse_proxy_gateways_unreachable = AsyncMock()
+        await websocket_endpoint(mock_websocket, db)
 
         mock_websocket.accept.assert_called_once()
         mock_websocket.send_text.assert_not_called()
         mock_websocket.close.assert_not_called()
         session_manager.disconnect.assert_awaited_once_with(self._CONNECTION_ID)
+        gateway_service.mark_reverse_proxy_gateways_unreachable.assert_awaited_once()
+        persistence_call = gateway_service.mark_reverse_proxy_gateways_unreachable.await_args
+        assert persistence_call is not None
+        assert persistence_call.args[0] is session_manager
         assert manager.sessions == {}
 
     @pytest.mark.asyncio
@@ -759,6 +771,20 @@ class TestWebSocketEndpoint:
             await websocket_endpoint(mock_websocket, Mock())
 
         session_manager.disconnect.assert_awaited_once_with(self._CONNECTION_ID)
+        assert manager.sessions == {}
+
+    @pytest.mark.asyncio
+    async def test_websocket_persistence_failure_preserves_primary_exception_and_cleanup(self, mock_websocket, session_manager):
+        """Reachability persistence cannot replace the receive failure or strand legacy cleanup."""
+        mock_websocket.receive_text.side_effect = [RuntimeError("primary boom"), asyncio.CancelledError()]
+        session_manager.disconnect.return_value = (ReverseProxyEviction(StableGatewayId(self._STABLE_ID), self._CONNECTION_ID),)
+        from mcpgateway.services.gateway_service import gateway_service
+        from mcpgateway.routers.reverse_proxy import websocket_endpoint
+
+        with patch.object(gateway_service, "mark_reverse_proxy_gateways_unreachable", new=AsyncMock(side_effect=RuntimeError("db unavailable"))):
+            with pytest.raises(RuntimeError, match="primary boom"):
+                await websocket_endpoint(mock_websocket, Mock())
+
         assert manager.sessions == {}
 
     @pytest.mark.asyncio
@@ -1988,6 +2014,25 @@ class TestHTTPEndpoints:
             assert "test-session" not in manager.sessions
         finally:
             manager.sessions.clear()
+
+    def test_disconnect_session_persistence_failure_still_removes_and_closes(self, client, mock_auth, mock_websocket):
+        """Reachability persistence failure cannot strand legacy removal or socket close."""
+        session = ReverseProxySession("test-session", mock_websocket, "test-user")
+        manager.sessions["test-session"] = session
+        typed_manager = Mock(spec=ReverseProxySessionManager)
+        typed_manager.disconnect.return_value = (ReverseProxyEviction(StableGatewayId("stable"), ConnectionId("test-session")),)
+
+        from mcpgateway.services.gateway_service import gateway_service
+
+        with (
+            patch("mcpgateway.routers.reverse_proxy.get_reverse_proxy_session_manager", new=AsyncMock(return_value=typed_manager)),
+            patch.object(gateway_service, "mark_reverse_proxy_gateways_unreachable", new=AsyncMock(side_effect=RuntimeError("db unavailable"))),
+        ):
+            response = client.delete("/reverse-proxy/sessions/test-session")
+
+        assert response.status_code == 200
+        assert "test-session" not in manager.sessions
+        mock_websocket.close.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_disconnect_session_blocked_close_is_bounded(self, client, mock_auth, mock_websocket):

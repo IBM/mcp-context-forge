@@ -7,6 +7,7 @@ Tests for process-local reverse-proxy sessions and pending responses.
 """
 
 import json
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 import anyio
@@ -22,6 +23,7 @@ from mcpgateway.services.reverse_proxy_sessions import (
     DuplicatePendingRequestError,
     LocalSessionId,
     ReverseProxySessionManager,
+    ReverseProxyEviction,
     StableGatewayId,
     get_reverse_proxy_session_manager,
 )
@@ -155,6 +157,108 @@ async def test_connect_generates_server_owned_id_and_rejects_duplicate_local_id(
     assert first.connection_id != ConnectionId(local_id)
     with pytest.raises(DuplicateLocalSessionError):
         await manager.connect(RecordingWebSocket(), local_id)
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_updates_connection_timestamp() -> None:
+    """Given a live connection, when heartbeat is recorded, then its timestamp advances to the supplied aware instant."""
+    manager = ReverseProxySessionManager()
+    connected_at = datetime(2026, 8, 13, 12, tzinfo=timezone.utc)
+    heartbeat_at = connected_at + timedelta(seconds=2)
+    session = await manager.connect(RecordingWebSocket(), LocalSessionId("local-heartbeat"), now=connected_at)
+
+    updated = await manager.record_heartbeat(session.connection_id, now=heartbeat_at)
+
+    assert updated == heartbeat_at
+    assert manager.last_heartbeat(session.connection_id) == heartbeat_at
+
+
+@pytest.mark.asyncio
+async def test_reap_stale_disconnects_caller_and_clears_stable_mapping() -> None:
+    """Given a stale promoted connection with a pending caller, when reaped, then canonical disconnect fails the caller and clears routing."""
+    manager = ReverseProxySessionManager()
+    websocket = RecordingWebSocket()
+    connected_at = datetime(2026, 8, 13, 12, tzinfo=timezone.utc)
+    session = await manager.connect(websocket, LocalSessionId("local-stale"), now=connected_at)
+    stable_id = StableGatewayId("stable-stale")
+    await manager.promote_stable_id(stable_id, session.connection_id)
+    caller_failed = anyio.Event()
+    evicted: tuple[ReverseProxyEviction, ...] = ()
+
+    async def send() -> None:
+        with pytest.raises(ConnectionClosedError):
+            await manager.send_request(session.connection_id, _request_payload("pending"), timeout_seconds=10)
+        caller_failed.set()
+
+    async with anyio.create_task_group() as task_group:
+        task_group.start_soon(send)
+        await websocket.sent.wait()
+        evicted = await manager.reap_stale(now=connected_at + timedelta(seconds=91), timeout_seconds=90)
+        await caller_failed.wait()
+
+    assert evicted == (ReverseProxyEviction(stable_id=stable_id, connection_id=session.connection_id),)
+    assert manager.resolve_connection_id(stable_id) is None
+    assert manager.pending_count(session.connection_id) == 0
+
+
+@pytest.mark.asyncio
+async def test_reap_stale_preserves_fresh_heartbeat_and_is_idempotent() -> None:
+    """Given fresh and already-evicted sessions, repeated stale scans preserve fresh state and report no duplicate eviction."""
+    manager = ReverseProxySessionManager()
+    started_at = datetime(2026, 8, 13, 12, tzinfo=timezone.utc)
+    stale = await manager.connect(RecordingWebSocket(), LocalSessionId("stale"), now=started_at)
+    fresh = await manager.connect(RecordingWebSocket(), LocalSessionId("fresh"), now=started_at)
+    stale_id = StableGatewayId("stale-id")
+    fresh_id = StableGatewayId("fresh-id")
+    await manager.promote_stable_id(stale_id, stale.connection_id)
+    await manager.promote_stable_id(fresh_id, fresh.connection_id)
+    await manager.record_heartbeat(fresh.connection_id, now=started_at + timedelta(seconds=60))
+
+    first = await manager.reap_stale(now=started_at + timedelta(seconds=91), timeout_seconds=90)
+    second = await manager.reap_stale(now=started_at + timedelta(seconds=91), timeout_seconds=90)
+
+    assert first == (ReverseProxyEviction(stable_id=stale_id, connection_id=stale.connection_id),)
+    assert second == ()
+    assert manager.resolve_connection_id(fresh_id) == fresh.connection_id
+
+
+@pytest.mark.asyncio
+async def test_replacement_promotes_while_old_stale_socket_close_is_blocked() -> None:
+    """Old-socket close runs outside manager locks, so a replacement can promote immediately."""
+    manager = ReverseProxySessionManager()
+    started_at = datetime(2026, 8, 13, 12, tzinfo=timezone.utc)
+    old_socket = CloseStallingWebSocket()
+    old = await manager.connect(old_socket, LocalSessionId("old"), now=started_at)
+    stable_id = StableGatewayId("stable-race")
+    await manager.promote_stable_id(stable_id, old.connection_id)
+    replacement = await manager.connect(RecordingWebSocket(), LocalSessionId("replacement"), now=started_at + timedelta(seconds=60))
+
+    async def reap() -> None:
+        await manager.reap_stale(now=started_at + timedelta(seconds=91), timeout_seconds=90)
+
+    async with anyio.create_task_group() as task_group:
+        with patch("mcpgateway.services.reverse_proxy_sessions._RETIRE_CLOSE_TIMEOUT_SECONDS", 0.05):
+            task_group.start_soon(reap)
+            await old_socket.close_entered.wait()
+            await manager.promote_stable_id(stable_id, replacement.connection_id)
+
+    assert old_socket.close_cancelled.is_set()
+    assert manager.resolve_connection_id(stable_id) == replacement.connection_id
+
+
+@pytest.mark.asyncio
+async def test_reap_stale_zero_timeout_is_disabled() -> None:
+    """Given an old connection, a zero timeout performs no eviction by explicit configuration semantics."""
+    manager = ReverseProxySessionManager()
+    started_at = datetime(2026, 8, 13, 12, tzinfo=timezone.utc)
+    session = await manager.connect(RecordingWebSocket(), LocalSessionId("disabled"), now=started_at)
+    stable_id = StableGatewayId("disabled-id")
+    await manager.promote_stable_id(stable_id, session.connection_id)
+
+    evicted = await manager.reap_stale(now=started_at + timedelta(days=1), timeout_seconds=0)
+
+    assert evicted == ()
+    assert manager.resolve_connection_id(stable_id) == session.connection_id
 
 
 @pytest.mark.asyncio
