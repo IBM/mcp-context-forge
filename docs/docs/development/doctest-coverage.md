@@ -28,7 +28,7 @@ Doctest is a Python testing framework that extracts interactive examples from do
 
 | Area | Status | Notes |
 | ---- | ------ | ----- |
-| Core transports & utilities | ✅ Doctest examples live directly in the modules (e.g. `mcpgateway/transports/*`, `mcpgateway/config.py`, `mcpgateway/wrapper.py`) |
+| Core transports & utilities | ✅ Doctest examples live directly in the modules (e.g. `mcpgateway/transports/*`, `mcpgateway/config.py`) |
 | Service layer | 🔄 Many high-traffic services include doctests, but coverage is being expanded as modules are touched |
 | Validators & schemas | ✅ JSON-RPC validation, slug helpers, and schema models ship with doctest-backed examples |
 | Remaining modules | 🚧 Add doctests opportunistically when new behaviour is introduced |
@@ -41,7 +41,6 @@ The following modules already contain runnable doctest examples you can referenc
 - `mcpgateway/cache/session_registry.py` (initialisation handshake and SSE helpers)
 - `mcpgateway/config.py` and supporting validators
 - `mcpgateway/utils/create_jwt_token.py`
-- `mcpgateway/wrapper.py` (URL conversion, logging toggles)
 - `mcpgateway/validation/jsonrpc.py`
 
 ## Running Doctests

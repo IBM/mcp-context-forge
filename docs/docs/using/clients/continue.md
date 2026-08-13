@@ -30,16 +30,15 @@ tools you publish through **ContextForge** - no plug-in code required.
 
 ## 🔗 Connecting Continue to ContextForge
 
-There are **two ways** to attach Continue to a gateway:
+Attach Continue to a gateway over SSE:
 
 | Transport | When to use | Snippet |
 |-----------|-------------|---------|
-| **SSE (HTTP)** | Remote / SSL / no local process | `<-- see Option A>` |
-| **Stdio wrapper** | Local dev, no SSE, or auth-header issues | `<-- see Option B>` |
+| **SSE (HTTP)** | Remote / SSL / no local process | see below |
 
-> For both options you still need a **JWT** or Basic auth if the gateway is protected.
+> You still need a **JWT** or Basic auth if the gateway is protected.
 
-### Option A - Direct SSE
+### Direct SSE
 
 ```jsonc
 // ~/.continue/config.json
@@ -64,40 +63,6 @@ There are **two ways** to attach Continue to a gateway:
 export MCP_AUTH=$(python3 -m mcpgateway.utils.create_jwt_token -u admin@example.com --secret my-test-key-but-now-longer-than-32-bytes)
 ```
 
-### Option B - Local stdio bridge (`mcpgateway.wrapper`)
-
-1. **Install the wrapper** (pipx keeps it isolated):
-
-```bash
-pipx install --include-deps mcp-contextforge-gateway
-```
-
-2. **Config in Continue**:
-
-```jsonc
-{
-  "experimental": {
-    "modelContextProtocolServer": {
-      "transport": {
-        "type": "stdio",
-        "command": "python3",
-        "args": ["-m", "mcpgateway.wrapper"],
-        "env": {
-          "MCP_SERVER_URL": "http://localhost:4444/servers/UUID_OF_SERVER_1",
-          "MCP_AUTH": "Bearer ${env:MCP_AUTH}",
-          "MCP_TOOL_CALL_TIMEOUT": "120"
-        }
-      }
-    }
-  }
-}
-```
-
-> If you prefer Docker:<br/>
-> replace `"command": "python3"` with `"command": "docker"` and use the same container
-> arguments shown in the Copilot docs.
-
----
 
 ## 🧪 Using Gateway Tools
 
@@ -111,14 +76,11 @@ Once VS Code restarts:
    Run hello_world with name = "Alice"
    ```
 
-   The wrapper/Gateway executes and streams the JSON result back to Continue.
+   The Gateway executes and streams the JSON result back to Continue.
 
 ---
 
 ## 📝 Tips
-
-* **SSE vs stdio** - SSE is simpler in prod, stdio is great for offline or
-  header-free environments.
 
 * **Multiple servers** - add more blocks under `"servers"` if you run staging vs prod.
 * **Custom instructions** - Continue's *Custom Instructions* pane lets you steer tool use.
