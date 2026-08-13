@@ -184,7 +184,6 @@ mcp-context-forge/
 - **SSE Transport**: Server-Sent Events for streaming
 - **WebSocket Transport**: Bidirectional real-time communication
 - **HTTP Transport**: Standard JSON-RPC over HTTP
-- **Stdio Wrapper**: Bridge for stdio-based MCP clients
 
 #### 3. Plugin System
 - **Hook-based**: Pre/post request/response hooks

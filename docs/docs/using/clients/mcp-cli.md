@@ -78,7 +78,7 @@ Create a `server_config.json` file to define your ContextForge Gateway connectio
 
 ```json
 {
-  "servers": {
+  "mcpServers": {
     "contextforge": {
       "type": "http",
       "url": "http://localhost:4444/servers/UUID_OF_SERVER_1/mcp/",
@@ -405,7 +405,7 @@ The mcp-cli integrates with ContextForge Gateway through multiple connection met
 2. **Configure mcp-cli:**
    ```json
    {
-     "servers": {
+     "mcpServers": {
        "contextforge": {
          "type": "http",
          "url": "http://localhost:4444/servers/UUID_OF_SERVER_1/mcp/",
