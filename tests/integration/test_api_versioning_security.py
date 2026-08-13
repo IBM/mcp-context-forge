@@ -18,16 +18,46 @@ For every protected /v1 route family we verify:
 
 from __future__ import annotations
 
+import os
+import tempfile
+
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import StaticPool
 
+import mcpgateway.db as db_mod
+import mcpgateway.main as main_mod
+import mcpgateway.transports.streamablehttp_transport as streamable_transport_mod
 from mcpgateway.config import settings
 from mcpgateway.main import app
 
 
 @pytest.fixture
-def client() -> TestClient:
-    return TestClient(app, raise_server_exceptions=False)
+def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
+    """TestClient backed by a real (schema-created) SQLite DB.
+
+    Some deny-path checks (e.g. per-server OAuth enforcement) query the DB
+    even for unauthenticated requests, so the default schema-less in-memory
+    DB used elsewhere in the suite isn't sufficient here.
+    """
+    fd, path = tempfile.mkstemp(suffix=".db")
+    engine = create_engine(f"sqlite:///{path}", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    TestSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+    db_mod.Base.metadata.create_all(bind=engine)
+
+    monkeypatch.setattr(db_mod, "engine", engine, raising=False)
+    monkeypatch.setattr(db_mod, "SessionLocal", TestSessionLocal, raising=False)
+    monkeypatch.setattr(main_mod, "SessionLocal", TestSessionLocal, raising=False)
+    monkeypatch.setattr(streamable_transport_mod, "SessionLocal", TestSessionLocal, raising=False)
+
+    try:
+        yield TestClient(app, raise_server_exceptions=False)
+    finally:
+        engine.dispose()
+        os.close(fd)
+        os.unlink(path)
 
 
 @pytest.fixture
@@ -89,9 +119,7 @@ class TestUnauthenticatedDenied:
         """Product aliases must authenticate before reaching handlers or rewriting."""
         response = client.request(method, path, content=b"{}", follow_redirects=False)
 
-        assert response.status_code == 401, (
-            f"Expected 401 for unauthenticated {method} {path}, got {response.status_code}"
-        )
+        assert response.status_code == 401, f"Expected 401 for unauthenticated {method} {path}, got {response.status_code}"
 
     @pytest.mark.parametrize("path", ADMIN_V1_ROUTES)
     def test_admin_route_unauthenticated(self, client: TestClient, path: str) -> None:

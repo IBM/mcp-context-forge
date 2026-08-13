@@ -51,7 +51,7 @@ logger = logging_service.get_logger(__name__)
 # Server path extraction patterns
 _SERVER_PATH_PATTERNS: List[Pattern[str]] = [
     re.compile(r"^/servers/([^/]+)(?:$|/)"),
-    re.compile(r"^/(?:v1/)?virtual-servers/([^/]+)(?:$|/)"),
+    re.compile(r"^/virtual-servers/([^/]+)(?:$|/)"),
     re.compile(r"^/sse/([^/?]+)(?:$|\?)"),
     re.compile(r"^/ws/([^/?]+)(?:$|\?)"),
 ]
@@ -59,12 +59,12 @@ _SERVER_PATH_PATTERNS: List[Pattern[str]] = [
 # Resource ID extraction patterns (IDs are UUID hex strings)
 _RESOURCE_PATTERNS: List[Tuple[Pattern[str], str]] = [
     (re.compile(r"/servers/?([a-f0-9\-]+)"), "server"),
-    (re.compile(r"/(?:v1/)?virtual-servers/?([a-f0-9\-]+)"), "server"),
+    (re.compile(r"/virtual-servers/?([a-f0-9\-]+)"), "server"),
     (re.compile(r"/tools/?([a-f0-9\-]+)"), "tool"),
     (re.compile(r"/resources/?([a-f0-9\-]+)"), "resource"),
     (re.compile(r"/prompts/?([a-f0-9\-]+)"), "prompt"),
     (re.compile(r"/gateways/?([a-f0-9\-]+)"), "gateway"),
-    (re.compile(r"/(?:v1/)?mcp-servers/?([a-f0-9\-]+)"), "gateway"),
+    (re.compile(r"/mcp-servers/?([a-f0-9\-]+)"), "gateway"),
 ]
 _AUTH_COOKIE_NAMES = ("jwt_token", "access_token")
 
@@ -92,8 +92,8 @@ _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     ("DELETE", re.compile(r"^/tools/[^/]+(?:$|/)"), Permissions.TOOLS_DELETE),
     ("GET", re.compile(r"^/servers/[^/]+/tools(?:$|/)"), Permissions.TOOLS_READ),
     ("POST", re.compile(r"^/servers/[^/]+/tools/[^/]+/call(?:$|/)"), Permissions.TOOLS_EXECUTE),
-    ("GET", re.compile(r"^/(?:v1/)?virtual-servers/[^/]+/tools(?:$|/)"), Permissions.TOOLS_READ),
-    ("POST", re.compile(r"^/(?:v1/)?virtual-servers/[^/]+/tools/[^/]+/call(?:$|/)"), Permissions.TOOLS_EXECUTE),
+    ("GET", re.compile(r"^/virtual-servers/[^/]+/tools(?:$|/)"), Permissions.TOOLS_READ),
+    ("POST", re.compile(r"^/virtual-servers/[^/]+/tools/[^/]+/call(?:$|/)"), Permissions.TOOLS_EXECUTE),
     # JSON-RPC endpoint — multiplexes tools/call, resources/list, initialize, etc.
     # Fine-grained per-method RBAC is enforced downstream by _ensure_rpc_permission();
     # the middleware only gates transport-level access via servers.use.
@@ -113,7 +113,7 @@ _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     ("PUT", re.compile(r"^/resources/[^/]+(?:$|/)"), Permissions.RESOURCES_UPDATE),
     ("DELETE", re.compile(r"^/resources/[^/]+(?:$|/)"), Permissions.RESOURCES_DELETE),
     ("GET", re.compile(r"^/servers/[^/]+/resources(?:$|/)"), Permissions.RESOURCES_READ),
-    ("GET", re.compile(r"^/(?:v1/)?virtual-servers/[^/]+/resources(?:$|/)"), Permissions.RESOURCES_READ),
+    ("GET", re.compile(r"^/virtual-servers/[^/]+/resources(?:$|/)"), Permissions.RESOURCES_READ),
     # Prompts permissions
     ("GET", re.compile(r"^/prompts(?:$|/)"), Permissions.PROMPTS_READ),
     ("POST", re.compile(r"^/prompts/?$"), Permissions.PROMPTS_CREATE),  # Only exact /prompts or /prompts/
@@ -121,7 +121,7 @@ _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     ("POST", re.compile(r"^/prompts/[^/]+$"), Permissions.PROMPTS_READ),  # MCP spec prompt retrieval (POST /prompts/{id})
     ("PUT", re.compile(r"^/prompts/[^/]+(?:$|/)"), Permissions.PROMPTS_UPDATE),
     ("DELETE", re.compile(r"^/prompts/[^/]+(?:$|/)"), Permissions.PROMPTS_DELETE),
-    ("GET", re.compile(r"^/(?:v1/)?virtual-servers/[^/]+/prompts(?:$|/)"), Permissions.SERVERS_READ),
+    ("GET", re.compile(r"^/virtual-servers/[^/]+/prompts(?:$|/)"), Permissions.SERVERS_READ),
     # Server management permissions
     ("GET", re.compile(r"^/servers/[^/]+/sse(?:$|/)"), Permissions.SERVERS_USE),  # Server SSE access endpoint
     ("GET", re.compile(r"^/servers(?:$|/)"), Permissions.SERVERS_READ),
@@ -132,14 +132,14 @@ _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     ("PUT", re.compile(r"^/servers/[^/]+(?:$|/)"), Permissions.SERVERS_UPDATE),
     ("DELETE", re.compile(r"^/servers/[^/]+(?:$|/)"), Permissions.SERVERS_DELETE),
     # Versioned virtual-server aliases (/v1 is stripped during request normalization).
-    ("GET", re.compile(r"^/(?:v1/)?virtual-servers/[^/]+/sse(?:$|/)"), Permissions.SERVERS_USE),
-    ("GET", re.compile(r"^/(?:v1/)?virtual-servers(?:$|/)"), Permissions.SERVERS_READ),
-    ("POST", re.compile(r"^/(?:v1/)?virtual-servers/?$"), Permissions.SERVERS_CREATE),
-    ("POST", re.compile(r"^/(?:v1/)?virtual-servers/[^/]+/(?:state|toggle)(?:$|/)"), Permissions.SERVERS_UPDATE),
-    ("POST", re.compile(r"^/(?:v1/)?virtual-servers/[^/]+/message(?:$|/)"), Permissions.SERVERS_USE),
-    ("POST", re.compile(r"^/(?:v1/)?virtual-servers/[^/]+/mcp(?:$|/)"), Permissions.SERVERS_USE),
-    ("PUT", re.compile(r"^/(?:v1/)?virtual-servers/[^/]+(?:$|/)"), Permissions.SERVERS_UPDATE),
-    ("DELETE", re.compile(r"^/(?:v1/)?virtual-servers/[^/]+(?:$|/)"), Permissions.SERVERS_DELETE),
+    ("GET", re.compile(r"^/virtual-servers/[^/]+/sse(?:$|/)"), Permissions.SERVERS_USE),
+    ("GET", re.compile(r"^/virtual-servers(?:$|/)"), Permissions.SERVERS_READ),
+    ("POST", re.compile(r"^/virtual-servers/?$"), Permissions.SERVERS_CREATE),
+    ("POST", re.compile(r"^/virtual-servers/[^/]+/(?:state|toggle)(?:$|/)"), Permissions.SERVERS_UPDATE),
+    ("POST", re.compile(r"^/virtual-servers/[^/]+/message(?:$|/)"), Permissions.SERVERS_USE),
+    ("POST", re.compile(r"^/virtual-servers/[^/]+/mcp(?:$|/)"), Permissions.SERVERS_USE),
+    ("PUT", re.compile(r"^/virtual-servers/[^/]+(?:$|/)"), Permissions.SERVERS_UPDATE),
+    ("DELETE", re.compile(r"^/virtual-servers/[^/]+(?:$|/)"), Permissions.SERVERS_DELETE),
     # Gateway permissions
     ("GET", re.compile(r"^/gateways(?:$|/)"), Permissions.GATEWAYS_READ),
     ("POST", re.compile(r"^/gateways/?$"), Permissions.GATEWAYS_CREATE),  # Only exact /gateways or /gateways/
@@ -155,11 +155,11 @@ _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     # MCP Servers REST API (v1 prefix stripped by middleware before matching)
     ("POST", re.compile(r"^/mcp-servers/test(?:$|/)"), Permissions.GATEWAYS_READ),
     # Versioned MCP-server aliases (/v1 is stripped during request normalization).
-    ("GET", re.compile(r"^/(?:v1/)?mcp-servers(?:$|/)"), Permissions.GATEWAYS_READ),
-    ("POST", re.compile(r"^/(?:v1/)?mcp-servers/?$"), Permissions.GATEWAYS_CREATE),
-    ("POST", re.compile(r"^/(?:v1/)?mcp-servers/[^/]+/"), Permissions.GATEWAYS_UPDATE),  # POST to sub-resources (state, toggle, refresh)
-    ("PUT", re.compile(r"^/(?:v1/)?mcp-servers/[^/]+(?:$|/)"), Permissions.GATEWAYS_UPDATE),
-    ("DELETE", re.compile(r"^/(?:v1/)?mcp-servers/[^/]+(?:$|/)"), Permissions.GATEWAYS_DELETE),
+    ("GET", re.compile(r"^/mcp-servers(?:$|/)"), Permissions.GATEWAYS_READ),
+    ("POST", re.compile(r"^/mcp-servers/?$"), Permissions.GATEWAYS_CREATE),
+    ("POST", re.compile(r"^/mcp-servers/[^/]+/"), Permissions.GATEWAYS_UPDATE),  # POST to sub-resources (state, toggle, refresh)
+    ("PUT", re.compile(r"^/mcp-servers/[^/]+(?:$|/)"), Permissions.GATEWAYS_UPDATE),
+    ("DELETE", re.compile(r"^/mcp-servers/[^/]+(?:$|/)"), Permissions.GATEWAYS_DELETE),
     # MCP registry catalog (v1 prefix stripped by middleware before matching)
     ("GET", re.compile(r"^/catalog(?:$|/)"), Permissions.SERVERS_READ),
     ("POST", re.compile(r"^/catalog/[^/]+/register(?:$|/)"), Permissions.SERVERS_CREATE),
