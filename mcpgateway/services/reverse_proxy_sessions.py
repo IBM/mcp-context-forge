@@ -10,6 +10,7 @@ duplicate local connections. It does not convey ownership or access scope.
 """
 
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 import logging
 from types import TracebackType
 from typing import Final, NewType, Protocol, TypeAlias, assert_never
@@ -116,6 +117,15 @@ class ReverseProxySession:
     connection_id: ConnectionId
     local_id: LocalSessionId
     websocket: TextWebSocket
+    last_heartbeat: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class ReverseProxyEviction:
+    """Stable mapping removed from one specific connection generation."""
+
+    stable_id: StableGatewayId
+    connection_id: ConnectionId
 
 
 PendingResult: TypeAlias = ResponseMessage | ConnectionClosedError
@@ -228,20 +238,29 @@ class ReverseProxySessionManager:
         self._registration_locks: dict[StableGatewayId, _RegistrationLockEntry] = {}
         self._lock = anyio.Lock()
 
-    async def connect(self, websocket: TextWebSocket, local_id: LocalSessionId) -> ReverseProxySession:
+    async def connect(self, websocket: TextWebSocket, local_id: LocalSessionId, *, now: datetime | None = None) -> ReverseProxySession:
         """Register a connection using a fresh server-generated identity."""
+        connected_at = now or datetime.now(tz=timezone.utc)
         async with self._lock:
             if local_id in self._local_connections:
                 raise DuplicateLocalSessionError(local_id=local_id)
             connection_id = ConnectionId(uuid.uuid4().hex)
-            session = ReverseProxySession(connection_id=connection_id, local_id=local_id, websocket=websocket)
+            session = ReverseProxySession(connection_id=connection_id, local_id=local_id, websocket=websocket, last_heartbeat=connected_at)
             self._sessions[connection_id] = session
             self._local_connections[local_id] = connection_id
             return session
 
-    async def disconnect(self, connection_id: ConnectionId) -> None:
-        """Remove a connection and fail all of its outstanding requests."""
+    async def disconnect(self, connection_id: ConnectionId, *, stale_before: datetime | None = None) -> tuple[ReverseProxyEviction, ...]:
+        """Remove a connection, fail its requests, and return stable mappings cleared.
+
+        When ``stale_before`` is supplied, cleanup occurs only if the connection's
+        latest heartbeat is older than that cutoff. This makes a reaper's stale
+        scan atomic with respect to a heartbeat arriving during eviction.
+        """
         async with self._lock:
+            current = self._sessions.get(connection_id)
+            if current is None or (stale_before is not None and current.last_heartbeat >= stale_before):
+                return ()
             session = self._sessions.pop(connection_id, None)
             if session is not None:
                 self._local_connections.pop(session.local_id, None)
@@ -252,6 +271,50 @@ class ReverseProxySessionManager:
             stable_ids = [sid for sid, cid in self._stable_connections.items() if cid == connection_id]
             for sid in stable_ids:
                 self._stable_connections.pop(sid, None)
+            return tuple(ReverseProxyEviction(stable_id=stable_id, connection_id=connection_id) for stable_id in stable_ids)
+
+    async def record_heartbeat(self, connection_id: ConnectionId, *, now: datetime | None = None) -> datetime:
+        """Record and return the latest heartbeat for an active connection."""
+        heartbeat_at = now or datetime.now(tz=timezone.utc)
+        async with self._lock:
+            session = self._sessions.get(connection_id)
+            if session is None:
+                raise ConnectionNotFoundError(connection_id=connection_id)
+            self._sessions[connection_id] = ReverseProxySession(
+                connection_id=session.connection_id,
+                local_id=session.local_id,
+                websocket=session.websocket,
+                last_heartbeat=heartbeat_at,
+            )
+        return heartbeat_at
+
+    def last_heartbeat(self, connection_id: ConnectionId) -> datetime | None:
+        """Return the active connection's latest heartbeat timestamp."""
+        session = self._sessions.get(connection_id)
+        return session.last_heartbeat if session is not None else None
+
+    async def reap_stale(self, *, now: datetime, timeout_seconds: float) -> tuple[ReverseProxyEviction, ...]:
+        """Disconnect stale sessions and return the stable gateway IDs evicted.
+
+        A non-positive timeout disables reaping. The public ``disconnect`` path
+        owns all pending-call and mapping cleanup; its cutoff recheck prevents a
+        heartbeat concurrent with this scan from being evicted.
+        """
+        if timeout_seconds <= 0:
+            return ()
+        stale_before = now - timedelta(seconds=timeout_seconds)
+        candidates = tuple((connection_id, session.websocket) for connection_id, session in self._sessions.items() if session.last_heartbeat < stale_before)
+        evicted: list[ReverseProxyEviction] = []
+        for connection_id, websocket in candidates:
+            stable_ids = await self.disconnect(connection_id, stale_before=stale_before)
+            if self.last_heartbeat(connection_id) is None:
+                try:
+                    with anyio.fail_after(_RETIRE_CLOSE_TIMEOUT_SECONDS):
+                        await websocket.close()
+                except Exception as close_error:  # best-effort: timeout, or a stale socket already lost
+                    logger.debug("Reverse proxy stale connection %s close failed: %s", connection_id, close_error)
+            evicted.extend(stable_ids)
+        return tuple(evicted)
 
     async def send_request(self, connection_id: ConnectionId, payload: JsonRpcRequest, timeout_seconds: float, auth: DownstreamAuth | None = None) -> ResponseMessage:
         """Install correlation, send a request, and await its connection-scoped response.

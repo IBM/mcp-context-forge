@@ -8371,6 +8371,56 @@ class TestCheckHealthOfGateways:
         assert result is True
         gateway_service._check_single_gateway_health.assert_awaited_once()
 
+    @pytest.mark.asyncio
+    async def test_batch_excludes_internal_proxied_gateway_from_url_probe(self, gateway_service, monkeypatch):
+        """Server-authoritative PROXIED rows derive health from WebSocket state and are never URL-probed."""
+        proxied = MagicMock(spec=DbGateway)
+        proxied.id = "proxied"
+        proxied.name = "proxied"
+        proxied.auth_type = None
+        proxied.transport = "PROXIED"
+        proxied.created_via = "reverse_proxy"
+        normal = MagicMock(spec=DbGateway)
+        normal.id = "normal"
+        normal.name = "normal"
+        normal.auth_type = None
+        normal.transport = "SSE"
+        normal.created_via = "api"
+        monkeypatch.setattr("mcpgateway.services.gateway_service.create_span", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False))))
+        gateway_service._check_single_gateway_health = AsyncMock()
+
+        result = await gateway_service.check_health_of_gateways([proxied, normal])
+
+        assert result is True
+        gateway_service._check_single_gateway_health.assert_awaited_once_with(normal, None)
+
+    @pytest.mark.asyncio
+    async def test_forged_proxied_gateway_fails_health_closed(self, gateway_service):
+        """A PROXIED transport without server provenance is unsupported, never healthy."""
+        gateway = MagicMock(spec=DbGateway)
+        gateway.id = "forged"
+        gateway.name = "forged"
+        gateway.url = "reverse-proxy://catalog/forged"
+        gateway.transport = "PROXIED"
+        gateway.created_via = "api"
+        gateway.enabled = True
+        gateway.reachable = False
+        gateway.ca_certificate = None
+        gateway.ca_certificate_sig = None
+        gateway.auth_type = None
+        gateway.oauth_config = None
+        gateway.auth_value = None
+        gateway.auth_query_params = None
+        gateway.client_cert = None
+        gateway.client_key = None
+        gateway_service._mark_gateway_reachable = AsyncMock()
+        gateway_service._handle_gateway_failure = AsyncMock()
+
+        await gateway_service._check_single_gateway_health(gateway)
+
+        gateway_service._mark_gateway_reachable.assert_not_awaited()
+        gateway_service._handle_gateway_failure.assert_awaited_once_with(gateway)
+
 
 # ---------------------------------------------------------------------------
 # set_gateway_state activation with stale cleanup

@@ -62,6 +62,16 @@ LOGGER = logging_service.get_logger("mcpgateway.routers.reverse_proxy")
 router = APIRouter(prefix="/reverse-proxy", tags=["reverse-proxy"])
 
 
+async def _persist_unreachable_best_effort(session_manager, evictions) -> None:
+    """Persist disconnect reachability without masking transport cleanup."""
+    try:
+        from mcpgateway.services.gateway_service import gateway_service  # pylint: disable=import-outside-toplevel
+
+        await gateway_service.mark_reverse_proxy_gateways_unreachable(session_manager, evictions, seen_at=datetime.now(tz=timezone.utc))
+    except Exception as persistence_error:
+        LOGGER.warning("Reverse-proxy reachability persistence failed", exc_info=persistence_error)
+
+
 class _LockedConnectionIO:
     """Serialize every send and close on one reverse-proxy connection.
 
@@ -489,7 +499,8 @@ async def websocket_endpoint(
                                 LOGGER.info(f"Unregistering server for connection {connection_id}")
                                 break
                             case HeartbeatMessage():
-                                await send_frame(encode_server_message(heartbeat(str(connection_id), datetime.now(tz=timezone.utc))))
+                                heartbeat_at = await session_manager.record_heartbeat(connection_id)
+                                await send_frame(encode_server_message(heartbeat(str(connection_id), heartbeat_at)))
                             case ResponseMessage():
                                 if not session_manager.resolve_response(connection_id, message):
                                     LOGGER.debug(f"Unmatched response from connection {connection_id}: {message.payload.id}")
@@ -513,7 +524,8 @@ async def websocket_endpoint(
         # guarantee the legacy mirror removal runs even when it fails.
         with anyio.CancelScope(shield=True):
             try:
-                await session_manager.disconnect(connection_id)
+                disconnected_stable_ids = await session_manager.disconnect(connection_id)
+                await _persist_unreachable_best_effort(session_manager, disconnected_stable_ids)
             finally:
                 await manager.remove_session(str(connection_id))
         LOGGER.info(f"Reverse proxy session ended: {connection_id}")
@@ -587,13 +599,16 @@ async def disconnect_session(
     # and pending calls fail closed immediately, then close the socket bounded
     # and best-effort: a stalled or already-lost connection cannot block cleanup.
     session_manager = await get_reverse_proxy_session_manager()
-    await session_manager.disconnect(ConnectionId(session_id))
-    await manager.remove_session(session_id)
+    disconnected_stable_ids = await session_manager.disconnect(ConnectionId(session_id))
+    await _persist_unreachable_best_effort(session_manager, disconnected_stable_ids)
     try:
-        with anyio.fail_after(_HTTP_DISCONNECT_CLOSE_TIMEOUT_SECONDS):
-            await session.websocket.close()
-    except Exception as close_error:
-        LOGGER.debug("Reverse proxy HTTP disconnect close for session %s failed: %s", session_id, close_error)
+        await manager.remove_session(session_id)
+    finally:
+        try:
+            with anyio.fail_after(_HTTP_DISCONNECT_CLOSE_TIMEOUT_SECONDS):
+                await session.websocket.close()
+        except Exception as close_error:
+            LOGGER.debug("Reverse proxy HTTP disconnect close for session %s failed: %s", session_id, close_error)
 
     return {"status": "disconnected", "session_id": session_id}
 

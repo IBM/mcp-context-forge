@@ -118,6 +118,7 @@ from mcpgateway.services.http_client_service import get_default_verify, get_http
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.mcp_apps import merge_mcp_protocol_meta, optional_extension_metadata, validate_extension_metadata, validate_ui_resource
 from mcpgateway.services.oauth_manager import OAuthManager
+from mcpgateway.services.reverse_proxy_sessions import ReverseProxyEviction, ReverseProxySessionManager
 from mcpgateway.services.session_affinity import register_gateway_capabilities_for_notifications
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
@@ -1741,6 +1742,42 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         db.refresh(db_gateway)
         await self.finalize_reverse_proxy_gateway(db_gateway, registration, created=True)
         return self.convert_gateway_to_read(db_gateway)
+
+    async def mark_reverse_proxy_gateways_unreachable(
+        self,
+        session_manager: ReverseProxySessionManager,
+        evictions: tuple[ReverseProxyEviction, ...],
+        *,
+        seen_at: datetime,
+    ) -> None:
+        """Persist generation-safe disconnect state for authoritative PROXIED rows."""
+        if not evictions:
+            return
+        changed = False
+        first_error: Exception | None = None
+        for eviction in evictions:
+            try:
+                async with session_manager.registration_lock(eviction.stable_id):
+                    if session_manager.resolve_connection_id(eviction.stable_id) is not None:
+                        continue
+                    with fresh_db_session() as db:
+                        gateway = db.get(DbGateway, str(eviction.stable_id))
+                        if gateway is not None and _is_internal_proxied_gateway(gateway):
+                            gateway.reachable = False
+                            gateway.last_seen = seen_at
+                            db.commit()
+                            changed = True
+            except Exception as persistence_error:  # pylint: disable=broad-exception-caught
+                if first_error is None:
+                    first_error = persistence_error
+        if changed:
+            try:
+                await _get_registry_cache().invalidate_gateways()
+            except Exception as cache_error:  # pylint: disable=broad-exception-caught
+                if first_error is None:
+                    first_error = cache_error
+        if first_error is not None:
+            raise first_error
 
     async def finalize_reverse_proxy_gateway(self, db_gateway: DbGateway, registration: ReverseProxyGatewayRegistration, *, created: bool) -> None:
         """Publish reverse-proxy gateway effects after its transaction commits."""
@@ -4764,7 +4801,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 batch = gateways[i : i + chunk_size]
 
                 # Each task is a health check for a gateway in the batch, excluding those with auth_type == "one_time_auth"
-                tasks = [limited_check(gw) for gw in batch if gw.auth_type != "one_time_auth"]
+                tasks = [limited_check(gw) for gw in batch if gw.auth_type != "one_time_auth" and not _is_internal_proxied_gateway(gw)]
 
                 # Execute all health checks concurrently
                 await asyncio.gather(*tasks, return_exceptions=True)
@@ -4818,6 +4855,12 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             gateway: Gateway to check (may be detached from session)
             user_email: Optional user email for OAuth token lookup
         """
+        # PROXIED is an internal WebSocket-derived transport. An authoritative row
+        # is excluded by the batch scheduler; a forged/direct call fails closed.
+        if str(gateway.transport or "").upper() == "PROXIED":
+            await self._handle_gateway_failure(gateway)
+            return
+
         # Extract gateway data upfront (gateway may be detached from session)
         gateway_id = gateway.id
         gateway_name = gateway.name
