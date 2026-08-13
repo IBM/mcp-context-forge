@@ -36,12 +36,8 @@ spec:
       {{- end }}
       automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
       securityContext:
-        {{- if .Values.redis.podSecurityContext }}
-        {{- toYaml .Values.redis.podSecurityContext | nindent 8 }}
-        {{- else }}
         seccompProfile:
           type: RuntimeDefault
-        {{- end }}
       containers:
         - name: redis
           securityContext:
