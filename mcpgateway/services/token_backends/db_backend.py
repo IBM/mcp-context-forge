@@ -26,7 +26,7 @@ from mcpgateway.services.encryption_service import get_encryption_service
 from mcpgateway.services.oauth_manager import OAuthError, OAuthInvalidGrantError, OAuthManager, parse_expires_in
 
 from .base import AbstractTokenBackend, TokenRecord
-from .refresh_helpers import apply_omit_resource_and_normalize, compute_prior_ttl
+from .refresh_helpers import apply_omit_resource_and_normalize, check_private_gateway_access, compute_prior_ttl
 
 logger = logging.getLogger(__name__)
 
@@ -407,15 +407,12 @@ class DatabaseTokenBackend(AbstractTokenBackend):
                 return None
 
             # PR #4341: Refuse refresh on private gateway whose owner != token owner
-            gateway_visibility = getattr(gateway, "visibility", "public")
-            gateway_owner_email = getattr(gateway, "owner_email", None)
-            if gateway_visibility == "private" and gateway_owner_email and gateway_owner_email != token_record.app_user_email:
-                logger.warning(
-                    "OAuth refresh denied: gateway %s is private and owned by %s, not token owner %s",
-                    token_record.gateway_id,
-                    gateway_owner_email,
-                    token_record.app_user_email,
-                )
+            if not check_private_gateway_access(
+                gateway_visibility=getattr(gateway, "visibility", "public"),
+                gateway_owner_email=getattr(gateway, "owner_email", None),
+                token_owner_email=token_record.app_user_email,
+                gateway_id=token_record.gateway_id,
+            ):
                 return None
 
             # Decrypt the refresh token

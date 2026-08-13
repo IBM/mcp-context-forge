@@ -1165,7 +1165,7 @@ class TestVaultTokenBackendRefreshToken:
             "user_id": "user123"
         }
 
-        with patch("mcpgateway.services.token_backends.vault_backend.logger") as mock_logger:
+        with patch("mcpgateway.services.token_backends.refresh_helpers.logger") as mock_logger:
             result = await backend._refresh_access_token(
                 gateway_id="gw-1",
                 team_id="team1",

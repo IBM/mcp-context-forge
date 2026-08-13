@@ -665,7 +665,7 @@ async def test_refresh_resource_string_normalizes_to_empty_logs_warning(service,
     import logging
 
     with caplog.at_level(logging.WARNING):
-        with patch("mcpgateway.services.token_backends.base.urlunparse", return_value=""):
+        with patch("mcpgateway.utils.oauth_resource.urlunparse", return_value=""):
             with patch("mcpgateway.services.token_backends.db_backend.OAuthManager", return_value=mock_oauth_manager):
                 result = await service._refresh_access_token(_make_token_record())
 
