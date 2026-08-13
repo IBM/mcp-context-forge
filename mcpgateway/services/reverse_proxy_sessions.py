@@ -9,16 +9,16 @@ Process-local reverse-proxy connections and pending responses.
 duplicate local connections. It does not convey ownership or access scope.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 import logging
 from types import TracebackType
-from typing import Final, NewType, Protocol, TypeAlias, assert_never
+from typing import Final, Mapping, NewType, Protocol, TypeAlias, assert_never
 import uuid
 
 import anyio
 
-from mcpgateway.services.reverse_proxy_protocol import DownstreamAuth, JsonRpcId, JsonRpcNotification, JsonRpcRequest, ResponseMessage, encode_server_message, request
+from mcpgateway.services.reverse_proxy_protocol import DownstreamAuth, JsonRpcId, JsonRpcNotification, JsonRpcRequest, JsonValue, ResponseMessage, encode_server_message, request
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +32,15 @@ PendingKey: TypeAlias = tuple[ConnectionId, JsonRpcId]
 # close serializes on the connection's own I/O lock, so a close stuck behind a
 # stalled send must never hang the retiring registration.
 _RETIRE_CLOSE_TIMEOUT_SECONDS: Final = 5.0
+
+
+def _utc_timestamp(value: datetime | None) -> datetime:
+    """Return an aware UTC timestamp or reject ambiguous naive input."""
+    timestamp = value or datetime.now(tz=timezone.utc)
+    if timestamp.tzinfo is None or timestamp.utcoffset() is None:
+        msg = "reverse-proxy session timestamps must be timezone-aware"
+        raise ValueError(msg)
+    return timestamp.astimezone(timezone.utc)
 
 
 class TextWebSocket(Protocol):
@@ -118,6 +127,12 @@ class ReverseProxySession:
     local_id: LocalSessionId
     websocket: TextWebSocket
     last_heartbeat: datetime
+    owner_email: str | None = None
+    connected_at: datetime = field(default_factory=lambda: datetime.now(tz=timezone.utc))
+    last_activity: datetime = field(default_factory=lambda: datetime.now(tz=timezone.utc))
+    message_count: int = 0
+    bytes_transferred: int = 0
+    server_info: Mapping[str, JsonValue] = field(default_factory=dict)
 
 
 @dataclass(frozen=True, slots=True)
@@ -238,14 +253,22 @@ class ReverseProxySessionManager:
         self._registration_locks: dict[StableGatewayId, _RegistrationLockEntry] = {}
         self._lock = anyio.Lock()
 
-    async def connect(self, websocket: TextWebSocket, local_id: LocalSessionId, *, now: datetime | None = None) -> ReverseProxySession:
+    async def connect(self, websocket: TextWebSocket, local_id: LocalSessionId, *, owner_email: str | None = None, now: datetime | None = None) -> ReverseProxySession:
         """Register a connection using a fresh server-generated identity."""
-        connected_at = now or datetime.now(tz=timezone.utc)
+        connected_at = _utc_timestamp(now)
         async with self._lock:
             if local_id in self._local_connections:
                 raise DuplicateLocalSessionError(local_id=local_id)
             connection_id = ConnectionId(uuid.uuid4().hex)
-            session = ReverseProxySession(connection_id=connection_id, local_id=local_id, websocket=websocket, last_heartbeat=connected_at)
+            session = ReverseProxySession(
+                connection_id=connection_id,
+                local_id=local_id,
+                websocket=websocket,
+                owner_email=owner_email,
+                connected_at=connected_at,
+                last_activity=connected_at,
+                last_heartbeat=connected_at,
+            )
             self._sessions[connection_id] = session
             self._local_connections[local_id] = connection_id
             return session
@@ -275,23 +298,55 @@ class ReverseProxySessionManager:
 
     async def record_heartbeat(self, connection_id: ConnectionId, *, now: datetime | None = None) -> datetime:
         """Record and return the latest heartbeat for an active connection."""
-        heartbeat_at = now or datetime.now(tz=timezone.utc)
+        heartbeat_at = _utc_timestamp(now)
         async with self._lock:
             session = self._sessions.get(connection_id)
             if session is None:
                 raise ConnectionNotFoundError(connection_id=connection_id)
-            self._sessions[connection_id] = ReverseProxySession(
-                connection_id=session.connection_id,
-                local_id=session.local_id,
-                websocket=session.websocket,
-                last_heartbeat=heartbeat_at,
-            )
+            self._sessions[connection_id] = replace(session, last_heartbeat=heartbeat_at, last_activity=heartbeat_at)
         return heartbeat_at
+
+    async def record_server_info(self, connection_id: ConnectionId, server_info: Mapping[str, JsonValue]) -> None:
+        """Store non-authoritative server metadata on an active typed session."""
+        async with self._lock:
+            session = self._sessions.get(connection_id)
+            if session is None:
+                raise ConnectionNotFoundError(connection_id=connection_id)
+            self._sessions[connection_id] = replace(session, server_info=dict(server_info))
+
+    def record_received(self, connection_id: ConnectionId, character_count: int, *, now: datetime | None = None) -> None:
+        """Account for one complete inbound WebSocket text frame."""
+        self._record_activity(connection_id, character_count=character_count, increment_message_count=True, now=now)
+
+    def record_sent(self, connection_id: ConnectionId, character_count: int, *, now: datetime | None = None) -> None:
+        """Account for one complete outbound WebSocket text frame."""
+        self._record_activity(connection_id, character_count=character_count, increment_message_count=False, now=now)
+
+    def _record_activity(self, connection_id: ConnectionId, *, character_count: int, increment_message_count: bool, now: datetime | None = None) -> None:
+        """Replace one typed session snapshot after a successful frame boundary."""
+        activity_at = _utc_timestamp(now)
+        session = self._sessions.get(connection_id)
+        if session is None:
+            raise ConnectionNotFoundError(connection_id=connection_id)
+        self._sessions[connection_id] = replace(
+            session,
+            last_activity=activity_at,
+            message_count=session.message_count + int(increment_message_count),
+            bytes_transferred=session.bytes_transferred + character_count,
+        )
 
     def last_heartbeat(self, connection_id: ConnectionId) -> datetime | None:
         """Return the active connection's latest heartbeat timestamp."""
         session = self._sessions.get(connection_id)
         return session.last_heartbeat if session is not None else None
+
+    def get_session(self, connection_id: ConnectionId) -> ReverseProxySession | None:
+        """Return one active typed session by its server-owned connection ID."""
+        return self._sessions.get(connection_id)
+
+    def list_sessions(self) -> tuple[ReverseProxySession, ...]:
+        """Return a stable snapshot of all active typed sessions."""
+        return tuple(self._sessions.values())
 
     async def reap_stale(self, *, now: datetime, timeout_seconds: float) -> tuple[ReverseProxyEviction, ...]:
         """Disconnect stale sessions and return the stable gateway IDs evicted.
@@ -316,7 +371,15 @@ class ReverseProxySessionManager:
             evicted.extend(stable_ids)
         return tuple(evicted)
 
-    async def send_request(self, connection_id: ConnectionId, payload: JsonRpcRequest, timeout_seconds: float, auth: DownstreamAuth | None = None) -> ResponseMessage:
+    async def send_request(
+        self,
+        connection_id: ConnectionId,
+        payload: JsonRpcRequest,
+        timeout_seconds: float,
+        auth: DownstreamAuth | None = None,
+        *,
+        now: datetime | None = None,
+    ) -> ResponseMessage:
         """Install correlation, send a request, and await its connection-scoped response.
 
         When ``auth`` is given, its headers and type ride the request envelope as
@@ -338,20 +401,30 @@ class ReverseProxySessionManager:
             with anyio.fail_after(timeout_seconds):
                 with anyio.CancelScope() as operation_scope:
                     pending.attach_operation_scope(operation_scope)
-                    await session.websocket.send_text(encode_server_message(request(str(connection_id), payload, auth=auth)))
+                    frame = encode_server_message(request(str(connection_id), payload, auth=auth))
+                    await session.websocket.send_text(frame)
+                    try:
+                        self.record_sent(connection_id, character_count=len(frame), now=now)
+                    except ConnectionNotFoundError:
+                        return pending.result()
                     return await pending.wait()
                 return pending.result()
         finally:
             if self._pending.get(key) is pending:
                 self._pending.pop(key)
 
-    async def send_notification(self, connection_id: ConnectionId, payload: JsonRpcNotification, timeout_seconds: float) -> None:
+    async def send_notification(self, connection_id: ConnectionId, payload: JsonRpcNotification, timeout_seconds: float, *, now: datetime | None = None) -> None:
         """Send a notification without installing response correlation."""
         session = self._sessions.get(connection_id)
         if session is None:
             raise ConnectionNotFoundError(connection_id=connection_id)
         with anyio.fail_after(timeout_seconds):
-            await session.websocket.send_text(encode_server_message(request(str(connection_id), payload)))
+            frame = encode_server_message(request(str(connection_id), payload))
+            await session.websocket.send_text(frame)
+            try:
+                self.record_sent(connection_id, character_count=len(frame), now=now)
+            except ConnectionNotFoundError:
+                raise ConnectionClosedError(connection_id=connection_id) from None
 
     def resolve_response(self, connection_id: ConnectionId, response: ResponseMessage) -> bool:
         """Resolve only the pending request owned by the responding connection."""
