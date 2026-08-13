@@ -2724,9 +2724,9 @@ MCP_BENCHMARK_TOOLS_MASTER_PORT ?= 5569
 MCP_BENCHMARK_LOCUST_LOG_LEVEL ?= ERROR
 MCP_BENCHMARK_TOOL_POOL_SIZE ?= 0
 MCP_BENCHMARK_TOOL_DENYLIST ?= schema_error,flaky
-MCP_BENCHMARK_WORKER_LOG_DIR ?= reports/mcp_benchmark_workers
-MCP_BENCHMARK_HTML_REPORT    := reports/benchmark_mcp_tools.html
-MCP_BENCHMARK_CSV_PREFIX     := reports/benchmark_mcp_tools
+MCP_BENCHMARK_WORKER_LOG_DIR      ?= reports/mcp_benchmark_workers
+MCP_BENCHMARK_TOOLS_HTML_REPORT   ?= reports/benchmark_mcp_tools.html
+MCP_BENCHMARK_TOOLS_CSV_PREFIX    ?= reports/benchmark_mcp_tools
 RL_LIMIT_PER_MIN ?= 30
 
 load-test-mcp-protocol:                    ## MCP Streamable HTTP protocol test (150 users, 2min)
@@ -2806,13 +2806,13 @@ benchmark-mcp-tools:                        ## Quick tools-only MCP benchmark ag
 			--spawn-rate=$(MCP_BENCHMARK_SPAWN_RATE) \
 			--run-time=$(MCP_BENCHMARK_RUN_TIME) \
 			--headless \
-			--html=$(MCP_BENCHMARK_HTML_REPORT) \
-			--csv=$(MCP_BENCHMARK_CSV_PREFIX) \
+			--html=$(MCP_BENCHMARK_TOOLS_HTML_REPORT) \
+			--csv=$(MCP_BENCHMARK_TOOLS_CSV_PREFIX) \
 			--only-summary \
 			MCPToolCallerUser'
 	@echo ""
-	@echo "📄 HTML Report: $(MCP_BENCHMARK_HTML_REPORT)"
-	@echo "📊 CSV Reports: $(MCP_BENCHMARK_CSV_PREFIX)_stats.csv"
+	@echo "📄 HTML Report: $(MCP_BENCHMARK_TOOLS_HTML_REPORT)"
+	@echo "📊 CSV Reports: $(MCP_BENCHMARK_TOOLS_CSV_PREFIX)_stats.csv"
 
 # help: benchmark-rate-limiter   - Rate limiter correctness test: unique users, controlled pacing
 .PHONY: benchmark-rate-limiter
