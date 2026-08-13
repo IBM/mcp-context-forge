@@ -96,4 +96,3 @@ def build_initialize(request_id: int = 1) -> dict[str, Any]:
             "clientInfo": {"name": "mcp-cli-test", "version": "1.0.0"},
         },
     }
-

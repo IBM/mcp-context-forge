@@ -270,5 +270,3 @@ def test_langfuse_trace_export_eventually_contains_root_list_trace(admin_jwt_tok
     assert "auth:jwt" in trace.get("tags", [])
     assert trace_attrs.get("langfuse.user.id") == ADMIN_EMAIL
     assert trace_attrs.get("langfuse.trace.name") == "Roots"
-
-
