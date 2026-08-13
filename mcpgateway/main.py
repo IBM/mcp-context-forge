@@ -4610,7 +4610,12 @@ async def sse_endpoint(request: Request, server_id: str, db: Session = Depends(g
 
 @server_router.post("/{server_id}/message")
 @require_permission("servers.use")
-async def message_endpoint(request: Request, server_id: str = Depends(require_valid_server), user=Depends(get_current_user_with_permissions)):
+async def message_endpoint(
+    request: Request,
+    server_id: str,
+    user=Depends(get_current_user_with_permissions),
+    _server_exists: str = Depends(require_valid_server),
+):
     """
     Handles incoming messages for a specific server.
 
