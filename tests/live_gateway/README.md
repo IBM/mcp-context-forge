@@ -32,7 +32,6 @@ Specific subsuites need additional services on top:
 |---|---|---|
 | `mcp/` | gateway with MCP transports registered | `make testing-up` (default profile) |
 | `sso/` | Keycloak (jwks tests) and/or Entra ID (entra tests) | `docker compose --profile sso up -d` for Keycloak; `AZURE_*` env vars for Entra |
-| `protocol_compliance/` | gateway in proxy + virtual-server modes | `make testing-up` |
 | `e2e_rust/` | gateway built with the Rust transport (edge or full mode) | `make testing-up` with the Rust profile, or rebuild compose images with Rust enabled |
 
 `tests/live_gateway/helpers/` holds shared fixtures used across these
@@ -51,9 +50,6 @@ make test-mcp-plugin-parity        # tests/live_gateway/mcp/test_mcp_plugin_pari
 make test-mcp-access-matrix        # tests/live_gateway/e2e_rust/test_mcp_access_matrix.py
 make test-mcp-session-isolation    # tests/live_gateway/e2e_rust/test_mcp_session_isolation.py
 make test-e2e-sso                  # tests/live_gateway/sso/
-make test-protocol-compliance      # tests/live_gateway/protocol_compliance/ (full matrix)
-make test-protocol-compliance-reference  # reference-target only (fast)
-make test-protocol-compliance-gateway    # gateway-target only
 
 # Or run a specific file directly via uv
 uv run --extra plugins pytest tests/live_gateway/mcp/test_langfuse_traces.py -v

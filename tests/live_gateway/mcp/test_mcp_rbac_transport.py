@@ -3,7 +3,7 @@
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 
-RBAC + multi-transport MCP protocol tests using Playwright API + FastMCP Client.
+RBAC + multi-transport MCP protocol tests using Playwright API + the official ``mcp`` SDK client.
 
 Exercises MCP JSON-RPC protocol behaviour across multiple users, RBAC roles, token
 scopes, server visibilities, and transports (Streamable HTTP). All user/team/role
@@ -17,7 +17,7 @@ requests with HTTP 400 responses.
 Requirements:
     - ContextForge running with docker-compose (default: http://localhost:8080)
     - fast_time_server registered as Streamable HTTP gateway
-    - FastMCP client dependencies installed
+    - ``mcp`` SDK installed (core dependency)
     - playwright installed: pip install playwright
 
 Usage:
@@ -30,8 +30,10 @@ from __future__ import annotations
 
 # Standard
 import asyncio
+from collections.abc import AsyncIterator
 import concurrent.futures
-from contextlib import suppress
+from contextlib import asynccontextmanager, suppress
+from datetime import timedelta
 import logging
 import os
 import time
@@ -41,9 +43,8 @@ import uuid
 # Third-Party
 import httpx
 import pytest
-from fastmcp.client import Client
-from fastmcp.client.auth import BearerAuth
-from mcp import McpError
+from mcp import ClientSession, McpError
+from mcp.client.streamable_http import streamablehttp_client
 
 pw = pytest.importorskip("playwright", reason="playwright is not installed – pip install playwright")
 from playwright.sync_api import APIRequestContext, Playwright
@@ -427,41 +428,45 @@ def _mcp_client_url(server_url: str = BASE_URL) -> str:
     return f"{server_url}/mcp/" if not server_url.endswith(("/mcp", "/mcp/")) else server_url.rstrip("/") + "/"
 
 
-async def _async_mcp_tools_list(access_token: str, server_url: str = BASE_URL) -> list:
+@asynccontextmanager
+async def _mcp_session(server_url: str, access_token: str | None = None) -> AsyncIterator[ClientSession]:
+    """Open an initialized MCP client session over Streamable HTTP."""
     url = _mcp_client_url(server_url)
-    async with Client(url, auth=BearerAuth(access_token), init_timeout=_CLIENT_TIMEOUT, timeout=_CLIENT_TIMEOUT) as client:
-        return await client.list_tools()
+    headers = {"Authorization": f"Bearer {access_token}"} if access_token else None
+    timeout = timedelta(seconds=_CLIENT_TIMEOUT)
+    async with streamablehttp_client(url, headers=headers, timeout=timeout, sse_read_timeout=timeout) as (read_stream, write_stream, _):
+        async with ClientSession(read_stream, write_stream, read_timeout_seconds=timeout) as session:
+            await session.initialize()
+            yield session
+
+
+async def _async_mcp_tools_list(access_token: str, server_url: str = BASE_URL) -> list:
+    async with _mcp_session(server_url, access_token) as session:
+        return (await session.list_tools()).tools
 
 
 async def _async_mcp_resources_list(access_token: str, server_url: str = BASE_URL) -> list:
-    url = _mcp_client_url(server_url)
-    async with Client(url, auth=BearerAuth(access_token), init_timeout=_CLIENT_TIMEOUT, timeout=_CLIENT_TIMEOUT) as client:
-        return await client.list_resources()
+    async with _mcp_session(server_url, access_token) as session:
+        return (await session.list_resources()).resources
 
 
 async def _async_mcp_prompts_list(access_token: str, server_url: str = BASE_URL) -> list:
-    url = _mcp_client_url(server_url)
-    async with Client(url, auth=BearerAuth(access_token), init_timeout=_CLIENT_TIMEOUT, timeout=_CLIENT_TIMEOUT) as client:
-        return await client.list_prompts()
+    async with _mcp_session(server_url, access_token) as session:
+        return (await session.list_prompts()).prompts
 
 
 async def _async_mcp_tool_call(access_token: str, tool_name: str, arguments: dict[str, Any] | None = None, server_url: str = BASE_URL):
-    url = _mcp_client_url(server_url)
-    async with Client(url, auth=BearerAuth(access_token), init_timeout=_CLIENT_TIMEOUT, timeout=_CLIENT_TIMEOUT) as client:
-        return await client.call_tool(tool_name, arguments or {})
+    async with _mcp_session(server_url, access_token) as session:
+        return await session.call_tool(tool_name, arguments or {})
 
 
 async def _async_mcp_initialize(access_token: str, server_url: str = BASE_URL) -> bool:
-    url = _mcp_client_url(server_url)
-    async with Client(url, auth=BearerAuth(access_token), init_timeout=_CLIENT_TIMEOUT, timeout=_CLIENT_TIMEOUT) as _client:
+    async with _mcp_session(server_url, access_token) as _session:
         return True
 
 
-async def _async_mcp_connect(url: str, auth: BearerAuth | None = None) -> bool:
-    kwargs: dict[str, Any] = {"init_timeout": _CLIENT_TIMEOUT, "timeout": _CLIENT_TIMEOUT}
-    if auth:
-        kwargs["auth"] = auth
-    async with Client(url, **kwargs) as _client:
+async def _async_mcp_connect(url: str, access_token: str | None = None) -> bool:
+    async with _mcp_session(url, access_token) as _session:
         return True
 
 
@@ -668,7 +673,7 @@ class TestMcpToolCallByRole:
 
     def test_admin_calls_tool_success(self, test_users: dict) -> None:
         result = _mcp_tool_call(test_users["admin"]["access_token"], "mcp-rbac-streamable-http-gw-get-system-time", {"timezone": "UTC"})
-        assert not result.is_error, f"Admin tool call should succeed: {result}"
+        assert not result.isError, f"Admin tool call should succeed: {result}"
         text = result.content[0].text
         assert len(text) > 0
         print(f"    -> Admin call mcp-rbac-streamable-http-gw-get-system-time = {text}")
@@ -676,20 +681,20 @@ class TestMcpToolCallByRole:
     def test_developer_can_execute_on_default_endpoint(self, test_users: dict) -> None:
         """Developer has team-scoped tools.execute; check_any_team=True allows it on /mcp."""
         result = _mcp_tool_call(test_users["developer"]["access_token"], "mcp-rbac-streamable-http-gw-get-system-time", {"timezone": "UTC"})
-        assert not result.is_error, f"Developer tool call should succeed (check_any_team): {result}"
+        assert not result.isError, f"Developer tool call should succeed (check_any_team): {result}"
         print(f"    -> Developer call succeeded: {result.content[0].text}")
 
     def test_team_admin_can_execute_on_default_endpoint(self, test_users: dict) -> None:
         """Team admin has team-scoped tools.execute; check_any_team=True allows it on /mcp."""
         result = _mcp_tool_call(test_users["team_admin"]["access_token"], "mcp-rbac-streamable-http-gw-get-system-time", {"timezone": "UTC"})
-        assert not result.is_error, f"Team admin tool call should succeed (check_any_team): {result}"
+        assert not result.isError, f"Team admin tool call should succeed (check_any_team): {result}"
         print(f"    -> Team admin call succeeded: {result.content[0].text}")
 
     def test_outsider_denied_tools_execute(self, outsider_user: dict) -> None:
         """Outsider has no team membership, so no tools.execute anywhere — denied."""
         try:
             result = _mcp_tool_call(outsider_user["access_token"], "mcp-rbac-streamable-http-gw-get-system-time", {"timezone": "UTC"})
-            assert result.is_error, f"Outsider should be denied tools.execute, got: {result}"
+            assert result.isError, f"Outsider should be denied tools.execute, got: {result}"
         except Exception:
             pass  # McpError or connection error — both valid denials
         print("    -> Outsider denied tools.execute (expected)")
@@ -697,7 +702,7 @@ class TestMcpToolCallByRole:
     def test_outsider_calls_nonexistent_tool_error(self, outsider_user: dict) -> None:
         try:
             result = _mcp_tool_call(outsider_user["access_token"], "nonexistent-tool-xyz-rbac")
-            assert result.is_error, f"Nonexistent tool should return error, got: {result}"
+            assert result.isError, f"Nonexistent tool should return error, got: {result}"
         except Exception:
             pass  # McpError — expected for outsider with no permissions
         print("    -> Outsider nonexistent tool: error (expected)")
@@ -705,7 +710,7 @@ class TestMcpToolCallByRole:
     def test_viewer_can_execute_on_default_endpoint(self, test_users: dict) -> None:
         """Viewer has team-scoped tools.execute; check_any_team=True allows it on /mcp."""
         result = _mcp_tool_call(test_users["viewer"]["access_token"], "mcp-rbac-streamable-http-gw-get-system-time", {"timezone": "UTC"})
-        assert not result.is_error, f"Viewer tool call should succeed (check_any_team): {result}"
+        assert not result.isError, f"Viewer tool call should succeed (check_any_team): {result}"
         print(f"    -> Viewer call succeeded: {result.content[0].text}")
 
 
@@ -742,7 +747,7 @@ class TestMcpScopedTokenPermissions:
     def test_unscoped_admin_token_can_call_tools(self, test_users: dict) -> None:
         """Admin token without custom scope (empty permissions = pass-through) can call tools."""
         result = _mcp_tool_call(test_users["admin"]["access_token"], "mcp-rbac-streamable-http-gw-get-system-time", {"timezone": "UTC"})
-        assert not result.is_error, f"Unscoped admin token should succeed: {result}"
+        assert not result.isError, f"Unscoped admin token should succeed: {result}"
         text = result.content[0].text
         assert len(text) > 0
         print(f"    -> Unscoped admin token call = {text}")
@@ -769,7 +774,7 @@ class TestMcpStreamableHttpTransport:
         assert len(time_tools) > 0, f"Expected at least one get-system-time tool, got: {[t.name for t in tools]}"
         # Call the first one found
         result = _mcp_tool_call(test_users["admin"]["access_token"], time_tools[0], {"timezone": "UTC"})
-        assert not result.is_error, f"Streamable HTTP get-system-time failed: {result}"
+        assert not result.isError, f"Streamable HTTP get-system-time failed: {result}"
         print(f"    -> Streamable HTTP {time_tools[0]} = {result.content[0].text}")
 
     def test_streamable_http_convert_time(self, test_users: dict) -> None:
@@ -781,7 +786,7 @@ class TestMcpStreamableHttpTransport:
             convert_tools[0],
             {"time": "2025-06-01T10:00:00Z", "source_timezone": "UTC", "target_timezone": "Europe/London"},
         )
-        assert not result.is_error, f"Streamable HTTP convert-time failed: {result}"
+        assert not result.isError, f"Streamable HTTP convert-time failed: {result}"
         print(f"    -> Streamable HTTP {convert_tools[0]}: OK")
 
     def test_streamable_http_resources_discoverable(self, test_users: dict) -> None:
@@ -848,7 +853,7 @@ class TestDenyPaths:
     def test_garbage_token_fails(self) -> None:
         """MCP initialize with garbage token should fail."""
         with pytest.raises(Exception) as excinfo:
-            _run_async(_async_mcp_connect(_mcp_client_url(), auth=BearerAuth("this-is-not-a-valid-token")))
+            _run_async(_async_mcp_connect(_mcp_client_url(), access_token="this-is-not-a-valid-token"))
         print(f"    -> Garbage token: failure (expected): {excinfo.value}")
 
     def test_wrong_secret_token_fails(self) -> None:
@@ -861,7 +866,7 @@ class TestDenyPaths:
         )
 
         with pytest.raises(Exception) as excinfo:
-            _run_async(_async_mcp_connect(_mcp_client_url(), auth=BearerAuth(bad_token)))
+            _run_async(_async_mcp_connect(_mcp_client_url(), access_token=bad_token))
         print(f"    -> Wrong secret: failure (expected): {excinfo.value}")
 
     def test_revoked_token_fails(self, admin_api: APIRequestContext, playwright: Playwright) -> None:
@@ -912,7 +917,7 @@ class TestDenyPaths:
     def test_invalid_bearer_prefix_fails(self) -> None:
         """Token without proper Bearer prefix handling."""
         with pytest.raises(Exception) as excinfo:
-            _run_async(_async_mcp_connect(_mcp_client_url(), auth=BearerAuth("not-bearer-prefixed-garbage")))
+            _run_async(_async_mcp_connect(_mcp_client_url(), access_token="not-bearer-prefixed-garbage"))
         print(f"    -> Invalid token: failure (expected): {excinfo.value}")
 
 
@@ -931,7 +936,7 @@ class TestCrossTransportConsistency:
 
         for tool_name in time_tools[:2]:  # Test up to 2 variants
             result = _mcp_tool_call(test_users["admin"]["access_token"], tool_name, {"timezone": "UTC"})
-            assert not result.is_error, f"{tool_name} failed: {result}"
+            assert not result.isError, f"{tool_name} failed: {result}"
             text = result.content[0].text
             assert len(text) > 0, f"{tool_name} returned empty text"
             print(f"    -> {tool_name} = {text}")
@@ -948,7 +953,7 @@ class TestCrossTransportConsistency:
                 tool_name,
                 {"time": "2025-01-15T12:00:00Z", "source_timezone": "UTC", "target_timezone": "America/New_York"},
             )
-            assert not result.is_error, f"{tool_name} failed: {result}"
+            assert not result.isError, f"{tool_name} failed: {result}"
             text = result.content[0].text
             assert len(text) > 0, f"{tool_name} returned empty text"
             print(f"    -> {tool_name} = {text}")
