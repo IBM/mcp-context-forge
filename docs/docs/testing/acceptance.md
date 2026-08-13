@@ -7,14 +7,12 @@ graph TB
     subgraph "TESTER WORKSTATION"
         PIP[pip install mcp-contextforge-gateway]
         JWT[mcpgateway.utils.create_jwt_token<br/>Generates Bearer Token]
-        WRAPPER[mcpgateway.wrapper<br/>stdio to HTTP bridge]
         VSC_SSE[VS Code with SSE/HTTP<br/>Direct connection]
         INSPECTOR[MCP Inspector]
         AGENTS[AI Agents<br/>LangChain / CrewAI]
         HEY[hey<br/>Performance Testing]
 
         PIP --> JWT
-        JWT --> WRAPPER
         JWT --> VSC_SSE
         JWT --> AGENTS
     end
@@ -56,7 +54,6 @@ graph TB
     GATEWAY_ENTRY -->|↕ Full Runtime ↔ Gateway| RUNTIME_ENTRY
 
     %% Connections from Workstation to Gateway
-    WRAPPER -.->|HTTP/JSON-RPC| GW
     VSC_SSE -.->|SSE/HTTP| GW_VIRTUAL
     INSPECTOR -.->|HTTP| GW
     AGENTS -.->|HTTP API| GW
@@ -68,7 +65,7 @@ graph TB
     classDef servers fill:#9C27B0,stroke:#BA68C8,stroke-width:3px,color:#fff
     classDef auth fill:#F44336,stroke:#EF5350,stroke-width:3px,color:#fff
 
-    class PIP,JWT,WRAPPER,VSC_SSE,INSPECTOR,AGENTS,HEY workstation
+    class PIP,JWT,VSC_SSE,INSPECTOR,AGENTS,HEY workstation
     class GW,GW_FEDERATION,GW_VIRTUAL,GW_RESOURCES,GW_PROMPTS,GW_TOOLS,GATEWAY_ENTRY gateway
     class TIME,TIME_AUTH,FAST_TIME,GIT,GITHUB,JIRA,SERVICENOW,PLAYWRIGHT,FIGMA,MONDAY,BOX,RUNTIME_ENTRY servers
     class GW_AUTH,TIME_AUTH auth
@@ -160,15 +157,6 @@ graph TB
 |---------|-----|----------|-----------------|--------|-------|
 | Create REST Tool | `curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" -H "Content-Type: application/json" -d '{"name": "weather_api", "url": "https://api.openweathermap.org/data/2.5/weather", "description": "Get current weather data", "integrationType": "REST", "requestType": "GET", "headers": {"X-API-Key": "demo-key"}, "input_schema": {"type": "object", "properties": {"q": {"type": "string", "description": "City name"}, "units": {"type": "string", "enum": ["metric", "imperial"]}}, "required": ["q"]}}' $GW_URL/tools \| jq` | Virtualize REST API | Success (201) | ☐ | REST as MCP tool |
 
-## 8. MCP Wrapper Testing
-
-| Feature | URL | Commands | Expected Result | Status | Notes |
-|---------|-----|----------|-----------------|--------|-------|
-| Install Package | `pip install mcp-contextforge-gateway` | Install for wrapper | Package installed | ☐ | If not already done |
-| Set Environment | `export MCP_SERVER_URL="$GW_URL/servers/$TIME_SERVER_UUID" && export MCP_AUTH=$MCPGATEWAY_BEARER_TOKEN` | Configure wrapper | Environment set | ☐ | Point to virtual server |
-| Test Wrapper Init | `echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}' \| python3 -m mcpgateway.wrapper 2>/dev/null \| jq` | Initialize via stdio | Returns capabilities with tools | ☐ | Stdio to HTTP bridge |
-| List Tools via Wrapper | `echo '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' \| python3 -m mcpgateway.wrapper 2>/dev/null \| jq` | List tools via stdio | Returns tool list | ☐ | Wrapper functionality |
-
 ## 9. VS Code Integration Testing
 
 ### 9.1. VS Code with MCP Wrapper (stdio)
@@ -180,11 +168,10 @@ graph TB
 {
   "mcp.servers": {
     "gateway-virtual": {
-      "command": "python",
-      "args": ["-m", "mcpgateway.wrapper"],
-      "env": {
-        "MCP_SERVER_URL": "$GW_URL/servers/$TIME_SERVER_UUID",
-        "MCP_AUTH": "$MCPGATEWAY_BEARER_TOKEN"
+      "type": "http",
+      "url": "$GW_URL/servers/$TIME_SERVER_UUID/mcp/",
+      "headers": {
+        "Authorization": "Bearer $MCPGATEWAY_BEARER_TOKEN"
       }
     }
   }
