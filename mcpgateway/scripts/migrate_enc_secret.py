@@ -113,11 +113,11 @@ _WEAK_VALUES: tuple = (
 )
 
 
-def calculate_entropy(text: str) -> float:
-    """Calculate Shannon entropy of *text*."""
-    if not text:
+def calculate_entropy(value: str) -> float:
+    """Calculate Shannon entropy of *value*."""
+    if not value:
         return 0.0
-    probabilities = [text.count(c) / len(text) for c in set(text)]
+    probabilities = [value.count(c) / len(value) for c in set(value)]
     return -sum(p * math.log2(p) for p in probabilities)
 
 
@@ -190,8 +190,8 @@ def _is_services_auth_blob(value: str) -> bool:
     if not value or len(value) < 18:  # shortest plausible: ceil((12+1)*4/3)=18 chars
         return False
     # base64url alphabet: A-Z a-z 0-9 - _   (no + / or whitespace, no = padding)
-    _B64URL_CHARS = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_")
-    if not all(c in _B64URL_CHARS for c in value):
+    b64url_chars = frozenset("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_")
+    if not all(c in b64url_chars for c in value):
         return False
     try:
         padded = value + "=" * (-len(value) % 4)
@@ -225,7 +225,6 @@ def _reencrypt_services_auth_value(
     """
     # Third-Party
     import orjson  # pylint: disable=import-outside-toplevel
-    import os as _os  # pylint: disable=import-outside-toplevel
 
     if value is None:
         return value, "skipped_null"
@@ -251,7 +250,7 @@ def _reencrypt_services_auth_value(
     # Re-encrypt with new key using a fresh random nonce.
     try:
         plaintext_bytes = orjson.dumps(payload)
-        nonce = _os.urandom(12)
+        nonce = os.urandom(12)
         ciphertext = new_aesgcm.encrypt(nonce, plaintext_bytes, None)
         combined = nonce + ciphertext
         encoded = base64.urlsafe_b64encode(combined).rstrip(b"=").decode()
@@ -717,7 +716,7 @@ def run_migration(
     new_svc = get_encryption_service(new_key)
 
     engine = _engine if _engine is not None else _make_engine(database_url)
-    SessionLocal = sessionmaker(bind=engine, autocommit=False, autoflush=False)
+    session_factory = sessionmaker(bind=engine, autocommit=False, autoflush=False)
 
     total: _Counter = {"found": 0, "migrated": 0, "skipped": 0, "errors": 0}
 
@@ -754,7 +753,7 @@ def run_migration(
         ("a2a_agent_auth", "id", ["auth_query_params"]),
     ]
 
-    session = SessionLocal()
+    session = session_factory()
     try:
         # ------------------------------------------------------------------
         # Check which tables actually exist in this database so the script

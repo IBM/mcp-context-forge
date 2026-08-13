@@ -17,6 +17,7 @@ Covers:
 """
 
 # Standard
+import base64
 import json
 import os
 import tempfile
@@ -936,3 +937,456 @@ class TestMain:
         assert exc_info.value.code == 1
         captured = capsys.readouterr()
         assert "low entropy" in captured.err
+
+
+# ---------------------------------------------------------------------------
+# calculate_entropy edge-case (line 119 — empty string early-return)
+# ---------------------------------------------------------------------------
+
+
+def test_calculate_entropy_empty_string():
+    """calculate_entropy returns 0.0 for an empty string."""
+    from mcpgateway.scripts.migrate_enc_secret import calculate_entropy  # pylint: disable=import-outside-toplevel
+
+    assert calculate_entropy("") == 0.0
+
+
+# ---------------------------------------------------------------------------
+# _try_decode_services_auth — blob too-short decoded branch (line 167)
+# ---------------------------------------------------------------------------
+
+
+def test_try_decode_services_auth_too_short():
+    """Blobs that decode to fewer than 13 bytes return None (too-short branch)."""
+    from mcpgateway.scripts.migrate_enc_secret import _make_services_auth_aesgcm, _try_decode_services_auth  # pylint: disable=import-outside-toplevel
+
+    aesgcm = _make_services_auth_aesgcm(OLD_KEY)
+    # Encode 12 bytes (exactly the nonce size, zero ciphertext bytes) → len < 13
+    short_blob = base64.urlsafe_b64encode(b"\x00" * 12).rstrip(b"=").decode()
+    assert _try_decode_services_auth(short_blob, aesgcm) is None
+
+
+# ---------------------------------------------------------------------------
+# _is_services_auth_blob — base64 decode exception path (lines 200-201)
+# ---------------------------------------------------------------------------
+
+
+def test_is_services_auth_blob_decode_exception():
+    """A string of valid base64url chars that raises on decode returns False."""
+    from mcpgateway.scripts.migrate_enc_secret import _is_services_auth_blob  # pylint: disable=import-outside-toplevel
+    from unittest.mock import patch as _patch  # pylint: disable=import-outside-toplevel
+
+    # Construct a string that passes the charset check but simulate a decode error
+    valid_looking = "A" * 20  # passes length and charset checks
+    with _patch("base64.urlsafe_b64decode", side_effect=Exception("forced")):
+        assert _is_services_auth_blob(valid_looking) is False
+
+
+# ---------------------------------------------------------------------------
+# _reencrypt_services_auth_value — encrypt failure path (lines 259-260)
+# ---------------------------------------------------------------------------
+
+
+def test_reencrypt_services_auth_encrypt_failure():
+    """When re-encryption raises an exception, status starts with 'error:encrypt_failed:'."""
+    from unittest.mock import patch as _patch, MagicMock  # pylint: disable=import-outside-toplevel
+    from mcpgateway.scripts.migrate_enc_secret import (  # pylint: disable=import-outside-toplevel
+        _reencrypt_services_auth_value,
+        _make_services_auth_aesgcm,
+    )
+    from mcpgateway.utils.services_auth import encode_auth  # pylint: disable=import-outside-toplevel
+
+    old_blob = encode_auth({"k": "v"}, secret=OLD_KEY)
+
+    real_old_aesgcm = _make_services_auth_aesgcm(OLD_KEY)
+    boom_aesgcm = MagicMock()
+    boom_aesgcm.encrypt.side_effect = RuntimeError("forced encrypt failure")
+
+    with _patch(
+        "mcpgateway.scripts.migrate_enc_secret._make_services_auth_aesgcm",
+        side_effect=[real_old_aesgcm, boom_aesgcm],
+    ):
+        _result, status = _reencrypt_services_auth_value(old_blob, OLD_KEY, NEW_KEY)
+
+    assert status.startswith("error:encrypt_failed:")
+
+
+# ---------------------------------------------------------------------------
+# _reencrypt_value — encrypt failure path (lines 467-468)
+# ---------------------------------------------------------------------------
+
+
+def test_reencrypt_value_encrypt_failure(old_svc, new_svc):
+    """When new_svc.encrypt_secret raises, status starts with 'error:encrypt_failed:'."""
+    from unittest.mock import MagicMock  # pylint: disable=import-outside-toplevel
+    from mcpgateway.scripts.migrate_enc_secret import _reencrypt_value  # pylint: disable=import-outside-toplevel
+
+    plaintext = "encrypt-fail-test"  # nosec B105  # pragma: allowlist secret
+    old_cipher = old_svc.encrypt_secret(plaintext)
+
+    broken_new_svc = MagicMock()
+    broken_new_svc.is_encrypted.side_effect = new_svc.is_encrypted
+    broken_new_svc.decrypt_secret.side_effect = new_svc.decrypt_secret
+    broken_new_svc.encrypt_secret.side_effect = RuntimeError("forced encrypt error")
+
+    _result, status = _reencrypt_value(old_cipher, old_svc, broken_new_svc)
+    assert status.startswith("error:encrypt_failed:")
+
+
+# ---------------------------------------------------------------------------
+# _reencrypt_oauth_config — error and skipped branches (lines 496-500)
+# ---------------------------------------------------------------------------
+
+
+def test_reencrypt_oauth_config_sensitive_key_error(old_svc, new_svc):
+    """A sensitive key that fails decryption is counted as an error."""
+    from mcpgateway.scripts.migrate_enc_secret import _reencrypt_oauth_config  # pylint: disable=import-outside-toplevel
+
+    other_svc = get_encryption_service(OTHER_KEY)
+    # Encrypt with OTHER_KEY; old_svc cannot decrypt it → error
+    bad_cipher = other_svc.encrypt_secret("bad")
+    config = {"client_secret": bad_cipher}
+
+    _new_config, migrated, skipped, errors = _reencrypt_oauth_config(config, old_svc, new_svc)
+    assert errors == 1
+    assert migrated == 0
+
+
+def test_reencrypt_oauth_config_sensitive_key_plaintext_skipped(old_svc, new_svc):
+    """A sensitive key whose value is plaintext (not encrypted) is counted as skipped."""
+    from mcpgateway.scripts.migrate_enc_secret import _reencrypt_oauth_config  # pylint: disable=import-outside-toplevel
+
+    config = {"client_secret": "not-encrypted-value"}
+    _new_config, migrated, _skipped, errors = _reencrypt_oauth_config(config, old_svc, new_svc)
+    assert errors == 0
+    assert migrated == 0
+
+
+# ---------------------------------------------------------------------------
+# _migrate_services_auth_simple_columns — error row (lines 304-306)
+# ---------------------------------------------------------------------------
+
+
+def test_migrate_services_auth_simple_columns_error_row(tmp_path):
+    """A row with an undecryptable blob is counted as an error."""
+    from sqlalchemy import create_engine, text as sa_text  # pylint: disable=import-outside-toplevel
+    from sqlalchemy.orm import sessionmaker as sm  # pylint: disable=import-outside-toplevel
+    from mcpgateway.scripts.migrate_enc_secret import _migrate_services_auth_simple_columns  # pylint: disable=import-outside-toplevel
+    from mcpgateway.utils.services_auth import encode_auth  # pylint: disable=import-outside-toplevel
+
+    db_url = f"sqlite:///{tmp_path / 'err.db'}"
+    engine = create_engine(db_url, connect_args={"check_same_thread": False})
+    with engine.connect() as conn:
+        conn.execute(sa_text("CREATE TABLE tools (id TEXT PRIMARY KEY, auth_value TEXT)"))
+        conn.commit()
+
+    # Encrypt with OTHER_KEY — neither OLD_KEY nor NEW_KEY can decrypt it
+    bad_blob = encode_auth({"k": "v"}, secret=OTHER_KEY)
+    SessionLocal = sm(bind=engine, autocommit=False, autoflush=False)
+    with SessionLocal() as session:
+        session.execute(sa_text("INSERT INTO tools (id, auth_value) VALUES ('t1', :v)"), {"v": bad_blob})
+        session.commit()
+
+    with SessionLocal() as session:
+        counts = _migrate_services_auth_simple_columns(session, "tools", "id", ["auth_value"], OLD_KEY, NEW_KEY, dry_run=False)
+
+    assert counts["errors"] == 1
+    assert counts["migrated"] == 0
+
+
+# ---------------------------------------------------------------------------
+# _migrate_services_auth_json_columns — various skip branches
+# (lines 364-366, 368, 371-372, 379-381, 387-390, 392)
+# ---------------------------------------------------------------------------
+
+
+def test_migrate_services_auth_json_columns_invalid_json(tmp_path):
+    """A column containing invalid JSON is skipped."""
+    from sqlalchemy import create_engine, text as sa_text  # pylint: disable=import-outside-toplevel
+    from sqlalchemy.orm import sessionmaker as sm  # pylint: disable=import-outside-toplevel
+    from mcpgateway.scripts.migrate_enc_secret import _migrate_services_auth_json_columns  # pylint: disable=import-outside-toplevel
+
+    db_url = f"sqlite:///{tmp_path / 'jskip.db'}"
+    engine = create_engine(db_url, connect_args={"check_same_thread": False})
+    with engine.connect() as conn:
+        conn.execute(sa_text("CREATE TABLE gateways (id TEXT PRIMARY KEY, auth_query_params TEXT)"))
+        conn.commit()
+
+    SessionLocal = sm(bind=engine, autocommit=False, autoflush=False)
+    with SessionLocal() as session:
+        session.execute(sa_text("INSERT INTO gateways (id, auth_query_params) VALUES ('g1', 'not-json')"))
+        session.commit()
+
+    with SessionLocal() as session:
+        counts = _migrate_services_auth_json_columns(session, "gateways", "id", ["auth_query_params"], OLD_KEY, NEW_KEY, dry_run=False)
+
+    assert counts["errors"] == 0
+    assert counts["skipped"] >= 1
+
+
+def test_migrate_services_auth_json_columns_non_dict_json(tmp_path):
+    """A column containing valid JSON but not a dict is skipped."""
+    from sqlalchemy import create_engine, text as sa_text  # pylint: disable=import-outside-toplevel
+    from sqlalchemy.orm import sessionmaker as sm  # pylint: disable=import-outside-toplevel
+    from mcpgateway.scripts.migrate_enc_secret import _migrate_services_auth_json_columns  # pylint: disable=import-outside-toplevel
+
+    db_url = f"sqlite:///{tmp_path / 'ndskip.db'}"
+    engine = create_engine(db_url, connect_args={"check_same_thread": False})
+    with engine.connect() as conn:
+        conn.execute(sa_text("CREATE TABLE gateways (id TEXT PRIMARY KEY, auth_query_params TEXT)"))
+        conn.commit()
+
+    import json  # pylint: disable=import-outside-toplevel
+    SessionLocal = sm(bind=engine, autocommit=False, autoflush=False)
+    with SessionLocal() as session:
+        # A JSON array instead of a dict
+        session.execute(sa_text("INSERT INTO gateways (id, auth_query_params) VALUES ('g2', :v)"), {"v": json.dumps([1, 2, 3])})
+        session.commit()
+
+    with SessionLocal() as session:
+        counts = _migrate_services_auth_json_columns(session, "gateways", "id", ["auth_query_params"], OLD_KEY, NEW_KEY, dry_run=False)
+
+    assert counts["errors"] == 0
+    assert counts["skipped"] >= 1
+
+
+def test_migrate_services_auth_json_columns_non_str_blob_value(tmp_path):
+    """A JSON dict whose value is not a string is skipped."""
+    from sqlalchemy import create_engine, text as sa_text  # pylint: disable=import-outside-toplevel
+    from sqlalchemy.orm import sessionmaker as sm  # pylint: disable=import-outside-toplevel
+    from mcpgateway.scripts.migrate_enc_secret import _migrate_services_auth_json_columns  # pylint: disable=import-outside-toplevel
+    import json  # pylint: disable=import-outside-toplevel
+
+    db_url = f"sqlite:///{tmp_path / 'nsblob.db'}"
+    engine = create_engine(db_url, connect_args={"check_same_thread": False})
+    with engine.connect() as conn:
+        conn.execute(sa_text("CREATE TABLE gateways (id TEXT PRIMARY KEY, auth_query_params TEXT)"))
+        conn.commit()
+
+    SessionLocal = sm(bind=engine, autocommit=False, autoflush=False)
+    with SessionLocal() as session:
+        # Value is an integer, not a string blob
+        session.execute(sa_text("INSERT INTO gateways (id, auth_query_params) VALUES ('g3', :v)"), {"v": json.dumps({"key": 42})})
+        session.commit()
+
+    with SessionLocal() as session:
+        counts = _migrate_services_auth_json_columns(session, "gateways", "id", ["auth_query_params"], OLD_KEY, NEW_KEY, dry_run=False)
+
+    assert counts["errors"] == 0
+    assert counts["skipped"] >= 1
+
+
+def test_migrate_services_auth_json_columns_error_in_blob(tmp_path):
+    """A JSON dict whose blob fails decryption is counted as an error."""
+    from sqlalchemy import create_engine, text as sa_text  # pylint: disable=import-outside-toplevel
+    from sqlalchemy.orm import sessionmaker as sm  # pylint: disable=import-outside-toplevel
+    from mcpgateway.scripts.migrate_enc_secret import _migrate_services_auth_json_columns  # pylint: disable=import-outside-toplevel
+    from mcpgateway.utils.services_auth import encode_auth  # pylint: disable=import-outside-toplevel
+    import json  # pylint: disable=import-outside-toplevel
+
+    db_url = f"sqlite:///{tmp_path / 'errblob.db'}"
+    engine = create_engine(db_url, connect_args={"check_same_thread": False})
+    with engine.connect() as conn:
+        conn.execute(sa_text("CREATE TABLE gateways (id TEXT PRIMARY KEY, auth_query_params TEXT)"))
+        conn.commit()
+
+    bad_blob = encode_auth({"k": "v"}, secret=OTHER_KEY)  # undecryptable with OLD_KEY
+    SessionLocal = sm(bind=engine, autocommit=False, autoflush=False)
+    with SessionLocal() as session:
+        session.execute(sa_text("INSERT INTO gateways (id, auth_query_params) VALUES ('g4', :v)"), {"v": json.dumps({"tok": bad_blob})})
+        session.commit()
+
+    with SessionLocal() as session:
+        counts = _migrate_services_auth_json_columns(session, "gateways", "id", ["auth_query_params"], OLD_KEY, NEW_KEY, dry_run=False)
+
+    assert counts["errors"] == 1
+
+
+# ---------------------------------------------------------------------------
+# _migrate_json_columns (EncryptionService path) — JSON decode error and
+# non-str raw_val branches (lines 628-630, 632)
+# ---------------------------------------------------------------------------
+
+
+def test_migrate_json_columns_invalid_json(tmp_path):
+    """oauth_config column with invalid JSON is silently skipped."""
+    from sqlalchemy import create_engine, text as sa_text  # pylint: disable=import-outside-toplevel
+    from sqlalchemy.orm import sessionmaker as sm  # pylint: disable=import-outside-toplevel
+    from mcpgateway.scripts.migrate_enc_secret import _migrate_json_columns  # pylint: disable=import-outside-toplevel
+
+    db_url = f"sqlite:///{tmp_path / 'jsonbad.db'}"
+    engine = create_engine(db_url, connect_args={"check_same_thread": False})
+    with engine.connect() as conn:
+        conn.execute(sa_text("CREATE TABLE gateways (id TEXT PRIMARY KEY, oauth_config TEXT)"))
+        conn.commit()
+
+    old_svc = get_encryption_service(OLD_KEY)
+    new_svc = get_encryption_service(NEW_KEY)
+    SessionLocal = sm(bind=engine, autocommit=False, autoflush=False)
+    with SessionLocal() as session:
+        session.execute(sa_text("INSERT INTO gateways (id, oauth_config) VALUES ('g1', 'not-json-at-all')"))
+        session.commit()
+
+    with SessionLocal() as session:
+        counts = _migrate_json_columns(session, "gateways", "id", ["oauth_config"], old_svc, new_svc, dry_run=False)
+
+    assert counts["errors"] == 0
+    assert counts["skipped"] >= 1
+
+
+def test_migrate_json_columns_non_str_raw_val(tmp_path):
+    """oauth_config returned as a dict directly (SQLAlchemy JSON type) is handled."""
+    from sqlalchemy import create_engine, Column, String, JSON  # pylint: disable=import-outside-toplevel
+    from sqlalchemy.orm import sessionmaker as sm, DeclarativeBase  # pylint: disable=import-outside-toplevel
+    from mcpgateway.scripts.migrate_enc_secret import _migrate_json_columns  # pylint: disable=import-outside-toplevel
+
+    db_url = f"sqlite:///{tmp_path / 'jsondict.db'}"
+    engine = create_engine(db_url, connect_args={"check_same_thread": False})
+
+    class Base(DeclarativeBase):
+        """Declarative base for test model."""
+
+    class GW(Base):
+        """Minimal gateway model with JSON oauth_config."""
+
+        __tablename__ = "gateways"
+        id = Column(String, primary_key=True)
+        oauth_config = Column(JSON)
+
+    Base.metadata.create_all(engine)
+
+    old_svc = get_encryption_service(OLD_KEY)
+    new_svc = get_encryption_service(NEW_KEY)
+    SessionLocal = sm(bind=engine, autocommit=False, autoflush=False)
+    with SessionLocal() as session:
+        secret = "gw-secret"  # nosec B105  # pragma: allowlist secret
+        session.add(GW(id="g1", oauth_config={"client_id": "cid", "client_secret": old_svc.encrypt_secret(secret)}))
+        session.commit()
+
+    with SessionLocal() as session:
+        counts = _migrate_json_columns(session, "gateways", "id", ["oauth_config"], old_svc, new_svc, dry_run=False)
+
+    assert counts["migrated"] >= 1
+
+
+# ---------------------------------------------------------------------------
+# run_migration — env-restore branches when vars are absent (lines 705-706,
+# 709-710, 712), and JWT too-short branch (line 697)
+# ---------------------------------------------------------------------------
+
+
+def test_run_migration_env_restore_absent_vars(tmp_path):
+    """run_migration cleans up injected env vars when they were absent before the call."""
+    import os  # pylint: disable=import-outside-toplevel
+
+    db_url = f"sqlite:///{tmp_path / 'envrestore.db'}"
+    # Strip the three vars we care about so the restore branches (del) are exercised
+    env_without = {k: v for k, v in os.environ.items() if k not in ("AUTH_ENCRYPTION_SECRET", "JWT_SECRET_KEY", "MIN_SECRET_LENGTH")}
+    captured_mid = {}
+
+    original_session_factory = None
+
+    def _sniff_env(*_args, **_kwargs):
+        """Record env state immediately after run_migration sets the vars."""
+        captured_mid["AUTH_ENCRYPTION_SECRET"] = os.environ.get("AUTH_ENCRYPTION_SECRET")
+        captured_mid["MIN_SECRET_LENGTH"] = os.environ.get("MIN_SECRET_LENGTH")
+        # Re-raise so the normal flow continues
+        raise SystemExit(0)
+
+    with patch.dict(os.environ, env_without, clear=True):
+        # Intercept the import that happens inside the try/finally env block
+        with patch("mcpgateway.scripts.migrate_enc_secret.sessionmaker", side_effect=_sniff_env):
+            try:
+                run_migration(db_url, OLD_KEY, NEW_KEY)
+            except SystemExit:
+                pass
+        # After run_migration returns, the vars it injected must be gone
+        assert "AUTH_ENCRYPTION_SECRET" not in os.environ
+        assert "MIN_SECRET_LENGTH" not in os.environ
+
+
+def test_run_migration_jwt_too_short_uses_new_key(tmp_path):
+    """When JWT_SECRET_KEY is shorter than _MIN_SECRET_LENGTH the migration still
+    succeeds — the short value is temporarily replaced then restored."""
+    import os  # pylint: disable=import-outside-toplevel
+
+    db_url = f"sqlite:///{tmp_path / 'jwtshort.db'}"
+    with patch.dict(os.environ, {"JWT_SECRET_KEY": "short"}, clear=False):
+        rc = run_migration(db_url, OLD_KEY, NEW_KEY)
+        assert rc == 0
+        # Inside patch.dict scope the key should be back to "short"
+        assert os.environ.get("JWT_SECRET_KEY") == "short"
+
+
+# ---------------------------------------------------------------------------
+# run_migration — fatal exception path (lines 866-870)
+# ---------------------------------------------------------------------------
+
+
+def test_run_migration_fatal_exception(tmp_path):
+    """A fatal exception during migration returns exit code 1."""
+    from unittest.mock import patch as _patch  # pylint: disable=import-outside-toplevel
+
+    db_url = f"sqlite:///{tmp_path / 'fatal.db'}"
+    # Patch the SQLAlchemy inspector so the exception fires inside the try/except
+    with _patch("sqlalchemy.inspect", side_effect=RuntimeError("boom")):
+        rc = run_migration(db_url, OLD_KEY, NEW_KEY)
+    assert rc == 1
+
+
+# ---------------------------------------------------------------------------
+# run_migration — dry-run zero-migrated message (line 860)
+# ---------------------------------------------------------------------------
+
+
+def test_run_migration_dry_run_nothing_to_migrate(tmp_path):
+    """Dry-run with an empty DB prints the 'nothing would be migrated' message."""
+    import io, contextlib  # pylint: disable=import-outside-toplevel,multiple-imports
+
+    db_url = f"sqlite:///{tmp_path / 'drynoop.db'}"
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rc = run_migration(db_url, OLD_KEY, NEW_KEY, dry_run=True)
+    assert rc == 0
+    assert "nothing would be migrated" in buf.getvalue()
+
+
+# ---------------------------------------------------------------------------
+# run_migration — cols empty after column-existence filtering (lines 779, 810)
+# ---------------------------------------------------------------------------
+
+
+def test_run_migration_skips_missing_columns(tmp_path):
+    """Tables that exist but are missing all expected columns are silently skipped."""
+    from sqlalchemy import create_engine, text as sa_text  # pylint: disable=import-outside-toplevel
+
+    db_url = f"sqlite:///{tmp_path / 'nocols.db'}"
+    engine = create_engine(db_url, connect_args={"check_same_thread": False})
+    with engine.connect() as conn:
+        # Create the tables but without ANY of the expected encrypted columns
+        conn.execute(sa_text("CREATE TABLE oauth_tokens (id TEXT PRIMARY KEY, unrelated TEXT)"))
+        conn.execute(sa_text("CREATE TABLE tools (id TEXT PRIMARY KEY, unrelated TEXT)"))
+        conn.commit()
+
+    rc = run_migration(db_url, OLD_KEY, NEW_KEY)
+    assert rc == 0
+
+
+# ---------------------------------------------------------------------------
+# main() — --dry-run print path (line 1004)
+# ---------------------------------------------------------------------------
+
+
+def test_main_dry_run_flag_output(tmp_path, capsys):
+    """Passing --dry-run to main() prints 'DRY RUN' before calling run_migration."""
+    import os  # pylint: disable=import-outside-toplevel
+
+    db_url = f"sqlite:///{tmp_path / 'maindry.db'}"
+    env = {"DATABASE_URL": db_url}
+    with patch.dict(os.environ, env, clear=False):
+        with patch("sys.argv", ["migrate_enc_secret", "--old-key", OLD_KEY, "--new-key", NEW_KEY, "--dry-run"]):
+            with pytest.raises(SystemExit) as exc_info:
+                main()
+    assert exc_info.value.code == 0
+    captured = capsys.readouterr()
+    assert "DRY RUN" in captured.out
