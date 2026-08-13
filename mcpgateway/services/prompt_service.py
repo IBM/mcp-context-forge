@@ -58,7 +58,7 @@ from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_service
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
-from mcpgateway.services.reverse_proxy_protocol import JsonRpcErrorResponse, JsonRpcRequest
+from mcpgateway.services.reverse_proxy_protocol import DownstreamAuth, JsonRpcErrorResponse, JsonRpcRequest
 from mcpgateway.services.reverse_proxy_sessions import ConnectionClosedError, ConnectionNotFoundError, get_reverse_proxy_session_manager, StableGatewayId
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
@@ -67,7 +67,7 @@ from mcpgateway.services.upstream_session_registry import get_upstream_session_r
 from mcpgateway.utils.admin_check import is_admin_bypass_granted, is_user_admin
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.correlation_id import get_correlation_id
-from mcpgateway.utils.gateway_access import build_gateway_auth_headers
+from mcpgateway.utils.gateway_access import build_gateway_auth_headers, GatewayAuthValueError, normalize_downstream_auth_headers
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import unified_paginate
 from mcpgateway.utils.services_auth import decode_auth
@@ -427,7 +427,15 @@ class PromptService(BaseService):
             # WebSocket session instead. The helper raises typed PromptError mappings
             # (fail-closed), so this branch stays ahead of the SSE/streamable try/except
             # that would re-wrap them into generic gateway-fetch errors.
-            return await self._get_reverse_proxied_prompt(gateway_id, remote_name, prompt_arguments, meta_data, prompt)
+            # Stored gateway credentials (strictly normalized; unsupported modes are rejected
+            # rather than silently omitted) ride the request envelope as ``authentication``/
+            # ``authType``; the material is never logged.
+            try:
+                stored_auth_headers = normalize_downstream_auth_headers(getattr(gateway, "auth_type", None), getattr(gateway, "auth_value", None))
+            except GatewayAuthValueError as auth_err:
+                raise PromptError(f"Gateway credentials cannot be forwarded downstream: {auth_err}") from auth_err
+            downstream_auth = DownstreamAuth(headers=stored_auth_headers, auth_type=getattr(gateway, "auth_type", None)) if stored_auth_headers else None
+            return await self._get_reverse_proxied_prompt(gateway_id, remote_name, prompt_arguments, meta_data, prompt, downstream_auth)
 
         try:
             # #4205: Use the upstream session registry when a downstream Mcp-Session-Id
@@ -485,14 +493,16 @@ class PromptService(BaseService):
         arguments: Optional[Dict[str, str]],
         meta_data: Optional[Dict[str, Any]],
         prompt: DbPrompt,
+        downstream_auth: Optional[DownstreamAuth] = None,
     ) -> PromptResult:
         """Dispatch ``prompts/get`` to a PROXIED gateway over its reverse-proxy session.
 
         The request resolves the process-local connection for the persisted stable
         gateway ID and sends the persisted ``original_name`` (never the namespaced
-        public name) downstream. No gateway identity or auth headers are attached
-        to the downstream call (Phase 3 decision): PROXIED gateways persist no
-        auth material and the downstream MCP server is operator-local.
+        public name) downstream. When the gateway row carries stored auth material,
+        ``downstream_auth`` rides the request envelope as ``authentication``/
+        ``authType`` for the client to apply downstream; when ``None`` those members
+        are omitted. The material is never logged.
 
         Args:
             gateway_id_str: Stable gateway identifier used to resolve the live connection.
@@ -501,6 +511,7 @@ class PromptService(BaseService):
             meta_data: Optional MCP ``_meta`` merged into the request params.
             prompt: Gateway-backed prompt record; its description is the fallback when
                 the upstream result carries none.
+            downstream_auth: Optional stored gateway credentials to forward downstream.
 
         Returns:
             Prompt result normalized into ContextForge models, mirroring the
@@ -540,7 +551,7 @@ class PromptService(BaseService):
             metadata={"event": "mcp_call_started", "prompt_name": prompt_name_original, "gateway_id": gateway_id_str, "transport": "proxied"},
         )
         try:
-            response = await session_manager.send_request(connection_id, request_payload, timeout_seconds=effective_timeout)
+            response = await session_manager.send_request(connection_id, request_payload, timeout_seconds=effective_timeout, auth=downstream_auth)
         except TimeoutError as timeout_err:
             mcp_duration_ms = (time.time() - mcp_start_time) * 1000
             structured_logger.log(

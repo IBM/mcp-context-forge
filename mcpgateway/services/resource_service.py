@@ -72,14 +72,14 @@ from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_servic
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
-from mcpgateway.services.reverse_proxy_protocol import JsonRpcErrorResponse, JsonRpcRequest
+from mcpgateway.services.reverse_proxy_protocol import DownstreamAuth, JsonRpcErrorResponse, JsonRpcRequest
 from mcpgateway.services.reverse_proxy_sessions import ConnectionClosedError, ConnectionNotFoundError, get_reverse_proxy_session_manager, StableGatewayId
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.upstream_session_registry import downstream_session_id_from_request_context as _downstream_session_id_from_request
 from mcpgateway.services.upstream_session_registry import get_upstream_session_registry, RegistryNotInitializedError, TransportType
 from mcpgateway.utils.admin_check import is_admin_bypass_granted, is_user_admin
 from mcpgateway.utils.correlation_id import get_correlation_id
-from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access
+from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access, GatewayAuthValueError, normalize_downstream_auth_headers
 from mcpgateway.utils.identity_propagation import build_identity_headers
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import unified_paginate
@@ -1651,20 +1651,22 @@ class ResourceService(BaseService):
         """
         return get_cached_ssl_context(ca_certificate)
 
-    async def _read_reverse_proxied_resource(self, gateway_id_str: str, uri: str, effective_timeout: float) -> str:
+    async def _read_reverse_proxied_resource(self, gateway_id_str: str, uri: str, effective_timeout: float, downstream_auth: Optional[DownstreamAuth] = None) -> str:
         """Dispatch ``resources/read`` to a PROXIED gateway over its reverse-proxy session.
 
         The request resolves the process-local connection for the persisted stable
         gateway ID and sends the persisted upstream URI downstream (or the
         substituted request URI for template-derived reads) — never a namespaced
-        public catalog name. No gateway identity or auth headers are attached to
-        the downstream call (Phase 3 decision): PROXIED gateways persist no auth
-        material and the downstream MCP server is operator-local.
+        public catalog name. When the gateway row carries stored auth material,
+        ``downstream_auth`` rides the request envelope as ``authentication``/
+        ``authType`` for the client to apply downstream; when ``None`` those members
+        are omitted. The material is never logged.
 
         Args:
             gateway_id_str: Stable gateway identifier used to resolve the live connection.
             uri: Upstream resource URI sent as ``params.uri``.
             effective_timeout: Per-request timeout in seconds.
+            downstream_auth: Optional stored gateway credentials to forward downstream.
 
         Returns:
             The text (or base64 blob) payload of the first ``result.contents`` entry.
@@ -1693,7 +1695,7 @@ class ResourceService(BaseService):
             metadata={"event": "mcp_call_started", "resource_uri": uri, "gateway_id": gateway_id_str, "transport": "proxied"},
         )
         try:
-            response = await session_manager.send_request(connection_id, request_payload, timeout_seconds=effective_timeout)
+            response = await session_manager.send_request(connection_id, request_payload, timeout_seconds=effective_timeout, auth=downstream_auth)
         except TimeoutError as timeout_err:
             mcp_duration_ms = (time.time() - mcp_start_time) * 1000
             structured_logger.log(
@@ -2354,7 +2356,15 @@ class ResourceService(BaseService):
                             # upstream connection; the gateway URL is only a registration placeholder.
                             if uri is None:
                                 raise ResourceError(f"Cannot dispatch resources/read to PROXIED gateway '{gateway.id}' without a resource URI")
-                            resource_text = await self._read_reverse_proxied_resource(str(gateway.id), uri, float(settings.health_check_timeout))
+                            # Forward stored gateway credentials only (strictly normalized; unsupported modes
+                            # are rejected rather than silently omitted); the shared ``headers`` may carry inbound
+                            # identity-propagation fields that must never ride the proxy envelope. Never logged.
+                            try:
+                                stored_auth_headers = normalize_downstream_auth_headers(getattr(gateway, "auth_type", None), getattr(gateway, "auth_value", None))
+                            except GatewayAuthValueError as auth_err:
+                                raise ResourceError(f"Gateway credentials cannot be forwarded downstream: {auth_err}") from auth_err
+                            downstream_auth = DownstreamAuth(headers=stored_auth_headers, auth_type=getattr(gateway, "auth_type", None)) if stored_auth_headers else None
+                            resource_text = await self._read_reverse_proxied_resource(str(gateway.id), uri, float(settings.health_check_timeout), downstream_auth)
                         elif (gateway_transport).lower() == "sse":
                             resource_text = await connect_to_sse_session(server_url=gateway_url, authentication=headers, uri=uri)
                         else:

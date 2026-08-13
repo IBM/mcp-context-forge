@@ -5,15 +5,18 @@ SPDX-License-Identifier: Apache-2.0
 
 Tests for PROXIED gateway dispatch in ResourceService.invoke_resource() (reverse-proxy Phase 4).
 
-A PROXIED gateway persists no auth material and no reachable URL: resource reads
-resolve the process-local reverse-proxy WebSocket connection for the persisted
-stable gateway ID and send a ``resources/read`` JSON-RPC request carrying the
-persisted upstream URI (or the substituted request URI for template-derived
-reads) — never a namespaced public catalog name. All failure modes fail closed
-through the existing MCP-path error taxonomy.
+A PROXIED gateway persists no reachable URL: resource reads resolve the
+process-local reverse-proxy WebSocket connection for the persisted stable gateway
+ID and send a ``resources/read`` JSON-RPC request carrying the persisted upstream
+URI (or the substituted request URI for template-derived reads) — never a
+namespaced public catalog name. Stored gateway auth material, when present, is
+attached to the outbound frame as ``DownstreamAuth``; when absent, the
+authentication fields are omitted. All failure modes fail closed through the
+existing MCP-path error taxonomy.
 """
 
 # Standard
+import logging
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 # Third-Party
@@ -392,3 +395,160 @@ class TestReadResourceReverseProxied:
             await resource_service.read_resource(db, resource_id="res-1", user="outsider@example.com", token_teams=["team-b"])
 
         manager_factory.assert_not_called()
+
+
+class TestReadResourceReverseProxiedAuth:
+    """Downstream auth forwarding on the PROXIED resources/read path (reverse-proxy Phase 4)."""
+
+    @pytest.mark.asyncio
+    async def test_dispatch_attaches_stored_gateway_auth(self, resource_service, proxied_resource):
+        """Stored gateway auth material reaches send_request as DownstreamAuth with the exact header dict."""
+        proxied_gateway = proxied_resource.gateway
+        proxied_gateway.auth_type = "bearer"
+        proxied_gateway.auth_value = {"Authorization": "Bearer proxied-resource-secret"}
+        manager = _manager_mock(send_return=_success_response("req-1", PROXIED_TEXT_RESULT))
+
+        with patch("mcpgateway.services.resource_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)):
+            result = await resource_service.invoke_resource(MagicMock(), "res-1", PROXIED_RESOURCE_URI, resource_obj=proxied_resource, gateway_obj=proxied_gateway)
+
+        assert result == "proxied ok"
+        manager.send_request.assert_awaited_once()
+        attached_auth = manager.send_request.await_args.kwargs["auth"]
+        assert attached_auth is not None
+        assert attached_auth.headers == {"Authorization": "Bearer proxied-resource-secret"}
+        assert attached_auth.auth_type == "bearer"
+
+    @pytest.mark.asyncio
+    async def test_dispatch_without_stored_auth_omits_auth_attachment(self, resource_service, proxied_resource):
+        """No stored gateway auth material: send_request receives auth=None so the envelope omits the fields."""
+        manager = _manager_mock(send_return=_success_response("req-1", PROXIED_TEXT_RESULT))
+
+        with patch("mcpgateway.services.resource_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)):
+            result = await resource_service.invoke_resource(MagicMock(), "res-1", PROXIED_RESOURCE_URI, resource_obj=proxied_resource, gateway_obj=proxied_resource.gateway)
+
+        assert result == "proxied ok"
+        manager.send_request.assert_awaited_once()
+        assert manager.send_request.await_args.kwargs["auth"] is None
+
+    @pytest.mark.asyncio
+    async def test_authed_downstream_mcp_error_is_code_only_and_never_logged(self, resource_service, proxied_resource, mock_logging_services, caplog):
+        """A 401-equivalent downstream error raises code-only; peer text and the secret reach no telemetry sink."""
+        caplog.set_level(logging.DEBUG)
+        proxied_gateway = proxied_resource.gateway
+        proxied_gateway.auth_type = "bearer"
+        proxied_gateway.auth_value = {"Authorization": "Bearer proxied-resource-secret"}
+        manager = _manager_mock(send_return=_error_response("req-1", code=-32001, message="unauthorized downstream"))
+
+        with (
+            patch("mcpgateway.services.resource_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
+            pytest.raises(ResourceError, match=r"MCP error -32001") as exc_info,
+        ):
+            await resource_service.invoke_resource(MagicMock(), "res-1", PROXIED_RESOURCE_URI, resource_obj=proxied_resource, gateway_obj=proxied_gateway)
+
+        assert "unauthorized downstream" not in str(exc_info.value)
+        assert "proxied-resource-secret" not in str(exc_info.value)
+        all_logged_calls = " ".join(repr(logged_call) for logged_call in mock_logging_services["structured_logger"].mock_calls)
+        assert "unauthorized downstream" not in all_logged_calls
+        assert "proxied-resource-secret" not in all_logged_calls
+        # The canary proves caplog capture is live, so the denials below are non-vacuous.
+        logging.getLogger("mcpgateway.services.resource_service").info("caplog-canary")
+        assert "caplog-canary" in caplog.text
+        assert "unauthorized downstream" not in caplog.text
+        assert "proxied-resource-secret" not in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_dispatch_forwards_basic_auth(self, resource_service, proxied_resource):
+        """Stored basic credentials reach the envelope as the verbatim Authorization header."""
+        proxied_gateway = proxied_resource.gateway
+        proxied_gateway.auth_type = "basic"
+        proxied_gateway.auth_value = {"Authorization": "Basic dXNlcjpwYXNz"}
+        manager = _manager_mock(send_return=_success_response("req-1", PROXIED_TEXT_RESULT))
+
+        with patch("mcpgateway.services.resource_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)):
+            result = await resource_service.invoke_resource(MagicMock(), "res-1", PROXIED_RESOURCE_URI, resource_obj=proxied_resource, gateway_obj=proxied_gateway)
+
+        assert result == "proxied ok"
+        attached_auth = manager.send_request.await_args.kwargs["auth"]
+        assert attached_auth is not None
+        assert attached_auth.headers == {"Authorization": "Basic dXNlcjpwYXNz"}
+        assert attached_auth.auth_type == "basic"
+
+    @pytest.mark.asyncio
+    async def test_dispatch_forwards_authheaders_custom_mapping(self, resource_service, proxied_resource):
+        """Custom authheaders material forwards the full stored header mapping (Oracle authheaders gap)."""
+        proxied_gateway = proxied_resource.gateway
+        proxied_gateway.auth_type = "authheaders"
+        proxied_gateway.auth_value = {"X-Api-Key": "proxied-resource-key", "X-Tenant": "acme"}  # pragma: allowlist secret
+        manager = _manager_mock(send_return=_success_response("req-1", PROXIED_TEXT_RESULT))
+
+        with patch("mcpgateway.services.resource_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)):
+            result = await resource_service.invoke_resource(MagicMock(), "res-1", PROXIED_RESOURCE_URI, resource_obj=proxied_resource, gateway_obj=proxied_gateway)
+
+        assert result == "proxied ok"
+        attached_auth = manager.send_request.await_args.kwargs["auth"]
+        assert attached_auth is not None
+        assert attached_auth.headers == {"X-Api-Key": "proxied-resource-key", "X-Tenant": "acme"}  # pragma: allowlist secret
+        assert attached_auth.auth_type == "authheaders"
+
+    @pytest.mark.asyncio
+    async def test_dispatch_rejects_unsupported_auth_mode_code_only(self, resource_service, proxied_resource, mock_logging_services):
+        """query_param-mode stored material is rejected with a typed, code-only error — never silently omitted."""
+        proxied_gateway = proxied_resource.gateway
+        proxied_gateway.auth_type = "query_param"
+        proxied_gateway.auth_value = {"api_key": "proxied-resource-secret"}  # pragma: allowlist secret
+        manager = _manager_mock(send_return=_success_response("req-1", PROXIED_TEXT_RESULT))
+
+        with (
+            patch("mcpgateway.services.resource_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
+            pytest.raises(ResourceError) as exc_info,
+        ):
+            await resource_service.invoke_resource(MagicMock(), "res-1", PROXIED_RESOURCE_URI, resource_obj=proxied_resource, gateway_obj=proxied_gateway)
+
+        assert "query_param" in str(exc_info.value)
+        assert "proxied-resource-secret" not in str(exc_info.value)
+        manager.send_request.assert_not_called()
+        all_logged_calls = " ".join(repr(logged_call) for logged_call in mock_logging_services["structured_logger"].mock_calls)
+        assert "proxied-resource-secret" not in all_logged_calls
+
+    @pytest.mark.asyncio
+    async def test_dispatch_rejects_malformed_auth_map_without_echo(self, resource_service, proxied_resource, mock_logging_services):
+        """Non-string header values are rejected at the boundary; the value never reaches error text or telemetry."""
+        proxied_gateway = proxied_resource.gateway
+        proxied_gateway.auth_type = "authheaders"
+        proxied_gateway.auth_value = {"X-Api-Key": 12345}
+        manager = _manager_mock(send_return=_success_response("req-1", PROXIED_TEXT_RESULT))
+
+        with (
+            patch("mcpgateway.services.resource_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
+            pytest.raises(ResourceError) as exc_info,
+        ):
+            await resource_service.invoke_resource(MagicMock(), "res-1", PROXIED_RESOURCE_URI, resource_obj=proxied_resource, gateway_obj=proxied_gateway)
+
+        assert "12345" not in str(exc_info.value)
+        manager.send_request.assert_not_called()
+        all_logged_calls = " ".join(repr(logged_call) for logged_call in mock_logging_services["structured_logger"].mock_calls)
+        assert "12345" not in all_logged_calls
+
+    @pytest.mark.asyncio
+    async def test_inbound_identity_headers_never_enter_envelope(self, resource_service, proxied_resource):
+        """Identity-propagation headers built from the inbound user never ride the proxy envelope."""
+        # First-Party
+        from mcpgateway.transports.context import UserContext
+
+        proxied_gateway = proxied_resource.gateway
+        proxied_gateway.auth_type = "bearer"
+        proxied_gateway.auth_value = {"Authorization": "Bearer proxied-resource-secret"}
+        manager = _manager_mock(send_return=_success_response("req-1", PROXIED_TEXT_RESULT))
+        identity = UserContext(user_id="inbound@example.com", email="inbound@example.com", is_admin=False, teams=[], auth_method="bearer")
+
+        with (
+            patch("mcpgateway.services.resource_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
+            patch("mcpgateway.services.resource_service.build_identity_headers", return_value={"Authorization": "Bearer INBOUND-HOSTILE", "X-User-Id": "inbound"}),
+        ):
+            result = await resource_service.invoke_resource(MagicMock(), "res-1", PROXIED_RESOURCE_URI, user_identity=identity, resource_obj=proxied_resource, gateway_obj=proxied_gateway)
+
+        assert result == "proxied ok"
+        attached_auth = manager.send_request.await_args.kwargs["auth"]
+        assert attached_auth is not None
+        assert attached_auth.headers == {"Authorization": "Bearer proxied-resource-secret"}
+        assert attached_auth.auth_type == "bearer"

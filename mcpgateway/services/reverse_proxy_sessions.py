@@ -17,7 +17,7 @@ import uuid
 
 import anyio
 
-from mcpgateway.services.reverse_proxy_protocol import JsonRpcId, JsonRpcNotification, JsonRpcRequest, ResponseMessage, encode_server_message, request
+from mcpgateway.services.reverse_proxy_protocol import DownstreamAuth, JsonRpcId, JsonRpcNotification, JsonRpcRequest, ResponseMessage, encode_server_message, request
 
 logger = logging.getLogger(__name__)
 
@@ -253,8 +253,13 @@ class ReverseProxySessionManager:
             for sid in stable_ids:
                 self._stable_connections.pop(sid, None)
 
-    async def send_request(self, connection_id: ConnectionId, payload: JsonRpcRequest, timeout_seconds: float) -> ResponseMessage:
-        """Install correlation, send a request, and await its connection-scoped response."""
+    async def send_request(self, connection_id: ConnectionId, payload: JsonRpcRequest, timeout_seconds: float, auth: DownstreamAuth | None = None) -> ResponseMessage:
+        """Install correlation, send a request, and await its connection-scoped response.
+
+        When ``auth`` is given, its headers and type ride the request envelope as
+        ``authentication``/``authType`` so the client can apply them downstream;
+        when ``None`` (the default) those members are omitted from the frame.
+        """
         session = self._sessions.get(connection_id)
         if session is None:
             raise ConnectionNotFoundError(connection_id=connection_id)
@@ -270,7 +275,7 @@ class ReverseProxySessionManager:
             with anyio.fail_after(timeout_seconds):
                 with anyio.CancelScope() as operation_scope:
                     pending.attach_operation_scope(operation_scope)
-                    await session.websocket.send_text(encode_server_message(request(str(connection_id), payload)))
+                    await session.websocket.send_text(encode_server_message(request(str(connection_id), payload, auth=auth)))
                     return await pending.wait()
                 return pending.result()
         finally:

@@ -6,15 +6,18 @@ SPDX-License-Identifier: Apache-2.0
 Tests for PROXIED gateway dispatch in PromptService._fetch_gateway_prompt_result()
 (reverse-proxy Phase 4).
 
-A PROXIED gateway persists no auth material and no reachable URL: prompt fetch
-resolves the process-local reverse-proxy WebSocket connection for the persisted
-stable gateway ID and sends a ``prompts/get`` JSON-RPC request using the
-persisted ``original_name`` (never the namespaced public name). All failure
-modes fail closed through the existing prompt-service error taxonomy.
+A PROXIED gateway persists no reachable URL: prompt fetch resolves the
+process-local reverse-proxy WebSocket connection for the persisted stable gateway
+ID and sends a ``prompts/get`` JSON-RPC request using the persisted
+``original_name`` (never the namespaced public name). Stored gateway auth
+material, when present, is attached to the outbound frame as ``DownstreamAuth``;
+when absent, the authentication fields are omitted. All failure modes fail closed
+through the existing prompt-service error taxonomy.
 """
 
 # Standard
 from contextlib import asynccontextmanager
+import logging
 from typing import Any, Optional
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
@@ -377,3 +380,143 @@ class TestFetchGatewayPromptResultReverseProxied:
             )
 
         manager_factory.assert_not_called()
+
+
+class TestFetchGatewayPromptResultReverseProxiedAuth:
+    """Downstream auth forwarding on the PROXIED prompts/get path (reverse-proxy Phase 4)."""
+
+    @pytest.mark.asyncio
+    async def test_dispatch_attaches_stored_gateway_auth(self, prompt_service, proxied_prompt, test_db):
+        """Stored gateway auth material reaches send_request as DownstreamAuth with the exact header dict."""
+        proxied_gateway = proxied_prompt.gateway
+        proxied_gateway.auth_type = "bearer"
+        proxied_gateway.auth_value = {"Authorization": "Bearer proxied-prompt-secret"}
+        _stub_lookup(prompt_service, test_db, proxied_prompt)
+        manager = _manager_mock(send_return=_success_response("req-1", PROXIED_RESULT))
+
+        with patch("mcpgateway.services.prompt_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)):
+            result = await prompt_service.get_prompt(test_db, PROXIED_PROMPT_NAME, {"question": "what"})
+
+        assert isinstance(result, PromptResult)
+        manager.send_request.assert_awaited_once()
+        attached_auth = manager.send_request.await_args.kwargs["auth"]
+        assert attached_auth is not None
+        assert attached_auth.headers == {"Authorization": "Bearer proxied-prompt-secret"}
+        assert attached_auth.auth_type == "bearer"
+
+    @pytest.mark.asyncio
+    async def test_dispatch_without_stored_auth_omits_auth_attachment(self, prompt_service, proxied_prompt, test_db):
+        """No stored gateway auth material: send_request receives auth=None so the envelope omits the fields."""
+        _stub_lookup(prompt_service, test_db, proxied_prompt)
+        manager = _manager_mock(send_return=_success_response("req-1", PROXIED_RESULT))
+
+        with patch("mcpgateway.services.prompt_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)):
+            result = await prompt_service.get_prompt(test_db, PROXIED_PROMPT_NAME, {"question": "what"})
+
+        assert isinstance(result, PromptResult)
+        manager.send_request.assert_awaited_once()
+        assert manager.send_request.await_args.kwargs["auth"] is None
+
+    @pytest.mark.asyncio
+    async def test_authed_downstream_mcp_error_is_code_only_and_never_logged(self, prompt_service, proxied_prompt, test_db, mock_logging_services, caplog):
+        """A 401-equivalent downstream error raises code-only; peer text and the secret reach no telemetry sink."""
+        caplog.set_level(logging.DEBUG)
+        proxied_gateway = proxied_prompt.gateway
+        proxied_gateway.auth_type = "bearer"
+        proxied_gateway.auth_value = {"Authorization": "Bearer proxied-prompt-secret"}
+        _stub_lookup(prompt_service, test_db, proxied_prompt)
+        manager = _manager_mock(send_return=_error_response("req-1", code=-32001, message="unauthorized downstream"))
+
+        with (
+            patch("mcpgateway.services.prompt_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
+            pytest.raises(PromptError, match=r"MCP error -32001") as exc_info,
+        ):
+            await prompt_service.get_prompt(test_db, PROXIED_PROMPT_NAME, {"question": "what"})
+
+        assert "unauthorized downstream" not in str(exc_info.value)
+        assert "proxied-prompt-secret" not in str(exc_info.value)
+        all_logged_calls = " ".join(repr(logged_call) for logged_call in mock_logging_services["structured_logger"].mock_calls)
+        assert "unauthorized downstream" not in all_logged_calls
+        assert "proxied-prompt-secret" not in all_logged_calls
+        # The canary proves caplog capture is live, so the denials below are non-vacuous.
+        logging.getLogger("mcpgateway.services.prompt_service").info("caplog-canary")
+        assert "caplog-canary" in caplog.text
+        assert "unauthorized downstream" not in caplog.text
+        assert "proxied-prompt-secret" not in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_dispatch_forwards_basic_auth(self, prompt_service, proxied_prompt, test_db):
+        """Stored basic credentials reach the envelope as the verbatim Authorization header."""
+        proxied_gateway = proxied_prompt.gateway
+        proxied_gateway.auth_type = "basic"
+        proxied_gateway.auth_value = {"Authorization": "Basic dXNlcjpwYXNz"}
+        _stub_lookup(prompt_service, test_db, proxied_prompt)
+        manager = _manager_mock(send_return=_success_response("req-1", PROXIED_RESULT))
+
+        with patch("mcpgateway.services.prompt_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)):
+            result = await prompt_service.get_prompt(test_db, PROXIED_PROMPT_NAME, {"question": "what"})
+
+        assert isinstance(result, PromptResult)
+        attached_auth = manager.send_request.await_args.kwargs["auth"]
+        assert attached_auth is not None
+        assert attached_auth.headers == {"Authorization": "Basic dXNlcjpwYXNz"}
+        assert attached_auth.auth_type == "basic"
+
+    @pytest.mark.asyncio
+    async def test_dispatch_forwards_authheaders_custom_mapping(self, prompt_service, proxied_prompt, test_db):
+        """Custom authheaders material forwards the full stored header mapping (Oracle authheaders gap)."""
+        proxied_gateway = proxied_prompt.gateway
+        proxied_gateway.auth_type = "authheaders"
+        proxied_gateway.auth_value = {"X-Api-Key": "proxied-prompt-key", "X-Tenant": "acme"}  # pragma: allowlist secret
+        _stub_lookup(prompt_service, test_db, proxied_prompt)
+        manager = _manager_mock(send_return=_success_response("req-1", PROXIED_RESULT))
+
+        with patch("mcpgateway.services.prompt_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)):
+            result = await prompt_service.get_prompt(test_db, PROXIED_PROMPT_NAME, {"question": "what"})
+
+        assert isinstance(result, PromptResult)
+        attached_auth = manager.send_request.await_args.kwargs["auth"]
+        assert attached_auth is not None
+        assert attached_auth.headers == {"X-Api-Key": "proxied-prompt-key", "X-Tenant": "acme"}  # pragma: allowlist secret
+        assert attached_auth.auth_type == "authheaders"
+
+    @pytest.mark.asyncio
+    async def test_dispatch_rejects_unsupported_auth_mode_code_only(self, prompt_service, proxied_prompt, test_db, mock_logging_services):
+        """oauth-mode stored material is rejected with a typed, code-only error — never silently omitted."""
+        proxied_gateway = proxied_prompt.gateway
+        proxied_gateway.auth_type = "oauth"
+        proxied_gateway.auth_value = {"Authorization": "Bearer proxied-prompt-secret"}
+        _stub_lookup(prompt_service, test_db, proxied_prompt)
+        manager = _manager_mock(send_return=_success_response("req-1", PROXIED_RESULT))
+
+        with (
+            patch("mcpgateway.services.prompt_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
+            pytest.raises(PromptError) as exc_info,
+        ):
+            await prompt_service.get_prompt(test_db, PROXIED_PROMPT_NAME, {"question": "what"})
+
+        assert "oauth" in str(exc_info.value)
+        assert "proxied-prompt-secret" not in str(exc_info.value)
+        manager.send_request.assert_not_called()
+        all_logged_calls = " ".join(repr(logged_call) for logged_call in mock_logging_services["structured_logger"].mock_calls)
+        assert "proxied-prompt-secret" not in all_logged_calls
+
+    @pytest.mark.asyncio
+    async def test_dispatch_rejects_malformed_auth_map_without_echo(self, prompt_service, proxied_prompt, test_db, mock_logging_services):
+        """Non-string header values are rejected at the boundary; the value never reaches error text or telemetry."""
+        proxied_gateway = proxied_prompt.gateway
+        proxied_gateway.auth_type = "authheaders"
+        proxied_gateway.auth_value = {"X-Api-Key": 12345}
+        _stub_lookup(prompt_service, test_db, proxied_prompt)
+        manager = _manager_mock(send_return=_success_response("req-1", PROXIED_RESULT))
+
+        with (
+            patch("mcpgateway.services.prompt_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
+            pytest.raises(PromptError) as exc_info,
+        ):
+            await prompt_service.get_prompt(test_db, PROXIED_PROMPT_NAME, {"question": "what"})
+
+        assert "12345" not in str(exc_info.value)
+        manager.send_request.assert_not_called()
+        all_logged_calls = " ".join(repr(logged_call) for logged_call in mock_logging_services["structured_logger"].mock_calls)
+        assert "12345" not in all_logged_calls

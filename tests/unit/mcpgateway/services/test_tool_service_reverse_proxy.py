@@ -3,17 +3,21 @@
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 
-Tests for PROXIED gateway dispatch in ToolService.invoke_tool() (reverse-proxy Phase 3).
+Tests for PROXIED gateway dispatch in ToolService.invoke_tool() (reverse-proxy Phase 3/4).
 
-A PROXIED gateway persists no auth material and no reachable URL: tool dispatch
-resolves the process-local reverse-proxy WebSocket connection for the persisted
-stable gateway ID and sends a ``tools/call`` JSON-RPC request using the persisted
-``original_name`` (never the namespaced public name). All failure modes fail
-closed through the existing MCP-path error taxonomy.
+A PROXIED gateway persists no reachable URL: tool dispatch resolves the
+process-local reverse-proxy WebSocket connection for the persisted stable gateway
+ID and sends a ``tools/call`` JSON-RPC request using the persisted
+``original_name`` (never the namespaced public name). Stored gateway auth
+material, when present, is attached to the outbound frame as ``DownstreamAuth``
+(Phase 4); when absent, the authentication fields are omitted. All failure modes
+fail closed through the existing MCP-path error taxonomy.
 """
 
 # Standard
 from contextlib import asynccontextmanager, contextmanager
+from types import SimpleNamespace
+import logging
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 from urllib.parse import urlparse
 
@@ -416,8 +420,8 @@ class TestInvokeToolReverseProxied:
             finally:
                 active_spans.remove(span_name)
 
-        async def send_and_assert_in_span(_connection_id, _payload, *, timeout_seconds):
-            del timeout_seconds
+        async def send_and_assert_in_span(_connection_id, _payload, *, timeout_seconds, auth=None):
+            del timeout_seconds, auth
             assert "tool.gateway_call" in active_spans
             return _success_response("req-1", PROXIED_RESULT)
 
@@ -516,6 +520,257 @@ class TestInvokeToolReverseProxied:
         assert failed_call["level"] == "ERROR"
         assert failed_call["error_details"]["error_type"] == "ValidationError"
         assert failed_call["error_details"]["error_message"] == "malformed upstream tools/call result"
+
+
+class TestInvokeToolReverseProxiedAuth:
+    """Downstream auth forwarding on the PROXIED tools/call path (reverse-proxy Phase 4)."""
+
+    @pytest.mark.asyncio
+    async def test_dispatch_attaches_stored_gateway_auth(self, tool_service, proxied_tool, test_db):
+        """Stored gateway auth material reaches send_request as DownstreamAuth with the exact header dict."""
+        proxied_gateway = proxied_tool.gateway
+        proxied_gateway.auth_type = "bearer"
+        proxied_gateway.auth_value = {"Authorization": "Bearer proxied-tool-secret"}
+        _stub_db_execute(test_db, proxied_tool, proxied_gateway, proxied_gateway)
+        manager = _manager_mock(send_return=_success_response("req-1", PROXIED_RESULT))
+
+        with (
+            patch("mcpgateway.services.tool_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
+            patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
+        ):
+            result = await tool_service.invoke_tool(test_db, PROXIED_TOOL_NAME, {"param": "value"}, request_headers=None)
+
+        assert result.is_error is False
+        manager.send_request.assert_awaited_once()
+        attached_auth = manager.send_request.await_args.kwargs["auth"]
+        assert attached_auth is not None
+        assert attached_auth.headers == {"Authorization": "Bearer proxied-tool-secret"}
+        assert attached_auth.auth_type == "bearer"
+
+    @pytest.mark.asyncio
+    async def test_dispatch_without_stored_auth_omits_auth_attachment(self, tool_service, proxied_tool, test_db):
+        """No stored gateway auth material: send_request receives auth=None so the envelope omits the fields."""
+        _stub_db_execute(test_db, proxied_tool, proxied_tool.gateway, proxied_tool.gateway)
+        manager = _manager_mock(send_return=_success_response("req-1", PROXIED_RESULT))
+
+        with (
+            patch("mcpgateway.services.tool_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
+            patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
+        ):
+            result = await tool_service.invoke_tool(test_db, PROXIED_TOOL_NAME, {"param": "value"}, request_headers=None)
+
+        assert result.is_error is False
+        manager.send_request.assert_awaited_once()
+        assert manager.send_request.await_args.kwargs["auth"] is None
+
+    @pytest.mark.asyncio
+    async def test_authed_downstream_mcp_error_is_code_only_and_never_logged(self, tool_service, proxied_tool, test_db, mock_logging_services, caplog):
+        """A 401-equivalent downstream error raises code-only; peer text and the secret reach no telemetry sink."""
+        caplog.set_level(logging.DEBUG)
+        proxied_gateway = proxied_tool.gateway
+        proxied_gateway.auth_type = "bearer"
+        proxied_gateway.auth_value = {"Authorization": "Bearer proxied-tool-secret"}
+        _stub_db_execute(test_db, proxied_tool, proxied_gateway, proxied_gateway)
+        manager = _manager_mock(send_return=_error_response("req-1", code=-32001, message="unauthorized downstream"))
+
+        with (
+            patch("mcpgateway.services.tool_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
+            pytest.raises(ToolInvocationError, match=r"MCP error -32001") as exc_info,
+        ):
+            await tool_service.invoke_tool(test_db, PROXIED_TOOL_NAME, {"param": "value"}, request_headers=None)
+
+        assert "unauthorized downstream" not in str(exc_info.value)
+        assert "proxied-tool-secret" not in str(exc_info.value)
+        all_logged_calls = " ".join(repr(logged_call) for logged_call in mock_logging_services["structured_logger"].mock_calls)
+        assert "unauthorized downstream" not in all_logged_calls
+        assert "proxied-tool-secret" not in all_logged_calls
+        # The canary proves caplog capture is live, so the denials below are non-vacuous.
+        logging.getLogger("mcpgateway.services.tool_service").info("caplog-canary")
+        assert "caplog-canary" in caplog.text
+        assert "unauthorized downstream" not in caplog.text
+        assert "proxied-tool-secret" not in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_dispatch_forwards_basic_auth(self, tool_service, proxied_tool, test_db):
+        """Stored basic credentials reach the envelope as the verbatim Authorization header."""
+        proxied_gateway = proxied_tool.gateway
+        proxied_gateway.auth_type = "basic"
+        proxied_gateway.auth_value = {"Authorization": "Basic dXNlcjpwYXNz"}
+        _stub_db_execute(test_db, proxied_tool, proxied_gateway, proxied_gateway)
+        manager = _manager_mock(send_return=_success_response("req-1", PROXIED_RESULT))
+
+        with (
+            patch("mcpgateway.services.tool_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
+            patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
+        ):
+            result = await tool_service.invoke_tool(test_db, PROXIED_TOOL_NAME, {"param": "value"}, request_headers=None)
+
+        assert result.is_error is False
+        attached_auth = manager.send_request.await_args.kwargs["auth"]
+        assert attached_auth is not None
+        assert attached_auth.headers == {"Authorization": "Basic dXNlcjpwYXNz"}
+        assert attached_auth.auth_type == "basic"
+
+    @pytest.mark.asyncio
+    async def test_dispatch_forwards_authheaders_custom_mapping(self, tool_service, proxied_tool, test_db):
+        """Custom authheaders material forwards the full stored header mapping."""
+        proxied_gateway = proxied_tool.gateway
+        proxied_gateway.auth_type = "authheaders"
+        proxied_gateway.auth_value = {"X-Api-Key": "proxied-tool-key", "X-Tenant": "acme"}  # pragma: allowlist secret
+        _stub_db_execute(test_db, proxied_tool, proxied_gateway, proxied_gateway)
+        manager = _manager_mock(send_return=_success_response("req-1", PROXIED_RESULT))
+
+        with (
+            patch("mcpgateway.services.tool_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
+            patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
+        ):
+            result = await tool_service.invoke_tool(test_db, PROXIED_TOOL_NAME, {"param": "value"}, request_headers=None)
+
+        assert result.is_error is False
+        attached_auth = manager.send_request.await_args.kwargs["auth"]
+        assert attached_auth is not None
+        assert attached_auth.headers == {"X-Api-Key": "proxied-tool-key", "X-Tenant": "acme"}  # pragma: allowlist secret
+        assert attached_auth.auth_type == "authheaders"
+
+    @pytest.mark.asyncio
+    async def test_dispatch_rejects_unsupported_auth_mode_code_only(self, tool_service, proxied_tool, test_db, mock_logging_services):
+        """oauth-mode stored material is rejected with a typed, code-only error — never silently omitted."""
+        proxied_gateway = proxied_tool.gateway
+        proxied_gateway.auth_type = "oauth"
+        proxied_gateway.auth_value = {"Authorization": "Bearer proxied-tool-secret"}
+        _stub_db_execute(test_db, proxied_tool, proxied_gateway, proxied_gateway)
+        manager = _manager_mock(send_return=_success_response("req-1", PROXIED_RESULT))
+
+        with (
+            patch("mcpgateway.services.tool_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
+            pytest.raises(ToolInvocationError) as exc_info,
+        ):
+            await tool_service.invoke_tool(test_db, PROXIED_TOOL_NAME, {"param": "value"}, request_headers=None)
+
+        assert "oauth" in str(exc_info.value)
+        assert "proxied-tool-secret" not in str(exc_info.value)
+        manager.send_request.assert_not_called()
+        all_logged_calls = " ".join(repr(logged_call) for logged_call in mock_logging_services["structured_logger"].mock_calls)
+        assert "proxied-tool-secret" not in all_logged_calls
+
+    @pytest.mark.asyncio
+    async def test_dispatch_rejects_malformed_auth_map_without_echo(self, tool_service, proxied_tool, test_db, mock_logging_services):
+        """Non-string header values are rejected at the boundary; the value never reaches error text or telemetry."""
+        proxied_gateway = proxied_tool.gateway
+        proxied_gateway.auth_type = "authheaders"
+        proxied_gateway.auth_value = {"X-Api-Key": 12345}
+        _stub_db_execute(test_db, proxied_tool, proxied_gateway, proxied_gateway)
+        manager = _manager_mock(send_return=_success_response("req-1", PROXIED_RESULT))
+
+        with (
+            patch("mcpgateway.services.tool_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
+            pytest.raises(ToolInvocationError) as exc_info,
+        ):
+            await tool_service.invoke_tool(test_db, PROXIED_TOOL_NAME, {"param": "value"}, request_headers=None)
+
+        assert "12345" not in str(exc_info.value)
+        manager.send_request.assert_not_called()
+        all_logged_calls = " ".join(repr(logged_call) for logged_call in mock_logging_services["structured_logger"].mock_calls)
+        assert "12345" not in all_logged_calls
+
+    @pytest.mark.asyncio
+    async def test_dispatch_rejects_corrupt_encoded_auth_without_echo(self, tool_service, proxied_tool, test_db):
+        """An undecryptable stored blob raises a typed error that never echoes the blob."""
+        proxied_gateway = proxied_tool.gateway
+        proxied_gateway.auth_type = "bearer"
+        proxied_gateway.auth_value = "!!!not-valid-encoded!!!"
+        _stub_db_execute(test_db, proxied_tool, proxied_gateway, proxied_gateway)
+        manager = _manager_mock(send_return=_success_response("req-1", PROXIED_RESULT))
+
+        with (
+            patch("mcpgateway.services.tool_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
+            pytest.raises(ToolInvocationError) as exc_info,
+        ):
+            await tool_service.invoke_tool(test_db, PROXIED_TOOL_NAME, {"param": "value"}, request_headers=None)
+
+        assert "!!!not-valid-encoded!!!" not in str(exc_info.value)
+        manager.send_request.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_warm_cache_dispatch_forwards_hydrated_auth(self, tool_service, test_db):
+        """Warm-cache invokes hydrate gateway auth from the DB and forward it (the cache stores no secrets)."""
+        cached_payload = {
+            "status": "active",
+            "tool": {
+                "id": "tool-cache-proxied-1",
+                "name": PROXIED_TOOL_NAME,
+                "original_name": PROXIED_ORIGINAL_NAME,
+                "url": "reverse-proxy://local/tools/upstream_echo",
+                "integration_type": "MCP",
+                "request_type": "SSE",
+                "auth_type": None,
+                "headers": {},
+                "annotations": {},
+                "input_schema": {"type": "object", "properties": {"param": {"type": "string"}}},
+                "jsonpath_filter": "",
+                "output_schema": None,
+                "enabled": True,
+                "reachable": True,
+                "visibility": "public",
+                "owner_email": None,
+                "team_id": None,
+                "gateway_id": "proxied-gw-1",
+                "timeout_ms": None,
+            },
+            "gateway": {
+                "id": "proxied-gw-1",
+                "name": "proxied_gateway",
+                "url": "reverse-proxy://local",
+                "transport": "PROXIED",
+                "auth_type": "bearer",
+                "passthrough_headers": [],
+                "enabled": True,
+                "reachable": True,
+            },
+        }
+        lookup_cache = SimpleNamespace(enabled=True, get=AsyncMock(return_value=cached_payload), set=AsyncMock(), set_negative=AsyncMock())
+        hydrated_gateway = SimpleNamespace(auth_value={"Authorization": "Bearer warm-cache-secret"}, auth_query_params=None, oauth_config=None)
+        hydrated_tool = SimpleNamespace(auth_value=None, oauth_config=None, gateway=hydrated_gateway)
+        hydration_result = Mock()
+        hydration_result.scalar_one_or_none.return_value = hydrated_tool
+        test_db.execute = Mock(return_value=hydration_result)
+        manager = _manager_mock(send_return=_success_response("req-1", PROXIED_RESULT))
+
+        with (
+            patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=lookup_cache),
+            patch("mcpgateway.services.tool_service.global_config_cache.get_passthrough_headers", return_value=[]),
+            patch("mcpgateway.services.tool_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
+            patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
+        ):
+            result = await tool_service.invoke_tool(test_db, PROXIED_TOOL_NAME, {"param": "value"}, request_headers=None)
+
+        assert result.is_error is False
+        attached_auth = manager.send_request.await_args.kwargs["auth"]
+        assert attached_auth is not None
+        assert attached_auth.headers == {"Authorization": "Bearer warm-cache-secret"}
+        assert attached_auth.auth_type == "bearer"
+
+    @pytest.mark.asyncio
+    async def test_inbound_authorization_header_never_enters_envelope(self, tool_service, proxied_tool, test_db):
+        """Hostile inbound passthrough headers never ride the envelope; only stored credentials do."""
+        proxied_gateway = proxied_tool.gateway
+        proxied_gateway.auth_type = "bearer"
+        proxied_gateway.auth_value = {"Authorization": "Bearer proxied-tool-secret"}
+        _stub_db_execute(test_db, proxied_tool, proxied_gateway, proxied_gateway)
+        manager = _manager_mock(send_return=_success_response("req-1", PROXIED_RESULT))
+
+        with (
+            patch("mcpgateway.services.tool_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)),
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={"Authorization": "Bearer INBOUND-HOSTILE", "X-Inbound": "x"}),
+            patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
+        ):
+            result = await tool_service.invoke_tool(test_db, PROXIED_TOOL_NAME, {"param": "value"}, request_headers={"Authorization": "Bearer INBOUND-HOSTILE", "X-Inbound": "x"})
+
+        assert result.is_error is False
+        attached_auth = manager.send_request.await_args.kwargs["auth"]
+        assert attached_auth is not None
+        assert attached_auth.headers == {"Authorization": "Bearer proxied-tool-secret"}
+        assert attached_auth.auth_type == "bearer"
 
 
 class TestPrepareRustMcpToolExecutionReverseProxied:
