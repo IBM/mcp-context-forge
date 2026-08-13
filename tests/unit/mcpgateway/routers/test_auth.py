@@ -16,7 +16,7 @@ from pydantic import SecretStr
 import pytest
 
 # First-Party
-from mcpgateway.routers.auth import LoginRequest, get_csrf_token, get_db, login
+from mcpgateway.routers.auth import get_csrf_token, get_db, login, LoginRequest
 
 
 class TestLoginRequest:
@@ -256,8 +256,8 @@ class TestLogin:
             patch("mcpgateway.routers.auth.create_access_token", new_callable=AsyncMock) as mock_create_token,
             patch("mcpgateway.routers.auth.settings") as mock_settings,
             patch("jwt.decode", return_value={"jti": "session-123"}),
-            patch("mcpgateway.services.csrf_service.generate_csrf_token", return_value="csrf-token-123") as mock_generate,
-            patch("mcpgateway.services.csrf_service.set_csrf_cookie") as mock_set_cookie,
+            patch("mcpgateway.routers.auth.generate_csrf_token", return_value="csrf-token-123") as mock_generate,
+            patch("mcpgateway.routers.auth.set_csrf_cookie") as mock_set_cookie,
         ):
             mock_service = MagicMock()
             mock_service.authenticate_user = AsyncMock(return_value=mock_user)
@@ -285,9 +285,9 @@ class TestLogin:
         current_user = SimpleNamespace(email="test@example.com")
 
         with (
-            patch("mcpgateway.config.settings") as mock_settings,
-            patch("mcpgateway.services.csrf_service.generate_csrf_token", return_value="csrf-token-123") as mock_generate,
-            patch("mcpgateway.services.csrf_service.set_csrf_cookie") as mock_set_cookie,
+            patch("mcpgateway.routers.auth.settings") as mock_settings,
+            patch("mcpgateway.routers.auth.generate_csrf_token", return_value="csrf-token-123") as mock_generate,
+            patch("mcpgateway.routers.auth.set_csrf_cookie") as mock_set_cookie,
         ):
             mock_settings.csrf_secret_key = SecretStr("secret")  # pragma: allowlist secret
             mock_settings.csrf_token_expiry = 60
@@ -320,7 +320,7 @@ class TestLogin:
 
         with (
             patch("mcpgateway.routers.auth.settings") as mock_settings,
-            patch("mcpgateway.services.csrf_service.generate_csrf_token", side_effect=Exception("boom")),
+            patch("mcpgateway.routers.auth.generate_csrf_token", side_effect=Exception("boom")),
         ):
             mock_settings.csrf_secret_key = SecretStr("secret")  # pragma: allowlist secret
             mock_settings.csrf_token_expiry = 60
@@ -393,6 +393,7 @@ class TestLogout:
     @pytest.mark.asyncio
     async def test_logout_with_secret_str_jwt_key(self, mock_request, mock_db, mock_current_user):
         """Test logout when jwt_secret_key is a SecretStr type (covers line 239)."""
+        # First-Party
         from mcpgateway.routers.auth import logout
 
         # Create a mock SecretStr
@@ -400,8 +401,8 @@ class TestLogout:
         mock_secret_str.get_secret_value.return_value = "test-secret-key"
 
         with (
-            patch("mcpgateway.services.token_blocklist_service.get_token_blocklist_service") as mock_blocklist_service,
-            patch("mcpgateway.config.settings") as mock_settings,
+            patch("mcpgateway.routers.auth.get_token_blocklist_service") as mock_blocklist_service,
+            patch("mcpgateway.routers.auth.settings") as mock_settings,
         ):
             # Setup settings with SecretStr
             mock_settings.jwt_secret_key = mock_secret_str
@@ -426,3 +427,257 @@ class TestLogout:
                 assert response["revoked_token"] == "test-jti-123"
                 mock_secret_str.get_secret_value.assert_called_once()
                 mock_service.revoke_token.assert_called_once()
+
+
+class TestSessionRefreshAndValidate:
+    """Tests for POST /auth/refresh and GET /auth/validate."""
+
+    SECRET = "test-secret-key"  # pragma: allowlist secret
+
+    @pytest.fixture
+    def mock_user(self):
+        """Create a mock authenticated user."""
+        user = MagicMock()
+        user.id = "test-user-id"
+        user.email = "test@example.com"
+        user.full_name = "Test User"
+        user.is_active = True
+        user.is_admin = False
+        user.auth_provider = "local"
+        return user
+
+    def _make_token(self, **overrides):
+        """Build a real session JWT so unverified claim decoding works."""
+        # Standard
+        import time as time_mod
+
+        # Third-Party
+        import jwt as jwt_lib
+
+        now = int(time_mod.time())
+        payload = {
+            "sub": "test-user-id",
+            "jti": "old-jti",
+            "iat": now,
+            "exp": now + 1200,
+            "token_use": "session",
+            "auth_provider": "local",
+            "scopes": {"server_id": None, "permissions": ["*"], "ip_restrictions": [], "time_restrictions": {}},
+        }
+        payload.update(overrides)
+        payload = {k: v for k, v in payload.items() if v is not None}
+        return jwt_lib.encode(payload, self.SECRET, algorithm="HS256"), payload
+
+    def _make_request(self, token, via_cookie=False):
+        """Create a mock request carrying the JWT in header or cookie."""
+        request = MagicMock()
+        request.client = MagicMock()
+        request.client.host = "127.0.0.1"
+        if via_cookie:
+            request.headers = {"user-agent": "test-agent"}
+            request.cookies = {"jwt_token": token}
+        else:
+            request.headers = {"authorization": f"Bearer {token}", "user-agent": "test-agent"}
+            request.cookies = {}
+        return request
+
+    def _patch_stack(self, new_token="newtok", expires_in=1200):
+        """Patch collaborators of refresh_session; returns the context managers dict."""
+        # Standard
+        # Real JWT for the newly issued token so its exp can be decoded
+        import time as time_mod
+
+        # Third-Party
+        import jwt as jwt_lib
+
+        now = int(time_mod.time())
+        issued = jwt_lib.encode({"jti": "new-jti", "exp": now + expires_in}, self.SECRET, algorithm="HS256")
+        return {
+            "create_token": patch("mcpgateway.routers.auth.create_access_token", new_callable=AsyncMock, return_value=(issued, expires_in)),
+            "csrf": patch("mcpgateway.routers.auth.generate_csrf_token", return_value="csrf-rotated"),
+            "set_csrf": patch("mcpgateway.routers.auth.set_csrf_cookie"),
+            "set_auth": patch("mcpgateway.routers.auth.set_auth_cookie"),
+            "audit": patch("mcpgateway.routers.auth.get_audit_trail_service"),
+        }
+
+    # ------------------------------------------------------------------
+    # POST /auth/refresh
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_refresh_success_bearer(self, mock_user):
+        """A valid local session refreshes: new token issued, CSRF rotated, audit logged, no auth cookie set."""
+        # Standard
+        import json
+
+        # First-Party
+        from mcpgateway.routers.auth import refresh_session
+
+        token, _ = self._make_token()
+        request = self._make_request(token)
+        patches = self._patch_stack()
+        with patches["create_token"] as mock_create, patches["csrf"], patches["set_csrf"], patches["set_auth"] as mock_set_auth, patches["audit"] as mock_audit:
+            response = await refresh_session(request, mock_user)
+
+        body = json.loads(response.body)
+        assert body["token_type"] == "bearer"
+        assert body["expires_in"] == 1200
+        assert body["expires_at"]
+        assert body["csrf_token"] == "csrf-rotated"
+        # Header-authenticated request must NOT receive an auth cookie
+        mock_set_auth.assert_not_called()
+        mock_audit.return_value.log_action.assert_called_once()
+        audit_kwargs = mock_audit.return_value.log_action.call_args.kwargs
+        assert audit_kwargs["action"] == "session_refresh"
+        assert "db" not in audit_kwargs
+        # session_start carried into the new token
+        create_kwargs = mock_create.call_args.kwargs
+        assert "session_start" in create_kwargs["extra_claims"]
+
+    @pytest.mark.asyncio
+    async def test_refresh_success_cookie_sets_auth_cookie(self, mock_user):
+        """A cookie-authenticated refresh re-sets the jwt_token cookie."""
+        # First-Party
+        from mcpgateway.routers.auth import refresh_session
+
+        token, _ = self._make_token()
+        request = self._make_request(token, via_cookie=True)
+        patches = self._patch_stack()
+        with patches["create_token"], patches["csrf"], patches["set_csrf"], patches["set_auth"] as mock_set_auth, patches["audit"]:
+            await refresh_session(request, mock_user)
+
+        mock_set_auth.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_refresh_preserves_session_start_claim(self, mock_user):
+        """session_start from the old token is carried over, not re-stamped."""
+        # First-Party
+        from mcpgateway.routers.auth import refresh_session
+
+        token, _ = self._make_token(session_start=1000000000, iat=1000000000)
+        request = self._make_request(token)
+        patches = self._patch_stack()
+        with patch("mcpgateway.routers.auth.settings") as mock_settings, patches["create_token"] as mock_create, patches["csrf"], patches["set_csrf"], patches["set_auth"], patches["audit"]:
+            mock_settings.session_max_lifetime = 0  # disable the cap for this test
+            mock_settings.csrf_secret_key = SecretStr(self.SECRET)
+            mock_settings.csrf_token_expiry = 3600
+            await refresh_session(request, mock_user)
+
+        assert mock_create.call_args.kwargs["extra_claims"]["session_start"] == 1000000000
+
+    @pytest.mark.asyncio
+    async def test_refresh_refuses_api_token(self, mock_user):
+        """API tokens (token_use=api) are refused with 403."""
+        # First-Party
+        from mcpgateway.routers.auth import refresh_session
+
+        token, _ = self._make_token(token_use="api")
+        request = self._make_request(token)
+
+        with pytest.raises(HTTPException) as exc_info:
+            await refresh_session(request, mock_user)
+
+        assert exc_info.value.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_refresh_refuses_token_without_token_use(self, mock_user):
+        """Legacy tokens without token_use are refused with 403 (fail-closed)."""
+        # First-Party
+        from mcpgateway.routers.auth import refresh_session
+
+        token, _ = self._make_token(token_use=None)
+        request = self._make_request(token)
+
+        with pytest.raises(HTTPException) as exc_info:
+            await refresh_session(request, mock_user)
+
+        assert exc_info.value.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_refresh_refuses_when_no_token_present(self, mock_user):
+        """Non-JWT auth (basic/proxy) has no session token to refresh: 401."""
+        # First-Party
+        from mcpgateway.routers.auth import refresh_session
+
+        request = MagicMock()
+        request.headers = {"user-agent": "test-agent"}
+        request.cookies = {}
+
+        with pytest.raises(HTTPException) as exc_info:
+            await refresh_session(request, mock_user)
+
+        assert exc_info.value.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_refresh_enforces_max_lifetime(self, mock_user):
+        """A session older than SESSION_MAX_LIFETIME cannot be refreshed: 401."""
+        # First-Party
+        from mcpgateway.routers.auth import refresh_session
+
+        token, _ = self._make_token(session_start=1000000000)  # ancient session
+        request = self._make_request(token)
+
+        with pytest.raises(HTTPException) as exc_info:
+            await refresh_session(request, mock_user)
+
+        assert exc_info.value.status_code == 401
+        assert "maximum lifetime" in exc_info.value.detail
+
+    # ------------------------------------------------------------------
+    # GET /auth/validate
+    # ------------------------------------------------------------------
+
+    @pytest.mark.asyncio
+    async def test_validate_local_session(self, mock_user):
+        """A local session reports valid=True with accurate expiry and source."""
+        # First-Party
+        from mcpgateway.routers.auth import validate_session
+
+        token, payload = self._make_token()
+        request = self._make_request(token)
+
+        result = await validate_session(request, mock_user)
+
+        assert result.valid is True
+        assert result.session_source == "local"
+        assert result.expires_in is not None and 0 < result.expires_in <= 1200
+        assert result.expires_at is not None
+        assert result.user.email == "test@example.com"
+        for key in ("token_expiry", "idle_timeout", "max_lifetime", "warning_time", "refresh_buffer", "activity_tracking"):
+            assert key in result.config
+
+    @pytest.mark.asyncio
+    async def test_validate_sso_session(self, mock_user):
+        """An SSO-provisioned session reports session_source=sso."""
+        # First-Party
+        from mcpgateway.routers.auth import validate_session
+
+        token, _ = self._make_token(auth_provider="github")
+        request = self._make_request(token)
+
+        result = await validate_session(request, mock_user)
+
+        assert result.session_source == "sso"
+
+    @pytest.mark.asyncio
+    async def test_validate_api_token_session(self, mock_user):
+        """An API-token session reports session_source=api_token."""
+        # First-Party
+        from mcpgateway.routers.auth import validate_session
+
+        token, _ = self._make_token(token_use="api")
+        request = self._make_request(token)
+
+        result = await validate_session(request, mock_user)
+
+        assert result.session_source == "api_token"
+
+    def test_session_source_external_idp(self):
+        """Tokens minted for external-IdP identities classify as sso."""
+        # First-Party
+        from mcpgateway.routers.auth import _session_source_from_payload
+
+        assert _session_source_from_payload({"token_use": "session", "source": "external_idp"}) == "sso"
+        assert _session_source_from_payload({"token_use": "session", "auth_provider": "local"}) == "local"
+        assert _session_source_from_payload({"token_use": "api"}) == "api_token"
+        assert _session_source_from_payload({}) == "local"

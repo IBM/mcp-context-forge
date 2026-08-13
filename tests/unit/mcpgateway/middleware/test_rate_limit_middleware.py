@@ -105,6 +105,7 @@ class TestRateLimitMiddlewareTiers:
             mock_settings.rate_limit_lockout_enabled = True
             mock_settings.rate_limit_lockout_threshold = 5
             mock_settings.rate_limit_lockout_duration_minutes = 15
+            mock_settings.session_refresh_rate_limit = 10
 
             from mcpgateway.middleware.rate_limit_middleware import RateLimitMiddleware
 
@@ -150,6 +151,12 @@ class TestRateLimitMiddlewareTiers:
         tier = middleware.get_endpoint_tier("/auth/email/login")
         assert tier["limit"] == 10
         assert tier["burst"] == 0
+
+    def test_endpoint_tier_session_refresh(self, middleware):
+        """Test SESSION_REFRESH tier detection for /auth/refresh on both mounts."""
+        assert middleware.get_endpoint_tier("/auth/refresh")["limit"] == 10
+        assert middleware.get_endpoint_tier("/v1/auth/refresh")["limit"] == 10
+        assert middleware._get_tier_name("/auth/refresh") == "SESSION_REFRESH"
 
     def test_endpoint_tier_critical_for_team_invitations(self, middleware):
         """Only SMTP-producing POST invitation requests use the strict tier."""
@@ -474,6 +481,7 @@ class TestRateLimitMiddlewareTiers:
             mock_settings.rate_limit_lockout_enabled = True
             mock_settings.rate_limit_lockout_threshold = 5
             mock_settings.rate_limit_lockout_duration_minutes = 15
+            mock_settings.session_refresh_rate_limit = 10
 
             from mcpgateway.middleware.rate_limit_middleware import RateLimitMiddleware
 
@@ -504,6 +512,7 @@ class TestRateLimitMiddlewareTiers:
             mock_settings.rate_limit_lockout_enabled = True
             mock_settings.rate_limit_lockout_threshold = 5
             mock_settings.rate_limit_lockout_duration_minutes = 15
+            mock_settings.session_refresh_rate_limit = 10
 
             from mcpgateway.middleware.rate_limit_middleware import RateLimitMiddleware
 
@@ -541,6 +550,7 @@ class TestRateLimitMiddlewareTiers:
             mock_settings.rate_limit_lockout_enabled = True
             mock_settings.rate_limit_lockout_threshold = 5
             mock_settings.rate_limit_lockout_duration_minutes = 15
+            mock_settings.session_refresh_rate_limit = 10
 
             from mcpgateway.middleware.rate_limit_middleware import RateLimitMiddleware
 
@@ -1154,6 +1164,7 @@ class TestRateLimitMiddlewareTiers:
             mock_settings.rate_limit_lockout_enabled = True
             mock_settings.rate_limit_lockout_threshold = 5
             mock_settings.rate_limit_lockout_duration_minutes = 15
+            mock_settings.session_refresh_rate_limit = 10
 
             from mcpgateway.middleware.rate_limit_middleware import RateLimitMiddleware
 
