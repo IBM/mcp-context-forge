@@ -938,6 +938,87 @@ class TestMain:
         captured = capsys.readouterr()
         assert "low entropy" in captured.err
 
+    def test_force_bypasses_short_key_check(self, tmp_path, capsys):
+        """--force allows a short --new-key that would otherwise be rejected."""
+        short_key = "tooshort"  # nosec B105  # pragma: allowlist secret
+        db_url = f"sqlite:///{tmp_path / 'force_short.db'}"
+        with patch.dict("os.environ", {"DATABASE_URL": db_url}, clear=False):
+            with pytest.raises(SystemExit) as exc_info:
+                with patch("sys.argv", ["migrate_enc_secret", "--old-key", OLD_KEY, "--new-key", short_key, "--force"]):
+                    main()
+        assert exc_info.value.code == 0
+        captured = capsys.readouterr()
+        assert "too short" not in captured.err
+
+    def test_force_bypasses_weak_key_check(self, tmp_path, capsys):
+        """--force allows a known-weak --new-key that would otherwise be rejected."""
+        weak_key = "my-test-key-but-now-longer-than-32-bytes"  # nosec B105  # pragma: allowlist secret
+        db_url = f"sqlite:///{tmp_path / 'force_weak.db'}"
+        with patch.dict("os.environ", {"DATABASE_URL": db_url}, clear=False):
+            with pytest.raises(SystemExit) as exc_info:
+                with patch("sys.argv", ["migrate_enc_secret", "--old-key", OLD_KEY, "--new-key", weak_key, "--force"]):
+                    main()
+        assert exc_info.value.code == 0
+        captured = capsys.readouterr()
+        assert "known-weak" not in captured.err
+
+    def test_force_bypasses_low_entropy_check(self, tmp_path, capsys):
+        """--force allows a low-entropy --new-key that would otherwise be rejected."""
+        low_entropy_key = "a" * 40  # nosec B105  # pragma: allowlist secret
+        db_url = f"sqlite:///{tmp_path / 'force_entropy.db'}"
+        with patch.dict("os.environ", {"DATABASE_URL": db_url}, clear=False):
+            with pytest.raises(SystemExit) as exc_info:
+                with patch("sys.argv", ["migrate_enc_secret", "--old-key", OLD_KEY, "--new-key", low_entropy_key, "--force"]):
+                    main()
+        assert exc_info.value.code == 0
+        captured = capsys.readouterr()
+        assert "low entropy" not in captured.err
+
+    def test_force_prints_warning(self, tmp_path, capsys):
+        """--force prints a warning to stderr so operators know validation was skipped."""
+        short_key = "tooshort"  # nosec B105  # pragma: allowlist secret
+        db_url = f"sqlite:///{tmp_path / 'force_warn.db'}"
+        with patch.dict("os.environ", {"DATABASE_URL": db_url}, clear=False):
+            with pytest.raises(SystemExit):
+                with patch("sys.argv", ["migrate_enc_secret", "--old-key", OLD_KEY, "--new-key", short_key, "--force"]):
+                    main()
+        captured = capsys.readouterr()
+        assert "--force" in captured.err
+
+    def test_force_actually_migrates_with_short_key(self, tmp_path):
+        """--force + short new key performs a real re-encryption."""
+        from mcpgateway.utils.services_auth import encode_auth, decode_auth  # pylint: disable=import-outside-toplevel
+        from sqlalchemy import create_engine, text as sa_text  # pylint: disable=import-outside-toplevel
+        from sqlalchemy.orm import sessionmaker as sm  # pylint: disable=import-outside-toplevel
+
+        short_key = "tooshort"  # nosec B105  # pragma: allowlist secret
+        db_url = f"sqlite:///{tmp_path / 'force_migrate.db'}"
+
+        # Seed a tools row encrypted under OLD_KEY
+        engine = create_engine(db_url, connect_args={"check_same_thread": False})
+        with engine.connect() as conn:
+            conn.execute(sa_text("CREATE TABLE tools (id TEXT PRIMARY KEY, auth_value TEXT)"))
+            conn.commit()
+
+        payload = {"Authorization": "Bearer rollback-tok"}
+        old_blob = encode_auth(payload, secret=OLD_KEY)
+        SessionLocal = sm(bind=engine, autocommit=False, autoflush=False)
+        with SessionLocal() as session:
+            session.execute(sa_text("INSERT INTO tools (id, auth_value) VALUES ('t1', :v)"), {"v": old_blob})
+            session.commit()
+
+        with patch.dict("os.environ", {"DATABASE_URL": db_url}, clear=False):
+            with pytest.raises(SystemExit) as exc_info:
+                with patch("sys.argv", ["migrate_enc_secret", "--old-key", OLD_KEY, "--new-key", short_key, "--force"]):
+                    main()
+        assert exc_info.value.code == 0
+
+        # Row should now decrypt under the short key
+        with SessionLocal() as session:
+            row = session.execute(sa_text("SELECT auth_value FROM tools WHERE id = 't1'")).fetchone()
+            assert decode_auth(row[0], secret=short_key) == payload
+
+
 
 # ---------------------------------------------------------------------------
 # calculate_entropy edge-case (line 119 — empty string early-return)

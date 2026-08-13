@@ -944,6 +944,17 @@ def main() -> None:
         default=False,
         help="Read-only mode: report what would be migrated without writing",
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        default=False,
+        help=(
+            "Skip strength validation on --new-key. "
+            "Use only when intentionally re-encrypting to a weaker key "
+            "(e.g. rolling back to a previous key or decrypting to a known-weak value). "
+            "⚠️  The resulting database will not start with a gateway that enforces strong secrets."
+        ),
+    )
     args = parser.parse_args()
 
     old_key = args.old_key or os.environ.get("OLD_AUTH_ENCRYPTION_SECRET", "")  # pragma: allowlist secret
@@ -975,25 +986,32 @@ def main() -> None:
     # Validate new_key against the same predicate Settings enforces at startup.
     # Catching this before touching the database prevents a completed migration
     # followed by a gateway startup failure.
-    _weak_set = frozenset(v.lower() for v in _WEAK_VALUES)
-    if len(new_key) < _MIN_SECRET_LENGTH:
-        print(
-            f"❌  --new-key is too short ({len(new_key)} chars, minimum {_MIN_SECRET_LENGTH}). Generate a strong key with: make init-secrets-patch-env",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-    if new_key.lower() in _weak_set or new_key.lower().startswith("__replace_me__"):
-        print(
-            "❌  --new-key is a known-weak value. Generate a strong key with: make init-secrets-patch-env",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-    if calculate_entropy(new_key) < _MIN_ENTROPY:
-        print(
-            f"❌  --new-key has low entropy (score {calculate_entropy(new_key):.2f} < {_MIN_ENTROPY}). Generate a strong key with: make init-secrets-patch-env",
-            file=sys.stderr,
-        )
-        sys.exit(1)
+    # --force bypasses all three checks for deliberate rollback / weak-key scenarios.
+    if not args.force:
+        _weak_set = frozenset(v.lower() for v in _WEAK_VALUES)
+        if len(new_key) < _MIN_SECRET_LENGTH:
+            print(
+                f"❌  --new-key is too short ({len(new_key)} chars, minimum {_MIN_SECRET_LENGTH}). "
+                f"Generate a strong key with: make init-secrets-patch-env  "
+                f"(or pass --force to skip this check)",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if new_key.lower() in _weak_set or new_key.lower().startswith("__replace_me__"):
+            print(
+                "❌  --new-key is a known-weak value. Generate a strong key with: make init-secrets-patch-env  "
+                "(or pass --force to skip this check)",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        if calculate_entropy(new_key) < _MIN_ENTROPY:
+            print(
+                f"❌  --new-key has low entropy (score {calculate_entropy(new_key):.2f} < {_MIN_ENTROPY}). "
+                f"Generate a strong key with: make init-secrets-patch-env  "
+                f"(or pass --force to skip this check)",
+                file=sys.stderr,
+            )
+            sys.exit(1)
 
     database_url = args.database_url or os.environ.get("DATABASE_URL", "sqlite:///./mcp.db")
 
@@ -1001,6 +1019,8 @@ def main() -> None:
     print(f"  old key: {'*' * min(len(old_key), 8)}...  new key: {'*' * min(len(new_key), 8)}...")
     if args.dry_run:
         print("  mode: DRY RUN (no writes)")
+    if args.force:
+        print("  ⚠️   --force: new-key strength validation skipped", file=sys.stderr)
     print()
 
     rc = run_migration(database_url, old_key, new_key, dry_run=args.dry_run)
