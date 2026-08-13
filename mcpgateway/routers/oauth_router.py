@@ -974,6 +974,13 @@ async def oauth_callback(
             else:
                 scopes_list = []
 
+            # Extract per-user learned audience/issuer from the IdP token response.
+            # These are best-effort (may be None for opaque tokens) and stored per-user
+            # so get_user_learned_audience() returns an authoritative per-user value
+            # rather than falling back to the shared gateway config for all users.
+            token_aud = result.get("token_aud")  # str | list | None
+            token_iss = result.get("token_iss")  # str | None
+
             await token_storage.store_tokens(
                 gateway_id=gateway_id,
                 user_id=result.get("user_id", ""),
@@ -982,6 +989,8 @@ async def oauth_callback(
                 refresh_token=token_response.get("refresh_token"),
                 expires_in=parse_expires_in(token_response),
                 scopes=scopes_list,
+                learned_aud=token_aud,
+                learned_iss=token_iss,
             )
 
         # Learn the IdP's audience mapping from the token and persist as resource.

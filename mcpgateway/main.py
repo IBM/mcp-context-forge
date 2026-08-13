@@ -7596,12 +7596,18 @@ async def refresh_gateway_tools(
         _enforce_scoped_resource_access(request, db, user, f"/gateways/{gateway_id}")
 
         user_email = get_user_email(user)
+        # Build user_context for Vault token path selection on authorization_code gateways.
+        # Uses jwt_teams_claim for session tokens so admin bypass doesn't erase team scope.
+        from mcpgateway.routers.oauth_router import _build_user_context  # pylint: disable=import-outside-toplevel
+
+        user_context = _build_user_context(user)
         result = await gateway_service.refresh_gateway_manually(
             gateway_id=gateway_id,
             include_resources=include_resources,
             include_prompts=include_prompts,
             user_email=user_email,
             request_headers=dict(request.headers),
+            user_context=user_context,
         )
         return GatewayRefreshResponse(gateway_id=gateway_id, **result)
     except GatewayNotFoundError as e:

@@ -129,8 +129,12 @@ class DatabaseTokenBackend(AbstractTokenBackend):
                 token_record.refresh_token = encrypted_refresh
                 token_record.expires_at = expires_at
                 token_record.scopes = scopes
-                token_record.learned_aud = learned_aud
-                token_record.learned_iss = learned_iss
+                # Only overwrite when caller supplies a value — never erase a
+                # previously-learned audience/issuer with None on re-auth.
+                if learned_aud is not None:
+                    token_record.learned_aud = learned_aud
+                if learned_iss is not None:
+                    token_record.learned_iss = learned_iss
                 token_record.updated_at = now
                 logger.info(
                     "Updated OAuth tokens for gateway %s, app user %s, OAuth user %s",
@@ -179,8 +183,15 @@ class DatabaseTokenBackend(AbstractTokenBackend):
 
         except Exception as e:
             self.db.rollback()
-            logger.error("Failed to store OAuth tokens: %s", str(e))
-            raise OAuthError(f"Token storage failed: {str(e)}")
+            # Log full detail server-side; surface only a generic message to
+            # the caller to avoid leaking DB internals (CWE-209).
+            logger.error(
+                "Failed to store OAuth tokens for gateway %s: %s",
+                SecurityValidator.sanitize_log_message(gateway_id),
+                str(e),
+                exc_info=True,
+            )
+            raise OAuthError("Token storage failed")
 
     async def get_user_token(
         self,

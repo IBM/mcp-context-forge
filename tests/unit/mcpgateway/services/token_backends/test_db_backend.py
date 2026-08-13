@@ -226,10 +226,10 @@ async def test_store_tokens_no_encryption(backend_no_encryption, mock_db):
 
 @pytest.mark.asyncio
 async def test_store_tokens_exception(backend_with_encryption, mock_db):
-    """Test that storage exceptions are properly handled."""
+    """Test that storage exceptions raise a generic OAuthError (CWE-209: no internal detail leaked)."""
     mock_db.execute.return_value.scalar_one_or_none.side_effect = Exception("DB error")
 
-    with pytest.raises(Exception, match="DB error"):
+    with pytest.raises(Exception, match="Token storage failed"):
         await backend_with_encryption.store_tokens(
             gateway_id="gw-1",
             team_id="team-1",
