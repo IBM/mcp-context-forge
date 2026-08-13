@@ -470,7 +470,7 @@ These variables have insecure defaults and **must be changed** before production
 | Variable | Description | Default | Action Required |
 |----------|-------------|---------|-----------------|
 | `JWT_SECRET_KEY` | Secret key for signing JWT tokens (32+ chars) | `my-test-key-but-now-longer-than-32-bytes` | Generate with `openssl rand -hex 32` |
-| `AUTH_ENCRYPTION_SECRET` | Passphrase for encrypting stored credentials | `my-test-salt` | Generate with `openssl rand -hex 32` |
+| `AUTH_ENCRYPTION_SECRET` | Passphrase for encrypting stored credentials | *(must be set — no default)* | Generate with `make init-secrets-patch-env` or `openssl rand -hex 32` |
 | `BASIC_AUTH_USER` | Username for HTTP Basic auth | `admin` | Change for production |
 | `BASIC_AUTH_PASSWORD` | Password for HTTP Basic auth | `changeme` | Set a strong password |
 | `PLATFORM_ADMIN_EMAIL` | Email for bootstrap admin user | `admin@example.com` | Use real admin email |

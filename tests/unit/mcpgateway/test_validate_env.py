@@ -158,3 +158,57 @@ def test_validate_env_warning_path_exit_on_warnings_true(tmp_path: Path) -> None
         code = ve.main(env_file=str(envfile), exit_on_warnings=True)
 
     assert code == 1
+
+
+def test_get_security_warnings_flags_short_jwt_secret() -> None:
+    """validate_env.py line 161: JWT_SECRET_KEY shorter than effective_min triggers a length warning.
+
+    Constructs a mock settings object where jwt_secret_key is 10 chars (not in WEAK_VALUES,
+    so the weak-name branch on line 157 does NOT fire) but below the 32-char floor
+    (line 160 condition is True).  This covers the previously-uncovered branch at line 161.
+    """
+    from pydantic import SecretStr  # already imported at module level, but explicit is fine
+
+    class _Settings:
+        port = 8080
+        password_min_length = 8
+        platform_admin_password = SecretStr("Str0ng!AdminPass")
+        basic_auth_password = SecretStr("Complex!Pass99")
+        # 10 chars, not in WEAK_VALUES (so not caught by line 157), but < 32 (line 160 fires)
+        jwt_secret_key = SecretStr("abcdefghij")  # nosec B106
+        auth_encryption_secret = SecretStr("Qr1!St2@Uv3#Wx4$Yz5%Aa6^Bb7&Cc8*")
+        app_domain = "https://example.com"
+        min_secret_length = 32
+
+    warnings = ve.get_security_warnings(_Settings())  # type: ignore[arg-type]
+
+    assert any("JWT_SECRET_KEY" in w and "at least" in w for w in warnings), (
+        f"Expected JWT length warning, got: {warnings}"
+    )
+
+
+def test_get_security_warnings_flags_short_auth_encryption_secret() -> None:
+    """validate_env.py line 172: AUTH_ENCRYPTION_SECRET shorter than effective_min triggers a length warning.
+
+    Constructs a mock settings object where auth_encryption_secret is 10 chars (not in
+    WEAK_VALUES, so line 168 does NOT fire) but below the 32-char floor (line 171 fires).
+    This covers the previously-uncovered branch at line 172.
+    """
+    from pydantic import SecretStr
+
+    class _Settings:
+        port = 8080
+        password_min_length = 8
+        platform_admin_password = SecretStr("Str0ng!AdminPass")
+        basic_auth_password = SecretStr("Complex!Pass99")
+        jwt_secret_key = SecretStr("a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p")  # nosec B106 # pragma: allowlist secret
+        # 10 chars, not in WEAK_VALUES (so line 168 does not fire), but < 32 (line 171 fires)
+        auth_encryption_secret = SecretStr("abcdefghij")  # nosec B106
+        app_domain = "https://example.com"
+        min_secret_length = 32
+
+    warnings = ve.get_security_warnings(_Settings())  # type: ignore[arg-type]
+
+    assert any("AUTH_ENCRYPTION_SECRET" in w and "at least" in w for w in warnings), (
+        f"Expected AUTH_ENCRYPTION_SECRET length warning, got: {warnings}"
+    )
