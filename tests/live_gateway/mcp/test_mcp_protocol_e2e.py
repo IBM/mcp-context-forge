@@ -134,6 +134,11 @@ async def client(jwt_token: str, mcp_url: str):
     yield holder["session"]
     release.set()
     await runner
+    # Teardown errors land in holder["error"] only after release.set(); the
+    # pre-yield check above can't see them, so re-check here or they'd be
+    # silently swallowed (the old FastMCP client propagated __aexit__ failures).
+    if "error" in holder:
+        raise holder["error"]
 
 
 # ---------------------------------------------------------------------------
