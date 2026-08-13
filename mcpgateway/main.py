@@ -3202,13 +3202,7 @@ class MCPPathRewriteMiddleware:
             >>> scope["path"]
             '/mcp/'
         """
-        # Auth check first
-        auth_ok = await streamable_http_auth(scope, receive, send)
-        if not auth_ok:
-            return
-
         original_path = scope.get("path", "")
-        scope["modified_path"] = original_path
 
         # Strip root_path prefix before pattern matching.
         # In reverse proxy deployments, scope["path"] may contain the full path
@@ -3216,6 +3210,26 @@ class MCPPathRewriteMiddleware:
         # We need to strip this prefix to correctly match server-scoped patterns.
         root_path = (scope.get("root_path") or settings.app_root_path or "").rstrip("/")
         app_path = _normalize_scope_path(original_path, root_path)
+
+        # streamable_http_auth() only extracts the server ID from "/servers/{id}/mcp";
+        # present the alias in that shape here, then restore it.
+        auth_path = original_path
+        if not app_path.startswith("/.well-known/") and app_path.startswith("/v1/virtual-servers/"):
+            _alias_auth_match = re.fullmatch(r"/v1/virtual-servers/([^/]+)/mcp/?", app_path)
+            if _alias_auth_match:
+                trailing_slash = "/" if app_path.endswith("/") else ""
+                auth_path = f"/servers/{_alias_auth_match.group(1)}/mcp{trailing_slash}"
+
+        if auth_path != original_path:
+            scope["path"] = auth_path
+            try:
+                auth_ok = await streamable_http_auth(scope, receive, send)
+            finally:
+                scope["path"] = original_path
+        else:
+            auth_ok = await streamable_http_auth(scope, receive, send)
+        if not auth_ok:
+            return
 
         # Update modified_path to the app-relative path (without root_path prefix).
         # This ensures streamablehttp_transport can extract server_id via regex (#4266).
