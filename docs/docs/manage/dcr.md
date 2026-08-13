@@ -313,6 +313,35 @@ and [Manual Client Credentials](#manual-client-credentials-fallback) examples).
 
 ---
 
+## Per-Gateway Token Endpoint Auth Method (`token_endpoint_auth_method`)
+
+`oauth_config.token_endpoint_auth_method` overrides the global
+`MCPGATEWAY_DCR_TOKEN_ENDPOINT_AUTH_METHOD` setting for a single gateway's
+DCR registration request (RFC 7591).
+
+| `oauth_config.token_endpoint_auth_method` | Registration behavior |
+|---|---|
+| `client_secret_basic` | Registers the client with `token_endpoint_auth_method: client_secret_basic` |
+| `client_secret_post` | Registers the client with `token_endpoint_auth_method: client_secret_post` |
+| absent / empty | Registration uses the global `MCPGATEWAY_DCR_TOKEN_ENDPOINT_AUTH_METHOD` |
+
+- Only `client_secret_basic` and `client_secret_post` are accepted.
+  `none`, `private_key_jwt`, and any other value are rejected at create/update
+  time: the gateway runtime authenticates DCR-registered clients with a client
+  secret, so public-client (`none`) registration is not supported yet.
+- The authorization server's registration response is authoritative: the
+  `token_endpoint_auth_method` the AS confirms is what gets stored back into
+  `oauth_config` and used for subsequent token requests.
+- UIs that send the ICA-style boolean `useClientSecretTokenAuthMethod` should
+  map it here: `true` -> `client_secret_basic`. The 1.0-style `false` ->
+  `none` (public PKCE client) mapping is a separate follow-up; ContextForge
+  does not currently support token endpoint auth method `none`.
+- Invalid values in an existing gateway row (for example, written before the
+  validation landed) are treated as absent at registration time, deferring to
+  the global setting.
+
+---
+
 ## Database Schema
 
 DCR uses three tables:
