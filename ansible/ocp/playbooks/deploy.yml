@@ -60,7 +60,8 @@
             annotations:
               meta.helm.sh/release-name: "{{ ocp_namespace }}"
               meta.helm.sh/release-namespace: "{{ ocp_namespace }}"
-          stringData: "{{ secret_values.mcpContextForge.secret }}"
+          stringData: "{{ dict(secret_values.mcpContextForge.secret | dict2items | map(attribute='key') | list | zip(secret_values.mcpContextForge.secret | dict2items | map(attribute='value') | map('string') | list)) }}"
+      no_log: true
 
     - name: Install ContextForge Helm chart
       ansible.builtin.command:
