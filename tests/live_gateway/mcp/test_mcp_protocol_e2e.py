@@ -122,23 +122,38 @@ async def client(jwt_token: str, mcp_url: str):
                     holder["session"] = session
                     ready.set()
                     await release.wait()
-        except BaseException as exc:  # surface connection/init failures in the test
+        except Exception as exc:  # surface connection/init failures in the test
+            # Exception, not BaseException: a cancelled runner must see
+            # CancelledError propagate, not have it stashed as a result.
             holder["error"] = exc
             ready.set()
 
     runner = asyncio.create_task(_session_runner())
-    await ready.wait()
-    if "error" in holder:
-        await runner
-        raise holder["error"]
-    yield holder["session"]
-    release.set()
-    await runner
-    # Teardown errors land in holder["error"] only after release.set(); the
-    # pre-yield check above can't see them, so re-check here or they'd be
-    # silently swallowed (the old FastMCP client propagated __aexit__ failures).
-    if "error" in holder:
-        raise holder["error"]
+    try:
+        await ready.wait()
+        if "error" in holder:
+            raise holder["error"]
+        yield holder["session"]
+    finally:
+        # Always unwind the runner, even when setup is cancelled (Ctrl-C,
+        # timeout, GeneratorExit) before the session is handed over —
+        # otherwise it stays parked at release.wait() holding an open HTTP
+        # connection. If setup never completed, the runner may instead be
+        # stuck mid-initialize, so cancel it rather than waiting it out.
+        release.set()
+        if "session" not in holder and not runner.done():
+            runner.cancel()
+        try:
+            await runner
+        except asyncio.CancelledError:
+            pass
+        # Teardown errors land in holder["error"] only after release.set();
+        # the pre-yield check above can't see them, so re-check here or
+        # they'd be silently swallowed (the old FastMCP client propagated
+        # __aexit__ failures). Skip the re-raise when an exception is
+        # already in flight so it isn't masked by the same object.
+        if "error" in holder and sys.exc_info()[0] is None:
+            raise holder["error"]
 
 
 # ---------------------------------------------------------------------------
