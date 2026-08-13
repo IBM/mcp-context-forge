@@ -21,6 +21,40 @@ from .base import normalize_resource_url
 logger = logging.getLogger(__name__)
 
 
+def check_private_gateway_access(
+    gateway_visibility: str | None,
+    gateway_owner_email: str | None,
+    token_owner_email: str,
+    gateway_id: str,
+) -> bool:
+    """Check if token owner can refresh tokens on a private gateway.
+
+    Per PR #4341: Refuse refresh on private gateways when the gateway owner
+    differs from the token owner. This prevents user A's tokens from being
+    used to refresh gateway access for user B's private gateway.
+
+    Args:
+        gateway_visibility: Gateway visibility ("private", "public", or None)
+        gateway_owner_email: Email of gateway owner (may be None)
+        token_owner_email: Email of token owner (from stored token record)
+        gateway_id: Gateway ID for logging
+
+    Returns:
+        True if access is allowed (public gateway or owner match),
+        False if access is denied (private gateway with mismatched owner)
+    """
+    visibility = gateway_visibility or "public"
+    if visibility == "private" and gateway_owner_email and gateway_owner_email != token_owner_email:
+        logger.warning(
+            "OAuth refresh denied: gateway %s is private and owned by %s, not token owner %s",
+            gateway_id,
+            gateway_owner_email,
+            token_owner_email,
+        )
+        return False
+    return True
+
+
 def apply_omit_resource_and_normalize(
     oauth_config: dict[str, Any],
     gateway_url: str | None,

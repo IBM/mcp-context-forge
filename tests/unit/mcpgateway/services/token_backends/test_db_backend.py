@@ -635,7 +635,7 @@ async def test_refresh_access_token_private_gateway_wrong_owner(backend_with_enc
     mock_gateway.owner_email = "owner@test.com"  # Different from token owner
     mock_db.query.return_value.filter.return_value.first.return_value = mock_gateway
 
-    with patch("mcpgateway.services.token_backends.db_backend.logger") as mock_logger:
+    with patch("mcpgateway.services.token_backends.refresh_helpers.logger") as mock_logger:
         result = await backend_with_encryption._refresh_access_token(token_record)
 
         assert result is None

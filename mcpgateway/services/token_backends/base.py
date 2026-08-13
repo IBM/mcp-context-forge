@@ -13,10 +13,15 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING
-from urllib.parse import urlparse, urlunparse
+
+# Re-export canonical normalize_resource from utils.oauth_resource
+# (avoids duplication - refresh_helpers imports from here for backward compat)
+from mcpgateway.utils.oauth_resource import normalize_resource as normalize_resource_url
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
+
+__all__ = ["TokenRecord", "AbstractTokenBackend", "normalize_resource_url"]
 
 
 @dataclass
@@ -228,39 +233,3 @@ class AbstractTokenBackend(ABC):
             OAuth config dict or None if not found / not supported.
         """
         return None
-
-
-def normalize_resource_url(url: str, *, preserve_query: bool = False) -> str | None:
-    """Normalize a URL as an OAuth 2.0 resource indicator per RFC 8707.
-
-    Strips the fragment component unconditionally.  Query string is stripped
-    unless ``preserve_query=True``.  Opaque identifiers (no scheme) are
-    returned unchanged.  Empty or falsy inputs return ``None``.
-
-    Shared by both DatabaseTokenBackend and VaultTokenBackend to avoid
-    duplication of the same inner function defined in their _refresh helpers.
-
-    Args:
-        url: Raw URL or opaque identifier.
-        preserve_query: Keep the query string in the normalised form.
-
-    Returns:
-        Normalised URL string, or ``None`` for empty input.
-
-    Examples:
-        >>> normalize_resource_url("https://mcp.example.com/path?q=1#frag")
-        'https://mcp.example.com/path'
-        >>> normalize_resource_url("https://mcp.example.com/path?q=1", preserve_query=True)
-        'https://mcp.example.com/path?q=1'
-        >>> normalize_resource_url("opaque-id") == "opaque-id"
-        True
-        >>> normalize_resource_url("") is None
-        True
-    """
-    if not url:
-        return None
-    parsed = urlparse(url)
-    if not parsed.scheme:
-        return url  # Opaque identifier — pass through unchanged
-    query = parsed.query if preserve_query else ""
-    return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, query, ""))
