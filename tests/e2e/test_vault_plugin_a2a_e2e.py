@@ -71,11 +71,12 @@ def _wait_http(url: str, timeout: float = 45.0, headers: Optional[dict] = None) 
     return False
 
 
-def _mint_jwt() -> str:
-    """Generate an admin JWT via the gateway helper."""
+def _mint_jwt(env: Optional[dict] = None) -> str:
+    """Generate an admin JWT via the gateway helper, using the same env as the gateway subprocess."""
     out = subprocess.check_output(
         [PYBIN, "-m", "mcpgateway.utils.create_jwt_token", "--username", "admin@example.com", "--exp", "10080", "--secret", JWT_SECRET],
         cwd=REPO,
+        env=env,
     )
     return out.decode().strip()
 
@@ -118,11 +119,12 @@ def live_stack():
                 "JWT_SECRET_KEY": JWT_SECRET,
                 "DATABASE_URL": f"sqlite:///{E2E_DB}",
                 "AUTH_REQUIRED": "true",
+                "EXPOSE_ERROR_DETAILS": "true",
             }
         )
         procs.append(subprocess.Popen([PYBIN, "-m", "uvicorn", "mcpgateway.main:app", "--host", "127.0.0.1", "--port", "4444"], cwd=REPO, stdout=logs[2], stderr=subprocess.STDOUT, env=env))
 
-        token = _mint_jwt()
+        token = _mint_jwt(env)
         if not _wait_http(f"{BASE_URL}/health", headers={"Authorization": f"Bearer {token}"}):
             pytest.skip(f"gateway did not become ready (see {GATEWAY_LOG})")
 
