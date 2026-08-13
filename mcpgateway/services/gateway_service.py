@@ -617,6 +617,16 @@ class ReverseProxyGatewayRegistration:
     scope: ReverseProxyGatewayScope
 
 
+def _is_internal_proxied_gateway(gateway: Any) -> bool:
+    """Identify server-minted reverse-proxy catalog rows by transport AND provenance.
+
+    Both halves are server-owned: ``transport == "PROXIED"`` plus
+    ``created_via == "reverse_proxy"``. Client-supplied update fields alone (e.g. a
+    transport string on an update payload) must never confer PROXIED authority.
+    """
+    return str(getattr(gateway, "transport", "") or "").upper() == "PROXIED" and getattr(gateway, "created_via", None) == "reverse_proxy"
+
+
 class GatewayService(BaseService):  # pylint: disable=too-many-instance-attributes
     """Service for managing federated gateways.
 
@@ -2872,6 +2882,26 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 if not await permission_service.check_resource_ownership(user_email, gateway):
                     raise PermissionError("Only the owner can update this gateway")
 
+            # Internal reverse-proxy catalog rows: identity fields are immutable and only
+            # header-forwardable auth modes (bearer/basic/authheaders) may be configured.
+            # query-param/OAuth/one-time modes need a probeable URL or network flow the row
+            # deliberately lacks, so they are rejected here rather than persisted inertly.
+            proxied_internal = _is_internal_proxied_gateway(gateway)
+            update_transport = getattr(gateway_update, "transport", None)
+            if proxied_internal:
+                if gateway_update.url is not None:
+                    raise GatewayError("Cannot change the URL of a reverse-proxy (PROXIED) gateway")
+                if update_transport is not None and str(update_transport).upper() != "PROXIED":
+                    raise GatewayError("Cannot change the transport of a reverse-proxy (PROXIED) gateway")
+                if getattr(gateway_update, "one_time_auth", False):
+                    raise GatewayError("one-time auth is not supported for reverse-proxy (PROXIED) gateways")
+                if gateway_update.oauth_config is not None:
+                    raise GatewayError("OAuth configuration is not supported for reverse-proxy (PROXIED) gateways")
+                if gateway_update.auth_type is not None and gateway_update.auth_type not in ("", "bearer", "basic", "authheaders"):
+                    raise GatewayError(f"auth mode '{gateway_update.auth_type}' is not supported for reverse-proxy (PROXIED) gateways")
+            elif update_transport is not None and str(update_transport).upper() == "PROXIED":
+                raise GatewayError("PROXIED transport is reserved for reverse-proxy-registered gateways")
+
             if gateway.enabled or include_inactive:
                 if getattr(settings, "gateway_async_lifecycle_enabled", False) is True and getattr(gateway, "status", None) == "pending":
                     return self.convert_gateway_to_read(gateway)
@@ -3205,7 +3235,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     auth_query_params_decrypted = connection_material.auth_query_params_decrypted
                     init_url = connection_material.url
 
-                if getattr(settings, "gateway_async_lifecycle_enabled", False) is True:
+                if getattr(settings, "gateway_async_lifecycle_enabled", False) is True and not proxied_internal:
                     gateway.status = "pending"
                     gateway.status_message = "Gateway update accepted and pending initialization"
                     gateway.registration_attempts = 0
@@ -3307,82 +3337,87 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 # so they can't affect connection re-init success/failure.
                 init_affecting_changed = any(new != old for new, old in _connection_field_pairs(include_signing=False))
 
-                try:
-                    ca_certificate = getattr(gateway, "ca_certificate", None)
-                    connection_material = await self._prepare_gateway_connection_material(
-                        init_url,
-                        client_cert=getattr(gateway, "client_cert", None),
-                        client_key=getattr(gateway, "client_key", None),
-                        decrypt_client_key=True,
-                        log_context="gateway re-init",
-                    )
+                # Internal reverse-proxy rows persist no probeable URL: the upstream is reachable
+                # only through the reverse-proxy WebSocket session, so updates (including stored
+                # auth material) persist without a network re-initialization in BOTH lifecycle
+                # modes; catalog rows reconcile when the client next re-registers.
+                if not proxied_internal:
                     try:
-                        capabilities, tools, resources, prompts, _ = await self._initialize_gateway(
-                            connection_material.url,
-                            gateway.auth_value,
-                            gateway.transport,
-                            gateway.auth_type,
-                            gateway.oauth_config,
-                            ca_certificate,
-                            auth_query_params=auth_query_params_decrypted,
-                            client_cert=connection_material.client_cert,
-                            client_key=connection_material.client_key,
+                        ca_certificate = getattr(gateway, "ca_certificate", None)
+                        connection_material = await self._prepare_gateway_connection_material(
+                            init_url,
+                            client_cert=getattr(gateway, "client_cert", None),
+                            client_key=getattr(gateway, "client_key", None),
+                            decrypt_client_key=True,
+                            log_context="gateway re-init",
                         )
-                    except Exception as init_err:
-                        # New URL/auth/TLS config is unreachable or invalid. Wrap non-connection
-                        # errors so the outer handler can recognize this as a connection failure
-                        # and decide (via init_affecting_changed) whether to propagate as a 502
-                        # or swallow as a best-effort cosmetic update (see visibility note ~2256).
-                        if init_affecting_changed and not isinstance(init_err, GatewayConnectionError):
-                            safe_url = sanitize_url_for_logging(gateway.url, auth_query_params_decrypted)
-                            safe_msg = sanitize_exception_message(str(init_err), auth_query_params_decrypted)
-                            raise GatewayConnectionError(f"Failed to initialize gateway at {safe_url}: {safe_msg}") from init_err
-                        raise
-                    if gateway_update.one_time_auth:
-                        # For one-time auth, clear auth_type and auth_value after initialization
-                        gateway.auth_type = "one_time_auth"
-                        gateway.auth_value = None
-                        gateway.oauth_config = None
+                        try:
+                            capabilities, tools, resources, prompts, _ = await self._initialize_gateway(
+                                connection_material.url,
+                                gateway.auth_value,
+                                gateway.transport,
+                                gateway.auth_type,
+                                gateway.oauth_config,
+                                ca_certificate,
+                                auth_query_params=auth_query_params_decrypted,
+                                client_cert=connection_material.client_cert,
+                                client_key=connection_material.client_key,
+                            )
+                        except Exception as init_err:
+                            # New URL/auth/TLS config is unreachable or invalid. Wrap non-connection
+                            # errors so the outer handler can recognize this as a connection failure
+                            # and decide (via init_affecting_changed) whether to propagate as a 502
+                            # or swallow as a best-effort cosmetic update (see visibility note ~2256).
+                            if init_affecting_changed and not isinstance(init_err, GatewayConnectionError):
+                                safe_url = sanitize_url_for_logging(gateway.url, auth_query_params_decrypted)
+                                safe_msg = sanitize_exception_message(str(init_err), auth_query_params_decrypted)
+                                raise GatewayConnectionError(f"Failed to initialize gateway at {safe_url}: {safe_msg}") from init_err
+                            raise
+                        if gateway_update.one_time_auth:
+                            # For one-time auth, clear auth_type and auth_value after initialization
+                            gateway.auth_type = "one_time_auth"
+                            gateway.auth_value = None
+                            gateway.oauth_config = None
 
-                    _vis_changed = gateway_update.visibility is not None
-                    catalog_sync = self._sync_gateway_catalog(
-                        db,
-                        gateway=gateway,
-                        tools=tools,
-                        resources=resources,
-                        prompts=prompts,
-                        created_via="update",
-                        update_visibility=_vis_changed,
-                    )
-                    self._reconcile_gateway_catalog(
-                        db,
-                        gateway=gateway,
-                        catalog_sync=catalog_sync,
-                        log_context="gateway update",
-                    )
+                        _vis_changed = gateway_update.visibility is not None
+                        catalog_sync = self._sync_gateway_catalog(
+                            db,
+                            gateway=gateway,
+                            tools=tools,
+                            resources=resources,
+                            prompts=prompts,
+                            created_via="update",
+                            update_visibility=_vis_changed,
+                        )
+                        self._reconcile_gateway_catalog(
+                            db,
+                            gateway=gateway,
+                            catalog_sync=catalog_sync,
+                            log_context="gateway update",
+                        )
 
-                    gateway.capabilities = capabilities
+                        gateway.capabilities = capabilities
 
-                    # Register capabilities for notification-driven actions
-                    register_gateway_capabilities_for_notifications(gateway.id, capabilities)
+                        # Register capabilities for notification-driven actions
+                        register_gateway_capabilities_for_notifications(gateway.id, capabilities)
 
-                    gateway.last_seen = datetime.now(timezone.utc)
+                        gateway.last_seen = datetime.now(timezone.utc)
 
-                    # Update tracking with new URL
-                    self._active_gateways.discard(gateway.url)
-                    self._active_gateways.add(gateway.url)
-                    reinit_succeeded = True
-                except GatewayConnectionError as gce:
-                    if init_affecting_changed:
-                        # Do NOT persist the broken update — propagate so the outer handler
-                        # rolls back (nothing committed) and the API returns 502, matching
-                        # POST /gateways behavior.
-                        raise
-                    logger.warning("Failed to initialize updated gateway: %s", gce)
-                    reinit_succeeded = False
-                except Exception as e:
-                    logger.warning("Failed to initialize updated gateway: %s", sanitize_exception_message(str(e), auth_query_params_decrypted))
-                    reinit_succeeded = False
+                        # Update tracking with new URL
+                        self._active_gateways.discard(gateway.url)
+                        self._active_gateways.add(gateway.url)
+                        reinit_succeeded = True
+                    except GatewayConnectionError as gce:
+                        if init_affecting_changed:
+                            # Do NOT persist the broken update — propagate so the outer handler
+                            # rolls back (nothing committed) and the API returns 502, matching
+                            # POST /gateways behavior.
+                            raise
+                        logger.warning("Failed to initialize updated gateway: %s", gce)
+                        reinit_succeeded = False
+                    except Exception as e:
+                        logger.warning("Failed to initialize updated gateway: %s", sanitize_exception_message(str(e), auth_query_params_decrypted))
+                        reinit_succeeded = False
 
                 # Update tags if provided
                 if gateway_update.tags is not None:
