@@ -720,7 +720,7 @@ def _is_mutate_permission(permission: str) -> bool:
     return parts[-1] in _MUTATE_PERMISSION_ACTIONS if len(parts) >= 2 else False
 
 
-def require_permission(permission: str, resource_type: Optional[str] = None, allow_admin_bypass: bool = True):
+def require_permission(permission: str, resource_type: Optional[str] = None, allow_admin_bypass: bool = True, global_only: bool = False):
     """Decorator to require specific permission for accessing an endpoint.
 
     Args:
@@ -729,6 +729,11 @@ def require_permission(permission: str, resource_type: Optional[str] = None, all
         allow_admin_bypass: If True (default), admin users bypass all permission checks.
                            If False, even admins must have explicit permissions.
                            Use False for admin UI routes to enforce granular RBAC.
+        global_only: If True, skip team derivation entirely and check only global/personal
+                     roles (team_id=None, check_any_team=False). Use for routes that manage
+                     resources with no team column, where the normal per-request team
+                     derivation (from a resource ID kwarg or "any team" aggregation) would
+                     let a team-scoped role grant access to a globally-scoped resource.
 
     Returns:
         Callable: Decorated function that enforces the permission requirement
@@ -793,7 +798,10 @@ def require_permission(permission: str, resource_type: Optional[str] = None, all
                 logger.warning(f"API token scope check failed: user={user_context['email']}, permission={permission}, token_scopes={token_scopes}")
                 raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
 
-            team_id, check_any_team = await _resolve_team_and_check_mode(user_context, kwargs)
+            if global_only:
+                team_id, check_any_team = None, False
+            else:
+                team_id, check_any_team = await _resolve_team_and_check_mode(user_context, kwargs)
 
             # First, check if any plugins want to handle permission checking
             # Third-Party
