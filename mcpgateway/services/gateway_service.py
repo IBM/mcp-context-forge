@@ -2862,6 +2862,18 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 # Handle OAuth configuration updates
                 if gateway_update.oauth_config is not None:
                     raw_oauth_update = dict(gateway_update.oauth_config)
+
+                    # GatewayCreate rejects the deprecated password grant for new gateways at
+                    # the schema layer, but GatewayUpdate must accept it so a gateway that
+                    # already uses it keeps working (unrelated field edits re-submit the
+                    # unchanged oauth_config). What must NOT be allowed is using this update
+                    # path to newly adopt password on a gateway that wasn't already using it —
+                    # otherwise the create-time rejection is trivially bypassable.
+                    if raw_oauth_update.get("grant_type") == "password":
+                        original_grant_type = original_oauth_config.get("grant_type") if isinstance(original_oauth_config, dict) else None
+                        if original_grant_type != "password":
+                            raise ValueError("The OAuth 2.1 resource owner password grant is not supported for new MCP servers. Use authorization_code or client_credentials instead.")
+
                     await self._enforce_token_exchange_admin_only(db, raw_oauth_update, user_email)
                     raw_oauth_update = await self._auto_discover_oauth_endpoints(raw_oauth_update)
                     raw_oauth_update = self._validate_token_exchange_config(raw_oauth_update)
