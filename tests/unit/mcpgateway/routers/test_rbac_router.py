@@ -296,7 +296,7 @@ async def test_get_user_roles_success(monkeypatch):
     monkeypatch.setattr(rbac_router, "PermissionService", lambda db: perm_service)
 
     db = MagicMock()
-    result = await rbac_router.get_user_roles("user@example.com", scope=None, active_only=True, user={"email": "admin@example.com"}, db=db)
+    result = await rbac_router.get_user_roles("user@example.com", scope=None, active_only=True, user={"email": "admin@example.com"}, db=db, request=scoped_request(None))
     assert result[0].role_id == "r1"
     db.commit.assert_called_once()
     db.close.assert_called_once()
@@ -505,7 +505,7 @@ async def test_permission_service_errors(monkeypatch):
     monkeypatch.setattr(rbac_router, "PermissionService", lambda db: perm_service)
 
     with pytest.raises(rbac_router.HTTPException) as excinfo:
-        await rbac_router.get_user_roles("user@example.com", scope=None, active_only=True, user={"email": "admin@example.com"}, db=MagicMock())
+        await rbac_router.get_user_roles("user@example.com", scope=None, active_only=True, user={"email": "admin@example.com"}, db=MagicMock(), request=scoped_request(None))
     assert excinfo.value.status_code == 500
 
     check_request = PermissionCheckRequest(user_email="user@example.com", permission="p1")

@@ -471,6 +471,7 @@ async def get_user_roles(
     active_only: bool = Query(True, description="Show only active assignments"),
     user=Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
+    request: Request = None,
 ):
     """Get roles assigned to a user.
 
@@ -480,6 +481,7 @@ async def get_user_roles(
         active_only: Whether to show only active assignments
         user: Current authenticated user
         db: Database session
+        request: Incoming request, used to resolve Layer-1 token scope.
 
     Returns:
         List[UserRoleResponse]: User's role assignments
@@ -493,8 +495,15 @@ async def get_user_roles(
         True
     """
     try:
+        # Layer 1: a narrowed admin viewing their OWN roles gets full visibility
+        # (same as /my/roles); viewing another user's roles is filtered to what
+        # the caller's token_teams actually covers.
+        _, token_teams = get_scoped_resource_access_context(request, user)
+        if user_email == user.get("email"):
+            token_teams = None
+
         permission_service = PermissionService(db)
-        user_roles = await permission_service.get_user_roles(user_email=user_email, scope=scope, include_expired=not active_only)
+        user_roles = await permission_service.get_user_roles(user_email=user_email, scope=scope, include_expired=not active_only, token_teams=token_teams)
 
         result = [UserRoleResponse.model_validate(user_role) for user_role in user_roles]
         db.commit()
