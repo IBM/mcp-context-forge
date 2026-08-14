@@ -4212,13 +4212,7 @@ class TestExtractUsingJqErrors:
         # First-Party
         import mcpgateway.services.tool_service as ts
 
-        with patch.object(ts, "_compile_jq_filter") as mock_compile:
-            mock_prog = MagicMock()
-            mock_input = MagicMock()
-            mock_input.all = MagicMock(return_value=[None])
-            mock_prog.input = MagicMock(return_value=mock_input)
-            mock_compile.return_value = mock_prog
-
+        with patch.object(ts, "run_jq_filter", return_value=[None]):
             result = extract_using_jq({"key": "value"}, ".x")
         assert isinstance(result, list)
         assert len(result) == 1
@@ -4226,16 +4220,18 @@ class TestExtractUsingJqErrors:
         assert result[0].text == "Error applying jsonpath filter"
 
     def test_jq_filter_exception(self):
-        """When jq raises exception, returns error message as TextContent in list."""
+        """When the filter engine raises, a fixed error message is returned."""
         # First-Party
         import mcpgateway.services.tool_service as ts
+        from mcpgateway.utils.jq_runner import JqFilterError
 
-        with patch.object(ts, "_compile_jq_filter", side_effect=ValueError("bad filter")):
+        with patch.object(ts, "run_jq_filter", side_effect=JqFilterError("bad filter")):
             result = extract_using_jq({"data": 1}, "bad_filter")
         assert isinstance(result, list)
         assert len(result) == 1
         assert isinstance(result[0], TextContent)
-        assert "Error" in result[0].text
+        assert result[0].text == "Error applying jsonpath filter"
+        assert "bad filter" not in result[0].text
 
 
 # ---------------------------------------------------------------------------

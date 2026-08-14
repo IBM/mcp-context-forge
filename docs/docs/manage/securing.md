@@ -649,7 +649,57 @@ Before connecting any MCP server:
 - [ ] Monitor server behavior for anomalies
 - [ ] Implement rate limiting for untrusted servers
 
-### 13. Database Security
+### 13. jq Filter Sandbox
+
+Tool `jsonpath_filter` values are jq programs. They are validated when a tool is
+written and again when it is invoked, and — on Linux — they execute in a forked
+worker whose environment has been cleared, under `JQ_FILTER_TIMEOUT_SECONDS`.
+
+Filters that reference `env`, `$ENV`, `input`, `inputs`, `input_filename`,
+`input_line_number`, `$__loc__`, `debug`, `stderr`, `include`, `import`, or
+`modulemeta` are rejected. Field access such as `.env` is unaffected.
+
+Object-construction keys are read as code, so an unquoted key named after a
+restricted built-in is refused. Quote it instead — write `{"env": .region}`
+rather than `{env: .region}`.
+
+| Setting | Default | Purpose |
+|---------|---------|---------|
+| `JQ_FILTER_EXECUTION` | `subprocess` | `subprocess` runs filters in the sandbox; `inprocess` disables it. |
+| `JQ_FILTER_TIMEOUT_SECONDS` | `2.0` | Wall-clock limit for a single filter. |
+| `JQ_FILTER_WORKERS` | `2` | Worker processes per gateway process. Raise it if filtered tools are called concurrently enough that a single slow filter queues others. |
+
+!!! warning "The sandbox is Linux-only"
+    The forked worker requires the `fork` start method, which is unsafe on
+    Darwin, so `subprocess` mode is silently inactive on any non-Linux platform
+    **regardless of `JQ_FILTER_EXECUTION`**. There, filters run in-process with
+    no environment scrub and no time limit, and the static denylist above is the
+    only protection. This is announced by a `WARNING` at startup — check for it
+    if you run the gateway outside a Linux container. The shipped container
+    images are Linux, so production deployments get the sandbox.
+
+`JQ_FILTER_EXECUTION=inprocess` likewise disables both the environment scrub and
+the time limit. It exists only for platforms without a usable `fork`, and must
+not be set in production.
+
+**Blast radius of a timeout.** A filter that overruns its limit causes the whole
+worker pool to be killed and rebuilt, because `ProcessPoolExecutor` cannot
+cancel a task that is already running and offers no way to target one worker.
+Other filters in flight at that moment are aborted and reported as errors to
+their own callers. Raising `JQ_FILTER_WORKERS` does not narrow this — the kill
+is pool-wide by design. It is an accepted trade-off: the alternative is leaving
+a non-terminating filter holding a worker indefinitely. The pool is also
+rebuilt if a worker dies abnormally (for example, if the kernel OOM-kills a
+filter that allocates without bound), so a single hostile filter cannot disable
+response filtering for the lifetime of the gateway process.
+
+**If you ran a build released before this change**, treat the following as
+disclosed and rotate them: `JWT_SECRET_KEY`, `AUTH_ENCRYPTION_SECRET`, and the
+credentials embedded in `DATABASE_URL` and `REDIS_URL`, plus
+`BASIC_AUTH_PASSWORD`. Audit existing tools for hostile `jsonpath_filter` values
+before upgrading, since those tools will begin failing at invoke time.
+
+### 14. Database Security
 
 - [ ] Use TLS for database connections
 - [ ] Configure strong passwords
@@ -657,7 +707,7 @@ Before connecting any MCP server:
 - [ ] Enable audit logging
 - [ ] Regular backups with encryption
 
-### 14. Monitoring & Logging
+### 15. Monitoring & Logging
 
 - [ ] Set up structured logging without sensitive data
 - [ ] Configure log rotation and secure storage
@@ -665,7 +715,7 @@ Before connecting any MCP server:
 - [ ] Set up anomaly detection
 - [ ] Create incident response procedures
 
-### 15. Integration Security
+### 16. Integration Security
 
 ContextForge should be integrated with:
 
@@ -675,7 +725,7 @@ ContextForge should be integrated with:
 - [ ] SIEM for security monitoring
 - [ ] Load balancer with TLS termination
 
-### 16. Well-Known URI Security
+### 17. Well-Known URI Security
 
 Configure well-known URIs appropriately for your deployment:
 
@@ -699,7 +749,7 @@ Security considerations:
 - [ ] Update security.txt Expires field before expiration
 - [ ] Consider custom well-known files only if necessary
 
-### 17. Downstream Application Security
+### 18. Downstream Application Security
 
 Applications consuming ContextForge data must:
 
