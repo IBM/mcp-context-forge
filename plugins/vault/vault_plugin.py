@@ -21,7 +21,6 @@ from pydantic import BaseModel
 
 # First-Party
 from cpex.framework import (
-    HttpHeaderPayload,
     Plugin,
     PluginConfig,
     PluginContext,
@@ -29,6 +28,7 @@ from cpex.framework import (
     ToolPreInvokeResult,
     get_attr,
 )
+from cpex.framework.extensions import Extensions, HttpExtension
 from mcpgateway.db import get_db
 from mcpgateway.services.gateway_service import GatewayService
 from mcpgateway.services.logging_service import LoggingService
@@ -112,12 +112,13 @@ class Vault(Plugin):
         token_name = parts[3] if len(parts) > 3 else None
         return system, scope, token_type, token_name
 
-    async def tool_pre_invoke(self, payload: ToolPreInvokePayload, context: PluginContext) -> ToolPreInvokeResult:
+    async def tool_pre_invoke(self, payload: ToolPreInvokePayload, context: PluginContext, extensions: Extensions | None = None) -> ToolPreInvokeResult:
         """Generate bearer tokens from vault-saved tokens before tool invocation.
 
         Args:
             payload: The tool payload containing arguments.
             context: Plugin execution context.
+            extensions: Hook extensions (headers on ``extensions.http``).
 
         Returns:
             Result with potentially modified headers containing bearer token.
@@ -171,19 +172,21 @@ class Vault(Plugin):
             finally:
                 gen.close()
 
+        def _with_headers(hdrs: dict[str, str]) -> ToolPreInvokeResult:
+            new_ext = (extensions or Extensions()).model_copy(update={"http": HttpExtension(headers=hdrs)})
+            return ToolPreInvokeResult(modified_extensions=new_ext)
+
+        headers: dict[str, str] = {k.lower(): v for k, v in (extensions.http.headers.items() if extensions and extensions.http else [])}
+
         if not system_key:
             logger.warning("System cannot be determined from gateway metadata.")
             # SECURITY: Strip vault header even when system cannot be determined
-            if payload.headers:
-                safe_headers = {k.lower(): v for k, v in payload.headers.root.items()}
-                if self._vault_header_key in safe_headers:
-                    del safe_headers[self._vault_header_key]
-                    payload = payload.model_copy(update={"headers": HttpHeaderPayload(root=safe_headers)})
-                    return ToolPreInvokeResult(modified_payload=payload)
+            if self._vault_header_key in headers:
+                del headers[self._vault_header_key]
+                return _with_headers(headers)
             return ToolPreInvokeResult()
 
         modified = False
-        headers: dict[str, str] = {k.lower(): v for k, v in payload.headers.root.items()} if payload.headers else {}
 
         # Check if vault header exists
         if self._vault_header_key not in headers:
@@ -196,8 +199,7 @@ class Vault(Plugin):
             logger.error("Failed to parse vault tokens from header: %s", e)
             # SECURITY: Always remove vault header even on parse error
             del headers[self._vault_header_key]
-            payload = payload.model_copy(update={"headers": HttpHeaderPayload(root=headers)})
-            return ToolPreInvokeResult(modified_payload=payload)
+            return _with_headers(headers)
 
         # SECURITY: Always remove vault header immediately after successful parsing
         # This header should NEVER be sent to the MCP server
@@ -205,8 +207,7 @@ class Vault(Plugin):
 
         if not isinstance(vault_tokens, dict):
             logger.error("Vault tokens header is not a JSON object: %s", type(vault_tokens).__name__)
-            payload = payload.model_copy(update={"headers": HttpHeaderPayload(root=headers)})
-            return ToolPreInvokeResult(modified_payload=payload)
+            return _with_headers(headers)
         logger.debug("Removed vault header '%s' from headers", self._vault_header_key)
 
         vault_handling = self._sconfig.vault_handling
@@ -265,9 +266,8 @@ class Vault(Plugin):
             # Even if we didn't modify headers (no token match), we still removed the vault header
             logger.warning("Vault tokens provided but no match found for system '%s' - possible misconfiguration", system_key)
 
-        # Always return modified payload since the vault header was stripped
-        payload = payload.model_copy(update={"headers": HttpHeaderPayload(root=headers)})
-        return ToolPreInvokeResult(modified_payload=payload)
+        # Always return modified extensions since the vault header was stripped
+        return _with_headers(headers)
 
     async def shutdown(self) -> None:
         """Shutdown the plugin gracefully.

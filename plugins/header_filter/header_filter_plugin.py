@@ -19,13 +19,13 @@ from pydantic import BaseModel, Field
 from cpex.framework import (
     AgentPreInvokePayload,
     AgentPreInvokeResult,
-    HttpHeaderPayload,
     Plugin,
     PluginConfig,
     PluginContext,
     ToolPreInvokePayload,
     ToolPreInvokeResult,
 )
+from cpex.framework.extensions import Extensions, HttpExtension
 from mcpgateway.services.logging_service import LoggingService
 
 # Initialize logging service
@@ -63,7 +63,7 @@ class HeaderFilter(Plugin):
 
     This plugin prevents sensitive authentication and authorization headers from being
     leaked to MCP servers. It runs on pre-invoke hooks for tools and agents where HTTP
-    headers are available in the payload.
+    headers are available via ``extensions.http.headers``.
 
     Security considerations:
     - Headers are filtered case-insensitively
@@ -123,55 +123,65 @@ class HeaderFilter(Plugin):
 
         return filtered_headers, removed_headers
 
-    async def tool_pre_invoke(self, payload: ToolPreInvokePayload, context: PluginContext) -> ToolPreInvokeResult:  # pylint: disable=unused-argument
+    @staticmethod
+    def _headers_from_extensions(extensions: Extensions | None) -> dict[str, str]:
+        """Read HTTP headers from hook extensions."""
+        if extensions and extensions.http:
+            return dict(extensions.http.headers)
+        return {}
+
+    def _result_with_headers(self, result_cls, extensions: Extensions | None, headers: dict[str, str]):
+        """Build a hook result that returns updated headers via modified_extensions."""
+        new_ext = (extensions or Extensions()).model_copy(update={"http": HttpExtension(headers=headers)})
+        return result_cls(modified_extensions=new_ext)
+
+    async def tool_pre_invoke(self, payload: ToolPreInvokePayload, context: PluginContext, extensions: Extensions | None = None) -> ToolPreInvokeResult:  # pylint: disable=unused-argument
         """Filter headers before tool invocation.
 
         Args:
-            payload: The tool payload containing headers.
+            payload: The tool payload.
             context: Plugin execution context.
+            extensions: Hook extensions (headers on ``extensions.http``).
 
         Returns:
-            Result with filtered headers.
+            Result with filtered headers in ``modified_extensions``.
         """
-        if not payload.headers:
+        headers = self._headers_from_extensions(extensions)
+        if not headers:
             return ToolPreInvokeResult()
 
-        headers = payload.headers.model_dump()
         context_name = f"tool:{payload.name}"
-
         filtered_headers, removed = self._filter_headers(headers, context_name)
 
         if removed:
             if self._sconfig.log_filtered_headers:
                 logger.info(f"Filtered {len(removed)} header(s) from {context_name}: {', '.join(removed)}")
-            modified = payload.model_copy(update={"headers": HttpHeaderPayload(root=filtered_headers)})
-            return ToolPreInvokeResult(modified_payload=modified)
+            return self._result_with_headers(ToolPreInvokeResult, extensions, filtered_headers)
 
         return ToolPreInvokeResult()
 
-    async def agent_pre_invoke(self, payload: AgentPreInvokePayload, context: PluginContext) -> AgentPreInvokeResult:  # pylint: disable=unused-argument
+    async def agent_pre_invoke(self, payload: AgentPreInvokePayload, context: PluginContext, extensions: Extensions | None = None) -> AgentPreInvokeResult:  # pylint: disable=unused-argument
         """Filter headers before agent invocation.
 
         Args:
-            payload: The agent payload containing headers.
+            payload: The agent payload.
             context: Plugin execution context.
+            extensions: Hook extensions (headers on ``extensions.http``).
 
         Returns:
-            Result with filtered headers.
+            Result with filtered headers in ``modified_extensions``.
         """
-        if not payload.headers:
+        headers = self._headers_from_extensions(extensions)
+        if not headers:
             return AgentPreInvokeResult()
 
-        headers = payload.headers.model_dump()
         context_name = f"agent:{payload.agent_id}"
-
         filtered_headers, removed = self._filter_headers(headers, context_name)
 
         if removed:
             if self._sconfig.log_filtered_headers:
                 logger.info(f"Filtered {len(removed)} header(s) from {context_name}: {', '.join(removed)}")
-            modified = payload.model_copy(update={"headers": HttpHeaderPayload(root=filtered_headers)})
-            return AgentPreInvokeResult(modified_payload=modified)
+            return self._result_with_headers(AgentPreInvokeResult, extensions, filtered_headers)
 
         return AgentPreInvokeResult()
 

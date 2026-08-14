@@ -25,6 +25,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 import pytest
+from cpex.framework.extensions import Extensions, HttpExtension
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -1163,16 +1164,17 @@ class TestCodePathCoverage:
         mock_plugin_manager = MagicMock()
         mock_plugin_manager.has_hooks_for = MagicMock(return_value=True)
 
-        # Mock the plugin hook result
+        # Mock the plugin hook result — headers via modified_extensions
         mock_pre_result = MagicMock()
         mock_pre_result.modified_payload.parameters = None
-        mock_pre_result.modified_payload.headers = MagicMock()
-        mock_pre_result.modified_payload.headers.model_dump = MagicMock(
-            return_value={
-                "x-custom": "allowed",
-                "authorization": "Bearer plugin",  # Will be filtered # pragma: allowlist secret
-                "x-api-key": "secret",  # Will be filtered # pragma: allowlist secret
-            }
+        mock_pre_result.modified_extensions = Extensions(
+            http=HttpExtension(
+                headers={
+                    "x-custom": "allowed",
+                    "authorization": "Bearer plugin",  # Will be filtered # pragma: allowlist secret
+                    "x-api-key": "secret",  # Will be filtered # pragma: allowlist secret
+                }
+            )
         )
         mock_plugin_manager.invoke_hook = AsyncMock(return_value=(mock_pre_result, {}))
 

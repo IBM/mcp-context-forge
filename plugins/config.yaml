@@ -1063,6 +1063,7 @@ plugins:
     tags: ["security", "vault", "OAUTH2"]
     mode: "disabled" # enforce | enforce_ignore_error | permissive | disabled
     priority: 10
+    capabilities: ["write_headers"]
     conditions:
       - prompts: []
         server_ids: []
@@ -1229,6 +1230,7 @@ plugins:
     tags: ["telemetry", "observability", "opentelemetry", "monitoring"]
     mode: "disabled" # enforce | enforce_ignore_error | permissive | disabled
     priority: 200 # Run late to capture all context
+    capabilities: ["read_headers"]
     conditions: [] # Apply to all tools
     config:
       export_full_payload: false # opt in only if you explicitly want result content in telemetry
@@ -1268,6 +1270,7 @@ plugins:
     tags: ["security", "policy", "access-control", "pdp", "rbac", "mac"]
     mode: "disabled"  # set to "sequential" to activate
     priority: 10  # Run early — access control before other plugins
+    capabilities: ["read_headers"]
     conditions: []
     config:
       engines:
@@ -1316,6 +1319,7 @@ plugins:
     tags: ["auth", "jwt", "claims", "rbac", "abac", "rfc9396"]
     mode: "disabled"  # set to "transform" to activate
     priority: 10  # Run early — before other auth plugins
+    capabilities: ["read_headers"]
     conditions: []
     config:
       context_key: jwt_claims

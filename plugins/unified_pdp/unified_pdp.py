@@ -44,6 +44,7 @@ from cpex.framework import (
     PluginContext,
     PluginViolation,
 )
+from cpex.framework.extensions import Extensions
 from cpex.framework.hooks.tools import (
     ToolPreInvokePayload,
     ToolPreInvokeResult,
@@ -235,6 +236,7 @@ class UnifiedPDPPlugin(Plugin):
         self,
         payload: ToolPreInvokePayload,
         context: PluginContext,
+        extensions: Extensions | None = None,
     ) -> ToolPreInvokeResult:
         """Called before every tool invocation.
 
@@ -245,6 +247,7 @@ class UnifiedPDPPlugin(Plugin):
         Args:
             payload: Contains the tool name and invocation arguments.
             context: Gateway-provided request context (user, tenant, etc.).
+            extensions: Hook extensions (headers on ``extensions.http``).
 
         Returns:
             A ToolPreInvokeResult — either pass-through or blocked with a
@@ -253,7 +256,8 @@ class UnifiedPDPPlugin(Plugin):
         subject = self._extract_subject(context)
 
         # Extract HTTP metadata from headers for IP and user_agent
-        http_meta = self._extract_http_metadata(payload.headers)
+        header_source = extensions.http.headers if extensions and extensions.http else payload.headers
+        http_meta = self._extract_http_metadata(header_source)
 
         # Extract classification_level from tool args if provided (for MAC engine)
         tool_args = payload.args or {}

@@ -13,7 +13,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 # Third-Party
-from cpex.framework import HttpHeaderPayload
+from cpex.framework.extensions import Extensions, HttpExtension
 from pydantic import BaseModel
 
 # First-Party
@@ -24,8 +24,8 @@ from mcpgateway.services.tool_service import _log_tool_pre_invoke_result
 def test_tool_pre_invoke_logging_without_modified_payload_logs_only_keys(caplog):
     """No modified payload should be logged without argument or header values."""
     original_args = {"normal\nkey": "visible-value", "wxo_auth": "secret-token"}  # pragma: allowlist secret
-    original_headers = HttpHeaderPayload(root={"Authorization": "Bearer secret", "x-wxo-access-token": "secret"})
-    pre_result = SimpleNamespace(modified_payload=None)
+    original_headers = {"Authorization": "Bearer secret", "x-wxo-access-token": "secret"}
+    pre_result = SimpleNamespace(modified_payload=None, modified_extensions=None)
 
     with caplog.at_level(logging.DEBUG, logger="mcpgateway.services.tool_service"):
         _log_tool_pre_invoke_result("rishiserver-list-all-secrets", original_args, original_headers, pre_result)
@@ -47,13 +47,16 @@ def test_tool_pre_invoke_logging_with_modified_payload_logs_key_diffs(caplog):
         "wxo_connection_id": "",
         "wxo_environment_id": "draft",
     }
-    original_headers = HttpHeaderPayload(root={"Authorization": "Bearer secret", "x-old": "old-value"})
+    original_headers = {"Authorization": "Bearer secret", "x-old": "old-value"}
     modified_payload = SimpleNamespace(
         name="renamed-tool",
         args={"real_arg": "changed-value"},
-        headers=HttpHeaderPayload(root={"x-connection": "connection-secret"}),
+        headers=None,
     )
-    pre_result = SimpleNamespace(modified_payload=modified_payload)
+    pre_result = SimpleNamespace(
+        modified_payload=modified_payload,
+        modified_extensions=Extensions(http=HttpExtension(headers={"x-connection": "connection-secret"})),
+    )
 
     with caplog.at_level(logging.DEBUG, logger="mcpgateway.services.tool_service"):
         _log_tool_pre_invoke_result("rishiserver-list-all-secrets", original_args, original_headers, pre_result)
@@ -72,7 +75,7 @@ def test_tool_pre_invoke_logging_with_modified_payload_logs_key_diffs(caplog):
 
 def test_tool_pre_invoke_logging_handles_missing_mappings(caplog):
     """Diagnostics should tolerate absent headers and non-mapping args."""
-    pre_result = SimpleNamespace(modified_payload=SimpleNamespace(name="tool", args=None, headers=None))
+    pre_result = SimpleNamespace(modified_payload=SimpleNamespace(name="tool", args=None, headers=None), modified_extensions=None)
 
     with caplog.at_level(logging.DEBUG, logger="mcpgateway.services.tool_service"):
         _log_tool_pre_invoke_result("tool", None, None, pre_result)
@@ -87,7 +90,7 @@ def test_tool_pre_invoke_logging_handles_missing_mappings(caplog):
 def test_tool_pre_invoke_logging_sanitizes_tool_and_modified_names(caplog):
     """Caller and plugin-controlled tool names should be sanitized before logging."""
     modified_payload = SimpleNamespace(name="renamed\nCRITICAL\x1b[31m", args={}, headers=None)
-    pre_result = SimpleNamespace(modified_payload=modified_payload)
+    pre_result = SimpleNamespace(modified_payload=modified_payload, modified_extensions=None)
 
     with caplog.at_level(logging.DEBUG, logger="mcpgateway.services.tool_service"):
         _log_tool_pre_invoke_result("tool\r\nERROR\x1b[31m", {}, None, pre_result)
@@ -111,7 +114,7 @@ def test_tool_pre_invoke_logging_skips_work_when_debug_disabled(monkeypatch):
     old_level = logger.level
     try:
         logger.setLevel(logging.INFO)
-        _log_tool_pre_invoke_result("tool", {"key": "value"}, None, SimpleNamespace(modified_payload=None))
+        _log_tool_pre_invoke_result("tool", {"key": "value"}, None, SimpleNamespace(modified_payload=None, modified_extensions=None))
     finally:
         logger.setLevel(old_level)
 
@@ -125,7 +128,7 @@ def test_tool_pre_invoke_logging_is_best_effort(monkeypatch, caplog):
     monkeypatch.setattr(tool_service_module, "sanitize_for_log", broken_sanitizer)
 
     with caplog.at_level(logging.DEBUG, logger="mcpgateway.services.tool_service"):
-        _log_tool_pre_invoke_result("tool", {"key": "value"}, None, SimpleNamespace(modified_payload=None))
+        _log_tool_pre_invoke_result("tool", {"key": "value"}, None, SimpleNamespace(modified_payload=None, modified_extensions=None))
 
     assert "tool_pre_invoke diagnostic logging failed" in caplog.text
 
@@ -142,7 +145,7 @@ def test_tool_pre_invoke_logging_swallows_logging_handler_failures(monkeypatch):
 
     monkeypatch.setattr(tool_service_module, "logger", RaisingLogger())
 
-    _log_tool_pre_invoke_result("tool", {}, None, SimpleNamespace(modified_payload=None))
+    _log_tool_pre_invoke_result("tool", {}, None, SimpleNamespace(modified_payload=None, modified_extensions=None))
 
 
 def test_tool_pre_invoke_logging_handles_pydantic_model_args(caplog):
@@ -153,7 +156,7 @@ def test_tool_pre_invoke_logging_handles_pydantic_model_args(caplog):
         wxo_auth: str
 
     args = ArgsModel(visible="keep-me", wxo_auth="secret-token")  # pragma: allowlist secret
-    pre_result = SimpleNamespace(modified_payload=None)
+    pre_result = SimpleNamespace(modified_payload=None, modified_extensions=None)
 
     with caplog.at_level(logging.DEBUG, logger="mcpgateway.services.tool_service"):
         _log_tool_pre_invoke_result("tool", args, None, pre_result)

@@ -81,7 +81,7 @@ class TestUnifiedPDPPlugin:
         plugin = self._plugin()
         plugin._pdp.check_access = AsyncMock(return_value=_allow_decision())
 
-        payload = ToolPreInvokePayload(name="db-query", args={"sql": "SELECT 1"}, headers={})
+        payload = ToolPreInvokePayload(name="db-query", args={"sql": "SELECT 1"})
         result = await plugin.tool_pre_invoke(payload, _make_context())
 
         assert result.continue_processing is not False
@@ -95,7 +95,7 @@ class TestUnifiedPDPPlugin:
         plugin = self._plugin()
         plugin._pdp.check_access = AsyncMock(return_value=_deny_decision())
 
-        payload = ToolPreInvokePayload(name="db-query", args={}, headers={})
+        payload = ToolPreInvokePayload(name="db-query", args={})
         result = await plugin.tool_pre_invoke(payload, _make_context())
 
         assert result.continue_processing is False
@@ -110,7 +110,7 @@ class TestUnifiedPDPPlugin:
         plugin = self._plugin()
         plugin._pdp.check_access = AsyncMock(return_value=_allow_decision())
 
-        payload = ToolPreInvokePayload(name="my-tool", args={}, headers={})
+        payload = ToolPreInvokePayload(name="my-tool", args={})
         await plugin.tool_pre_invoke(payload, _make_context())
 
         call_args = plugin._pdp.check_access.call_args
@@ -167,7 +167,7 @@ class TestUnifiedPDPPlugin:
         plugin._pdp.check_access = AsyncMock(return_value=_allow_decision())
 
         user = {"email": "bob@x.com", "roles": ["admin"], "team_id": "ops", "mfa_verified": True}
-        payload = ToolPreInvokePayload(name="t", args={}, headers={})
+        payload = ToolPreInvokePayload(name="t", args={})
         await plugin.tool_pre_invoke(payload, _make_context(user=user))
 
         subject = plugin._pdp.check_access.call_args[0][0]
@@ -182,7 +182,7 @@ class TestUnifiedPDPPlugin:
         plugin = self._plugin()
         plugin._pdp.check_access = AsyncMock(return_value=_allow_decision())
 
-        payload = ToolPreInvokePayload(name="t", args={}, headers={})
+        payload = ToolPreInvokePayload(name="t", args={})
         await plugin.tool_pre_invoke(payload, _make_context(user="simple-user-id"))
 
         subject = plugin._pdp.check_access.call_args[0][0]
@@ -201,7 +201,7 @@ class TestUnifiedPDPPlugin:
         ctx.global_context.server_id = "test-server"
         ctx.global_context.request_id = "req-123"
         ctx.global_context.tenant_id = "tenant-1"
-        payload = ToolPreInvokePayload(name="t", args={}, headers={})
+        payload = ToolPreInvokePayload(name="t", args={})
         await plugin.tool_pre_invoke(payload, ctx)
 
         subject = plugin._pdp.check_access.call_args[0][0]
@@ -214,7 +214,7 @@ class TestUnifiedPDPPlugin:
         plugin = self._plugin()
         plugin._pdp.check_access = AsyncMock(return_value=_allow_decision())
 
-        payload = ToolPreInvokePayload(name="my-tool", args={}, headers={})
+        payload = ToolPreInvokePayload(name="my-tool", args={})
         await plugin.tool_pre_invoke(payload, _make_context())
 
         resource = plugin._pdp.check_access.call_args[0][2]

@@ -12,7 +12,7 @@ Uses the same mocking pattern as `test_a2a_service.py` for DB and HTTP, with
 additional mocking of `_get_plugin_manager` to control plugin hook behaviour.
 
 Tests cover:
-    - PRE_INVOKE fires with correct AgentPreInvokePayload (headers=request_headers)
+    - PRE_INVOKE fires with correct AgentPreInvokePayload (headers via extensions.http)
     - PRE_INVOKE applies modified headers to prepared request
     - PRE_INVOKE applies modified parameters
     - PRE_INVOKE PluginViolationError is raised as A2AAgentError
@@ -91,7 +91,7 @@ def _make_plugin_manager(has_pre=True, has_post=True):
         return False
 
     pm.has_hooks_for = MagicMock(side_effect=_has_hooks)
-    pm.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=None, retry_delay_ms=0, metadata=None), {}))
+    pm.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=None, modified_extensions=None, retry_delay_ms=0, metadata=None), {}))
     return pm
 
 
@@ -147,12 +147,14 @@ class TestA2AInvokePreHook:
             )
 
         payload = pm.invoke_hook.await_args_list[0].kwargs["payload"]
-        filtered = payload.headers.root
+        extensions = pm.invoke_hook.await_args_list[0].kwargs.get("extensions")
+        filtered = extensions.http.headers if extensions and extensions.http else {}
         assert "x-tenant-id" in filtered
         assert "x-request-id" in filtered
         assert "user-agent" not in filtered
         assert "referer" not in filtered
         assert "authorization" not in filtered
+        assert payload.headers is None
 
     @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
     @patch("mcpgateway.services.a2a_service.fresh_db_session")
@@ -196,7 +198,9 @@ class TestA2AInvokePreHook:
             )
 
         payload = pm.invoke_hook.await_args_list[0].kwargs["payload"]
-        assert payload.headers.root == {}
+        extensions = pm.invoke_hook.await_args_list[0].kwargs.get("extensions")
+        assert extensions is None or extensions.http is None or extensions.http.headers == {}
+        assert payload.headers is None
 
     @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
     @patch("mcpgateway.services.a2a_service.fresh_db_session")
@@ -212,7 +216,7 @@ class TestA2AInvokePreHook:
         mock_db,
         mock_agent,
     ):
-        """PRE_INVOKE receives the inbound request_headers as AgentPreInvokePayload.headers."""
+        """PRE_INVOKE receives the inbound request_headers via extensions.http.headers."""
         # Third-Party
         from cpex.framework import AgentHookType, AgentPreInvokePayload
 
@@ -243,10 +247,11 @@ class TestA2AInvokePreHook:
         first_call = pm.invoke_hook.await_args_list[0]
         assert first_call.args[0] == AgentHookType.AGENT_PRE_INVOKE
         payload = first_call.kwargs["payload"]
+        extensions = first_call.kwargs.get("extensions")
         assert isinstance(payload, AgentPreInvokePayload)
         assert payload.agent_id == mock_agent.id
-        assert payload.headers is not None
-        assert payload.headers.root == inbound_headers
+        assert extensions is not None and extensions.http is not None
+        assert extensions.http.headers == inbound_headers
 
     @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
     @patch("mcpgateway.services.a2a_service.fresh_db_session")
@@ -287,7 +292,9 @@ class TestA2AInvokePreHook:
             )
 
         payload = pm.invoke_hook.await_args_list[0].kwargs["payload"]
-        assert payload.headers.root == {}
+        extensions = pm.invoke_hook.await_args_list[0].kwargs.get("extensions")
+        assert extensions is None or extensions.http is None or extensions.http.headers == {}
+        assert payload.headers is None
 
     @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
     @patch("mcpgateway.services.a2a_service.fresh_db_session")
@@ -305,7 +312,7 @@ class TestA2AInvokePreHook:
     ):
         """Headers modified by the plugin are applied to the outbound prepared request headers."""
         # Third-Party
-        from cpex.framework import HttpHeaderPayload
+        from cpex.framework.extensions import Extensions, HttpExtension
 
         # Add headers to passthrough whitelist so they pass Layer 1 filtering
         mock_agent.passthrough_headers = ["x-custom", "x-request-id"]
@@ -314,8 +321,9 @@ class TestA2AInvokePreHook:
         modified = SimpleNamespace(
             modified_payload=SimpleNamespace(
                 parameters=None,
-                headers=HttpHeaderPayload(root={"X-Custom": "value", "X-Request-ID": "plugin-req-123"}),
+                headers=None,
             ),
+            modified_extensions=Extensions(http=HttpExtension(headers={"X-Custom": "value", "X-Request-ID": "plugin-req-123"})),
             retry_delay_ms=0,
             metadata=None,
         )
@@ -501,7 +509,7 @@ class TestA2AInvokePostHook:
             nonlocal call_count
             call_count += 1
             if call_count == 1:
-                return (SimpleNamespace(modified_payload=None, metadata=None), {})
+                return (SimpleNamespace(modified_payload=None, modified_extensions=None, metadata=None), {})
             raise RuntimeError("post crash")
 
         pm.invoke_hook = AsyncMock(side_effect=_invoke_hook_side_effect)
@@ -698,7 +706,7 @@ class TestA2AInvokeGlobalContext:
 
             async def _invoke_hook(hook_type, payload, global_context=None, local_contexts=None, violations_as_exceptions=True, extensions=None):
                 captured_context["global"] = global_context
-                return (SimpleNamespace(modified_payload=None, retry_delay_ms=0, metadata=None), {})
+                return (SimpleNamespace(modified_payload=None, modified_extensions=None, retry_delay_ms=0, metadata=None), {})
 
             pm.invoke_hook = _invoke_hook
             return pm
@@ -754,7 +762,7 @@ class TestA2AInvokeGlobalContext:
 
         async def _invoke_hook(hook_type, payload, global_context=None, local_contexts=None, violations_as_exceptions=True, extensions=None):
             captured_context["global"] = global_context
-            return (SimpleNamespace(modified_payload=None, retry_delay_ms=0, metadata=None), {})
+            return (SimpleNamespace(modified_payload=None, modified_extensions=None, retry_delay_ms=0, metadata=None), {})
 
         pm.invoke_hook = _invoke_hook
 
@@ -809,7 +817,7 @@ class TestA2AInvokeGlobalContext:
 
         async def _invoke_hook(hook_type, payload, global_context=None, local_contexts=None, violations_as_exceptions=True, extensions=None):
             captured_context["global"] = global_context
-            return (SimpleNamespace(modified_payload=None, retry_delay_ms=0, metadata=None), {})
+            return (SimpleNamespace(modified_payload=None, modified_extensions=None, retry_delay_ms=0, metadata=None), {})
 
         pm.invoke_hook = _invoke_hook
 

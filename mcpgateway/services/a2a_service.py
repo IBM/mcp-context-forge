@@ -35,7 +35,7 @@ from mcpgateway.db import EmailTeamMember as DbEmailTeamMember
 from mcpgateway.db import fresh_db_session, get_for_update
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.observability import create_span, set_span_attribute, set_span_error
-from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
+from mcpgateway.plugins.utils import build_hook_extensions, build_request_extensions, headers_from_modified_extensions, record_plugin_metrics
 from mcpgateway.schemas import A2AAgentAggregateMetrics, A2AAgentCreate, A2AAgentMetrics, A2AAgentRead, A2AAgentUpdate
 from mcpgateway.services.a2a_protocol import prepare_a2a_invocation
 from mcpgateway.services.base_service import BaseService
@@ -2255,7 +2255,6 @@ class A2AAgentService(BaseService):
             AgentHookType,
             AgentPreInvokePayload,
             GlobalContext,
-            HttpHeaderPayload,
             PluginViolationError,
         )
 
@@ -2297,44 +2296,44 @@ class A2AAgentService(BaseService):
         # Fire pre-invoke hook — can modify parameters, headers, and agent metadata
         if plugin_manager and plugin_manager.has_hooks_for(AgentHookType.AGENT_PRE_INVOKE):
             try:
+                ext_in = build_hook_extensions(plugin_headers)
                 pre_result, context_table = await plugin_manager.invoke_hook(
                     AgentHookType.AGENT_PRE_INVOKE,
                     payload=AgentPreInvokePayload(
                         agent_id=agent_id,
                         messages=[{"role": "user", "content": parameters}] if parameters else [],
-                        headers=HttpHeaderPayload(root=plugin_headers),
                         parameters=parameters if isinstance(parameters, dict) else {},
                     ),
                     global_context=global_context,
                     local_contexts=context_table,
                     violations_as_exceptions=True,
-                    extensions=build_request_extensions(),
+                    extensions=ext_in,
                 )
                 record_plugin_metrics(current_trace_id.get(), pre_result.metadata)
                 if pre_result.modified_payload:
                     if pre_result.modified_payload.parameters is not None:
                         parameters = pre_result.modified_payload.parameters
-                    if pre_result.modified_payload.headers is not None:
-                        # Security: Re-filter plugin-returned headers to prevent malicious
-                        # plugins from injecting sensitive headers into downstream requests
-                        # (PR #5183 review fix)
-                        plugin_returned = pre_result.modified_payload.headers.model_dump()
-                        safe_headers = self._refilter_plugin_headers(
-                            plugin_headers=plugin_returned,
-                            agent=agent,
-                            feature_flag_enabled=settings.enable_sensitive_header_passthrough,
-                        )
-                        prepared.headers.update(safe_headers)
+                plugin_returned = headers_from_modified_extensions(pre_result)
+                if plugin_returned is not None:
+                    # Security: Re-filter plugin-returned headers to prevent malicious
+                    # plugins from injecting sensitive headers into downstream requests
+                    # (PR #5183 review fix)
+                    safe_headers = self._refilter_plugin_headers(
+                        plugin_headers=plugin_returned,
+                        agent=agent,
+                        feature_flag_enabled=settings.enable_sensitive_header_passthrough,
+                    )
+                    prepared.headers.update(safe_headers)
 
-                        # Log security-blocked headers for forensic awareness
-                        if plugin_returned.keys() - safe_headers.keys():
-                            removed = sorted(plugin_returned.keys() - safe_headers.keys())
-                            logger.warning(
-                                "Plugin attempted to set headers blocked by security policy: %s (agent=%s, flag=%s)",
-                                removed,
-                                agent.name,
-                                settings.enable_sensitive_header_passthrough,
-                            )
+                    # Log security-blocked headers for forensic awareness
+                    if plugin_returned.keys() - safe_headers.keys():
+                        removed = sorted(plugin_returned.keys() - safe_headers.keys())
+                        logger.warning(
+                            "Plugin attempted to set headers blocked by security policy: %s (agent=%s, flag=%s)",
+                            removed,
+                            agent.name,
+                            settings.enable_sensitive_header_passthrough,
+                        )
             except PluginViolationError as e:
                 logger.error("Plugin RBAC violation for A2A agent %s: %s", agent_id, e)
                 raise A2AAgentError(f"Plugin RBAC violation: {e}") from e

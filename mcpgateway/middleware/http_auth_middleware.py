@@ -23,7 +23,7 @@ from starlette.types import ASGIApp
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.plugins import get_plugin_manager
-from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
+from mcpgateway.plugins.utils import build_hook_extensions, headers_from_modified_extensions, record_plugin_metrics
 from mcpgateway.services.observability_service import current_trace_id
 from mcpgateway.utils.correlation_id import generate_correlation_id, get_correlation_id
 from mcpgateway.utils.verify_credentials import _resolve_auth_header_name
@@ -69,6 +69,9 @@ async def run_pre_request_hooks(
         global_context = GlobalContext(request_id=request_id, server_id=None, tenant_id=None, content_type=content_type)
 
     try:
+        ext_in = build_hook_extensions(headers)
+        # Dual-write: HttpPreRequestPayload.headers is still required in cpex 0.1.1;
+        # real data lives on extensions.http.headers.
         pre_result, context_table = await plugin_manager.invoke_hook(
             HttpHookType.HTTP_PRE_REQUEST,
             payload=HttpPreRequestPayload(
@@ -81,14 +84,17 @@ async def run_pre_request_hooks(
             global_context=global_context,
             local_contexts=None,
             violations_as_exceptions=False,
-            extensions=build_request_extensions(),
+            extensions=ext_in,
         )
         record_plugin_metrics(current_trace_id.get(), pre_result.metadata)
 
-        if not pre_result.modified_payload:
+        plugin_headers = headers_from_modified_extensions(pre_result)
+        if plugin_headers is not None:
+            modified_headers_dict = plugin_headers
+        elif pre_result.modified_payload:
+            modified_headers_dict = pre_result.modified_payload.root
+        else:
             return headers, global_context, context_table
-
-        modified_headers_dict = pre_result.modified_payload.root
 
         # Security: prevent plugin hooks from overriding auth-sensitive
         # headers that were already present on the inbound request.
@@ -251,7 +257,7 @@ class HttpAuthMiddleware(BaseHTTPMiddleware):
                     global_context=global_context,
                     local_contexts=context_table,
                     violations_as_exceptions=False,
-                    extensions=build_request_extensions(),
+                    extensions=build_hook_extensions(dict(request.headers)),
                 )
                 record_plugin_metrics(current_trace_id.get(), post_result.metadata)
 
