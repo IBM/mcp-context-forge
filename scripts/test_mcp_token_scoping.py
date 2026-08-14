@@ -24,11 +24,13 @@ Test Cases:
 """
 
 import asyncio
-import jwt
-import time
 import sys
+import time
+import uuid
 from dataclasses import dataclass
 from typing import List, Optional
+
+import jwt
 
 # Colors for output
 GREEN = "\033[0;32m"
@@ -54,7 +56,7 @@ class TestResult:
 
 def generate_token(email: str, is_admin: bool, teams: Optional[List[str]] = "OMIT", secret: str = "my-test-key-but-now-longer-than-32-bytes") -> str:
     """Generate a JWT token with specified claims."""
-    payload = {"sub": email, "is_admin": is_admin, "iat": int(time.time()), "exp": int(time.time()) + 3600, "iss": "mcpgateway", "aud": "mcpgateway-api"}
+    payload = {"sub": email, "is_admin": is_admin, "iat": int(time.time()), "exp": int(time.time()) + 3600, "iss": "mcpgateway", "aud": "mcpgateway-api", "jti": str(uuid.uuid4())}
     if teams != "OMIT":
         payload["teams"] = teams
     return jwt.encode(payload, secret, algorithm="HS256")
@@ -65,15 +67,14 @@ async def discover_tool_counts(base_url: str, token: str) -> tuple[int, int]:
     import aiohttp
 
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-    payload = {"jsonrpc": "2.0", "method": "tools/list", "params": {}, "id": 1}
     async with aiohttp.ClientSession() as session:
-        async with session.post(f"{base_url}/rpc", headers=headers, json=payload) as response:
-            data = await response.json()
+        async with session.get(f"{base_url}/tools?limit=0", headers=headers) as response:
+            response.raise_for_status()
+            tools = await response.json()
 
-    if "error" in data:
-        raise RuntimeError(data["error"].get("message", str(data["error"])))
+    if not isinstance(tools, list):
+        raise RuntimeError(f"Unexpected tools catalog payload: {tools!r}")
 
-    tools = data.get("result", {}).get("tools", [])
     unsupported = {tool.get("visibility") for tool in tools} - {"public", "team"}
     if unsupported:
         raise RuntimeError(f"Unsupported tool visibility values in catalog: {sorted(unsupported)}")
