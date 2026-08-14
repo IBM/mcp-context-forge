@@ -160,7 +160,7 @@ from mcpgateway.services.a2a_agent_plugin_binding_service import A2AAgentPluginB
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
 from mcpgateway.services.argon2_service import Argon2PasswordService
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
-from mcpgateway.services.catalog_service import catalog_service
+from mcpgateway.services.catalog_service import catalog_service, CatalogRegistrationPermissionError
 from mcpgateway.services.content_security import ContentSizeError, ContentTypeError, TemplateValidationError
 from mcpgateway.services.csrf_service import get_csrf_service
 from mcpgateway.services.email_auth_service import AuthenticationError, EmailAuthService, PasswordValidationError
@@ -17969,7 +17969,19 @@ async def register_catalog_server(
     if not settings.mcpgateway_catalog_enabled:
         raise HTTPException(status_code=404, detail="Catalog feature is disabled")
 
-    result = await catalog_service.register_catalog_server(catalog_id=server_id, request=request, db=db)
+    user_email, token_teams = get_scoped_resource_access_context(http_request, _user)
+
+    try:
+        result = await catalog_service.register_catalog_server(
+            catalog_id=server_id,
+            request=request,
+            db=db,
+            created_by=user_email,
+            owner_email=user_email,
+            token_teams=token_teams,
+        )
+    except CatalogRegistrationPermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
 
     # Check if this is an HTMX request
     is_htmx = http_request.headers.get("HX-Request") == "true"
@@ -18072,6 +18084,7 @@ async def check_catalog_server_status(
 @admin_router.post("/mcp-registry/bulk-register", response_model=CatalogBulkRegisterResponse)
 @require_permission("servers.create", allow_admin_bypass=False)
 async def bulk_register_catalog_servers(
+    http_request: Request,
     request: CatalogBulkRegisterRequest,
     db: Session = Depends(get_db),
     _user=Depends(get_current_user_with_permissions),
@@ -18079,6 +18092,7 @@ async def bulk_register_catalog_servers(
     """Register multiple catalog servers at once.
 
     Args:
+        http_request: FastAPI request object
         request: Bulk registration request with server IDs
         db: Database session
         _user: Authenticated user
@@ -18087,12 +18101,23 @@ async def bulk_register_catalog_servers(
         Bulk registration response with success/failure details
 
     Raises:
-        HTTPException: If the catalog feature is disabled.
+        HTTPException: If the catalog feature is disabled or scope is invalid.
     """
     if not settings.mcpgateway_catalog_enabled:
         raise HTTPException(status_code=404, detail="Catalog feature is disabled")
 
-    return await catalog_service.bulk_register_servers(request, db)
+    user_email, token_teams = get_scoped_resource_access_context(http_request, _user)
+
+    try:
+        return await catalog_service.bulk_register_servers(
+            request,
+            db,
+            created_by=user_email,
+            owner_email=user_email,
+            token_teams=token_teams,
+        )
+    except CatalogRegistrationPermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
 
 
 @admin_router.get("/mcp-registry/partial")
