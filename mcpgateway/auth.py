@@ -264,10 +264,12 @@ def _get_user_team_ids_sync(email: str) -> List[str]:
         from mcpgateway.db import EmailTeamMember  # pylint: disable=import-outside-toplevel
 
         result = db.execute(
-            select(EmailTeamMember.team_id).where(
+            select(EmailTeamMember.team_id)
+            .where(
                 EmailTeamMember.user_email == email,
                 EmailTeamMember.is_active.is_(True),
             )
+            .order_by(EmailTeamMember.id)  # Stable ordering: teams[0] used as Vault path key
         )
         return [row[0] for row in result.all()]
 
@@ -1119,6 +1121,7 @@ def _get_auth_context_batched_sync(email: str, jti: Optional[str] = None) -> Dic
                     EmailTeamMember.is_active.is_(True),
                     EmailTeam.is_active.is_(True),
                 )
+                .order_by(EmailTeamMember.id)  # Stable ordering: consistent with _get_user_team_ids_sync
             )
             team_rows = team_ids_result.all()
             team_ids: list[str] = []

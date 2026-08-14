@@ -233,3 +233,32 @@ class AbstractTokenBackend(ABC):
             OAuth config dict or None if not found / not supported.
         """
         return None
+
+    async def get_user_auth_headers(  # pylint: disable=unused-argument
+        self,
+        gateway_id: str,
+        team_id: str,
+        app_user_email: str,
+    ) -> dict | None:
+        """Return per-user non-OAuth auth headers for a gateway call.
+
+        ICA (Identity-aware Credential Agent) writes a plain ``{header: value}``
+        dict under a ``headers`` key at the same per-user Vault path used for
+        OAuth tokens (``{mount}/data/{prefix}/{team}/{server_id}/{email}``).
+        This method retrieves that dict so callers can merge it into the upstream
+        request headers for non-OAuth gateway auth types (bearer/basic/authheaders).
+
+        Default implementation returns None (not supported by this backend).
+        VaultTokenBackend overrides this to read the ``headers`` field from the
+        per-user Vault record.
+
+        Args:
+            gateway_id: Gateway UUID (resolved to mcp_url by Vault backend)
+            team_id: Team identifier (used in Vault path; ignored by DB backend)
+            app_user_email: ContextForge user email
+
+        Returns:
+            Dict of ``{header_name: header_value}`` pairs, or None if not supported
+            or no per-user record exists.
+        """
+        return None

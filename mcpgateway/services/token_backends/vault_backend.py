@@ -802,6 +802,32 @@ class VaultTokenBackend(AbstractTokenBackend):
 
             oauth_config = gateway.oauth_config.copy()
 
+            # Decrypt client_secret before calling the token endpoint.
+            # The gateway record stores client_secret encrypted at rest (same as DB backend).
+            # Sending an encrypted ciphertext envelope to the IdP causes repeated
+            # invalid_client errors that can trigger IdP rate-limiting / account lockout.
+            # Fail closed: raise OAuthError so the outer handler preserves the stored
+            # token for a later retry (same behaviour as DatabaseTokenBackend:436-446).
+            if "client_secret" in oauth_config and oauth_config["client_secret"]:
+                encryption_secret = getattr(self.settings, "auth_encryption_secret", None)
+                if encryption_secret:
+                    try:
+                        from mcpgateway.services.encryption_service import get_encryption_service  # pylint: disable=import-outside-toplevel
+
+                        encryption = get_encryption_service(encryption_secret)
+                        decrypted_secret = await encryption.decrypt_secret_async(oauth_config["client_secret"])
+                        if decrypted_secret is None:
+                            raise OAuthError(
+                                f"client_secret decryption failed for gateway {gateway_id}: "
+                                "decrypt_secret_async returned None (wrong AUTH_ENCRYPTION_SECRET or corrupted ciphertext). "
+                                "Check that AUTH_ENCRYPTION_SECRET matches the value used when the gateway was stored."
+                            )
+                        oauth_config["client_secret"] = decrypted_secret
+                    except OAuthError:
+                        raise
+                    except Exception as enc_err:  # pylint: disable=broad-except
+                        logger.warning("client_secret decryption setup failed for gateway %s: %s; using value as-is", gateway_id, enc_err)
+
             # RFC 8707: Set resource parameter for JWT access tokens during refresh
             # PR #5244: Apply omit_resource flag and normalize resource parameter
             apply_omit_resource_and_normalize(oauth_config, gateway.url, gateway_id)

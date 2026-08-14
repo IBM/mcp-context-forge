@@ -39,6 +39,7 @@ class TestVaultTokenBackendInit:
         mock_settings.vault_token_cache_enabled = False
         mock_settings.vault_token_cache_ttl = 300
         mock_settings.vault_token_cache_max_size = 10000
+        mock_settings.auth_encryption_secret = None  # No encryption in unit tests
 
         backend = VaultTokenBackend(mock_db, mock_settings)
 
@@ -63,6 +64,7 @@ class TestVaultTokenBackendInit:
         mock_settings.vault_token_cache_enabled = True
         mock_settings.vault_token_cache_ttl = 300
         mock_settings.vault_token_cache_max_size = 10000
+        mock_settings.auth_encryption_secret = None  # No encryption in unit tests
 
         backend = VaultTokenBackend(mock_db, mock_settings)
 
@@ -85,6 +87,7 @@ class TestVaultTokenBackendInit:
         mock_settings.vault_token_cache_enabled = False
         mock_settings.vault_token_cache_ttl = 300
         mock_settings.vault_token_cache_max_size = 10000
+        mock_settings.auth_encryption_secret = None  # No encryption in unit tests
 
         backend = VaultTokenBackend(mock_db, mock_settings)
 
@@ -103,6 +106,7 @@ class TestVaultTokenBackendInit:
         mock_settings.vault_token_cache_enabled = False
         mock_settings.vault_token_cache_ttl = 300
         mock_settings.vault_token_cache_max_size = 10000
+        mock_settings.auth_encryption_secret = None  # No encryption in unit tests
 
         backend = VaultTokenBackend(mock_db, mock_settings)
 
@@ -122,6 +126,7 @@ class TestVaultTokenBackendInit:
         mock_settings.vault_token_cache_enabled = False
         mock_settings.vault_token_cache_ttl = 300
         mock_settings.vault_token_cache_max_size = 10000
+        mock_settings.auth_encryption_secret = None  # No encryption in unit tests
 
         with pytest.raises(ValueError) as exc_info:
             VaultTokenBackend(mock_db, mock_settings)
@@ -145,6 +150,7 @@ class TestVaultTokenBackendPathHelpers:
         mock_settings.vault_token_cache_enabled = False
         mock_settings.vault_token_cache_ttl = 300
         mock_settings.vault_token_cache_max_size = 10000
+        mock_settings.auth_encryption_secret = None  # No encryption in unit tests
 
         backend = VaultTokenBackend(mock_db, mock_settings)
 
@@ -171,6 +177,7 @@ class TestVaultTokenBackendPathHelpers:
         mock_settings.vault_token_cache_enabled = False
         mock_settings.vault_token_cache_ttl = 300
         mock_settings.vault_token_cache_max_size = 10000
+        mock_settings.auth_encryption_secret = None  # No encryption in unit tests
 
         backend = VaultTokenBackend(mock_db, mock_settings)
 
@@ -195,6 +202,7 @@ class TestVaultTokenBackendPathHelpers:
         mock_settings.vault_token_cache_enabled = False
         mock_settings.vault_token_cache_ttl = 300
         mock_settings.vault_token_cache_max_size = 10000
+        mock_settings.auth_encryption_secret = None  # No encryption in unit tests
 
         backend = VaultTokenBackend(mock_db, mock_settings)
 
@@ -221,6 +229,7 @@ class TestVaultTokenBackendPathHelpers:
         mock_settings.vault_token_cache_enabled = False
         mock_settings.vault_token_cache_ttl = 300
         mock_settings.vault_token_cache_max_size = 10000
+        mock_settings.auth_encryption_secret = None  # No encryption in unit tests
 
         backend = VaultTokenBackend(mock_db, mock_settings)
 
@@ -247,6 +256,7 @@ class TestVaultTokenBackendPathHelpers:
         mock_settings.vault_token_cache_enabled = False
         mock_settings.vault_token_cache_ttl = 300
         mock_settings.vault_token_cache_max_size = 10000
+        mock_settings.auth_encryption_secret = None  # No encryption in unit tests
 
         backend = VaultTokenBackend(mock_db, mock_settings)
 
@@ -272,6 +282,7 @@ class TestVaultTokenBackendPathHelpers:
         mock_settings.vault_token_cache_enabled = False
         mock_settings.vault_token_cache_ttl = 300
         mock_settings.vault_token_cache_max_size = 10000
+        mock_settings.auth_encryption_secret = None  # No encryption in unit tests
 
         backend = VaultTokenBackend(mock_db, mock_settings)
 
@@ -303,6 +314,7 @@ class TestVaultTokenBackendStoreTokens:
         mock_settings.vault_token_cache_enabled = False
         mock_settings.vault_token_cache_ttl = 300
         mock_settings.vault_token_cache_max_size = 10000
+        mock_settings.auth_encryption_secret = None  # No encryption in unit tests
 
         backend = VaultTokenBackend(mock_db, mock_settings)
 
@@ -364,6 +376,7 @@ class TestVaultTokenBackendStoreTokens:
         mock_settings.vault_token_cache_enabled = False
         mock_settings.vault_token_cache_ttl = 300
         mock_settings.vault_token_cache_max_size = 10000
+        mock_settings.auth_encryption_secret = None  # No encryption in unit tests
 
         backend = VaultTokenBackend(mock_db, mock_settings)
 
@@ -405,6 +418,7 @@ class TestVaultTokenBackendGetUserToken:
         mock_settings.vault_token_cache_enabled = False
         mock_settings.vault_token_cache_ttl = 300
         mock_settings.vault_token_cache_max_size = 10000
+        mock_settings.auth_encryption_secret = None  # No encryption in unit tests
 
         backend = VaultTokenBackend(mock_db, mock_settings)
 
@@ -459,6 +473,7 @@ class TestVaultTokenBackendGetUserToken:
         mock_settings.vault_token_cache_enabled = False
         mock_settings.vault_token_cache_ttl = 300
         mock_settings.vault_token_cache_max_size = 10000
+        mock_settings.auth_encryption_secret = None  # No encryption in unit tests
 
         backend = VaultTokenBackend(mock_db, mock_settings)
 
@@ -497,6 +512,7 @@ class TestVaultTokenBackendRevoke:
         mock_settings.vault_token_cache_enabled = False
         mock_settings.vault_token_cache_ttl = 300
         mock_settings.vault_token_cache_max_size = 10000
+        mock_settings.auth_encryption_secret = None  # No encryption in unit tests
 
         backend = VaultTokenBackend(mock_db, mock_settings)
 
@@ -532,6 +548,7 @@ class TestVaultTokenBackendRevoke:
         mock_settings.vault_token_cache_enabled = False
         mock_settings.vault_token_cache_ttl = 300
         mock_settings.vault_token_cache_max_size = 10000
+        mock_settings.auth_encryption_secret = None  # No encryption in unit tests
 
         backend = VaultTokenBackend(mock_db, mock_settings)
 
@@ -569,6 +586,7 @@ class TestVaultTokenBackendVaultRequest:
         mock_settings.vault_token_cache_enabled = False
         mock_settings.vault_token_cache_ttl = 300
         mock_settings.vault_token_cache_max_size = 10000
+        mock_settings.auth_encryption_secret = None  # No encryption in unit tests
 
         backend = VaultTokenBackend(mock_db, mock_settings)
 
@@ -603,6 +621,7 @@ class TestVaultTokenBackendVaultRequest:
         mock_settings.vault_token_cache_enabled = False
         mock_settings.vault_token_cache_ttl = 300
         mock_settings.vault_token_cache_max_size = 10000
+        mock_settings.auth_encryption_secret = None  # No encryption in unit tests
 
         backend = VaultTokenBackend(mock_db, mock_settings)
 
@@ -627,6 +646,7 @@ class TestVaultTokenBackendVaultRequest:
         mock_settings.vault_token_cache_enabled = False
         mock_settings.vault_token_cache_ttl = 300
         mock_settings.vault_token_cache_max_size = 10000
+        mock_settings.auth_encryption_secret = None  # No encryption in unit tests
 
         backend = VaultTokenBackend(mock_db, mock_settings)
 
@@ -660,6 +680,7 @@ class TestVaultTokenBackendVaultRequest:
         mock_settings.vault_token_cache_enabled = False
         mock_settings.vault_token_cache_ttl = 300
         mock_settings.vault_token_cache_max_size = 10000
+        mock_settings.auth_encryption_secret = None  # No encryption in unit tests
 
         backend = VaultTokenBackend(mock_db, mock_settings)
 
@@ -692,6 +713,7 @@ class TestVaultTokenBackendVaultRequest:
         mock_settings.vault_token_cache_enabled = False
         mock_settings.vault_token_cache_ttl = 300
         mock_settings.vault_token_cache_max_size = 10000
+        mock_settings.auth_encryption_secret = None  # No encryption in unit tests
 
         backend = VaultTokenBackend(mock_db, mock_settings)
 
@@ -732,6 +754,7 @@ class TestVaultTokenBackendVaultRequest:
         mock_settings.vault_token_cache_enabled = False
         mock_settings.vault_token_cache_ttl = 300
         mock_settings.vault_token_cache_max_size = 10000
+        mock_settings.auth_encryption_secret = None  # No encryption in unit tests
 
         backend = VaultTokenBackend(mock_db, mock_settings)
 
@@ -758,6 +781,7 @@ class TestVaultTokenBackendVaultRequest:
         mock_settings.vault_token_cache_enabled = False
         mock_settings.vault_token_cache_ttl = 300
         mock_settings.vault_token_cache_max_size = 10000
+        mock_settings.auth_encryption_secret = None  # No encryption in unit tests
 
         backend = VaultTokenBackend(mock_db, mock_settings)
 
@@ -802,6 +826,7 @@ class TestVaultTokenBackendVaultRequest:
         mock_settings.vault_token_cache_enabled = False
         mock_settings.vault_token_cache_ttl = 300
         mock_settings.vault_token_cache_max_size = 10000
+        mock_settings.auth_encryption_secret = None  # No encryption in unit tests
 
         backend = VaultTokenBackend(mock_db, mock_settings)
 
@@ -841,6 +866,7 @@ class TestVaultTokenBackendGetOAuthCredentials:
         mock_settings.vault_token_cache_enabled = False
         mock_settings.vault_token_cache_ttl = 300
         mock_settings.vault_token_cache_max_size = 10000
+        mock_settings.auth_encryption_secret = None  # No encryption in unit tests
 
         backend = VaultTokenBackend(mock_db, mock_settings)
 
@@ -882,6 +908,7 @@ class TestVaultTokenBackendGetOAuthCredentials:
         mock_settings.vault_token_cache_enabled = False
         mock_settings.vault_token_cache_ttl = 300
         mock_settings.vault_token_cache_max_size = 10000
+        mock_settings.auth_encryption_secret = None  # No encryption in unit tests
 
         backend = VaultTokenBackend(mock_db, mock_settings)
 
@@ -911,6 +938,7 @@ class TestVaultTokenBackendGetOAuthCredentials:
         mock_settings.vault_token_cache_enabled = False
         mock_settings.vault_token_cache_ttl = 300
         mock_settings.vault_token_cache_max_size = 10000
+        mock_settings.auth_encryption_secret = None  # No encryption in unit tests
 
         backend = VaultTokenBackend(mock_db, mock_settings)
 
@@ -944,6 +972,7 @@ class TestVaultTokenBackendCleanupExpiredTokens:
         mock_settings.vault_token_cache_enabled = False
         mock_settings.vault_token_cache_ttl = 300
         mock_settings.vault_token_cache_max_size = 10000
+        mock_settings.auth_encryption_secret = None  # No encryption in unit tests
 
         backend = VaultTokenBackend(mock_db, mock_settings)
 
@@ -975,6 +1004,7 @@ class TestVaultTokenBackendStoreOAuthCredentials:
         mock_settings.vault_token_cache_enabled = False
         mock_settings.vault_token_cache_ttl = 300
         mock_settings.vault_token_cache_max_size = 10000
+        mock_settings.auth_encryption_secret = None  # No encryption in unit tests
 
         backend = VaultTokenBackend(mock_db, mock_settings)
 
@@ -1014,6 +1044,7 @@ class TestVaultTokenBackendStoreOAuthCredentials:
         mock_settings.vault_token_cache_enabled = False
         mock_settings.vault_token_cache_ttl = 300
         mock_settings.vault_token_cache_max_size = 10000
+        mock_settings.auth_encryption_secret = None  # No encryption in unit tests
 
         backend = VaultTokenBackend(mock_db, mock_settings)
 
@@ -1056,6 +1087,7 @@ class TestVaultTokenBackendGetTokenInfo:
         mock_settings.vault_token_cache_enabled = False
         mock_settings.vault_token_cache_ttl = 300
         mock_settings.vault_token_cache_max_size = 10000
+        mock_settings.auth_encryption_secret = None  # No encryption in unit tests
 
         backend = VaultTokenBackend(mock_db, mock_settings)
 
@@ -1111,6 +1143,7 @@ class TestVaultTokenBackendRefreshToken:
         mock_settings.vault_token_cache_enabled = False
         mock_settings.vault_token_cache_ttl = 300
         mock_settings.vault_token_cache_max_size = 10000
+        mock_settings.auth_encryption_secret = None  # No encryption in unit tests
 
         backend = VaultTokenBackend(mock_db, mock_settings)
 
@@ -1150,6 +1183,7 @@ class TestVaultTokenBackendRefreshToken:
         mock_settings.vault_token_cache_enabled = False
         mock_settings.vault_token_cache_ttl = 300
         mock_settings.vault_token_cache_max_size = 10000
+        mock_settings.auth_encryption_secret = None  # No encryption in unit tests
 
         backend = VaultTokenBackend(mock_db, mock_settings)
 
@@ -1191,6 +1225,7 @@ class TestVaultTokenBackendRefreshToken:
         mock_settings.vault_token_cache_enabled = False
         mock_settings.vault_token_cache_ttl = 300
         mock_settings.vault_token_cache_max_size = 10000
+        mock_settings.auth_encryption_secret = None  # No encryption in unit tests
 
         backend = VaultTokenBackend(mock_db, mock_settings)
 
@@ -1249,6 +1284,7 @@ class TestVaultTokenBackendRefreshToken:
         mock_settings.vault_token_cache_enabled = False
         mock_settings.vault_token_cache_ttl = 300
         mock_settings.vault_token_cache_max_size = 10000
+        mock_settings.auth_encryption_secret = None  # No encryption in unit tests
 
         backend = VaultTokenBackend(mock_db, mock_settings)
 
@@ -1304,6 +1340,7 @@ class TestVaultTokenBackendRefreshToken:
         mock_settings.vault_token_cache_enabled = False
         mock_settings.vault_token_cache_ttl = 300
         mock_settings.vault_token_cache_max_size = 10000
+        mock_settings.auth_encryption_secret = None  # No encryption in unit tests
 
         backend = VaultTokenBackend(mock_db, mock_settings)
 
@@ -1362,6 +1399,7 @@ class TestVaultTokenBackendExpiredTokenHandling:
         mock_settings.vault_token_cache_enabled = False
         mock_settings.vault_token_cache_ttl = 300
         mock_settings.vault_token_cache_max_size = 10000
+        mock_settings.auth_encryption_secret = None  # No encryption in unit tests
 
         backend = VaultTokenBackend(mock_db, mock_settings)
 
@@ -1421,6 +1459,7 @@ class TestVaultTokenBackendExpiredTokenHandling:
         mock_settings.vault_token_cache_enabled = False
         mock_settings.vault_token_cache_ttl = 300
         mock_settings.vault_token_cache_max_size = 10000
+        mock_settings.auth_encryption_secret = None  # No encryption in unit tests
 
         backend = VaultTokenBackend(mock_db, mock_settings)
 
@@ -1485,6 +1524,7 @@ class TestVaultTokenBackendPR5244:
         mock_settings.vault_token_cache_enabled = False
         mock_settings.vault_token_cache_ttl = 300
         mock_settings.vault_token_cache_max_size = 10000
+        mock_settings.auth_encryption_secret = None  # No encryption in unit tests
 
         backend = VaultTokenBackend(mock_db, mock_settings)
 
@@ -1548,6 +1588,7 @@ class TestVaultTokenBackendPR5244:
         mock_settings.vault_token_cache_enabled = False
         mock_settings.vault_token_cache_ttl = 300
         mock_settings.vault_token_cache_max_size = 10000
+        mock_settings.auth_encryption_secret = None  # No encryption in unit tests
 
         backend = VaultTokenBackend(mock_db, mock_settings)
 
@@ -1605,6 +1646,7 @@ class TestVaultTokenBackendPR5244:
         mock_settings.vault_token_cache_enabled = False
         mock_settings.vault_token_cache_ttl = 300
         mock_settings.vault_token_cache_max_size = 10000
+        mock_settings.auth_encryption_secret = None  # No encryption in unit tests
 
         backend = VaultTokenBackend(mock_db, mock_settings)
 
@@ -1668,6 +1710,7 @@ class TestVaultTokenBackendPR5244:
         mock_settings.vault_token_cache_enabled = False
         mock_settings.vault_token_cache_ttl = 300
         mock_settings.vault_token_cache_max_size = 10000
+        mock_settings.auth_encryption_secret = None  # No encryption in unit tests
 
         backend = VaultTokenBackend(mock_db, mock_settings)
 
@@ -1728,6 +1771,7 @@ class TestVaultTokenBackendPR5244:
         mock_settings.vault_token_cache_enabled = False
         mock_settings.vault_token_cache_ttl = 300
         mock_settings.vault_token_cache_max_size = 10000
+        mock_settings.auth_encryption_secret = None  # No encryption in unit tests
 
         backend = VaultTokenBackend(mock_db, mock_settings)
 
@@ -1792,6 +1836,7 @@ class TestVaultTokenBackendPR5244:
         mock_settings.vault_token_cache_enabled = False
         mock_settings.vault_token_cache_ttl = 300
         mock_settings.vault_token_cache_max_size = 10000
+        mock_settings.auth_encryption_secret = None  # No encryption in unit tests
 
         backend = VaultTokenBackend(mock_db, mock_settings)
 
@@ -1865,6 +1910,7 @@ class TestVaultTokenBackendAdditionalCoverage:
         mock_settings.vault_token_cache_enabled = False
         mock_settings.vault_token_cache_ttl = 300
         mock_settings.vault_token_cache_max_size = 10000
+        mock_settings.auth_encryption_secret = None  # No encryption in unit tests
 
         backend = VaultTokenBackend(mock_db, mock_settings)
 
@@ -1898,6 +1944,7 @@ class TestVaultTokenBackendAdditionalCoverage:
         mock_settings.vault_token_cache_enabled = False
         mock_settings.vault_token_cache_ttl = 300
         mock_settings.vault_token_cache_max_size = 10000
+        mock_settings.auth_encryption_secret = None  # No encryption in unit tests
 
         backend = VaultTokenBackend(mock_db, mock_settings)
 
@@ -1954,6 +2001,7 @@ class TestVaultTokenBackendAdditionalCoverage:
         mock_settings.vault_token_cache_enabled = True
         mock_settings.vault_token_cache_ttl = 300
         mock_settings.vault_token_cache_max_size = 10000
+        mock_settings.auth_encryption_secret = None  # No encryption in unit tests
 
         backend = VaultTokenBackend(mock_db, mock_settings)
 
@@ -1994,6 +2042,7 @@ class TestVaultTokenBackendAdditionalCoverage:
         mock_settings.vault_token_cache_enabled = False
         mock_settings.vault_token_cache_ttl = 300
         mock_settings.vault_token_cache_max_size = 10000
+        mock_settings.auth_encryption_secret = None  # No encryption in unit tests
 
         backend = VaultTokenBackend(mock_db, mock_settings)
 
@@ -2032,6 +2081,7 @@ class TestVaultTokenBackendStoreTokensEdgeCases:
         mock_settings.vault_token_cache_enabled = False
         mock_settings.vault_token_cache_ttl = 300
         mock_settings.vault_token_cache_max_size = 10000
+        mock_settings.auth_encryption_secret = None  # No encryption in unit tests
 
         backend = VaultTokenBackend(mock_db, mock_settings)
 
@@ -2085,6 +2135,7 @@ class TestVaultTokenBackendStoreTokensEdgeCases:
         mock_settings.vault_token_cache_enabled = True  # Enable cache
         mock_settings.vault_token_cache_ttl = 300
         mock_settings.vault_token_cache_max_size = 10000
+        mock_settings.auth_encryption_secret = None  # No encryption in unit tests
 
         backend = VaultTokenBackend(mock_db, mock_settings)
 

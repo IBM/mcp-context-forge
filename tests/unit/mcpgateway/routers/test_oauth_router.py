@@ -708,7 +708,7 @@ class TestOAuthRouter:
 
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
 
-        token_result = {"user_id": "oauth_user_123", "app_user_email": "test@example.com", "expires_at": "2024-01-01T12:00:00", "token_aud": None}
+        token_result = {"user_id": "oauth_user_123", "app_user_email": "test@example.com", "expires_at": "2024-01-01T12:00:00", "token_aud": None, "state_data": {"app_user_email": "test@example.com", "team_id": None}}
 
         with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_manager_class:
             mock_oauth_manager = Mock()
@@ -759,7 +759,7 @@ class TestOAuthRouter:
         }
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
 
-        token_result = {"user_id": "oauth_user_123", "app_user_email": "test@example.com", "expires_at": "2024-01-01T12:00:00", "token_aud": None}
+        token_result = {"user_id": "oauth_user_123", "app_user_email": "test@example.com", "expires_at": "2024-01-01T12:00:00", "token_aud": None, "state_data": {"app_user_email": "test@example.com", "team_id": None}}
 
         with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_manager_class:
             mock_oauth_manager = Mock()
@@ -827,7 +827,7 @@ class TestOAuthRouter:
         state = "gateway123_abc123"
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
 
-        token_result = {"user_id": "oauth_user_123", "app_user_email": "test@example.com", "expires_at": "2024-01-01T12:00:00"}
+        token_result = {"user_id": "oauth_user_123", "app_user_email": "test@example.com", "expires_at": "2024-01-01T12:00:00", "state_data": {"app_user_email": "test@example.com", "team_id": None}}
 
         with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_manager_class:
             mock_oauth_manager = Mock()
@@ -851,7 +851,7 @@ class TestOAuthRouter:
         """Test OAuth callback resolves gateway via opaque state mapping."""
         state = "opaque-state-token"
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
-        token_result = {"user_id": "oauth_user_123", "app_user_email": "test@example.com", "expires_at": "2024-01-01T12:00:00"}
+        token_result = {"user_id": "oauth_user_123", "app_user_email": "test@example.com", "expires_at": "2024-01-01T12:00:00", "state_data": {"app_user_email": "test@example.com", "team_id": None}}
 
         with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_manager_class:
             mock_oauth_manager = Mock()
@@ -2131,7 +2131,7 @@ class TestOAuthRouterAdditionalCoverage:
         state_raw = payload + (b"0" * 32)
         state = base64.urlsafe_b64encode(state_raw).decode()
 
-        result_payload = {"user_id": "u1"}
+        result_payload = {"user_id": "u1", "state_data": {"app_user_email": "u1@example.com", "team_id": None}}
 
         with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_mgr:
             mock_mgr = Mock()
@@ -2734,7 +2734,7 @@ class TestOAuthRouterAdditionalCoverage:
         }
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
 
-        token_result = {"user_id": "u1", "expires_at": None}
+        token_result = {"user_id": "u1", "expires_at": None, "state_data": {"app_user_email": "u1@example.com", "team_id": None}}
 
         with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_mgr:
             mock_mgr = Mock()
@@ -2792,6 +2792,7 @@ class TestOAuthCallbackCSPCompliance:
             "user_id": "user@example.com",
             "expires_at": "2026-12-31T23:59:59Z",
             "token_aud": None,
+            "state_data": {"app_user_email": "user@example.com", "team_id": None},
         }
 
         # Add CSP nonce to request state (simulating SecurityHeadersMiddleware)
@@ -2853,6 +2854,7 @@ class TestOAuthCallbackCSPCompliance:
             "user_id": "user@example.com",
             "expires_at": "2026-12-31T23:59:59Z",
             "token_aud": None,
+            "state_data": {"app_user_email": "user@example.com", "team_id": None},
         }
 
         with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_mgr:
@@ -2922,6 +2924,7 @@ class TestOAuthCallbackCSPCompliance:
                     "user_id": "user@example.com",
                     "expires_at": "2026-12-31T23:59:59Z",
                     "token_aud": None,
+                    "state_data": {"app_user_email": "user@example.com", "team_id": None},
                 }
             )
             mock_oauth_mgr.return_value = mock_mgr
@@ -2964,6 +2967,7 @@ class TestOAuthCallbackCSPCompliance:
             "user_id": "user@example.com",
             "expires_at": "2026-12-31T23:59:59Z",
             "token_aud": None,
+            "state_data": {"app_user_email": "user@example.com", "team_id": None},
         }
 
         # Simulate missing CSP nonce (request.state.csp_nonce not set)
@@ -3042,6 +3046,7 @@ class TestOAuthCallbackCSPCompliance:
             "user_id": "user@example.com",
             "expires_at": "2026-12-31T23:59:59Z",
             "token_aud": None,
+            "state_data": {"app_user_email": "user@example.com", "team_id": None},
         }
 
         nonces_seen = set()
@@ -3279,7 +3284,8 @@ class TestOAuthRouterPopupMode:
             mock_oauth_manager.resolve_gateway_id_from_state = AsyncMock(return_value="test-gateway")
             mock_oauth_manager.complete_authorization_code_flow = AsyncMock(return_value={
                 "user_id": "user@example.com",
-                "expires_at": "2026-12-31T23:59:59Z"
+                "expires_at": "2026-12-31T23:59:59Z",
+                "state_data": {"app_user_email": "user@example.com", "team_id": None},
             })
             mock_oauth_manager_class.return_value = mock_oauth_manager
 
@@ -3443,7 +3449,8 @@ class TestOAuthRouterPopupMode:
             mock_oauth_manager.resolve_gateway_id_from_state = AsyncMock(return_value="test-gateway")
             mock_oauth_manager.complete_authorization_code_flow = AsyncMock(return_value={
                 "user_id": "user@example.com",
-                "expires_at": "2026-12-31T23:59:59Z"
+                "expires_at": "2026-12-31T23:59:59Z",
+                "state_data": {"app_user_email": "user@example.com", "team_id": None},
             })
             mock_oauth_manager_class.return_value = mock_oauth_manager
 

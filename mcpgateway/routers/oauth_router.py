@@ -936,6 +936,14 @@ async def oauth_callback(
         team_id = state_data.get("team_id")
         logger.info(f"OAuth callback: extracted team_id={team_id} from state_data for user {app_user_email}")
 
+        # SECURITY (CWE-287): Hard-fail if user identity cannot be bound.
+        # State is already consumed at this point; a missing email means no token
+        # can be stored and the user would see "success" with nothing stored —
+        # a silent no-op that burns the one-time state and leaves the user stuck.
+        if not app_user_email:
+            logger.error("OAuth callback: cannot bind token — no user identity in state (state already consumed). User must re-authorize.")
+            return _invalid_state_response()
+
         # Now build properly-scoped TokenStorageService with team_id from state
         # SECURITY: Use team_id from OAuth state (which came from original token scope)
         #
@@ -1023,10 +1031,16 @@ async def oauth_callback(
             "token_use": "session",
             "jti": secrets.token_urlsafe(16),
         }
+        # S8: When team_id is None (Admin-UI session, no team scope), omit the
+        # `teams` key entirely so the JWT has no teams claim.  Passing `teams=[]`
+        # serialises as `"teams": []`, which _narrow_by_jwt_teams treats as
+        # "no narrowing requested" and returns full DB membership — broader than
+        # the intended shared/public scope.  Omitting the key leaves
+        # _build_user_context seeing jwt_teams_claim=None → shared path (correct).
         session_jwt = await create_jwt_token(
             data=jwt_payload,
             expires_in_minutes=5,
-            teams=[team_id] if team_id else [],
+            **( {"teams": [team_id]} if team_id else {} ),
         )
 
         # Legacy admin UI: return full page with fetch-tools button.

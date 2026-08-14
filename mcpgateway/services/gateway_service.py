@@ -2321,61 +2321,27 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             else:
                 logger.info("Using decrypted OAuth token for gateway %s", gateway.name)
 
-            # Connect to MCP server with team-aware fallback.
-            # INTENTIONAL CROSS-PATH RETRY: if the team-scoped token is rejected with 401, retry
-            # once with the shared-path token. This handles the transition period where a user
-            # authorised via Admin UI (shared path) but is now calling via a team-scoped API token.
-            # Retry only runs when: (a) error is 401/unauthorized, (b) a team-scoped token was used,
-            # and (c) a different shared-path token exists. We never fall back to another team's path.
-            try:
-                if gateway.transport.upper() == "SSE":
-                    capabilities, tools, resources, prompts, _ = await self._connect_to_sse_server_without_validation(gateway.url, authentication, validation_warnings=token_validation_warnings)
-                elif gateway.transport.upper() == "STREAMABLEHTTP":
-                    try:
-                        capabilities, tools, resources, prompts, _ = await self.connect_to_streamablehttp_server(gateway.url, authentication)
-                    except Exception as streamable_err:
-                        error_str = str(streamable_err).lower()
-                        if token_validation_warnings and ("401" in error_str or "403" in error_str or "unauthorized" in error_str or "forbidden" in error_str):
-                            diagnostics = "; ".join(token_validation_warnings)
-                            sanitized_url = sanitize_url_for_logging(gateway.url)
-                            raise GatewayConnectionError(
-                                f"MCP server rejected OAuth token at {sanitized_url} (HTTP {type(streamable_err).__name__}). Possible causes: {diagnostics}. Check oauth_config audience and scopes."
-                            )
-                        raise
-                else:
-                    raise ValueError(f"Unsupported transport type: {gateway.transport}")
-            except Exception as e:
-                error_str = str(e).lower()
-                is_auth_error = "401" in error_str or "unauthorized" in error_str
-                used_team_token = token_source and "team-scoped" in token_source
-
-                if is_auth_error and used_team_token and teams:
-                    logger.warning(
-                        "Team-scoped OAuth token failed with 401 for user=%s, gateway=%s. Retrying with shared path token.",
-                        app_user_email,
-                        gateway.name,
-                    )
-                    user_context_shared = {
-                        "email": app_user_email,
-                        "teams": None,
-                        "is_admin": is_admin,
-                    }
-                    token_storage_shared = TokenStorageService(db, user_context=user_context_shared)
-                    shared_token = await token_storage_shared.get_user_token(gateway.id, app_user_email)
-
-                    if shared_token and shared_token != access_token:
-                        logger.info("Retrying with shared path OAuth token for user=%s, gateway=%s", app_user_email, gateway.name)
-                        authentication = {"Authorization": f"Bearer {shared_token}"}
-                        if gateway.transport.upper() == "SSE":
-                            capabilities, tools, resources, prompts, _ = await self._connect_to_sse_server_without_validation(gateway.url, authentication, validation_warnings=[])
-                        elif gateway.transport.upper() == "STREAMABLEHTTP":
-                            capabilities, tools, resources, prompts, _ = await self.connect_to_streamablehttp_server(gateway.url, authentication)
-                        else:
-                            raise ValueError(f"Unsupported transport type: {gateway.transport}")
-                    else:
-                        raise
-                else:
+            # Connect to MCP server. No cross-path fallback — issue #5598 explicitly
+            # prohibits dual-backend fallback mode. If the token is rejected the caller
+            # must re-authorize; silently substituting a different credential path
+            # creates an unpredictable security surface and inconsistent behaviour vs
+            # the tool_service.py and resource_service.py invocation paths.
+            if gateway.transport.upper() == "SSE":
+                capabilities, tools, resources, prompts, _ = await self._connect_to_sse_server_without_validation(gateway.url, authentication, validation_warnings=token_validation_warnings)
+            elif gateway.transport.upper() == "STREAMABLEHTTP":
+                try:
+                    capabilities, tools, resources, prompts, _ = await self.connect_to_streamablehttp_server(gateway.url, authentication)
+                except Exception as streamable_err:
+                    error_str = str(streamable_err).lower()
+                    if token_validation_warnings and ("401" in error_str or "403" in error_str or "unauthorized" in error_str or "forbidden" in error_str):
+                        diagnostics = "; ".join(token_validation_warnings)
+                        sanitized_url = sanitize_url_for_logging(gateway.url)
+                        raise GatewayConnectionError(
+                            f"MCP server rejected OAuth token at {sanitized_url} (HTTP {type(streamable_err).__name__}). Possible causes: {diagnostics}. Check oauth_config audience and scopes."
+                        )
                     raise
+            else:
+                raise ValueError(f"Unsupported transport type: {gateway.transport}")
 
             catalog_sync = self._sync_gateway_catalog(
                 db,
