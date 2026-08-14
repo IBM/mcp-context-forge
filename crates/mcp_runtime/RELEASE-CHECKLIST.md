@@ -63,8 +63,6 @@ Rules:
 - [ ] `make test-mcp-protocol-e2e`
 - [ ] `make test-mcp-rbac`
 - [ ] `make test-mcp-access-matrix`
-- [ ] `make 2025-11-25-core`
-- [ ] `make 2025-11-25-auth`
 - [ ] `make testing-down`
 - [ ] `PLUGINS_CONFIG_FILE=plugins/plugin_parity_config.yaml make testing-up`
 - [ ] `MCP_PLUGIN_PARITY_EXPECTED_RUNTIME=python make test-mcp-plugin-parity`
@@ -83,8 +81,6 @@ Rules:
 - [ ] `make test-mcp-protocol-e2e`
 - [ ] `make test-mcp-rbac`
 - [ ] `make test-mcp-access-matrix`
-- [ ] `make 2025-11-25-core`
-- [ ] `make 2025-11-25-auth`
 
 ## 7. Rust Edge Validation
 
@@ -96,8 +92,6 @@ Rules:
 - [ ] `make test-mcp-protocol-e2e`
 - [ ] `make test-mcp-rbac`
 - [ ] `make test-mcp-access-matrix`
-- [ ] `make 2025-11-25-core`
-- [ ] `make 2025-11-25-auth`
 
 ## 8. Rust Full Validation
 
@@ -111,8 +105,6 @@ Rules:
 - [ ] `make test-mcp-access-matrix`
 - [ ] `make test-mcp-session-isolation`
 - [ ] `make test-mcp-session-isolation-load MCP_ISOLATION_LOAD_RUN_TIME=30s`
-- [ ] `make 2025-11-25-core`
-- [ ] `make 2025-11-25-auth`
 - [ ] `PLUGINS_CONFIG_FILE=plugins/plugin_parity_config.yaml make testing-rebuild-rust-full`
 - [ ] `MCP_PLUGIN_PARITY_EXPECTED_RUNTIME=rust make test-mcp-plugin-parity`
 - [ ] Confirm Rust plugin parity covers `resources/read`, `tools/call`, and `prompts/get`
@@ -213,11 +205,6 @@ Note:
 - [ ] Note any regression or unexpected failure count before release
 - [ ] Record Python baseline tools-only benchmark numbers for comparison
 - [ ] Record Rust full tools-only benchmark numbers for comparison
-
-## 11a. Optional MCP Compliance Artifacts
-
-- [ ] `make 2025-11-25-report`
-- [ ] Review generated artifacts under `artifacts/mcp-2025-11-25/`
 
 ## 12. Profiling
 
