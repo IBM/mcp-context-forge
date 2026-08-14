@@ -152,6 +152,7 @@ from mcpgateway.admin import (  # admin_get_metrics,
     admin_reset_metrics,
     admin_resources_partial_html,
     admin_search_a2a_agents,
+    admin_search_catalog,
     admin_search_gateways,
     admin_search_prompts,
     admin_search_resources,
@@ -13759,6 +13760,43 @@ async def test_admin_search_endpoints_support_tags_without_query(monkeypatch, mo
 
 
 @pytest.mark.asyncio
+async def test_admin_search_catalog_returns_open_catalog_matches(monkeypatch, mock_db, allow_permission):
+    catalog_search = AsyncMock(return_value=SimpleNamespace(servers=[SimpleNamespace(id="cloudflare-docs", name="Cloudflare Docs", description="Cloudflare documentation")]))
+    monkeypatch.setattr("mcpgateway.admin.catalog_service.get_catalog_servers", catalog_search)
+
+    result = await admin_search_catalog(
+        q=" Cloudflare ",
+        limit=5,
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db, "_cached_team_ids": ["team-1"]},
+    )
+
+    assert result["catalog"] == [{"id": "cloudflare-docs", "name": "Cloudflare Docs", "description": "Cloudflare documentation"}]
+    catalog_request = catalog_search.await_args.args[0]
+    assert catalog_request.search == "cloudflare"
+    assert catalog_request.auth_type == "Open"
+    assert catalog_request.limit == 5
+    assert catalog_search.await_args.kwargs == {"user_email": "user@example.com", "token_teams": ["team-1"]}
+
+
+@pytest.mark.asyncio
+async def test_admin_search_catalog_disabled_returns_empty(monkeypatch, mock_db, allow_permission):
+    catalog_search = AsyncMock()
+    monkeypatch.setattr(settings, "mcpgateway_catalog_enabled", False)
+    monkeypatch.setattr("mcpgateway.admin.catalog_service.get_catalog_servers", catalog_search)
+
+    result = await admin_search_catalog(
+        q="cloudflare",
+        limit=5,
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db, "_cached_team_ids": []},
+    )
+
+    assert result["catalog"] == []
+    catalog_search.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_admin_unified_search_aggregates_results(monkeypatch, mock_db, allow_permission):
     monkeypatch.setattr("mcpgateway.admin.admin_search_servers", AsyncMock(return_value={"servers": [{"id": "srv-1", "name": "Server 1"}], "count": 1}))
     monkeypatch.setattr("mcpgateway.admin.admin_search_gateways", AsyncMock(return_value={"gateways": [{"id": "gw-1", "name": "Gateway 1"}], "count": 1}))
@@ -13807,7 +13845,9 @@ async def test_admin_unified_search_default_excludes_users(monkeypatch, mock_db,
     monkeypatch.setattr("mcpgateway.admin.admin_search_a2a_agents", AsyncMock(return_value={"agents": [], "count": 0}))
     monkeypatch.setattr("mcpgateway.admin.admin_search_teams", AsyncMock(return_value={"teams": [], "count": 0}))
     users_search = AsyncMock(return_value={"users": [{"id": "user-1"}], "count": 1})
+    catalog_search = AsyncMock(return_value={"catalog": [{"id": "catalog-1"}], "count": 1})
     monkeypatch.setattr("mcpgateway.admin.admin_search_users", users_search)
+    monkeypatch.setattr("mcpgateway.admin.admin_search_catalog", catalog_search)
 
     result = await admin_unified_search(
         q="core",
@@ -13823,6 +13863,47 @@ async def test_admin_unified_search_default_excludes_users(monkeypatch, mock_db,
     assert "users" not in result["entity_types"]
     assert "users" not in result["results"]
     users_search.assert_not_called()
+    assert "catalog" not in result["entity_types"]
+    catalog_search.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_admin_unified_search_catalog_is_explicit_and_permission_safe(monkeypatch, mock_db, allow_permission):
+    setup_team_service(monkeypatch, ["team-1"])
+    catalog_search = AsyncMock(return_value={"catalog": [{"id": "catalog-1", "name": "Catalog 1"}], "count": 1})
+    monkeypatch.setattr("mcpgateway.admin.admin_search_catalog", catalog_search)
+
+    result = await admin_unified_search(
+        q="catalog",
+        tags=None,
+        entity_types="catalog",
+        include_inactive=False,
+        limit=5,
+        gateway_id=None,
+        team_id=None,
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db},
+    )
+
+    assert result["entity_types"] == ["catalog"]
+    assert result["results"]["catalog"] == [{"id": "catalog-1", "name": "Catalog 1"}]
+    assert result["items"][0]["entity_type"] == "catalog"
+    assert catalog_search.await_args.kwargs["user"]["_cached_team_ids"] == ["team-1"]
+
+    catalog_search.side_effect = HTTPException(status_code=403, detail="forbidden")
+    denied = await admin_unified_search(
+        q="catalog",
+        tags=None,
+        entity_types="catalog",
+        include_inactive=False,
+        limit=5,
+        gateway_id=None,
+        team_id=None,
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db},
+    )
+    assert denied["results"]["catalog"] == []
+    assert denied["count"] == 0
 
 
 @pytest.mark.asyncio

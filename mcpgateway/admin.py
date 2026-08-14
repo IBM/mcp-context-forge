@@ -11579,6 +11579,29 @@ async def admin_search_a2a_agents(
     return _build_search_response(entity_key="agents", entity_type="agents", items=agents, query=search_query, tags=normalized_tags, tag_groups=tag_groups)
 
 
+@require_permission("servers.read", allow_admin_bypass=False)
+async def admin_search_catalog(
+    q: str,
+    limit: int,
+    db: Session,
+    user: Any,
+) -> dict[str, Any]:
+    """Search visible open-auth catalog servers by name or description."""
+    search_query = _normalize_search_query(q)
+    if not search_query or not settings.mcpgateway_catalog_enabled:
+        return _build_search_response(entity_key="catalog", entity_type="catalog", items=[], query=search_query, tags="", tag_groups=[])
+
+    catalog_request = CatalogListRequest(search=search_query, auth_type="Open", limit=limit)
+    catalog_response = await catalog_service.get_catalog_servers(
+        catalog_request,
+        db,
+        user_email=get_user_email(user),
+        token_teams=await _get_user_team_ids(user, db),
+    )
+    items = [{"id": server.id, "name": server.name, "description": server.description} for server in catalog_response.servers]
+    return _build_search_response(entity_key="catalog", entity_type="catalog", items=items, query=search_query, tags="", tag_groups=[])
+
+
 async def perform_unified_search(
     *,
     request: Optional[Request] = None,
@@ -11601,7 +11624,7 @@ async def perform_unified_search(
     enforced inside each ``admin_search_*`` call.
 
     Searches servers, gateways, tools, resources, prompts, agents, teams, roots,
-    and optionally users (when the caller has ``admin.user_management`` permission).
+    and optionally catalog entries or users (when explicitly requested and permitted).
 
     Args:
         request: Current request object.
@@ -11609,7 +11632,7 @@ async def perform_unified_search(
         tags (Optional[str]): Tag filter expression (comma=OR, plus=AND).
         entity_types (Optional[str]): Optional comma-separated entity type list.
             Supported values: servers, gateways, tools, resources, prompts,
-            agents, teams, users, roots.
+            agents, teams, users, roots, catalog.
         include_inactive (bool): Whether to include inactive entities.
         limit (int): Default per-entity limit for returned items.
         limit_per_type (Optional[int]): Optional alias overriding ``limit``.
@@ -11629,7 +11652,7 @@ async def perform_unified_search(
     normalized_entity_types = _normalize_tags_query(entity_types)
     tag_groups = _parse_tag_filter_groups(normalized_tags)
 
-    supported_entity_types = ["servers", "gateways", "tools", "resources", "prompts", "agents", "teams", "users", "roots"]
+    supported_entity_types = ["servers", "gateways", "tools", "resources", "prompts", "agents", "teams", "users", "roots", "catalog"]
     default_entity_types = ["servers", "gateways", "tools", "resources", "prompts", "agents", "teams", "roots"]
     selected_entity_types: list[str] = []
     if normalized_entity_types:
@@ -11833,6 +11856,18 @@ async def perform_unified_search(
             user=user,
         )
         grouped_results["roots"] = typing_cast(list[dict[str, Any]], roots_result.get("roots", roots_result.get("items", [])))
+
+    # Catalog does not support tag filtering and remains opt-in for unified search.
+    if "catalog" in selected_entity_types and search_query:
+        catalog_result = await _safe_entity_search(
+            admin_search_catalog,
+            "catalog",
+            q=search_query,
+            limit=effective_limit,
+            db=db,
+            user=user,
+        )
+        grouped_results["catalog"] = typing_cast(list[dict[str, Any]], catalog_result.get("catalog", catalog_result.get("items", [])))
 
     groups = []
     flat_items: list[dict[str, Any]] = []
