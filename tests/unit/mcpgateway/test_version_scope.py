@@ -10,7 +10,8 @@ Layer-1 scope enforcement on the diagnostics endpoint.
 from unittest.mock import AsyncMock, MagicMock
 
 # Third-Party
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException
+from fastapi.testclient import TestClient
 import pytest
 
 # First-Party
@@ -48,6 +49,50 @@ async def test_basic_auth_string_identity_is_still_accepted(monkeypatch):
     response = await version_endpoint(scoped_request(None, path="/version"), _user="basic-auth-user@example.com")
 
     assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_basic_auth_verified_marker_bypasses_db_scope_check(monkeypatch):
+    """request.state.basic_auth_verified_admin must satisfy the Layer-1 check on its
+    own, without calling is_unrestricted_platform_admin (which would 403 legacy Basic
+    auth callers - they have no token_teams and no matching EmailUser/platform_admin_email row).
+    """
+    monkeypatch.setattr(
+        "mcpgateway.auth_context.is_unrestricted_platform_admin",
+        AsyncMock(side_effect=AssertionError("must not be called for a verified basic-auth admin")),
+    )
+    monkeypatch.setattr("mcpgateway.version._build_payload", MagicMock(return_value={"ok": True}))
+
+    request = scoped_request([], path="/version")
+    request.state.basic_auth_verified_admin = True
+
+    response = await version_endpoint(request, _user="admin")
+
+    assert response.status_code == 200
+
+
+def test_basic_auth_admin_allowed_end_to_end(monkeypatch):
+    """Real require_admin_auth Basic-auth path (no dependency override, no scope-helper
+    mocking) must reach the handler and get 200 - regression guard for the /version 403
+    introduced by routing legacy Basic auth through is_unrestricted_platform_admin.
+    """
+    # First-Party
+    from mcpgateway import version as ver_mod
+    from mcpgateway.config import settings
+
+    monkeypatch.setattr(settings, "api_allow_basic_auth", True, raising=False)
+    monkeypatch.setattr(settings, "mcp_client_auth_enabled", True, raising=False)
+    monkeypatch.setattr(ver_mod, "_database_version", lambda: ("db-vX", True))
+    monkeypatch.setattr(ver_mod, "_system_metrics", lambda: {"stub": True})
+    monkeypatch.setattr(ver_mod, "REDIS_AVAILABLE", False, raising=False)
+
+    app = FastAPI()
+    app.include_router(ver_mod.router)
+    client = TestClient(app)
+
+    rsp = client.get("/version", auth=(settings.basic_auth_user, settings.basic_auth_password.get_secret_value()))
+
+    assert rsp.status_code == 200
 
 
 @pytest.mark.asyncio

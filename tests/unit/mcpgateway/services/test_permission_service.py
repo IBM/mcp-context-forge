@@ -357,6 +357,59 @@ async def test_get_user_roles_with_scope(svc, mock_db):
 
 
 @pytest.mark.asyncio
+async def test_get_user_roles_token_teams_none_is_unfiltered(svc, mock_db):
+    """token_teams=None (unrestricted caller, or a caller viewing their own roles) returns every row."""
+    rows = [
+        SimpleNamespace(scope="global", scope_id=None),
+        SimpleNamespace(scope="team", scope_id="team-a"),
+        SimpleNamespace(scope="team", scope_id="team-b"),
+        SimpleNamespace(scope="personal", scope_id=None),
+    ]
+    mock_db.execute.return_value.scalars.return_value.all.return_value = rows
+    roles = await svc.get_user_roles("user@test.com")
+    assert roles == rows
+
+
+@pytest.mark.asyncio
+async def test_get_user_roles_narrowed_caller_sees_only_covered_team_rows(svc, mock_db):
+    """A narrowed caller viewing someone else's roles must not see global, out-of-scope-team, or personal rows.
+
+    Regression guard for the GET /rbac/users/{email}/roles scope leak: a narrowed
+    admin querying another user's roles previously received every assignment
+    unfiltered, disclosing global grants and out-of-scope team membership.
+    """
+    global_row = SimpleNamespace(scope="global", scope_id=None)
+    covered_team_row = SimpleNamespace(scope="team", scope_id="team-a")
+    uncovered_team_row = SimpleNamespace(scope="team", scope_id="team-b")
+    no_scope_id_team_row = SimpleNamespace(scope="team", scope_id=None)
+    personal_row = SimpleNamespace(scope="personal", scope_id=None)
+    mock_db.execute.return_value.scalars.return_value.all.return_value = [
+        global_row,
+        covered_team_row,
+        uncovered_team_row,
+        no_scope_id_team_row,
+        personal_row,
+    ]
+
+    roles = await svc.get_user_roles("victim@test.com", token_teams=["team-a"])
+
+    assert roles == [covered_team_row]
+
+
+@pytest.mark.asyncio
+async def test_get_user_roles_public_only_caller_sees_nothing(svc, mock_db):
+    """token_teams=[] (public-only) must fail closed to an empty result, not disclose anything."""
+    rows = [
+        SimpleNamespace(scope="global", scope_id=None),
+        SimpleNamespace(scope="team", scope_id="team-a"),
+        SimpleNamespace(scope="personal", scope_id=None),
+    ]
+    mock_db.execute.return_value.scalars.return_value.all.return_value = rows
+    roles = await svc.get_user_roles("victim@test.com", token_teams=[])
+    assert roles == []
+
+
+@pytest.mark.asyncio
 async def test_get_user_roles_include_all_teams(svc, mock_db):
     """_get_user_roles with include_all_teams=True."""
     mock_db.execute.return_value.scalars.return_value.all.return_value = []

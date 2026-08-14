@@ -1349,14 +1349,22 @@ async def version_endpoint(
     # But it must never grant access just because we couldn't verify it -
     # fail closed on any error. 503 (not 403) so an operator can tell "couldn't
     # verify, DB unavailable" apart from "verified, and you're not admin".
-    try:
-        with fresh_db_session() as _db:
-            is_admin_unrestricted = await is_unrestricted_platform_admin(request, _user, _db)
-    except HTTPException:
-        raise
-    except Exception as exc:
-        logger.warning("version diagnostics: admin scope check failed (%s: %s)", type(exc).__name__, exc)
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Unable to verify admin authorization; try again shortly") from exc
+    # Legacy HTTP Basic auth (require_admin_auth's basic_credentials branch) verifies a
+    # single static superuser credential outside the EmailUser/RBAC DB world, so it never
+    # populates token_teams and would otherwise be wrongly denied by the DB-backed check
+    # below. require_admin_auth marks a verified basic-auth admin on request.state; trust
+    # that marker directly instead of re-deriving Layer-1 scope for it.
+    if getattr(request.state, "basic_auth_verified_admin", False):
+        is_admin_unrestricted = True
+    else:
+        try:
+            with fresh_db_session() as _db:
+                is_admin_unrestricted = await is_unrestricted_platform_admin(request, _user, _db)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.warning("version diagnostics: admin scope check failed (%s: %s)", type(exc).__name__, exc)
+            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Unable to verify admin authorization; try again shortly") from exc
 
     if not is_admin_unrestricted:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_GLOBAL_SCOPE_DENIED_MSG)
