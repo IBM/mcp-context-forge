@@ -106,7 +106,7 @@ class CatalogService:
             from mcpgateway.db import EmailTeam as DbEmailTeam  # pylint: disable=import-outside-toplevel
             from mcpgateway.db import EmailTeamMember as DbEmailTeamMember  # pylint: disable=import-outside-toplevel
 
-            team = db.execute(select(DbEmailTeam).where(DbEmailTeam.id == requested_team_id, DbEmailTeam.is_active == True)).scalar_one_or_none()  # noqa: E712
+            team = db.execute(select(DbEmailTeam).where(DbEmailTeam.id == requested_team_id, DbEmailTeam.is_active == True)).scalar_one_or_none()  # noqa: E712  # pylint: disable=singleton-comparison
             if not team:
                 raise CatalogRegistrationPermissionError(f"Team '{requested_team_id}' not found or inactive")
 
@@ -114,7 +114,7 @@ class CatalogService:
                 select(DbEmailTeamMember).where(
                     DbEmailTeamMember.team_id == requested_team_id,
                     DbEmailTeamMember.user_email == owner_email,
-                    DbEmailTeamMember.is_active == True,  # noqa: E712
+                    DbEmailTeamMember.is_active == True,  # noqa: E712  # pylint: disable=singleton-comparison
                 )
             ).scalar_one_or_none()
             if not membership:
