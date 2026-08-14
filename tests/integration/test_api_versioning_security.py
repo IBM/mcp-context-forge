@@ -33,6 +33,9 @@ import mcpgateway.transports.streamablehttp_transport as streamable_transport_mo
 from mcpgateway.config import settings
 from mcpgateway.main import app
 
+# Local
+from tests.helpers.auth import make_auth_header_for_email
+
 
 @pytest.fixture
 def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
@@ -51,6 +54,7 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setattr(db_mod, "SessionLocal", TestSessionLocal, raising=False)
     monkeypatch.setattr(main_mod, "SessionLocal", TestSessionLocal, raising=False)
     monkeypatch.setattr(streamable_transport_mod, "SessionLocal", TestSessionLocal, raising=False)
+    monkeypatch.setattr(settings, "require_user_in_db", False)
 
     try:
         yield TestClient(app, raise_server_exceptions=False)
@@ -61,8 +65,8 @@ def client(monkeypatch: pytest.MonkeyPatch) -> TestClient:
 
 
 @pytest.fixture
-def valid_auth() -> tuple[str, str]:
-    return (settings.basic_auth_user, settings.basic_auth_password)
+def valid_auth_headers() -> dict[str, str]:
+    return make_auth_header_for_email(settings.platform_admin_email, is_admin=True, teams=None)
 
 
 @pytest.fixture
@@ -172,15 +176,15 @@ class TestValidCredentialsPassAuth:
     AUTH_PASS_CODES = {200, 201, 204, 404, 405, 422}
 
     @pytest.mark.parametrize("path", ALWAYS_ON_V1_ROUTES)
-    def test_always_on_route_valid_auth_passes(self, client: TestClient, path: str, valid_auth: tuple) -> None:
-        response = client.get(path, auth=valid_auth, follow_redirects=False)
+    def test_always_on_route_valid_auth_passes(self, client: TestClient, path: str, valid_auth_headers: dict[str, str]) -> None:
+        response = client.get(path, headers=valid_auth_headers, follow_redirects=False)
         assert response.status_code not in [401, 403], (
             f"Valid credentials were rejected on GET {path}: {response.status_code}"
         )
 
     @pytest.mark.parametrize("path", ADMIN_V1_ROUTES)
-    def test_admin_route_valid_admin_auth_passes(self, client: TestClient, path: str, valid_auth: tuple) -> None:
-        response = client.get(path, auth=valid_auth, follow_redirects=False)
+    def test_admin_route_valid_admin_auth_passes(self, client: TestClient, path: str, valid_auth_headers: dict[str, str]) -> None:
+        response = client.get(path, headers=valid_auth_headers, follow_redirects=False)
         assert response.status_code not in [401], (
             f"Valid admin credentials were rejected on GET {path}: {response.status_code}"
         )
@@ -212,9 +216,9 @@ class TestV1LegacyAuthParity:
         )
 
     @pytest.mark.parametrize("legacy,versioned", ROUTE_PAIRS)
-    def test_valid_auth_parity(self, client: TestClient, legacy: str, versioned: str, valid_auth: tuple) -> None:
-        legacy_status = client.get(legacy, auth=valid_auth, follow_redirects=False).status_code
-        v1_status = client.get(versioned, auth=valid_auth, follow_redirects=False).status_code
+    def test_valid_auth_parity(self, client: TestClient, legacy: str, versioned: str, valid_auth_headers: dict[str, str]) -> None:
+        legacy_status = client.get(legacy, headers=valid_auth_headers, follow_redirects=False).status_code
+        v1_status = client.get(versioned, headers=valid_auth_headers, follow_redirects=False).status_code
         assert legacy_status == v1_status, (
             f"Auth parity failure (valid creds): {legacy} → {legacy_status}, {versioned} → {v1_status}"
         )
