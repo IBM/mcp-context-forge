@@ -807,8 +807,8 @@ clean:
 # help: test-mcp-access-matrix - MCP role/access matrix (Rust transport, edge/full mode)
 # help: test-mcp-plugin-parity - MCP plugin parity E2E for current Python or Rust stack
 # help: test-mcp-session-isolation - MCP session/auth isolation tests for Rust public transport
-# help: test-e2e-sso         - E2E tests requiring a live SSO identity provider (Keycloak or Entra ID)
 # help: test-live-gateway    - Run ALL live-gateway tests (mcp + sso + e2e_rust)
+# help: test-live-gateway    - Run ALL live-gateway tests (mcp + sso + protocol_compliance + e2e_rust)
 # help: test-plugin-integration - Self-contained plugin E2E tests (boots gateway; PLUGIN=<name> ENFORCEMENT=static|binding|both)
 # help: test-plugin-secrets-detection  - Plugin E2E: SecretsDetection
 # help: test-plugin-encoded-exfil      - Plugin E2E: EncodedExfil
@@ -940,11 +940,11 @@ test-mcp-session-isolation: uv  ## MCP session/auth isolation tests for the Rust
 		|| { echo "❌ MCP session/auth isolation tests failed!"; exit 1; }
 	@echo "✅ MCP session/auth isolation tests passed!"
 
-test-e2e-sso: uv  ## E2E tests requiring a live SSO identity provider (Keycloak or Entra ID)
+test-e2e-sso: uv  ## E2E tests requiring a live Keycloak SSO identity provider
 	@echo "🔐 Running SSO-dependent E2E tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
-	@echo "   Requires one of:"
-	@echo "     - Keycloak: 'docker compose --profile sso up -d' (for test_oauth_jwks_e2e.py)"
-	@echo "     - Entra ID: AZURE_CLIENT_ID/AZURE_CLIENT_SECRET/AZURE_TENANT_ID env vars (for test_entra_id_integration.py)"
+	@echo "   Requires: Keycloak via 'docker compose --profile sso up -d' (for test_oauth_jwks_e2e.py)"
+	@echo "   Note: the Entra ID integration test now lives at tests/integration/test_entra_id_integration.py"
+	@echo "         and runs (skipping when AZURE_* creds are absent) as part of the default 'make test'."
 	@$(UV_BIN) run pytest -p playwright tests/live_gateway/sso/ -v -s --tb=short \
 		|| { echo "❌ SSO E2E tests failed!"; exit 1; }
 	@echo "✅ SSO E2E tests passed!"
