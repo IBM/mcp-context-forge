@@ -202,6 +202,11 @@ Deploy ContextForge for managing MCP servers:
 # Create data directory
 mkdir -p $(pwd)/mcpgateway_data
 
+# Generate a unique secret and admin password — don't reuse example values,
+# especially since HOST=0.0.0.0 below exposes the container beyond localhost
+export JWT_SECRET_KEY=$(openssl rand -hex 32)
+export PLATFORM_ADMIN_PASSWORD=$(openssl rand -base64 24)
+
 # Run ContextForge
 docker run -d \
   --name mcpgateway \
@@ -212,19 +217,19 @@ docker run -d \
   -e MCPGATEWAY_ADMIN_API_ENABLED=true \
   -e DATABASE_URL=sqlite:////data/mcp.db \
   -e HOST=0.0.0.0 \
-  -e JWT_SECRET_KEY=your-secret-key \
+  -e JWT_SECRET_KEY="$JWT_SECRET_KEY" \
   -e AUTH_REQUIRED=true \
   -e PLATFORM_ADMIN_EMAIL=admin@example.com \
-  -e PLATFORM_ADMIN_PASSWORD=changeme \
+  -e PLATFORM_ADMIN_PASSWORD="$PLATFORM_ADMIN_PASSWORD" \
   ghcr.io/ibm/mcp-context-forge:1.0.0-RC-3
 
 # Generate an API token for later use (expires in 1 week)
 docker exec mcpgateway \
   python3 -m mcpgateway.utils.create_jwt_token \
-  --username admin@example.com --exp 10080 --secret your-secret-key
+  --username admin@example.com --admin --exp 10080 --secret "$JWT_SECRET_KEY"
 ```
 
-Access ContextForge UI at http://localhost:4444/admin using email/password (admin@example.com / changeme).
+Access ContextForge UI at http://localhost:4444/admin using email `admin@example.com` and the `PLATFORM_ADMIN_PASSWORD` you generated above.
 
 ### Step 5: Deploy MCPO
 

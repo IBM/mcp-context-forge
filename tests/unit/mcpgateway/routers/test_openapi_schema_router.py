@@ -353,39 +353,47 @@ def test_generate_schemas_403_when_permission_denied(monkeypatch: pytest.MonkeyP
     # Reload router to pick up the real decorator
     importlib.reload(router_mod)
 
-    # Monkeypatch PermissionService to deny all permissions
-    class DenyAll:
-        def __init__(self, _db):
-            pass
+    try:
+        # Monkeypatch PermissionService to deny all permissions
+        class DenyAll:
+            def __init__(self, _db):
+                pass
 
-        async def check_permission(self, **_kwargs):
-            return False
+            async def check_permission(self, **_kwargs):
+                return False
 
-    monkeypatch.setattr("mcpgateway.middleware.rbac.PermissionService", DenyAll)
+        monkeypatch.setattr("mcpgateway.middleware.rbac.PermissionService", DenyAll)
 
-    # Mount the freshly-reloaded router on a throwaway app
-    test_app = FastAPI()
-    test_app.include_router(router_mod.router)
+        # Mount the freshly-reloaded router on a throwaway app
+        test_app = FastAPI()
+        test_app.include_router(router_mod.router)
 
-    # Override auth dependency to return an unprivileged user (no DB lookup)
-    async def unprivileged_user():
-        return {"email": "user@example.com", "is_admin": False, "ip_address": "127.0.0.1", "user_agent": "tests"}
+        # Override auth dependency to return an unprivileged user (no DB lookup)
+        async def unprivileged_user():
+            return {"email": "user@example.com", "is_admin": False, "ip_address": "127.0.0.1", "user_agent": "tests"}
 
-    test_app.dependency_overrides[get_current_user_with_permissions] = unprivileged_user
+        test_app.dependency_overrides[get_current_user_with_permissions] = unprivileged_user
 
-    client = TestClient(test_app, raise_server_exceptions=False)
+        client = TestClient(test_app, raise_server_exceptions=False)
 
-    response = client.post(
-        "/v1/tools/generate-schemas-from-openapi",
-        json={"url": "http://api.example.com/calculate"},
-    )
+        response = client.post(
+            "/v1/tools/generate-schemas-from-openapi",
+            json={"url": "http://api.example.com/calculate"},
+        )
 
-    assert response.status_code == 403, f"Expected 403, got {response.status_code}: {response.text}"
-    assert "access denied" in response.json().get("detail", "").lower()
-
-    # Re-patch decorators and reload for remaining tests
-    patch_rbac_decorators()
-    importlib.reload(router_mod)
+        assert response.status_code == 403, f"Expected 403, got {response.status_code}: {response.text}"
+        assert "access denied" in response.json().get("detail", "").lower()
+    finally:
+        # Restore the invariant established at module import (lines 24-28 above):
+        # mcpgateway.middleware.rbac's live decorator attributes point at the real
+        # implementations, but this file's own `router_mod` import is baked with
+        # the mock. A finally block — not a bare tail call whose return value
+        # gets discarded — so a failure above still restores this, and so a
+        # random test-order run elsewhere in the same session doesn't inherit a
+        # mock-patched mcpgateway.middleware.rbac.
+        _real_decorators = patch_rbac_decorators()
+        importlib.reload(router_mod)
+        restore_rbac_decorators(_real_decorators)
 
 
 # ---------------------------------------------------------------------------

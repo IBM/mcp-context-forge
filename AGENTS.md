@@ -202,6 +202,7 @@ The derived triple is memoized on `request.state` per principal, so calling the 
 - A `token-exchange` OAuth grant (RFC 8693 / On-Behalf-Of) exists for gateways; with it, the user's inbound JWT is exchanged with a trusted Authorization Server and **never forwarded upstream** — only the exchanged token is sent to the downstream MCP server.
 - `token_url` on a `token-exchange` gateway is an SSRF / egress boundary: the user's ContextForge JWT is POSTed to it as the `subject_token`, it is validated at config time, and creating or modifying token-exchange gateways is a privileged action.
 - Audit token-exchange operations via the structured logging sink with a `correlation_id`; never log raw subject tokens or exchanged tokens.
+- Do not re-implement the global-record admin scope check. Use `require_global_admin_permission()` for whole-endpoint guards and `require_unrestricted_platform_admin()` for conditional call sites (both in `mcpgateway/middleware/rbac.py`). New admin routes over records with no team association must be classified in `tests/unit/mcpgateway/test_global_record_scope.py`; the drift guard fails the build otherwise.
 
 #### UAID Cross-Gateway Security
 
@@ -324,10 +325,10 @@ OTEL_EXPORTER_OTLP_ENDPOINT=          # .env.example sets http://localhost:4317
 
 ```bash
 # Generate JWT token
-python -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret KEY
+python -m mcpgateway.utils.create_jwt_token --username admin@example.com --admin --exp 10080 --secret KEY
 
 # Export for API calls
-export MCPGATEWAY_BEARER_TOKEN=$(python -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 0 --secret KEY)
+export MCPGATEWAY_BEARER_TOKEN=$(python -m mcpgateway.utils.create_jwt_token --username admin@example.com --admin --exp 0 --secret KEY)
 
 # Expose stdio server via HTTP/SSE
 python -m mcpgateway.translate --stdio "uvx mcp-server-git" --port 9000

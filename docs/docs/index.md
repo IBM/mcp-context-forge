@@ -158,7 +158,7 @@ JWT_SECRET_KEY=my-test-key-but-now-longer-than-32-bytes \
 
 # 3️⃣  Generate a bearer token & smoke-test the API
 export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
-    --username admin@example.com --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes)
+    --username admin@example.com --admin --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes)
 
 curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      http://127.0.0.1:4444/version | jq
@@ -191,7 +191,7 @@ curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
 
     # 4️⃣  Bearer token and smoke-test
     $Env:MCPGATEWAY_BEARER_TOKEN = python3 -m mcpgateway.utils.create_jwt_token `
-        --username admin@example.com --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes
+        --username admin@example.com --admin --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes
 
     curl -s -H "Authorization: Bearer $Env:MCPGATEWAY_BEARER_TOKEN" `
          http://127.0.0.1:4444/version | jq
@@ -297,7 +297,7 @@ docker compose logs -f gateway
 # Access Admin UI: http://localhost:4444/admin
 # Generate API token
 docker compose exec gateway python3 -m mcpgateway.utils.create_jwt_token \
-  --username admin@example.com --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes
+  --username admin@example.com --admin --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes
 ```
 
 **What you get:**
@@ -332,16 +332,21 @@ kubectl port-forward svc/mcp-gateway-mcp-context-forge 4444:80
 
 ### Docker (Single Container)
 
+Binding `HOST=0.0.0.0` exposes the gateway beyond localhost — generate a unique secret and admin password rather than reusing these example values if the container is reachable from outside your machine:
+
 ```bash
+export JWT_SECRET_KEY=$(openssl rand -hex 32)
+export PLATFORM_ADMIN_PASSWORD=$(openssl rand -base64 24)
+
 docker run -d --name mcpgateway \
   -p 4444:4444 \
   -e MCPGATEWAY_UI_ENABLED=true \
   -e MCPGATEWAY_ADMIN_API_ENABLED=true \
   -e HOST=0.0.0.0 \
-  -e JWT_SECRET_KEY=my-test-key-but-now-longer-than-32-bytes \
+  -e JWT_SECRET_KEY="$JWT_SECRET_KEY" \
   -e AUTH_REQUIRED=true \
   -e PLATFORM_ADMIN_EMAIL=admin@example.com \
-  -e PLATFORM_ADMIN_PASSWORD=changeme \
+  -e PLATFORM_ADMIN_PASSWORD="$PLATFORM_ADMIN_PASSWORD" \
   -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
   -e DATABASE_URL=sqlite:///./mcp.db \
   -e SECURE_COOKIES=false \
@@ -350,7 +355,7 @@ docker run -d --name mcpgateway \
 # Tail logs and generate API key
 docker logs -f mcpgateway
 docker run --rm -it ghcr.io/ibm/mcp-context-forge:1.0.0 \
-  python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes
+  python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --admin --exp 10080 --secret "$JWT_SECRET_KEY"
 ```
 
 Browse to **[http://localhost:4444/admin](http://localhost:4444/admin)** and login with `PLATFORM_ADMIN_EMAIL` / `PLATFORM_ADMIN_PASSWORD`.
@@ -589,7 +594,7 @@ Interactive API documentation is available when the server is running (adjust th
 ```bash
 # Generate a JWT token
 export TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
-  --username admin@example.com --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes)
+  --username admin@example.com --admin --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes)
 
 # Test API access
 curl -H "Authorization: Bearer $TOKEN" http://localhost:4444/health

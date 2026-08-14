@@ -1010,6 +1010,7 @@ async def test_require_admin_auth_accepts_basic_auth_when_enabled(monkeypatch):
     monkeypatch.setattr(vc.settings, "email_auth_enabled", False, raising=False)
     monkeypatch.setattr(vc.settings, "basic_auth_user", "admin", raising=False)
     monkeypatch.setattr(vc.settings, "basic_auth_password", SecretStr("secret"), raising=False)
+    monkeypatch.setattr(vc.settings, "platform_admin_email", "admin@example.com", raising=False)
 
     # Create mock request
     mock_request = Mock(spec=Request)
@@ -1026,7 +1027,10 @@ async def test_require_admin_auth_accepts_basic_auth_when_enabled(monkeypatch):
         basic_credentials=basic_creds,
     )
 
-    assert result == "admin"
+    # Basic auth returns the canonical platform-admin email, not the raw
+    # username - the Basic credential identifier is not an RBAC principal.
+    assert result == "admin@example.com"
+    assert mock_request.state.auth_method == "basic"
 
 
 @pytest.mark.asyncio
@@ -1369,7 +1373,7 @@ async def test_require_admin_auth_email_auth_user_not_found_falls_back_to_basic(
 
     basic_creds = HTTPBasicCredentials(username="admin", password="secret")
     result = await vc.require_admin_auth(request=mock_request, credentials=None, jwt_token="token", basic_credentials=basic_creds)
-    assert result == "admin"
+    assert result == vc.settings.platform_admin_email
 
 
 @pytest.mark.asyncio
@@ -1399,7 +1403,7 @@ async def test_require_admin_auth_email_auth_missing_username_falls_back_to_basi
 
     basic_creds = HTTPBasicCredentials(username="admin", password="secret")
     result = await vc.require_admin_auth(request=mock_request, credentials=None, jwt_token="token", basic_credentials=basic_creds)
-    assert result == "admin"
+    assert result == vc.settings.platform_admin_email
 
 
 @pytest.mark.asyncio
@@ -1460,7 +1464,7 @@ async def test_require_admin_auth_email_auth_get_db_http_401_non_html_falls_back
 
     basic_creds = HTTPBasicCredentials(username="admin", password="secret")
     result = await vc.require_admin_auth(request=mock_request, credentials=None, jwt_token="token", basic_credentials=basic_creds)
-    assert result == "admin"
+    assert result == vc.settings.platform_admin_email
 
 
 @pytest.mark.asyncio
