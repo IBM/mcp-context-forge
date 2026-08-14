@@ -27,9 +27,7 @@ Feature gate
 ------------
 The feature is a no-op when:
 
-  - ``CPEX_CONTROL_TELEMETRY_ENABLED=false`` (config setting), or
-  - the installed CPEX version does not expose ``ControlExecutionRecord``
-    (``execution_records_supported()`` returns False).
+  - ``CPEX_CONTROL_TELEMETRY_ENABLED=false`` (config setting).
 
 Existing ``tool.invoke`` spans, ``plugin.metrics.*`` spans, and CPEX
 violation/on_error handling are untouched.
@@ -42,7 +40,6 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 # First-Party
-from mcpgateway.plugins.cpex_compat import execution_records_supported, get_executions
 from mcpgateway.plugins.utils import _IDENTIFIER_RE  # re-use the same identifier validator
 
 logger = logging.getLogger(__name__)
@@ -116,10 +113,10 @@ class ControlTelemetryAccumulator:
             result: ``PluginResult`` from ``invoke_hook`` (may be None on early exit).
             hook: ``"pre"`` or ``"post"`` — enforcement point tag for each record.
         """
-        if not execution_records_supported():
-            return
-
-        records = get_executions(result)
+        try:
+            records = list(getattr(result, "executions", None) or [])
+        except Exception:  # noqa: BLE001
+            records = []
         hook_count = 0
         for rec in records:
             if hook_count >= _MAX_RECORDS_PER_HOOK:
@@ -132,8 +129,13 @@ class ControlTelemetryAccumulator:
                 continue
             self._records.append((hook, rec))
 
-        # Track denial at each phase independently
-        if result is not None and not getattr(result, "continue_processing", True):
+        # Track denial at each phase independently.
+        # Use a guarded read — continue_processing may be a descriptor that raises.
+        try:
+            denied = result is not None and not getattr(result, "continue_processing", True)
+        except Exception:  # noqa: BLE001
+            denied = False
+        if denied:
             if hook == "pre":
                 self._pre_denied = True
             else:
@@ -402,8 +404,6 @@ def record_control_telemetry(
         binding_name: Gateway/server binding name (trusted).
     """
     if not trace_id:
-        return
-    if not execution_records_supported():
         return
     if not accumulator.records and not accumulator.pre_denied and not accumulator.post_denied and not accumulator.plugin_errored:
         # Nothing ran and no error/denial flag set — no-op, don't emit empty spans.
