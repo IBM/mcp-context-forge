@@ -1158,7 +1158,7 @@ class TestVaultTokenBackendRefreshToken:
         }
 
         with patch("mcpgateway.services.token_backends.vault_backend.logger") as mock_logger:
-            result = await backend._refresh_access_token(
+            result = await backend._do_refresh_access_token(
                 gateway_id="gw-1",
                 team_id="team1",
                 app_user_email="user@test.com",
@@ -1200,7 +1200,7 @@ class TestVaultTokenBackendRefreshToken:
         }
 
         with patch("mcpgateway.services.token_backends.refresh_helpers.logger") as mock_logger:
-            result = await backend._refresh_access_token(
+            result = await backend._do_refresh_access_token(
                 gateway_id="gw-1",
                 team_id="team1",
                 app_user_email="user@test.com",  # Different from owner
@@ -1259,7 +1259,7 @@ class TestVaultTokenBackendRefreshToken:
             mock_oauth_class.return_value = mock_oauth
 
             with patch.object(backend, "store_tokens", new_callable=AsyncMock) as mock_store:
-                result = await backend._refresh_access_token(
+                result = await backend._do_refresh_access_token(
                     gateway_id="gw-1",
                     team_id="team1",
                     app_user_email="user@test.com",
@@ -1316,7 +1316,7 @@ class TestVaultTokenBackendRefreshToken:
             mock_oauth_class.return_value = mock_oauth
 
             with patch.object(backend, "store_tokens", new_callable=AsyncMock):
-                result = await backend._refresh_access_token(
+                result = await backend._do_refresh_access_token(
                     gateway_id="gw-1",
                     team_id="team1",
                     app_user_email="user@test.com",
@@ -1366,7 +1366,7 @@ class TestVaultTokenBackendRefreshToken:
 
             with patch.object(backend, "revoke_user_tokens", new_callable=AsyncMock) as mock_revoke:
                 with patch("mcpgateway.services.token_backends.vault_backend.logger") as mock_logger:
-                    result = await backend._refresh_access_token(
+                    result = await backend._do_refresh_access_token(
                         gateway_id="gw-1",
                         team_id="team1",
                         app_user_email="user@test.com",
@@ -1562,7 +1562,7 @@ class TestVaultTokenBackendPR5244:
             mock_oauth_cls.return_value = mock_oauth_mgr
 
             # Execute
-            result = await backend._refresh_access_token(
+            result = await backend._do_refresh_access_token(
                 gateway_id="gw-test-123",
                 team_id="team-1",
                 app_user_email="user@test.com",
@@ -1620,7 +1620,7 @@ class TestVaultTokenBackendPR5244:
             mock_oauth_mgr.refresh_token = AsyncMock(side_effect=OAuthError("invalid_client: wrong credentials"))
             mock_oauth_cls.return_value = mock_oauth_mgr
 
-            result = await backend._refresh_access_token(
+            result = await backend._do_refresh_access_token(
                 gateway_id="gw-test-123",
                 team_id="team-1",
                 app_user_email="user@test.com",
@@ -1681,7 +1681,7 @@ class TestVaultTokenBackendPR5244:
             })
             mock_oauth_cls.return_value = mock_oauth_mgr
 
-            result = await backend._refresh_access_token(
+            result = await backend._do_refresh_access_token(
                 gateway_id="gw-test-123",
                 team_id="team-1",
                 app_user_email="user@test.com",
@@ -1742,7 +1742,7 @@ class TestVaultTokenBackendPR5244:
             })
             mock_oauth_cls.return_value = mock_oauth_mgr
 
-            result = await backend._refresh_access_token(
+            result = await backend._do_refresh_access_token(
                 gateway_id="gw-test-123",
                 team_id="team-1",
                 app_user_email="user@test.com",
@@ -1809,7 +1809,7 @@ class TestVaultTokenBackendPR5244:
             })
             mock_oauth_cls.return_value = mock_oauth_mgr
 
-            await backend._refresh_access_token(
+            await backend._do_refresh_access_token(
                 gateway_id="gw-test-123",
                 team_id="team-1",
                 app_user_email="user@test.com",
@@ -1873,7 +1873,7 @@ class TestVaultTokenBackendPR5244:
             })
             mock_oauth_cls.return_value = mock_oauth_mgr
 
-            await backend._refresh_access_token(
+            await backend._do_refresh_access_token(
                 gateway_id="gw-test-123",
                 team_id="team-1",
                 app_user_email="user@test.com",
@@ -1920,7 +1920,7 @@ class TestVaultTokenBackendAdditionalCoverage:
             "user_id": "user123",
         }
 
-        result = await backend._refresh_access_token(
+        result = await backend._do_refresh_access_token(
             gateway_id="gw-1",
             team_id="team1",
             app_user_email="user@test.com",
@@ -1975,7 +1975,7 @@ class TestVaultTokenBackendAdditionalCoverage:
             mock_oauth.refresh_token = AsyncMock(side_effect=Exception("Network timeout"))
             mock_oauth_cls.return_value = mock_oauth
 
-            result = await backend._refresh_access_token(
+            result = await backend._do_refresh_access_token(
                 gateway_id="gw-123",
                 team_id="team1",
                 app_user_email="user@test.com",
@@ -2023,10 +2023,12 @@ class TestVaultTokenBackendAdditionalCoverage:
 
             await backend.revoke_user_tokens("gw-123", "team1", "user@test.com")
 
-            # Assert: DELETE called and cache cleared
+            # Assert: DELETE called and cache entry marked expired (not deleted —
+            # expire-in-place lets other workers' copies become stale within one TTL cycle).
             mock_vault.assert_called_once()
             assert mock_vault.call_args[0][0] == "DELETE"
-            assert cache_key not in VaultTokenBackend._token_cache
+            assert cache_key in VaultTokenBackend._token_cache
+            assert VaultTokenBackend._token_cache[cache_key]["cache_expires"] < datetime.now(timezone.utc)
 
     @pytest.mark.asyncio
     async def test_revoke_user_tokens_without_team_id(self):
