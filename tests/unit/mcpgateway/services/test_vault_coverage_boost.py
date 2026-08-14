@@ -1146,17 +1146,17 @@ class TestGatewayServiceUnsupportedTransport:
 
 
 # ===========================================================================
-# 22. gateway_service.py  –  lines 2319, 2322-2324, 2326-2328, 2332-2335, 2337, 2340
-#     (401 retry with shared-path token)
+# 22. gateway_service.py  –  401 propagates directly (no dual-backend fallback)
+#     B3 fix: cross-path retry removed per issue #5598 "no dual-backend fallback"
 # ===========================================================================
 
 
 class TestGatewayService401Retry:
-    """fetch_tools_after_oauth 401 retry fallback logic (lines 2319-2340)."""
+    """fetch_tools_after_oauth 401 propagates directly — no cross-path retry (B3 fix)."""
 
     @pytest.mark.asyncio
-    async def test_401_retries_with_shared_token_when_different(self):
-        """On 401 with team-scoped token, retry is attempted with shared-path token (lines 2319-2335)."""
+    async def test_401_propagates_without_retry(self):
+        """On 401, error propagates immediately — no shared-path fallback (B3, #5598)."""
         from mcpgateway.services.gateway_service import GatewayService
 
         svc = GatewayService()
@@ -1177,102 +1177,19 @@ class TestGatewayService401Retry:
         mock_user = MagicMock()
         mock_user.is_admin = False
 
-        # Track call count to return gateway first, then user for subsequent calls
         execute_call_count = [0]
 
         def _execute(stmt):
             result = MagicMock()
             execute_call_count[0] += 1
-            if execute_call_count[0] == 1:
-                # First call: gateway query
-                result.scalar_one_or_none.return_value = mock_gw
-            else:
-                # Subsequent calls: user query (or other queries that don't matter)
-                result.scalar_one_or_none.return_value = mock_user
+            result.scalar_one_or_none.return_value = mock_gw if execute_call_count[0] == 1 else mock_user
             return result
 
         mock_db.execute.side_effect = _execute
 
-        # First TSS call returns team-scoped token; second (shared) returns different token
-        call_count = [0]
-
         def _tss_factory(db, user_context=None):
             inst = MagicMock()
-            call_count[0] += 1
-            if call_count[0] == 1:
-                # team-scoped path
-                inst.get_user_token = AsyncMock(return_value="team_token")
-            else:
-                # shared path
-                inst.get_user_token = AsyncMock(return_value="shared_token")
-            inst.get_user_learned_audience = AsyncMock(return_value=(None, None))
-            return inst
-
-        caps = ({"tools": {}}, [], [], [], None)
-
-        with patch("mcpgateway.services.token_storage_service.TokenStorageService", side_effect=_tss_factory):
-            with patch("mcpgateway.services.token_validation_service.validate_oauth_token_claims") as mock_validate:
-                mock_validate.return_value = MagicMock(warnings=[], blocking_errors=[])
-                with patch.object(svc, "_connect_to_sse_server_without_validation", new_callable=AsyncMock) as mock_connect:
-                    # First call raises 401; second call succeeds
-                    mock_connect.side_effect = [
-                        Exception("401 Unauthorized"),
-                        caps,
-                    ]
-                    with patch.object(svc, "_reconcile_gateway_catalog", return_value=MagicMock(items_added=0, items_removed=0, items_updated=0)):
-                        result = await svc.fetch_tools_after_oauth(
-                            db=mock_db,
-                            gateway_id="gw-1",
-                            app_user_email="u@e.com",
-                            teams=["engineering"],
-                        )
-
-        # Should have attempted connect twice
-        assert mock_connect.call_count == 2
-
-    @pytest.mark.asyncio
-    async def test_401_no_retry_when_shared_token_same(self):
-        """On 401 with team-scoped token, no retry when shared token is identical (line 2340)."""
-        from mcpgateway.services.gateway_service import GatewayService
-
-        svc = GatewayService()
-        mock_db = MagicMock()
-
-        mock_gw = MagicMock()
-        mock_gw.id = "gw-1"
-        mock_gw.name = "test-gw"
-        mock_gw.url = "https://mcp.example.com"
-        mock_gw.oauth_config = {"grant_type": "authorization_code"}
-        mock_gw.transport = "SSE"
-        mock_gw.tools = []
-        mock_gw.resources = []
-        mock_gw.prompts = []
-        mock_gw.capabilities = {"tools": {}}
-        mock_gw.email_team = None
-
-        mock_user = MagicMock()
-        mock_user.is_admin = False
-
-        # Track call count to return gateway first, then user for subsequent calls
-        execute_call_count = [0]
-
-        def _execute(stmt):
-            result = MagicMock()
-            execute_call_count[0] += 1
-            if execute_call_count[0] == 1:
-                # First call: gateway query
-                result.scalar_one_or_none.return_value = mock_gw
-            else:
-                # Subsequent calls: user query (or other queries that don't matter)
-                result.scalar_one_or_none.return_value = mock_user
-            return result
-
-        mock_db.execute.side_effect = _execute
-
-        # Both tokens are the same → no retry
-        def _tss_factory(db, user_context=None):
-            inst = MagicMock()
-            inst.get_user_token = AsyncMock(return_value="same_token")
+            inst.get_user_token = AsyncMock(return_value="team_token")
             inst.get_user_learned_audience = AsyncMock(return_value=(None, None))
             return inst
 
@@ -1289,7 +1206,7 @@ class TestGatewayService401Retry:
                             teams=["engineering"],
                         )
 
-        # Only one connection attempt
+        # Exactly one attempt — no fallback retry
         assert mock_connect.call_count == 1
 
 
