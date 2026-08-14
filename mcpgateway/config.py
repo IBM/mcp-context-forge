@@ -1554,8 +1554,7 @@ class Settings(BaseSettings):
                 raise SecurityConfigurationError(
                     f"{field_name}: too short ({len(val)} chars, minimum {effective_min}). "
                     "Run 'python -m mcpgateway.scripts.init_secrets' to generate strong values, "
-                    "or use 'make init-secrets-patch-env' to write them directly into .env."
-                    + rotation_hint
+                    "or use 'make init-secrets-patch-env' to write them directly into .env." + rotation_hint
                 )
 
             is_placeholder = val.lower().startswith("__replace_me__")
@@ -1575,8 +1574,7 @@ class Settings(BaseSettings):
                     "Cross-process token consistency requires operators to supply a real secret before startup — "
                     "no per-process random fallback is generated. "
                     "Run 'python -m mcpgateway.scripts.init_secrets' to generate strong values, "
-                    "or use 'make init-secrets-patch-env' to write them directly into .env."
-                    + rotation_hint
+                    "or use 'make init-secrets-patch-env' to write them directly into .env." + rotation_hint
                 )
 
         if not self.client_mode:
