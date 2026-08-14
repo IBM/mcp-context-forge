@@ -28,7 +28,7 @@ Structure:
 # Standard
 import asyncio
 import base64
-from contextlib import asynccontextmanager, suppress
+from contextlib import asynccontextmanager, AsyncExitStack, suppress
 from datetime import datetime, timezone
 from functools import lru_cache
 import html
@@ -1446,10 +1446,19 @@ async def _run_reverse_proxy_reaper() -> None:
     timeout_seconds = settings.mcpgateway_reverse_proxy_heartbeat_timeout
     interval_seconds = timeout_seconds / 3
     session_manager = await get_reverse_proxy_session_manager()
+    relay = None
+    release_owners = None
+    if settings.mcpgateway_reverse_proxy_distributed_enabled:
+        from mcpgateway.services.reverse_proxy_relay_runtime import get_reverse_proxy_relay, release_reverse_proxy_owners_best_effort  # pylint: disable=import-outside-toplevel
+
+        relay = await get_reverse_proxy_relay()
+        release_owners = release_reverse_proxy_owners_best_effort
     while True:
         await asyncio.sleep(interval_seconds)
         seen_at = datetime.now(tz=timezone.utc)
         evictions = await session_manager.reap_stale(now=seen_at, timeout_seconds=timeout_seconds)
+        if relay is not None and release_owners is not None:
+            await release_owners(relay, evictions)
         try:
             await gateway_service.mark_reverse_proxy_gateways_unreachable(session_manager, evictions, seen_at=seen_at)
         except Exception as persistence_error:  # best-effort observability state must not stop session cleanup
@@ -1485,6 +1494,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     aggregation_loop_task: Optional[asyncio.Task] = None
     aggregation_backfill_task: Optional[asyncio.Task] = None
     reverse_proxy_reaper_task: Optional[asyncio.Task] = None
+    reverse_proxy_relay_stack: AsyncExitStack | None = None
     siem_export_service: Optional[Any] = None
     dataplane_publisher_service: Optional[Any] = None
 
@@ -1732,6 +1742,12 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         if _reverse_proxy_reaper_enabled():
             reverse_proxy_reaper_task = asyncio.create_task(_run_reverse_proxy_reaper())
 
+        if settings.mcpgateway_reverse_proxy_distributed_enabled:
+            from mcpgateway.services.reverse_proxy_relay_runtime import reverse_proxy_relay_lifespan  # pylint: disable=import-outside-toplevel
+
+            reverse_proxy_relay_stack = AsyncExitStack()
+            await reverse_proxy_relay_stack.enter_async_context(reverse_proxy_relay_lifespan())
+
         # Start heartbeat, RPC listener, and notification service for
         # multi-worker session affinity. The upstream-session pool is
         # owned by ``UpstreamSessionRegistry`` and runs unconditionally;
@@ -1944,6 +1960,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             reverse_proxy_reaper_task.cancel()
             with suppress(asyncio.CancelledError):
                 await reverse_proxy_reaper_task
+
+        if reverse_proxy_relay_stack is not None:
+            await reverse_proxy_relay_stack.aclose()
 
         # Stop the plugin invalidation listener before the factory so in-flight
         # messages don't race with a half-torn-down cache.

@@ -90,6 +90,7 @@ from mcpgateway.services.token_backends.vault_backend import VaultAuthError, Vau
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
 from mcpgateway.services.performance_tracker import get_performance_tracker
 from mcpgateway.services.reverse_proxy_protocol import DownstreamAuth, JsonRpcErrorResponse, JsonRpcRequest
+from mcpgateway.services.reverse_proxy_relay import RelayUnavailableError
 from mcpgateway.services.reverse_proxy_sessions import ConnectionClosedError, ConnectionNotFoundError, get_reverse_proxy_session_manager, StableGatewayId
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
@@ -4974,10 +4975,14 @@ class ToolService(BaseService):
                 JSON-RPC error.
             ToolTimeoutError: If the downstream call exceeds ``effective_timeout``.
         """
-        session_manager = await get_reverse_proxy_session_manager()
-        connection_id = session_manager.resolve_connection_id(StableGatewayId(gateway_id_str))
-        if connection_id is None:
-            raise ToolInvocationError(f"No active reverse-proxy connection for gateway '{gateway_id_str}'")
+        stable_id = StableGatewayId(gateway_id_str)
+        session_manager = None
+        connection_id = None
+        if not settings.mcpgateway_reverse_proxy_distributed_enabled:
+            session_manager = await get_reverse_proxy_session_manager()
+            connection_id = session_manager.resolve_connection_id(stable_id)
+            if connection_id is None:
+                raise ToolInvocationError(f"No active reverse-proxy connection for gateway '{gateway_id_str}'")
 
         params: Dict[str, Any] = {"name": tool_name_original, "arguments": arguments}
         if meta_data is not None:
@@ -4994,7 +4999,16 @@ class ToolService(BaseService):
             metadata={"event": "mcp_call_started", "tool_name": tool_name_original, "gateway_id": gateway_id_str, "transport": "proxied"},
         )
         try:
-            response = await session_manager.send_request(connection_id, request_payload, timeout_seconds=effective_timeout, auth=downstream_auth)
+            if settings.mcpgateway_reverse_proxy_distributed_enabled:
+                from mcpgateway.services.reverse_proxy_relay_runtime import get_reverse_proxy_relay  # pylint: disable=import-outside-toplevel
+
+                relay = await get_reverse_proxy_relay()
+                response = await relay.send_request_by_stable_id(stable_id, request_payload, timeout_seconds=effective_timeout, auth=downstream_auth)
+            else:
+                assert session_manager is not None and connection_id is not None
+                response = await session_manager.send_request(connection_id, request_payload, timeout_seconds=effective_timeout, auth=downstream_auth)
+        except RelayUnavailableError:
+            raise ToolInvocationError(f"Reverse-proxy relay unavailable for gateway '{gateway_id_str}'") from None
         except TimeoutError as timeout_err:
             mcp_duration_ms = (time.time() - mcp_start_time) * 1000
             structured_logger.log(

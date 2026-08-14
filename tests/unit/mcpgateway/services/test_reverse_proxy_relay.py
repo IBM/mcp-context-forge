@@ -5,11 +5,14 @@ SPDX-License-Identifier: Apache-2.0
 
 Focused tests for the isolated Redis reverse-proxy relay.
 """
+
 # T6 explicitly co-locates its deterministic Redis fake and focused relay matrix.
 # pylint: disable=missing-function-docstring,use-implicit-booleaness-not-comparison
 
+# Future
 from __future__ import annotations
 
+# Standard
 from collections import defaultdict
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -17,18 +20,22 @@ import json
 import logging
 import time
 from typing import Final
+from unittest.mock import AsyncMock, MagicMock
 
+# Third-Party
 import anyio
+from anyio import TASK_STATUS_IGNORED
 import orjson
 import pytest
 from redis.exceptions import ConnectionError as RedisConnectionError
 
+# First-Party
 from mcpgateway.auth_context import FORWARD_SIG_FIELD, sign_redis_forward_envelope
-from mcpgateway.services.reverse_proxy_protocol import DownstreamAuth, JsonRpcRequest, JsonRpcSuccessResponse, ResponseMessage
-from mcpgateway.services.reverse_proxy_relay import ReverseProxyRelay
 from mcpgateway.services import reverse_proxy_relay_io
-from mcpgateway.services.reverse_proxy_sessions import ConnectionId, ConnectionNotFoundError, LocalSessionId, ReverseProxySessionManager, StableGatewayId
-
+from mcpgateway.services.reverse_proxy_protocol import DownstreamAuth, JsonRpcRequest, JsonRpcSuccessResponse, ResponseMessage
+from mcpgateway.services.reverse_proxy_relay import RelayTarget, RelayUnavailableError, ReverseProxyRelay
+from mcpgateway.services.reverse_proxy_relay_models import RelayOwner
+from mcpgateway.services.reverse_proxy_sessions import ConnectionClosedError, ConnectionId, ConnectionNotFoundError, LocalSessionId, ReverseProxyEviction, ReverseProxySessionManager, StableGatewayId
 
 OWNER_TTL: Final = 300
 WORKER_A: Final = "worker-a"
@@ -468,7 +475,11 @@ async def test_timeout_cancellation_and_late_response_leave_no_subscriptions() -
 async def test_listener_rejects_unsigned_forged_malformed_and_oversized_envelopes() -> None:
     redis = _FakeRedis()
     manager, websocket, connection_id = await _local_manager()
-    relay = _relay(manager, redis, WORKER_A,)
+    relay = _relay(
+        manager,
+        redis,
+        WORKER_A,
+    )
     base = {
         "type": "rp_request",
         "request_id": "correlation",
@@ -866,3 +877,199 @@ async def test_decode_responses_string_payload_and_dynamic_worker_identity() -> 
     second = relay.owner_value(ConnectionId("generation"))
     assert WORKER_A in first
     assert "worker-after-fork" in second
+
+
+@pytest.mark.asyncio
+async def test_runtime_factory_flag_off_uses_local_manager_without_redis(monkeypatch: pytest.MonkeyPatch) -> None:
+    # First-Party
+    from mcpgateway.services import reverse_proxy_relay_runtime
+
+    manager = ReverseProxySessionManager()
+    get_redis = AsyncMock(side_effect=AssertionError("disabled relay requested Redis"))
+    monkeypatch.setattr(reverse_proxy_relay_runtime.settings, "mcpgateway_reverse_proxy_distributed_enabled", False)
+    monkeypatch.setattr(reverse_proxy_relay_runtime, "get_reverse_proxy_session_manager", AsyncMock(return_value=manager))
+    monkeypatch.setattr(reverse_proxy_relay_runtime, "get_redis_client", get_redis)
+    reverse_proxy_relay_runtime.reset_reverse_proxy_relay()
+
+    relay = await reverse_proxy_relay_runtime.get_reverse_proxy_relay()
+
+    assert relay.resolve_connection_id(STABLE_ID) is None
+    get_redis.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_runtime_factory_flag_on_fails_when_canonical_redis_is_unavailable(monkeypatch: pytest.MonkeyPatch) -> None:
+    # First-Party
+    from mcpgateway.services import reverse_proxy_relay_runtime
+
+    monkeypatch.setattr(reverse_proxy_relay_runtime.settings, "mcpgateway_reverse_proxy_distributed_enabled", True)
+    monkeypatch.setattr(reverse_proxy_relay_runtime, "get_redis_client", AsyncMock(return_value=None))
+    reverse_proxy_relay_runtime.reset_reverse_proxy_relay()
+
+    with pytest.raises(RelayUnavailableError, match="reverse-proxy relay unavailable"):
+        await reverse_proxy_relay_runtime.get_reverse_proxy_relay()
+
+
+def test_runtime_worker_identity_rebinds_after_process_change(monkeypatch: pytest.MonkeyPatch) -> None:
+    # First-Party
+    from mcpgateway.services import reverse_proxy_relay_runtime
+
+    pids = iter((101, 101, 202))
+    monkeypatch.setattr(reverse_proxy_relay_runtime.os, "getpid", lambda: next(pids))
+    reverse_proxy_relay_runtime.reset_reverse_proxy_relay()
+
+    first = reverse_proxy_relay_runtime.current_reverse_proxy_worker_id()
+    same_process = reverse_proxy_relay_runtime.current_reverse_proxy_worker_id()
+    after_fork = reverse_proxy_relay_runtime.current_reverse_proxy_worker_id()
+
+    assert first == same_process
+    assert first != after_fork
+
+
+@pytest.mark.parametrize("method", ["tools/call", "resources/read", "prompts/get"])
+@pytest.mark.asyncio
+async def test_two_worker_fake_redis_relays_all_dispatch_methods(method: str) -> None:
+    redis = _FakeRedis()
+    manager_a, websocket, connection_id = await _local_manager()
+    relay_a = _relay(manager_a, redis, WORKER_A)
+    relay_b = _relay(ReverseProxySessionManager(), redis, WORKER_B)
+    assert await relay_a.claim_owner(STABLE_ID, connection_id)
+    assert await relay_a.heartbeat_worker()
+    request = JsonRpcRequest(jsonrpc="2.0", id=f"request-{method.replace('/', '-')}", method=method, params={})
+    response: ResponseMessage | None = None
+
+    async with anyio.create_task_group() as task_group:
+        await task_group.start(relay_a.listen)
+        response = await relay_b.send_request_by_stable_id(STABLE_ID, request, timeout_seconds=1)
+        task_group.cancel_scope.cancel()
+
+    assert response is not None
+    assert isinstance(response.payload, JsonRpcSuccessResponse)
+    assert json.loads(websocket.frames[0])["payload"]["method"] == method
+
+
+@pytest.mark.asyncio
+async def test_local_mapping_is_retired_when_redis_owner_generation_moves() -> None:
+    redis = _FakeRedis()
+    manager, websocket, connection_id = await _local_manager()
+    relay = _relay(manager, redis, WORKER_A)
+    replacement = RelayOwner(worker_id=WORKER_B, connection_id="replacement-generation")
+    redis.store[relay.owner_key(STABLE_ID)] = replacement.model_dump_json().encode()
+
+    target = await relay.resolve_target(STABLE_ID)
+
+    assert isinstance(target, RelayTarget)
+    assert target.owner == replacement
+    assert manager.resolve_connection_id(STABLE_ID) is None
+    assert manager.get_session(connection_id) is None
+    assert websocket.frames == []
+
+
+@pytest.mark.asyncio
+async def test_redis_operation_failure_raises_code_only_relay_unavailable() -> None:
+    secret = "redis://user:synthetic-secret@cache.invalid/0"  # pragma: allowlist secret
+
+    class _UnavailableRedis(_FakeRedis):
+        async def get(self, key: str) -> bytes | None:
+            del key
+            raise RedisConnectionError(secret)
+
+    relay = _relay(ReverseProxySessionManager(), _UnavailableRedis(), WORKER_A)
+
+    with pytest.raises(RuntimeError) as caught:
+        await relay.resolve_target(STABLE_ID)
+
+    assert type(caught.value).__name__ == "RelayUnavailableError"
+    assert str(caught.value) == "reverse-proxy relay unavailable"
+    assert "synthetic-secret" not in repr(caught.value)
+
+
+@pytest.mark.asyncio
+async def test_runtime_lifespan_propagates_listener_subscribe_failure_without_hanging(monkeypatch: pytest.MonkeyPatch) -> None:
+    # First-Party
+    from mcpgateway.services import reverse_proxy_relay_runtime
+
+    relay = _relay(ReverseProxySessionManager(), _FakeRedis(), WORKER_A)
+    relay.listen = AsyncMock(side_effect=RelayUnavailableError())
+    monkeypatch.setattr(reverse_proxy_relay_runtime, "get_reverse_proxy_relay", AsyncMock(return_value=relay))
+
+    with anyio.fail_after(1):
+        with pytest.raises(BaseExceptionGroup) as caught:
+            async with reverse_proxy_relay_runtime.reverse_proxy_relay_lifespan():
+                pytest.fail("listener startup unexpectedly succeeded")
+
+    assert len(caught.value.exceptions) == 1
+    assert str(caught.value.exceptions[0]) == "reverse-proxy relay unavailable"
+
+
+@pytest.mark.asyncio
+async def test_release_outage_is_best_effort_for_every_eviction(monkeypatch: pytest.MonkeyPatch) -> None:
+    # First-Party
+    from mcpgateway.services import reverse_proxy_relay_runtime
+    from mcpgateway.services.reverse_proxy_sessions import ReverseProxyEviction
+
+    relay = MagicMock(release_owner=AsyncMock(side_effect=RedisConnectionError("redis://user:synthetic-secret@cache.invalid/0")))  # pragma: allowlist secret
+    evictions = (
+        ReverseProxyEviction(STABLE_ID, ConnectionId("generation-a")),
+        ReverseProxyEviction(StableGatewayId("stable-2"), ConnectionId("generation-b")),
+    )
+
+    await reverse_proxy_relay_runtime.release_reverse_proxy_owners_best_effort(relay, evictions)
+
+    assert relay.release_owner.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_runtime_lifespan_propagates_heartbeat_failure_and_resets(monkeypatch: pytest.MonkeyPatch) -> None:
+    # First-Party
+    from mcpgateway.services import reverse_proxy_relay_runtime
+
+    relay = _relay(ReverseProxySessionManager(), _FakeRedis(), WORKER_A)
+
+    async def listen(*, task_status=TASK_STATUS_IGNORED) -> None:
+        task_status.started()
+        await anyio.sleep_forever()
+
+    monkeypatch.setattr(relay, "listen", listen)
+    monkeypatch.setattr(relay, "heartbeat", AsyncMock(side_effect=[None, RelayUnavailableError()]))
+    monkeypatch.setattr(reverse_proxy_relay_runtime, "get_reverse_proxy_relay", AsyncMock(return_value=relay))
+
+    with anyio.fail_after(1):
+        with pytest.raises(BaseExceptionGroup) as caught:
+            async with reverse_proxy_relay_runtime.reverse_proxy_relay_lifespan():
+                await anyio.sleep_forever()
+
+    assert any(isinstance(error, RelayUnavailableError) for error in caught.value.exceptions)
+    assert reverse_proxy_relay_runtime._default_relay is None
+
+
+@pytest.mark.asyncio
+async def test_owner_heartbeat_loss_retires_generation_fails_pending_and_reports_eviction() -> None:
+    redis = _FakeRedis()
+    manager = ReverseProxySessionManager()
+    websocket = _BlockingWebSocket()
+    session = await manager.connect(websocket, LocalSessionId("heartbeat-loss"))
+    await manager.promote_stable_id(STABLE_ID, session.connection_id)
+    ownership_lost = AsyncMock()
+    relay = ReverseProxyRelay(manager, redis=redis, worker_id=lambda: WORKER_A, owner_ttl_seconds=OWNER_TTL, ownership_lost=ownership_lost)
+    caller_failed = anyio.Event()
+
+    async def invoke() -> None:
+        try:
+            await manager.send_request(session.connection_id, _request("heartbeat-loss"), 60)
+        except ConnectionClosedError:
+            caller_failed.set()
+
+    async with anyio.create_task_group() as task_group:
+        task_group.start_soon(invoke)
+        await websocket.sent.wait()
+        await relay.heartbeat()
+        await caller_failed.wait()
+        task_group.cancel_scope.cancel()
+
+    assert manager.resolve_connection_id(STABLE_ID) is None
+    assert manager.get_session(session.connection_id) is None
+    ownership_lost.assert_awaited_once()
+    lost_call = ownership_lost.await_args
+    assert lost_call is not None
+    assert lost_call.args[0] == (ReverseProxyEviction(STABLE_ID, session.connection_id),)
