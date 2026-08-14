@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Location: ./tests/scripts/test_migrate_enc_secret.py
+"""Location: ./tests/unit/mcpgateway/scripts/test_migrate_enc_secret.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 
