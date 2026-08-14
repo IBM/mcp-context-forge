@@ -2503,6 +2503,24 @@ class Settings(BaseSettings):
         "Longer responses are truncated to prevent exposing excessive sensitive data. "
         "Default: 5000 characters. Range: 1000-100000.",
     )
+    # jq filter sandbox — see docs/superpowers/specs/2026-08-11-jq-env-disclosure-design.md
+    jq_filter_execution: Literal["subprocess", "inprocess"] = Field(
+        default="subprocess",
+        description="Execution mode for tool jsonpath_filter jq programs. 'subprocess' runs each filter in a forked worker with a cleared environment and a wall-clock limit. "
+        "'inprocess' removes both protections and is unsafe; it exists only for platforms where fork is unavailable.",
+    )
+    jq_filter_timeout_seconds: float = Field(
+        default=2.0,
+        gt=0,
+        le=60,
+        description="Wall-clock limit for a single jq filter run. Exceeding it kills the worker and returns a filter error. Default: 2.0 seconds.",
+    )
+    jq_filter_workers: int = Field(
+        default=2,
+        ge=1,
+        le=16,
+        description="Number of forked jq worker processes per gateway worker. Default: 2.",
+    )
 
     # Content Security - Size Limits
     content_max_resource_size: int = Field(default=102400, ge=1024, le=10485760, description="Maximum size in bytes for resource content (default: 100KB)")  # 100KB  # Minimum 1KB  # Maximum 10MB

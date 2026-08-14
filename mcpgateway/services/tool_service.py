@@ -45,7 +45,6 @@ from cpex.framework import (
 )
 from cpex.framework.constants import GATEWAY_METADATA, TOOL_METADATA
 import httpx
-import jq
 import jsonschema
 from jsonschema import Draft4Validator, Draft6Validator, Draft7Validator, validators
 from mcp import ClientSession, types
@@ -101,6 +100,8 @@ from mcpgateway.utils.display_name import generate_display_name
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access, extract_gateway_id_from_headers
 from mcpgateway.utils.header_filtering import filter_sensitive_headers
 from mcpgateway.utils.identity_propagation import build_identity_headers, build_identity_meta
+from mcpgateway.utils.jq_guard import assert_safe_jq_filter
+from mcpgateway.utils.jq_runner import JqFilterBusy, JqFilterError, JqFilterTimeout, run_jq_filter
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import decode_cursor, encode_cursor, unified_paginate
@@ -636,23 +637,6 @@ def _handle_json_parse_error(response, error, is_error_response: bool = False) -
     return {"response_text": text}
 
 
-@lru_cache(maxsize=256)
-def _compile_jq_filter(jq_filter: str):
-    """Cache compiled jq filter program.
-
-    Args:
-        jq_filter: The jq filter string to compile.
-
-    Returns:
-        Compiled jq program object.
-
-    Raises:
-        ValueError: If the jq filter is invalid.
-    """
-    # pylint: disable=c-extension-no-member
-    return jq.compile(jq_filter)
-
-
 @lru_cache(maxsize=128)
 def _get_validator_class_and_check(schema_json: str) -> Tuple[type, dict]:
     """Cache schema validation and validator class selection.
@@ -739,7 +723,11 @@ def extract_using_jq(data, jq_filter=""):
     """
     Extracts data from a given input (string, dict, or list) using a jq filter string.
 
-    Uses cached compiled jq programs for performance.
+    The filter is refused if it uses a restricted jq built-in, then delegated to
+    the sandboxed runner in :mod:`mcpgateway.utils.jq_runner`, which owns program
+    compilation, caching, and the worker pool. A refusal, a timeout, or an
+    execution failure comes back as a single ``TextContent`` in a list, which
+    callers must treat as an error result rather than as tool output.
 
     Args:
         data (str, dict, list): The input JSON data. Can be a string, dict, or list.
@@ -788,17 +776,48 @@ def extract_using_jq(data, jq_filter=""):
         # If the input is not a string, dict, or list, raise an error
         return ["Input data must be a JSON string, dictionary, or list."]
 
-    # Apply the jq filter to the data using cached compiled program
+    # Refuse restricted built-ins before execution. This covers rows written
+    # before the schema validator existed, and any writer that bypasses it.
     try:
-        program = _compile_jq_filter(jq_filter)
-        result = program.input(data).all()
+        assert_safe_jq_filter(jq_filter_str)
+    except ValueError as exc:
+        logger.warning("Refused jq filter: %s", exc)
+        return [TextContent(type="text", text="jsonpath filter uses a restricted jq builtin")]
+
+    try:
+        result = run_jq_filter(jq_filter_str, data)
         if result == [None]:
             return [TextContent(type="text", text="Error applying jsonpath filter")]
-    except Exception as e:
-        message = "Error applying jsonpath filter: " + str(e)
-        return [TextContent(type="text", text=message)]
+    except JqFilterTimeout:
+        logger.warning("jq filter exceeded its time limit and was terminated")
+        return [TextContent(type="text", text="jsonpath filter exceeded the execution time limit")]
+    except JqFilterBusy:
+        logger.warning("jq filter sandbox had no free worker")
+        return [TextContent(type="text", text="jsonpath filter sandbox is busy, try again")]
+    except JqFilterError as exc:
+        logger.warning("jq filter failed: %s", exc)
+        return [TextContent(type="text", text="Error applying jsonpath filter")]
 
     return result
+
+
+def _is_jq_filter_error(filtered_response) -> bool:
+    """Report whether ``extract_using_jq`` returned an error rather than data.
+
+    Refusals, timeouts, and execution failures come back as a list holding a
+    single ``TextContent``. Filter output never contains ``TextContent``
+    instances on either sink: the REST sink filters ``response.json()`` and the
+    MCP passthrough sink filters a ``model_dump(mode="json")`` payload, both of
+    which are plain JSON data by the time the filter runs.
+
+    Args:
+        filtered_response: Whatever ``extract_using_jq`` returned.
+
+    Returns:
+        True when the value is an error result that must not be reported as a
+        successful invocation.
+    """
+    return isinstance(filtered_response, list) and len(filtered_response) > 0 and isinstance(filtered_response[0], TextContent)
 
 
 _VALID_HTTP_HEADER_NAME = re.compile(r"^[!#$%&'*+\-.0-9A-Z^_`a-z|~]+$")
@@ -5725,9 +5744,9 @@ class ToolService(BaseService):
                             except (json.JSONDecodeError, orjson.JSONDecodeError, UnicodeDecodeError, AttributeError) as e:
                                 result = _handle_json_parse_error(response, e, is_error_response=False)
                             logger.debug("REST API tool response: %s", result)
-                            filtered_response = extract_using_jq(result, tool_jsonpath_filter)
+                            filtered_response = await asyncio.to_thread(extract_using_jq, result, tool_jsonpath_filter)
                             # Check if extract_using_jq returned an error (list of TextContent objects)
-                            if isinstance(filtered_response, list) and len(filtered_response) > 0 and isinstance(filtered_response[0], TextContent):
+                            if _is_jq_filter_error(filtered_response):
                                 # Error case - use the TextContent directly
                                 tool_result = ToolResult(content=filtered_response, is_error=True)
                                 success = False
@@ -6407,11 +6426,17 @@ class ToolService(BaseService):
                             content = dump.get("content", [])
                             # Accept both alias and pythonic names for structured content
                             structured = dump.get("structuredContent") or dump.get("structured_content")
-                            filtered_response = extract_using_jq(content, tool_jsonpath_filter)
+                            filtered_response = await asyncio.to_thread(extract_using_jq, content, tool_jsonpath_filter)
 
                             is_err = getattr(tool_call_result, "is_error", None)
                             if is_err is None:
                                 is_err = getattr(tool_call_result, "isError", False)
+                            # A refused or timed-out filter must be reported as an error here
+                            # too. Without this the refusal string was recorded as a successful
+                            # invocation carrying it as if it were real tool output.
+                            if _is_jq_filter_error(filtered_response):
+                                is_err = True
+                                structured = None
                             tool_result = ToolResult(content=filtered_response, structured_content=structured, is_error=is_err, meta=getattr(tool_call_result, "meta", None))
                             success = not is_err
                             logger.debug("Final tool_result: %s", tool_result)

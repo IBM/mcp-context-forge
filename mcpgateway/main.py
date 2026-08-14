@@ -219,6 +219,7 @@ from mcpgateway.utils.csp_nonce import get_csp_nonce_from_request
 from mcpgateway.utils.error_formatter import ErrorFormatter, sanitize_validation_error_for_log, should_expose_error_details
 from mcpgateway.utils.header_filtering import filter_sensitive_headers as _filter_sensitive_headers
 from mcpgateway.utils.internal_http import internal_loopback_base_url, internal_loopback_verify
+from mcpgateway.utils.jq_runner import shutdown_jq_pool, start_jq_pool
 from mcpgateway.utils.metadata_capture import MetadataCapture
 from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.passthrough_headers import set_global_passthrough_headers
@@ -1468,6 +1469,13 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     await logging_service.initialize()
     logger.info("Starting ContextForge services")
 
+    # Start the sandboxed jq worker pool before any service that might invoke
+    # tool response filters is initialised. A failure here (BrokenProcessPool,
+    # TimeoutError, or OSError from the sandbox warm-up on Linux/subprocess
+    # mode) is a hard startup failure and must propagate rather than letting
+    # the gateway boot with a broken or absent sandbox.
+    start_jq_pool()
+
     # Wait for the database to be ready, then run bootstrap (alembic + seed).
     # This used to run at module-import time, which made every test that
     # imported mcpgateway.main pay for a real DB probe and migration check.
@@ -2035,6 +2043,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
         # Close Redis client last (after all services that use it)
         await close_redis_client()
+
+        # Shut down the sandboxed jq worker pool
+        shutdown_jq_pool()
 
         logger.info("Shutdown complete")
 

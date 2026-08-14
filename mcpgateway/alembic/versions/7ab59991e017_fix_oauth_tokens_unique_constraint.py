@@ -160,7 +160,7 @@ def downgrade() -> None:
                 duplicate_details += f"\n  ... and {len(duplicate_check) - 5} more"
 
             raise RuntimeError(
-                f"Cannot downgrade migration 7ab59991e017: "
+                f"Cannot downgrade migration 7ab59991e017: "  # nosec B608 - human-readable error text, not an executed SQL statement
                 f"{len(duplicate_check)} duplicate (gateway_id, user_id) pairs exist.\n\n"
                 f"This is expected after the upgrade enabled multi-user OAuth support. "
                 f"Multiple ContextForge users can now store tokens for the same OAuth provider user.\n\n"
