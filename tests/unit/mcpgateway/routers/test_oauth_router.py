@@ -551,6 +551,45 @@ class TestOAuthRouter:
         assert oauth_config_passed["redirect_uri"] == f"{str(settings.app_domain).rstrip('/')}/oauth/callback"
 
     @pytest.mark.asyncio
+    async def test_initiate_oauth_flow_defaults_redirect_uri_includes_root_path(self, mock_db, mock_request, mock_current_user):
+        """Behind a reverse proxy with a non-empty root_path, the derived callback must
+        include it -- otherwise the URL sent to the IdP 404s once past the proxy."""
+        # First-Party
+        from mcpgateway.config import settings
+
+        mock_request.scope = {"root_path": "/proxy/mcp"}
+
+        mock_gateway = Mock(spec=Gateway)
+        mock_gateway.id = "gateway123"
+        mock_gateway.name = "Test Gateway"
+        mock_gateway.url = "https://mcp.example.com"
+        mock_gateway.visibility = "public"
+        mock_gateway.team_id = None
+        mock_gateway.oauth_config = {
+            "grant_type": "authorization_code",
+            "client_id": "client-id",
+            "client_secret": "secret",
+            "authorization_url": "https://auth.example.com/authorize",
+            "token_url": "https://auth.example.com/token",
+        }
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+
+        auth_data = {"authorization_url": "https://auth.example.com/authorize?state=x", "state": "x"}
+
+        with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_manager_class:
+            mock_oauth_manager = Mock()
+            mock_oauth_manager.initiate_authorization_code_flow = AsyncMock(return_value=auth_data)
+            mock_oauth_manager_class.return_value = mock_oauth_manager
+
+            with patch("mcpgateway.routers.oauth_router.TokenStorageService"):
+                from mcpgateway.routers.oauth_router import initiate_oauth_flow
+
+                await initiate_oauth_flow("gateway123", mock_request, mock_current_user, mock_db)
+
+        oauth_config_passed = mock_oauth_manager.initiate_authorization_code_flow.call_args[0][1]
+        assert oauth_config_passed["redirect_uri"] == f"{str(settings.app_domain).rstrip('/')}/proxy/mcp/oauth/callback"
+
+    @pytest.mark.asyncio
     async def test_initiate_oauth_flow_preserves_explicit_redirect_uri(self, mock_db, mock_request, mock_gateway, mock_current_user):
         """An explicitly configured redirect_uri is passed through untouched."""
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
@@ -739,7 +778,10 @@ class TestOAuthRouter:
 
     @pytest.mark.asyncio
     async def test_oauth_callback_defaults_redirect_uri(self, mock_db, mock_request):
-        """The token exchange gets the gateway's own callback URL when the config omits redirect_uri."""
+        """The callback passes OAuthManager the gateway's own callback URL as its
+        default_redirect_uri fallback -- OAuthManager applies it only if the state pinned
+        at authorize time carries none (see TestRedirectUriPinning in test_oauth_manager.py
+        for the actual application/pinning-precedence logic, which lives there now)."""
         # First-Party
         from mcpgateway.config import settings
 
@@ -775,8 +817,8 @@ class TestOAuthRouter:
                 result = await oauth_callback(code="auth_code_123", state=state, request=mock_request, db=mock_db)
 
         assert isinstance(result, HTMLResponse)
-        oauth_config_passed = mock_oauth_manager.complete_authorization_code_flow.call_args[0][3]
-        assert oauth_config_passed["redirect_uri"] == f"{str(settings.app_domain).rstrip('/')}/oauth/callback"
+        default_redirect_uri_passed = mock_oauth_manager.complete_authorization_code_flow.call_args.kwargs["default_redirect_uri"]
+        assert default_redirect_uri_passed == f"{str(settings.app_domain).rstrip('/')}/oauth/callback"
 
     @pytest.mark.asyncio
     async def test_oauth_callback_legacy_state_format(self, mock_db, mock_request, mock_gateway):

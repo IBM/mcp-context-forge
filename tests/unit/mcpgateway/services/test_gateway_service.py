@@ -7635,7 +7635,15 @@ class TestUpdateGatewayAdvanced:
         mock_gateway.auth_query_params = None
         mock_gateway.version = 1
         mock_gateway.tags = []
-        mock_gateway.oauth_config = None
+        # Already a password-grant gateway (deprecated grant, kept working for existing
+        # records only) so the update below is re-saving it, not newly adopting password.
+        mock_gateway.oauth_config = {
+            "grant_type": "password",
+            "client_id": "cid",
+            "client_secret": "old-secret",  # pragma: allowlist secret
+            "password": "old-pw",  # pragma: allowlist secret
+            "token_url": "https://auth.example.com/token",
+        }
 
         update_data = _make_gateway(
             auth_type=None,
@@ -7669,6 +7677,61 @@ class TestUpdateGatewayAdvanced:
         assert encryption.is_encrypted(mock_gateway.oauth_config["client_secret"])
         assert encryption.is_encrypted(mock_gateway.oauth_config["password"])
         assert mock_gateway.oauth_config["grant_type"] == "password"
+
+    @pytest.mark.asyncio
+    async def test_update_oauth_config_rejects_new_password_grant(self, gateway_service, mock_gateway, monkeypatch):
+        """update_gateway must not let a non-password gateway be flipped to the deprecated
+        password grant. GatewayCreate rejects it at the schema layer for new gateways, but
+        GatewayUpdate has to accept it for gateways that already use it (backwards
+        compatibility) -- so the "already password" check has to happen here, comparing
+        against the gateway's current oauth_config, not in the schema layer.
+        """
+        db = MagicMock()
+        db.execute.return_value = _make_execute_result(scalar=mock_gateway)
+        mock_gateway.auth_type = "oauth"
+        mock_gateway.auth_value = {}
+        mock_gateway.auth_query_params = None
+        mock_gateway.version = 1
+        mock_gateway.tags = []
+        mock_gateway.oauth_config = {
+            "grant_type": "client_credentials",
+            "client_id": "cid",
+            "client_secret": "secret",  # pragma: allowlist secret
+            "token_url": "https://auth.example.com/token",
+        }
+
+        update_data = _make_gateway(
+            auth_type=None,
+            auth_value=None,
+            url="http://example.com/gateway",
+            passthrough_headers=None,
+            visibility=None,
+            oauth_config={
+                "grant_type": "password",
+                "client_id": "cid",
+                "client_secret": "secret",  # pragma: allowlist secret
+                "password": "pw",  # pragma: allowlist secret
+                "username": "svc-user",
+                "token_url": "https://auth.example.com/token",
+            },
+        )
+        update_data.auth_token = None
+        update_data.auth_password = None
+        update_data.auth_header_value = None
+        update_data.auth_query_param_key = None
+        update_data.auth_query_param_value = None
+
+        monkeypatch.setattr("mcpgateway.services.gateway_service.get_for_update", MagicMock(side_effect=[mock_gateway, None]))
+        monkeypatch.setattr("mcpgateway.services.gateway_service._get_registry_cache", lambda: MagicMock(invalidate_gateways=AsyncMock()))
+        monkeypatch.setattr("mcpgateway.services.gateway_service._get_tool_lookup_cache", lambda: MagicMock(invalidate_gateway=AsyncMock()))
+        monkeypatch.setattr("mcpgateway.cache.admin_stats_cache.admin_stats_cache", MagicMock(invalidate_tags=AsyncMock()))
+        monkeypatch.setattr(gateway_service, "_initialize_gateway", AsyncMock(return_value=({"tools": {}}, [], [], [], [])))
+
+        with pytest.raises(GatewayError, match="password grant"):
+            await gateway_service.update_gateway(db, mock_gateway.id, update_data)
+
+        # The gateway's stored config must be untouched by the rejected attempt.
+        assert mock_gateway.oauth_config["grant_type"] == "client_credentials"
 
     @pytest.mark.asyncio
     async def test_update_oauth_config_preserves_masked_secret_placeholder(self, gateway_service, mock_gateway, monkeypatch):
