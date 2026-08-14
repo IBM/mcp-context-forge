@@ -20668,6 +20668,7 @@ class TestCatalogEndpoints:
         monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_catalog_enabled", True, raising=False)
         reg_result = SimpleNamespace(success=True, message="Registered", oauth_required=False, error=None)
         monkeypatch.setattr("mcpgateway.admin.catalog_service.register_catalog_server", AsyncMock(return_value=reg_result))
+        monkeypatch.setattr("mcpgateway.admin.get_scoped_resource_access_context", MagicMock(return_value=("admin@test.com", None)))
 
         request = MagicMock(spec=Request)
         request.headers = {}
@@ -20679,6 +20680,7 @@ class TestCatalogEndpoints:
         monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_catalog_enabled", True, raising=False)
         reg_result = SimpleNamespace(success=True, message="Registered OK", oauth_required=False, error=None)
         monkeypatch.setattr("mcpgateway.admin.catalog_service.register_catalog_server", AsyncMock(return_value=reg_result))
+        monkeypatch.setattr("mcpgateway.admin.get_scoped_resource_access_context", MagicMock(return_value=("admin@test.com", None)))
 
         request = MagicMock(spec=Request)
         request.headers = {"HX-Request": "true"}
@@ -20709,8 +20711,9 @@ class TestCatalogEndpoints:
         from mcpgateway.schemas import CatalogBulkRegisterRequest
 
         req = CatalogBulkRegisterRequest(server_ids=["a", "b"])
+        http_request = MagicMock(spec=Request)
         with pytest.raises(HTTPException) as exc_info:
-            await bulk_register_catalog_servers(req, db=mock_db, _user={"email": "admin@test.com"})
+            await bulk_register_catalog_servers(http_request, req, db=mock_db, _user={"email": "admin@test.com"})
         assert exc_info.value.status_code == 404
 
     @pytest.mark.asyncio
@@ -20718,12 +20721,14 @@ class TestCatalogEndpoints:
         monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_catalog_enabled", True, raising=False)
         bulk_result = MagicMock()
         monkeypatch.setattr("mcpgateway.admin.catalog_service.bulk_register_servers", AsyncMock(return_value=bulk_result))
+        monkeypatch.setattr("mcpgateway.admin.get_scoped_resource_access_context", MagicMock(return_value=("admin@test.com", None)))
 
         # First-Party
         from mcpgateway.schemas import CatalogBulkRegisterRequest
 
         req = CatalogBulkRegisterRequest(server_ids=["a", "b"])
-        result = await bulk_register_catalog_servers(req, db=mock_db, _user={"email": "admin@test.com"})
+        http_request = MagicMock(spec=Request)
+        result = await bulk_register_catalog_servers(http_request, req, db=mock_db, _user={"email": "admin@test.com"})
         assert result == bulk_result
 
 
