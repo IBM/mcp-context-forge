@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Tests for GatewayService.transfer_gateway_ownership."""
+"""Location: ./tests/unit/mcpgateway/services/test_gateway_service_transfer.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+
+Tests for GatewayService.transfer_gateway_ownership.
+"""
 
 from __future__ import annotations
 
