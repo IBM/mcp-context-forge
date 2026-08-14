@@ -114,7 +114,7 @@ from mcpgateway.middleware.header_size_middleware import HeaderSizeMiddleware
 from mcpgateway.middleware.http_auth_middleware import HttpAuthMiddleware, run_pre_request_hooks
 from mcpgateway.middleware.protocol_version import MCPProtocolVersionMiddleware
 from mcpgateway.middleware.rate_limit_middleware import RateLimitMiddleware
-from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, get_current_user_with_permissions, PermissionChecker, require_permission
+from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, get_current_user_with_permissions, PermissionChecker, require_permission, require_unrestricted_platform_admin
 from mcpgateway.middleware.request_logging_middleware import RequestLoggingMiddleware
 from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
 from mcpgateway.middleware.token_scoping import ResourceOwnershipResult, token_scoping_middleware
@@ -7614,10 +7614,6 @@ async def refresh_gateway_tools(
 ##############
 # Root APIs  #
 ##############
-async def _require_unrestricted_root_admin(request: Request, user: Any, db: Session) -> None:
-    """Require unrestricted platform-admin authority for global roots."""
-    if not await is_unrestricted_platform_admin(request, user, db):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
 
 
 def _root_validation_http_error(exc: RootServiceValidationError) -> HTTPException:
@@ -7644,7 +7640,7 @@ async def list_roots(
     Returns:
         List of Root objects.
     """
-    await _require_unrestricted_root_admin(request, user, db)
+    await require_unrestricted_platform_admin(request, user, db)
     logger.debug(f"User '{safe_log_user(user)}' requested list of roots")
     return await root_service.list_roots()
 
@@ -7673,7 +7669,7 @@ async def export_root(
         HTTPException: If root not found or export fails
     """
     try:
-        await _require_unrestricted_root_admin(request, user, db)
+        await require_unrestricted_platform_admin(request, user, db)
         logger.info("User %s requested root export", safe_log_user(user))
 
         # Extract username from user
@@ -7732,7 +7728,7 @@ async def subscribe_roots_changes(
     Returns:
         StreamingResponse with event-stream media type.
     """
-    await _require_unrestricted_root_admin(request, user, db)
+    await require_unrestricted_platform_admin(request, user, db)
     logger.debug(f"User '{safe_log_user(user)}' subscribed to root changes stream")
 
     async def generate_events():
@@ -7771,7 +7767,7 @@ async def get_root_by_uri(
         HTTPException: If the root is not found.
         Exception: For any other unexpected errors.
     """
-    await _require_unrestricted_root_admin(request, user, db)
+    await require_unrestricted_platform_admin(request, user, db)
     logger.debug("User '%s' requested root", safe_log_user(user))
     try:
         root = await root_service.get_root_by_uri(root_uri)
@@ -7806,7 +7802,7 @@ async def add_root(
     Returns:
         The added Root object.
     """
-    await _require_unrestricted_root_admin(request, user, db)
+    await require_unrestricted_platform_admin(request, user, db)
     logger.debug("User '%s' requested to add root", safe_log_user(user))
     try:
         return await root_service.add_root(root_data.uri, root_data.name)
@@ -7842,7 +7838,7 @@ async def update_root(
         HTTPException: If the root is not found.
         Exception: For any other unexpected errors.
     """
-    await _require_unrestricted_root_admin(request, user, db)
+    await require_unrestricted_platform_admin(request, user, db)
     logger.debug("User '%s' requested to update root", safe_log_user(user))
     try:
         root = await root_service.update_root(root_uri, root_data.name)
@@ -7876,7 +7872,7 @@ async def remove_root(
     Returns:
         Status message indicating result.
     """
-    await _require_unrestricted_root_admin(request, user, db)
+    await require_unrestricted_platform_admin(request, user, db)
     logger.debug("User '%s' requested to remove root", safe_log_user(user))
     try:
         await root_service.remove_root(uri)
@@ -12545,7 +12541,7 @@ async def export_configuration(
             tags_list = [t.strip() for t in tags.split(",") if t.strip()]
 
         if configuration_export_includes_roots(include_types, exclude_types_list):
-            await _require_unrestricted_root_admin(request, user, db)
+            await require_unrestricted_platform_admin(request, user, db)
 
         # Extract username from user (which is now an EmailUser object)
         if hasattr(user, "email"):
@@ -12619,7 +12615,7 @@ async def export_selective_configuration(
         logger.info(f"User {safe_log_user(user)} requested selective configuration export")
 
         if selective_selection_includes_roots(entity_selections):
-            await _require_unrestricted_root_admin(request, user, db)
+            await require_unrestricted_platform_admin(request, user, db)
 
         username: Optional[str] = None
         # Extract username from user (which is now an EmailUser object)
@@ -12694,7 +12690,7 @@ async def import_configuration(
         logger.info(f"User {safe_log_user(user)} requested configuration import (dry_run={dry_run})")
 
         if import_envelope_includes_roots(import_data, selected_entities):
-            await _require_unrestricted_root_admin(request, user, db)
+            await require_unrestricted_platform_admin(request, user, db)
 
         # Validate conflict strategy
         try:

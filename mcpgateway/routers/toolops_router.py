@@ -16,7 +16,7 @@ The module handles API endpoints created for several toolops features.
 from typing import Any, Dict, List
 
 # Third-Party
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 import orjson
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.common.query_params import QueryIdentifierDotted300, QueryToolOpsMode
 from mcpgateway.main import get_db
-from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
+from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_global_admin_permission, require_permission
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.tool_service import ToolService
 from mcpgateway.toolops.toolops_altk_service import enrich_tool, execute_tool_nl_test_cases, validation_generate_test_cases
@@ -64,6 +64,7 @@ class ToolNLTestInput(BaseModel):
 # First-Party
 # Toolops APIs - Generating test cases , Tool enrichment #
 @toolops_router.post("/validation/generate_testcases")
+@require_global_admin_permission()
 @require_permission("admin.system_config")
 async def generate_testcases_for_tool(
     tool_id: QueryIdentifierDotted300 = None,
@@ -72,6 +73,7 @@ async def generate_testcases_for_tool(
     mode: QueryToolOpsMode = "generate",
     db: Session = Depends(get_db),
     _user=Depends(get_current_user_with_permissions),
+    request: Request = None,  # pylint: disable=unused-argument
 ) -> List[Dict]:
     """
     Generate test cases for a tool
@@ -86,6 +88,7 @@ async def generate_testcases_for_tool(
         number_of_nl_variations: Number of Natural language variations(parapharses) per test case (optional)
         mode: Three supported modes - 'generate' for test case generation, 'query' for obtaining test cases from DB , 'status' to check test generation status
         db: DB session to connect with database
+        request: Incoming request, used to resolve Layer-1 token scope.
 
     Returns:
         List: A list of test cases generated for the tool , each test case is dictionary object
@@ -106,8 +109,14 @@ async def generate_testcases_for_tool(
 
 
 @toolops_router.post("/validation/execute_tool_nl_testcases")
+@require_global_admin_permission()
 @require_permission("admin.system_config")
-async def execute_tool_nl_testcases(tool_nl_test_input: ToolNLTestInput, db: Session = Depends(get_db), _user=Depends(get_current_user_with_permissions)) -> List:
+async def execute_tool_nl_testcases(
+    tool_nl_test_input: ToolNLTestInput,
+    db: Session = Depends(get_db),
+    _user=Depends(get_current_user_with_permissions),
+    request: Request = None,  # pylint: disable=unused-argument
+) -> List:
     """
     Execute test cases for a tool
 
@@ -120,6 +129,7 @@ async def execute_tool_nl_testcases(tool_nl_test_input: ToolNLTestInput, db: Ses
             - tool_id: Tool ID in ContextForge\
             - tool_nl_test_cases: List of natural language test cases (utteances) for testing MCP tool with the agent
         db: DB session to connect with database
+        request: Incoming request, used to resolve Layer-1 token scope.
 
     Returns:
         List: A list of tool outputs after agent execution for the provided tool nl test cases
@@ -142,11 +152,13 @@ async def execute_tool_nl_testcases(tool_nl_test_input: ToolNLTestInput, db: Ses
 
 
 @toolops_router.post("/enrichment/enrich_tool")
+@require_global_admin_permission()
 @require_permission("admin.system_config")
 async def enrich_a_tool(
     tool_id: QueryIdentifierDotted300 = None,
     db: Session = Depends(get_db),
     _user=Depends(get_current_user_with_permissions),
+    request: Request = None,  # pylint: disable=unused-argument
 ) -> dict[str, Any]:
     """
     Enriches an input tool
@@ -154,6 +166,7 @@ async def enrich_a_tool(
     Args:
         tool_id: Unique Tool ID MCP-CF.
         db: The database session used to interact with the data store.
+        request: Incoming request, used to resolve Layer-1 token scope.
 
     Returns:
         result: A dict having the keys "tool_id", "tool_name", "original_desc" and "enriched_desc" with their corresponding values

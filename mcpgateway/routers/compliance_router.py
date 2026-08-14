@@ -21,14 +21,14 @@ import logging
 from typing import Any, Dict, List, Optional
 
 # Third-Party
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.responses import Response
 from pydantic import BaseModel, field_validator, ValidationInfo
 from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.db import get_db
-from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_admin_permission
+from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_global_admin_permission
 from mcpgateway.services.compliance_service import ComplianceFramework, get_compliance_service
 
 logger = logging.getLogger(__name__)
@@ -122,12 +122,13 @@ class FrameworkInfo(BaseModel):
 
 
 @router.get("/frameworks", response_model=List[FrameworkInfo])
-@require_admin_permission()
-async def list_frameworks(user=Depends(get_current_user_with_permissions)) -> List[FrameworkInfo]:  # pylint: disable=unused-argument
+@require_global_admin_permission()
+async def list_frameworks(user=Depends(get_current_user_with_permissions), request: Request = None) -> List[FrameworkInfo]:  # pylint: disable=unused-argument
     """List all supported compliance frameworks.
 
     Args:
         user: Authenticated admin user context.
+        request: Incoming request, used to resolve Layer-1 token scope.
 
     Returns:
         List of FrameworkInfo objects.
@@ -141,14 +142,15 @@ async def list_frameworks(user=Depends(get_current_user_with_permissions)) -> Li
 
 
 @router.post("/reports", response_model=ComplianceReportResponse, status_code=status.HTTP_201_CREATED)
-@require_admin_permission()
-async def generate_report(body: GenerateReportRequest, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> ComplianceReportResponse:  # pylint: disable=unused-argument
+@require_global_admin_permission()
+async def generate_report(body: GenerateReportRequest, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db), request: Request = None) -> ComplianceReportResponse:  # pylint: disable=unused-argument
     """Generate a new compliance report.
 
     Args:
         body: Framework and assessment period.
         user: Authenticated admin user context.
         db: Database session.
+        request: Incoming request, used to resolve Layer-1 token scope.
 
     Returns:
         ComplianceReportResponse: The generated report.
@@ -185,13 +187,14 @@ async def generate_report(body: GenerateReportRequest, user=Depends(get_current_
 
 
 @router.get("/reports", response_model=List[ComplianceReportResponse])
-@require_admin_permission()
-async def list_reports(user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> List[ComplianceReportResponse]:  # pylint: disable=unused-argument
+@require_global_admin_permission()
+async def list_reports(user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db), request: Request = None) -> List[ComplianceReportResponse]:  # pylint: disable=unused-argument
     """List all stored compliance reports.
 
     Args:
         user: Authenticated admin user context.
         db: Database session.
+        request: Incoming request, used to resolve Layer-1 token scope.
 
     Returns:
         List of ComplianceReportResponse objects.
@@ -226,14 +229,15 @@ async def list_reports(user=Depends(get_current_user_with_permissions), db: Sess
 
 
 @router.get("/reports/{report_id}", response_model=ComplianceReportResponse)
-@require_admin_permission()
-async def get_report(report_id: str, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> ComplianceReportResponse:  # pylint: disable=unused-argument
+@require_global_admin_permission()
+async def get_report(report_id: str, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db), request: Request = None) -> ComplianceReportResponse:  # pylint: disable=unused-argument
     """Get a specific compliance report by ID.
 
     Args:
         report_id: Report UUID.
         user: Authenticated admin user context.
         db: Database session.
+        request: Incoming request, used to resolve Layer-1 token scope.
 
     Returns:
         ComplianceReportResponse: The requested report.
@@ -269,12 +273,13 @@ async def get_report(report_id: str, user=Depends(get_current_user_with_permissi
 
 
 @router.get("/reports/{report_id}/export")
-@require_admin_permission()
+@require_global_admin_permission()
 async def export_report(  # pylint: disable=unused-argument
     report_id: str,
     user=Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
     export_format: Optional[str] = Query(default="json", description="Export format: json or csv"),
+    request: Request = None,
 ) -> Response:
     """Export a compliance report in JSON or CSV format.
 
@@ -283,6 +288,7 @@ async def export_report(  # pylint: disable=unused-argument
         user: Authenticated admin user context.
         db: Database session.
         export_format: Export format ('json' or 'csv').
+        request: Incoming request, used to resolve Layer-1 token scope.
 
     Returns:
         Response with JSON or CSV content.

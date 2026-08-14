@@ -211,7 +211,7 @@ mcpgateway --host 0.0.0.0 --port 4444 &
 # 4️⃣  Generate a bearer token and smoke-test
 export JWT_SECRET_KEY=$(grep '^JWT_SECRET_KEY=' .env | cut -d= -f2)
 export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
-    --username admin@example.com --exp 10080 --secret "$JWT_SECRET_KEY")
+    --username admin@example.com --admin --exp 10080 --secret "$JWT_SECRET_KEY")
 
 curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
      http://127.0.0.1:4444/version | jq
@@ -243,7 +243,7 @@ mcpgateway.exe --host 0.0.0.0 --port 4444
 # 4️⃣  Bearer token and smoke-test
 $Env:JWT_SECRET_KEY = (Get-Content .env | Select-String '^JWT_SECRET_KEY=').ToString().Split('=')[1]
 $Env:MCPGATEWAY_BEARER_TOKEN = python3 -m mcpgateway.utils.create_jwt_token `
-    --username admin@example.com --exp 10080 --secret $Env:JWT_SECRET_KEY
+    --username admin@example.com --admin --exp 10080 --secret $Env:JWT_SECRET_KEY
 
 curl -s -H "Authorization: Bearer $Env:MCPGATEWAY_BEARER_TOKEN" `
      http://127.0.0.1:4444/version | jq
@@ -423,7 +423,7 @@ docker compose logs -f gateway
 # 7️⃣  Generate an API token
 export JWT_SECRET_KEY=$(grep '^JWT_SECRET_KEY=' .env | cut -d= -f2)
 docker compose exec gateway python3 -m mcpgateway.utils.create_jwt_token \
-  --username admin@example.com --exp 10080 --secret "$JWT_SECRET_KEY"
+  --username admin@example.com --admin --exp 10080 --secret "$JWT_SECRET_KEY"
 ```
 
 **What you get:**
@@ -490,7 +490,7 @@ kubectl port-forward svc/mcp-gateway-mcp-context-forge 4444:80
 # Generate API token (reads JWT_SECRET_KEY from the pod's environment)
 kubectl exec deployment/mcp-gateway-mcp-context-forge -- \
   python3 -m mcpgateway.utils.create_jwt_token \
-  --username admin@yourcompany.com --exp 10080 --secret "${JWT_SECRET}"
+  --username admin@yourcompany.com --admin --exp 10080 --secret "${JWT_SECRET}"
 ```
 
 > SSRF note: Helm defaults to strict SSRF settings (`SSRF_ALLOW_PRIVATE_NETWORKS=false`).
@@ -540,7 +540,7 @@ docker run --rm -it \
   -e JWT_SECRET_KEY="${JWT_SECRET_KEY}" \
   ghcr.io/ibm/mcp-context-forge:latest \
   python3 -m mcpgateway.utils.create_jwt_token \
-  --username admin@example.com --exp 10080 --secret "${JWT_SECRET_KEY}"
+  --username admin@example.com --admin --exp 10080 --secret "${JWT_SECRET_KEY}"
 ```
 
 Browse to **[http://localhost:4444/admin](http://localhost:4444/admin)** and login with `PLATFORM_ADMIN_EMAIL` / `PLATFORM_ADMIN_PASSWORD`.
@@ -624,7 +624,7 @@ podman run -d --name mcpgateway --network=host \
 
   ```bash
   docker exec mcpgateway python3 -m mcpgateway.utils.create_jwt_token \
-    --username admin@example.com --exp 10080 --secret "${JWT_SECRET_KEY}"
+    --username admin@example.com --admin --exp 10080 --secret "${JWT_SECRET_KEY}"
   ```
 * **Upgrades** - Stop, remove, and rerun with the same `-v $(pwd)/data:/data` mount; your DB and config stay intact.
 
@@ -656,7 +656,7 @@ The `mcpgateway.wrapper` lets you connect to the gateway over **stdio** while ke
 ```bash
 # JWT_SECRET_KEY must be set — see "Docker (Single Container)" for how to generate it
 export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
-  --username admin@example.com --exp 10080 --secret "${JWT_SECRET_KEY}")
+  --username admin@example.com --admin --exp 10080 --secret "${JWT_SECRET_KEY}")
 export MCP_AUTH="Bearer ${MCPGATEWAY_BEARER_TOKEN}"
 export MCP_SERVER_URL='http://localhost:4444/servers/UUID_OF_SERVER_1/mcp'
 export MCP_TOOL_CALL_TIMEOUT=120
@@ -947,7 +947,7 @@ export JWT_SECRET_KEY=$(grep '^JWT_SECRET_KEY=' .env | cut -d= -f2)
 
 # Generate a JWT token
 export TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
-  --username admin@example.com --exp 10080 --secret "$JWT_SECRET_KEY")
+  --username admin@example.com --admin --exp 10080 --secret "$JWT_SECRET_KEY")
 
 # Test API access
 curl -H "Authorization: Bearer $TOKEN" http://localhost:4444/health

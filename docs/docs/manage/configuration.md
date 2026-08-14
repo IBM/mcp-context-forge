@@ -147,8 +147,13 @@ ContextForge supports multiple database backends with full feature parity across
 !!! info "Basic Authentication"
     **Basic Authentication is DISABLED by default** for security. `BASIC_AUTH_USER`/`PASSWORD` are only used when Basic auth is explicitly enabled:
 
-    - `API_ALLOW_BASIC_AUTH=true` - Enable for API endpoints (e.g., `/api/metrics/*`)
+    - `API_ALLOW_BASIC_AUTH=true` - Enable for API endpoints (e.g., `/health/security`)
     - `DOCS_ALLOW_BASIC_AUTH=true` - Enable for docs endpoints (`/docs`, `/redoc`)
+
+    **Note:** Global-record admin routes (e.g., `/api/metrics/*`, `/api/logs/*`) additionally
+    require an unrestricted platform-admin bearer or session token — see
+    [Global-record routes](rbac.md#global-record-routes) — so Basic auth alone does not grant
+    access to those routes even with `API_ALLOW_BASIC_AUTH=true`.
 
     **Recommended:** Use JWT tokens instead of Basic auth:
     ```bash
@@ -159,7 +164,7 @@ ContextForge supports multiple database backends with full feature parity across
 !!! tip "JWT Token Generation"
     `JWT_SECRET_KEY` is used to sign JSON Web Tokens. Generate tokens via:
     ```bash
-    export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes)
+    export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --admin --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes)
     ```
 
 ### UI Features

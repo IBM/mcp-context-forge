@@ -1735,7 +1735,16 @@ async def require_admin_auth(
                     detail="Basic authentication is disabled for API endpoints. Use JWT or API tokens instead.",
                     headers={"WWW-Authenticate": "Bearer"},
                 )
-            return await verify_basic_credentials(basic_credentials)
+            verified_user = await verify_basic_credentials(basic_credentials)
+            # Legacy HTTP Basic auth verifies a single static superuser credential
+            # (BASIC_AUTH_USER/BASIC_AUTH_PASSWORD) independent of the EmailUser/RBAC
+            # DB world, so success here already proves unrestricted platform-admin
+            # authority. token_teams is never populated for this auth path (no JWT,
+            # no upstream auth middleware involvement), so mark it explicitly for
+            # Layer-1 callers (e.g. mcpgateway.version) that would otherwise deny it.
+            if hasattr(request, "state"):
+                request.state.basic_auth_verified_admin = True
+            return verified_user
         else:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
