@@ -79,7 +79,7 @@ def test_ui_base_url_treats_blank_string_as_unset():
 
 
 def test_smtp_without_ui_base_url_warns_about_frontend_routes(caplog):
-    """SMTP with fallback links warns operators that frontend routes must exist."""
+    """SMTP fallback warns about invitation and legacy password routes."""
     caplog.set_level(logging.WARNING, logger="mcpgateway.config")
 
     Settings(smtp_enabled=True, ui_base_url=None, environment="development", _env_file=None)
@@ -87,6 +87,7 @@ def test_smtp_without_ui_base_url_warns_about_frontend_routes(caplog):
     warnings = [record.getMessage() for record in caplog.records]
     assert any("SMTP_ENABLED=true while UI_BASE_URL is unset" in message for message in warnings)
     assert any("/accept-invitation/{token}" in message for message in warnings)
+    assert any("MCPGATEWAY_ADMIN_API_ENABLED=true" in message for message in warnings)
 
 
 @pytest.mark.parametrize(

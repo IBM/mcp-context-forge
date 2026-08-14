@@ -121,11 +121,12 @@ ContextForge uses this trusted base to generate these browser-facing email links
 - `https://ui.example.com/contextforge/reset-password/{token}`
 - `https://ui.example.com/contextforge/forgot-password`
 
-When `UI_BASE_URL` is unset, links use `APP_DOMAIN + APP_ROOT_PATH`. That fallback host must serve the
-`/accept-invitation/{token}`, `/reset-password/{token}`, and `/forgot-password` frontend routes; ContextForge does
-not provide those React pages. If the React client is deployed separately, configure `UI_BASE_URL` or email links
-will point at the gateway and may return 404. ContextForge never derives these links from the inbound `Host` header.
-Tokens are URL-encoded as individual path segments.
+When `UI_BASE_URL` is unset, links use `APP_DOMAIN + APP_ROOT_PATH` as their base. Password-reset and account-lockout
+emails preserve compatibility with the bundled Admin UI by using `/admin/reset-password/{token}` and
+`/admin/forgot-password`; these routes require `MCPGATEWAY_ADMIN_API_ENABLED=true`. Invitation emails continue to use
+`/accept-invitation/{token}`, so the fallback host must serve that frontend route. ContextForge does not provide the
+React invitation page. If the React client is deployed separately, configure `UI_BASE_URL`. ContextForge never
+derives these links from the inbound `Host` header. Tokens are URL-encoded as individual path segments.
 
 `UI_BASE_URL` controls links only; it does not configure browser access to gateway APIs. For a React client on a
 different origin, add that exact origin to `ALLOWED_ORIGINS`. Deployments using cross-origin cookies must also set

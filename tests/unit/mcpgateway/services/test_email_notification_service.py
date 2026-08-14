@@ -72,14 +72,24 @@ class TestAuthEmailNotificationService:
         assert result == "https://ui.example.com/contextforge/accept-invitation/tok%2Fen%20%3F"
 
     def test_build_frontend_url_falls_back_to_domain_and_root_path(self):
-        """Frontend links fall back to trusted gateway configuration."""
+        """Password links fall back to bundled Admin UI routes."""
         with patch("mcpgateway.services.email_notification_service.settings") as mock_settings:
             mock_settings.ui_base_url = None
             mock_settings.app_domain = "https://gateway.example.com/"
             mock_settings.app_root_path = "/root/"
             result = build_frontend_url("/forgot-password")
 
-        assert result == "https://gateway.example.com/root/forgot-password"
+        assert result == "https://gateway.example.com/root/admin/forgot-password"
+
+    def test_build_frontend_url_invitation_fallback_remains_frontend_route(self):
+        """Invitation fallback does not inherit legacy Admin UI prefix."""
+        with patch("mcpgateway.services.email_notification_service.settings") as mock_settings:
+            mock_settings.ui_base_url = None
+            mock_settings.app_domain = "https://gateway.example.com/"
+            mock_settings.app_root_path = "/root/"
+            result = build_frontend_url("/accept-invitation", "tok/en")
+
+        assert result == "https://gateway.example.com/root/accept-invitation/tok%2Fen"
 
     def test_build_frontend_url_rejects_untrusted_path_shape(self):
         """Frontend helper rejects relative and scheme-relative paths."""
