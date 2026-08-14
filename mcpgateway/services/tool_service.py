@@ -636,6 +636,59 @@ def _handle_json_parse_error(response, error, is_error_response: bool = False) -
     return {"response_text": text}
 
 
+def _format_rest_error_message(response: Any, result: object, fallback_message: Optional[str] = None) -> str:
+    """Return a useful, bounded message from a REST error response.
+
+    REST APIs use several common JSON error envelopes. Preserve those details
+    for tool callers and fall back to the raw response body for unknown or
+    non-object JSON values. The fallback is bounded by the same setting used
+    for non-JSON responses.
+
+    Args:
+        response: HTTP response with ``status_code`` and ``text`` attributes.
+        result: Parsed JSON body, or the fallback produced by
+            :func:`_handle_json_parse_error`.
+        fallback_message: Message to use when a non-JSON-compatible result
+            cannot be rendered.
+
+    Returns:
+        Error text suitable for a ``TextContent`` response.
+    """
+
+    if isinstance(result, Mapping):
+        for key in ("error", "errors", "message", "detail"):
+            value = result.get(key)
+            if value not in (None, "", [], {}):
+                return value if isinstance(value, str) else orjson.dumps(value).decode()
+
+        response_text = result.get("response_text")
+        if isinstance(response_text, str) and response_text:
+            return f"HTTP {response.status_code}: {response_text}"
+
+    if isinstance(result, str):
+        body = result
+    else:
+        response_text = getattr(response, "text", "")
+        if isinstance(response_text, str) and response_text:
+            body = response_text
+        else:
+            try:
+                body = orjson.dumps(result).decode()
+            except (TypeError, ValueError):
+                if fallback_message is not None:
+                    return fallback_message
+                body = _safe_text_repr(result, _safe_type_name(result))
+
+    if body:
+        max_length = settings.rest_response_text_max_length
+        if len(body) > max_length:
+            logger.warning("REST error response truncated from %s to %s characters.", len(body), max_length)
+            body = body[:max_length]
+        return f"HTTP {response.status_code}: {body}"
+
+    return f"HTTP {response.status_code}"
+
+
 @lru_cache(maxsize=256)
 def _compile_jq_filter(jq_filter: str):
     """Cache compiled jq filter program.
@@ -5688,14 +5741,9 @@ class ToolService(BaseService):
                                 result = response.json()
                             except (json.JSONDecodeError, orjson.JSONDecodeError, UnicodeDecodeError, AttributeError) as e:
                                 result = _handle_json_parse_error(response, e, is_error_response=True)
-                            if "error" in result:
-                                error_val = result["error"]
-                            elif "response_text" in result:
-                                error_val = f"HTTP {response.status_code}: {result['response_text']}"
-                            else:
-                                error_val = f"HTTP {response.status_code}"
+                            error_val = _format_rest_error_message(response, result)
                             tool_result = ToolResult(
-                                content=[TextContent(type="text", text=error_val if isinstance(error_val, str) else orjson.dumps(error_val).decode())],
+                                content=[TextContent(type="text", text=error_val)],
                                 is_error=True,
                                 structured_content={"status_code": response.status_code},
                             )
@@ -5713,9 +5761,9 @@ class ToolService(BaseService):
                                 result = response.json()
                             except (json.JSONDecodeError, orjson.JSONDecodeError, UnicodeDecodeError, AttributeError) as e:
                                 result = _handle_json_parse_error(response, e, is_error_response=True)
-                            error_val = result["error"] if "error" in result else "Tool error encountered"
+                            error_val = _format_rest_error_message(response, result, fallback_message="Tool error encountered")
                             tool_result = ToolResult(
-                                content=[TextContent(type="text", text=error_val if isinstance(error_val, str) else orjson.dumps(error_val).decode())],
+                                content=[TextContent(type="text", text=error_val)],
                                 is_error=True,
                             )
                             # Don't mark as successful for error responses - success remains False
