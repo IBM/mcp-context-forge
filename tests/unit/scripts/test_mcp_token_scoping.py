@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Regression tests for the MCP token-scoping smoke script."""
+"""Location: ./tests/unit/scripts/test_mcp_token_scoping.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+
+Regression tests for the MCP token-scoping smoke script.
+"""
 
 import importlib.util
 from pathlib import Path
