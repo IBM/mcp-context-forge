@@ -1539,9 +1539,9 @@ class Settings(BaseSettings):
             # For auth_encryption_secret failures, append the secrets rotation guide URL
             # so operators upgrading from 1.0.7 know how to re-encrypt stored credentials.
             rotation_hint = (
-                "\nIf you are upgrading from 1.0.7 and have stored credentials encrypted "
-                "under the old key, you must rotate them before starting the gateway.\n"
-                "Rotation guide: docs/upgrade/auth-encryption-secret-1.0.7-to-1.0.8.md"
+                "\nIf you have stored credentials encrypted under the old key, "
+                "you must rotate them before starting the gateway.\n"
+                "Rotation guide: docs/docs/operations/auth-encryption-secret-rotation.md"
                 if field_name == "auth_encryption_secret"
                 else ""
             )

@@ -1,8 +1,20 @@
-# AUTH_ENCRYPTION_SECRET Secrets Rotation Guide
+# AUTH_ENCRYPTION_SECRET Rotation
 
-> **Scope:** This guide is for operators who ran ContextForge 1.0.7 with a weak
-> `AUTH_ENCRYPTION_SECRET` (e.g. `my-test-salt`, `changeme`, or any value shorter
-> than 32 characters) and are upgrading to 1.0.8.
+`AUTH_ENCRYPTION_SECRET` is the key used to encrypt stored credentials in the
+ContextForge database (OAuth tokens, SSO secrets, tool/agent/LLM auth values).
+Unlike most configuration secrets — which take effect immediately on restart — rotating
+`AUTH_ENCRYPTION_SECRET` requires a one-time re-encryption pass over the database
+**before** the new key is used to start the gateway. This document covers how to do
+that safely.
+
+> ℹ️ For most other ContextForge secrets (e.g. `JWT_SECRET_KEY`, `BASIC_AUTH_PASSWORD`),
+> rotation is as simple as updating the value in your config source and restarting the
+> gateway. `AUTH_ENCRYPTION_SECRET` is the exception because it protects data at rest.
+
+> 🔼 **Upgrading to a new release and seeing a startup failure or auth errors?**
+> You are in the right place. The sequence is: **run this rotation first, then start
+> the new gateway version**. Do not start the new gateway before Step 5 is complete —
+> doing so will make stored credentials permanently unreadable.
 
 ---
 
@@ -13,9 +25,10 @@
 > - **Using ContextForge as a Python package?** Read the
 >   [Python package section](#using-contextforge-as-a-python-package) first and
 >   plan your rotation accordingly before following the steps below.
-> - **Helm / Kubernetes, custom `MIN_SECRET_LENGTH`, started 1.0.8 with the wrong key,
->   or rolling back a rotation?** Check [Special cases](#special-cases) first —
->   some scenarios require a different procedure before or instead of the standard steps.
+> - **Helm / Kubernetes, custom `MIN_SECRET_LENGTH`, started the gateway with the
+>   wrong key, or rolling back a rotation?** Check [Special cases](#special-cases)
+>   first — some scenarios require a different procedure before or instead of the
+>   standard steps.
 > - **Hit an error?** Jump to [Troubleshooting](#troubleshooting).
 > - **Need deployment-specific commands?** See the
 >   [Appendix](#appendix--deployment-specific-rotation-commands).
@@ -25,29 +38,12 @@
 | [0a](#step-0--back-up-the-database-and-securely-store-the-old-key) | Back up the database |
 | [0b](#step-0--back-up-the-database-and-securely-store-the-old-key) | Securely store the old encryption key |
 | [1](#step-1--stop-the-contextforge-gateway) | Stop the ContextForge gateway |
-| [2](#step-2--get-the-108-code-or-later) | Get the 1.0.8+ code |
+| [2](#step-2--get-the-latest-code-or-package) | Get the latest code or package |
 | [3](#step-3--generate-a-new-strong-key) | Generate a new strong key |
 | [4](#step-4--dry-run-the-rotation-recommended) | Dry-run the rotation *(recommended)* |
 | [5](#step-5--run-the-live-rotation) | Execute the live data rotation |
 | [6](#step-6--start-the-contextforge-gateway) | Start the ContextForge gateway |
 | [7](#step-6--start-the-contextforge-gateway) | Confirm everything is running as expected |
-
----
-
-## Why this matters
-
-1.0.8 restores an unconditional startup guardrail: `AUTH_ENCRYPTION_SECRET` must be
-≥ 32 chars, high-entropy, and not a known-weak value in **every** environment. If you
-upgrade without following this guide, you will hit one or both of:
-
-| Failure | Symptom |
-|---------|---------|
-| **Startup failure** | `SecurityConfigurationError: auth_encryption_secret: too short` — gateway refuses to start |
-| **Silent decryption failure** | All stored OAuth tokens, SSO credentials, and gateway client secrets decrypt as garbage |
-
-> ⚠️ **Do not start the 1.0.8 gateway before completing Step 5.**
-> If you start it before rotating the database, every stored credential becomes
-> permanently unreadable.
 
 ---
 
@@ -88,7 +84,7 @@ it twice is safe; already-rotated values are detected and skipped.
 - Access to the configuration source your deployment reads from (`.env` file, Docker
   Compose environment block, Kubernetes Secret, Helm values, or your secret manager)
 - Access to the database (`DATABASE_URL` — SQLite file path or PostgreSQL connection string)
-- The exact current (weak) value of `AUTH_ENCRYPTION_SECRET` — retrieve it **before** stopping
+- The current value of `AUTH_ENCRYPTION_SECRET` — retrieve it **before** stopping
 
 ---
 
@@ -124,15 +120,18 @@ for deployment-specific commands.
 
 ---
 
-### Step 2 — Get the 1.0.8+ code
+### Step 2 — Get the latest code or package
 
-The rotation script (`migrate_enc_secret.py`) is a **new file added in 1.0.8** — it
-does not exist on 1.0.7. You need the 1.0.8 (or later) codebase or package available
-to run it, regardless of how you deploy.
+You need the codebase or package that contains the rotation script
+(`mcpgateway/scripts/migrate_enc_secret.py`) available to run it.
 
-For git-based deployments: `git pull origin main` or `git checkout v1.0.8`.
+> ⚠️ **If upgrading:** pull the new version's code or package now so you can run
+> the rotation script. **Do not deploy or start the new gateway image/process yet** —
+> that happens in Step 6, after the rotation is complete.
+
+For git-based deployments: `git pull origin main` or check out your target version.
 For Docker / Kubernetes / Helm: run the script from a local checkout or
-`pip install mcp-contextforge-gateway==1.0.8` on any machine that can reach the
+`pip install --upgrade mcp-contextforge-gateway` on any machine that can reach the
 database, before the new image is deployed.
 
 ---
@@ -161,7 +160,7 @@ committing to the live run.
 
 ```bash
 uv run python3 -m mcpgateway.scripts.migrate_enc_secret \
-    --old-key <old-weak-key> \
+    --old-key <old-key> \
     --new-key <new-strong-key> \
     --dry-run
 ```
@@ -192,7 +191,7 @@ always left in its original state on failure.
 
 ```bash
 uv run python3 -m mcpgateway.scripts.migrate_enc_secret \
-    --old-key <old-weak-key> \
+    --old-key <old-key> \
     --new-key <new-strong-key>
 ```
 
@@ -200,7 +199,7 @@ uv run python3 -m mcpgateway.scripts.migrate_enc_secret \
 
 ```bash
 uv run python3 -m mcpgateway.scripts.migrate_enc_secret \
-    --old-key <old-weak-key> \
+    --old-key <old-key> \
     --new-key <new-strong-key> \
     --database-url postgresql+psycopg://user:pass@host/dbname
 ```
@@ -254,6 +253,16 @@ If you embed ContextForge in your own application via `pip install mcp-contextfo
 rather than running the server directly, the rotation script is still available as a
 module and can be driven programmatically or from a plain `python` invocation — no
 `uv`, `make`, or repository checkout required.
+
+> 🔼 **Upgrading the package and seeing a startup failure or auth errors?**
+> `AUTH_ENCRYPTION_SECRET` is now required to be a strong secret (≥ 32 chars,
+> high-entropy). If your application previously set a weak value, you must:
+> 1. Generate a strong new key (Step 1 below).
+> 2. Run the rotation script to re-encrypt stored credentials (Steps 2–3 below).
+> 3. Update `AUTH_ENCRYPTION_SECRET` to the new value in your config and restart.
+>
+> **Do not update the config and restart first** — the gateway will start but all
+> stored credentials will be unreadable until the rotation script is run.
 
 ### Why this path is different
 
@@ -373,10 +382,10 @@ ones that matter for you.
 
 ### Helm / Kubernetes deployments
 
-`charts/mcp-stack/values.yaml` now ships with `AUTH_ENCRYPTION_SECRET: ""` (must be
+`charts/mcp-stack/values.yaml` ships with `AUTH_ENCRYPTION_SECRET: ""` (must be
 set explicitly). Provide the new strong value via your `values-override.yaml` or a
 Kubernetes Secret, then run the rotation as a pre-upgrade Job or init container
-**before** the gateway Deployment rolls over to 1.0.8.
+**before** the gateway Deployment rolls over to the new version.
 
 ### `MIN_SECRET_LENGTH` raised above 32
 
@@ -386,13 +395,13 @@ full value in your config source and pass it as `--new-key`. The rotation script
 validates `--new-key` against the absolute 32-char minimum only — the gateway will
 re-apply the higher floor at startup.
 
-### If you already started 1.0.8 with the wrong key
+### If you started the gateway with the wrong key
 
-> ❌ **This is a data-loss scenario.** Any row written by the 1.0.8 gateway after it
-> started is encrypted under the new key. Any row still encrypted under the old key
-> is now unreadable by the running gateway. You need to identify which rows each key
-> owns before re-running the rotation. Use `--dry-run` with both key orders to see
-> the error counts, then contact the team before proceeding.
+> ❌ **This is a data-loss scenario.** Any row written after the gateway started is
+> encrypted under the new key. Any row still encrypted under the old key is now
+> unreadable by the running gateway. You need to identify which rows each key owns
+> before re-running the rotation. Use `--dry-run` with both key orders to see the
+> error counts, then contact the team before proceeding.
 
 ### Rolling back to a previous (weaker) key — `--force`
 
@@ -400,11 +409,10 @@ re-apply the higher floor at startup.
 > meet the strength requirements** (e.g. reverting a key rotation in a test
 > environment, or undoing a rotation before re-doing it with a different key).
 > After a `--force` rollback the database will contain credentials encrypted under a
-> weak key.  **Do not start the 1.0.8 gateway with a weak
-> `AUTH_ENCRYPTION_SECRET`** — it will refuse to start.
+> weak key — the gateway will refuse to start until a strong key is in place.
 
 By default the script rejects `--new-key` values that are too short, known-weak, or
-low-entropy — the same guardrail the gateway enforces at startup.  Pass `--force` to
+low-entropy — the same guardrail the gateway enforces at startup. Pass `--force` to
 bypass all three checks:
 
 ```bash
@@ -458,16 +466,15 @@ uv run python3 -m mcpgateway.scripts.migrate_enc_secret \
 | `❌ --old-key and --new-key are identical` | Both arguments have the same value | Verify you are using the old key as `--old-key` and the newly generated value as `--new-key`. |
 | `Errors: N` in dry-run output | Some rows encrypted with a third key | Identify previous key rotation history; re-run with the correct `--old-key` for each batch. |
 | `AUTH_ENCRYPTION_SECRET: shell environment holds a weak/non-compliant value…` | `AUTH_ENCRYPTION_SECRET=changeme` exported in shell, strong value already in `.env` | Run `unset AUTH_ENCRYPTION_SECRET`, then retry. |
-| OAuth flows break after upgrade | Rotation ran with wrong `--old-key`; rows not actually re-encrypted | Confirm exit code was `0` and `Values migrated > 0`. Re-run rotation with correct keys. |
-| Tool / agent / LLM auth fails after upgrade | `services_auth` blobs not re-encrypted (separate path from OAuth) | Same fix — re-run rotation with correct `--old-key`; confirm `Values migrated > 0` for those tables. |
+| OAuth flows break after rotation | Rotation ran with wrong `--old-key`; rows not actually re-encrypted | Confirm exit code was `0` and `Values migrated > 0`. Re-run rotation with correct keys. |
+| Tool / agent / LLM auth fails after rotation | `services_auth` blobs not re-encrypted (separate path from OAuth) | Same fix — re-run rotation with correct `--old-key`; confirm `Values migrated > 0` for those tables. |
 
 ---
 
 ## Appendix — Deployment-specific rotation commands
 
 Self-contained command sequences for each deployment type. Substitute
-`<old-key>`, `<new-key>`, and `<new-strong-value>` with your actual values before
-running.
+`<old-key>` and `<new-key>` with your actual values before running.
 
 ---
 
@@ -482,24 +489,14 @@ OLD_KEY=$(docker inspect mcpgateway | python3 -c \
 # 1. Stop
 docker compose down
 
-# 2. Pull 1.0.8 code
+# 2. Pull latest code
 git pull origin main
 
 # 3. Generate a new strong key and update compose config
 NEW_KEY=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))")
 # Edit docker-compose.override.yml or .env to set AUTH_ENCRYPTION_SECRET=$NEW_KEY
 
-# 4. Dry-run
-DATABASE_URL=<your-database-url> \
-  docker run --rm \
-    -e OLD_AUTH_ENCRYPTION_SECRET="$OLD_KEY" \
-    -e NEW_AUTH_ENCRYPTION_SECRET="$NEW_KEY" \
-    -e DATABASE_URL=<your-database-url> \
-    --network host \
-    icr.io/contextforge/mcp-context-forge:1.0.8 \
-    python -m mcpgateway.scripts.migrate_enc_secret --dry-run
-
-# 4a. (Alternative) Run from local checkout instead of image:
+# 4. Dry-run (from local checkout)
 uv run python3 -m mcpgateway.scripts.migrate_enc_secret \
     --old-key "$OLD_KEY" --new-key "$NEW_KEY" --dry-run
 
@@ -525,8 +522,8 @@ OLD_KEY=$(kubectl get secret mcpgateway-secrets \
 kubectl scale deployment mcpgateway --replicas=0
 kubectl rollout status deployment/mcpgateway   # wait for scale-down
 
-# 2. (on a machine with Python + the 1.0.8 source or package)
-git pull origin main   # or: pip install "mcp-contextforge-gateway==1.0.8"
+# 2. Get latest code or package
+git pull origin main   # or: pip install --upgrade mcp-contextforge-gateway
 
 # 3. Generate a new key and patch the Secret
 NEW_KEY=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))")
@@ -567,7 +564,7 @@ helm upgrade mcpgateway ./charts/mcp-stack \
   --reuse-values \
   --set replicaCount=0
 
-# 2. Pull 1.0.8 chart + app
+# 2. Pull latest chart + app
 git pull origin main
 
 # 3. Generate a new key and write it to your values override
@@ -590,7 +587,7 @@ uv run python3 -m mcpgateway.scripts.migrate_enc_secret \
     --new-key "$NEW_KEY" \
     --database-url "postgresql+psycopg://user:pass@localhost:5432/mcpgateway"
 
-# 6. Roll out 1.0.8 with the new key
+# 6. Roll out with the new key
 helm upgrade mcpgateway ./charts/mcp-stack -f values-override.yaml
 ```
 
@@ -605,7 +602,7 @@ OLD_KEY=$(grep AUTH_ENCRYPTION_SECRET /etc/mcpgateway/mcpgateway.env | cut -d= -
 # 1. Stop the service
 sudo systemctl stop mcpgateway
 
-# 2. Pull 1.0.8 code
+# 2. Pull latest code
 cd /opt/mcpgateway
 git pull origin main
 
@@ -640,8 +637,8 @@ OLD_KEY="$AUTH_ENCRYPTION_SECRET"
 
 # 1. Stop your application process (app-specific)
 
-# 2. Install or upgrade to 1.0.8
-pip install --upgrade "mcp-contextforge-gateway==1.0.8"
+# 2. Install or upgrade to the latest package
+pip install --upgrade mcp-contextforge-gateway
 
 # 3. Generate a new strong key
 NEW_KEY=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))")
@@ -671,8 +668,8 @@ import secrets
 import subprocess
 import sys
 
-old_key = "my-old-weak-secret"           # retrieved from your secrets manager
-new_key = secrets.token_urlsafe(32)       # generate once, store immediately
+old_key = "my-old-secret"               # retrieved from your secrets manager
+new_key = secrets.token_urlsafe(32)     # generate once, store immediately
 database_url = "postgresql+psycopg://user:pass@host/dbname"
 
 # Dry-run first
@@ -719,7 +716,7 @@ OLD_KEY=$(grep AUTH_ENCRYPTION_SECRET .env | cut -d= -f2-)
 
 # 1. Stop the dev server (Ctrl-C or kill the process)
 
-# 2. Pull 1.0.8 code
+# 2. Pull latest code
 git pull origin main
 
 # 3. Generate a new key and update .env
