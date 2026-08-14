@@ -113,7 +113,10 @@ class ControlTelemetryAccumulator:
             result: ``PluginResult`` from ``invoke_hook`` (may be None on early exit).
             hook: ``"pre"`` or ``"post"`` — enforcement point tag for each record.
         """
-        records = list(getattr(result, "executions", None) or []) if result is not None else []
+        try:
+            records = list(getattr(result, "executions", None) or [])
+        except Exception:  # noqa: BLE001
+            records = []
         hook_count = 0
         for rec in records:
             if hook_count >= _MAX_RECORDS_PER_HOOK:

@@ -143,6 +143,29 @@ class TestAccumulatorAdd:
         acc.add(None, hook="pre")
         assert acc.records == []
 
+    def test_noop_when_executions_raises(self):
+        """add() must never propagate if the executions property raises."""
+
+        class Boom:
+            continue_processing = True
+
+            @property
+            def executions(self):
+                raise RuntimeError("unexpected error")
+
+        acc = ControlTelemetryAccumulator()
+        acc.add(Boom(), hook="pre")  # must not raise
+        assert acc.records == []
+
+    def test_noop_when_executions_not_iterable(self):
+        """add() returns [] without raising when executions is truthy but non-iterable."""
+        import types
+
+        result = types.SimpleNamespace(executions=42, continue_processing=True)
+        acc = ControlTelemetryAccumulator()
+        acc.add(result, hook="pre")  # list(42) would raise TypeError — must be swallowed
+        assert acc.records == []
+
 
 class TestAccumulatorCap:
     def test_cap_enforced_at_max_records_per_call(self):
