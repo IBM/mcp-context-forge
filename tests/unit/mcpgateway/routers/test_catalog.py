@@ -227,7 +227,7 @@ async def test_register_open_one_click_no_body(monkeypatch, allow_permission):
         "db": db,
         "created_by": "user@example.com",
         "owner_email": "user@example.com",
-        "team_id": None,
+        "token_teams": [],
     }
 
 
@@ -338,7 +338,7 @@ async def test_register_forwards_identity_and_team(monkeypatch, allow_permission
     kwargs = mock_register.await_args.kwargs
     assert kwargs["created_by"] == "user@example.com"
     assert kwargs["owner_email"] == "user@example.com"
-    assert kwargs["team_id"] == "team-a"
+    assert kwargs["token_teams"] == ["team-a"]
 
 
 @pytest.mark.asyncio
@@ -356,7 +356,7 @@ async def test_register_public_only_token_gets_no_team(monkeypatch, allow_permis
 
     kwargs = mock_register.await_args.kwargs
     assert kwargs["owner_email"] == "user@example.com"
-    assert kwargs["team_id"] is None
+    assert kwargs["token_teams"] == []
 
 
 def test_register_body_rejects_unsafe_name():
