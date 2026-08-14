@@ -624,6 +624,33 @@
           class="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
           placeholder="Enter your API key"
         />
+        <label
+          class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2 mt-4"
+          >Visibility</label
+        >
+        <select
+          id="modal-visibility"
+          onchange="document.getElementById('modal-team-id-group').style.display = this.value === 'team' ? 'block' : 'none'"
+          class="w-full px-4 py-2 mb-4 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+        >
+          <option value="private" selected>Private</option>
+          <option value="team">Team</option>
+          <option value="public">Public</option>
+        </select>
+        <div id="modal-team-id-group" style="display: none">
+          <label
+            class="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2"
+            >Team</label
+          >
+          <select
+            id="modal-team-id"
+            class="w-full px-4 py-2 mb-4 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 dark:bg-gray-700 dark:border-gray-600 dark:text-white"
+          >
+            {% for team in registration_teams %}
+            <option value="{{ team.id }}">{{ team.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
         <button
           data-action-click="registerServerWithApiKey"
           class="w-full mt-4 px-4 py-2 bg-blue-600 text-white text-sm font-medium rounded-lg hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-colors"
@@ -642,6 +669,8 @@ function showApiKeyModal(serverId, serverName, serverUrl) {
   document.getElementById('modal-server-name').textContent = 'Add ' + serverName;
   document.getElementById('modal-server-url').value = serverUrl;
   document.getElementById('modal-api-key').value = '';
+  document.getElementById('modal-visibility').value = 'private';
+  document.getElementById('modal-team-id-group').style.display = 'none';
   document.getElementById('api-key-modal').classList.remove('hidden');
 }
 
@@ -668,6 +697,16 @@ function registerServerWithApiKey() {
   // Add custom name if provided
   if (customName && customName.trim()) {
     requestBody.name = customName.trim();
+  }
+
+  // Add visibility and optional team_id
+  const visibility = document.getElementById('modal-visibility').value;
+  requestBody.visibility = visibility;
+  if (visibility === 'team') {
+    const teamId = document.getElementById('modal-team-id').value;
+    if (teamId) {
+      requestBody.team_id = teamId;
+    }
   }
 
   // Use HTMX to post the registration

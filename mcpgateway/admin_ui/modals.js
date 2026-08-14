@@ -296,6 +296,18 @@ export const submitApiKeyForm = function (event) {
     requestData.api_key = apiKey;
   }
 
+  // Add visibility and optional team_id
+  const visibilityEl = safeGetElement("modal-visibility");
+  if (visibilityEl) {
+    requestData.visibility = visibilityEl.value;
+    if (visibilityEl.value === "team") {
+      const teamIdEl = safeGetElement("modal-team-id");
+      if (teamIdEl && teamIdEl.value) {
+        requestData.team_id = teamIdEl.value;
+      }
+    }
+  }
+
   const rootPath = window.ROOT_PATH || "";
 
   // Send registration request
