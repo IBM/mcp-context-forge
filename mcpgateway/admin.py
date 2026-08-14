@@ -125,6 +125,7 @@ from mcpgateway.schemas import (
     CatalogServerRegisterResponse,
     CatalogServerStatusResponse,
     GatewayCreate,
+    GatewayOwnershipTransferRequest,
     GatewayRead,
     GatewayTestRequest,
     GatewayTestResponse,
@@ -13117,6 +13118,44 @@ async def admin_delete_gateway_rest(
         )
 
 
+# Ownership transfer endpoint for gateways
+@admin_router.post("/gateways/{gateway_id}/transfer-ownership", response_model=GatewayRead)
+@require_admin_permission()
+async def transfer_gateway_ownership(
+    gateway_id: str,
+    transfer: GatewayOwnershipTransferRequest,
+    http_request: Request,
+    db: Session = Depends(get_db),
+    _user=Depends(get_current_user_with_permissions),
+) -> GatewayRead:
+    """Transfer ownership of a gateway to another user.
+
+    Args:
+        gateway_id: The ID of the gateway to transfer.
+        transfer: Transfer request with target owner email and optional team.
+        http_request: The HTTP request.
+        db: Database session.
+        _user: Authenticated admin user.
+
+    Returns:
+        Updated GatewayRead with new ownership.
+    """
+    actor_email = get_user_email(_user)
+    try:
+        result = await gateway_service.transfer_gateway_ownership(
+            db=db,
+            gateway_id=gateway_id,
+            target_owner_email=transfer.target_owner_email,
+            actor_email=actor_email,
+            target_team_id=transfer.target_team_id,
+        )
+        return result
+    except GatewayNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 # Legacy POST endpoint for backward compatibility with HTMX UI
 # OAuth callback is now handled by the dedicated OAuth router at /oauth/callback
 # This route has been removed to avoid conflicts with the complete implementation
@@ -18198,6 +18237,20 @@ async def catalog_partial(
         "servers_by_provider": servers_by_provider,
     }
 
+    # Load user teams for visibility/team selector in registration modal
+    registration_teams: list[dict[str, str]] = []
+    try:
+        user_email, token_teams = get_scoped_resource_access_context(request, _user)
+        if user_email and "@" in user_email:
+            team_service = TeamManagementService(db)
+            raw_teams = await team_service.get_user_teams(user_email, include_personal=True)
+            if token_teams is not None:
+                token_team_set = set(token_teams)
+                raw_teams = [t for t in raw_teams if str(t.id) in token_team_set]
+            registration_teams = [{"id": str(t.id), "name": t.name} for t in raw_teams]
+    except Exception as e:
+        LOGGER.warning(f"Failed to load registration teams for catalog: {e}")
+
     context = {
         "request": request,
         "servers": response.servers,
@@ -18207,6 +18260,7 @@ async def catalog_partial(
         "total_pages": total_pages,
         "page_size": page_size,
         "filter_params": filter_params,
+        "registration_teams": registration_teams,
     }
 
     return request.app.state.templates.TemplateResponse(request, "mcp_registry_partial.html", context)
