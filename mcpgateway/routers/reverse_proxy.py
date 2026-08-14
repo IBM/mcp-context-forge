@@ -54,7 +54,7 @@ from mcpgateway.services.reverse_proxy_protocol import (
     ResponseMessage,
     UnregisterMessage,
 )
-from mcpgateway.services.reverse_proxy_sessions import ConnectionId, get_reverse_proxy_session_manager, LocalSessionId, ReverseProxySession, StableGatewayId
+from mcpgateway.services.reverse_proxy_sessions import ConnectionId, get_reverse_proxy_session_manager, LocalSessionId, ReverseProxyEviction, ReverseProxySession, StableGatewayId
 from mcpgateway.utils.verify_credentials import require_auth, verify_jwt_token_cached
 
 # Initialize logging
@@ -67,7 +67,7 @@ router = APIRouter(prefix="/reverse-proxy", tags=["reverse-proxy"])
 async def _persist_unreachable_best_effort(session_manager, evictions) -> None:
     """Persist disconnect reachability without masking transport cleanup."""
     try:
-        from mcpgateway.services.gateway_service import gateway_service  # pylint: disable=import-outside-toplevel
+        from mcpgateway.services.gateway_service import gateway_service  # pylint: disable=import-outside-toplevel,no-name-in-module
 
         await gateway_service.mark_reverse_proxy_gateways_unreachable(session_manager, evictions, seen_at=datetime.now(tz=timezone.utc))
     except Exception as persistence_error:
@@ -246,10 +246,17 @@ async def websocket_endpoint(
 
     # Resolve the shared service singletons on first endpoint use (they are PEP 562
     # lazy module attributes), never at router import time.
-    from mcpgateway.services.gateway_service import gateway_service  # pylint: disable=import-outside-toplevel
-    from mcpgateway.services.server_service import server_service  # pylint: disable=import-outside-toplevel
+    from mcpgateway.services.gateway_service import gateway_service  # pylint: disable=import-outside-toplevel,no-name-in-module
+    from mcpgateway.services.server_service import server_service  # pylint: disable=import-outside-toplevel,no-name-in-module
 
     session_manager = await get_reverse_proxy_session_manager()
+    relay = None
+    release_owners = None
+    if settings.mcpgateway_reverse_proxy_distributed_enabled:
+        from mcpgateway.services.reverse_proxy_relay_runtime import get_reverse_proxy_relay, release_reverse_proxy_owners_best_effort  # pylint: disable=import-outside-toplevel
+
+        relay = await get_reverse_proxy_relay()
+        release_owners = release_reverse_proxy_owners_best_effort
     connection_io = _LockedConnectionIO(websocket, anyio.Lock())
     connection = await session_manager.connect(connection_io, LocalSessionId(uuid.uuid4().hex), owner_email=authenticated_context.owner_email)
     connection_id = connection.connection_id
@@ -278,6 +285,7 @@ async def websocket_endpoint(
             stable_id: StableGatewayId | None = None
             quiesced: ConnectionId | None = None
             committed = False
+            ownership_claimed = False
             try:
                 registration_context = AuthenticatedRegistrationContext(owner_email=authenticated_context.owner_email, team_id=authenticated_context.team_id)
                 await session_manager.record_server_info(connection_id, server.model_dump(exclude_none=True))
@@ -303,6 +311,12 @@ async def websocket_endpoint(
                     # stays fail-closed.
                     await discovery.publish_post_commit_effects(db_gateway, db_server)
                     await session_manager.promote_stable_id(stable_id, connection_id)
+                    if relay is not None:
+                        if quiesced is not None:
+                            await relay.release_owner(stable_id, quiesced)
+                        ownership_claimed = await relay.claim_owner(stable_id, connection_id)
+                        if not ownership_claimed:
+                            raise RuntimeError("reverse-proxy stable gateway is already owned")
                 registration_state = "registered"
                 LOGGER.info(f"Registered server for connection {connection_id}: {server.name}")
                 await send_frame(encode_server_message(register_complete(str(connection_id), RegistrationStatus.SUCCESS)))
@@ -315,6 +329,9 @@ async def websocket_endpoint(
                 # register) still compensates under a shield, then re-raises.
                 with anyio.CancelScope(shield=True):
                     if stable_id is not None:
+                        if ownership_claimed and relay is not None:
+                            assert release_owners is not None
+                            await release_owners(relay, (ReverseProxyEviction(stable_id, connection_id),))
                         if not committed:
                             # Catalog untouched: restoring the predecessor is safe.
                             await session_manager.restore_stable_id(stable_id, quiesced, connection_id)
@@ -334,6 +351,9 @@ async def websocket_endpoint(
                     # cancelling this task group, and the demote/retire must still
                     # complete to keep catalog and routing consistent.
                     with anyio.CancelScope(shield=True):
+                        if ownership_claimed and relay is not None:
+                            assert release_owners is not None
+                            await release_owners(relay, (ReverseProxyEviction(stable_id, connection_id),))
                         if not committed:
                             # Pre-commit failure: restore the catalog-compatible predecessor.
                             await session_manager.restore_stable_id(stable_id, quiesced, connection_id)
@@ -410,6 +430,9 @@ async def websocket_endpoint(
         # Shield typed disconnect so cancellation cannot skip authoritative cleanup.
         with anyio.CancelScope(shield=True):
             disconnected_stable_ids = await session_manager.disconnect(connection_id)
+            if relay is not None:
+                assert release_owners is not None
+                await release_owners(relay, disconnected_stable_ids)
             await _persist_unreachable_best_effort(session_manager, disconnected_stable_ids)
         LOGGER.info(f"Reverse proxy session ended: {connection_id}")
 
@@ -486,6 +509,11 @@ async def disconnect_session(
     # closed immediately, then close the socket bounded
     # and best-effort: a stalled or already-lost connection cannot block cleanup.
     disconnected_stable_ids = await session_manager.disconnect(ConnectionId(session_id))
+    if settings.mcpgateway_reverse_proxy_distributed_enabled:
+        from mcpgateway.services.reverse_proxy_relay_runtime import get_reverse_proxy_relay, release_reverse_proxy_owners_best_effort  # pylint: disable=import-outside-toplevel
+
+        relay = await get_reverse_proxy_relay()
+        await release_reverse_proxy_owners_best_effort(relay, disconnected_stable_ids)
     await _persist_unreachable_best_effort(session_manager, disconnected_stable_ids)
     try:
         with anyio.fail_after(_HTTP_DISCONNECT_CLOSE_TIMEOUT_SECONDS):
