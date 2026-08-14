@@ -1040,7 +1040,7 @@ async def oauth_callback(
         session_jwt = await create_jwt_token(
             data=jwt_payload,
             expires_in_minutes=5,
-            **( {"teams": [team_id]} if team_id else {} ),
+            **({"teams": [team_id]} if team_id else {}),
         )
 
         # Legacy admin UI: return full page with fetch-tools button.
