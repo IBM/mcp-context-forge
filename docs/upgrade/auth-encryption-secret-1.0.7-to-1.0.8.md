@@ -1,8 +1,36 @@
-# AUTH_ENCRYPTION_SECRET Secrets Rotation Guide — 1.0.7 → 1.0.8
+# AUTH_ENCRYPTION_SECRET Secrets Rotation Guide
 
 > **Scope:** This guide is for operators who ran ContextForge 1.0.7 with a weak
 > `AUTH_ENCRYPTION_SECRET` (e.g. `my-test-salt`, `changeme`, or any value shorter
 > than 32 characters) and are upgrading to 1.0.8.
+
+---
+
+## Rotation at a glance
+
+> 📖 **Before you start — read the right section for your situation:**
+>
+> - **Using ContextForge as a Python package?** Read the
+>   [Python package section](#using-contextforge-as-a-python-package) first and
+>   plan your rotation accordingly before following the steps below.
+> - **Helm / Kubernetes, custom `MIN_SECRET_LENGTH`, started 1.0.8 with the wrong key,
+>   or rolling back a rotation?** Check [Special cases](#special-cases) first —
+>   some scenarios require a different procedure before or instead of the standard steps.
+> - **Hit an error?** Jump to [Troubleshooting](#troubleshooting).
+> - **Need deployment-specific commands?** See the
+>   [Appendix](#appendix--deployment-specific-rotation-commands).
+
+| Step | Action |
+|------|--------|
+| [0a](#step-0--back-up-the-database-and-securely-store-the-old-key) | Back up the database |
+| [0b](#step-0--back-up-the-database-and-securely-store-the-old-key) | Securely store the old encryption key |
+| [1](#step-1--stop-the-contextforge-gateway) | Stop the ContextForge gateway |
+| [2](#step-2--get-the-108-code-or-later) | Get the 1.0.8+ code |
+| [3](#step-3--generate-a-new-strong-key) | Generate a new strong key |
+| [4](#step-4--dry-run-the-rotation-recommended) | Dry-run the rotation *(recommended)* |
+| [5](#step-5--run-the-live-rotation) | Execute the live data rotation |
+| [6](#step-6--start-the-contextforge-gateway) | Start the ContextForge gateway |
+| [7](#step-6--start-the-contextforge-gateway) | Confirm everything is running as expected |
 
 ---
 
@@ -66,24 +94,20 @@ it twice is safe; already-rotated values are detected and skipped.
 
 ## Rotation sequence
 
-### Step 0 — Back up the database and record the old weak key
-
-Do both of these while the gateway is still running and the database is in a
-consistent state.
+### Step 0 — Back up the database and securely store the old key
 
 #### Back up the database
 
-> 💡 Take a backup using whatever method fits your deployment (file copy, database
-> dump, snapshot, etc.) before making any changes. This is your safety net — if
-> anything goes wrong during rotation you can restore and retry with the correct keys.
-> Keep the backup until you have confirmed the rotated gateway starts and all
-> OAuth / SSO / tool auth flows work correctly.
+> 💡 Using your own processes, create a backup of the database before making any
+> changes. This is your safety net — if anything goes wrong during rotation you can
+> restore and retry with the correct keys. Keep the backup until you have confirmed
+> the rotated gateway starts and all OAuth / SSO / tool auth flows work correctly.
 
-#### Record the old weak key
+#### Securely store the old encryption key
 
-Record the current value of `AUTH_ENCRYPTION_SECRET` from wherever your deployment
-stores it (`.env`, Docker/Kubernetes secret, Helm values, secret manager, etc.).
-You will need it as `--old-key` in Step 5.
+Record the current value of `AUTH_ENCRYPTION_SECRET` and store it securely (a
+secrets manager, a password vault, or an encrypted note). You will need it as
+`--old-key` in Step 5.
 
 > ⚠️ Once Step 3 sets a new value, the old one is no longer in your config source.
 > See the [Appendix](#appendix--deployment-specific-rotation-commands) for
@@ -91,20 +115,20 @@ You will need it as `--old-key` in Step 5.
 
 ---
 
-### Step 1 — Stop the gateway
+### Step 1 — Stop the ContextForge gateway
 
-No writes must happen to the database between key generation and rotation.
-Stop the gateway using whichever method your deployment uses. See the
-[Appendix](#appendix--deployment-specific-rotation-commands) for
-deployment-specific commands.
+Stop the ContextForge gateway using whichever method your deployment uses, leaving
+the database running. No writes must happen to the database between key generation
+and rotation. See the [Appendix](#appendix--deployment-specific-rotation-commands)
+for deployment-specific commands.
 
 ---
 
-### Step 2 — Get the 1.0.8 code
+### Step 2 — Get the 1.0.8+ code
 
 The rotation script (`migrate_enc_secret.py`) is a **new file added in 1.0.8** — it
-does not exist on 1.0.7. You need the 1.0.8 codebase (or package) available to run
-it, regardless of how you deploy.
+does not exist on 1.0.7. You need the 1.0.8 (or later) codebase or package available
+to run it, regardless of how you deploy.
 
 For git-based deployments: `git pull origin main` or `git checkout v1.0.8`.
 For Docker / Kubernetes / Helm: run the script from a local checkout or
@@ -132,6 +156,8 @@ with Python: `python3 -c "import secrets; print(secrets.token_urlsafe(32))"`.
 ### Step 4 — Dry-run the rotation *(recommended)*
 
 Reads every affected row and reports what would be re-encrypted. No writes are made.
+This ensures that no unforeseen issues occur with rotating the encrypted data before
+committing to the live run.
 
 ```bash
 uv run python3 -m mcpgateway.scripts.migrate_enc_secret \
@@ -208,30 +234,17 @@ ROTATION SUMMARY:
 
 ---
 
-### Step 6 — Start the gateway
+### Step 6 — Start the ContextForge gateway
 
 The guardrail now passes (strong key in your config) and all database rows are
 encrypted under the new key. Start the gateway using whichever method your
 deployment uses. See the [Appendix](#appendix--deployment-specific-rotation-commands)
 for deployment-specific commands.
 
-**Expected result:** no `SecurityConfigurationError` in startup logs. Verify
-credentials work by authenticating via the gateway and confirming SSO / OAuth flows
-succeed.
-
----
-
-## Full sequence at a glance
-
-| # | Action | Code version | Gateway state |
-|---|--------|-------------|---------------|
-| 0 | Back up database + record old weak key | 1.0.7 | Running (read only) |
-| 1 | Stop gateway | 1.0.7 | **Stopped** |
-| 2 | Pull 1.0.8 code | **1.0.8** | Stopped |
-| 3 | `make init-secrets` → set `AUTH_ENCRYPTION_SECRET` in your config source | 1.0.8 | Stopped |
-| 4 | `migrate_enc_secret --dry-run` | 1.0.8 | Stopped |
-| 5 | `migrate_enc_secret` (live rotation) | 1.0.8 | Stopped |
-| 6 | Start gateway | 1.0.8 | **Running** |
+**Confirm everything is running as expected:** verify there is no
+`SecurityConfigurationError` in the startup logs, then confirm SSO / OAuth flows,
+tool auth, and agent credentials all work correctly before discarding the database
+backup.
 
 ---
 

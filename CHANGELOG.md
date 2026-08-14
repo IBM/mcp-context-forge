@@ -10,6 +10,13 @@
 
 ### Breaking Changes
 
+- **`AUTH_ENCRYPTION_SECRET` enforcement restored — stored credentials must be re-encrypted before upgrading** ([#6113](https://github.com/IBM/mcp-context-forge/issues/6113)) - 1.0.7 relaxed the `AUTH_ENCRYPTION_SECRET` guardrail in `ENVIRONMENT=development`, allowing weak values such as `my-test-salt` to start the gateway. 1.0.8 restores unconditional enforcement across all environments. Operators who ran 1.0.7 with a weak secret face two breaking changes on upgrade:
+
+  1. **Startup failure** — the gateway refuses to start because the weak value no longer passes the strength guardrail.
+  2. **Silent decryption failure** — all credentials stored under the old weak key (OAuth tokens, SSO secrets, tool/agent/LLM auth) become unreadable under the new strong key.
+
+  **Action required before upgrading:** run the one-shot re-encryption script (`mcpgateway/scripts/migrate_enc_secret.py`) with the old and new keys while the gateway is stopped. See the full rotation guide at [`docs/upgrade/auth-encryption-secret-1.0.7-to-1.0.8.md`](docs/upgrade/auth-encryption-secret-1.0.7-to-1.0.8.md) for step-by-step instructions, deployment-specific commands, and special cases (Helm/Kubernetes, Python package consumers, rollback).
+
 - **Python 3.11 no longer supported** - The minimum supported Python version is now **3.12**. Python 3.11 interpreters are rejected at install time via `requires-python = ">=3.12,<3.14"` in `pyproject.toml`. Upgrade to Python 3.12 or 3.13 before updating.
 
 - **uv 0.6.9 or later required** - `pyproject.toml` now declares `required-version = ">=0.6.9"` under `[tool.uv]`. The `exclude-newer = "10 days"` relative duration syntax was introduced in uv 0.6.9; older versions silently fail to parse it, discard the lockfile, and re-resolve freely — which can pull in packages lacking Linux wheels. Upgrade uv before running `uv sync` or `uv lock`.
