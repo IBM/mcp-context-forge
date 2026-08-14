@@ -8288,6 +8288,8 @@ class CatalogServerRegisterRequest(BaseModel):
     name: Optional[str] = Field(None, description="Optional custom name for the server")
     api_key: Optional[str] = Field(None, description="API key if required")
     oauth_credentials: Optional[Dict[str, Any]] = Field(None, description="OAuth credentials if required")
+    visibility: Optional[Literal["private", "team", "public"]] = Field(None, description="Visibility level: private, team, or public")
+    team_id: Optional[str] = Field(None, description="Team ID for team-scoped registration")
 
 
 class CatalogServerRegisterBody(BaseModel):
@@ -8299,6 +8301,8 @@ class CatalogServerRegisterBody(BaseModel):
 
     name: Optional[str] = Field(None, description="Optional custom name for the server")
     api_key: Optional[str] = Field(None, max_length=4096, description="API key if the catalog entry requires one")
+    visibility: Optional[Literal["private", "team", "public"]] = Field(None, description="Visibility level: private, team, or public")
+    team_id: Optional[str] = Field(None, description="Team ID for team-scoped registration")
 
     @field_validator("name")
     @classmethod
@@ -8373,6 +8377,8 @@ class CatalogBulkRegisterRequest(BaseModel):
 
     server_ids: List[str] = Field(..., description="List of catalog server IDs to register")
     skip_errors: bool = Field(default=True, description="Continue on error")
+    visibility: Optional[Literal["private", "team", "public"]] = Field(None, description="Visibility level for all registered servers")
+    team_id: Optional[str] = Field(None, description="Team ID for team-scoped registration")
 
 
 class CatalogBulkRegisterResponse(BaseModel):
