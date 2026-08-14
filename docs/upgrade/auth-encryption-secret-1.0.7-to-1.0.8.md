@@ -1,4 +1,4 @@
-# AUTH_ENCRYPTION_SECRET Upgrade Guide — 1.0.7 → 1.0.8
+# AUTH_ENCRYPTION_SECRET Secrets Rotation Guide — 1.0.7 → 1.0.8
 
 > **Scope:** This guide is for operators who ran ContextForge 1.0.7 with a weak
 > `AUTH_ENCRYPTION_SECRET` (e.g. `my-test-salt`, `changeme`, or any value shorter
@@ -18,14 +18,14 @@ upgrade without following this guide, you will hit one or both of:
 | **Silent decryption failure** | All stored OAuth tokens, SSO credentials, and gateway client secrets decrypt as garbage |
 
 > ⚠️ **Do not start the 1.0.8 gateway before completing Step 5.**
-> If you start it before re-encrypting the database, every stored credential becomes
+> If you start it before rotating the database, every stored credential becomes
 > permanently unreadable.
 
 ---
 
 ## What gets re-encrypted
 
-The migration script touches exactly these columns — everything else is untouched:
+The rotation script touches exactly these columns — everything else is untouched:
 
 **EncryptionService path** (`v2:{...}` format — OAuth/SSO credentials):
 
@@ -50,7 +50,7 @@ The migration script touches exactly these columns — everything else is untouc
 
 Tables that don't exist (optional features not deployed) are silently skipped. NULL
 values and plaintext values are also skipped. The script is **idempotent** — running
-it twice is safe; already-migrated values are detected and skipped.
+it twice is safe; already-rotated values are detected and skipped.
 
 ---
 
@@ -64,116 +64,72 @@ it twice is safe; already-migrated values are detected and skipped.
 
 ---
 
-## Upgrade sequence
+## Rotation sequence
 
-### Step 0 — Record the old weak key
+### Step 0 — Back up the database and record the old weak key
 
-You need the exact old value as `--old-key` in Step 5. Find it now while the gateway
-is still running — wherever your deployment stores it:
+Do both of these while the gateway is still running and the database is in a
+consistent state.
 
-```bash
-# .env file
-grep AUTH_ENCRYPTION_SECRET .env
+#### Back up the database
 
-# Docker Compose (environment block or env_file)
-# Check your compose override or the running container:
-docker inspect <container-name> | grep AUTH_ENCRYPTION_SECRET
+> 💡 Take a backup using whatever method fits your deployment (file copy, database
+> dump, snapshot, etc.) before making any changes. This is your safety net — if
+> anything goes wrong during rotation you can restore and retry with the correct keys.
+> Keep the backup until you have confirmed the rotated gateway starts and all
+> OAuth / SSO / tool auth flows work correctly.
 
-# Kubernetes Secret
-kubectl get secret <secret-name> -o jsonpath='{.data.AUTH_ENCRYPTION_SECRET}' | base64 -d
+#### Record the old weak key
 
-# Helm values / secret manager
-# Retrieve from your values-override.yaml or secrets manager UI
-```
-
-Write the value down — you will need it in Step 5.
+Record the current value of `AUTH_ENCRYPTION_SECRET` from wherever your deployment
+stores it (`.env`, Docker/Kubernetes secret, Helm values, secret manager, etc.).
+You will need it as `--old-key` in Step 5.
 
 > ⚠️ Once Step 3 sets a new value, the old one is no longer in your config source.
+> See the [Appendix](#appendix--deployment-specific-rotation-commands) for
+> deployment-specific retrieval commands.
 
 ---
 
 ### Step 1 — Stop the gateway
 
-No writes must happen to the database between key generation and migration.
-Stop the gateway using whichever method your deployment uses:
-
-```bash
-# Docker Compose
-docker compose down
-
-# Kubernetes — scale the Deployment to zero replicas
-kubectl scale deployment <mcpgateway-deployment> --replicas=0
-
-# Helm
-helm upgrade <release> <chart> --set replicaCount=0
-
-# systemd
-systemctl stop mcpgateway
-
-# bare-metal gunicorn / uvicorn
-kill -TERM $(pgrep -f gunicorn)
-kill -TERM $(pgrep -f uvicorn)
-```
+No writes must happen to the database between key generation and rotation.
+Stop the gateway using whichever method your deployment uses. See the
+[Appendix](#appendix--deployment-specific-rotation-commands) for
+deployment-specific commands.
 
 ---
 
 ### Step 2 — Get the 1.0.8 code
 
-The migration script (`migrate_enc_secret.py`) is a **new file added in 1.0.8** — it
-does not exist on 1.0.7. You need the 1.0.8 codebase available locally to run it,
-regardless of how you deploy:
+The rotation script (`migrate_enc_secret.py`) is a **new file added in 1.0.8** — it
+does not exist on 1.0.7. You need the 1.0.8 codebase (or package) available to run
+it, regardless of how you deploy.
 
-```bash
-# git-based deployments
-git pull origin main
-# or
-git checkout v1.0.8
-
-# Docker / Kubernetes / Helm — pull the 1.0.8 image tag, but run the migration
-# script from the repository checkout on any machine that has Python + uv and
-# can reach the database before the new image is deployed.
-```
+For git-based deployments: `git pull origin main` or `git checkout v1.0.8`.
+For Docker / Kubernetes / Helm: run the script from a local checkout or
+`pip install mcp-contextforge-gateway==1.0.8` on any machine that can reach the
+database, before the new image is deployed.
 
 ---
 
 ### Step 3 — Generate a new strong key
 
-`make init-secrets` generates a fresh set of secrets and writes them to `.env.secrets`
-for review. `AUTH_ENCRYPTION_SECRET` is **not** patched in-place because rotating it
-requires migrating the database first — that is what Step 5 does.
+Generate a strong new `AUTH_ENCRYPTION_SECRET` (≥ 32 chars, high-entropy) and set it
+in your config source. The value must be in place **before** you run Step 5 — the
+script reads it as `--new-key`.
 
-```bash
-make init-secrets
-```
-
-Read the generated value from `.env.secrets`:
-
-```bash
-grep AUTH_ENCRYPTION_SECRET .env.secrets
-# AUTH_ENCRYPTION_SECRET=<43-char URL-safe base64 token>
-```
-
-Then set it in whichever configuration source your deployment reads from — `.env`,
-a Docker secret, a Kubernetes Secret, Helm `values-override.yaml`, or your secret
-manager. The value must be in place **before** you run Step 5.
-
-```bash
-# .env (bare-metal / local)
-sed -i 's/^AUTH_ENCRYPTION_SECRET=.*/AUTH_ENCRYPTION_SECRET=<new-value>/' .env
-
-# Docker Compose (if using environment: block directly)
-# Update the AUTH_ENCRYPTION_SECRET line in your compose override file
-
-# Kubernetes / Helm
-# kubectl create secret generic mcpgateway-secrets \
-#   --from-literal=AUTH_ENCRYPTION_SECRET=<new-value> --dry-run=client -o yaml | kubectl apply -f -
-```
+For repository-based deployments, `make init-secrets` generates a ready-to-use value
+in `.env.secrets`. For package consumers or environments without `make`, generate one
+with Python: `python3 -c "import secrets; print(secrets.token_urlsafe(32))"`.
 
 > 📋 Note the new value — you will pass it as `--new-key` in Step 5.
+> See the [Appendix](#appendix--deployment-specific-rotation-commands) for how to
+> set the value in each deployment type.
 
 ---
 
-### Step 4 — Dry-run the migration *(recommended)*
+### Step 4 — Dry-run the rotation *(recommended)*
 
 Reads every affected row and reports what would be re-encrypted. No writes are made.
 
@@ -198,11 +154,11 @@ DRY RUN SUMMARY (no changes written):
 
 > ❌ **If `Errors > 0`:** some rows are encrypted with a key that is neither
 > `--old-key` nor `--new-key` (a third key from a previous rotation). Stop and
-> investigate before proceeding — do not run the live migration until errors are 0.
+> investigate before proceeding — do not run the live rotation until errors are 0.
 
 ---
 
-### Step 5 — Run the live migration
+### Step 5 — Run the live rotation
 
 Re-encrypts all affected rows under the new key in a single database transaction.
 The transaction is rolled back automatically if any row fails — the database is
@@ -235,19 +191,19 @@ Expected output on success:
 
 ```
 ============================================================
-MIGRATION SUMMARY:
+ROTATION SUMMARY:
   Rows scanned  : 12
   Values migrated: 8
   Values skipped : 4
   Errors         : 0
 ============================================================
 
-✅  Migration complete — 8 value(s) re-encrypted successfully.
+✅  Rotation complete — 8 value(s) re-encrypted successfully.
 ```
 
 | Exit code | Meaning |
 |-----------|---------|
-| `0` | All rows migrated (or nothing to migrate). Proceed to Step 6. |
+| `0` | All rows rotated (or nothing to rotate). Proceed to Step 6. |
 | `1` | One or more rows failed. Transaction rolled back. Check stderr before retrying. |
 
 ---
@@ -256,29 +212,8 @@ MIGRATION SUMMARY:
 
 The guardrail now passes (strong key in your config) and all database rows are
 encrypted under the new key. Start the gateway using whichever method your
-deployment uses:
-
-```bash
-# Docker Compose
-docker compose up -d
-
-# Kubernetes — restore replicas
-kubectl scale deployment <mcpgateway-deployment> --replicas=<original-count>
-
-# Helm
-helm upgrade <release> <chart> --set replicaCount=<original-count>
-# or roll out the 1.0.8 image with the new secret value:
-helm upgrade <release> <chart> -f values-override.yaml
-
-# systemd
-systemctl start mcpgateway
-
-# bare-metal development
-make dev
-
-# bare-metal production
-make serve
-```
+deployment uses. See the [Appendix](#appendix--deployment-specific-rotation-commands)
+for deployment-specific commands.
 
 **Expected result:** no `SecurityConfigurationError` in startup logs. Verify
 credentials work by authenticating via the gateway and confirming SSO / OAuth flows
@@ -290,13 +225,128 @@ succeed.
 
 | # | Action | Code version | Gateway state |
 |---|--------|-------------|---------------|
-| 0 | Record old weak key | 1.0.7 | Running (read only) |
+| 0 | Back up database + record old weak key | 1.0.7 | Running (read only) |
 | 1 | Stop gateway | 1.0.7 | **Stopped** |
 | 2 | Pull 1.0.8 code | **1.0.8** | Stopped |
 | 3 | `make init-secrets` → set `AUTH_ENCRYPTION_SECRET` in your config source | 1.0.8 | Stopped |
 | 4 | `migrate_enc_secret --dry-run` | 1.0.8 | Stopped |
-| 5 | `migrate_enc_secret` (live run) | 1.0.8 | Stopped |
+| 5 | `migrate_enc_secret` (live rotation) | 1.0.8 | Stopped |
 | 6 | Start gateway | 1.0.8 | **Running** |
+
+---
+
+## Using ContextForge as a Python package
+
+If you embed ContextForge in your own application via `pip install mcp-contextforge-gateway`
+rather than running the server directly, the rotation script is still available as a
+module and can be driven programmatically or from a plain `python` invocation — no
+`uv`, `make`, or repository checkout required.
+
+### Why this path is different
+
+When installed as a package:
+
+- `uv` and `make` are not available (they are dev tools, not runtime dependencies).
+- The `.env` file convention does not apply — your application owns the configuration surface.
+- You generate strong secrets with Python's `secrets` module rather than `make init-secrets`.
+- The rotation script is invoked either as a CLI entry-point or imported directly.
+
+### Step-by-step for package consumers
+
+**1. Generate a strong new key in Python:**
+
+```python
+import secrets
+new_key = secrets.token_urlsafe(32)   # 43-char URL-safe base64 string
+print(new_key)
+```
+
+Store the output wherever your application reads `AUTH_ENCRYPTION_SECRET` from —
+an environment variable, a secrets manager (HashiCorp Vault, AWS Secrets Manager,
+IBM Key Protect), or an injected config file. Keep the old key available until
+Step 3 completes.
+
+**2. Dry-run via the installed entry-point:**
+
+```bash
+# If mcp-contextforge-gateway is installed in the active environment:
+python -m mcpgateway.scripts.migrate_enc_secret \
+    --old-key "$OLD_AUTH_ENCRYPTION_SECRET" \
+    --new-key "$NEW_AUTH_ENCRYPTION_SECRET" \
+    --database-url "$DATABASE_URL" \
+    --dry-run
+```
+
+**3. Run the live rotation:**
+
+```bash
+python -m mcpgateway.scripts.migrate_enc_secret \
+    --old-key "$OLD_AUTH_ENCRYPTION_SECRET" \
+    --new-key "$NEW_AUTH_ENCRYPTION_SECRET" \
+    --database-url "$DATABASE_URL"
+```
+
+**4. Invoke programmatically from your own code:**
+
+```python
+import sys
+from mcpgateway.scripts.migrate_enc_secret import main
+
+sys.argv = [
+    "migrate_enc_secret",
+    "--old-key", old_key,
+    "--new-key", new_key,
+    "--database-url", database_url,
+]
+main()   # raises SystemExit(0) on success, SystemExit(1) on failure
+```
+
+Or, to capture the result without raising:
+
+```python
+import subprocess, sys
+
+result = subprocess.run(
+    [
+        sys.executable, "-m", "mcpgateway.scripts.migrate_enc_secret",
+        "--old-key", old_key,
+        "--new-key", new_key,
+        "--database-url", database_url,
+    ],
+    capture_output=True,
+    text=True,
+)
+if result.returncode != 0:
+    raise RuntimeError(f"Secret rotation failed:\n{result.stderr}")
+```
+
+**5. Update your application config and restart:**
+
+After a `returncode == 0`, update `AUTH_ENCRYPTION_SECRET` to the new value in
+whatever config surface your app uses, then restart the gateway process.
+
+### Using environment variables instead of CLI flags
+
+The script reads `OLD_AUTH_ENCRYPTION_SECRET` and `NEW_AUTH_ENCRYPTION_SECRET` from
+the environment if the corresponding CLI flags are not passed — convenient when your
+secrets manager injects environment variables at runtime:
+
+```python
+import os, subprocess, sys
+
+os.environ["OLD_AUTH_ENCRYPTION_SECRET"] = old_key
+os.environ["NEW_AUTH_ENCRYPTION_SECRET"] = new_key
+os.environ["DATABASE_URL"] = database_url
+
+result = subprocess.run(
+    [sys.executable, "-m", "mcpgateway.scripts.migrate_enc_secret"],
+    capture_output=True,
+    text=True,
+)
+```
+
+> ⚠️ Clear `OLD_AUTH_ENCRYPTION_SECRET` from the environment after the rotation
+> completes — it is a live credential.
 
 ---
 
@@ -305,21 +355,21 @@ succeed.
 ### Never had any OAuth tokens / SSO / gateways with credentials
 
 The dry-run will report `Rows scanned: 0, Values migrated: 0`. Still run the live
-migration (Step 5) to confirm exit 0, but it is a no-op. Steps 3 and 6 are the only
+rotation (Step 5) to confirm exit 0, but it is a no-op. Steps 3 and 6 are the only
 ones that matter for you.
 
 ### Helm / Kubernetes deployments
 
 `charts/mcp-stack/values.yaml` now ships with `AUTH_ENCRYPTION_SECRET: ""` (must be
 set explicitly). Provide the new strong value via your `values-override.yaml` or a
-Kubernetes Secret, then run the migration as a pre-upgrade Job or init container
+Kubernetes Secret, then run the rotation as a pre-upgrade Job or init container
 **before** the gateway Deployment rolls over to 1.0.8.
 
 ### `MIN_SECRET_LENGTH` raised above 32
 
 If you have `MIN_SECRET_LENGTH=64` set in your configuration, `make init-secrets` will
 generate a token of ≥ 64 chars (the script respects the configured floor). Set that
-full value in your config source and pass it as `--new-key`. The migration script
+full value in your config source and pass it as `--new-key`. The rotation script
 validates `--new-key` against the absolute 32-char minimum only — the gateway will
 re-apply the higher floor at startup.
 
@@ -328,14 +378,14 @@ re-apply the higher floor at startup.
 > ❌ **This is a data-loss scenario.** Any row written by the 1.0.8 gateway after it
 > started is encrypted under the new key. Any row still encrypted under the old key
 > is now unreadable by the running gateway. You need to identify which rows each key
-> owns before re-running the migration. Use `--dry-run` with both key orders to see
+> owns before re-running the rotation. Use `--dry-run` with both key orders to see
 > the error counts, then contact the team before proceeding.
 
 ### Rolling back to a previous (weaker) key — `--force`
 
 > ⚠️ **Use only when you intentionally need to decrypt back to a key that does not
 > meet the strength requirements** (e.g. reverting a key rotation in a test
-> environment, or undoing a migration before re-doing it with a different key).
+> environment, or undoing a rotation before re-doing it with a different key).
 > After a `--force` rollback the database will contain credentials encrypted under a
 > weak key.  **Do not start the 1.0.8 gateway with a weak
 > `AUTH_ENCRYPTION_SECRET`** — it will refuse to start.
@@ -395,5 +445,286 @@ uv run python3 -m mcpgateway.scripts.migrate_enc_secret \
 | `❌ --old-key and --new-key are identical` | Both arguments have the same value | Verify you are using the old key as `--old-key` and the newly generated value as `--new-key`. |
 | `Errors: N` in dry-run output | Some rows encrypted with a third key | Identify previous key rotation history; re-run with the correct `--old-key` for each batch. |
 | `AUTH_ENCRYPTION_SECRET: shell environment holds a weak/non-compliant value…` | `AUTH_ENCRYPTION_SECRET=changeme` exported in shell, strong value already in `.env` | Run `unset AUTH_ENCRYPTION_SECRET`, then retry. |
-| OAuth flows break after upgrade | Migration ran with wrong `--old-key`; rows not actually re-encrypted | Confirm exit code was `0` and `Values migrated > 0`. Re-run migration with correct keys. |
-| Tool / agent / LLM auth fails after upgrade | `services_auth` blobs not re-encrypted (separate path from OAuth) | Same fix — re-run migration with correct `--old-key`; confirm `Values migrated > 0` for those tables. |
+| OAuth flows break after upgrade | Rotation ran with wrong `--old-key`; rows not actually re-encrypted | Confirm exit code was `0` and `Values migrated > 0`. Re-run rotation with correct keys. |
+| Tool / agent / LLM auth fails after upgrade | `services_auth` blobs not re-encrypted (separate path from OAuth) | Same fix — re-run rotation with correct `--old-key`; confirm `Values migrated > 0` for those tables. |
+
+---
+
+## Appendix — Deployment-specific rotation commands
+
+Self-contained command sequences for each deployment type. Substitute
+`<old-key>`, `<new-key>`, and `<new-strong-value>` with your actual values before
+running.
+
+---
+
+### Docker Compose
+
+```bash
+# 0. Record the old key
+OLD_KEY=$(docker inspect mcpgateway | python3 -c \
+  "import sys,json; envs=json.load(sys.stdin)[0]['Config']['Env']; \
+   print(next(e.split('=',1)[1] for e in envs if e.startswith('AUTH_ENCRYPTION_SECRET=')))")
+
+# 1. Stop
+docker compose down
+
+# 2. Pull 1.0.8 code
+git pull origin main
+
+# 3. Generate a new strong key and update compose config
+NEW_KEY=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))")
+# Edit docker-compose.override.yml or .env to set AUTH_ENCRYPTION_SECRET=$NEW_KEY
+
+# 4. Dry-run
+DATABASE_URL=<your-database-url> \
+  docker run --rm \
+    -e OLD_AUTH_ENCRYPTION_SECRET="$OLD_KEY" \
+    -e NEW_AUTH_ENCRYPTION_SECRET="$NEW_KEY" \
+    -e DATABASE_URL=<your-database-url> \
+    --network host \
+    icr.io/contextforge/mcp-context-forge:1.0.8 \
+    python -m mcpgateway.scripts.migrate_enc_secret --dry-run
+
+# 4a. (Alternative) Run from local checkout instead of image:
+uv run python3 -m mcpgateway.scripts.migrate_enc_secret \
+    --old-key "$OLD_KEY" --new-key "$NEW_KEY" --dry-run
+
+# 5. Live rotation
+uv run python3 -m mcpgateway.scripts.migrate_enc_secret \
+    --old-key "$OLD_KEY" \
+    --new-key "$NEW_KEY"
+
+# 6. Start
+docker compose up -d
+```
+
+---
+
+### Kubernetes (kubectl)
+
+```bash
+# 0. Record the old key from the Secret
+OLD_KEY=$(kubectl get secret mcpgateway-secrets \
+  -o jsonpath='{.data.AUTH_ENCRYPTION_SECRET}' | base64 -d)
+
+# 1. Stop — scale to zero
+kubectl scale deployment mcpgateway --replicas=0
+kubectl rollout status deployment/mcpgateway   # wait for scale-down
+
+# 2. (on a machine with Python + the 1.0.8 source or package)
+git pull origin main   # or: pip install "mcp-contextforge-gateway==1.0.8"
+
+# 3. Generate a new key and patch the Secret
+NEW_KEY=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))")
+kubectl create secret generic mcpgateway-secrets \
+  --from-literal=AUTH_ENCRYPTION_SECRET="$NEW_KEY" \
+  --dry-run=client -o yaml | kubectl apply -f -
+
+# 4. Dry-run (connect to DB via port-forward or from a pod with DB access)
+kubectl port-forward svc/postgres 5432:5432 &
+uv run python3 -m mcpgateway.scripts.migrate_enc_secret \
+    --old-key "$OLD_KEY" \
+    --new-key "$NEW_KEY" \
+    --database-url "postgresql+psycopg://user:pass@localhost:5432/mcpgateway" \
+    --dry-run
+
+# 5. Live rotation
+uv run python3 -m mcpgateway.scripts.migrate_enc_secret \
+    --old-key "$OLD_KEY" \
+    --new-key "$NEW_KEY" \
+    --database-url "postgresql+psycopg://user:pass@localhost:5432/mcpgateway"
+
+# 6. Restore replicas
+kubectl scale deployment mcpgateway --replicas=2
+kubectl rollout status deployment/mcpgateway
+```
+
+---
+
+### Helm
+
+```bash
+# 0. Record the old key
+OLD_KEY=$(kubectl get secret mcpgateway-secrets \
+  -o jsonpath='{.data.AUTH_ENCRYPTION_SECRET}' | base64 -d)
+
+# 1. Scale to zero via Helm
+helm upgrade mcpgateway ./charts/mcp-stack \
+  --reuse-values \
+  --set replicaCount=0
+
+# 2. Pull 1.0.8 chart + app
+git pull origin main
+
+# 3. Generate a new key and write it to your values override
+NEW_KEY=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))")
+# In values-override.yaml set:
+#   auth:
+#     encryptionSecret: "<new-key>"
+
+# 4. Dry-run
+kubectl port-forward svc/postgres 5432:5432 &
+uv run python3 -m mcpgateway.scripts.migrate_enc_secret \
+    --old-key "$OLD_KEY" \
+    --new-key "$NEW_KEY" \
+    --database-url "postgresql+psycopg://user:pass@localhost:5432/mcpgateway" \
+    --dry-run
+
+# 5. Live rotation
+uv run python3 -m mcpgateway.scripts.migrate_enc_secret \
+    --old-key "$OLD_KEY" \
+    --new-key "$NEW_KEY" \
+    --database-url "postgresql+psycopg://user:pass@localhost:5432/mcpgateway"
+
+# 6. Roll out 1.0.8 with the new key
+helm upgrade mcpgateway ./charts/mcp-stack -f values-override.yaml
+```
+
+---
+
+### systemd (bare-metal)
+
+```bash
+# 0. Record the old key
+OLD_KEY=$(grep AUTH_ENCRYPTION_SECRET /etc/mcpgateway/mcpgateway.env | cut -d= -f2-)
+
+# 1. Stop the service
+sudo systemctl stop mcpgateway
+
+# 2. Pull 1.0.8 code
+cd /opt/mcpgateway
+git pull origin main
+
+# 3. Generate a new key and update the environment file
+NEW_KEY=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))")
+sudo sed -i "s|^AUTH_ENCRYPTION_SECRET=.*|AUTH_ENCRYPTION_SECRET=$NEW_KEY|" \
+    /etc/mcpgateway/mcpgateway.env
+
+# 4. Dry-run
+uv run python3 -m mcpgateway.scripts.migrate_enc_secret \
+    --old-key "$OLD_KEY" \
+    --new-key "$NEW_KEY" \
+    --dry-run
+
+# 5. Live rotation
+uv run python3 -m mcpgateway.scripts.migrate_enc_secret \
+    --old-key "$OLD_KEY" \
+    --new-key "$NEW_KEY"
+
+# 6. Start the service
+sudo systemctl start mcpgateway
+sudo systemctl status mcpgateway
+```
+
+---
+
+### Python package (pip-installed)
+
+```bash
+# 0. Retrieve the old key from your secrets manager / environment
+OLD_KEY="$AUTH_ENCRYPTION_SECRET"
+
+# 1. Stop your application process (app-specific)
+
+# 2. Install or upgrade to 1.0.8
+pip install --upgrade "mcp-contextforge-gateway==1.0.8"
+
+# 3. Generate a new strong key
+NEW_KEY=$(python3 -c "import secrets; print(secrets.token_urlsafe(32))")
+# Store NEW_KEY in your secrets manager / config before proceeding
+
+# 4. Dry-run
+python -m mcpgateway.scripts.migrate_enc_secret \
+    --old-key "$OLD_KEY" \
+    --new-key "$NEW_KEY" \
+    --database-url "$DATABASE_URL" \
+    --dry-run
+
+# 5. Live rotation
+python -m mcpgateway.scripts.migrate_enc_secret \
+    --old-key "$OLD_KEY" \
+    --new-key "$NEW_KEY" \
+    --database-url "$DATABASE_URL"
+
+# 6. Update AUTH_ENCRYPTION_SECRET to NEW_KEY in your config / secrets manager
+#    and restart your application
+```
+
+**Programmatic rotation** (call from your own Python code):
+
+```python
+import secrets
+import subprocess
+import sys
+
+old_key = "my-old-weak-secret"           # retrieved from your secrets manager
+new_key = secrets.token_urlsafe(32)       # generate once, store immediately
+database_url = "postgresql+psycopg://user:pass@host/dbname"
+
+# Dry-run first
+result = subprocess.run(
+    [
+        sys.executable, "-m", "mcpgateway.scripts.migrate_enc_secret",
+        "--old-key", old_key,
+        "--new-key", new_key,
+        "--database-url", database_url,
+        "--dry-run",
+    ],
+    capture_output=True,
+    text=True,
+)
+print(result.stdout)
+if result.returncode != 0:
+    raise RuntimeError(f"Dry-run failed:\n{result.stderr}")
+
+# Live rotation
+result = subprocess.run(
+    [
+        sys.executable, "-m", "mcpgateway.scripts.migrate_enc_secret",
+        "--old-key", old_key,
+        "--new-key", new_key,
+        "--database-url", database_url,
+    ],
+    capture_output=True,
+    text=True,
+)
+print(result.stdout)
+if result.returncode != 0:
+    raise RuntimeError(f"Rotation failed:\n{result.stderr}")
+
+# Update your config to use new_key, then restart the gateway
+```
+
+---
+
+### Local development (SQLite + .env)
+
+```bash
+# 0. Record the old key
+OLD_KEY=$(grep AUTH_ENCRYPTION_SECRET .env | cut -d= -f2-)
+
+# 1. Stop the dev server (Ctrl-C or kill the process)
+
+# 2. Pull 1.0.8 code
+git pull origin main
+
+# 3. Generate a new key and update .env
+make init-secrets
+NEW_KEY=$(grep AUTH_ENCRYPTION_SECRET .env.secrets | cut -d= -f2-)
+sed -i "s|^AUTH_ENCRYPTION_SECRET=.*|AUTH_ENCRYPTION_SECRET=$NEW_KEY|" .env
+
+# 4. Dry-run
+uv run python3 -m mcpgateway.scripts.migrate_enc_secret \
+    --old-key "$OLD_KEY" \
+    --new-key "$NEW_KEY" \
+    --dry-run
+
+# 5. Live rotation
+uv run python3 -m mcpgateway.scripts.migrate_enc_secret \
+    --old-key "$OLD_KEY" \
+    --new-key "$NEW_KEY"
+
+# 6. Restart
+make dev
+```

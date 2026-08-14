@@ -24,7 +24,6 @@ concurrency = thread, multiprocessing
 omit =
     mcpgateway/alembic/*
     mcpgateway/tools/builder/*
-    mcpgateway/scripts/migrate_enc_secret.py
     */tests/*
     */test_*.py
 

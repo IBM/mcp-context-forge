@@ -661,7 +661,7 @@ plugins = ["pydantic.mypy"]              # Enable mypy plugin for Pydantic model
 
 [tool.pytest.ini_options]
 minversion = "6.0"
-addopts = "-ra -q -p no:playwright -p no:benchmark --ignore=tests/playwright --ignore=tests/migration --ignore=tests/performance --ignore=tests/compliance --ignore=tests/live_gateway --ignore=mcpgateway/scripts/migrate_enc_secret.py"
+addopts = "-ra -q -p no:playwright -p no:benchmark --ignore=tests/playwright --ignore=tests/migration --ignore=tests/performance --ignore=tests/compliance --ignore=tests/live_gateway"
 testpaths = [ "tests",]
 asyncio_mode = "auto"
 filterwarnings = [
@@ -808,7 +808,6 @@ concurrency = ["thread", "multiprocessing"]
 omit = [
     "mcpgateway/alembic/*",
     "mcpgateway/tools/builder/*",
-    "mcpgateway/scripts/migrate_enc_secret.py",
     "*/tests/*",
     "*/test_*.py",
 ]

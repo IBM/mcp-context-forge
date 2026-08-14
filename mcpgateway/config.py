@@ -1536,6 +1536,16 @@ class Settings(BaseSettings):
         ):
             val = secret_field.get_secret_value()
 
+            # For auth_encryption_secret failures, append the secrets rotation guide URL
+            # so operators upgrading from 1.0.7 know how to re-encrypt stored credentials.
+            rotation_hint = (
+                "\nIf you are upgrading from 1.0.7 and have stored credentials encrypted "
+                "under the old key, you must rotate them before starting the gateway.\n"
+                "Rotation guide: docs/upgrade/auth-encryption-secret-1.0.7-to-1.0.8.md"
+                if field_name == "auth_encryption_secret"
+                else ""
+            )
+
             if not val.strip():
                 raise SecurityConfigurationError(f"{field_name}: secret is empty. Set a real value (run 'python -m mcpgateway.scripts.init_secrets').")
 
@@ -1545,6 +1555,7 @@ class Settings(BaseSettings):
                     f"{field_name}: too short ({len(val)} chars, minimum {effective_min}). "
                     "Run 'python -m mcpgateway.scripts.init_secrets' to generate strong values, "
                     "or use 'make init-secrets-patch-env' to write them directly into .env."
+                    + rotation_hint
                 )
 
             is_placeholder = val.lower().startswith("__replace_me__")
@@ -1563,10 +1574,9 @@ class Settings(BaseSettings):
                     f"{field_name}: {reason} rejected in every environment (including '{env}'). "
                     "Cross-process token consistency requires operators to supply a real secret before startup — "
                     "no per-process random fallback is generated. "
-                    "To fix, choose one of:\n"
-                    "  make setup                  # recommended: auto-creates .env and patches secrets in-place\n"
-                    "  make init-secrets           # writes secrets to .env.secrets for review, then copy into .env\n"
-                    "  make init-secrets-patch-env # patches secrets directly into an existing .env"
+                    "Run 'python -m mcpgateway.scripts.init_secrets' to generate strong values, "
+                    "or use 'make init-secrets-patch-env' to write them directly into .env."
+                    + rotation_hint
                 )
 
         if not self.client_mode:
