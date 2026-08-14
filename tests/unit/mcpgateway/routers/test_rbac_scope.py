@@ -149,6 +149,45 @@ async def test_get_global_role_returns_404_for_narrowed_admin(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_get_user_roles_narrows_by_caller_token_teams_for_other_users(monkeypatch):
+    """A narrowed admin viewing someone else's roles must pass its own token_teams
+    through to PermissionService.get_user_roles() so the service can filter out
+    global/out-of-scope-team/personal rows (the GET /rbac/users/{email}/roles leak).
+    """
+    get_user_roles_mock = AsyncMock(return_value=[])
+    monkeypatch.setattr("mcpgateway.services.permission_service.PermissionService.get_user_roles", get_user_roles_mock)
+
+    await rbac_router.get_user_roles(
+        "victim@example.com",
+        scope=None,
+        active_only=True,
+        user=admin_user_context(["team-a"]),
+        db=MagicMock(),
+        request=_jwt_scoped_request(["team-a"], path="/rbac/users/victim@example.com/roles"),
+    )
+
+    get_user_roles_mock.assert_awaited_once_with(user_email="victim@example.com", scope=None, include_expired=False, token_teams=["team-a"])
+
+
+@pytest.mark.asyncio
+async def test_get_user_roles_unfiltered_when_caller_views_own_roles(monkeypatch):
+    """A narrowed admin querying their OWN email via the admin route gets full visibility (parity with /my/roles)."""
+    get_user_roles_mock = AsyncMock(return_value=[])
+    monkeypatch.setattr("mcpgateway.services.permission_service.PermissionService.get_user_roles", get_user_roles_mock)
+
+    await rbac_router.get_user_roles(
+        "admin@example.com",
+        scope=None,
+        active_only=True,
+        user=admin_user_context(["team-a"]),
+        db=MagicMock(),
+        request=_jwt_scoped_request(["team-a"], path="/rbac/users/admin@example.com/roles"),
+    )
+
+    get_user_roles_mock.assert_awaited_once_with(user_email="admin@example.com", scope=None, include_expired=False, token_teams=None)
+
+
+@pytest.mark.asyncio
 async def test_narrowed_admin_cannot_authorize_global_assignment(monkeypatch):
     """The escalation path: a narrowed admin minting themselves a global '*' role."""
     monkeypatch.setattr("mcpgateway.auth_context.is_unrestricted_platform_admin", AsyncMock(return_value=False))
