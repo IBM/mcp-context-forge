@@ -922,3 +922,99 @@ async def test_bulk_register_breaks_on_exception_when_not_skipping_errors(servic
         db = MagicMock()
         result = await service.bulk_register_servers(fake_request, db, created_by="test@example.com", owner_email="test@example.com", token_teams=None)
     assert result.failed and result.failed[0]["error"] == "boom"
+
+
+# ---------- Deny-path regression tests for catalog registration scope ----------
+
+
+@pytest.mark.asyncio
+async def test_register_default_visibility_is_private(service):
+    """Registration without explicit visibility defaults to private, not public."""
+    fake_catalog = {"catalog_servers": [{"id": "1", "name": "srv", "url": "http://a", "description": "desc"}]}
+    register_gateway = AsyncMock(return_value=MagicMock(id=1, name="srv"))
+    with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)):
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = None
+        with patch("mcpgateway.services.catalog_service.select"), patch.object(service._gateway_service, "register_gateway", register_gateway):
+            result = await service.register_catalog_server("1", None, db, created_by="u@x.com", owner_email="u@x.com", token_teams=None)
+    assert result.success
+    assert register_gateway.await_args.kwargs["visibility"] == "private"
+
+
+@pytest.mark.asyncio
+async def test_register_explicit_public_honored(service):
+    """Explicit visibility=public is passed through to the gateway."""
+    fake_catalog = {"catalog_servers": [{"id": "1", "name": "srv", "url": "http://a", "description": "desc"}]}
+    register_gateway = AsyncMock(return_value=MagicMock(id=1, name="srv"))
+    req = CatalogServerRegisterRequest(server_id="1", visibility="public")
+    with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)):
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = None
+        with patch("mcpgateway.services.catalog_service.select"), patch.object(service._gateway_service, "register_gateway", register_gateway):
+            result = await service.register_catalog_server("1", req, db, created_by="u@x.com", owner_email="u@x.com", token_teams=None)
+    assert result.success
+    assert register_gateway.await_args.kwargs["visibility"] == "public"
+
+
+@pytest.mark.asyncio
+async def test_register_team_without_team_id_rejected(service):
+    """visibility=team without a team_id is rejected."""
+    from mcpgateway.services.catalog_service import CatalogRegistrationPermissionError
+    req = CatalogServerRegisterRequest(server_id="1", visibility="team")
+    db = MagicMock()
+    with pytest.raises(CatalogRegistrationPermissionError, match="team_id is required"):
+        await service.register_catalog_server("1", req, db, created_by="u@x.com", owner_email="u@x.com", token_teams=None)
+
+
+@pytest.mark.asyncio
+async def test_register_foreign_team_rejected(service):
+    """A team_id not in the caller's token scope is rejected."""
+    from mcpgateway.services.catalog_service import CatalogRegistrationPermissionError
+    req = CatalogServerRegisterRequest(server_id="1", visibility="team", team_id="foreign-team")
+    db = MagicMock()
+    with pytest.raises(CatalogRegistrationPermissionError, match="not in the caller's token scope"):
+        await service.register_catalog_server("1", req, db, created_by="u@x.com", owner_email="u@x.com", token_teams=["my-team"])
+
+
+@pytest.mark.asyncio
+async def test_register_public_only_token_cannot_create_private(service):
+    """Public-only tokens (token_teams=[]) cannot create private registrations."""
+    from mcpgateway.services.catalog_service import CatalogRegistrationPermissionError
+    db = MagicMock()
+    with pytest.raises(CatalogRegistrationPermissionError, match="Public-only tokens"):
+        await service.register_catalog_server("1", None, db, created_by="u@x.com", owner_email="u@x.com", token_teams=[])
+
+
+@pytest.mark.asyncio
+async def test_register_unknown_owner_rejected(service):
+    """An unknown or empty owner is rejected."""
+    from mcpgateway.services.catalog_service import CatalogRegistrationPermissionError
+    db = MagicMock()
+    with pytest.raises(CatalogRegistrationPermissionError, match="Authenticated identity required"):
+        await service.register_catalog_server("1", None, db, created_by="unknown", owner_email="unknown", token_teams=None)
+
+
+@pytest.mark.asyncio
+async def test_register_owner_email_set_from_caller(service):
+    """Persisted gateway has owner_email matching the authenticated caller."""
+    fake_catalog = {"catalog_servers": [{"id": "1", "name": "srv", "url": "http://a", "description": "desc"}]}
+    register_gateway = AsyncMock(return_value=MagicMock(id=1, name="srv"))
+    with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)):
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = None
+        with patch("mcpgateway.services.catalog_service.select"), patch.object(service._gateway_service, "register_gateway", register_gateway):
+            await service.register_catalog_server("1", None, db, created_by="caller@co.com", owner_email="caller@co.com", token_teams=None)
+    assert register_gateway.await_args.kwargs["owner_email"] == "caller@co.com"
+
+
+@pytest.mark.asyncio
+async def test_bulk_rejects_invalid_scope_before_any_registration(service):
+    """Bulk registration with an invalid common scope rejects before creating any gateway."""
+    from mcpgateway.services.catalog_service import CatalogRegistrationPermissionError
+    fake_request = CatalogBulkRegisterRequest(server_ids=["1", "2"], visibility="team")
+    mock_register = AsyncMock()
+    db = MagicMock()
+    with patch.object(service, "register_catalog_server", mock_register):
+        with pytest.raises(CatalogRegistrationPermissionError, match="team_id is required"):
+            await service.bulk_register_servers(fake_request, db, created_by="u@x.com", owner_email="u@x.com", token_teams=None)
+    mock_register.assert_not_awaited()
