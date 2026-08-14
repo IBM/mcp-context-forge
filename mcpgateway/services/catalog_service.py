@@ -46,6 +46,10 @@ CATALOG_REGISTER_NOT_FOUND_MSG = "Server not found in catalog"
 CATALOG_REGISTER_ALREADY_REGISTERED_MSG = "Server already registered"
 
 
+class CatalogRegistrationPermissionError(PermissionError):
+    """Raised when a catalog registration is rejected due to scope/team policy."""
+
+
 class CatalogService:
     """Service for managing MCP server catalog."""
 
@@ -54,6 +58,72 @@ class CatalogService:
         self._catalog_cache: Optional[Dict[str, Any]] = None
         self._cache_timestamp: float = 0
         self._gateway_service = GatewayService()
+
+    def _resolve_registration_scope(
+        self,
+        db: Session,
+        request: Optional[CatalogServerRegisterRequest],
+        owner_email: str,
+        token_teams: Optional[List[str]],
+    ) -> tuple:
+        """Resolve visibility and team_id for a catalog registration.
+
+        Args:
+            db: Database session
+            request: Registration request with optional visibility/team overrides
+            owner_email: Authenticated caller's email
+            token_teams: Token-scoped team list (None=admin bypass, []=public-only)
+
+        Returns:
+            Tuple of (visibility, team_id)
+
+        Raises:
+            CatalogRegistrationPermissionError: If the caller lacks permission for the requested scope.
+        """
+        # Extract requested scope from request
+        visibility = (request.visibility if request and request.visibility else "private")
+        requested_team_id = (request.team_id if request and request.team_id else None)
+
+        # Reject unknown or empty owner
+        if not owner_email or owner_email == "unknown":
+            raise CatalogRegistrationPermissionError("Authenticated identity required for catalog registration")
+
+        # Public-only tokens can only create explicitly public gateways
+        if token_teams is not None and len(token_teams) == 0 and visibility != "public":
+            raise CatalogRegistrationPermissionError("Public-only tokens can only create public catalog registrations")
+
+        # Team visibility requires a team_id
+        if visibility == "team" and not requested_team_id:
+            raise CatalogRegistrationPermissionError("team_id is required when visibility is 'team'")
+
+        # Validate team_id against token scope
+        if requested_team_id and token_teams is not None and requested_team_id not in token_teams:
+            raise CatalogRegistrationPermissionError("Requested team is not in the caller's token scope")
+
+        # Validate team membership when a team is specified
+        if requested_team_id:
+            # First-Party
+            from mcpgateway.db import EmailTeam as DbEmailTeam  # pylint: disable=import-outside-toplevel
+            from mcpgateway.db import EmailTeamMember as DbEmailTeamMember  # pylint: disable=import-outside-toplevel
+
+            team = db.execute(select(DbEmailTeam).where(DbEmailTeam.id == requested_team_id, DbEmailTeam.is_active == True)).scalar_one_or_none()  # noqa: E712
+            if not team:
+                raise CatalogRegistrationPermissionError(f"Team '{requested_team_id}' not found or inactive")
+
+            membership = db.execute(
+                select(DbEmailTeamMember).where(
+                    DbEmailTeamMember.team_id == requested_team_id,
+                    DbEmailTeamMember.user_email == owner_email,
+                    DbEmailTeamMember.is_active == True,  # noqa: E712
+                )
+            ).scalar_one_or_none()
+            if not membership:
+                raise CatalogRegistrationPermissionError(f"Caller is not an active member of team '{requested_team_id}'")
+
+            # Release the read transaction
+            db.commit()
+
+        return (visibility, requested_team_id)
 
     async def load_catalog(self, force_reload: bool = False) -> Dict[str, Any]:
         """Load catalog from YAML file.
@@ -287,9 +357,10 @@ class CatalogService:
         catalog_id: str,
         request: Optional[CatalogServerRegisterRequest],
         db: Session,
-        created_by: Optional[str] = None,
-        owner_email: Optional[str] = None,
-        team_id: Optional[str] = None,
+        *,
+        created_by: str,
+        owner_email: str,
+        token_teams: Optional[List[str]],
     ) -> CatalogServerRegisterResponse:
         """Register a catalog server as a gateway.
 
@@ -298,13 +369,19 @@ class CatalogService:
             request: Registration request with optional overrides
             db: Database session
             created_by: Identity of the caller creating the gateway
-            owner_email: Email of the gateway owner
-            team_id: Team the gateway belongs to
+            owner_email: Email of the gateway owner (derived from auth, never client-supplied)
+            token_teams: Token-scoped team list (None=admin bypass, []=public-only)
 
         Returns:
             Registration response
+
+        Raises:
+            CatalogRegistrationPermissionError: If scope validation fails.
         """
         try:
+            # Resolve visibility and team scope before any persistence
+            visibility, resolved_team_id = self._resolve_registration_scope(db, request, owner_email, token_teams)
+
             # Load catalog to find the server
             catalog_data = await self.load_catalog()
             servers = catalog_data.get("catalog_servers", [])
@@ -417,10 +494,10 @@ class CatalogService:
                     auth_type="oauth",  # Mark as OAuth so it can be identified after page refresh
                     enabled=False,  # Disabled until OAuth is configured
                     created_via="catalog",
-                    visibility="public",
+                    visibility=visibility,
                     created_by=created_by,
                     owner_email=owner_email,
-                    team_id=team_id,
+                    team_id=resolved_team_id,
                     version=1,
                 )
 
@@ -487,10 +564,10 @@ class CatalogService:
                 db=db,
                 gateway=gateway_create,
                 created_via="catalog",
-                visibility="public",  # Catalog servers should be public
+                visibility=visibility,
                 created_by=created_by,
                 owner_email=owner_email,
-                team_id=team_id,
+                team_id=resolved_team_id,
                 initialize_timeout=settings.httpx_admin_read_timeout,
             )
 
@@ -518,6 +595,8 @@ class CatalogService:
 
             return CatalogServerRegisterResponse(success=True, server_id=str(gateway_read.id), message=message, error=None)
 
+        except CatalogRegistrationPermissionError:
+            raise
         except Exception as e:
             logger.error("Failed to register catalog server %s: %s", catalog_id, e)
 
@@ -600,22 +679,58 @@ class CatalogService:
             logger.error("Failed to check server status for %s: %s", catalog_id, e)
             return CatalogServerStatusResponse(server_id=catalog_id, is_available=False, is_registered=False, error=str(e))
 
-    async def bulk_register_servers(self, request: CatalogBulkRegisterRequest, db: Session) -> CatalogBulkRegisterResponse:
+    async def bulk_register_servers(
+        self,
+        request: CatalogBulkRegisterRequest,
+        db: Session,
+        *,
+        created_by: str,
+        owner_email: str,
+        token_teams: Optional[List[str]],
+    ) -> CatalogBulkRegisterResponse:
         """Register multiple catalog servers.
 
         Args:
             request: Bulk registration request
             db: Database session
+            created_by: Identity of the caller creating the gateways
+            owner_email: Email of the gateway owner (derived from auth)
+            token_teams: Token-scoped team list (None=admin bypass, []=public-only)
 
         Returns:
             Bulk registration response
+
+        Raises:
+            CatalogRegistrationPermissionError: If scope validation fails on the common scope.
         """
+        # Validate common scope once before iterating
+        # Build a synthetic request carrying the bulk-level visibility/team
+        scope_request = CatalogServerRegisterRequest(
+            server_id="__bulk_validation__",
+            visibility=request.visibility,
+            team_id=request.team_id,
+        )
+        self._resolve_registration_scope(db, scope_request, owner_email, token_teams)
+
         successful = []
         failed = []
 
         for server_id in request.server_ids:
             try:
-                response = await self.register_catalog_server(catalog_id=server_id, request=None, db=db)
+                # Build per-server request carrying the bulk-level visibility/team
+                per_server_request = CatalogServerRegisterRequest(
+                    server_id=server_id,
+                    visibility=request.visibility,
+                    team_id=request.team_id,
+                )
+                response = await self.register_catalog_server(
+                    catalog_id=server_id,
+                    request=per_server_request,
+                    db=db,
+                    created_by=created_by,
+                    owner_email=owner_email,
+                    token_teams=token_teams,
+                )
 
                 if response.success:
                     successful.append(server_id)
