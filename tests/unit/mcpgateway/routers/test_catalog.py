@@ -18,6 +18,7 @@ import pytest
 from mcpgateway.api.v1 import build_legacy_router, build_v1_router
 from mcpgateway.config import settings
 from mcpgateway.routers.catalog import list_catalog_servers, register_catalog_server
+from mcpgateway.services.catalog_service import CatalogRegistrationPermissionError
 from mcpgateway.schemas import CatalogListResponse, CatalogServerRegisterBody, CatalogServerRegisterRequest, CatalogServerRegisterResponse
 from mcpgateway.services.catalog_service import CATALOG_REGISTER_ALREADY_REGISTERED_MSG, CATALOG_REGISTER_NOT_FOUND_MSG
 from tests.helpers.router_helpers import collect_routes
@@ -377,3 +378,19 @@ def test_register_body_allows_empty_payload():
 
     assert body.name is None
     assert body.api_key is None
+
+
+@pytest.mark.asyncio
+async def test_register_permission_error_returns_403(monkeypatch, allow_permission):
+    """A CatalogRegistrationPermissionError maps to HTTP 403."""
+    monkeypatch.setattr("mcpgateway.routers.catalog.settings.mcpgateway_catalog_enabled", True, raising=False)
+    monkeypatch.setattr("mcpgateway.routers.catalog.get_scoped_resource_access_context", MagicMock(return_value=("user@example.com", [])))
+    monkeypatch.setattr("mcpgateway.routers.catalog.catalog_service.register_catalog_server", AsyncMock(side_effect=CatalogRegistrationPermissionError("denied")))
+    db = MagicMock()
+    request = MagicMock(spec=Request)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await register_catalog_server("asana", request, db=db, user={"email": "user@example.com", "db": db})
+
+    assert exc_info.value.status_code == 403
+    assert exc_info.value.detail == "denied"

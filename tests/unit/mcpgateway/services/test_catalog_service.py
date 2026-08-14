@@ -19,7 +19,7 @@ from mcpgateway.schemas import (
     CatalogListRequest,
     CatalogServerRegisterRequest,
 )
-from mcpgateway.services.catalog_service import CatalogService
+from mcpgateway.services.catalog_service import CatalogRegistrationPermissionError, CatalogService
 
 
 @pytest.fixture
@@ -1018,3 +1018,42 @@ async def test_bulk_rejects_invalid_scope_before_any_registration(service):
         with pytest.raises(CatalogRegistrationPermissionError, match="team_id is required"):
             await service.bulk_register_servers(fake_request, db, created_by="u@x.com", owner_email="u@x.com", token_teams=None)
     mock_register.assert_not_awaited()
+
+
+# ---------- _resolve_registration_scope: team membership validation ----------
+
+
+def test_resolve_scope_team_not_found(service):
+    """Team ID passes token-scope check but DB returns no matching active team."""
+    request = CatalogServerRegisterRequest(server_id="1", visibility="team", team_id="team-1")
+    db = MagicMock()
+    db.execute.return_value.scalar_one_or_none.return_value = None
+
+    with pytest.raises(CatalogRegistrationPermissionError, match="not found or inactive"):
+        service._resolve_registration_scope(db, request, owner_email="u@x.com", token_teams=["team-1"])
+
+
+def test_resolve_scope_caller_not_team_member(service):
+    """Team exists but caller has no active membership row."""
+    request = CatalogServerRegisterRequest(server_id="1", visibility="team", team_id="team-1")
+    db = MagicMock()
+    fake_team = MagicMock()
+    # First call: team lookup → found; second call: membership lookup → None
+    db.execute.return_value.scalar_one_or_none.side_effect = [fake_team, None]
+
+    with pytest.raises(CatalogRegistrationPermissionError, match="not an active member"):
+        service._resolve_registration_scope(db, request, owner_email="u@x.com", token_teams=["team-1"])
+
+
+def test_resolve_scope_team_valid_returns_visibility_and_team_id(service):
+    """Both team and membership exist → returns ('team', 'team-1') and commits."""
+    request = CatalogServerRegisterRequest(server_id="1", visibility="team", team_id="team-1")
+    db = MagicMock()
+    fake_team = MagicMock()
+    fake_membership = MagicMock()
+    db.execute.return_value.scalar_one_or_none.side_effect = [fake_team, fake_membership]
+
+    result = service._resolve_registration_scope(db, request, owner_email="u@x.com", token_teams=["team-1"])
+
+    assert result == ("team", "team-1")
+    db.commit.assert_called_once()
