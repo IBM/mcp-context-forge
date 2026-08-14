@@ -11,6 +11,8 @@ from pathlib import Path
 import tests.performance.utils.generate_docker_compose as compose_module
 from tests.performance.utils.generate_docker_compose import DockerComposeGenerator
 
+_RETIRED_FAST_TEST_MARKERS = ("fast_test_server", "register_fast_test", "fastTestServer", "fastTest", "fast-test-server", "register-fast-test")
+
 
 def test_generated_compose_contains_only_fast_time_server(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(compose_module, "GATEWAY_SERVICE_TEMPLATE", compose_module.GATEWAY_SERVICE_TEMPLATE.replace("{JWT_SECRET_KEY}", "{{JWT_SECRET_KEY}}"))
@@ -31,8 +33,8 @@ def test_generated_compose_contains_only_fast_time_server(tmp_path: Path, monkey
     compose = DockerComposeGenerator(config).generate("test")
 
     assert "fast_time_server:" in compose
-    assert "fast_test_server" not in compose
-    assert "register_fast_test" not in compose
+    for marker in _RETIRED_FAST_TEST_MARKERS:
+        assert marker not in compose, marker
 
 
 def test_static_stack_files_contain_no_fast_test_backend() -> None:
@@ -50,5 +52,5 @@ def test_static_stack_files_contain_no_fast_test_backend() -> None:
     )
     for relative_path in paths:
         content = (repo_root / relative_path).read_text(encoding="utf-8")
-        assert "fast_test_server" not in content, relative_path
-        assert "register_fast_test" not in content, relative_path
+        for marker in _RETIRED_FAST_TEST_MARKERS:
+            assert marker not in content, f"{relative_path}: {marker}"
