@@ -308,11 +308,8 @@ class TokenStorageService:
         Returns:
             The ``{header: value}`` dict, or None.
         """
-        backend_getter = getattr(self._backend, "get_user_auth_headers", None)
-        if backend_getter is None:
-            return None
         team_id = self._get_team_id(gateway_id, app_user_email)
-        return await backend_getter(
+        return await self._backend.get_user_auth_headers(
             gateway_id=gateway_id,
             team_id=team_id,
             app_user_email=app_user_email,

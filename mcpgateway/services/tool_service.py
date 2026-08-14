@@ -4488,10 +4488,9 @@ class ToolService(BaseService):
             headers = {}
             if app_user_email and settings.oauth_token_backend == "vault":
                 # Per-user auth headers are only stored by the Vault backend (written by ICA).
-                # Skip the DB round-trip entirely on the default database backend which does
-                # not implement get_user_auth_headers — the facade returns None immediately
-                # via the getattr guard in token_storage_service.py, so the session and
-                # EmailUser query would be wasted on every non-OAuth tool invocation.
+                # Skip the DB round-trip entirely on the default database backend — the base
+                # class default returns None, so the session and EmailUser query would be
+                # wasted on every non-OAuth tool invocation.
                 try:
                     # First-Party
                     from mcpgateway.services.token_storage_service import TokenStorageService, build_token_user_context  # pylint: disable=import-outside-toplevel
