@@ -166,6 +166,22 @@ class TestAccumulatorAdd:
         acc.add(result, hook="pre")  # list(42) would raise TypeError — must be swallowed
         assert acc.records == []
 
+    def test_noop_when_continue_processing_raises(self):
+        """add() must not propagate if the continue_processing property raises."""
+
+        class BoomDenied:
+            executions = []
+
+            @property
+            def continue_processing(self):
+                raise RuntimeError("descriptor error")
+
+        acc = ControlTelemetryAccumulator()
+        acc.add(BoomDenied(), hook="pre")  # must not raise
+        # Denial is not recorded when the read itself fails (safe default: not denied)
+        assert acc.pre_denied is False
+        assert acc.records == []
+
 
 class TestAccumulatorCap:
     def test_cap_enforced_at_max_records_per_call(self):

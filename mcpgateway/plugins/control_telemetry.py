@@ -129,8 +129,13 @@ class ControlTelemetryAccumulator:
                 continue
             self._records.append((hook, rec))
 
-        # Track denial at each phase independently
-        if result is not None and not getattr(result, "continue_processing", True):
+        # Track denial at each phase independently.
+        # Use a guarded read — continue_processing may be a descriptor that raises.
+        try:
+            denied = result is not None and not getattr(result, "continue_processing", True)
+        except Exception:  # noqa: BLE001
+            denied = False
+        if denied:
             if hook == "pre":
                 self._pre_denied = True
             else:
