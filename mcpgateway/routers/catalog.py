@@ -119,13 +119,17 @@ async def register_catalog_server(
         raise HTTPException(status_code=404, detail="Catalog feature is disabled")
 
     # Map body fields (including visibility/team_id) into the service request
-    service_request = CatalogServerRegisterRequest(
-        server_id=catalog_id,
-        name=body.name if body else None,
-        api_key=body.api_key if body else None,
-        visibility=body.visibility if body else None,
-        team_id=body.team_id if body else None,
-    ) if body else None
+    service_request = (
+        CatalogServerRegisterRequest(
+            server_id=catalog_id,
+            name=body.name if body else None,
+            api_key=body.api_key if body else None,
+            visibility=body.visibility if body else None,
+            team_id=body.team_id if body else None,
+        )
+        if body
+        else None
+    )
 
     user_email, token_teams = get_scoped_resource_access_context(request, user)
 

@@ -3793,12 +3793,12 @@ class GatewayUpdate(BaseModelWithConfigDict):
         return self
 
 
-
 class GatewayOwnershipTransferRequest(BaseModel):
     """Request to transfer gateway ownership to another user."""
 
     target_owner_email: EmailStr = Field(..., description="Email of the new gateway owner")
     target_team_id: Optional[str] = Field(None, description="New team ID for the gateway")
+
 
 # ---------------------------------------------------------------------------
 # OAuth config masking helper (used by GatewayRead.masked / A2AAgentRead.masked)

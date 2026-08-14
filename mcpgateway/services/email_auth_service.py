@@ -52,11 +52,8 @@ from mcpgateway.db import (
     Gateway as DbGateway,
     PasswordResetToken,
     PendingUserApproval,
-    Prompt as DbPrompt,
-    Resource as DbResource,
     Role,
     SSOAuthSession,
-    Tool as DbTool,
     TokenRevocation,
     UserRole,
     utc_now,
@@ -2096,22 +2093,26 @@ class EmailAuthService:
             # ----------------------------------------------------------------
             # Transfer owned gateways to prevent orphaned resources
             # ----------------------------------------------------------------
-            owned_gateways = self.db.execute(
-                select(DbGateway).where(DbGateway.owner_email == email)
-            ).scalars().all()
+            owned_gateways = self.db.execute(select(DbGateway).where(DbGateway.owner_email == email)).scalars().all()
 
             for gw in owned_gateways:
                 new_owner_email: str | None = None
 
                 # Team gateways: prefer another active team member
                 if gw.visibility == "team" and gw.team_id:
-                    alternate = self.db.execute(
-                        select(EmailTeamMember).where(
-                            EmailTeamMember.team_id == gw.team_id,
-                            EmailTeamMember.user_email != email,
-                            EmailTeamMember.is_active == True,  # noqa: E712
-                        ).order_by(EmailTeamMember.user_email)
-                    ).scalars().first()
+                    alternate = (
+                        self.db.execute(
+                            select(EmailTeamMember)
+                            .where(
+                                EmailTeamMember.team_id == gw.team_id,
+                                EmailTeamMember.user_email != email,
+                                EmailTeamMember.is_active == True,  # noqa: E712
+                            )
+                            .order_by(EmailTeamMember.user_email)
+                        )
+                        .scalars()
+                        .first()
+                    )
                     if alternate:
                         new_owner_email = alternate.user_email
 
@@ -2122,9 +2123,7 @@ class EmailAuthService:
                         new_owner_email = admin_email.strip()
 
                 if not new_owner_email:
-                    raise ValueError(
-                        f"Cannot delete user {email}: gateway {gw.id} would become orphaned and no fallback owner is available"
-                    )
+                    raise ValueError(f"Cannot delete user {email}: gateway {gw.id} would become orphaned and no fallback owner is available")
 
                 # Transfer gateway ownership
                 gw.owner_email = new_owner_email
