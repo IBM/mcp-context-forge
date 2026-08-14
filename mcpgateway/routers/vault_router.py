@@ -27,6 +27,7 @@ from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.db import Gateway, Server, Tool, get_db, server_tool_association
 from mcpgateway.middleware.rbac import get_current_user_with_permissions
 from mcpgateway.routers.oauth_router import _build_user_context, _enforce_gateway_access
+from mcpgateway.services.a2a_server_service import _check_server_access as _check_server_visibility
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.token_storage_service import TokenStorageService
 from mcpgateway.utils.paths import resolve_root_path
@@ -127,6 +128,20 @@ async def vault_authorize(
             )
             raise HTTPException(status_code=404, detail="Server not found")
 
+        # B2g: enforce the Server row's own visibility / team / owner rules before
+        # resolving gateways.  _enforce_gateway_access (called below) only checks
+        # the resolved gateway; a private or team-scoped server linked to a broader-
+        # visibility gateway could otherwise have its OAuth flow triggered by any
+        # authenticated user who knows or guesses the server_id UUID.
+        user_token_teams = current_user.get("token_teams")
+        if not _check_server_visibility(server, current_user["email"], user_token_teams):
+            logger.warning(
+                "Vault OAuth authorize: access denied to server %s for user %s",
+                SecurityValidator.sanitize_log_message(server_id),
+                SecurityValidator.sanitize_log_message(current_user["email"]),
+            )
+            raise HTTPException(status_code=403, detail="Access denied")
+
         # Resolve OAuth-enabled gateway
         gateway = _resolve_oauth_gateway(server, db, gateway_url)
         if not gateway:
@@ -181,10 +196,19 @@ async def vault_authorize(
         oauth_config_with_callback = gateway.oauth_config.copy()
         oauth_config_with_callback["redirect_uri"] = callback_url
 
+        # B2e: pass popup=True so the /oauth/callback handler routes this flow
+        # through _popup_callback_response and never executes the session-cookie-set
+        # path (lines 997-1140 of oauth_router.py).  The vault flow is already
+        # fully authenticated at authorize time; minting a new session cookie at
+        # callback time is unnecessary and would overwrite the user's primary
+        # browser session with a 5-minute JWT whose missing teams claim would be
+        # widened to full DB membership by resolve_session_teams() (same root cause
+        # as B1 / issue #6204).
         result = await oauth_manager.initiate_authorization_code_flow(
             gateway_id=gateway.id,
             credentials=oauth_config_with_callback,
             app_user_email=current_user["email"],
+            popup=True,
         )
         auth_url = result["authorization_url"]
 

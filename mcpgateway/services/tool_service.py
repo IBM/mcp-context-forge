@@ -4154,6 +4154,55 @@ class ToolService(BaseService):
 
     # pylint: enable=duplicate-code
 
+    async def _resolve_vault_auth_headers(
+        self,
+        app_user_email: Optional[str],
+        token_teams: Optional[List[str]],
+        gateway_id_str: str,
+        gateway_name: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Return per-user Vault auth headers for non-OAuth gateways, or None.
+
+        ICA writes a plain ``{header: value}`` dict under the ``headers`` field
+        of the per-user Vault path.  Only the Vault backend implements
+        ``get_user_auth_headers``; the DB backend's base-class default returns
+        ``None``, so this method guards with ``settings.oauth_token_backend ==
+        "vault"`` to avoid the DB round-trip on every non-OAuth tool invocation
+        when Vault is not in use.
+
+        Args:
+            app_user_email: Authenticated end-user email.
+            token_teams: JWT-scoped team list from the caller token.
+            gateway_id_str: Gateway UUID string.
+            gateway_name: Gateway display name (for log messages only).
+
+        Returns:
+            Dict of ``{header: value}`` pairs if found, otherwise ``None``.
+        """
+        if not app_user_email or settings.oauth_token_backend != "vault":
+            return None
+        try:
+            from mcpgateway.services.token_storage_service import TokenStorageService, build_token_user_context  # pylint: disable=import-outside-toplevel
+
+            with fresh_db_session() as token_db:
+                token_storage_context = build_token_user_context(token_db, app_user_email, token_teams)
+                token_storage = TokenStorageService(token_db, user_context=token_storage_context)
+                user_headers = await token_storage.get_user_auth_headers(gateway_id_str, app_user_email)
+            if user_headers:
+                logger.info(
+                    "Using per-user Vault auth headers for gateway '%s' (user=%s)",
+                    gateway_name,
+                    app_user_email,
+                )
+                return user_headers
+        except Exception as e:  # pylint: disable=broad-except
+            logger.warning(
+                "Per-user Vault auth-header lookup failed for gateway %s: %s; falling back to gateway auth",
+                gateway_name,
+                e,
+            )
+        return None
+
     async def prepare_rust_mcp_tool_execution(
         self,
         db: Session,
@@ -4485,31 +4534,8 @@ class ToolService(BaseService):
             # from Vault FIRST, then fall back to the gateway-wide (admin-set) static auth. ICA
             # writes the per-user credential as a plain {header: value} dict under a `headers` field
             # at the same per-user Vault path used for OAuth tokens.
-            headers = {}
-            if app_user_email and settings.oauth_token_backend == "vault":
-                # Per-user auth headers are only stored by the Vault backend (written by ICA).
-                # Skip the DB round-trip entirely on the default database backend — the base
-                # class default returns None, so the session and EmailUser query would be
-                # wasted on every non-OAuth tool invocation.
-                try:
-                    # First-Party
-                    from mcpgateway.services.token_storage_service import TokenStorageService, build_token_user_context  # pylint: disable=import-outside-toplevel
-
-                    with fresh_db_session() as token_db:
-                        token_storage_context = build_token_user_context(token_db, app_user_email, token_teams)
-                        token_storage = TokenStorageService(token_db, user_context=token_storage_context)
-                        user_headers = await token_storage.get_user_auth_headers(gateway_id_str, app_user_email)
-                    if user_headers:
-                        headers = user_headers
-                        logger.info(
-                            "Using per-user Vault auth headers for gateway '%s' (user=%s)",
-                            gateway_name,
-                            app_user_email,
-                        )
-                except Exception as e:  # pylint: disable=broad-except
-                    logger.warning("Per-user Vault auth-header lookup failed for gateway %s: %s; falling back to gateway auth", gateway_name, e)
-            if not headers:
-                headers = decode_auth(gateway_auth_value) if gateway_auth_value else {}
+            vault_headers = await self._resolve_vault_auth_headers(app_user_email, token_teams, gateway_id_str, gateway_name)
+            headers = vault_headers or (decode_auth(gateway_auth_value) if gateway_auth_value else {})
 
         if request_headers:
             # B3: when the gateway uses token-exchange, the exchanged Authorization header
@@ -5956,26 +5982,8 @@ class ToolService(BaseService):
                                 raise ToolInvocationError(f"OAuth authentication failed for gateway: {str(e)}")
                     else:
                         # Non-OAuth: per-user Vault creds FIRST, then gateway-wide static auth.
-                        headers = {}
-                        if app_user_email and settings.oauth_token_backend == "vault":
-                            # Per-user auth headers are only stored by the Vault backend.
-                            # Skip the DB round-trip on the default database backend which
-                            # does not implement get_user_auth_headers.
-                            try:
-                                # First-Party
-                                from mcpgateway.services.token_storage_service import TokenStorageService, build_token_user_context  # pylint: disable=import-outside-toplevel
-
-                                with fresh_db_session() as token_db:
-                                    token_storage_context = build_token_user_context(token_db, app_user_email, token_teams)
-                                    token_storage = TokenStorageService(token_db, user_context=token_storage_context)
-                                    user_headers = await token_storage.get_user_auth_headers(gateway_id_str, app_user_email)
-                                if user_headers:
-                                    headers = user_headers
-                                    logger.info("Using per-user Vault auth headers for gateway '%s' (user=%s)", gateway_name, app_user_email)
-                            except Exception as e:  # pylint: disable=broad-except
-                                logger.warning("Per-user Vault auth-header lookup failed for gateway %s: %s; falling back to gateway auth", gateway_name, e)
-                        if not headers:
-                            headers = decode_auth(gateway_auth_value) if gateway_auth_value else {}
+                        vault_headers = await self._resolve_vault_auth_headers(app_user_email, token_teams, gateway_id_str, gateway_name)
+                        headers = vault_headers or (decode_auth(gateway_auth_value) if gateway_auth_value else {})
 
                     # Use cached passthrough headers (no DB query needed)
                     if request_headers:

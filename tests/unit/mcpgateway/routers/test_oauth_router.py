@@ -1024,7 +1024,10 @@ class TestOAuthRouter:
                 assert isinstance(result, HTMLResponse)
                 assert result.status_code == 400
                 assert "❌ OAuth Authorization Failed" in result.body.decode()
-                assert "Invalid authorization code" in result.body.decode()
+                # B2d (CWE-209): raw error detail must NOT appear in the browser page;
+                # only the generic user-facing message is rendered.
+                assert "Invalid authorization code" not in result.body.decode()
+                assert "OAuth authorization failed" in result.body.decode()
 
     @pytest.mark.asyncio
     async def test_oauth_callback_unexpected_error(self, mock_db, mock_request, mock_gateway):

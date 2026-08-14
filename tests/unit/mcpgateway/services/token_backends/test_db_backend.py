@@ -114,6 +114,134 @@ def test_is_token_expired_naive_datetime(backend_with_encryption):
 
 # ---------- store_tokens ----------
 
+@pytest.mark.asyncio
+async def test_store_tokens_none_learned_aud_preserves_existing(backend_with_encryption, mock_db):
+    """store_tokens(learned_aud=None) on re-auth must NOT erase a previously stored
+    learned_aud value.
+
+    Regression guard for the round-1 fix: before the fix, passing learned_aud=None
+    would unconditionally overwrite the existing learned_aud column with None,
+    silently breaking per-user audience validation for all subsequent tool calls.
+    """
+    existing_token = OAuthToken(
+        gateway_id="gw-1",
+        user_id="oauth-user-1",
+        app_user_email="alice@example.com",
+        access_token="encrypted_old",
+        refresh_token="encrypted_old_rt",
+        expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+        scopes=["read"],
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+    )
+    # Simulate a previously learned audience value on the existing row
+    existing_token.learned_aud = "https://api.example.com"
+    existing_token.learned_iss = "https://idp.example.com"
+
+    mock_db.execute.return_value.scalar_one_or_none.return_value = existing_token
+    mock_db.query.return_value.filter.return_value.first.return_value = Mock(
+        id="gw-1",
+        url="https://example.com",
+    )
+
+    # Re-authorize: IdP refresh response omits aud/iss → caller passes None
+    await backend_with_encryption.store_tokens(
+        gateway_id="gw-1",
+        team_id="team-1",
+        user_id="oauth-user-1",
+        app_user_email="alice@example.com",
+        access_token="new_access_token",
+        refresh_token="new_refresh_token",
+        expires_in=3600,
+        scopes=["read", "write"],
+        learned_aud=None,  # ← must NOT erase the existing value
+        learned_iss=None,  # ← must NOT erase the existing value
+    )
+
+    # Previously-learned audience must survive the re-auth update
+    assert existing_token.learned_aud == "https://api.example.com", (
+        "store_tokens(learned_aud=None) erased a previously-stored learned_aud"
+    )
+    assert existing_token.learned_iss == "https://idp.example.com", (
+        "store_tokens(learned_iss=None) erased a previously-stored learned_iss"
+    )
+
+
+@pytest.mark.asyncio
+async def test_two_user_isolation_write_and_read(backend_with_encryption, mock_db):
+    """User A's learned_aud write must not leak into User B's row for the same gateway.
+
+    Regression guard: if the UPSERT query matched on gateway_id alone (without
+    app_user_email), user A's re-auth would overwrite user B's row and user B's
+    get_user_learned_audience() call would return user A's aud value.
+    """
+    row_alice = OAuthToken(
+        gateway_id="gw-shared",
+        user_id="oauth-alice",
+        app_user_email="alice@example.com",
+        access_token="enc_alice",
+        refresh_token=None,
+        expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+        scopes=["read"],
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+    )
+    row_alice.learned_aud = "aud-for-alice"
+    row_alice.learned_iss = "iss-for-alice"
+
+    row_bob = OAuthToken(
+        gateway_id="gw-shared",
+        user_id="oauth-bob",
+        app_user_email="bob@example.com",
+        access_token="enc_bob",
+        refresh_token=None,
+        expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+        scopes=["read"],
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+    )
+    row_bob.learned_aud = "aud-for-bob"
+    row_bob.learned_iss = "iss-for-bob"
+
+    # get_user_learned_audience calls _resolve_mcp_url (db.get) then _vault_request
+    # (no DB).  The backend uses db.execute for the SELECT query.
+    # First call → alice, second call → bob.
+    alice_result = MagicMock()
+    alice_result.one_or_none.return_value = row_alice
+    alice_result.scalar_one_or_none.return_value = row_alice
+
+    bob_result = MagicMock()
+    bob_result.one_or_none.return_value = row_bob
+    bob_result.scalar_one_or_none.return_value = row_bob
+
+    mock_db.execute.side_effect = [alice_result, bob_result]
+    mock_db.query.return_value.filter.return_value.first.return_value = Mock(
+        id="gw-shared",
+        url="https://shared-gateway.example.com",
+    )
+
+    # Alice's lookup must return only Alice's record
+    aud_alice, iss_alice = await backend_with_encryption.get_user_learned_audience(
+        gateway_id="gw-shared",
+        team_id="team-1",
+        app_user_email="alice@example.com",
+    )
+    assert aud_alice == "aud-for-alice", f"Expected alice's aud, got: {aud_alice}"
+
+    # Bob's lookup must return only Bob's record
+    aud_bob, iss_bob = await backend_with_encryption.get_user_learned_audience(
+        gateway_id="gw-shared",
+        team_id="team-1",
+        app_user_email="bob@example.com",
+    )
+    assert aud_bob == "aud-for-bob", f"Expected bob's aud, got: {aud_bob}"
+
+    # The two users' audiences must be distinct — no cross-contamination
+    assert aud_alice != aud_bob, "Alice and Bob share the same learned_aud — isolation failure"
+
+
+
+
 
 @pytest.mark.asyncio
 async def test_store_tokens_new(backend_with_encryption, mock_db):
