@@ -1631,6 +1631,13 @@ class Settings(BaseSettings):
             if self.debug and not self.dev_mode:
                 logger.warning("🐛 SECURITY WARNING: Debug mode is enabled in non-dev mode. This may leak sensitive information! Set DEBUG=false for production.")
 
+            if self.smtp_enabled and self.ui_base_url is None:
+                logger.warning(
+                    "SMTP_ENABLED=true while UI_BASE_URL is unset. Browser-facing email links will use "
+                    "APP_DOMAIN plus APP_ROOT_PATH. Ensure that fallback serves /accept-invitation/{token}, "
+                    "/reset-password/{token}, and /forgot-password, or configure UI_BASE_URL for the React client."
+                )
+
         # CSRF secret key fallback to JWT secret key.
         # NOTE: SecretStr("") is truthy, so the emptiness check must go through
         # get_secret_value(); `if not self.csrf_secret_key` would never fire and

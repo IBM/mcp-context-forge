@@ -78,6 +78,33 @@ def test_ui_base_url_treats_blank_string_as_unset():
     assert configured.ui_base_url is None
 
 
+def test_smtp_without_ui_base_url_warns_about_frontend_routes(caplog):
+    """SMTP with fallback links warns operators that frontend routes must exist."""
+    caplog.set_level(logging.WARNING, logger="mcpgateway.config")
+
+    Settings(smtp_enabled=True, ui_base_url=None, environment="development", _env_file=None)
+
+    warnings = [record.getMessage() for record in caplog.records]
+    assert any("SMTP_ENABLED=true while UI_BASE_URL is unset" in message for message in warnings)
+    assert any("/accept-invitation/{token}" in message for message in warnings)
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"smtp_enabled": False, "ui_base_url": None},
+        {"smtp_enabled": True, "ui_base_url": "https://ui.example.com/contextforge"},
+    ],
+)
+def test_frontend_route_warning_only_for_smtp_fallback(caplog, overrides):
+    """Configured UI links and disabled SMTP do not produce fallback warnings."""
+    caplog.set_level(logging.WARNING, logger="mcpgateway.config")
+
+    Settings(environment="development", _env_file=None, **overrides)
+
+    assert not any("SMTP_ENABLED=true while UI_BASE_URL is unset" in record.getMessage() for record in caplog.records)
+
+
 # --------------------------------------------------------------------------- #
 #                         SSO field validators                            #
 # --------------------------------------------------------------------------- #
