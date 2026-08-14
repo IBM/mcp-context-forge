@@ -150,6 +150,13 @@ class TestRateLimitMiddlewareTiers:
         assert tier["limit"] == 10
         assert tier["burst"] == 0
 
+    def test_endpoint_tier_critical_for_team_invitations(self, middleware):
+        """SMTP-producing team invitations use the strict tier."""
+        tier = middleware.get_endpoint_tier("/teams/team-123/invitations")
+        assert tier["limit"] == 10
+        assert tier["burst"] == 0
+        assert middleware._get_tier_name("/teams/team-123/invitations") == "CRITICAL_INVITATION"
+
     def test_endpoint_tier_high(self, middleware):
         """Test HIGH tier detection for token endpoints."""
         tier = middleware.get_endpoint_tier("/tokens/list")

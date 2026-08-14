@@ -105,6 +105,11 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 "limit": settings.rate_limit_critical_rpm,
                 "burst": settings.rate_limit_critical_burst,
             },
+            "CRITICAL_INVITATION": {
+                "pattern": r"^/teams/[^/]+/invitations/?$",
+                "limit": settings.rate_limit_critical_rpm,
+                "burst": settings.rate_limit_critical_burst,
+            },
             "HIGH": {
                 "pattern": r"^/(tokens|oauth|rbac)(/|$)",
                 "limit": settings.rate_limit_high_rpm,

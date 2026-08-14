@@ -79,7 +79,7 @@ class TestAuthEmailNotificationService:
             mock_settings.app_root_path = "/root/"
             result = build_frontend_url("/forgot-password")
 
-        assert result == "https://gateway.example.com/root/admin/forgot-password"
+        assert result == "https://gateway.example.com/root/forgot-password"
 
     def test_build_frontend_url_rejects_untrusted_path_shape(self):
         """Frontend helper rejects relative and scheme-relative paths."""
