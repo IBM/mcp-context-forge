@@ -81,8 +81,8 @@ class CatalogService:
             CatalogRegistrationPermissionError: If the caller lacks permission for the requested scope.
         """
         # Extract requested scope from request
-        visibility = (request.visibility if request and request.visibility else "private")
-        requested_team_id = (request.team_id if request and request.team_id else None)
+        visibility = request.visibility if request and request.visibility else "private"
+        requested_team_id = request.team_id if request and request.team_id else None
 
         # Reject unknown or empty owner
         if not owner_email or owner_email == "unknown":
