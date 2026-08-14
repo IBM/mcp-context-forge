@@ -28,6 +28,7 @@ Usage:
 from __future__ import annotations
 
 # Standard
+import asyncio
 import json
 import os
 import subprocess
@@ -310,29 +311,29 @@ class TestToolCalls:
         assert text
         print(f"    -> get-system-time(UTC) = {text}")
 
-    async def test_convert_time(self, client: Client) -> None:
-        result = await client.call_tool_mcp(
-            name="fast-time-convert-time",
-            arguments={"time": "2025-01-15T12:00:00Z", "source_timezone": "UTC", "target_timezone": "America/New_York"},
+    async def test_convert_time(self, client: GatewayClientSession) -> None:
+        result = await client.call_tool(
+            "fast-time-convert-time",
+            {"time": "2025-01-15T12:00:00Z", "source_timezone": "UTC", "target_timezone": "America/New_York"},
         )
         assert result.isError is False, f"convert-time returned error (upstream may be down): {result.content}"
         assert result.content[0].type == "text"
         print(f"    -> convert-time(UTC->NY) = {result.content[0].text}")
 
-    async def test_echo(self, client: Client) -> None:
+    async def test_echo(self, client: GatewayClientSession) -> None:
         test_message = "hello-from-mcp-protocol-e2e"
-        result = await client.call_tool_mcp(name="fast-time-echo", arguments={"message": test_message})
+        result = await client.call_tool("fast-time-echo", {"message": test_message})
         assert result.isError is False, f"echo returned error (upstream may be down): {result.content}"
         text = result.content[0].text
         assert test_message in text, f"echo did not return message: {text}"
         print(f"    -> echo('{test_message}') = {text}")
 
-    async def test_get_stats(self, client: Client) -> None:
-        result = await client.call_tool_mcp(name="fast-time-get-stats", arguments={})
+    async def test_get_stats(self, client: GatewayClientSession) -> None:
+        result = await client.call_tool("fast-time-get-stats", {})
         assert result.isError is False, f"get-stats returned error (upstream may be down): {result.content}"
         print(f"    -> get-stats = {result.content[0].text[:120]}")
 
-    async def test_schema_error_preserves_payload(self, client: Client) -> None:
+    async def test_schema_error_preserves_payload(self, client: GatewayClientSession) -> None:
         """End-to-end regression guard for ContextForge #4202.
 
         Drives the full MCP federation path through the retained fast-time
@@ -341,18 +342,18 @@ class TestToolCalls:
         """
         tool = await self._require_declared_output_schema(client, "fast-time-schema-error")
         assert tool is not None
-        result = await client.call_tool_mcp(name="fast-time-schema-error", arguments={})
+        result = await client.call_tool("fast-time-schema-error", {})
         assert result.isError is True, f"expected isError=true, got: {result}"
         text = result.content[0].text if result.content else ""
         assert "200 points" in text, f"expected original error text preserved, got: {text!r}"
         assert '"validator"' not in text and '"required"' not in text, f"error payload appears to have been replaced by a validation error: {text!r}"
         print(f"    -> schema_error isError=true preserved: {text}")
 
-    async def test_schema_success_validates_payload(self, client: Client) -> None:
+    async def test_schema_success_validates_payload(self, client: GatewayClientSession) -> None:
         """Positive control proving valid output-schema responses still validate."""
         tool = await self._require_declared_output_schema(client, "fast-time-schema-success")
         assert tool is not None
-        result = await client.call_tool_mcp(name="fast-time-schema-success", arguments={})
+        result = await client.call_tool("fast-time-schema-success", {})
         assert result.isError is False, f"expected success, got: {result}"
         payload = json.loads(result.content[0].text)
         assert payload.get("recognitionId") == "rec-123", f"unexpected payload: {payload}"
@@ -362,9 +363,9 @@ class TestToolCalls:
         print(f"    -> schema_success validated: {payload}")
 
     @staticmethod
-    async def _require_declared_output_schema(client: Client, tool_name: str):
+    async def _require_declared_output_schema(client: GatewayClientSession, tool_name: str):
         """Require a synced tool with a declared output schema."""
-        tools = await client.list_tools()
+        tools = (await client.list_tools()).tools
         match = next((tool for tool in tools if tool.name == tool_name), None)
         assert match is not None, (
             f"Tool {tool_name!r} is not registered in the gateway. "
@@ -376,7 +377,7 @@ class TestToolCalls:
         )
         return match
 
-    async def test_nonexistent_tool(self, client: Client) -> None:
+    async def test_nonexistent_tool(self, client: GatewayClientSession) -> None:
         """Calling a nonexistent tool surfaces an error, via either path."""
         try:
             result = await client.call_tool("nonexistent-tool-xyz", {})

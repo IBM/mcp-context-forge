@@ -184,14 +184,14 @@ Recommended server content:
 - public, team-scoped, and owner-scoped objects
 - at least one live time/echo tool for freshness validation
 
-The current isolation suite prefers a compose-backed time-capable streamable
+The current isolation suite requires the compose-backed time-capable
 HTTP gateway:
 
-- canonical preference: `fast_time`
-- fallback: `fast_test`
+- required gateway: `fast_time`
+- no `fast_test` fallback is supported
 
-That fallback is acceptable because the suite is proving session/auth binding,
-not benchmarking a specific upstream server.
+The suite is proving session/auth binding against the canonical compose
+fixture, not benchmarking a specific upstream server.
 
 ## Implemented hardening additions
 

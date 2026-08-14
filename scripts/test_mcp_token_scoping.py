@@ -83,6 +83,22 @@ async def discover_tool_counts(base_url: str, token: str) -> tuple[int, int]:
     )
 
 
+async def discover_virtual_server_tool_count(base_url: str, token: str, server_id: str) -> int:
+    """Return the number of tools associated with a virtual server."""
+    import aiohttp
+
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+    async with aiohttp.ClientSession() as session:
+        async with session.get(f"{base_url}/servers/{server_id}", headers=headers) as response:
+            response.raise_for_status()
+            server = await response.json()
+
+    associated_tools = server.get("associatedTools", server.get("associated_tools", []))
+    if not isinstance(associated_tools, list):
+        raise RuntimeError(f"Unexpected associated tool payload for server {server_id}: {associated_tools!r}")
+    return len(associated_tools)
+
+
 async def test_with_http_rpc(base_url: str, token: str, test_name: str, expected_public: int, expected_team: int) -> TestResult:
     """Test via HTTP RPC endpoint."""
     import aiohttp
@@ -307,7 +323,6 @@ async def main():
 
     expected_total = expected_public + expected_team
 
-
     token = generate_token("admin@example.com", is_admin=True, teams="OMIT")
     t1 = await test_mcp_transport(f"{base_url}/mcp/", token, "Admin (unrestricted)", expected_total)
 
@@ -319,7 +334,8 @@ async def main():
 
     server_id = "9779b6698cbd4b4995ee04a4fab38737"  # pragma: allowlist secret
     token = generate_token("admin@example.com", is_admin=True, teams="OMIT")
-    t4 = await test_mcp_transport(f"{base_url}/servers/{server_id}/mcp/", token, "Virtual Server", 2)
+    expected_virtual_server = await discover_virtual_server_tool_count(base_url, token, server_id)
+    t4 = await test_mcp_transport(f"{base_url}/servers/{server_id}/mcp/", token, "Virtual Server", expected_virtual_server)
 
     transport_passed = all([t1, t2, t3, t4])
 
