@@ -33,3 +33,22 @@ def test_generated_compose_contains_only_fast_time_server(tmp_path: Path, monkey
     assert "fast_time_server:" in compose
     assert "fast_test_server" not in compose
     assert "register_fast_test" not in compose
+
+
+def test_static_stack_files_contain_no_fast_test_backend() -> None:
+    """Static Compose and Helm files must not restore the retired backend."""
+    repo_root = Path(__file__).resolve().parents[2]
+    paths = (
+        "docker-compose.yml",
+        "docker-compose.with-langfuse.yml",
+        "charts/mcp-stack/values.yaml",
+        "charts/mcp-stack/values-minikube.yaml",
+        "charts/mcp-stack/profiles/ocp/values-pgo.yaml",
+        "charts/mcp-stack/templates/registration-jobs.yaml",
+        "charts/mcp-stack/templates/testing-stack.yaml",
+        "charts/mcp-stack/values.schema.json",
+    )
+    for relative_path in paths:
+        content = (repo_root / relative_path).read_text(encoding="utf-8")
+        assert "fast_test_server" not in content, relative_path
+        assert "register_fast_test" not in content, relative_path

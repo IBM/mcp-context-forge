@@ -162,7 +162,7 @@ def print_result(result: TestResult):
         print(f"  {RED}Error: {result.error}{NC}")
 
 
-async def run_tests(base_url: str, team_id: str):
+async def run_tests(base_url: str, team_id: str) -> tuple[bool, int, int]:
     """Run all token-scoping tests against the discovered catalog."""
 
     print(f"{CYAN}{'='*70}{NC}")
@@ -248,6 +248,7 @@ async def run_tests(base_url: str, team_id: str):
         expected = f"{result.expected_tools} ({result.expected_public}p+{result.expected_team}t)"
         actual = f"{result.actual_tools} ({result.actual_public}p+{result.actual_team}t)"
         print(f"  {result.name:<25} expected={expected:<8} actual={actual:<6} {status}")
+    return all(result.passed for result in results), expected_public, expected_team
 
 
 async def test_mcp_transport(mcp_url: str, token: str, test_name: str, expected_count: int):
@@ -298,15 +299,14 @@ async def main():
     base_url = "http://localhost:8080"
     team_id = "12c794d92318414fbc6829bd455bee6d"  # Platform Administrator's Team  # pragma: allowlist secret
 
-    all_passed = await run_tests(base_url, team_id)
+    all_passed, expected_public, expected_team = await run_tests(base_url, team_id)
 
     print(f"\n{CYAN}{'='*70}{NC}")
     print(f"{CYAN}MCP TRANSPORT TESTS{NC}")
     print(f"{CYAN}{'='*70}{NC}")
 
-    discovery_token = generate_token("admin@example.com", is_admin=True, teams=None)
-    expected_public, expected_team = await discover_tool_counts(base_url, discovery_token)
     expected_total = expected_public + expected_team
+
 
     token = generate_token("admin@example.com", is_admin=True, teams="OMIT")
     t1 = await test_mcp_transport(f"{base_url}/mcp/", token, "Admin (unrestricted)", expected_total)
@@ -319,7 +319,7 @@ async def main():
 
     server_id = "9779b6698cbd4b4995ee04a4fab38737"  # pragma: allowlist secret
     token = generate_token("admin@example.com", is_admin=True, teams="OMIT")
-    t4 = await test_mcp_transport(f"{base_url}/servers/{server_id}/mcp/", token, "Virtual Server", expected_total)
+    t4 = await test_mcp_transport(f"{base_url}/servers/{server_id}/mcp/", token, "Virtual Server", 2)
 
     transport_passed = all([t1, t2, t3, t4])
 

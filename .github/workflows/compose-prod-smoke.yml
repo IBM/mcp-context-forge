@@ -140,6 +140,7 @@ jobs:
               break
             fi
             echo "Waiting for fast time server (${i}/60)"
+            sleep 2
           done
 
           for i in {1..60}; do
