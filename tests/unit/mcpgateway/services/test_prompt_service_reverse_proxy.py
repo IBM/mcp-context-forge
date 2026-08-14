@@ -23,8 +23,8 @@ from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 # Third-Party
 from mcp import types
-import pytest
 from pydantic import ValidationError
+import pytest
 
 # First-Party
 from mcpgateway.common.models import PromptResult, Role
@@ -33,6 +33,7 @@ from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.services.prompt_service import PromptError, PromptNotFoundError, PromptService
 from mcpgateway.services.reverse_proxy_protocol import JsonRpcErrorResponse, JsonRpcSuccessResponse, ResponseMessage
+from mcpgateway.services.reverse_proxy_relay import RelayUnavailableError
 from mcpgateway.services.reverse_proxy_sessions import ConnectionClosedError, ConnectionId, ConnectionNotFoundError
 
 PROXIED_PROMPT_NAME = "proxied-gateway-upstream-prompt"
@@ -147,6 +148,33 @@ def _structured_log_call_kwargs(mock_logger, event_name):
 
 class TestFetchGatewayPromptResultReverseProxied:
     """PROXIED gateway dispatch through the reverse-proxy session manager."""
+
+    @pytest.mark.asyncio
+    async def test_distributed_dispatch_uses_relay_stable_id_api(self, prompt_service, proxied_prompt, monkeypatch):
+        relay = MagicMock(
+            send_request_by_stable_id=AsyncMock(return_value=_success_response("relay", {"description": "relay prompt", "messages": [{"role": "user", "content": {"type": "text", "text": "hello"}}]}))
+        )
+        monkeypatch.setattr(settings, "mcpgateway_reverse_proxy_distributed_enabled", True)
+
+        with patch("mcpgateway.services.reverse_proxy_relay_runtime.get_reverse_proxy_relay", AsyncMock(return_value=relay)):
+            result = await prompt_service._get_reverse_proxied_prompt("proxied-gw-1", "upstream_prompt", {"name": "Ada"}, None, proxied_prompt)
+
+        stable_id, request = relay.send_request_by_stable_id.await_args.args
+        assert stable_id == "proxied-gw-1"
+        assert request.method == "prompts/get"
+        assert request.params == {"name": "upstream_prompt", "arguments": {"name": "Ada"}}
+        assert result.description == "relay prompt"
+
+    @pytest.mark.asyncio
+    async def test_distributed_redis_failure_maps_to_code_only_prompt_error(self, prompt_service, proxied_prompt, monkeypatch):
+        relay = MagicMock(send_request_by_stable_id=AsyncMock(side_effect=RelayUnavailableError()))
+        monkeypatch.setattr(settings, "mcpgateway_reverse_proxy_distributed_enabled", True)
+
+        with patch("mcpgateway.services.reverse_proxy_relay_runtime.get_reverse_proxy_relay", AsyncMock(return_value=relay)):
+            with pytest.raises(PromptError) as caught:
+                await prompt_service._get_reverse_proxied_prompt("proxied-gw-1", "upstream_prompt", None, None, proxied_prompt)
+
+        assert str(caught.value) == "Reverse-proxy relay unavailable for gateway 'proxied-gw-1'"
 
     @pytest.mark.asyncio
     async def test_dispatch_uses_original_name_and_shared_normalization(self, prompt_service, proxied_prompt, test_db, mock_logging_services):

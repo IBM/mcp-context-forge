@@ -24,9 +24,10 @@ import anyio.to_thread
 import orjson
 
 # Third-Party
-from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, Request, status, WebSocket, WebSocketDisconnect
 from fastapi.testclient import TestClient
 import pytest
+from redis.exceptions import ConnectionError as RedisConnectionError
 
 # First-Party
 from mcpgateway.config import settings
@@ -239,6 +240,13 @@ class TestWebSocketEndpoint:
             yield
 
     @pytest.fixture(autouse=True)
+    def distributed_relay(self, monkeypatch):
+        relay = MagicMock(claim_owner=AsyncMock(return_value=True), release_owner=AsyncMock(return_value=True))
+        monkeypatch.setattr(settings, "mcpgateway_reverse_proxy_distributed_enabled", True)
+        with patch("mcpgateway.services.reverse_proxy_relay_runtime.get_reverse_proxy_relay", new=AsyncMock(return_value=relay)):
+            yield relay
+
+    @pytest.fixture(autouse=True)
     def catalog_service(self):
         """Mock catalog registration at the router import site."""
         service = Mock(spec=ReverseProxyCatalogService)
@@ -290,7 +298,7 @@ class TestWebSocketEndpoint:
         assert ack["sessionId"] != "client-controlled"
 
     @pytest.mark.asyncio
-    async def test_websocket_register_message(self, session_manager, catalog_service, discovery_service):
+    async def test_websocket_register_message(self, session_manager, catalog_service, discovery_service, distributed_relay):
         """Register drives ack(processing) -> catalog -> quiesce -> discovery -> publish -> promote -> complete(success)."""
         websocket = ScriptedReverseProxyWebSocket()
         websocket.queue_client_frame({"type": "register", "server": {"name": "test-server", "description": "Test server", "protocol": "mcp"}})
@@ -316,6 +324,7 @@ class TestWebSocketEndpoint:
         assert register_call.args[2].name == "test-server"
 
         session_manager.promote_stable_id.assert_awaited_once_with(StableGatewayId(self._STABLE_ID), self._CONNECTION_ID)
+        distributed_relay.claim_owner.assert_awaited_once_with(StableGatewayId(self._STABLE_ID), self._CONNECTION_ID)
         discovery_service.publish_post_commit_effects.assert_awaited_once()
 
         discovery_service.discover_and_reconcile.assert_awaited_once()
@@ -327,6 +336,22 @@ class TestWebSocketEndpoint:
         assert discovery_call.kwargs["timeout_seconds"] == float(settings.tool_timeout)
 
         assert websocket.closed_code is None
+
+    @pytest.mark.asyncio
+    async def test_distributed_claim_loss_after_promotion_closes_and_demotes_candidate(self, session_manager, distributed_relay):
+        distributed_relay.claim_owner.return_value = False
+        websocket = ScriptedReverseProxyWebSocket()
+        websocket.queue_client_frame({"type": "register", "server": {"name": "test-server"}})
+
+        from mcpgateway.routers.reverse_proxy import websocket_endpoint
+
+        await websocket_endpoint(cast(WebSocket, websocket), Mock())
+
+        assert [frame["type"] for frame in websocket.sent_frames] == ["register_ack", "register_complete"]
+        assert websocket.sent_frames[-1]["status"] == "error"
+        session_manager.restore_stable_id.assert_awaited_once_with(StableGatewayId(self._STABLE_ID), None, self._CONNECTION_ID)
+        session_manager.disconnect.assert_awaited_with(self._CONNECTION_ID)
+        assert websocket.closed_code == status.WS_1008_POLICY_VIOLATION
 
     @pytest.mark.asyncio
     async def test_websocket_register_catalog_failure_closes_connection(self, session_manager, catalog_service, discovery_service):
@@ -1778,6 +1803,26 @@ class TestHTTPEndpoints:
 
         assert response.status_code == 200
         mock_websocket.close.assert_called_once()
+
+    def test_disconnect_session_release_failure_still_persists_and_closes(self, client, mock_auth, mock_websocket, monkeypatch):
+        eviction = ReverseProxyEviction(StableGatewayId("stable"), ConnectionId("test-session"))
+        typed_manager = Mock(spec=ReverseProxySessionManager)
+        typed_manager.get_session.return_value = self.typed_session("test-user", mock_websocket)
+        typed_manager.disconnect.return_value = (eviction,)
+        relay = MagicMock(release_owner=AsyncMock(side_effect=RedisConnectionError("redis://user:synthetic-secret@cache.invalid/0")))  # pragma: allowlist secret
+        persist = AsyncMock()
+        monkeypatch.setattr(settings, "mcpgateway_reverse_proxy_distributed_enabled", True)
+
+        with (
+            patch("mcpgateway.routers.reverse_proxy.get_reverse_proxy_session_manager", new=AsyncMock(return_value=typed_manager)),
+            patch("mcpgateway.services.reverse_proxy_relay_runtime.get_reverse_proxy_relay", new=AsyncMock(return_value=relay)),
+            patch("mcpgateway.routers.reverse_proxy._persist_unreachable_best_effort", persist),
+        ):
+            response = client.delete("/reverse-proxy/sessions/test-session")
+
+        assert response.status_code == 200
+        persist.assert_awaited_once_with(typed_manager, (eviction,))
+        mock_websocket.close.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_disconnect_session_blocked_close_is_bounded(self, client, mock_auth, mock_websocket):

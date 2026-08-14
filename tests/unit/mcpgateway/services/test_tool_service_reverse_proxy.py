@@ -16,14 +16,14 @@ fail closed through the existing MCP-path error taxonomy.
 
 # Standard
 from contextlib import asynccontextmanager, contextmanager
-from types import SimpleNamespace
 import logging
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 from urllib.parse import urlparse
 
 # Third-Party
-import pytest
 from pydantic import ValidationError
+import pytest
 
 # First-Party
 from mcpgateway.cache.tool_lookup_cache import tool_lookup_cache
@@ -31,6 +31,7 @@ from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.services.reverse_proxy_protocol import JsonRpcErrorResponse, JsonRpcSuccessResponse, ResponseMessage
+from mcpgateway.services.reverse_proxy_relay import RelayUnavailableError
 from mcpgateway.services.reverse_proxy_sessions import ConnectionClosedError, ConnectionId, ConnectionNotFoundError
 from mcpgateway.services.tool_service import TextContent, ToolInvocationError, ToolNotFoundError, ToolResult, ToolService, ToolTimeoutError
 
@@ -210,6 +211,33 @@ def _structured_log_call_kwargs(mock_logger, event_name):
 
 class TestInvokeToolReverseProxied:
     """PROXIED gateway dispatch through the reverse-proxy session manager."""
+
+    @pytest.mark.asyncio
+    async def test_distributed_dispatch_uses_relay_stable_id_api(self, tool_service, monkeypatch):
+        relay = MagicMock(send_request_by_stable_id=AsyncMock(return_value=_success_response("relay", PROXIED_RESULT)))
+        monkeypatch.setattr(settings, "mcpgateway_reverse_proxy_distributed_enabled", True)
+
+        with patch("mcpgateway.services.reverse_proxy_relay_runtime.get_reverse_proxy_relay", AsyncMock(return_value=relay)):
+            result = await tool_service._invoke_reverse_proxied_tool("proxied-gw-1", PROXIED_ORIGINAL_NAME, {"param": "value"}, None, 1.0)
+
+        stable_id, request = relay.send_request_by_stable_id.await_args.args
+        assert stable_id == "proxied-gw-1"
+        assert request.method == "tools/call"
+        assert request.params == {"name": PROXIED_ORIGINAL_NAME, "arguments": {"param": "value"}}
+        assert len(result.content) == 1
+        assert result.content[0].type == "text"
+        assert result.content[0].text == "proxied ok"
+
+    @pytest.mark.asyncio
+    async def test_distributed_redis_failure_maps_to_code_only_tool_error(self, tool_service, monkeypatch):
+        relay = MagicMock(send_request_by_stable_id=AsyncMock(side_effect=RelayUnavailableError()))
+        monkeypatch.setattr(settings, "mcpgateway_reverse_proxy_distributed_enabled", True)
+
+        with patch("mcpgateway.services.reverse_proxy_relay_runtime.get_reverse_proxy_relay", AsyncMock(return_value=relay)):
+            with pytest.raises(ToolInvocationError) as caught:
+                await tool_service._invoke_reverse_proxied_tool("proxied-gw-1", PROXIED_ORIGINAL_NAME, {}, None, 1.0)
+
+        assert str(caught.value) == "Reverse-proxy relay unavailable for gateway 'proxied-gw-1'"
 
     @pytest.mark.asyncio
     async def test_dispatch_uses_original_name_and_shared_normalization(self, tool_service, proxied_tool, test_db, mock_logging_services):

@@ -511,7 +511,7 @@ class ReverseProxySessionManager:
             elif current == candidate_connection_id:
                 self._stable_connections.pop(stable_id, None)
 
-    async def retire_connection(self, connection_id: ConnectionId) -> None:
+    async def retire_connection(self, connection_id: ConnectionId) -> tuple[ReverseProxyEviction, ...]:
         """Disconnect ``connection_id`` and best-effort close its socket wrapper, bounded.
 
         Used to retire a displaced predecessor after a replacement registration
@@ -525,18 +525,23 @@ class ReverseProxySessionManager:
         lost; cancellation is never swallowed.
         """
         session = self._sessions.get(connection_id)
-        await self.disconnect(connection_id)
+        evictions = await self.disconnect(connection_id)
         if session is None:
-            return
+            return evictions
         try:
             with anyio.fail_after(_RETIRE_CLOSE_TIMEOUT_SECONDS):
                 await session.websocket.close()
         except Exception as close_error:  # best-effort: timeout, or a displaced socket already lost
             logger.debug("Reverse proxy retired connection %s close failed: %s", connection_id, close_error)
+        return evictions
 
     def resolve_connection_id(self, stable_id: StableGatewayId) -> ConnectionId | None:
         """Return the live connection identifier for ``stable_id`` or ``None`` when unknown."""
         return self._stable_connections.get(stable_id)
+
+    def stable_connections(self) -> tuple[tuple[StableGatewayId, ConnectionId], ...]:
+        """Return a stable snapshot of process-local stable-ID mappings."""
+        return tuple(self._stable_connections.items())
 
 
 _default_manager: ReverseProxySessionManager | None = None

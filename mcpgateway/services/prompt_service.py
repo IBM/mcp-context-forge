@@ -59,6 +59,7 @@ from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_servic
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
 from mcpgateway.services.reverse_proxy_protocol import DownstreamAuth, JsonRpcErrorResponse, JsonRpcRequest
+from mcpgateway.services.reverse_proxy_relay import RelayUnavailableError
 from mcpgateway.services.reverse_proxy_sessions import ConnectionClosedError, ConnectionNotFoundError, get_reverse_proxy_session_manager, StableGatewayId
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
@@ -525,10 +526,14 @@ class PromptService(BaseService):
                 reaches exceptions or telemetry).
             ValidationError: If the upstream ``prompts/get`` result is malformed.
         """
-        session_manager = await get_reverse_proxy_session_manager()
-        connection_id = session_manager.resolve_connection_id(StableGatewayId(gateway_id_str))
-        if connection_id is None:
-            raise PromptError(f"No active reverse-proxy connection for gateway '{gateway_id_str}'")
+        stable_id = StableGatewayId(gateway_id_str)
+        session_manager = None
+        connection_id = None
+        if not settings.mcpgateway_reverse_proxy_distributed_enabled:
+            session_manager = await get_reverse_proxy_session_manager()
+            connection_id = session_manager.resolve_connection_id(stable_id)
+            if connection_id is None:
+                raise PromptError(f"No active reverse-proxy connection for gateway '{gateway_id_str}'")
 
         # Omit unset optional members: the MCP SDK serializes prompts/get params without
         # "arguments" when none are supplied, and strict downstreams may reject an explicit null.
@@ -551,7 +556,16 @@ class PromptService(BaseService):
             metadata={"event": "mcp_call_started", "prompt_name": prompt_name_original, "gateway_id": gateway_id_str, "transport": "proxied"},
         )
         try:
-            response = await session_manager.send_request(connection_id, request_payload, timeout_seconds=effective_timeout, auth=downstream_auth)
+            if settings.mcpgateway_reverse_proxy_distributed_enabled:
+                from mcpgateway.services.reverse_proxy_relay_runtime import get_reverse_proxy_relay  # pylint: disable=import-outside-toplevel
+
+                relay = await get_reverse_proxy_relay()
+                response = await relay.send_request_by_stable_id(stable_id, request_payload, timeout_seconds=effective_timeout, auth=downstream_auth)
+            else:
+                assert session_manager is not None and connection_id is not None
+                response = await session_manager.send_request(connection_id, request_payload, timeout_seconds=effective_timeout, auth=downstream_auth)
+        except RelayUnavailableError:
+            raise PromptError(f"Reverse-proxy relay unavailable for gateway '{gateway_id_str}'") from None
         except TimeoutError as timeout_err:
             mcp_duration_ms = (time.time() - mcp_start_time) * 1000
             structured_logger.log(

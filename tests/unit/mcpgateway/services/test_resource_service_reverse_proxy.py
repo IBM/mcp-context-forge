@@ -20,8 +20,8 @@ import logging
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 # Third-Party
-import pytest
 from pydantic import ValidationError
+import pytest
 
 # First-Party
 from mcpgateway.common.models import ResourceContent
@@ -30,6 +30,7 @@ from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.services.resource_service import ResourceError, ResourceNotFoundError, ResourceService
 from mcpgateway.services.reverse_proxy_protocol import JsonRpcErrorResponse, JsonRpcSuccessResponse, ResponseMessage
+from mcpgateway.services.reverse_proxy_relay import RelayUnavailableError
 from mcpgateway.services.reverse_proxy_sessions import ConnectionClosedError, ConnectionId, ConnectionNotFoundError
 
 PROXIED_RESOURCE_URI = "file:///upstream/docs/readme.md"  # persisted upstream URI, sent verbatim (D1)
@@ -123,6 +124,31 @@ def _structured_log_call_kwargs(mock_logger, event_name):
 
 class TestReadResourceReverseProxied:
     """PROXIED gateway resource reads dispatch through the reverse-proxy session manager."""
+
+    @pytest.mark.asyncio
+    async def test_distributed_dispatch_uses_relay_stable_id_api(self, resource_service, monkeypatch):
+        relay = MagicMock(send_request_by_stable_id=AsyncMock(return_value=_success_response("relay", {"contents": [{"uri": "file:///upstream", "text": "relay resource"}]})))
+        monkeypatch.setattr(settings, "mcpgateway_reverse_proxy_distributed_enabled", True)
+
+        with patch("mcpgateway.services.reverse_proxy_relay_runtime.get_reverse_proxy_relay", AsyncMock(return_value=relay)):
+            result = await resource_service._read_reverse_proxied_resource("proxied-gw-1", "file:///upstream", 1.0)
+
+        stable_id, request = relay.send_request_by_stable_id.await_args.args
+        assert stable_id == "proxied-gw-1"
+        assert request.method == "resources/read"
+        assert request.params == {"uri": "file:///upstream"}
+        assert result == "relay resource"
+
+    @pytest.mark.asyncio
+    async def test_distributed_redis_failure_maps_to_code_only_resource_error(self, resource_service, monkeypatch):
+        relay = MagicMock(send_request_by_stable_id=AsyncMock(side_effect=RelayUnavailableError()))
+        monkeypatch.setattr(settings, "mcpgateway_reverse_proxy_distributed_enabled", True)
+
+        with patch("mcpgateway.services.reverse_proxy_relay_runtime.get_reverse_proxy_relay", AsyncMock(return_value=relay)):
+            with pytest.raises(ResourceError) as caught:
+                await resource_service._read_reverse_proxied_resource("proxied-gw-1", "file:///upstream", 1.0)
+
+        assert str(caught.value) == "Reverse-proxy relay unavailable for gateway 'proxied-gw-1'"
 
     @pytest.mark.asyncio
     async def test_dispatch_sends_resources_read_with_persisted_uri(self, resource_service, proxied_resource, mock_logging_services):
