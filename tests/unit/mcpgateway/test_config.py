@@ -62,8 +62,6 @@ def test_parse_sso_entra_admin_groups_json_and_csv():
     assert s_json.sso_entra_admin_groups == ["admin", "superadmin"]
 
 
-
-
 def test_ratelimiter_redis_url_defaults():
     """Test rate limiter Redis config defaults to None."""
     s = Settings(environment="development", _env_file=None)
@@ -282,7 +280,7 @@ def test_ratelimiter_redis_url_set():
         ratelimiter_redis_socket_timeout=5.0,
         ratelimiter_redis_socket_connect_timeout=3.0,
         environment="development",
-        _env_file=None
+        _env_file=None,
     )
     assert s.ratelimiter_redis_url == "redis://localhost:6380/0"
     assert s.ratelimiter_redis_max_connections == 100
@@ -1396,6 +1394,25 @@ def test_parse_list_from_env_invalid_type():
         Settings(sso_entra_admin_groups=123, environment="development", _env_file=None)
 
 
+def test_proto_and_sqlite_allowed_roots_accept_csv_and_json():
+    """New fail-closed filesystem roots use the shared flexible list parser."""
+    settings_from_csv = Settings(
+        mcpgateway_proto_scan_roots="/srv/protos,/opt/protos",
+        mcpgateway_sqlite_allowed_roots="/srv/data,/opt/data",
+        environment="development",
+        _env_file=None,
+    )
+    settings_from_json = Settings(
+        mcpgateway_proto_scan_roots='["/srv/protos", "/opt/protos"]',
+        mcpgateway_sqlite_allowed_roots='["/srv/data", "/opt/data"]',
+        environment="development",
+        _env_file=None,
+    )
+
+    assert settings_from_csv.mcpgateway_proto_scan_roots == settings_from_json.mcpgateway_proto_scan_roots == ["/srv/protos", "/opt/protos"]
+    assert settings_from_csv.mcpgateway_sqlite_allowed_roots == settings_from_json.mcpgateway_sqlite_allowed_roots == ["/srv/data", "/opt/data"]
+
+
 def test_ui_hide_sections_csv_aliases_and_invalid_values():
     """UI section hide list should normalize aliases and ignore invalid values."""
     s = Settings(
@@ -1725,7 +1742,6 @@ def test_experimental_rust_mcp_runtime_uds_rejects_missing_parent(tmp_path: Path
     missing_parent = tmp_path / "missing" / "contextforge-rust.sock"
     with pytest.raises(ValueError, match="parent directory does not exist"):
         Settings(experimental_rust_mcp_runtime_uds=str(missing_parent), _env_file=None)
-
 
 
 def test_auth_required_true_with_explicit_mcp_permissive_warns(caplog):
@@ -2225,10 +2241,7 @@ def test_empty_secret_raises():
 def test_init_secrets_patch_mode_writes_strong_values(tmp_path):
     """init_secrets ensure_env_file_secrets replaces placeholder values with strong ones."""
     env_file = tmp_path / ".env"
-    env_file.write_text(
-        "JWT_SECRET_KEY=__REPLACE_ME__run_init-secrets_before_starting\n"
-        "AUTH_ENCRYPTION_SECRET=__REPLACE_ME__run_init-secrets_before_starting\n"
-    )
+    env_file.write_text("JWT_SECRET_KEY=__REPLACE_ME__run_init-secrets_before_starting\n" "AUTH_ENCRYPTION_SECRET=__REPLACE_ME__run_init-secrets_before_starting\n")
 
     import os as _os
 

@@ -14,6 +14,7 @@ import uuid
 
 # Third-Party
 import pytest
+from google.protobuf.descriptor_pb2 import FileDescriptorProto, FileDescriptorSet
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -193,7 +194,7 @@ class TestGrpcService:
 
         with patch("mcpgateway.services.grpc_service.TeamManagementService") as mock_team_service_class:
             mock_team_instance = mock_team_service_class.return_value
-            mock_team_instance.build_team_filter_clause = AsyncMock(return_value=None)
+            mock_team_instance.get_user_teams = AsyncMock(return_value=[MagicMock(id="team-123")])
 
             with patch("mcpgateway.services.grpc_service.unified_paginate", new_callable=AsyncMock) as mock_paginate:
                 mock_paginate.return_value = ([sample_db_service], None)
@@ -206,7 +207,7 @@ class TestGrpcService:
 
             assert len(result) == 1
             assert next_cursor is None
-            mock_team_instance.build_team_filter_clause.assert_called_once()
+            mock_team_instance.get_user_teams.assert_awaited_once_with("test@example.com")
 
     async def test_list_services_with_team_names(self, service, mock_db, sample_db_service):
         """Test listing services with team name resolution."""
@@ -664,7 +665,7 @@ class TestGrpcService:
             tool = call[0][0]
             assert tool.integration_type == "gRPC"
             assert tool.grpc_service_id == sample_db_service.id
-            assert tool.created_via == "grpc-reflection"
+            assert tool.created_via == "grpc-schema-sync"
             assert tool.federation_source == sample_db_service.name
             assert tool.url == sample_db_service.target
             assert tool.owner_email == "test@example.com"
@@ -714,11 +715,17 @@ class TestGrpcService:
         assert existing_tool.url == "new-host:50051"
 
     def test_sync_tools_removes_stale_tools(self, service, mock_db, sample_db_service):
-        """Test that _sync_tools_from_reflection removes tools for methods no longer discovered."""
-        # Service now has no discovered methods
-        sample_db_service.discovered_services = {}
+        """Test that _sync_tools_from_reflection disables tools for methods that disappeared."""
+        # Catalog has one method remaining; the other method vanished.
+        sample_db_service.discovered_services = {
+            "test.TestService": {
+                "name": "test.TestService",
+                "methods": [
+                    {"name": "KeepMe", "input_type": ".test.Req", "output_type": ".test.Resp", "client_streaming": False, "server_streaming": False},
+                ],
+            }
+        }
 
-        # But there's a stale tool from a previous reflection
         # First-Party
         from mcpgateway.db import Tool as DbTool
 
@@ -734,10 +741,10 @@ class TestGrpcService:
 
         service._sync_tools_from_reflection(mock_db, sample_db_service)
 
-        # Stale-tool cleanup fires exactly 3 deletes (ToolMetric, server_tool_association, DbTool)
-        # plus the initial SELECT for existing tools. Asserting on call_count is more robust than
-        # string-matching the SQLAlchemy Delete object repr.
-        assert mock_db.execute.call_count == 4
+        # Stale methods retain tool identity, server relationships, and metrics.
+        assert stale_tool.enabled is False
+        assert stale_tool.deprecated is True
+        assert stale_tool.reachable is False
 
     def test_sync_tools_empty_discovered_services(self, service, mock_db, sample_db_service):
         """Test _sync_tools_from_reflection with empty discovered services and no existing tools."""
@@ -868,10 +875,10 @@ class TestGrpcService:
 
         service._sync_tools_from_reflection(mock_db, sample_db_service)
 
-        # Should have added 3 tools total
-        assert mock_db.add.call_count == 3
+        # Client-streaming methods remain catalog-only and are not executable MCP tools.
+        assert mock_db.add.call_count == 2
         tool_names = {call[0][0].original_name for call in mock_db.add.call_args_list}
-        assert tool_names == {"pkg.ServiceA.MethodA", "pkg.ServiceB.MethodB1", "pkg.ServiceB.MethodB2"}
+        assert tool_names == {"pkg.ServiceA.MethodA", "pkg.ServiceB.MethodB1"}
 
     def test_sync_tools_skips_underscore_keys(self, service, mock_db, sample_db_service):
         """Test that _sync_tools_from_reflection skips _-prefixed keys like _file_descriptors."""
@@ -960,15 +967,25 @@ class TestGrpcService:
         assert result[0]["method"] == "Hello"
 
     @patch("mcpgateway.translate_grpc.GrpcEndpoint")
-    async def test_invoke_method_with_stored_descriptors(self, mock_endpoint_cls, service, mock_db, sample_db_service):
+    @patch("mcpgateway.services.grpc_service.runtime_cache")
+    async def test_invoke_method_with_stored_descriptors(self, mock_cache, mock_endpoint_cls, service, mock_db, sample_db_service):
         """Test invoke_method uses stored descriptors instead of reflection."""
-        # Standard
-        import base64
+        from google.protobuf.descriptor_pb2 import FileDescriptorProto, FileDescriptorSet
+        from mcpgateway.db import GrpcSchemaArtifact
 
-        fake_descriptor_bytes = b"\x0a\x05hello"
+        mock_entry = MagicMock()
+        mock_entry.channel = MagicMock()
+        mock_entry.pool = None
+        mock_entry.method_classes = {}
+        mock_cache.key_for.return_value = "svc-key"
+        mock_cache.acquire.return_value = mock_entry
+
+        file_proto = FileDescriptorProto(name="legacy.proto", package="test", syntax="proto3")
+        descriptor_set = FileDescriptorSet()
+        descriptor_set.file.append(file_proto)
         sample_db_service.enabled = True
+        sample_db_service.active_artifact_id = "artifact-1"
         sample_db_service.discovered_services = {
-            "_file_descriptors": [base64.b64encode(fake_descriptor_bytes).decode("ascii")],
             "test.Svc": {
                 "name": "test.Svc",
                 "methods": [
@@ -981,6 +998,16 @@ class TestGrpcService:
         sample_db_service.tls_key_path = None
         sample_db_service.grpc_metadata = {}
 
+        mock_db.get.return_value = GrpcSchemaArtifact(
+            id="artifact-1",
+            grpc_service_id=sample_db_service.id,
+            version=1,
+            source_type="legacy",
+            content_hash="hash-1",
+            descriptor_set=descriptor_set.SerializeToString(),
+            source_info={},
+            is_active=True,
+        )
         mock_db.execute.return_value.scalar_one_or_none.return_value = sample_db_service
 
         mock_ep_instance = AsyncMock()
@@ -993,16 +1020,17 @@ class TestGrpcService:
         result = await service.invoke_method(mock_db, sample_db_service.id, "test.Svc.Do", {"key": "value"})
 
         assert result == {"result": "ok"}
-        # Should have been created with reflection_enabled=False
         mock_endpoint_cls.assert_called_once()
         call_kwargs = mock_endpoint_cls.call_args[1]
         assert call_kwargs["reflection_enabled"] is False
-        # Should have called load_file_descriptors
+        # Store-descriptor services go through the runtime cache: the endpoint
+        # borrows a shared channel (owns_channel=False) instead of owning one, so
+        # close() is a no-op and the cache balances the reference in its finally.
+        assert call_kwargs["owns_channel"] is False
+        assert call_kwargs["channel"] is not None
         mock_ep_instance.load_file_descriptors.assert_called_once()
-        # Should have set _services (excluding _file_descriptors)
         assert "_file_descriptors" not in mock_ep_instance._services
-        mock_ep_instance.close.assert_called_once()
-
+        mock_ep_instance.close.assert_not_called()
     @patch("mcpgateway.translate_grpc.GrpcEndpoint")
     async def test_invoke_method_without_stored_descriptors(self, mock_endpoint_cls, service, mock_db, sample_db_service):
         """Test invoke_method falls back to reflection when no stored descriptors."""
@@ -1039,17 +1067,13 @@ class TestGrpcService:
     @patch("mcpgateway.services.grpc_service.reflection_pb2_grpc")
     @patch("mcpgateway.services.grpc_service.reflection_pb2")
     async def test_perform_reflection_stores_file_descriptor_bytes(self, mock_reflection_pb2, mock_reflection_pb2_grpc, mock_grpc, service, mock_db, sample_db_service):
-        """Test that _perform_reflection collects file descriptor bytes into _file_descriptors."""
-        # Standard
-        import base64
-
-        # Third-Party
-        from google.protobuf.descriptor_pb2 import FileDescriptorProto  # pylint: disable=no-name-in-module
-
+        """Test that reflection normalizes descriptor bytes into an artifact."""
         # Build a real serialized FileDescriptorProto
         fd_proto = FileDescriptorProto()
         fd_proto.name = "test.proto"
         fd_proto.package = "testpkg"
+        fd_proto.message_type.add(name="Req")
+        fd_proto.message_type.add(name="Resp")
         svc_desc = fd_proto.service.add()
         svc_desc.name = "TestService"
         m = svc_desc.method.add()
@@ -1079,20 +1103,343 @@ class TestGrpcService:
 
         mock_grpc.insecure_channel.return_value = MagicMock()
 
-        # Patch _sync_tools_from_reflection to avoid DB operations
-        with patch.object(service, "_sync_tools_from_reflection"):
+        # The candidate artifact must look non-empty so activation proceeds past the guard.
+        candidate_artifact = MagicMock()
+        candidate_artifact.id = "artifact-1"
+        candidate_artifact.grpc_service_id = sample_db_service.id
+        candidate_artifact.source_info = {
+            "catalog": {
+                "testpkg.TestService": {
+                    "name": "testpkg.TestService",
+                    "methods": [{"name": "DoStuff"}],
+                }
+            }
+        }
+
+        # Patch persistence while still verifying the normalized protoset payload.
+        with patch.object(service, "_sync_tools_from_reflection"), patch("mcpgateway.services.grpc_service.GrpcSchemaService.import_artifact") as import_artifact:
+            import_artifact.return_value = candidate_artifact
             await service._perform_reflection(mock_db, sample_db_service)
 
-        # Verify _file_descriptors was populated
-        discovered = sample_db_service.discovered_services
-        assert "_file_descriptors" in discovered
-        assert len(discovered["_file_descriptors"]) == 1
-        # Verify it's valid base64-encoded proto bytes
-        decoded = base64.b64decode(discovered["_file_descriptors"][0])
-        assert decoded == proto_bytes
-        # Verify service was discovered
-        assert "testpkg.TestService" in discovered
-        assert discovered["testpkg.TestService"]["methods"][0]["name"] == "DoStuff"
+        artifact_payload = import_artifact.call_args.args[2]
+        descriptor_set = FileDescriptorSet()
+        descriptor_set.ParseFromString(artifact_payload)
+        assert [item.SerializeToString() for item in descriptor_set.file] == [proto_bytes]
+        assert import_artifact.call_args.kwargs["source_type"] == "reflection"
+        # New candidate-first flow: imported without activation, then promoted.
+        assert import_artifact.call_args.kwargs["activate"] is False
+        # Promotion clears the candidate pointer and sets the active artifact.
+        assert sample_db_service.candidate_artifact_id is None
+        assert sample_db_service.active_artifact_id == "artifact-1"
+
+
+def _fds(*method_names):
+    """Build a FileDescriptorProto with the given methods under testpkg.TestService.
+
+    Returns (reflection_fd_bytes, serialized_file_descriptor_set) so tests can feed
+    both the mocked reflection stub and the artifact importer.
+    """
+    fd_proto = FileDescriptorProto()
+    fd_proto.name = "test.proto"
+    fd_proto.package = "testpkg"
+    fd_proto.message_type.add(name="Req")
+    fd_proto.message_type.add(name="Resp")
+    svc_desc = fd_proto.service.add()
+    svc_desc.name = "TestService"
+    for method_name in method_names:
+        method = svc_desc.method.add()
+        method.name = method_name
+        method.input_type = ".testpkg.Req"
+        method.output_type = ".testpkg.Resp"
+    descriptor_set = FileDescriptorSet()
+    descriptor_set.file.append(fd_proto)
+    return [fd_proto.SerializeToString()], descriptor_set.SerializeToString()
+
+
+def _reflection_stub(fd_bytes_list):
+    """Build a ServerReflectionStub double listing one service with the given descriptor bytes."""
+    list_resp = MagicMock()
+    list_resp.HasField = lambda field: field == "list_services_response"
+    svc_info = MagicMock()
+    svc_info.name = "testpkg.TestService"
+    list_resp.list_services_response.service = [svc_info]
+
+    fd_resp = MagicMock()
+    fd_resp.HasField = lambda field: field == "file_descriptor_response"
+    fd_resp.file_descriptor_response.file_descriptor_proto = fd_bytes_list
+
+    stub = MagicMock()
+    stub.ServerReflectionInfo = MagicMock(side_effect=[iter([list_resp]), iter([fd_resp])])
+    return stub
+
+
+class TestReflectionPublicationProtection:
+    """Candidate-schema protection for reflection failures, empty sets, and hash drift."""
+
+    @pytest.fixture(autouse=True)
+    def _skip_grpc_target_validation(self, monkeypatch):
+        monkeypatch.setattr("mcpgateway.services.grpc_service._validate_grpc_target", lambda _target: None)
+
+    async def _reflect(self, test_db, service, fd_bytes_list):
+        with patch("mcpgateway.services.grpc_service.grpc") as mock_grpc, patch(
+            "mcpgateway.services.grpc_service.reflection_pb2_grpc"
+        ) as mock_pb2_grpc, patch("mcpgateway.services.grpc_service.reflection_pb2"):
+            mock_pb2_grpc.ServerReflectionStub.return_value = _reflection_stub(fd_bytes_list)
+            mock_grpc.insecure_channel.return_value = MagicMock()
+            await GrpcService()._perform_reflection(test_db, service)
+
+    @pytest.mark.asyncio
+    async def test_reflection_success_publishes_candidate_then_activates_and_syncs(self, test_db):
+        """Non-empty reflection lands as candidate, then activates and syncs tools."""
+        from mcpgateway.services.grpc_schema_service import GrpcSchemaService
+
+        service = DbGrpcService(name="prot-svc", slug="prot-svc", target="localhost:50051", discovery_mode="reflection")
+        test_db.add(service)
+        test_db.commit()
+
+        fd_bytes, _ = _fds("DoStuff")
+        await self._reflect(test_db, service, fd_bytes)
+
+        test_db.refresh(service)
+        assert service.reachable is True
+        assert service.last_reflection_error is None
+        assert service.active_artifact_id is not None
+        assert service.candidate_artifact_id is None  # cleared once promoted
+        assert service.active_schema_hash is not None
+        tools = test_db.query(DbTool).filter_by(grpc_service_id=service.id).all()
+        assert {tool.original_name for tool in tools} == {"testpkg.TestService.DoStuff"}
+        assert all(tool.enabled for tool in tools)
+
+    @pytest.mark.asyncio
+    async def test_reflection_failure_keeps_active_schema_and_tools(self, test_db):
+        """A reflection exception must keep the active artifact and published tools untouched."""
+        from mcpgateway.services.grpc_schema_service import GrpcSchemaService
+
+        service = DbGrpcService(name="fail-svc", slug="fail-svc", target="localhost:50051", discovery_mode="reflection")
+        test_db.add(service)
+        test_db.commit()
+        _, active_bytes = _fds("DoStuff")
+        GrpcSchemaService.import_artifact(test_db, service, active_bytes, "active.protoset", created_by="system", activate=True)
+        test_db.commit()
+        test_db.refresh(service)
+        active_artifact_id = service.active_artifact_id
+        tool = DbTool(
+            original_name="testpkg.TestService.DoStuff",
+            custom_name="testpkg.TestService.DoStuff",
+            custom_name_slug="testpkg-testservice-dostuff",
+            url=service.target,
+            integration_type="gRPC",
+            input_schema={},
+            enabled=True,
+            deprecated=False,
+            reachable=True,
+            grpc_service_id=service.id,
+            created_via="grpc-schema-sync",
+        )
+        test_db.add(tool)
+        test_db.commit()
+        tool_id = tool.id
+
+        with patch("mcpgateway.services.grpc_service.grpc") as mock_grpc, patch(
+            "mcpgateway.services.grpc_service.reflection_pb2_grpc"
+        ) as mock_pb2_grpc, patch("mcpgateway.services.grpc_service.reflection_pb2") as mock_pb2, patch.object(
+            GrpcService, "_sync_tools_from_reflection"
+        ) as mock_sync:
+            mock_stub = MagicMock()
+            mock_stub.ServerReflectionInfo = MagicMock(side_effect=RuntimeError("connection jitter"))
+            mock_pb2_grpc.ServerReflectionStub.return_value = mock_stub
+            mock_grpc.insecure_channel.return_value = MagicMock()
+            with pytest.raises(RuntimeError, match="connection jitter"):
+                await GrpcService()._perform_reflection(test_db, service)
+
+        mock_sync.assert_not_called()
+        test_db.refresh(service)
+        assert service.reachable is False
+        assert "connection jitter" in service.last_reflection_error
+        assert service.active_artifact_id == active_artifact_id
+        test_db.refresh(tool)
+        assert tool.id == tool_id
+        assert tool.enabled is True
+        assert tool.deprecated is False
+
+    @pytest.mark.asyncio
+    async def test_reflection_empty_descriptor_set_keeps_active_tools(self, test_db):
+        """An empty descriptor set over a published schema must not disable tools."""
+        from mcpgateway.services.grpc_schema_service import GrpcSchemaService
+
+        service = DbGrpcService(name="empty-svc", slug="empty-svc", target="localhost:50051", discovery_mode="reflection")
+        test_db.add(service)
+        test_db.commit()
+        _, active_bytes = _fds("DoStuff")
+        GrpcSchemaService.import_artifact(test_db, service, active_bytes, "active.protoset", created_by="system", activate=True)
+        test_db.commit()
+        test_db.refresh(service)
+        active_artifact_id = service.active_artifact_id
+        tool = DbTool(
+            original_name="testpkg.TestService.DoStuff",
+            custom_name="testpkg.TestService.DoStuff",
+            custom_name_slug="testpkg-testservice-dostuff",
+            url=service.target,
+            integration_type="gRPC",
+            input_schema={},
+            enabled=True,
+            deprecated=False,
+            reachable=True,
+            grpc_service_id=service.id,
+            created_via="grpc-schema-sync",
+        )
+        test_db.add(tool)
+        test_db.commit()
+
+        await self._reflect(test_db, service, [])  # empty file descriptor list
+
+        test_db.refresh(service)
+        assert service.last_reflection_error == "Reflection returned empty descriptor set; keeping active schema"
+        assert service.active_artifact_id == active_artifact_id
+        test_db.refresh(tool)
+        assert tool.enabled is True
+        assert tool.deprecated is False
+
+    @pytest.mark.asyncio
+    async def test_reflection_schema_hash_change_creates_new_version_without_disabling_unrelated(self, test_db):
+        """A reflected hash change creates a new immutable version; old artifacts and tool IDs survive."""
+        from mcpgateway.db import GrpcSchemaArtifact
+
+        service = DbGrpcService(name="hash-svc", slug="hash-svc", target="localhost:50051", discovery_mode="reflection")
+        test_db.add(service)
+        test_db.commit()
+
+        fd1, _ = _fds("GetItem", "ListItems")
+        await self._reflect(test_db, service, fd1)
+        test_db.refresh(service)
+        hash1 = service.active_schema_hash
+        artifact1_id = service.active_artifact_id
+        tool_ids = {tool.original_name: tool.id for tool in test_db.query(DbTool).filter_by(grpc_service_id=service.id).all()}
+        assert set(tool_ids) == {"testpkg.TestService.GetItem", "testpkg.TestService.ListItems"}
+        assert test_db.query(GrpcSchemaArtifact).filter_by(grpc_service_id=service.id).count() == 1
+
+        fd2, _ = _fds("GetItem", "ListItems", "NewMethod")
+        await self._reflect(test_db, service, fd2)
+        test_db.refresh(service)
+
+        assert service.active_schema_hash != hash1
+        assert service.active_artifact_id != artifact1_id
+        artifacts = test_db.query(GrpcSchemaArtifact).filter_by(grpc_service_id=service.id).order_by(GrpcSchemaArtifact.version).all()
+        assert len(artifacts) == 2  # historical artifact retained
+        assert [artifact.is_active for artifact in artifacts] == [False, True]
+        tools = test_db.query(DbTool).filter_by(grpc_service_id=service.id).all()
+        assert {tool.original_name for tool in tools} == {
+            "testpkg.TestService.GetItem",
+            "testpkg.TestService.ListItems",
+            "testpkg.TestService.NewMethod",
+        }
+        for tool in tools:
+            if tool.original_name in tool_ids:
+                assert tool.id == tool_ids[tool.original_name]  # Tool ID stability
+            assert tool.enabled is True
+
+    @pytest.mark.asyncio
+    async def test_reflection_recovery_after_failure(self, test_db):
+        """A later successful reflection clears the recorded error and publishes."""
+        service = DbGrpcService(name="rec-svc", slug="rec-svc", target="localhost:50051", discovery_mode="reflection")
+        test_db.add(service)
+        test_db.commit()
+
+        with patch("mcpgateway.services.grpc_service.grpc") as mock_grpc, patch(
+            "mcpgateway.services.grpc_service.reflection_pb2_grpc"
+        ) as mock_pb2_grpc, patch("mcpgateway.services.grpc_service.reflection_pb2"):
+            mock_stub = MagicMock()
+            mock_stub.ServerReflectionInfo = MagicMock(side_effect=RuntimeError("jitter"))
+            mock_pb2_grpc.ServerReflectionStub.return_value = mock_stub
+            mock_grpc.insecure_channel.return_value = MagicMock()
+            with pytest.raises(RuntimeError):
+                await GrpcService()._perform_reflection(test_db, service)
+        test_db.refresh(service)
+        assert service.reachable is False
+        assert "jitter" in service.last_reflection_error
+        assert service.active_artifact_id is None
+
+        fd_bytes, _ = _fds("DoStuff")
+        await self._reflect(test_db, service, fd_bytes)
+        test_db.refresh(service)
+        assert service.reachable is True
+        assert service.last_reflection_error is None
+        assert service.active_artifact_id is not None
+        tools = test_db.query(DbTool).filter_by(grpc_service_id=service.id).all()
+        assert {tool.original_name for tool in tools} == {"testpkg.TestService.DoStuff"}
+
+    def test_sync_tools_skips_when_empty_catalog_would_disable_existing(self):
+        """Last-line defense: sync must skip when an empty catalog would disable published tools."""
+        service = MagicMock(spec=DbGrpcService)
+        service.id = "svc-1"
+        service.name = "guard-svc"
+        service.discovered_services = {}
+
+        existing_tool = MagicMock(spec=DbTool)
+        existing_tool.original_name = "testpkg.TestService.DoStuff"
+        existing_tool.enabled = True
+        existing_tool.deprecated = False
+        existing_tool.reachable = True
+
+        db = MagicMock(spec=Session)
+        db.execute.return_value.scalars.return_value.all.return_value = [existing_tool]
+
+        GrpcService()._sync_tools_from_reflection(db, service)
+
+        assert existing_tool.enabled is True
+        assert existing_tool.deprecated is False
+        assert existing_tool.reachable is True
+
+
+class TestSchemaActivationTransaction:
+    """Schema activation and tool synchronization must share one DB transaction.
+
+    import_schema(activate=True) runs artifact activation and tool sync without an
+    internal commit, so a tool-sync failure rolls back the schema activation too.
+    """
+
+    @pytest.mark.asyncio
+    async def test_import_activate_commits_schema_and_tools_together(self, test_db):
+        """A successful import+activate persists both the artifact and its tools."""
+        service = DbGrpcService(name="txn-svc", slug="txn-svc", target="localhost:50051")
+        test_db.add(service)
+        test_db.commit()
+
+        artifact = await GrpcService().import_schema(
+            test_db, service.id, _fds("DoStuff")[1], "schema.protoset", user_email=None, activate=True
+        )
+
+        test_db.refresh(service)
+        assert service.active_artifact_id == artifact.id
+        assert service.active_schema_hash == artifact.content_hash
+        tools = test_db.query(DbTool).filter_by(grpc_service_id=service.id).all()
+        assert {tool.original_name for tool in tools} == {"testpkg.TestService.DoStuff"}
+        assert all(tool.enabled for tool in tools)
+
+    @pytest.mark.asyncio
+    async def test_import_activate_rolls_back_schema_when_tool_sync_fails(self, test_db):
+        """A tool-sync failure must roll back the schema activation (single transaction)."""
+        from mcpgateway.db import GrpcSchemaArtifact
+
+        service = DbGrpcService(name="txn-fail-svc", slug="txn-fail-svc", target="localhost:50051")
+        test_db.add(service)
+        test_db.commit()
+
+        with patch.object(GrpcService, "_sync_tools_from_reflection", side_effect=RuntimeError("tool write failed")):
+            with pytest.raises(RuntimeError, match="tool write failed"):
+                await GrpcService().import_schema(
+                    test_db, service.id, _fds("DoStuff")[1], "schema.protoset", user_email=None, activate=True
+                )
+
+        # Router's get_db rolls back the whole transaction on exception.
+        test_db.rollback()
+
+        test_db.refresh(service)
+        assert service.active_artifact_id is None
+        assert service.candidate_artifact_id is None
+        assert service.method_count == 0
+        assert test_db.query(DbTool).filter_by(grpc_service_id=service.id).count() == 0
+        assert test_db.query(GrpcSchemaArtifact).filter_by(grpc_service_id=service.id).count() == 0
 
 
 class TestSecurityHardening:
@@ -1763,7 +2110,12 @@ class TestSyncToolsSchemaChange:
             "x-grpc-output-type": ".test.OutputType",
             "x-grpc-client-streaming": False,
             "x-grpc-server-streaming": False,
+            "examples": [{}],
         }
+        existing_tool.output_schema = None
+        existing_tool.enabled = True
+        existing_tool.deprecated = False
+        existing_tool.reachable = True
 
         mock_db = MagicMock(spec=Session)
         mock_scalars = MagicMock()
@@ -1830,7 +2182,12 @@ class TestSyncToolsUnchanged:
             "x-grpc-output-type": ".test.OutputType",
             "x-grpc-client-streaming": False,
             "x-grpc-server-streaming": False,
+            "examples": [{}],
         }
+        existing_tool.output_schema = None
+        existing_tool.enabled = True
+        existing_tool.deprecated = False
+        existing_tool.reachable = True
 
         mock_db = MagicMock(spec=Session)
         mock_scalars = MagicMock()

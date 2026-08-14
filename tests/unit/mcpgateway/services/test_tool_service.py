@@ -3023,7 +3023,7 @@ class TestToolService:
             mock_grpc_service_class.return_value = mock_grpc_manager
 
             # Invoke the tool
-            result = await tool_service.invoke_tool(test_db, "test_tool", {"input": "value"}, request_headers=None)
+            result = await tool_service.invoke_tool(test_db, "test_tool", {"input": "value"}, request_headers=None, timeout_override=12.5)
 
             # Verify GrpcServiceManager.invoke_method was called
             mock_grpc_manager.invoke_method.assert_awaited_once()
@@ -3034,11 +3034,61 @@ class TestToolService:
             assert call_args[0][1] == "grpc-svc-123"  # service_id (positional arg 1)
             assert call_args[0][2] == "test.Service.Method"  # method_name (positional arg 2)
             assert call_args[0][3] == {"input": "value"}  # request_data (positional arg 3)
+            assert call_args.kwargs["timeout"] == 12.5
 
             # Verify the result is properly JSON-serialized
             assert result.content[0].type == "text"
             result_json = json.loads(result.content[0].text)
             assert result_json == mock_grpc_response
+
+    @pytest.mark.asyncio
+    async def test_grpc_stream_waits_for_post_invoke_output_governance(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """A post-invoke plugin must inspect stream items before the debugger receives them."""
+        # Third-Party
+        from cpex.framework import PluginResult, ToolHookType
+
+        mock_tool.integration_type = "gRPC"
+        mock_tool.grpc_service_id = "grpc-svc-123"
+        mock_tool.original_name = "test.Service.Stream"
+        mock_tool.jsonpath_filter = ""
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+        stream_callback = AsyncMock()
+
+        modified_payload = Mock()
+        modified_payload.result = {
+            "content": [{"type": "text", "text": json.dumps({"items": [{"value": "filtered"}], "truncated": False})}],
+            "isError": False,
+        }
+        post_result = Mock(continue_processing=True, violation=None, modified_payload=modified_payload, retry_delay_ms=0)
+        post_result.metadata = None
+        plugin_manager = Mock()
+        plugin_manager.has_hooks_for = Mock(return_value=True)
+
+        async def invoke_hook(hook_type, *_args, **_kwargs):
+            if hook_type == ToolHookType.TOOL_PRE_INVOKE:
+                return PluginResult(continue_processing=True), None
+            return post_result, None
+
+        plugin_manager.invoke_hook = AsyncMock(side_effect=invoke_hook)
+
+        with (
+            patch("mcpgateway.services.grpc_service.GrpcService") as grpc_service_class,
+            patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=plugin_manager)),
+        ):
+            grpc_manager = AsyncMock()
+            grpc_manager.invoke_method = AsyncMock(return_value={"items": [{"value": "raw"}], "truncated": False})
+            grpc_service_class.return_value = grpc_manager
+
+            await tool_service.invoke_tool(
+                test_db,
+                "test_tool",
+                {},
+                request_headers=None,
+                meta_data={"grpc_stream_callback": stream_callback},
+            )
+
+        assert grpc_manager.invoke_method.await_args.kwargs["stream_callback"] is None
+        stream_callback.assert_awaited_once_with({"value": "filtered"})
 
     @pytest.mark.asyncio
     async def test_invoke_tool_mcp_streamablehttp(self, tool_service, mock_tool, test_db):
@@ -11292,6 +11342,56 @@ class TestGrpcToolInvocation:
 
             with pytest.raises(ToolTimeoutError):
                 await tool_service.invoke_tool(test_db, "test.Svc.DoStuff", {}, request_headers=None)
+
+    @pytest.mark.asyncio
+    async def test_invoke_grpc_tool_populates_structured_content(self, tool_service, test_db, mock_grpc_tool, mock_global_config_obj):
+        """A schema-declaring gRPC tool must attach structured_content from the JSON body.
+
+        Without this, the MCP egress validator rejects the response with
+        "outputSchema defined but no structured output returned".
+        """
+        output_schema = {
+            "type": "object",
+            "properties": {"status": {"type": "string"}},
+            "required": ["status"],
+        }
+        mock_grpc_tool.output_schema = output_schema
+        setup_db_execute_mock(test_db, mock_grpc_tool, mock_global_config_obj)
+
+        with patch("mcpgateway.services.tool_service.fresh_db_session") as mock_fresh_db, patch("mcpgateway.services.grpc_service.GrpcService") as mock_grpc_cls:
+            mock_grpc_manager = AsyncMock()
+            mock_grpc_manager.invoke_method = AsyncMock(return_value={"status": "SERVING"})
+            mock_grpc_cls.return_value = mock_grpc_manager
+            mock_fresh_db.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_fresh_db.return_value.__exit__ = MagicMock(return_value=False)
+
+            response = await tool_service.invoke_tool(test_db, "test.Svc.DoStuff", {}, request_headers=None)
+
+        assert response.is_error is not True
+        assert response.structured_content == {"status": "SERVING"}
+
+    @pytest.mark.asyncio
+    async def test_invoke_grpc_tool_schema_mismatch_marks_error(self, tool_service, test_db, mock_grpc_tool, mock_global_config_obj):
+        """A gRPC response that violates the tool's output schema must be flagged is_error."""
+        mock_grpc_tool.output_schema = {
+            "type": "object",
+            "properties": {"status": {"type": "string"}},
+            "required": ["status"],
+            "additionalProperties": False,
+        }
+        setup_db_execute_mock(test_db, mock_grpc_tool, mock_global_config_obj)
+
+        with patch("mcpgateway.services.tool_service.fresh_db_session") as mock_fresh_db, patch("mcpgateway.services.grpc_service.GrpcService") as mock_grpc_cls:
+            mock_grpc_manager = AsyncMock()
+            # Missing required "status" and has an extra key -> must fail validation
+            mock_grpc_manager.invoke_method = AsyncMock(return_value={"unexpected": True})
+            mock_grpc_cls.return_value = mock_grpc_manager
+            mock_fresh_db.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_fresh_db.return_value.__exit__ = MagicMock(return_value=False)
+
+            response = await tool_service.invoke_tool(test_db, "test.Svc.DoStuff", {}, request_headers=None)
+
+        assert response.is_error is True
 
 
 # Coverage decision-record (B7 anti-regression):

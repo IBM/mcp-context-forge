@@ -157,6 +157,34 @@ transport_get_events_delivered_counter = Counter(
     ["method"],
 )
 
+# gRPC labels are restricted to administrator-registered service and descriptor
+# method names plus the finite gRPC status-code set.
+grpc_client_calls_counter = Counter(
+    "grpc_client_calls_total",
+    "Outbound gRPC calls by registered service, method, and status",
+    ["service", "method", "status"],
+)
+grpc_client_duration_histogram = Histogram(
+    "grpc_client_duration_seconds",
+    "Outbound gRPC call latency",
+    ["service", "method"],
+)
+grpc_health_checks_counter = Counter(
+    "grpc_health_checks_total",
+    "gRPC health checks by service, check type, and outcome",
+    ["service", "check_type", "outcome"],
+)
+grpc_health_status_gauge = Gauge(
+    "grpc_health_status",
+    "Current gRPC health state (1 healthy, 0 unhealthy or unknown)",
+    ["service"],
+)
+grpc_reflection_counter = Counter(
+    "grpc_reflection_total",
+    "gRPC reflection attempts by registered service and outcome",
+    ["service", "outcome"],
+)
+
 # ADR-052: Per-session bus listener-queue overflow events (subscriber too slow).
 # Operators alert on rate; without this counter the only signal was a
 # WARNING log line.

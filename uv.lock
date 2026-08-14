@@ -1441,6 +1441,19 @@ wheels = [
 ]
 
 [[package]]
+name = "grpcio-health-checking"
+version = "1.83.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "grpcio" },
+    { name = "protobuf" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/cd/84/5db47abe1b8b946e8edcfcf7fb2116c7a4ab839e23126680a984c88eb424/grpcio_health_checking-1.83.0.tar.gz", hash = "sha256:ad6bc4d5a1103ad704d25ccd82def300dfa27996b185cab3e4cceeef2c6867d4", size = 17107, upload-time = "2026-07-23T15:24:16.466Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c6/9c/8922f2a529bf49361b4f70d6d07adfadc07d1a93eb5ee07f6f66a54445e8/grpcio_health_checking-1.83.0-py3-none-any.whl", hash = "sha256:7d8b47a5bfbc699d4aee0fc7a27f5d0265eb23a6a64db5ac2d8b749a0f8a9911", size = 19120, upload-time = "2026-07-23T15:24:14.873Z" },
+]
+
+[[package]]
 name = "grpcio-reflection"
 version = "1.83.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2557,6 +2570,7 @@ dev-all = [
 ]
 grpc = [
     { name = "grpcio" },
+    { name = "grpcio-health-checking" },
     { name = "grpcio-reflection" },
     { name = "grpcio-tools" },
     { name = "protobuf" },

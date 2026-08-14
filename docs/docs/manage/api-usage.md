@@ -2107,6 +2107,65 @@ curl -v -H "Authorization: Bearer $TOKEN" $BASE_URL/tools
 curl -i -H "Authorization: Bearer $TOKEN" $BASE_URL/tools > response.txt
 ```
 
+## Governed SQL Data API
+
+The external SQL feature is opt-in (`MCPGATEWAY_SQL_API_ENABLED=true`). Platform administrators create encrypted connections and discover metadata; discovered tables remain private, unexposed, and read-only until an operation policy is explicitly saved.
+
+```bash
+# Create and test a source (platform admin)
+curl -X POST "$BASE_URL/admin/sql/sources" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"name":"inventory","connection_url":"postgresql+psycopg://user@db.example.com/inventory"}'
+
+curl -X POST "$BASE_URL/admin/sql/sources/SOURCE_ID/test" \
+  -H "Authorization: Bearer $TOKEN"
+curl -X POST "$BASE_URL/admin/sql/sources/SOURCE_ID/discover" \
+  -H "Authorization: Bearer $TOKEN"
+
+# Assign and expose query only
+curl -X PATCH "$BASE_URL/admin/sql/tables/TABLE_ID" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"team_id":"TEAM_ID","visibility":"team","exposed":true,"allow_query":true}'
+```
+
+Once exposed, REST and generated MCP tools share the same ToolService permission, plugin, audit, and metrics pipeline:
+
+```bash
+# Equality filter, selected fields, descending sort, and one enabled relation
+curl -G "$BASE_URL/api/v1/data/inventory/public/orders" \
+  -H "Authorization: Bearer $TOKEN" \
+  --data-urlencode 'filter={"state":"open"}' \
+  --data-urlencode 'fields=id,state,total' \
+  --data-urlencode 'sort=-id' \
+  --data-urlencode 'include=customer' \
+  --data-urlencode 'limit=100'
+
+# Composite keys are URL-encoded JSON; PATCH and DELETE require a complete primary/unique key
+curl -X PATCH "$BASE_URL/api/v1/data/inventory/public/order_lines?key=%7B%22order_id%22%3A10%2C%22line_id%22%3A2%7D" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"quantity":3}'
+```
+
+Arbitrary SQL, DDL, stored procedures, bulk writes, and multi-hop includes are not accepted. Views are always read-only. Update/delete require a reflected primary key or explicit unique key. Deadlines are enforced by the database driver so a timed-out write cannot continue in a detached worker and commit after the caller receives an error.
+
+## Unified API Debugger
+
+Enable the debugger with `MCPGATEWAY_API_DEBUG_ENABLED=true`. Catalog reads require `tools.read`; invocation requires `tools.execute`. Calls use the real ToolService pipeline.
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" "$BASE_URL/admin/debug/catalog?protocol=gRPC"
+
+curl -X POST "$BASE_URL/admin/debug/invoke" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"tool_id":"TOOL_ID","arguments":{"id":"42"},"headers":{},"metadata":{"x-tenant":"demo"},"deadline_seconds":10}'
+
+curl -X POST -N "$BASE_URL/admin/debug/stream" \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"tool_id":"TOOL_ID","arguments":{},"headers":{},"metadata":{},"deadline_seconds":30}'
+```
+
+The Admin UI renders editable controls from each tool's JSON Schema and can copy generated values into the raw JSON editor. History is private to the caller and keeps only redacted request previews plus result metadata—never response bodies or credentials. Defaults are seven days and the latest 100 calls per user. If an output-governance plugin is configured, server-streaming items are buffered until `TOOL_POST_INVOKE` has approved or transformed them; otherwise they are emitted live.
+
 ## Best Practices
 
 1. **Token Management**

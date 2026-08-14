@@ -1897,6 +1897,16 @@ admin_router = APIRouter(
     dependencies=[Depends(enforce_admin_csrf)],
 )
 
+# Feature routers inherit the admin prefix, authentication, and CSRF policy.
+# Imported here (after enforce_admin_csrf is defined) to avoid circular imports.
+from mcpgateway.routers.api_debug import router as api_debug_router  # pylint: disable=wrong-import-position  # noqa: E402
+from mcpgateway.routers.grpc_schema import router as grpc_schema_router  # pylint: disable=wrong-import-position  # noqa: E402
+from mcpgateway.routers.sql_data import admin_router as sql_admin_router  # pylint: disable=wrong-import-position  # noqa: E402
+
+admin_router.include_router(grpc_schema_router)
+admin_router.include_router(sql_admin_router)
+admin_router.include_router(api_debug_router)
+
 ####################
 # Admin UI Routes  #
 ####################
@@ -4211,7 +4221,7 @@ async def admin_ui(
     grpc_services = []
     try:
         if "grpc-services" not in hidden_sections and GRPC_AVAILABLE and grpc_service_mgr and settings.mcpgateway_grpc_enabled:
-            grpc_services_raw = await grpc_service_mgr.list_services(
+            grpc_services_raw, _ = await grpc_service_mgr.list_services(
                 db,
                 include_inactive=include_inactive,
                 user_email=user_email,
@@ -4252,6 +4262,8 @@ async def admin_ui(
             "bulk_import_max_tools": settings.mcpgateway_bulk_import_max_tools,
             "a2a_enabled": settings.mcpgateway_a2a_enabled,
             "grpc_enabled": GRPC_AVAILABLE and settings.mcpgateway_grpc_enabled,
+            "sql_api_enabled": settings.mcpgateway_sql_api_enabled,
+            "api_debug_enabled": settings.mcpgateway_api_debug_enabled,
             "catalog_enabled": settings.mcpgateway_catalog_enabled,
             "llmchat_enabled": getattr(settings, "llmchat_enabled", False),
             "toolops_enabled": getattr(settings, "toolops_enabled", False),
@@ -8266,7 +8278,9 @@ async def admin_create_user(
         )
 
         # If the user was created with the default password, optionally force password change
-        if settings.password_change_enforcement_enabled and getattr(settings, "require_password_change_for_default_password", True) and password == settings.default_user_password.get_secret_value():  # nosec B105
+        if (
+            settings.password_change_enforcement_enabled and getattr(settings, "require_password_change_for_default_password", True) and password == settings.default_user_password.get_secret_value()
+        ):  # nosec B105
             new_user.password_change_required = True
             db.commit()
 
@@ -18389,6 +18403,22 @@ async def get_observability_metrics_partial(request: Request, _user=Depends(get_
     root_path = _resolve_root_path(request)
     return request.app.state.templates.TemplateResponse(request, "observability_metrics.html", {"request": request, "root_path": root_path})
 
+
+@admin_router.get("/api-metrics/partial", response_class=HTMLResponse)
+@require_permission("admin.system_config", allow_admin_bypass=False)
+async def get_api_metrics_partial(request: Request, _user=Depends(get_current_user_with_permissions), _db: Session = Depends(get_db)):
+    """Render the API Metrics dashboard partial.
+
+    Args:
+        request: FastAPI request object
+        _user: Authenticated user with admin permissions (required by dependency)
+        _db: Database session for permission checks.
+
+    Returns:
+        HTMLResponse: Rendered API metrics dashboard template
+    """
+    root_path = _resolve_root_path(request)
+    return request.app.state.templates.TemplateResponse(request, "api_metrics_dashboard.html", {"request": request, "root_path": root_path})
 
 @admin_router.get("/observability/stats", response_class=HTMLResponse)
 @require_permission("admin.system_config", allow_admin_bypass=False)

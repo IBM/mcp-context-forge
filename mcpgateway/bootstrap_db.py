@@ -396,6 +396,8 @@ async def bootstrap_default_roles(conn: Connection) -> None:
                         "tokens.update",
                         "tokens.revoke",
                         "tools.manage_plugins",
+                        "sql.tables.read",
+                        "sql.tables.manage",
                     ],
                     "is_system_role": True,
                 },
