@@ -13124,7 +13124,6 @@ async def admin_delete_gateway_rest(
 async def transfer_gateway_ownership(
     gateway_id: str,
     transfer: GatewayOwnershipTransferRequest,
-    http_request: Request,
     db: Session = Depends(get_db),
     _user=Depends(get_current_user_with_permissions),
 ) -> GatewayRead:
@@ -13133,7 +13132,6 @@ async def transfer_gateway_ownership(
     Args:
         gateway_id: The ID of the gateway to transfer.
         transfer: Transfer request with target owner email and optional team.
-        http_request: The HTTP request.
         db: Database session.
         _user: Authenticated admin user.
 

@@ -2106,7 +2106,7 @@ class EmailAuthService:
                             .where(
                                 EmailTeamMember.team_id == gw.team_id,
                                 EmailTeamMember.user_email != email,
-                                EmailTeamMember.is_active == True,  # noqa: E712
+                                EmailTeamMember.is_active == True,  # noqa: E712  # pylint: disable=singleton-comparison
                             )
                             .order_by(EmailTeamMember.user_email)
                         )

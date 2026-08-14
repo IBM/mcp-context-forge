@@ -5663,7 +5663,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             ValueError: Target user invalid or team membership check fails
         """
         # Validate target user exists and is active
-        target_user = db.execute(select(DbEmailUser).where(DbEmailUser.email == target_owner_email, DbEmailUser.is_active == True)).scalar_one_or_none()  # noqa: E712
+        target_user = db.execute(select(DbEmailUser).where(DbEmailUser.email == target_owner_email, DbEmailUser.is_active == True)).scalar_one_or_none()  # noqa: E712  # pylint: disable=singleton-comparison
         if not target_user:
             raise ValueError(f"Target user not found or inactive: {target_owner_email}")
 
@@ -5681,7 +5681,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 select(DbEmailTeamMember).where(
                     DbEmailTeamMember.team_id == effective_team_id,
                     DbEmailTeamMember.user_email == target_owner_email,
-                    DbEmailTeamMember.is_active == True,  # noqa: E712
+                    DbEmailTeamMember.is_active == True,  # noqa: E712  # pylint: disable=singleton-comparison
                 )
             ).scalar_one_or_none()
             if not member:
@@ -5693,7 +5693,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 select(DbEmailTeamMember).where(
                     DbEmailTeamMember.team_id == target_team_id,
                     DbEmailTeamMember.user_email == target_owner_email,
-                    DbEmailTeamMember.is_active == True,  # noqa: E712
+                    DbEmailTeamMember.is_active == True,  # noqa: E712  # pylint: disable=singleton-comparison
                 )
             ).scalar_one_or_none()
             if not member:
