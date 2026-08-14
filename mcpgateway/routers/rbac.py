@@ -399,6 +399,10 @@ async def _authorize_delegated_permissions(db: Session, user, role_id: str, team
     ``*``) to themselves or anyone else — ``RoleCreateRequest.permissions`` is an
     unvalidated ``List[str]``, so nothing at role-creation time stops a
     ``scope="team"`` role from carrying wildcard or ``admin.*`` permissions.
+    Checks the role's full inherited permission set (``get_effective_permissions()``),
+    not just its direct ``permissions`` column, so a role with harmless direct
+    permissions can't be used to smuggle through a wildcard/platform-admin grant
+    inherited from a parent role via ``inherits_from``.
     Only relevant to granting (assign), never to revoking: revocation only ever
     reduces privilege, so gating it identically would block a team_admin from
     cleaning up a wildcard-carrying assignment they don't personally hold.
@@ -422,7 +426,7 @@ async def _authorize_delegated_permissions(db: Session, user, role_id: str, team
 
     permission_service = PermissionService(db)
     caller_permissions = await permission_service.get_user_permissions(user["email"], team_id=team_id)
-    for permission in role.permissions or []:
+    for permission in role.get_effective_permissions():
         if not _permission_covered(caller_permissions, permission):
             logger.warning(
                 "Role assignment denied: user=%s lacks permission=%s required by role=%s",

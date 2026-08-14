@@ -481,23 +481,27 @@ The mcp-cli integrates with ContextForge Gateway through multiple connection met
 
 ### Production Docker Setup
 
-Use the official Docker image for production environments:
+Use the official Docker image for production environments. **Never reuse the example values below** — generate a unique secret and set a strong admin password before exposing the container beyond localhost:
 
 ```bash
-# Start the gateway
+# Generate a strong JWT secret and admin password (do this once, store securely)
+export JWT_SECRET_KEY=$(openssl rand -hex 32)
+export PLATFORM_ADMIN_PASSWORD=$(openssl rand -base64 24)
+
+# Start the gateway (binds to all interfaces — put it behind a reverse proxy/firewall in production)
 docker run -d --name mcpgateway \
   -p 4444:4444 \
   -e HOST=0.0.0.0 \
-  -e JWT_SECRET_KEY=my-secret-key \
+  -e JWT_SECRET_KEY="$JWT_SECRET_KEY" \
   -e BASIC_AUTH_USER=admin \
-  -e BASIC_AUTH_PASSWORD=changeme \
+  -e BASIC_AUTH_PASSWORD="$PLATFORM_ADMIN_PASSWORD" \
   -e PLATFORM_ADMIN_EMAIL=admin@example.com \
-  -e PLATFORM_ADMIN_PASSWORD=changeme \
+  -e PLATFORM_ADMIN_PASSWORD="$PLATFORM_ADMIN_PASSWORD" \
   -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
   ghcr.io/ibm/mcp-context-forge:1.0.0-RC-3
 
 # Generate token
-export MCPGATEWAY_BEARER_TOKEN=$(docker exec mcpgateway python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --admin --exp 10080 --secret my-secret-key)
+export MCPGATEWAY_BEARER_TOKEN=$(docker exec mcpgateway python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --admin --exp 10080 --secret "$JWT_SECRET_KEY")
 
 # Test connection
 curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:4444/tools

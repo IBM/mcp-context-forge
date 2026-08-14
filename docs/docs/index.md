@@ -332,16 +332,21 @@ kubectl port-forward svc/mcp-gateway-mcp-context-forge 4444:80
 
 ### Docker (Single Container)
 
+Binding `HOST=0.0.0.0` exposes the gateway beyond localhost — generate a unique secret and admin password rather than reusing these example values if the container is reachable from outside your machine:
+
 ```bash
+export JWT_SECRET_KEY=$(openssl rand -hex 32)
+export PLATFORM_ADMIN_PASSWORD=$(openssl rand -base64 24)
+
 docker run -d --name mcpgateway \
   -p 4444:4444 \
   -e MCPGATEWAY_UI_ENABLED=true \
   -e MCPGATEWAY_ADMIN_API_ENABLED=true \
   -e HOST=0.0.0.0 \
-  -e JWT_SECRET_KEY=my-test-key-but-now-longer-than-32-bytes \
+  -e JWT_SECRET_KEY="$JWT_SECRET_KEY" \
   -e AUTH_REQUIRED=true \
   -e PLATFORM_ADMIN_EMAIL=admin@example.com \
-  -e PLATFORM_ADMIN_PASSWORD=changeme \
+  -e PLATFORM_ADMIN_PASSWORD="$PLATFORM_ADMIN_PASSWORD" \
   -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
   -e DATABASE_URL=sqlite:///./mcp.db \
   -e SECURE_COOKIES=false \
@@ -350,7 +355,7 @@ docker run -d --name mcpgateway \
 # Tail logs and generate API key
 docker logs -f mcpgateway
 docker run --rm -it ghcr.io/ibm/mcp-context-forge:1.0.0 \
-  python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --admin --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes
+  python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --admin --exp 10080 --secret "$JWT_SECRET_KEY"
 ```
 
 Browse to **[http://localhost:4444/admin](http://localhost:4444/admin)** and login with `PLATFORM_ADMIN_EMAIL` / `PLATFORM_ADMIN_PASSWORD`.

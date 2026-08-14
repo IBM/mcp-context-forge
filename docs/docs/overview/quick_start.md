@@ -127,6 +127,13 @@ Pick an install method below, generate an auth token, then walk through a real t
 
     2. **(Optional) persist the DB**
 
+        Generate a unique secret and admin password before running these — don't reuse the example values, especially if the container is reachable beyond localhost:
+
+        ```bash
+        export JWT_SECRET_KEY=$(openssl rand -hex 32)
+        export PLATFORM_ADMIN_PASSWORD=$(openssl rand -base64 24)
+        ```
+
         === "SQLite (Default)"
             ```bash
             mkdir -p $(pwd)/data
@@ -134,9 +141,9 @@ Pick an install method below, generate an auth token, then walk through a real t
               -p 4444:4444 \
               -v $(pwd)/data:/data \
               -e DATABASE_URL=sqlite:////data/mcp.db \
-              -e JWT_SECRET_KEY=my-test-key-but-now-longer-than-32-bytes \
+              -e JWT_SECRET_KEY="$JWT_SECRET_KEY" \
               -e PLATFORM_ADMIN_EMAIL=admin@example.com \
-              -e PLATFORM_ADMIN_PASSWORD=changeme \
+              -e PLATFORM_ADMIN_PASSWORD="$PLATFORM_ADMIN_PASSWORD" \
               -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
               ghcr.io/ibm/mcp-context-forge:1.0.0-RC-3
             ```
@@ -156,9 +163,9 @@ Pick an install method below, generate an auth token, then walk through a real t
               -p 4444:4444 \
               --link postgres-db:postgres \
               -e DATABASE_URL=postgresql+psycopg://postgres:mysecretpassword@postgres:5432/mcp \
-              -e JWT_SECRET_KEY=my-test-key-but-now-longer-than-32-bytes \
+              -e JWT_SECRET_KEY="$JWT_SECRET_KEY" \
               -e PLATFORM_ADMIN_EMAIL=admin@example.com \
-              -e PLATFORM_ADMIN_PASSWORD=changeme \
+              -e PLATFORM_ADMIN_PASSWORD="$PLATFORM_ADMIN_PASSWORD" \
               -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
               ghcr.io/ibm/mcp-context-forge:1.0.0-RC-3
             ```
@@ -167,7 +174,7 @@ Pick an install method below, generate an auth token, then walk through a real t
 
         ```bash
         docker exec mcpgateway python3 -m mcpgateway.utils.create_jwt_token \
-          --username admin@example.com --admin --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes
+          --username admin@example.com --admin --exp 10080 --secret "$JWT_SECRET_KEY"
         ```
 
     4. **Smoke-test**

@@ -209,9 +209,7 @@ async def test_narrowed_admin_cannot_authorize_global_assignment(monkeypatch):
     monkeypatch.setattr("mcpgateway.auth_context.is_unrestricted_platform_admin", AsyncMock(return_value=False))
 
     with pytest.raises(HTTPException) as exc:
-        await rbac_router._authorize_assignment_scope(
-            scoped_request(["team-a"]), admin_user_context(["team-a"]), MagicMock(), "global", None, "victim@example.com"
-        )
+        await rbac_router._authorize_assignment_scope(scoped_request(["team-a"]), admin_user_context(["team-a"]), MagicMock(), "global", None, "victim@example.com")
 
     assert exc.value.status_code == 403
 
@@ -220,24 +218,19 @@ async def test_narrowed_admin_cannot_authorize_global_assignment(monkeypatch):
 async def test_unrestricted_admin_may_authorize_global_assignment(monkeypatch):
     monkeypatch.setattr("mcpgateway.auth_context.is_unrestricted_platform_admin", AsyncMock(return_value=True))
 
-    assert (
-        await rbac_router._authorize_assignment_scope(
-            scoped_request(None), admin_user_context(None), MagicMock(), "global", None, "victim@example.com"
-        )
-        is None
-    )
+    assert await rbac_router._authorize_assignment_scope(scoped_request(None), admin_user_context(None), MagicMock(), "global", None, "victim@example.com") is None
 
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "scope,scope_id,target,expected_denied",
     [
-        ("team", "team-b", "victim@example.com", True),   # team not covered by the token
-        ("team", None, "victim@example.com", True),        # team scope with no scope_id fails closed
-        ("team", "team-a", "member@example.com", False),   # covered team
-        ("personal", None, "victim@example.com", True),    # someone else's personal scope
-        ("personal", None, "admin@example.com", False),    # self
-        ("nonsense", None, "victim@example.com", True),    # unknown scope fails closed
+        ("team", "team-b", "victim@example.com", True),  # team not covered by the token
+        ("team", None, "victim@example.com", True),  # team scope with no scope_id fails closed
+        ("team", "team-a", "member@example.com", False),  # covered team
+        ("personal", None, "victim@example.com", True),  # someone else's personal scope
+        ("personal", None, "admin@example.com", False),  # self
+        ("nonsense", None, "victim@example.com", True),  # unknown scope fails closed
     ],
 )
 async def test_assignment_scope_matrix(scope, scope_id, target, expected_denied):
@@ -261,9 +254,17 @@ async def test_assignment_scope_matrix(scope, scope_id, target, expected_denied)
         assert await rbac_router._authorize_assignment_scope(request, user, MagicMock(), scope, scope_id, target) is None
 
 
-def _role_with_permissions(permissions):
-    """Build a minimal role row with only the ``permissions`` field used by containment checks."""
-    return SimpleNamespace(id="r1", permissions=permissions)
+def _role_with_permissions(permissions, effective_permissions=None):
+    """Build a minimal role row with the ``permissions``/``get_effective_permissions()`` used by containment checks.
+
+    ``effective_permissions`` defaults to ``permissions`` (mirroring the real
+    ``Role.get_effective_permissions()`` when the role has no parent), but can be
+    set separately to simulate a role that inherits additional permissions from
+    a parent via ``inherits_from``.
+    """
+    role = SimpleNamespace(id="r1", permissions=permissions)
+    role.get_effective_permissions = lambda: effective_permissions if effective_permissions is not None else permissions
+    return role
 
 
 def _db_with_member(is_member: bool):
@@ -313,6 +314,30 @@ async def test_team_assignment_allows_role_covered_by_callers_own_permissions(mo
 
     result = await rbac_router._authorize_assignment_scope(request, user, _db_with_member(True), "team", "team-a", "member@example.com", role_id="r1")
     assert result is None
+
+
+@pytest.mark.asyncio
+async def test_team_assignment_denies_role_escalating_via_inherited_permissions(monkeypatch):
+    """A role's direct permissions can look harmless while it inherits '*' via inherits_from.
+
+    Containment must check Role.get_effective_permissions() (direct + inherited),
+    not just the direct `permissions` column, or a narrowed team_admin could grant
+    a role whose parent carries platform-admin/wildcard authority.
+    """
+    role_service = MagicMock()
+    role_service.get_role_by_id = AsyncMock(return_value=_role_with_permissions(["tools.read"], effective_permissions=["tools.read", "*"]))
+    monkeypatch.setattr(rbac_router, "RoleService", lambda db: role_service)
+
+    permission_service = MagicMock()
+    permission_service.get_user_permissions = AsyncMock(return_value={"admin.user_management", "tools.read"})
+    monkeypatch.setattr(rbac_router, "PermissionService", lambda db: permission_service)
+
+    request = _jwt_scoped_request(["team-a"], path="/rbac/users/x/roles")
+    user = admin_user_context(["team-a"])
+
+    with pytest.raises(HTTPException) as exc:
+        await rbac_router._authorize_assignment_scope(request, user, _db_with_member(True), "team", "team-a", "member@example.com", role_id="r1")
+    assert exc.value.status_code == 403
 
 
 @pytest.mark.asyncio
