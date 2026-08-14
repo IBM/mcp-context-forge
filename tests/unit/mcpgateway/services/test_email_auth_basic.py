@@ -2691,7 +2691,10 @@ class TestEmailAuthServiceUserDeletion:
         mock_teams_result = MagicMock()
         mock_teams_result.scalars.return_value.all.return_value = []
 
-        mock_db.execute.side_effect = [mock_user_result, mock_teams_result, MagicMock(), MagicMock()]
+        mock_no_gateways = MagicMock()
+        mock_no_gateways.scalars.return_value.all.return_value = []
+
+        mock_db.execute.side_effect = [mock_user_result, mock_teams_result, mock_no_gateways, MagicMock(), MagicMock()]
 
         query_mocks = {}
 
@@ -2771,7 +2774,10 @@ class TestEmailAuthServiceUserDeletion:
         # Fifth execute: team members (empty)
         mock_empty_result = MagicMock()
 
-        mock_db.execute.side_effect = [mock_user_result, mock_teams_result, mock_members_result, mock_empty_result, mock_empty_result]
+        mock_no_gateways = MagicMock()
+        mock_no_gateways.scalars.return_value.all.return_value = []
+
+        mock_db.execute.side_effect = [mock_user_result, mock_teams_result, mock_members_result, mock_no_gateways, mock_empty_result, mock_empty_result]
 
         mock_role_svc = MagicMock()
         mock_role_svc.delete_all_user_roles = AsyncMock(return_value=0)
@@ -2818,6 +2824,9 @@ class TestEmailAuthServiceUserDeletion:
         mock_delete_team_members_all = MagicMock()
         mock_delete_auth_events = MagicMock()
 
+        mock_no_gateways = MagicMock()
+        mock_no_gateways.scalars.return_value.all.return_value = []
+
         mock_db.execute.side_effect = [
             mock_user_result,
             mock_teams_result,
@@ -2825,6 +2834,7 @@ class TestEmailAuthServiceUserDeletion:
             mock_single_member,  # Just the user as member
             mock_delete_history,  # Delete team member history records
             mock_delete_team_members_for_team,  # Delete team members (for the team)
+            mock_no_gateways,  # No owned gateways
             mock_delete_team_members_all,  # Delete team members (remove user from all teams)
             mock_delete_auth_events,  # Delete auth events
         ]
@@ -2919,6 +2929,9 @@ class TestEmailAuthServiceUserDeletion:
         mock_single_member.scalars.return_value.all.return_value = [single_member]
 
         mock_empty = MagicMock()
+        mock_no_gateways = MagicMock()
+        mock_no_gateways.scalars.return_value.all.return_value = []
+
         mock_db.execute.side_effect = [
             mock_user_result,
             mock_teams_result,
@@ -2926,6 +2939,7 @@ class TestEmailAuthServiceUserDeletion:
             mock_single_member,
             mock_empty,  # delete history
             mock_empty,  # delete team members
+            mock_no_gateways,  # no owned gateways
             mock_empty,  # delete user memberships
             mock_empty,  # delete auth events
         ]
