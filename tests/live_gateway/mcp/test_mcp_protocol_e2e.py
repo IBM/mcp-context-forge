@@ -366,8 +366,14 @@ class TestToolCalls:
         """Require a synced tool with a declared output schema."""
         tools = await client.list_tools()
         match = next((tool for tool in tools if tool.name == tool_name), None)
-        assert match is not None, f"Tool {tool_name!r} is not registered in the gateway."
-        assert match.outputSchema, f"Tool {tool_name!r} has no outputSchema declared in the gateway: {match}"
+        assert match is not None, (
+            f"Tool {tool_name!r} is not registered in the gateway. "
+            "Check that register_fast_time completed and gateway synchronization finished."
+        )
+        assert match.outputSchema, (
+            f"Tool {tool_name!r} has no outputSchema declared in the gateway: {match}. "
+            "Check that the upstream tool declares an output_schema and gateway synchronization completed successfully."
+        )
         return match
 
     async def test_nonexistent_tool(self, client: Client) -> None:

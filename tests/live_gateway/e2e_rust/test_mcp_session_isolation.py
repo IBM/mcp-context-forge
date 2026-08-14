@@ -275,11 +275,9 @@ def _select_time_gateway(gateways: list[dict[str, Any]], tools: list[dict[str, A
         if gateway_id:
             tool_counts_by_gateway[gateway_id] = tool_counts_by_gateway.get(gateway_id, 0) + 1
 
-    preferred_names = ("fast_time",)
-    for preferred_name in preferred_names:
-        for candidate in gateways:
-            if candidate.get("name") == preferred_name and candidate.get("transport") == "STREAMABLEHTTP" and tool_counts_by_gateway.get(candidate.get("id"), 0) > 0:
-                return candidate
+    for candidate in gateways:
+        if candidate.get("name") == "fast_time" and candidate.get("transport") == "STREAMABLEHTTP" and tool_counts_by_gateway.get(candidate.get("id"), 0) > 0:
+            return candidate
 
     for candidate in gateways:
         url = str(candidate.get("url", ""))

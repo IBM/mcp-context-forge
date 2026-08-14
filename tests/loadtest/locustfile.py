@@ -230,6 +230,7 @@ PROMPT_ARGUMENT_NAMES: dict[str, str] = {}
 # Tools that require arguments and are tested with proper arguments in specific user classes
 # These should be excluded from generic rpc_call_tool to avoid false failures
 TOOLS_WITH_REQUIRED_ARGS: set[str] = {
+    "fast-time-echo",  # Requires: message
     "fast-time-convert-time",  # Requires: time, source_timezone, target_timezone
     "fast-time-get-system-time",  # Requires: timezone
 }
@@ -1783,8 +1784,7 @@ class StressTestUser(BaseUser):
 
 class FastTimeUser(BaseUser):
     """User that calls the fast_time MCP server tools.
-
-    Tests the fast-time-get-system-time tool via JSON-RPC.
+    Tests fast-time echo and time tools via JSON-RPC.
     Weight: High (main MCP tool testing)
 
     NOTE: These tests require the fast_time MCP server to be running.
@@ -1811,6 +1811,19 @@ class FastTimeUser(BaseUser):
                 response.success()
                 return
             self._validate_jsonrpc_response(response)
+
+    @task(3)
+    @tag("mcp", "fasttime", "echo")
+    def call_echo(self):
+        """Call fast-time-echo with a load-test message."""
+        payload = _json_rpc_request(
+            "tools/call",
+            {
+                "name": "fast-time-echo",
+                "arguments": {"message": "load-test-echo"},
+            },
+        )
+        self._rpc_request(payload, "/rpc fast-time-echo")
 
     @task(10)
     @tag("mcp", "fasttime", "tools")
