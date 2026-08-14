@@ -674,7 +674,7 @@ class ResourceService(BaseService):
             )
 
             db_resource.team = self._get_team_name(db, db_resource.team_id)
-            return self.convert_resource_to_read(db_resource)
+            return self.convert_resource_to_read(db_resource, include_content=True)
         except IntegrityError as ie:
             logger.error("IntegrityErrors in group: %s", ie)
 
@@ -2940,7 +2940,7 @@ class ResourceService(BaseService):
                 )
 
             resource.team = self._get_team_name(db, resource.team_id)
-            return self.convert_resource_to_read(resource)
+            return self.convert_resource_to_read(resource, include_content=True)
         except PermissionError as e:
             # Structured logging: Log permission error
             structured_logger.log(
@@ -3368,7 +3368,7 @@ class ResourceService(BaseService):
                 },
             )
 
-            return self.convert_resource_to_read(resource)
+            return self.convert_resource_to_read(resource, include_content=True)
         except PermissionError as pe:
             db.rollback()
 

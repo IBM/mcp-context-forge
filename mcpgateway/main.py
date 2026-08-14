@@ -6454,8 +6454,7 @@ async def get_resource_info(
     """
     Get resource metadata by ID.
 
-    Returns the resource metadata including the enabled status. This endpoint
-    is different from GET /resources/{resource_id} which returns the resource content.
+    Returns the resource including the enabled status.
 
     Args:
         resource_id (str): ID of the resource.

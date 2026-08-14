@@ -422,6 +422,57 @@ class TestResourceRegistration:
             # Should handle binary content correctly
             mock_db.add.assert_called_once()
 
+    @pytest.mark.asyncio
+    async def test_register_resource_response_includes_content(self, resource_service, mock_db, sample_resource_create, mock_resource):
+        """POST /resources response must include content; converter must be called with include_content=True."""
+        # Mock database responses - use separate mock objects to avoid conflicts
+        mock_scalar = MagicMock()
+        mock_scalar.scalar_one_or_none.return_value = None  # No existing resource
+        mock_db.execute.return_value = mock_scalar
+
+        # Mock validation and notification
+        with (
+            patch.object(resource_service, "_detect_mime_type", return_value="text/plain"),
+            patch.object(resource_service, "_notify_resource_added", new_callable=AsyncMock),
+            patch.object(resource_service, "convert_resource_to_read") as mock_convert,
+        ):
+            mock_convert.return_value = ResourceRead(
+                id="39334ce0ed2644d79ede8913a66930c9",
+                uri=sample_resource_create.uri,
+                name=sample_resource_create.name,
+                description=sample_resource_create.description or "",
+                mime_type="text/plain",
+                size=len(sample_resource_create.content),
+                enabled=True,
+                content=sample_resource_create.content,
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc),
+                template=None,
+                metrics={
+                    "total_executions": 0,
+                    "successful_executions": 0,
+                    "failed_executions": 0,
+                    "failure_rate": 0.0,
+                    "min_response_time": None,
+                    "max_response_time": None,
+                    "avg_response_time": None,
+                    "last_execution_time": None,
+                },
+            )
+
+            # Call method
+            result = await resource_service.register_resource(mock_db, sample_resource_create)
+
+            # Verify database operations
+            mock_db.add.assert_called_once()
+            mock_db.commit.assert_called_once()
+            mock_db.refresh.assert_called_once()
+
+            # Verify converter was called with include_content=True so content is not null
+            mock_convert.assert_called_once_with(mock_db.refresh.call_args[0][0], include_content=True)
+
+            # Verify result carries content back to the caller
+            assert result.content == sample_resource_create.content
 
 # --------------------------------------------------------------------------- #
 # Resource listing tests                                                      #
@@ -1053,6 +1104,23 @@ class TestResourceManagement:
             assert mock_resource.name == "Updated Name"
             assert mock_resource.description == "Updated description"
             mock_db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_update_resource_response_includes_content(self, resource_service, mock_db, mock_resource):
+        """PUT /resources/{id} response must include content (not null) for the caller's own write."""
+        mock_resource.text_content = "Updated content"
+        mock_resource.binary_content = None
+        update_data = ResourceUpdate(name="Updated Name", content="Updated content")
+
+        mock_scalar = MagicMock()
+        mock_scalar.scalar_one_or_none.return_value = mock_resource
+        mock_db.execute.return_value = mock_scalar
+        mock_db.get.return_value = mock_resource
+
+        with patch.object(resource_service, "_notify_resource_updated", new_callable=AsyncMock):
+            result = await resource_service.update_resource(mock_db, mock_resource.id, update_data)
+
+        assert result.content == "Updated content"
 
     @pytest.mark.asyncio
     async def test_update_resource_accepts_ui_extension_metadata(self, resource_service, mock_db, mock_resource, monkeypatch):
@@ -2130,11 +2198,11 @@ class TestUtilityMethods:
 
     def test_convert_resource_to_read_maps_text_content_to_content(self, resource_service, mock_resource):
         """text_content from DB row must appear as content in ResourceRead."""
-        mock_resource.text_content = "Hello paddddd"
+        mock_resource.text_content = "Hello, this is mock resource content"
 
-        result = resource_service.convert_resource_to_read(mock_resource, include_metrics=False)
+        result = resource_service.convert_resource_to_read(mock_resource, include_metrics=False, include_content=True)
 
-        assert result.content == "Hello paddddd"
+        assert result.content == "Hello, this is mock resource content"
 
     def test_convert_resource_to_read_content_none_when_no_text_content(self, resource_service, mock_resource):
         """content must be None when the resource has no stored text_content."""
