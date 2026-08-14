@@ -235,7 +235,7 @@ class TestDatabaseTokenBackendRefreshNoPriorTTL:
             with patch("mcpgateway.services.token_backends.db_backend.parse_expires_in", return_value=None):
                 with patch("mcpgateway.services.token_backends.db_backend.compute_prior_ttl", return_value=None):
                     with patch("mcpgateway.services.token_backends.db_backend.apply_omit_resource_and_normalize"):
-                        result = await backend._refresh_access_token(token_record)
+                        result = await backend._do_refresh_access_token(token_record)
 
         # expires_at should be None (line 476 path)
         assert token_record.expires_at is None
@@ -773,7 +773,7 @@ class TestVaultRefreshAccessTokenNoPriorTTL:
                 with patch("mcpgateway.services.token_backends.vault_backend.compute_prior_ttl", return_value=None):
                     with patch("mcpgateway.services.token_backends.vault_backend.apply_omit_resource_and_normalize"):
                         with patch.object(backend, "store_tokens", new_callable=AsyncMock):
-                            result = await backend._refresh_access_token(
+                            result = await backend._do_refresh_access_token(
                                 gateway_id="gw-1",
                                 team_id="t1",
                                 app_user_email="u@e.com",

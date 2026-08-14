@@ -566,9 +566,7 @@ class VaultTokenBackend(AbstractTokenBackend):
                 server_id = self._hash_server_id(mcp_url)
                 cache_key = (team_id, server_id, app_user_email)
                 if cache_key in VaultTokenBackend._token_cache:
-                    VaultTokenBackend._token_cache[cache_key]["cache_expires"] = (
-                        datetime.now(timezone.utc) - timedelta(seconds=1)
-                    )
+                    VaultTokenBackend._token_cache[cache_key]["cache_expires"] = datetime.now(timezone.utc) - timedelta(seconds=1)
 
             logger.info(
                 "Revoked OAuth tokens in Vault for gateway %s (mcp_url=%s), team=%s, user=%s",
@@ -684,7 +682,7 @@ class VaultTokenBackend(AbstractTokenBackend):
             )
             return (None, None)
 
-    # TODO (Phase 2): wire get_oauth_credentials / store_oauth_credentials into the
+    # NOTE (Phase 2): wire get_oauth_credentials / store_oauth_credentials into the
     # authorize/refresh flow so that teams can override the per-gateway oauth_config
     # stored in the database with team-scoped credentials kept in Vault.  Both methods
     # are fully implemented below but have no call sites in the current Phase 1 scope.
@@ -804,7 +802,7 @@ class VaultTokenBackend(AbstractTokenBackend):
         if VaultTokenBackend._refresh_locks_mutex is None:
             VaultTokenBackend._refresh_locks_mutex = asyncio.Lock()
         key = (gateway_id, team_id, app_user_email)
-        async with VaultTokenBackend._refresh_locks_mutex:
+        async with VaultTokenBackend._refresh_locks_mutex:  # pylint: disable=not-async-context-manager
             if key not in VaultTokenBackend._refresh_locks:
                 VaultTokenBackend._refresh_locks[key] = asyncio.Lock()
             return VaultTokenBackend._refresh_locks[key]
@@ -926,9 +924,7 @@ class VaultTokenBackend(AbstractTokenBackend):
                         # the stored token for a later retry rather than sending the
                         # raw ciphertext envelope as the literal client_secret to the IdP
                         # (same behaviour as DatabaseTokenBackend lines 436-446).
-                        raise OAuthError(
-                            f"client_secret decryption setup failed for gateway {gateway_id}: {enc_err}"
-                        ) from enc_err
+                        raise OAuthError(f"client_secret decryption setup failed for gateway {gateway_id}: {enc_err}") from enc_err
 
             # RFC 8707: Set resource parameter for JWT access tokens during refresh
             # PR #5244: Apply omit_resource flag and normalize resource parameter
