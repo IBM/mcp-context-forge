@@ -234,6 +234,32 @@ class AbstractTokenBackend(ABC):
         """
         return None
 
+    async def store_oauth_credentials(  # pylint: disable=unused-argument
+        self,
+        team_id: str,
+        mcp_url: str,
+        credentials: dict,
+    ) -> bool:
+        """Store team-scoped OAuth credentials (optional extension).
+
+        Default implementation returns False (not supported).
+        VaultTokenBackend overrides this to write per-team client credentials
+        at {mount}/data/{prefix}/credentials/{team_id}/{server_id}.
+
+        This enables multi-team same-URL scenarios where each team registers
+        the same MCP server with independent OAuth apps and credentials.
+        Reserved for a future admin API that provisions per-team OAuth apps.
+
+        Args:
+            team_id: Team identifier
+            mcp_url: Gateway URL
+            credentials: OAuth config dict (client_id, client_secret, etc.)
+
+        Returns:
+            True if stored successfully, False if not supported or on error.
+        """
+        return False
+
     async def get_user_auth_headers(  # pylint: disable=unused-argument
         self,
         gateway_id: str,

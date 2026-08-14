@@ -1185,46 +1185,16 @@ async def oauth_callback(
         return response
 
     except OAuthError as e:
-        logger.error(f"OAuth callback failed: {str(e)}")
-        if is_popup:
-            return _popup_callback_response(csp_nonce, {"type": "oauth_callback", "status": "error", "error": "oauth_error", "errorDescription": str(e)}, status_code=400)
-        return HTMLResponse(
-            content=f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>OAuth Authorization Failed</title>
-            <style>
-                body {{ font-family: Arial, sans-serif; margin: 40px; }}
-                .error {{ color: #dc2626; }}
-                .button {{
-                    display: inline-block;
-                    padding: 10px 20px;
-                    background-color: #3b82f6;
-                    color: white;
-                    text-decoration: none;
-                    border-radius: 5px;
-                    margin-top: 20px;
-                }}
-                .button:hover {{ background-color: #2563eb; }}
-            </style>
-        </head>
-        <body>
-            <h1 class="error">❌ OAuth Authorization Failed</h1>
-            <p><strong>Error:</strong> {escape(str(e))}</p>
-            <p>Please check your OAuth configuration and try again.</p>
-            <a href="{safe_root_path}/admin#gateways" class="button">Return to Admin Panel</a>
-        </body>
-        </html>
-        """,
-            status_code=400,
-        )
-
-    except Exception as e:
-        logger.error(f"Unexpected error in OAuth callback: {str(e)}")
+        # CWE-209: log full detail server-side only; never render internal error
+        # strings (which may contain upstream hostnames, token-endpoint URLs, or
+        # raw HTTP response bodies) into the browser-facing HTML page.
+        logger.error("OAuth callback failed: %s", sanitize_for_log(str(e)))
+        _oauth_user_msg = "OAuth authorization failed. Please check your configuration and try again."
         if is_popup:
             return _popup_callback_response(
-                csp_nonce, {"type": "oauth_callback", "status": "error", "error": "server_error", "errorDescription": "An unexpected error occurred during authorization."}, status_code=500
+                csp_nonce,
+                {"type": "oauth_callback", "status": "error", "error": "oauth_error", "errorDescription": _oauth_user_msg},
+                status_code=400,
             )
         return HTMLResponse(
             content=f"""
@@ -1249,7 +1219,49 @@ async def oauth_callback(
         </head>
         <body>
             <h1 class="error">❌ OAuth Authorization Failed</h1>
-            <p><strong>Unexpected Error:</strong> {escape(str(e))}</p>
+            <p><strong>Error:</strong> {escape(_oauth_user_msg)}</p>
+            <p>Please check your OAuth configuration and try again.</p>
+            <a href="{safe_root_path}/admin#gateways" class="button">Return to Admin Panel</a>
+        </body>
+        </html>
+        """,
+            status_code=400,
+        )
+
+    except Exception as e:
+        # CWE-209: log full detail server-side only.
+        logger.error("Unexpected error in OAuth callback: %s", sanitize_for_log(str(e)))
+        _unexpected_user_msg = "An unexpected error occurred during authorization. Please contact your administrator."
+        if is_popup:
+            return _popup_callback_response(
+                csp_nonce,
+                {"type": "oauth_callback", "status": "error", "error": "server_error", "errorDescription": _unexpected_user_msg},
+                status_code=500,
+            )
+        return HTMLResponse(
+            content=f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>OAuth Authorization Failed</title>
+            <style>
+                body {{ font-family: Arial, sans-serif; margin: 40px; }}
+                .error {{ color: #dc2626; }}
+                .button {{
+                    display: inline-block;
+                    padding: 10px 20px;
+                    background-color: #3b82f6;
+                    color: white;
+                    text-decoration: none;
+                    border-radius: 5px;
+                    margin-top: 20px;
+                }}
+                .button:hover {{ background-color: #2563eb; }}
+            </style>
+        </head>
+        <body>
+            <h1 class="error">❌ OAuth Authorization Failed</h1>
+            <p><strong>Unexpected Error:</strong> {escape(_unexpected_user_msg)}</p>
             <p>Please contact your administrator for assistance.</p>
             <a href="{safe_root_path}/admin#gateways" class="button">Return to Admin Panel</a>
         </body>

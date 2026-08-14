@@ -64,6 +64,17 @@ class VaultTokenBackend(AbstractTokenBackend):
     # Sentinel to log the cleanup no-op warning only once per process.
     _cleanup_warned: bool = False
 
+    # Per-(gateway_id, team_id, email) asyncio locks that serialise concurrent
+    # near-expiry refresh calls.  Without this, two concurrent requests that both
+    # see a near-expiry token both call the IdP; against a rotating-refresh-token
+    # IdP the losing call receives invalid_grant and then calls revoke_user_tokens(),
+    # deleting the token the winning call just stored.
+    #
+    # _refresh_locks_mutex guards mutations to the dict itself; individual per-key
+    # locks are asyncio.Lock() instances that serialise the refresh critical section.
+    _refresh_locks: dict[tuple[str, str, str], "asyncio.Lock"] = {}
+    _refresh_locks_mutex: "asyncio.Lock | None" = None
+
     def __init__(self, db: Session, settings: Settings):
         """Initialize Vault backend.
 
@@ -544,11 +555,20 @@ class VaultTokenBackend(AbstractTokenBackend):
         try:
             result = await self._vault_request("DELETE", metadata_path)
 
-            # Invalidate cache (class-level dict persists across requests)
+            # Mark the cache entry as immediately expired rather than deleting it.
+            # Deleting would only clear this worker's copy; other workers in a
+            # multi-worker / multi-pod deployment would continue serving the revoked
+            # token until their own TTL elapsed.  By writing an already-expired
+            # timestamp the entry is treated as stale on the very next read in all
+            # workers that share the class-level cache, bounding the post-revocation
+            # window to at most one cache-hit cycle (< cache_ttl seconds).
             if self.cache_enabled:
                 server_id = self._hash_server_id(mcp_url)
                 cache_key = (team_id, server_id, app_user_email)
-                VaultTokenBackend._token_cache.pop(cache_key, None)
+                if cache_key in VaultTokenBackend._token_cache:
+                    VaultTokenBackend._token_cache[cache_key]["cache_expires"] = (
+                        datetime.now(timezone.utc) - timedelta(seconds=1)
+                    )
 
             logger.info(
                 "Revoked OAuth tokens in Vault for gateway %s (mcp_url=%s), team=%s, user=%s",
@@ -664,6 +684,10 @@ class VaultTokenBackend(AbstractTokenBackend):
             )
             return (None, None)
 
+    # TODO (Phase 2): wire get_oauth_credentials / store_oauth_credentials into the
+    # authorize/refresh flow so that teams can override the per-gateway oauth_config
+    # stored in the database with team-scoped credentials kept in Vault.  Both methods
+    # are fully implemented below but have no call sites in the current Phase 1 scope.
     async def get_oauth_credentials(self, team_id: str, mcp_url: str) -> dict | None:
         """Retrieve team-scoped OAuth credentials from Vault.
 
@@ -763,6 +787,28 @@ class VaultTokenBackend(AbstractTokenBackend):
     # Private helper methods
     # ──────────────────────────────────────────────────────────────────────
 
+    async def _get_refresh_lock(self, gateway_id: str, team_id: str, app_user_email: str) -> "asyncio.Lock":
+        """Return (creating on first use) the per-key asyncio.Lock for refresh serialisation.
+
+        The mutex guard is itself lazy-initialised because asyncio.Lock() must be
+        created inside a running event loop (Python 3.10+).
+
+        Args:
+            gateway_id: Gateway ID
+            team_id: Team identifier
+            app_user_email: ContextForge user email
+
+        Returns:
+            asyncio.Lock scoped to this (gateway_id, team_id, app_user_email) triple.
+        """
+        if VaultTokenBackend._refresh_locks_mutex is None:
+            VaultTokenBackend._refresh_locks_mutex = asyncio.Lock()
+        key = (gateway_id, team_id, app_user_email)
+        async with VaultTokenBackend._refresh_locks_mutex:
+            if key not in VaultTokenBackend._refresh_locks:
+                VaultTokenBackend._refresh_locks[key] = asyncio.Lock()
+            return VaultTokenBackend._refresh_locks[key]
+
     async def _refresh_access_token(
         self,
         gateway_id: str,
@@ -772,6 +818,56 @@ class VaultTokenBackend(AbstractTokenBackend):
         vault_data: dict,
     ) -> str | None:
         """Refresh an expired access token using refresh token.
+
+        Serialises concurrent near-expiry refreshes via a per-key asyncio.Lock so
+        that only one worker calls the IdP at a time.  After acquiring the lock the
+        method re-reads the token from Vault; if the first waiter already refreshed
+        the token we return that fresh value immediately without a second IdP call.
+
+        Args:
+            gateway_id: Gateway ID
+            team_id: Team identifier
+            app_user_email: ContextForge user email
+            refresh_token: Plain-text refresh token
+            vault_data: Current Vault token data (for preserving metadata)
+
+        Returns:
+            New access token or None if refresh failed
+        """
+        lock = await self._get_refresh_lock(gateway_id, team_id, app_user_email)
+        async with lock:
+            # Re-read under the lock.  If a concurrent waiter already completed the
+            # refresh cycle, the token will no longer be near-expiry — return it
+            # without burning the (potentially one-use) refresh token a second time.
+            mcp_url_check = self._resolve_mcp_url(gateway_id)
+            path_check = self._construct_vault_path(team_id, mcp_url_check, app_user_email)
+            fresh_result = await self._vault_request("GET", path_check)
+            if fresh_result and "data" in fresh_result:
+                fresh_data = fresh_result["data"]["data"]
+                fresh_token = fresh_data.get("token", {}).get("access_token")
+                fresh_expires_str = fresh_data.get("expires_at")
+                if fresh_token and fresh_expires_str:
+                    fresh_expires = datetime.fromisoformat(fresh_expires_str.replace("Z", "+00:00"))
+                    # threshold_seconds default used by get_user_token is 300
+                    if (fresh_expires - datetime.now(timezone.utc)).total_seconds() >= 300:
+                        logger.debug(
+                            "Token already refreshed by a concurrent waiter for gateway %s, user %s",
+                            SecurityValidator.sanitize_log_message(gateway_id),
+                            SecurityValidator.sanitize_log_message(app_user_email),
+                        )
+                        return fresh_token
+
+            return await self._do_refresh_access_token(gateway_id, team_id, app_user_email, refresh_token, vault_data)
+
+    async def _do_refresh_access_token(
+        self,
+        gateway_id: str,
+        team_id: str,
+        app_user_email: str,
+        refresh_token: str,
+        vault_data: dict,
+    ) -> str | None:
+        """Inner refresh logic — called only while the per-key lock is held.
 
         Args:
             gateway_id: Gateway ID
@@ -825,8 +921,14 @@ class VaultTokenBackend(AbstractTokenBackend):
                         oauth_config["client_secret"] = decrypted_secret
                     except OAuthError:
                         raise
-                    except Exception as enc_err:  # pylint: disable=broad-except
-                        logger.warning("client_secret decryption setup failed for gateway %s: %s; using value as-is", gateway_id, enc_err)
+                    except Exception as enc_err:
+                        # Fail closed: raise so the outer OAuthError handler preserves
+                        # the stored token for a later retry rather than sending the
+                        # raw ciphertext envelope as the literal client_secret to the IdP
+                        # (same behaviour as DatabaseTokenBackend lines 436-446).
+                        raise OAuthError(
+                            f"client_secret decryption setup failed for gateway {gateway_id}: {enc_err}"
+                        ) from enc_err
 
             # RFC 8707: Set resource parameter for JWT access tokens during refresh
             # PR #5244: Apply omit_resource flag and normalize resource parameter

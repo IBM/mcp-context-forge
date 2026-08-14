@@ -25,10 +25,13 @@ from mcpgateway.routers.vault_router import _resolve_oauth_gateway, vault_author
 # ---------------------------------------------------------------------------
 
 
-def _make_server(server_id: str = "srv-123") -> MagicMock:
+def _make_server(server_id: str = "srv-123", visibility: str = "public", team_id: str | None = None, owner_email: str | None = None) -> MagicMock:
     """Return a minimal mock Server ORM object."""
     server = MagicMock()
     server.id = server_id
+    server.visibility = visibility
+    server.team_id = team_id
+    server.owner_email = owner_email
     return server
 
 
