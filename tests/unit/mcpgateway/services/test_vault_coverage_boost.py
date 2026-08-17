@@ -445,11 +445,16 @@ class TestVaultStoreTokensPreservesCreatedAt:
 
 
 class TestVaultStoreTokensCacheInvalidation:
-    """store_tokens invalidates the in-memory cache (lines 324-326)."""
+    """store_tokens expires the in-memory cache entry in-place (multi-pod safe)."""
 
     @pytest.mark.asyncio
-    async def test_store_tokens_invalidates_cache_entry(self):
-        """After store_tokens, the stale cache entry is removed."""
+    async def test_store_tokens_expires_cache_entry_in_place(self):
+        """After store_tokens, the cache entry is marked expired (not removed).
+
+        The expire-in-place pattern ensures other workers in a multi-pod deployment
+        also treat the entry as stale on their next cache read, bounding the stale
+        window to at most one cache-hit cycle — same pattern as revoke_user_tokens().
+        """
         from mcpgateway.services.token_backends.vault_backend import VaultTokenBackend
 
         mock_db = MagicMock()
@@ -459,7 +464,7 @@ class TestVaultStoreTokensCacheInvalidation:
 
         backend = _make_vault_backend(db=mock_db, vault_token_cache_enabled=True)
 
-        # Pre-populate cache
+        # Pre-populate cache with a future-expiry entry
         server_id = backend._hash_server_id("https://mcp.example.com")
         cache_key = ("t1", server_id, "u@e.com")
         VaultTokenBackend._token_cache[cache_key] = {
@@ -480,7 +485,10 @@ class TestVaultStoreTokensCacheInvalidation:
                 scopes=["read"],
             )
 
-        assert cache_key not in VaultTokenBackend._token_cache
+        # Entry must still be present but with an already-expired timestamp so
+        # the next cache-read treats it as stale (expire-in-place pattern).
+        assert cache_key in VaultTokenBackend._token_cache
+        assert VaultTokenBackend._token_cache[cache_key]["cache_expires"] < datetime.now(timezone.utc)
 
 
 # ===========================================================================

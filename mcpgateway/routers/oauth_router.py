@@ -59,28 +59,38 @@ def _build_user_context(current_user: dict[str, Any] | EmailUserResponse | None,
     """Build user_context dict for TokenStorageService from authenticated user.
 
     OAuth token storage path selection:
-    ┌───────────┬───────────────────┬───────────────────────┐
-    │ Flow      │ JWT teams claim   │ Storage path          │
-    ├───────────┼───────────────────┼───────────────────────┤
-    │ Admin UI  │ absent            │ vault/oauth/shared/   │
-    ├───────────┼───────────────────┼───────────────────────┤
-    │ API       │ teams: []         │ vault/oauth/shared/   │
-    ├───────────┼───────────────────┼───────────────────────┤
-    │ API       │ teams: ["eng"]    │ vault/oauth/eng/      │
-    └───────────┴───────────────────┴───────────────────────┘
+    ┌───────────┬────────────────────────────┬───────────────────────┐
+    │ Flow      │ token_teams (DB-resolved)  │ Storage path          │
+    ├───────────┼────────────────────────────┼───────────────────────┤
+    │ Normal    │ ["eng", ...]               │ vault/oauth/eng/      │
+    ├───────────┼────────────────────────────┼───────────────────────┤
+    │ Revoked   │ [] (revoked in DB)         │ vault/oauth/shared/   │
+    ├───────────┼────────────────────────────┼───────────────────────┤
+    │ Admin     │ None (bypass)              │ jwt_teams_claim hint  │
+    │           │   + jwt_teams_claim=["e"]  │ → vault/oauth/eng/    │
+    │           │   + jwt_teams_claim=None   │ → vault/oauth/shared/ │
+    ├───────────┼────────────────────────────┼───────────────────────┤
+    │ API       │ teams: []                  │ vault/oauth/shared/   │
+    ├───────────┼────────────────────────────┼───────────────────────┤
+    │ API       │ teams: ["eng"]             │ vault/oauth/eng/      │
+    └───────────┴────────────────────────────┴───────────────────────┘
 
-    SECURITY: For session tokens (token_use="session"), we use the raw
-    ``jwt_teams_claim`` from the JWT rather than the RBAC-resolved
-    ``token_teams``. This is because ``resolve_session_teams`` correctly
-    returns ``None`` (admin bypass) for admin users, collapsing their
-    teams for RBAC/visibility purposes. But OAuth token storage path
-    selection needs the actual JWT claim — an admin who authorized with
-    ``teams=["engineering"]`` stored their tokens at the ``engineering/``
-    Vault path, so they must be retrieved from there too.
+    SECURITY (CWE-863 fix): For session tokens (token_use="session"), we use
+    ``token_teams`` — the DB-authoritative result of ``resolve_session_teams()``
+    — as the primary path selector.  This ensures that team revocations in the
+    DB take effect immediately: a user removed from a team can no longer store
+    new OAuth tokens under that team's Vault path.
 
-    The raw ``jwt_teams_claim`` is stored in ``request.state.jwt_teams_claim``
-    by auth middleware and forwarded via ``current_user["jwt_teams_claim"]``
-    by the RBAC middleware. It is never used for permission checks.
+    Admin bypass exception: ``resolve_session_teams()`` returns ``None`` for
+    admin users (admin bypass).  When ``token_teams`` is ``None`` we fall back
+    to ``jwt_teams_claim`` as a *path hint only* (never for permission checks),
+    so that an admin who authorised with ``teams=["engineering"]`` in their JWT
+    still reads from/writes to the ``engineering/`` Vault path rather than the
+    shared path.
+
+    The ``jwt_teams_claim`` field is forwarded by RBAC middleware from
+    ``request.state.jwt_teams_claim`` and is used ONLY for this path-hint
+    fallback, never for access-control decisions.
 
     Args:
         current_user: Authenticated user from RBAC middleware (dict) or legacy EmailUserResponse
@@ -101,16 +111,28 @@ def _build_user_context(current_user: dict[str, Any] | EmailUserResponse | None,
 
         token_use = current_user.get("token_use")
         if token_use == "session":
-            # For session tokens, use the raw JWT teams claim (not the RBAC-resolved
-            # token_teams which is None for admins due to admin bypass).
-            # jwt_teams_claim is the authoritative path selector: it matches what
-            # was used during /oauth/authorize when the tokens were stored.
-            jwt_teams_claim = current_user.get("jwt_teams_claim")
-            if jwt_teams_claim and isinstance(jwt_teams_claim, list):
-                filtered = [t for t in jwt_teams_claim if t and isinstance(t, str)]
+            # CWE-863 fix: use DB-authoritative token_teams as the primary path
+            # selector so that revoked team memberships take effect immediately.
+            # token_teams is the result of resolve_session_teams() which intersects
+            # the JWT teams claim against current DB membership.
+            token_teams = current_user.get("token_teams")
+            if isinstance(token_teams, list) and token_teams:
+                filtered = [t for t in token_teams if t and isinstance(t, str)]
                 if filtered:
                     return {"email": email, "teams": filtered, "is_admin": is_admin}
-            # No JWT teams claim → Admin UI session → shared path
+
+            # token_teams is None (admin bypass) or [] (revoked/public-only).
+            # For admins (None): fall back to jwt_teams_claim as a path hint so
+            # the admin reads from the correct team-scoped Vault path.
+            # For revoked/public ([]): fall through to shared path — correct.
+            if token_teams is None:
+                jwt_teams_claim = current_user.get("jwt_teams_claim")
+                if jwt_teams_claim and isinstance(jwt_teams_claim, list):
+                    filtered = [t for t in jwt_teams_claim if t and isinstance(t, str)]
+                    if filtered:
+                        return {"email": email, "teams": filtered, "is_admin": is_admin}
+
+            # No usable team → shared path (Admin UI sessions, public-only tokens)
             return {"email": email, "teams": None, "is_admin": is_admin}
 
         # API / legacy token: use RBAC-resolved token_teams directly.

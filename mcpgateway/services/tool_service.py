@@ -86,6 +86,7 @@ from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_servic
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
 from mcpgateway.services.metrics_query_service import get_top_performers_combined
 from mcpgateway.services.oauth_manager import OAuthManager
+from mcpgateway.services.token_backends.vault_backend import VaultAuthError, VaultConnectionError
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
 from mcpgateway.services.performance_tracker import get_performance_tracker
 from mcpgateway.services.structured_logger import get_structured_logger
@@ -4195,6 +4196,12 @@ class ToolService(BaseService):
                     app_user_email,
                 )
                 return user_headers
+        except (VaultConnectionError, VaultAuthError):
+            # Vault is unreachable or authentication failed — fail closed rather than
+            # silently degrade per-user credential isolation by falling back to the
+            # gateway's shared credentials.  The caller should surface a 503 instead
+            # of using a different user's (or a shared) token.
+            raise
         except Exception as e:  # pylint: disable=broad-except
             logger.warning(
                 "Per-user Vault auth-header lookup failed for gateway %s: %s; falling back to gateway auth",

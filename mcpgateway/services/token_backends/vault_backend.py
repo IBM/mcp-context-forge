@@ -350,11 +350,20 @@ class VaultTokenBackend(AbstractTokenBackend):
         # Write to Vault
         await self._vault_request("POST", path, payload)
 
-        # Invalidate cache (class-level dict persists across requests)
+        # Mark the cache entry as immediately expired rather than deleting it.
+        # Deleting only clears this worker's copy; other workers in a multi-pod
+        # deployment would continue serving the pre-store token until their own
+        # TTL elapsed.  Writing an already-expired timestamp makes the entry stale
+        # on the very next read in all workers, bounding the stale-window to at
+        # most one cache-hit cycle (< cache_ttl seconds).
+        # This is the same expire-in-place pattern used by revoke_user_tokens().
         if self.cache_enabled:
             server_id = self._hash_server_id(mcp_url)
             cache_key = (team_id, server_id, app_user_email)
-            VaultTokenBackend._token_cache.pop(cache_key, None)
+            if cache_key in VaultTokenBackend._token_cache:
+                VaultTokenBackend._token_cache[cache_key]["cache_expires"] = (
+                    datetime.now(timezone.utc) - timedelta(seconds=1)
+                )
 
         logger.info(
             "Stored OAuth tokens in Vault for gateway %s (mcp_url=%s), team=%s, user=%s",
@@ -399,62 +408,72 @@ class VaultTokenBackend(AbstractTokenBackend):
         Returns:
             Plain-text access token or None
         """
-        mcp_url = self._resolve_mcp_url(gateway_id)
-        server_id = self._hash_server_id(mcp_url)
-        cache_key = (team_id, server_id, app_user_email)
+        try:
+            mcp_url = self._resolve_mcp_url(gateway_id)
+            server_id = self._hash_server_id(mcp_url)
+            cache_key = (team_id, server_id, app_user_email)
 
-        # Check cache first (class-level OrderedDict — persists across requests).
-        # Move accessed entry to the end so the front always holds the LRU entry.
-        if self.cache_enabled and cache_key in VaultTokenBackend._token_cache:
-            cached = VaultTokenBackend._token_cache[cache_key]
-            if datetime.now(timezone.utc) < cached["cache_expires"]:
-                logger.debug("Cache hit for token: team=%s, server_id=%s, email=%s", team_id, server_id, app_user_email)
-                VaultTokenBackend._token_cache.move_to_end(cache_key)
-                return cached["token"]
-            # Expired cache entry — remove it proactively
-            VaultTokenBackend._token_cache.pop(cache_key, None)
+            # Check cache first (class-level OrderedDict — persists across requests).
+            # Move accessed entry to the end so the front always holds the LRU entry.
+            if self.cache_enabled and cache_key in VaultTokenBackend._token_cache:
+                cached = VaultTokenBackend._token_cache[cache_key]
+                if datetime.now(timezone.utc) < cached["cache_expires"]:
+                    logger.debug("Cache hit for token: team=%s, server_id=%s, email=%s", team_id, server_id, app_user_email)
+                    VaultTokenBackend._token_cache.move_to_end(cache_key)
+                    return cached["token"]
+                # Expired cache entry — remove it proactively
+                VaultTokenBackend._token_cache.pop(cache_key, None)
 
-        # Fetch from Vault
-        path = self._construct_vault_path(team_id, mcp_url, app_user_email)
-        result = await self._vault_request("GET", path)
+            # Fetch from Vault
+            path = self._construct_vault_path(team_id, mcp_url, app_user_email)
+            result = await self._vault_request("GET", path)
 
-        if not result or "data" not in result:
-            logger.debug(
-                "No OAuth tokens found in Vault for gateway %s (mcp_url=%s), team=%s, user=%s",
-                SecurityValidator.sanitize_log_message(gateway_id),
-                SecurityValidator.sanitize_log_message(mcp_url),
-                SecurityValidator.sanitize_log_message(team_id),
-                SecurityValidator.sanitize_log_message(app_user_email),
-            )
-            return None
-
-        data = result["data"]["data"]
-        access_token = data["token"]["access_token"]
-        refresh_token = data["token"].get("refresh_token")
-        expires_at_str = data.get("expires_at")
-
-        # Check expiry and refresh if needed
-        if expires_at_str:
-            expires_at = datetime.fromisoformat(expires_at_str.replace("Z", "+00:00"))
-            if (expires_at - datetime.now(timezone.utc)).total_seconds() < threshold_seconds:
-                logger.info(
-                    "OAuth token near expiry for gateway %s, team=%s, user=%s",
+            if not result or "data" not in result:
+                logger.debug(
+                    "No OAuth tokens found in Vault for gateway %s (mcp_url=%s), team=%s, user=%s",
                     SecurityValidator.sanitize_log_message(gateway_id),
+                    SecurityValidator.sanitize_log_message(mcp_url),
                     SecurityValidator.sanitize_log_message(team_id),
                     SecurityValidator.sanitize_log_message(app_user_email),
                 )
-                if refresh_token:
-                    new_token = await self._refresh_access_token(gateway_id, team_id, app_user_email, refresh_token, data)
-                    if new_token:
-                        # Cache the freshly-refreshed token before returning
-                        self._write_token_cache(cache_key, new_token)
-                        return new_token
-                return None  # Expired, no refresh available
+                return None
 
-        # Cache token (class-level OrderedDict — persists across requests).
-        self._write_token_cache(cache_key, access_token)
+            data = result["data"]["data"]
+            access_token = data["token"]["access_token"]
+            refresh_token = data["token"].get("refresh_token")
+            expires_at_str = data.get("expires_at")
 
-        return access_token
+            # Check expiry and refresh if needed
+            if expires_at_str:
+                expires_at = datetime.fromisoformat(expires_at_str.replace("Z", "+00:00"))
+                if (expires_at - datetime.now(timezone.utc)).total_seconds() < threshold_seconds:
+                    logger.info(
+                        "OAuth token near expiry for gateway %s, team=%s, user=%s",
+                        SecurityValidator.sanitize_log_message(gateway_id),
+                        SecurityValidator.sanitize_log_message(team_id),
+                        SecurityValidator.sanitize_log_message(app_user_email),
+                    )
+                    if refresh_token:
+                        new_token = await self._refresh_access_token(gateway_id, team_id, app_user_email, refresh_token, data, threshold_seconds=threshold_seconds)
+                        if new_token:
+                            # Cache the freshly-refreshed token before returning
+                            self._write_token_cache(cache_key, new_token)
+                            return new_token
+                    return None  # Expired, no refresh available
+
+            # Cache token (class-level OrderedDict — persists across requests).
+            self._write_token_cache(cache_key, access_token)
+
+            return access_token
+
+        except (VaultConnectionError, VaultAuthError) as e:
+            logger.warning(
+                "Vault unavailable in get_user_token for gateway %s, user %s: %s",
+                SecurityValidator.sanitize_log_message(gateway_id),
+                SecurityValidator.sanitize_log_message(app_user_email),
+                str(e),
+            )
+            return None
 
     async def get_user_auth_headers(
         self,
@@ -478,16 +497,25 @@ class VaultTokenBackend(AbstractTokenBackend):
         Returns:
             The ``{header: value}`` dict, or None if no per-user record / no headers field.
         """
-        mcp_url = self._resolve_mcp_url(gateway_id)
-        path = self._construct_vault_path(team_id, mcp_url, app_user_email)
-        result = await self._vault_request("GET", path)
-        if not result or "data" not in result:
+        try:
+            mcp_url = self._resolve_mcp_url(gateway_id)
+            path = self._construct_vault_path(team_id, mcp_url, app_user_email)
+            result = await self._vault_request("GET", path)
+            if not result or "data" not in result:
+                return None
+            data = result["data"]["data"]
+            headers = data.get("headers")
+            if isinstance(headers, dict) and headers:
+                return {str(k): str(v) for k, v in headers.items() if k and v}
             return None
-        data = result["data"]["data"]
-        headers = data.get("headers")
-        if isinstance(headers, dict) and headers:
-            return {str(k): str(v) for k, v in headers.items() if k and v}
-        return None
+        except (VaultConnectionError, VaultAuthError) as e:
+            logger.warning(
+                "Vault unavailable in get_user_auth_headers for gateway %s, user %s: %s",
+                SecurityValidator.sanitize_log_message(gateway_id),
+                SecurityValidator.sanitize_log_message(app_user_email),
+                str(e),
+            )
+            return None
 
     async def get_token_info(
         self,
@@ -505,33 +533,43 @@ class VaultTokenBackend(AbstractTokenBackend):
         Returns:
             Token info dict or None
         """
-        mcp_url = self._resolve_mcp_url(gateway_id)
-        path = self._construct_vault_path(team_id, mcp_url, app_user_email)
-        result = await self._vault_request("GET", path)
+        try:
+            mcp_url = self._resolve_mcp_url(gateway_id)
+            path = self._construct_vault_path(team_id, mcp_url, app_user_email)
+            result = await self._vault_request("GET", path)
 
-        if not result or "data" not in result:
+            if not result or "data" not in result:
+                return None
+
+            data = result["data"]["data"]
+            expires_at_str = data.get("expires_at")
+            updated_at_str = data.get("updated_at")
+
+            # Determine status
+            status = "valid"
+            if expires_at_str:
+                expires_at = datetime.fromisoformat(expires_at_str.replace("Z", "+00:00"))
+                now = datetime.now(timezone.utc)
+                if expires_at <= now:
+                    status = "expired"
+                elif (expires_at - now).total_seconds() < 300:
+                    status = "near_expiry"
+
+            return {
+                "scopes": data["token"]["scopes"],
+                "expires_at": expires_at_str,
+                "status": status,
+                "updated_at": updated_at_str,
+            }
+
+        except (VaultConnectionError, VaultAuthError) as e:
+            logger.warning(
+                "Vault unavailable in get_token_info for gateway %s, user %s: %s",
+                SecurityValidator.sanitize_log_message(gateway_id),
+                SecurityValidator.sanitize_log_message(app_user_email),
+                str(e),
+            )
             return None
-
-        data = result["data"]["data"]
-        expires_at_str = data.get("expires_at")
-        updated_at_str = data.get("updated_at")
-
-        # Determine status
-        status = "valid"
-        if expires_at_str:
-            expires_at = datetime.fromisoformat(expires_at_str.replace("Z", "+00:00"))
-            now = datetime.now(timezone.utc)
-            if expires_at <= now:
-                status = "expired"
-            elif (expires_at - now).total_seconds() < 300:
-                status = "near_expiry"
-
-        return {
-            "scopes": data["token"]["scopes"],
-            "expires_at": expires_at_str,
-            "status": status,
-            "updated_at": updated_at_str,
-        }
 
     async def revoke_user_tokens(
         self,
@@ -577,6 +615,11 @@ class VaultTokenBackend(AbstractTokenBackend):
             )
             return result is not None  # None = 404 (not found)
 
+        except (VaultConnectionError, VaultAuthError):
+            # Vault is unhealthy — re-raise so the caller knows revocation may
+            # have failed.  Returning False is unsafe here: it reads as "token
+            # not found" when the token may still be live in Vault.
+            raise
         except Exception as e:
             logger.error("Failed to revoke OAuth tokens in Vault: %s", str(e))
             return False
@@ -814,6 +857,7 @@ class VaultTokenBackend(AbstractTokenBackend):
         app_user_email: str,
         refresh_token: str,
         vault_data: dict,
+        threshold_seconds: int = 300,
     ) -> str | None:
         """Refresh an expired access token using refresh token.
 
@@ -828,6 +872,10 @@ class VaultTokenBackend(AbstractTokenBackend):
             app_user_email: ContextForge user email
             refresh_token: Plain-text refresh token
             vault_data: Current Vault token data (for preserving metadata)
+            threshold_seconds: Seconds before expiry to consider token near-expiry.
+                Must match the value used by the caller (get_user_token) so the
+                "already refreshed" recheck uses the same freshness window as the
+                near-expiry trigger.
 
         Returns:
             New access token or None if refresh failed
@@ -835,7 +883,7 @@ class VaultTokenBackend(AbstractTokenBackend):
         lock = await self._get_refresh_lock(gateway_id, team_id, app_user_email)
         async with lock:
             # Re-read under the lock.  If a concurrent waiter already completed the
-            # refresh cycle, the token will no longer be near-expiry — return it
+            # refresh cycle the token will no longer be near-expiry — return it
             # without burning the (potentially one-use) refresh token a second time.
             mcp_url_check = self._resolve_mcp_url(gateway_id)
             path_check = self._construct_vault_path(team_id, mcp_url_check, app_user_email)
@@ -844,10 +892,21 @@ class VaultTokenBackend(AbstractTokenBackend):
                 fresh_data = fresh_result["data"]["data"]
                 fresh_token = fresh_data.get("token", {}).get("access_token")
                 fresh_expires_str = fresh_data.get("expires_at")
-                if fresh_token and fresh_expires_str:
+                if fresh_token:
+                    if not fresh_expires_str:
+                        # IdP omitted expires_in — any fresh access token written by
+                        # the winner is valid indefinitely.  Return it immediately to
+                        # avoid burning a rotating refresh token a second time.
+                        logger.debug(
+                            "Token already refreshed (no expiry) by a concurrent waiter for gateway %s, user %s",
+                            SecurityValidator.sanitize_log_message(gateway_id),
+                            SecurityValidator.sanitize_log_message(app_user_email),
+                        )
+                        return fresh_token
                     fresh_expires = datetime.fromisoformat(fresh_expires_str.replace("Z", "+00:00"))
-                    # threshold_seconds default used by get_user_token is 300
-                    if (fresh_expires - datetime.now(timezone.utc)).total_seconds() >= 300:
+                    # Use the same threshold that triggered the refresh so the
+                    # guard window is consistent with the trigger window.
+                    if (fresh_expires - datetime.now(timezone.utc)).total_seconds() >= threshold_seconds:
                         logger.debug(
                             "Token already refreshed by a concurrent waiter for gateway %s, user %s",
                             SecurityValidator.sanitize_log_message(gateway_id),

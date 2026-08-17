@@ -305,3 +305,45 @@ class TestVaultAuthorizeDenyPaths:
 
         assert isinstance(response, RedirectResponse)
         assert response.status_code == 302
+
+    @pytest.mark.asyncio
+    async def test_private_server_non_member_returns_403(self):
+        """Non-member caller against a team-scoped server is denied 403 via _check_server_visibility.
+
+        This is the B2g regression test: the _check_server_visibility call in
+        vault_authorize (line 137) guards access to the server row itself before
+        gateway resolution begins.  Without it, any authenticated user who knows
+        a server_id UUID could initiate an OAuth flow against a private server.
+
+        The test mocks _check_server_visibility to return False (non-member) and
+        confirms that vault_authorize raises 403 before _resolve_oauth_gateway is
+        ever called.
+        """
+        db = MagicMock()
+        private_server = _make_server(
+            server_id="private-srv",
+            visibility="team",
+            team_id="engineering",
+        )
+        db.get.return_value = private_server
+
+        mallory = _make_user(email="mallory@corp.com", is_admin=False, token_teams=["marketing"])
+
+        # _resolve_oauth_gateway must NOT be called — the server check should
+        # short-circuit before we reach gateway resolution.
+        with patch("mcpgateway.routers.vault_router._resolve_oauth_gateway") as mock_resolve:
+            with patch(
+                "mcpgateway.routers.vault_router._check_server_visibility",
+                return_value=False,  # non-member of engineering team
+            ):
+                with pytest.raises(HTTPException) as exc_info:
+                    await vault_authorize(
+                        request=_make_request(),
+                        server_id="private-srv",
+                        gateway_url=None,
+                        db=db,
+                        current_user=mallory,
+                    )
+
+        assert exc_info.value.status_code == 403
+        mock_resolve.assert_not_called()
