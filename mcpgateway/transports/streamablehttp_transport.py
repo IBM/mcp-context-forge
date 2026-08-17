@@ -38,7 +38,7 @@ import contextvars
 from dataclasses import dataclass
 from enum import Enum
 import re
-from typing import Any, assert_never, AsyncGenerator, ContextManager, Dict, Iterable, List, Optional, Pattern, Tuple, Union
+from typing import Any, assert_never, AsyncGenerator, Callable, ContextManager, Dict, Iterable, List, Optional, Pattern, Tuple, Union
 from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
 
@@ -49,7 +49,6 @@ from fastapi.security.utils import get_authorization_scheme_param
 import httpx2 as httpx
 import jwt
 from mcp import ClientSession, types
-from mcp.client.streamable_http import streamable_http_client as streamablehttp_client
 from mcp.server.lowlevel import Server
 from mcp.server.lowlevel.helper_types import ReadResourceContents
 from mcp.server.streamable_http import EventCallback, EventId, EventMessage, EventStore, StreamId
@@ -101,6 +100,7 @@ from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_ga
 from mcpgateway.utils.identity_propagation import build_identity_headers
 from mcpgateway.utils.internal_http import post_rpc_in_process
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
+from mcpgateway.utils.mcp_v2_compat import streamablehttp_client
 from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cached
 from mcpgateway.utils.trace_context import set_trace_context_from_teams, set_trace_session_id
@@ -299,6 +299,7 @@ _REJECT = object()
 
 # ASGI scope key for propagating gateway context from middleware to MCP handlers
 _MCPGATEWAY_CONTEXT_KEY = "_mcpgateway_context"
+_MCP_REQUEST_CONTEXT_VAR: contextvars.ContextVar[Any | None] = contextvars.ContextVar("_mcp_request_context", default=None)
 
 # Initialize ToolService, PromptService, ResourceService, CompletionService and MCP Server
 tool_service: ToolService = ToolService()
@@ -309,6 +310,22 @@ completion_service: CompletionService = CompletionService()
 
 class ContextForgeMCPServer(Server[Any]):
     """MCP server with ContextForge extension capability advertising."""
+
+    @property
+    def request_context(self) -> Any:
+        """Return the current MCP v2 request context using the old v1 property name."""
+        ctx = _MCP_REQUEST_CONTEXT_VAR.get()
+        if ctx is None:
+            raise LookupError("No active MCP request context")
+        return ctx
+
+    async def _invoke_v1_handler(self, ctx: Any, func: Callable[..., Any], *args: Any) -> Any:
+        """Run an old-style handler with ``request_context`` bridged through a contextvar."""
+        token = _MCP_REQUEST_CONTEXT_VAR.set(ctx)
+        try:
+            return await func(*args)
+        finally:
+            _MCP_REQUEST_CONTEXT_VAR.reset(token)
 
     def get_capabilities(self, notification_options: Any, experimental_capabilities: dict[str, dict[str, Any]]) -> types.ServerCapabilities:
         """Return SDK capabilities plus enabled ContextForge MCP extensions."""
@@ -321,6 +338,147 @@ class ContextForgeMCPServer(Server[Any]):
             merged_extensions.update(extensions)
             capabilities.extensions = merged_extensions
         return capabilities
+
+    def call_tool(self, validate_input: bool = True) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+        """Register a v1-style tool call handler against the MCP v2 server."""
+
+        def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+            async def handler(ctx: Any, params: types.CallToolRequestParams) -> types.CallToolResult | types.InputRequiredResult:
+                result = await self._invoke_v1_handler(ctx, func, params.name, params.arguments or {})
+                if isinstance(result, (types.CallToolResult, types.InputRequiredResult)):
+                    return result
+                if isinstance(result, tuple):
+                    content, structured_content = result
+                    return types.CallToolResult(content=list(content), structured_content=structured_content)
+                return types.CallToolResult(content=list(result or []))
+
+            _ = validate_input
+            self.add_request_handler("tools/call", types.CallToolRequestParams, handler)
+            return func
+
+        return decorator
+
+    def list_tools(self) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+        """Register a v1-style tools/list handler against the MCP v2 server."""
+
+        def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+            async def handler(ctx: Any, _params: types.PaginatedRequestParams | None) -> types.ListToolsResult:
+                result = await self._invoke_v1_handler(ctx, func)
+                if isinstance(result, types.ListToolsResult):
+                    return result
+                return types.ListToolsResult(tools=list(result or []))
+
+            self.add_request_handler("tools/list", types.PaginatedRequestParams, handler)
+            return func
+
+        return decorator
+
+    def list_prompts(self) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+        """Register a v1-style prompts/list handler against the MCP v2 server."""
+
+        def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+            async def handler(ctx: Any, _params: types.PaginatedRequestParams | None) -> types.ListPromptsResult:
+                result = await self._invoke_v1_handler(ctx, func)
+                if isinstance(result, types.ListPromptsResult):
+                    return result
+                return types.ListPromptsResult(prompts=list(result or []))
+
+            self.add_request_handler("prompts/list", types.PaginatedRequestParams, handler)
+            return func
+
+        return decorator
+
+    def get_prompt(self) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+        """Register a v1-style prompts/get handler against the MCP v2 server."""
+
+        def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+            async def handler(ctx: Any, params: types.GetPromptRequestParams) -> types.GetPromptResult | types.InputRequiredResult:
+                return await self._invoke_v1_handler(ctx, func, params.name, params.arguments)
+
+            self.add_request_handler("prompts/get", types.GetPromptRequestParams, handler)
+            return func
+
+        return decorator
+
+    def list_resources(self) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+        """Register a v1-style resources/list handler against the MCP v2 server."""
+
+        def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+            async def handler(ctx: Any, _params: types.PaginatedRequestParams | None) -> types.ListResourcesResult:
+                result = await self._invoke_v1_handler(ctx, func)
+                if isinstance(result, types.ListResourcesResult):
+                    return result
+                return types.ListResourcesResult(resources=list(result or []))
+
+            self.add_request_handler("resources/list", types.PaginatedRequestParams, handler)
+            return func
+
+        return decorator
+
+    def read_resource(self) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+        """Register a v1-style resources/read handler against the MCP v2 server."""
+
+        def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+            async def handler(ctx: Any, params: types.ReadResourceRequestParams) -> types.ReadResourceResult | types.InputRequiredResult:
+                result = await self._invoke_v1_handler(ctx, func, params.uri)
+                if isinstance(result, (types.ReadResourceResult, types.InputRequiredResult)):
+                    return result
+                if isinstance(result, str):
+                    return types.ReadResourceResult(contents=[types.TextResourceContents(uri=params.uri, text=result)])
+                if isinstance(result, bytes):
+                    blob = base64.b64encode(result).decode("ascii")
+                    return types.ReadResourceResult(contents=[types.BlobResourceContents(uri=params.uri, blob=blob)])
+                return types.ReadResourceResult(contents=list(result or []))
+
+            self.add_request_handler("resources/read", types.ReadResourceRequestParams, handler)
+            return func
+
+        return decorator
+
+    def list_resource_templates(self) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+        """Register a v1-style resources/templates/list handler against the MCP v2 server."""
+
+        def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+            async def handler(ctx: Any, _params: types.PaginatedRequestParams | None) -> types.ListResourceTemplatesResult:
+                result = await self._invoke_v1_handler(ctx, func)
+                if isinstance(result, types.ListResourceTemplatesResult):
+                    return result
+                return types.ListResourceTemplatesResult(resource_templates=list(result or []))
+
+            self.add_request_handler("resources/templates/list", types.PaginatedRequestParams, handler)
+            return func
+
+        return decorator
+
+    def set_logging_level(self) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+        """Register a v1-style logging/setLevel handler against the MCP v2 server."""
+
+        def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+            async def handler(ctx: Any, params: types.SetLevelRequestParams) -> types.EmptyResult:
+                result = await self._invoke_v1_handler(ctx, func, params.level)
+                return result if isinstance(result, types.EmptyResult) else types.EmptyResult()
+
+            self.add_request_handler("logging/setLevel", types.SetLevelRequestParams, handler)
+            return func
+
+        return decorator
+
+    def completion(self) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
+        """Register a v1-style completion handler against the MCP v2 server."""
+
+        def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
+            async def handler(ctx: Any, params: types.CompleteRequestParams) -> types.CompleteResult:
+                result = await self._invoke_v1_handler(ctx, func, params.ref, params.argument, params.context)
+                if isinstance(result, types.CompleteResult):
+                    return result
+                if isinstance(result, types.Completion):
+                    return types.CompleteResult(completion=result)
+                return result
+
+            self.add_request_handler("completion/complete", types.CompleteRequestParams, handler)
+            return func
+
+        return decorator
 
 
 mcp_app: Server[Any] = ContextForgeMCPServer("mcp-streamable-http")
@@ -1631,7 +1789,7 @@ async def _proxy_read_resource_to_gateway(gateway: Any, resource_uri: str, user_
 
                     # Send request with _meta
                     result = await session.send_request(
-                        types.ClientRequest(ReadResourceRequest(params=ReadResourceRequestParams.model_validate(request_params_dict))),
+                        ReadResourceRequest(params=ReadResourceRequestParams.model_validate(request_params_dict)),
                         types.ReadResourceResult,
                     )
                 else:

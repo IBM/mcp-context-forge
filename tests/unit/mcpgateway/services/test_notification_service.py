@@ -1434,7 +1434,7 @@ class TestRespondWithPayloadValidationBranches:
             def validate_python(*_args, **_kwargs):
                 raise_validation()
 
-        monkeypatch.setattr("mcpgateway.services.notification_service._CLIENT_RESULT_ADAPTER", BrokenClientResultAdapter())
+        monkeypatch.setattr("mcp.types.client_result_adapter", BrokenClientResultAdapter())
 
         responder, captured = TestServerInitiatedRequestCorrelation._make_responder("req-bad-result")
         with caplog.at_level("WARNING", logger="mcpgateway.services.notification_service"):

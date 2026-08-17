@@ -37,12 +37,12 @@ import httpx2 as httpx
 from mcp import ClientSession
 from mcp import MCPError as McpError
 from mcp.client.sse import sse_client
-from mcp.client.streamable_http import streamable_http_client as streamablehttp_client
 import mcp.types as mcp_types
 
 # First-Party
 from mcpgateway.services.notification_service import RequestResponder
 from mcpgateway.transports.context import request_headers_var
+from mcpgateway.utils.mcp_v2_compat import streamablehttp_client
 from mcpgateway.utils.url_auth import sanitize_url_for_logging
 
 logger = logging.getLogger(__name__)

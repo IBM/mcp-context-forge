@@ -47,7 +47,6 @@ import uuid
 import warnings
 
 # Third-Party
-from cpex.framework import HttpHookType, PluginError, PluginViolationError, PromptHookType, ResourceHookType
 from fastapi import APIRouter, Body, Depends, FastAPI, HTTPException, Query, Request, status, WebSocket, WebSocketDisconnect
 from fastapi.background import BackgroundTasks
 from fastapi.exception_handlers import request_validation_exception_handler as fastapi_default_validation_handler
@@ -129,6 +128,7 @@ from mcpgateway.plugins import (
     start_plugin_invalidation_listener,
     stop_plugin_invalidation_listener,
 )
+from mcpgateway.plugins.cpex_compat import HttpHookType, PluginError, PluginViolationError, PromptHookType, ResourceHookType
 from mcpgateway.plugins.violation_codes import PLUGIN_VIOLATION_CODE_MAPPING, PluginViolationCode, VALID_HTTP_STATUS_CODES
 from mcpgateway.routers.openapi_schema_router import router as openapi_schema_router
 from mcpgateway.routers.server_well_known import router as server_well_known_router

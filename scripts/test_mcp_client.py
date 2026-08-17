@@ -9,8 +9,8 @@ import sys
 
 async def main():
     # Import MCP client
-    from mcp.client.streamable_http import streamable_http_client as streamablehttp_client
     from mcp.client.session import ClientSession
+    from mcpgateway.utils.mcp_v2_compat import streamablehttp_client
 
     # Generate JWT token
     token_result = subprocess.run(

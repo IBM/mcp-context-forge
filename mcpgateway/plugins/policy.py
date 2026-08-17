@@ -17,8 +17,8 @@ Examples:
     True
 """
 
-# Third-Party
-from cpex.framework.hooks.policies import HookPayloadPolicy
+# First-Party
+from mcpgateway.plugins.cpex_compat import HookPayloadPolicy
 
 HOOK_PAYLOAD_POLICIES: dict[str, HookPayloadPolicy] = {
     # Tools

@@ -129,6 +129,10 @@ def _force_minimal_main_app_features() -> None:
 _force_minimal_main_app_features()
 
 # First-Party
+from mcpgateway.utils.mcp_v2_compat import install_mcp_v2_cpex_compat  # noqa: E402
+
+install_mcp_v2_cpex_compat()
+
 import mcpgateway.db as db_mod  # noqa: E402  # must load after test DB env hardening
 from mcpgateway.config import Settings  # noqa: E402  # must load after test DB env hardening
 

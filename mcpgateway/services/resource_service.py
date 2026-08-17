@@ -37,7 +37,6 @@ import uuid
 import httpx2 as httpx
 from mcp import ClientSession, types
 from mcp.client.sse import sse_client
-from mcp.client.streamable_http import streamable_http_client as streamablehttp_client
 from mcp.types import ReadResourceRequest, ReadResourceRequestParams
 import parse
 from pydantic import ValidationError
@@ -79,6 +78,7 @@ from mcpgateway.utils.admin_check import is_admin_bypass_granted, is_user_admin
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access
 from mcpgateway.utils.identity_propagation import build_identity_headers
 from mcpgateway.utils.metrics_common import build_top_performers
+from mcpgateway.utils.mcp_v2_compat import streamablehttp_client
 from mcpgateway.utils.pagination import unified_paginate
 from mcpgateway.utils.services_auth import decode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
@@ -91,8 +91,8 @@ from mcpgateway.utils.validate_signature import validate_signature
 
 # Plugin support imports (conditional)
 try:
-    # Third-Party
-    from cpex.framework import GlobalContext, PluginContextTable, ResourceHookType, ResourcePostFetchPayload, ResourcePreFetchPayload
+    # First-Party
+    from mcpgateway.plugins.cpex_compat import GlobalContext, PluginContextTable, ResourceHookType, ResourcePostFetchPayload, ResourcePreFetchPayload
 
     PLUGINS_AVAILABLE = True
 except ImportError:
@@ -128,11 +128,11 @@ audit_trail = get_audit_trail_service()
 metrics_buffer = get_metrics_buffer_service()
 
 
-def _build_read_resource_request(uri: Any, meta_data: Dict[str, Any]) -> "types.ClientRequest":
-    """Build a ReadResource ClientRequest that carries _meta."""
+def _build_read_resource_request(uri: Any, meta_data: Dict[str, Any]) -> ReadResourceRequest:
+    """Build a ReadResourceRequest that carries _meta."""
     _rp_dict = ReadResourceRequestParams(uri=uri).model_dump(by_alias=True)
     _rp_dict["_meta"] = meta_data
-    return types.ClientRequest(ReadResourceRequest(params=ReadResourceRequestParams.model_validate(_rp_dict)))
+    return ReadResourceRequest(params=ReadResourceRequestParams.model_validate(_rp_dict))
 
 
 async def _read_resource_with_meta(session: "ClientSession", uri: Any, meta_data: Optional[Dict[str, Any]]) -> Any:

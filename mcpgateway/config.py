@@ -3944,10 +3944,10 @@ class LazySettingsWrapper:
         Returns:
             The plugin framework settings wrapper.
         """
-        # Third-Party
-        from cpex.framework.settings import settings as _plugin_settings  # pylint: disable=import-outside-toplevel
+        # First-Party
+        from mcpgateway.plugins.cpex_compat import plugin_settings  # pylint: disable=import-outside-toplevel
 
-        return _plugin_settings
+        return plugin_settings
 
     def __getattr__(self, key: str) -> Any:
         """Get the real settings object and forward to it

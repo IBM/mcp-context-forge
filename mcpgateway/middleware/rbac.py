@@ -20,7 +20,6 @@ import uuid
 import warnings
 
 # Third-Party
-from cpex.framework import GlobalContext
 from fastapi import Cookie, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
@@ -28,6 +27,7 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.db import fresh_db_session, Permissions, SessionLocal
+from mcpgateway.plugins.cpex_compat import GlobalContext, HttpAuthCheckPermissionPayload, HttpHookType
 from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
 from mcpgateway.services.observability_service import current_trace_id
 from mcpgateway.services.permission_service import PermissionService
@@ -804,9 +804,6 @@ def require_permission(permission: str, resource_type: Optional[str] = None, all
                 team_id, check_any_team = await _resolve_team_and_check_mode(user_context, kwargs)
 
             # First, check if any plugins want to handle permission checking
-            # Third-Party
-            from cpex.framework import HttpAuthCheckPermissionPayload, HttpHookType  # pylint: disable=import-outside-toplevel
-
             # First-Party
             from mcpgateway.plugins import get_plugin_manager  # pylint: disable=import-outside-toplevel
 

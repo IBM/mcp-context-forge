@@ -23,13 +23,11 @@ from typing import Any, AsyncGenerator, Dict, List, Optional, Set, Union
 import uuid
 
 # Third-Party
-from cpex.framework import GlobalContext, PluginContextTable, PromptHookType, PromptPosthookPayload, PromptPrehookPayload
 from jinja2 import meta, select_autoescape, Template
 from jinja2.exceptions import SecurityError as JinjaSecurityError
 from jinja2.sandbox import SandboxedEnvironment
 from mcp import ClientSession, types
 from mcp.client.sse import sse_client
-from mcp.client.streamable_http import streamable_http_client as streamablehttp_client
 from mcp.types import GetPromptRequest, GetPromptRequestParams
 import orjson
 from pydantic import ValidationError
@@ -48,6 +46,7 @@ from mcpgateway.db import get_for_update
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import PromptMetric, PromptMetricsHourly, server_prompt_association
 from mcpgateway.observability import create_span, set_span_attribute, set_span_error
+from mcpgateway.plugins.cpex_compat import GlobalContext, PluginContextTable, PromptHookType, PromptPosthookPayload, PromptPrehookPayload
 from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
 from mcpgateway.schemas import PromptCreate, PromptMetrics, PromptRead, PromptUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
@@ -65,6 +64,7 @@ from mcpgateway.services.upstream_session_registry import get_upstream_session_r
 from mcpgateway.utils.admin_check import is_admin_bypass_granted, is_user_admin
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers
+from mcpgateway.utils.mcp_v2_compat import streamablehttp_client
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import unified_paginate
 from mcpgateway.utils.services_auth import decode_auth
@@ -143,8 +143,8 @@ audit_trail = get_audit_trail_service()
 metrics_buffer = get_metrics_buffer_service()
 
 
-def _build_get_prompt_request(name: str, arguments: Optional[Dict[str, str]], meta_data: Dict[str, Any]) -> "types.ClientRequest":
-    """Build a GetPrompt ClientRequest that carries _meta (CWE-20, CWE-284).
+def _build_get_prompt_request(name: str, arguments: Optional[Dict[str, str]], meta_data: Dict[str, Any]) -> GetPromptRequest:
+    """Build a GetPromptRequest that carries _meta (CWE-20, CWE-284).
 
     Using ``by_alias=True`` ensures the Pydantic alias ``_meta`` is the only
     key written into the dict so the subsequent ``model_validate`` call
@@ -160,11 +160,11 @@ def _build_get_prompt_request(name: str, arguments: Optional[Dict[str, str]], me
         meta_data: Validated metadata dict to inject as ``_meta``.
 
     Returns:
-        A :class:`types.ClientRequest` ready to be passed to ``session.send_request``.
+        A concrete ``GetPromptRequest`` ready to be passed to ``session.send_request``.
     """
     _gp_dict = GetPromptRequestParams(name=name, arguments=arguments).model_dump(by_alias=True)
     _gp_dict["_meta"] = meta_data
-    return types.ClientRequest(GetPromptRequest(params=GetPromptRequestParams.model_validate(_gp_dict)))
+    return GetPromptRequest(params=GetPromptRequestParams.model_validate(_gp_dict))
 
 
 async def _get_prompt_with_meta(session: "ClientSession", name: str, arguments: Optional[Dict[str, str]], meta_data: Optional[Dict[str, Any]]) -> Any:

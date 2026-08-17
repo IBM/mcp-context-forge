@@ -29,12 +29,8 @@ from pydantic import BaseModel, TypeAdapter
 from pydantic import ValidationError as _ValidationError
 
 # First-Party
-from mcpgateway import _install_mcp_v2_cpex_compat
 from mcpgateway.plugins import _state
 from mcpgateway.plugins._redis import get_shared_redis_client as _redis
-
-
-_install_mcp_v2_cpex_compat()
 
 if TYPE_CHECKING:
     from cpex.framework import ObservabilityProvider, TenantPluginManager

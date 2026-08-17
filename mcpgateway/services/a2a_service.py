@@ -2250,16 +2250,14 @@ class A2AAgentService(BaseService):
         # ═══════════════════════════════════════════════════════════════════════════
         # PHASE 2b: Plugin context setup and PRE_INVOKE hook
         # ═══════════════════════════════════════════════════════════════════════════
-        # Third-Party
-        from cpex.framework import (
+        # First-Party
+        from mcpgateway.plugins.cpex_compat import (
             AgentHookType,
             AgentPreInvokePayload,
             GlobalContext,
             HttpHeaderPayload,
             PluginViolationError,
-        )
-
-        # First-Party
+        )  # pylint: disable=import-outside-toplevel
         from mcpgateway.plugins.gateway_plugin_manager import make_context_id  # pylint: disable=import-outside-toplevel
         from mcpgateway.schemas import A2A_AGENT_METADATA, PydanticA2AAgent  # pylint: disable=import-outside-toplevel
 
@@ -2514,8 +2512,8 @@ class A2AAgentService(BaseService):
                 # ═══════════════════════════════════════════════════════════════════════════
                 if plugin_manager and plugin_manager.has_hooks_for(AgentHookType.AGENT_POST_INVOKE):
                     try:
-                        # Third-Party
-                        from cpex.framework import AgentPostInvokePayload  # pylint: disable=import-outside-toplevel
+                        # First-Party
+                        from mcpgateway.plugins.cpex_compat import AgentPostInvokePayload  # pylint: disable=import-outside-toplevel
 
                         post_result, _ = await plugin_manager.invoke_hook(
                             AgentHookType.AGENT_POST_INVOKE,

@@ -252,8 +252,8 @@ async def test_mcp_transport(mcp_url: str, token: str, test_name: str, expected_
     print(f"  Expected tools: {expected_count}")
 
     try:
-        from mcp.client.streamable_http import streamable_http_client as streamablehttp_client
         from mcp.client.session import ClientSession
+        from mcpgateway.utils.mcp_v2_compat import streamablehttp_client
 
         headers = {"Authorization": f"Bearer {token}"}
 

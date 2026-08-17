@@ -11,9 +11,8 @@ from importlib import metadata as importlib_metadata
 import sys
 from typing import Any, Dict, Mapping, Optional, Tuple
 
-# Third-Party
-from cpex.framework.models import Config
-from cpex.framework.utils import parse_class_name
+# First-Party
+from mcpgateway.plugins.cpex_compat import Config, parse_class_name
 
 
 def _safe_str(value: Any) -> Optional[str]:

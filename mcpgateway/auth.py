@@ -72,7 +72,6 @@ from urllib.parse import urlparse
 import uuid
 
 # Third-Party
-from cpex.framework import GlobalContext, HttpAuthResolveUserPayload, HttpHeaderPayload, HttpHookType, PluginViolationError
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials
 import redis
@@ -85,6 +84,7 @@ from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import EmailUser, fresh_db_session, SessionLocal
 from mcpgateway.plugins import get_plugin_manager
+from mcpgateway.plugins.cpex_compat import GlobalContext, HttpAuthResolveUserPayload, HttpHeaderPayload, HttpHookType, PluginViolationError
 from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
 from mcpgateway.services.observability_service import current_trace_id
 from mcpgateway.transports.context import UserContext

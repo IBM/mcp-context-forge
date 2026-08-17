@@ -53,7 +53,6 @@ from typing import Any, Awaitable, Callable, Dict, Generic, Optional, Protocol, 
 
 # Third-Party
 import mcp.types as mcp_types
-from pydantic import TypeAdapter
 
 # First-Party
 from mcpgateway.services.logging_service import LoggingService
@@ -68,7 +67,11 @@ _ResultT = TypeVar("_ResultT")
 
 @runtime_checkable
 class RequestResponder(Protocol, Generic[_RequestT, _ResultT]):
-    """Structural subset of the MCP responder used by notification forwarding."""
+    """Structural subset of the MCP responder used by notification forwarding.
+
+    ``runtime_checkable`` verifies attribute presence only; call signatures are
+    exercised by the forwarding tests and real SDK integration paths.
+    """
 
     request_id: mcp_types.RequestId
     request: _RequestT
@@ -99,7 +102,6 @@ MessageHandlerCallback = Callable[
 # Initialize logging
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
-_CLIENT_RESULT_ADAPTER = TypeAdapter(mcp_types.ClientResult)
 
 
 class NotificationType(Enum):
@@ -825,7 +827,7 @@ class NotificationService:
             await responder.respond(error)
             return
         try:
-            result = _CLIENT_RESULT_ADAPTER.validate_python(payload.get("result") or {})
+            result = mcp_types.client_result_adapter.validate_python(payload.get("result") or {})
         except ValidationError as exc:
             logger.warning("Could not validate downstream result, sending error: %s", exc)
             await responder.respond(
@@ -955,8 +957,9 @@ class NotificationService:
         # with a traceback rather than being bucketed as a publish
         # failure.
         try:
-            # Older SDKs wrapped the typed notification under ``root``;
-            # MCP v2 exposes the concrete notification model directly.
+            # Transitional while MCP v2 branches are rebased: older wrappers
+            # expose the typed notification under ``root``; MCP v2 passes the
+            # concrete notification model directly.
             inner = notification.root if hasattr(notification, "root") else notification
             payload = inner.model_dump(by_alias=True, exclude_none=True)
         except (AttributeError, ValidationError, TypeError, ValueError) as exc:
@@ -1022,8 +1025,8 @@ class NotificationService:
         """
         self._notifications_received += 1
 
-        # Extract notification type from the notification object. Older
-        # SDKs used a root wrapper; MCP v2 passes the concrete model.
+        # Transitional while MCP v2 branches are rebased: older wrappers used
+        # ``root``; MCP v2 passes the concrete notification model directly.
         notification_root = notification.root if hasattr(notification, "root") else notification
 
         # Check for list_changed notifications

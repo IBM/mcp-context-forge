@@ -35,13 +35,15 @@ $ cforge --help
 """
 
 # Third-Party
-import cpex.tools.cli as plugins
 import typer
 
 # First-Party
 import mcpgateway.tools.builder.cli as builder
+from mcpgateway.plugins.cpex_compat import get_cpex_cli_module
 
 app = typer.Typer(help="Command line tools for building, deploying, and interacting with ContextForge AI Gateway")
+
+plugins = get_cpex_cli_module()
 
 app.add_typer(plugins.app, name="plugin", help="Manage the plugin lifecycle")
 app.add_typer(builder.app, name="gateway", help="Manage the building and deployment of the gateway")
