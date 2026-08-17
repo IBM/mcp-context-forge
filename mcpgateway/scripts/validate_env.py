@@ -26,6 +26,10 @@ from typing import Optional
 from pydantic import SecretStr, ValidationError
 
 # First-Party
+from mcpgateway._security_constants import MIN_ENTROPY as _MIN_ENTROPY
+from mcpgateway._security_constants import MIN_SECRET_LENGTH as _MIN_SECRET_LENGTH
+from mcpgateway._security_constants import WEAK_VALUES as _WEAK_VALUES
+from mcpgateway._security_constants import calculate_entropy
 from mcpgateway.config import SecurityConfigurationError, Settings
 
 
@@ -148,26 +152,26 @@ def get_security_warnings(settings: Settings) -> list[str]:
 
     # --- JWT_SECRET_KEY ---
     jwt = settings.jwt_secret_key.get_secret_value() if isinstance(settings.jwt_secret_key, SecretStr) else settings.jwt_secret_key
-    weak_jwt = ["my-test-key", "my-test-key-but-now-longer-than-32-bytes", "changeme", "secret", "password"]
-    if jwt.lower() in weak_jwt:
+    _weak_set = frozenset(v.lower() for v in _WEAK_VALUES)
+    effective_min = max(getattr(settings, "min_secret_length", _MIN_SECRET_LENGTH), _MIN_SECRET_LENGTH)
+    if jwt.lower() in _weak_set or jwt.lower().startswith("__replace_me__"):
         warnings.append("JWT_SECRET_KEY: Default/weak secret detected! Please set a strong, unique value for production.")
 
-    if len(jwt) < 32:
-        warnings.append(f"JWT_SECRET_KEY: Secret should be at least 32 characters long. Current length: {len(jwt)}")
+    if len(jwt) < effective_min:
+        warnings.append(f"JWT_SECRET_KEY: Secret should be at least {effective_min} characters long. Current length: {len(jwt)}")
 
-    if len(set(jwt)) < 10:
+    if calculate_entropy(jwt) < _MIN_ENTROPY:
         warnings.append("JWT_SECRET_KEY: Secret has low entropy. Consider using a more random value.")
 
     # --- AUTH_ENCRYPTION_SECRET ---
     auth_secret = settings.auth_encryption_secret.get_secret_value() if isinstance(settings.auth_encryption_secret, SecretStr) else settings.auth_encryption_secret
-    weak_auth = ["my-test-salt", "changeme", "secret", "password"]
-    if auth_secret.lower() in weak_auth:
+    if auth_secret.lower() in _weak_set or auth_secret.lower().startswith("__replace_me__"):
         warnings.append("AUTH_ENCRYPTION_SECRET: Default/weak secret detected! Please set a strong, unique value for production.")
 
-    if len(auth_secret) < 32:
-        warnings.append(f"AUTH_ENCRYPTION_SECRET: Secret should be at least 32 characters long. Current length: {len(auth_secret)}")
+    if len(auth_secret) < effective_min:
+        warnings.append(f"AUTH_ENCRYPTION_SECRET: Secret should be at least {effective_min} characters long. Current length: {len(auth_secret)}")
 
-    if len(set(auth_secret)) < 10:
+    if calculate_entropy(auth_secret) < _MIN_ENTROPY:
         warnings.append("AUTH_ENCRYPTION_SECRET: Secret has low entropy. Consider using a more random value.")
 
     # --- URL Checks ---

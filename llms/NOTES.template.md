@@ -13,5 +13,5 @@ See AGENTS.md § PR Review Workflow for the procedure.
 [ ] 2. Tests  (`make test`)
 [ ] 3. Coverage  (`make coverage diff-cover`)
 [ ] 4. Gateway stack  (`make docker-nuke docker-prod-rust testing-up RUST_MCP_MODE=`)
-[ ] 5. MCP protocol  (`make test-mcp-protocol-e2e test-mcp-rbac test-protocol-compliance`)
+[ ] 5. MCP protocol  (`make test-mcp-protocol-e2e test-mcp-rbac`)
 [ ] 6. Secrets scan  (`make detect-secrets-scan`)

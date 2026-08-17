@@ -331,8 +331,7 @@ install-dev: venv
 	@echo "🔑  Next step — choose one:"
 	@echo "    make setup           # recommended: auto-creates .env and patches secrets in-place"
 	@echo "    make init-secrets    # writes secrets to .env.secrets so you can review before copying"
-	@echo "    JWT_SECRET_KEY must be strong in every environment."
-	@echo "    AUTH_ENCRYPTION_SECRET: weak values (e.g. my-test-salt) are allowed in ENVIRONMENT=development."
+	@echo "    The gateway will not start until JWT_SECRET_KEY and AUTH_ENCRYPTION_SECRET are set."
 
 # help: build-ui              - Build Admin UI CSS and JS bundles (requires npm; set SKIP_UI_BUILD=1 to bypass)
 .PHONY: build-ui
@@ -376,7 +375,7 @@ check-env-dev:
 
 # help: init-secrets          - Generate secrets → .env.secrets for manual review; copy values into .env when ready
 # help: init-secrets-force    - Regenerate .env.secrets unconditionally (no prompt)
-# help: init-secrets-patch-env - Patch JWT_SECRET_KEY/BASIC_AUTH_PASSWORD into .env; AUTH_ENCRYPTION_SECRET written to .env.secrets only
+# help: init-secrets-patch-env - Write generated secrets directly into .env (in-place, preserves other values)
 .PHONY: init-secrets init-secrets-force init-secrets-patch-env
 init-secrets:                   ## 🔑 Generate secrets → .env.secrets (prompts if file exists)
 	$(UV_BIN) run python3 -m mcpgateway.scripts.init_secrets
@@ -384,7 +383,7 @@ init-secrets:                   ## 🔑 Generate secrets → .env.secrets (promp
 init-secrets-force:             ## 🔑 Regenerate .env.secrets unconditionally (--force)
 	$(UV_BIN) run python3 -m mcpgateway.scripts.init_secrets --force
 
-init-secrets-patch-env:         ## 🔑 Patch JWT_SECRET_KEY into .env; AUTH_ENCRYPTION_SECRET written to .env.secrets only (--patch-env)
+init-secrets-patch-env:         ## 🔑 Patch weak/placeholder secrets directly into .env (--patch-env)
 	$(UV_BIN) run python3 -m mcpgateway.scripts.init_secrets --patch-env .env
 
 # First-time setup: works before make dev, make serve, and make compose-up.
@@ -801,18 +800,14 @@ clean:
 # =============================================================================
 # help: 🧪 TESTING
 # help: smoketest            - Run smoketest.py --verbose (build container, add MCP server, test endpoints)
-# help: test-protocol-compliance - MCP protocol compliance harness: full (target, transport) matrix across reference + gateway (K=<filter> to pick one)
-# help: test-protocol-compliance-reference - Protocol compliance harness, reference server only (fast, always-on)
-# help: test-protocol-compliance-gateway - Protocol compliance harness, gateway-proxy + gateway-virtual targets (requires working gateway boot)
-# help: test-protocol-compliance-matrix - Protocol compliance matrix across every runnable engine; summary table (pass MATRIX_ARGS='--format markdown --out X' to override)
-# help: test-mcp-protocol-e2e - MCP protocol E2E via FastMCP client against live gateway (K=<filter> to pick one; MCP_E2E_CLIENT_TIMEOUT env to extend the 5s client timeout)
+# help: test-mcp-protocol-e2e - MCP protocol E2E via mcp SDK client against live gateway (K=<filter> to pick one; MCP_E2E_CLIENT_TIMEOUT env to extend the 5s client timeout)
 # help: test-mcp-cli         - [DEPRECATED] Alias for test-mcp-protocol-e2e (accepts same K=<filter>)
 # help: test-bats            - Run bats tests for git tooling (tests/bash; requires bats)
 # help: test-mcp-rbac        - RBAC + multi-transport MCP protocol tests (needs live gateway + SSE)
 # help: test-mcp-access-matrix - MCP role/access matrix (Rust transport, edge/full mode)
 # help: test-mcp-plugin-parity - MCP plugin parity E2E for current Python or Rust stack
 # help: test-mcp-session-isolation - MCP session/auth isolation tests for Rust public transport
-# help: test-e2e-sso         - E2E tests requiring a live SSO identity provider (Keycloak or Entra ID)
+# help: test-live-gateway    - Run ALL live-gateway tests (mcp + sso + e2e_rust)
 # help: test-live-gateway    - Run ALL live-gateway tests (mcp + sso + protocol_compliance + e2e_rust)
 # help: test-plugin-integration - Self-contained plugin E2E tests (boots gateway; PLUGIN=<name> ENFORCEMENT=static|binding|both)
 # help: test-plugin-secrets-detection  - Plugin E2E: SecretsDetection
@@ -861,12 +856,11 @@ clean:
 
 # Dirs/files always excluded from standard pytest runs.
 # tests/live_gateway/ — see tests/live_gateway/README.md. Subsuites need
-# a running gateway (`make testing-up`), Keycloak/Entra (sso/), the Rust
-# transport (e2e_rust/), or specific protocol setup (protocol_compliance/).
+# a running gateway (`make testing-up`), Keycloak/Entra (sso/), or the Rust
+# transport (e2e_rust/).
 # Invoke via `make test-live-gateway` (everything) or a targeted helper
 # (test-mcp-protocol-e2e, test-mcp-rbac, test-mcp-plugin-parity,
-# test-mcp-access-matrix, test-mcp-session-isolation, test-e2e-sso,
-# test-protocol-compliance{,-reference,-gateway}).
+# test-mcp-access-matrix, test-mcp-session-isolation, test-e2e-sso).
 PYTEST_IGNORE := tests/fuzz tests/manual test.py \
     tests/live_gateway
 
@@ -880,7 +874,7 @@ smoketest:
 	@$(VENV_DIR)/bin/python ./smoketest.py --verbose || { echo "❌ Smoketest failed!"; exit 1; }
 	@echo "✅ Smoketest passed!"
 
-test-mcp-protocol-e2e: uv  ## MCP protocol E2E via FastMCP client (K=<filter> to pick one)
+test-mcp-protocol-e2e: uv  ## MCP protocol E2E via mcp SDK client (K=<filter> to pick one)
 	@echo "🔌 Running MCP protocol E2E tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
 	@echo "   Env: MCP_CLI_BASE_URL (gateway URL)  JWT_SECRET_KEY  PLATFORM_ADMIN_EMAIL"
 	@echo "   Timeout: $${MCP_E2E_CLIENT_TIMEOUT:-5.0}s per client operation (override MCP_E2E_CLIENT_TIMEOUT)"
@@ -905,28 +899,6 @@ test-bats:                     ## 🧪  Run bats tests for git tooling (tests/ba
 	}
 	@echo "🧪  Running bats tests for git tooling (tests/bash)..."
 	@bats tests/bash/ && echo "✅  bats tests passed!" || { echo "❌  bats tests failed!"; exit 1; }
-
-test-protocol-compliance: uv  ## MCP protocol compliance harness — full (target, transport) matrix (K=<filter> to pick one)
-	@echo "📜 Running MCP protocol compliance harness (tests/live_gateway/protocol_compliance)..."
-	@if [ -n "$(K)" ]; then echo "   Filter: -k \"$(K)\""; fi
-	@$(UV_BIN) run pytest tests/live_gateway/protocol_compliance $(if $(K),-k "$(K)") -v --tb=short \
-		|| { echo "❌ protocol compliance harness failed!"; exit 1; }
-	@echo "✅ protocol compliance harness passed!"
-
-test-protocol-compliance-reference: uv  ## Protocol compliance harness — reference server only (fast, always-on)
-	@echo "📜 Running MCP protocol compliance harness (reference target only)..."
-	@$(UV_BIN) run pytest tests/live_gateway/protocol_compliance -k "reference-stdio" -v --tb=short \
-		|| { echo "❌ reference-target compliance harness failed!"; exit 1; }
-	@echo "✅ reference-target compliance harness passed!"
-
-test-protocol-compliance-gateway: uv  ## Protocol compliance harness — gateway-proxy + gateway-virtual (needs in-process gateway boot to succeed)
-	@echo "📜 Running MCP protocol compliance harness (gateway targets)..."
-	@$(UV_BIN) run pytest tests/live_gateway/protocol_compliance -k "gateway_proxy or gateway_virtual" -v --tb=short \
-		|| { echo "❌ gateway-target compliance harness failed!"; exit 1; }
-	@echo "✅ gateway-target compliance harness passed!"
-
-test-protocol-compliance-matrix: uv  ## MCP compliance matrix across every runnable engine (reference, python, rust_edge, rust_full) with aggregated summary
-	@$(UV_BIN) run python scripts/compliance_matrix.py $(MATRIX_ARGS)
 
 test-mcp-rbac: uv  ## RBAC + multi-transport MCP protocol tests (needs live gateway + SSE)
 	@echo "🔐 Running RBAC + multi-transport MCP protocol tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
@@ -968,16 +940,16 @@ test-mcp-session-isolation: uv  ## MCP session/auth isolation tests for the Rust
 		|| { echo "❌ MCP session/auth isolation tests failed!"; exit 1; }
 	@echo "✅ MCP session/auth isolation tests passed!"
 
-test-e2e-sso: uv  ## E2E tests requiring a live SSO identity provider (Keycloak or Entra ID)
+test-e2e-sso: uv  ## E2E tests requiring a live Keycloak SSO identity provider
 	@echo "🔐 Running SSO-dependent E2E tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
-	@echo "   Requires one of:"
-	@echo "     - Keycloak: 'docker compose --profile sso up -d' (for test_oauth_jwks_e2e.py)"
-	@echo "     - Entra ID: AZURE_CLIENT_ID/AZURE_CLIENT_SECRET/AZURE_TENANT_ID env vars (for test_entra_id_integration.py)"
+	@echo "   Requires: Keycloak via 'docker compose --profile sso up -d' (for test_oauth_jwks_e2e.py)"
+	@echo "   Note: the Entra ID integration test now lives at tests/integration/test_entra_id_integration.py"
+	@echo "         and runs (skipping when AZURE_* creds are absent) as part of the default 'make test'."
 	@$(UV_BIN) run pytest -p playwright tests/live_gateway/sso/ -v -s --tb=short \
 		|| { echo "❌ SSO E2E tests failed!"; exit 1; }
 	@echo "✅ SSO E2E tests passed!"
 
-test-live-gateway: uv  ## Run ALL live-gateway tests (mcp + sso + protocol_compliance)
+test-live-gateway: uv  ## Run ALL live-gateway tests (mcp + sso)
 	@echo "🌐 Running all tests in tests/live_gateway/ ..."
 	@echo "   Requires: live ContextForge gateway (typically 'make testing-up') and any"
 	@echo "             extra services per subsuite — see tests/live_gateway/README.md."
@@ -7464,8 +7436,7 @@ interrogate: uv                     ## 📝 Docstring coverage
 pip-audit:                          ## 🔒 Audit Python dependencies for CVEs
 	@echo "🔒  pip-audit vulnerability scan..."
 	@echo ""
-	@echo "  ⚠️  NOTE: --skip-editable is active. Two editable installs are expected to be skipped:"
-	@echo "       • compliance-reference-server   (mcp-servers/ dev install)"
+	@echo "  ⚠️  NOTE: --skip-editable is active. One editable install is expected to be skipped:"
 	@echo "       • mcp-contextforge-gateway      (main gateway dev install)"
 	@echo ""
 	@echo "  🚨 If ANY OTHER package appears in the skip table → STOP and investigate."

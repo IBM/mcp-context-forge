@@ -192,6 +192,36 @@ Typical use case: the user authenticates to ContextForge once (JWT/SSO), and eve
 - **`inbound_user_jwt`** (default): The ContextForge JWT presented by the calling user on the current request is used as the `subject_token` in the exchange. This requires the inbound request to carry a verifiable JWT (not an opaque API key).
 - **`user_oauth_token`**: The user's previously stored per-gateway OAuth access token (obtained via the Authorization Code flow described above) is used as the `subject_token` instead. This is supported on the tool-invocation path; gateway connection/health-check paths fail closed for `token-exchange` because they have no per-request user context.
 
+### Tool discovery for token-exchange gateways
+
+Registration (`POST /gateways`) intentionally skips the discovery probe for
+`grant_type: "token-exchange"` — there is no end-user JWT at registration
+time, so the gateway is persisted with an empty tool list. Two explicit,
+authenticated triggers populate it afterwards:
+
+- **`POST /gateways/{gateway_id}/tools/refresh`** — the manual-refresh API.
+  For token-exchange gateways the caller's own inbound ContextForge JWT is
+  used as the RFC 8693 `subject_token` for a single discovery-time exchange;
+  the exchanged token (never the raw JWT) authenticates the MCP connection.
+- **`POST /oauth/fetch-tools/{gateway_id}`** — the Admin UI `🔧 Fetch Tools`
+  button. For token-exchange gateways this delegates to the same
+  manual-refresh pipeline.
+
+The subject token is resolved from the `Authorization: Bearer` header if one
+is present; the HttpOnly `jwt_token` session cookie is only consulted when no
+bearer credential was presented at all (Admin UI sessions cannot attach a
+bearer header). A bearer credential that isn't a structurally valid JWT never
+falls back to the cookie — that cookie could belong to a different principal
+than the one the bearer already authenticated the request as, so the request
+fails closed instead of silently swapping identities. Both routes are
+CSRF-protected for cookie-credentialed callers, and both fail closed: a caller
+without a structurally valid JWT gets an error — the raw credential is never
+forwarded upstream. Every exchange attempt (success or failure) is audited via
+the structured `token-exchange` event with the request's correlation id.
+
+There is no `🔐 Authorize` step for token-exchange gateways — no user
+consent flow exists, and the Admin UI hides that action for them.
+
 ### `subject_token_type`
 
 Per RFC 8693 §3, `subject_token_type` tells the Authorization Server how to interpret `subject_token`:

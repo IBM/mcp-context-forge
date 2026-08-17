@@ -41,6 +41,7 @@ from mcpgateway.common.oauth import OAUTH_SENSITIVE_KEYS
 from mcpgateway.common.validators import SecurityValidator, validate_core_url
 from mcpgateway.config import settings
 from mcpgateway.utils.base_models import BaseModelWithConfigDict
+from mcpgateway.utils.jq_guard import assert_safe_jq_filter
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
 from mcpgateway.validation.tags import validate_tags_field
 
@@ -727,6 +728,26 @@ def _assemble_tool_authheaders(values: Dict[str, Any]) -> Dict[str, Any]:
     return {"auth_type": "authheaders", "auth_value": None}
 
 
+def _validate_jsonpath_filter_value(value: Optional[str]) -> Optional[str]:
+    """Reject jq filters that use restricted built-ins.
+
+    Shared by ``ToolCreate.validate_jsonpath_filter`` and
+    ``ToolUpdate.validate_jsonpath_filter`` so the check has one implementation.
+
+    Args:
+        value: The submitted jq filter.
+
+    Returns:
+        The filter unchanged when it is safe.
+
+    Raises:
+        ValueError: If the filter uses a restricted jq built-in.
+    """
+    if value:
+        assert_safe_jq_filter(value)
+    return value
+
+
 class ToolCreate(BaseModel):
     """
     Represents the configuration for creating a tool with various attributes and settings.
@@ -930,6 +951,22 @@ class ToolCreate(BaseModel):
         if len(v) > SecurityValidator.MAX_NAME_LENGTH:
             raise ValueError(f"Display name exceeds maximum length of {SecurityValidator.MAX_NAME_LENGTH}")
         return SecurityValidator.sanitize_display_text(v, "Display name")
+
+    @field_validator("jsonpath_filter")
+    @classmethod
+    def validate_jsonpath_filter(cls, value: Optional[str]) -> Optional[str]:
+        """Reject jq filters that use restricted built-ins.
+
+        Args:
+            value: The submitted jq filter.
+
+        Returns:
+            The filter unchanged when it is safe.
+
+        Raises:
+            ValueError: If the filter uses a restricted jq built-in.
+        """
+        return _validate_jsonpath_filter_value(value)
 
     @field_validator("headers", "input_schema", "annotations")
     @classmethod
@@ -1469,6 +1506,22 @@ class ToolUpdate(BaseModelWithConfigDict):
             logger.info(f"Description too long, truncated to {SecurityValidator.MAX_DESCRIPTION_LENGTH} characters.")
             return SecurityValidator.sanitize_display_text(truncated, "Description")
         return SecurityValidator.sanitize_display_text(v, "Description")
+
+    @field_validator("jsonpath_filter")
+    @classmethod
+    def validate_jsonpath_filter(cls, value: Optional[str]) -> Optional[str]:
+        """Reject jq filters that use restricted built-ins.
+
+        Args:
+            value: The submitted jq filter.
+
+        Returns:
+            The filter unchanged when it is safe.
+
+        Raises:
+            ValueError: If the filter uses a restricted jq built-in.
+        """
+        return _validate_jsonpath_filter_value(value)
 
     @field_validator("headers", "input_schema", "annotations")
     @classmethod

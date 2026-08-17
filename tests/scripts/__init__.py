@@ -1,8 +1,7 @@
 # -*- coding: utf-8 -*-
-"""Location: ./tests/live_gateway/protocol_compliance/helpers/__init__.py
+"""Location: ./tests/scripts/__init__.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 
-Module Description.
-Module documentation...
+Tests for mcpgateway.scripts.
 """

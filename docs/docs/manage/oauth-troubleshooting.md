@@ -507,7 +507,7 @@ DCR_METADATA_CACHE_TTL=3600
 | `CACHE_TYPE` | `database` | `database`, `redis`, `memory`, or `none` |
 | `REDIS_URL` | `redis://localhost:6379/0` | Redis connection string (when CACHE_TYPE=redis) |
 | `DATABASE_URL` | `sqlite:///./mcp.db` | Database for state storage |
-| `AUTH_ENCRYPTION_SECRET` | `my-test-salt` | Secret for HMAC signing states (change in production!) |
+| `AUTH_ENCRYPTION_SECRET` | *(must be set — no default)* | AES encryption key for OAuth tokens and state signatures; generate with `make init-secrets-patch-env` |
 | `OAUTH_REQUEST_TIMEOUT` | `30` | Timeout for OAuth requests (seconds) |
 | `OAUTH_MAX_RETRIES` | `3` | Max retries for token requests |
 | `LOG_LEVEL` | `INFO` | Set to `DEBUG` for troubleshooting |
