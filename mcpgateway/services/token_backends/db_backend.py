@@ -174,7 +174,7 @@ class DatabaseTokenBackend(AbstractTokenBackend):
                 app_user_email=app_user_email,
                 access_token=access_token,  # Plain-text in return value
                 refresh_token=refresh_token,
-                token_type="Bearer",
+                token_type="Bearer",  # nosec B106 - OAuth token_type constant, not a password
                 expires_at=expires_at,
                 scopes=scopes,
                 created_at=token_record.created_at,

@@ -12889,7 +12889,7 @@ except ImportError:
     logger.debug("OAuth router not available")
 
 # Vault OAuth router (conditionally registered when OAUTH_TOKEN_BACKEND=vault)
-if settings.oauth_token_backend == "vault":
+if settings.oauth_token_backend == "vault":  # nosec B105 - config discriminator, not a password
     try:
         # First-Party
         from mcpgateway.routers.vault_router import vault_router  # pylint: disable=import-outside-toplevel

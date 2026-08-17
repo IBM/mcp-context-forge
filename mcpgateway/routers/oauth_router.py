@@ -52,7 +52,7 @@ logger = logging.getLogger(__name__)
 
 ADMIN_CSRF_COOKIE_NAME = "mcpgateway_csrf_token"
 ADMIN_CSRF_HEADER_NAME = "x-csrf-token"
-GRANT_TYPE_TOKEN_EXCHANGE = "token-exchange"
+GRANT_TYPE_TOKEN_EXCHANGE = "token-exchange"  # nosec B105 - OAuth grant-type constant, not a credential
 
 
 def _build_user_context(current_user: dict[str, Any] | EmailUserResponse | None, db: Session | None = None) -> dict:
@@ -110,7 +110,7 @@ def _build_user_context(current_user: dict[str, Any] | EmailUserResponse | None,
         logger.debug("_build_user_context: email=%s, token_use=%s", email, current_user.get("token_use"))
 
         token_use = current_user.get("token_use")
-        if token_use == "session":
+        if token_use == "session":  # nosec B105 - token_use type discriminator, not a password
             # CWE-863 fix: use DB-authoritative token_teams as the primary path
             # selector so that revoked team memberships take effect immediately.
             # token_teams is the result of resolve_session_teams() which intersects
@@ -1050,7 +1050,7 @@ async def oauth_callback(
 
         jwt_payload = {
             "email": app_user_email,
-            "token_use": "session",
+            "token_use": "session",  # nosec B105 - token_use type discriminator, not a password
             "jti": secrets.token_urlsafe(16),
         }
         # S8: When team_id is None (Admin-UI session, no team scope), omit the

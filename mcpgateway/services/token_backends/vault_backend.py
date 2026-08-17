@@ -337,7 +337,7 @@ class VaultTokenBackend(AbstractTokenBackend):
                     "scopes": scopes,
                 },
                 "user_id": user_id,
-                "token_type": "Bearer",
+                "token_type": "Bearer",  # nosec B105 - OAuth token_type constant, not a password
                 "expires_at": expires_at.isoformat() if expires_at else None,
                 # Preserve existing learned values when caller passes None (matches DB backend)
                 "learned_aud": learned_aud if learned_aud is not None else existing_learned_aud,
@@ -361,9 +361,7 @@ class VaultTokenBackend(AbstractTokenBackend):
             server_id = self._hash_server_id(mcp_url)
             cache_key = (team_id, server_id, app_user_email)
             if cache_key in VaultTokenBackend._token_cache:
-                VaultTokenBackend._token_cache[cache_key]["cache_expires"] = (
-                    datetime.now(timezone.utc) - timedelta(seconds=1)
-                )
+                VaultTokenBackend._token_cache[cache_key]["cache_expires"] = datetime.now(timezone.utc) - timedelta(seconds=1)
 
         logger.info(
             "Stored OAuth tokens in Vault for gateway %s (mcp_url=%s), team=%s, user=%s",
@@ -381,7 +379,7 @@ class VaultTokenBackend(AbstractTokenBackend):
             app_user_email=app_user_email,
             access_token=access_token,
             refresh_token=refresh_token,
-            token_type="Bearer",
+            token_type="Bearer",  # nosec B106 - OAuth token_type constant, not a password
             expires_at=expires_at,
             scopes=scopes,
             created_at=now,
