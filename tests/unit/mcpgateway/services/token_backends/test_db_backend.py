@@ -1089,3 +1089,36 @@ async def test_get_user_learned_audience_exception_returns_none(backend_with_enc
 
     assert result == (None, None)
     mock_logger.debug.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Round-7 coverage: DatabaseTokenBackend encryption init failures (lines 135,137)
+# ---------------------------------------------------------------------------
+
+
+def test_db_backend_encryption_import_error():
+    """DatabaseTokenBackend handles ImportError on encryption init (line 135)."""
+    from mcpgateway.services.token_backends.db_backend import DatabaseTokenBackend
+    from unittest.mock import MagicMock, patch
+
+    db = MagicMock()
+    settings = MagicMock()
+    settings.auth_encryption_secret = "test-secret"
+
+    with patch("mcpgateway.services.token_backends.db_backend.get_encryption_service", side_effect=ImportError("no crypto")):
+        backend = DatabaseTokenBackend(db, settings)
+    assert backend.encryption is None
+
+
+def test_db_backend_encryption_attribute_error():
+    """DatabaseTokenBackend handles AttributeError on encryption init (line 137)."""
+    from mcpgateway.services.token_backends.db_backend import DatabaseTokenBackend
+    from unittest.mock import MagicMock, patch
+
+    db = MagicMock()
+    settings = MagicMock()
+    settings.auth_encryption_secret = "test-secret"
+
+    with patch("mcpgateway.services.token_backends.db_backend.get_encryption_service", side_effect=AttributeError("no attr")):
+        backend = DatabaseTokenBackend(db, settings)
+    assert backend.encryption is None

@@ -56,3 +56,71 @@ class TestNormalizeResourceUrl:
         result = normalize_resource_url("not a valid url", preserve_query=False)
         # Should return original string if parsing fails
         assert result == "not a valid url"
+
+
+# ---------------------------------------------------------------------------
+# Round-7 coverage: store_oauth_credentials default (line 261) and
+# get_user_auth_headers default (line 290)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_store_oauth_credentials_default_returns_false():
+    """Default store_oauth_credentials returns False (not supported by base)."""
+    from mcpgateway.services.token_backends.base import AbstractTokenBackend
+
+    class _Concrete(AbstractTokenBackend):
+        """Minimal concrete backend for testing base defaults."""
+
+        async def store_tokens(self, *a, **kw):
+            """Stub."""
+
+        async def get_user_token(self, *a, **kw):
+            """Stub."""
+
+        async def get_token_info(self, *a, **kw):
+            """Stub."""
+
+        async def revoke_user_tokens(self, *a, **kw):
+            """Stub."""
+
+        async def cleanup_expired_tokens(self, *a, **kw):
+            """Stub."""
+
+        async def get_user_learned_audience(self, *a, **kw):
+            """Stub."""
+
+    backend = _Concrete()
+    result = await backend.store_oauth_credentials("team-1", "https://mcp.example.com", {})
+    assert result is False
+
+
+@pytest.mark.asyncio
+async def test_get_user_auth_headers_default_returns_none():
+    """Default get_user_auth_headers returns None (not supported by base)."""
+    from mcpgateway.services.token_backends.base import AbstractTokenBackend
+
+    class _Concrete(AbstractTokenBackend):
+        """Minimal concrete backend for testing base defaults."""
+
+        async def store_tokens(self, *a, **kw):
+            """Stub."""
+
+        async def get_user_token(self, *a, **kw):
+            """Stub."""
+
+        async def get_token_info(self, *a, **kw):
+            """Stub."""
+
+        async def revoke_user_tokens(self, *a, **kw):
+            """Stub."""
+
+        async def cleanup_expired_tokens(self, *a, **kw):
+            """Stub."""
+
+        async def get_user_learned_audience(self, *a, **kw):
+            """Stub."""
+
+    backend = _Concrete()
+    result = await backend.get_user_auth_headers("gw-1", "team-1", "alice@example.com")
+    assert result is None
