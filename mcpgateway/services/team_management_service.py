@@ -268,11 +268,13 @@ class TeamSeedResult:
         team: The created (or reactivated) team.
         members_added: Seeds that resolved to a direct membership.
         invitations_sent: Seeds that resolved to an invitation.
+        invitations_to_deliver: Persisted invitations awaiting best-effort email delivery.
     """
 
     team: EmailTeam
     members_added: List[SeededMember] = field(default_factory=list)
     invitations_sent: List[SeededInvitation] = field(default_factory=list)
+    invitations_to_deliver: List[EmailTeamInvitation] = field(default_factory=list, repr=False)
 
 
 class _Unset:
@@ -897,6 +899,7 @@ class TeamManagementService:
                 team=team,
                 members_added=[SeededMember(email=member.user_email, role=member.role) for member, _ in memberships],
                 invitations_sent=[SeededInvitation(email=invitation.email, role=invitation.role, invitation_id=invitation.id) for invitation in invitations],
+                invitations_to_deliver=invitations,
             )
 
         except Exception as e:

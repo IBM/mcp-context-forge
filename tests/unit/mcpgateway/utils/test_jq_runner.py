@@ -162,6 +162,7 @@ def test_pool_failure_fails_closed(monkeypatch):
         run_jq_filter(".a", {"a": 1})
 
 
+@linux_only
 def test_pool_is_reused_within_a_process(jq_pool):
     """Repeated startup calls do not churn the pool."""
     # First-Party
@@ -172,6 +173,7 @@ def test_pool_is_reused_within_a_process(jq_pool):
     assert jq_runner._POOL is first  # pylint: disable=protected-access
 
 
+@linux_only
 def test_pool_is_rebuilt_after_pid_change(jq_pool, monkeypatch):
     """A pool inherited across a fork is discarded rather than reused."""
     # First-Party

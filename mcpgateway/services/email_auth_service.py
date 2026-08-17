@@ -30,7 +30,6 @@ import re
 import secrets
 import time
 from typing import Optional
-import urllib.parse
 import warnings
 
 # Third-Party
@@ -60,7 +59,7 @@ from mcpgateway.db import (
 )
 from mcpgateway.schemas import PaginationLinks, PaginationMeta
 from mcpgateway.services.argon2_service import Argon2PasswordService
-from mcpgateway.services.email_notification_service import AuthEmailNotificationService
+from mcpgateway.services.email_notification_service import AuthEmailNotificationService, build_frontend_url
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.metrics import password_reset_completions_counter, password_reset_requests_counter
 from mcpgateway.utils.pagination import unified_paginate
@@ -446,9 +445,7 @@ class EmailAuthService:
         Returns:
             str: Absolute forgot-password URL.
         """
-        app_domain = str(getattr(settings, "app_domain", "http://localhost:4444")).rstrip("/")
-        root_path = str(getattr(settings, "app_root_path", "")).rstrip("/")
-        return f"{app_domain}{root_path}/admin/forgot-password"
+        return build_frontend_url("/forgot-password")
 
     @staticmethod
     def _build_reset_password_url(token: str) -> str:
@@ -460,10 +457,7 @@ class EmailAuthService:
         Returns:
             str: Absolute reset-password URL.
         """
-        safe_token = urllib.parse.quote(token, safe="")
-        app_domain = str(getattr(settings, "app_domain", "http://localhost:4444")).rstrip("/")
-        root_path = str(getattr(settings, "app_root_path", "")).rstrip("/")
-        return f"{app_domain}{root_path}/admin/reset-password/{safe_token}"
+        return build_frontend_url("/reset-password", token)
 
     async def _invalidate_user_auth_cache(self, email: str) -> None:
         """Invalidate cached authentication data for a user.

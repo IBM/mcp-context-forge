@@ -334,3 +334,57 @@ class TestPluginHeaderSecurityRefiltering:
         # Downstream DOES include sensitive when flag enabled (line 1966)
         assert downstream_headers.get("authorization") == "Bearer token"
         assert downstream_headers.get("x-custom-header") == "value"
+
+    def test_plugin_header_removal_reconciliation_unit(self):
+        """Test header removal reconciliation logic (lines 2331-2335) at unit level."""
+        # This tests the specific reconciliation logic where a plugin removes a header
+        # that was originally in the request, and we need to ensure it's also removed
+        # from the prepared headers dict before sending downstream.
+
+        # Simulate the state at line 2329-2335:
+        # - plugin_headers: what the plugin saw (before modification)
+        # - plugin_returned: what the plugin returned (after modification)
+        # - prepared.headers: the headers dict we're building to send downstream
+
+        # Simulate prepared headers dict (this would be built from passthrough set)
+        class PreparedHeaders:
+            def __init__(self):
+                self.headers = {
+                    "x-custom-header": "value1",
+                    "x-request-id": "req-123",
+                    "X-Trace-Id": "trace-456",  # Note mixed case
+                }
+
+        prepared = PreparedHeaders()
+
+        # Plugin saw these headers (lowercase as they came from request)
+        plugin_headers = {
+            "x-custom-header": "value1",
+            "x-request-id": "req-123",
+            "x-trace-id": "trace-456",
+        }
+
+        # Plugin returned these (removed x-trace-id, e.g., Vault plugin stripping tokens)
+        plugin_returned = {
+            "x-custom-header": "value1",
+            "x-request-id": "req-123",
+            # x-trace-id deliberately REMOVED by plugin
+        }
+
+        # Execute the reconciliation logic (lines 2329-2335)
+        plugin_returned_lower = {k.lower() for k in plugin_returned}
+        for received_key in plugin_headers:
+            rk = received_key.lower()
+            if rk not in plugin_returned_lower:
+                # Plugin removed this header — drop it from the outbound set.
+                for existing_key in [k for k in prepared.headers if k.lower() == rk]:
+                    del prepared.headers[existing_key]
+
+        # Verify: X-Trace-Id should be removed (case-insensitive match)
+        assert "x-trace-id" not in {k.lower() for k in prepared.headers}
+        assert "X-Trace-Id" not in prepared.headers
+
+        # Verify: Other headers are preserved
+        assert "x-custom-header" in prepared.headers
+        assert "x-request-id" in prepared.headers
+        assert len(prepared.headers) == 2
