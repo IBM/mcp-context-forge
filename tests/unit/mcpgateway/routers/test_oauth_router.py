@@ -3951,32 +3951,83 @@ class TestPersistLearnedAudience:
 
 
 # ===========================================================================
-# Tests for _build_user_context jwt_teams_claim path (lines 107-113)
+# Tests for _build_user_context session-token path (CWE-863 fix)
 # ===========================================================================
 
 
 class TestBuildUserContextSessionTokenPath:
-    """Tests for _build_user_context with session token jwt_teams_claim (lines 107-113)."""
+    """Tests for _build_user_context session-token Vault path selection.
 
-    def test_session_token_with_jwt_teams_returns_filtered_teams(self):
-        """Session token with valid jwt_teams_claim returns team-scoped context (lines 107-111)."""
+    The session-token branch now uses ``token_teams`` (DB-authoritative, revocation-
+    aware) as the primary path selector, falling back to ``jwt_teams_claim`` only
+    when ``token_teams`` is ``None`` (admin bypass case).
+    """
+
+    def test_session_token_normal_user_uses_token_teams(self):
+        """Normal session token uses DB-authoritative token_teams for path selection."""
         from mcpgateway.routers.oauth_router import _build_user_context
 
         current_user = {
             "email": "user@example.com",
             "is_admin": False,
             "token_use": "session",
-            "jwt_teams_claim": ["engineering", "ops"],
-            "token_teams": None,  # RBAC-resolved (admin bypass) — should be ignored for session tokens
+            "token_teams": ["engineering", "ops"],  # DB-authoritative
+            "jwt_teams_claim": ["engineering", "ops", "stale-team"],  # More than DB — ignored
         }
         result = _build_user_context(current_user)
 
         assert result["email"] == "user@example.com"
+        # token_teams is used, not jwt_teams_claim — stale-team not included
         assert result["teams"] == ["engineering", "ops"]
         assert result["is_admin"] is False
 
-    def test_session_token_with_empty_jwt_teams_returns_shared_path(self):
-        """Session token with empty jwt_teams_claim returns shared path (line 113)."""
+    def test_session_token_revoked_user_goes_to_shared_path(self):
+        """Revoked team member (token_teams=[]) is routed to shared path, not stale JWT team.
+
+        CWE-863 regression test: a user removed from a team in the DB gets
+        token_teams=[] from resolve_session_teams(). The stale jwt_teams_claim
+        must NOT be used as a fallback path — that would let a revoked user
+        continue storing tokens under their former team's Vault path.
+        """
+        from mcpgateway.routers.oauth_router import _build_user_context
+
+        current_user = {
+            "email": "revoked@example.com",
+            "is_admin": False,
+            "token_use": "session",
+            "token_teams": [],  # Revoked — resolve_session_teams returned empty intersection
+            "jwt_teams_claim": ["engineering"],  # Stale JWT claim — must NOT be used
+        }
+        result = _build_user_context(current_user)
+
+        assert result["email"] == "revoked@example.com"
+        # Must route to shared path, NOT engineering — revocation respected
+        assert result["teams"] is None
+
+    def test_session_token_admin_falls_back_to_jwt_teams_claim(self):
+        """Admin (token_teams=None bypass) falls back to jwt_teams_claim as a path hint.
+
+        Admins have no DB team list (resolve_session_teams returns None for admin bypass).
+        jwt_teams_claim is used as a read/write path hint so the admin's tokens
+        go to the correct team-scoped Vault path.
+        """
+        from mcpgateway.routers.oauth_router import _build_user_context
+
+        current_user = {
+            "email": "admin@example.com",
+            "is_admin": True,
+            "token_use": "session",
+            "token_teams": None,  # Admin bypass from resolve_session_teams()
+            "jwt_teams_claim": ["engineering", "ops"],
+        }
+        result = _build_user_context(current_user)
+
+        assert result["email"] == "admin@example.com"
+        assert result["teams"] == ["engineering", "ops"]
+        assert result["is_admin"] is True
+
+    def test_session_token_admin_with_empty_jwt_teams_returns_shared_path(self):
+        """Admin session with empty jwt_teams_claim returns shared path."""
         from mcpgateway.routers.oauth_router import _build_user_context
 
         current_user = {
@@ -3992,8 +4043,8 @@ class TestBuildUserContextSessionTokenPath:
         assert result["teams"] is None
         assert result["is_admin"] is True
 
-    def test_session_token_with_null_jwt_teams_returns_shared_path(self):
-        """Session token with null jwt_teams_claim returns shared path (line 113)."""
+    def test_session_token_admin_with_null_jwt_teams_returns_shared_path(self):
+        """Admin session with null jwt_teams_claim returns shared path."""
         from mcpgateway.routers.oauth_router import _build_user_context
 
         current_user = {
@@ -4007,31 +4058,31 @@ class TestBuildUserContextSessionTokenPath:
 
         assert result["teams"] is None
 
-    def test_session_token_jwt_teams_filters_empty_strings(self):
-        """Session token jwt_teams_claim filters out blank strings (lines 109-111)."""
+    def test_session_token_admin_jwt_teams_filters_empty_strings(self):
+        """Admin session jwt_teams_claim fallback filters out blank strings."""
         from mcpgateway.routers.oauth_router import _build_user_context
 
         current_user = {
-            "email": "user@example.com",
-            "is_admin": False,
+            "email": "admin@example.com",
+            "is_admin": True,
             "token_use": "session",
             "jwt_teams_claim": ["", "engineering", None, "ops"],
-            "token_teams": None,
+            "token_teams": None,  # Admin bypass
         }
         result = _build_user_context(current_user)
 
         assert result["teams"] == ["engineering", "ops"]
 
-    def test_session_token_jwt_teams_all_empty_falls_to_shared_path(self):
-        """Session token with only blank/None jwt_teams entries falls to shared path (line 113)."""
+    def test_session_token_admin_jwt_teams_all_empty_falls_to_shared_path(self):
+        """Admin session with only blank/None jwt_teams entries falls to shared path."""
         from mcpgateway.routers.oauth_router import _build_user_context
 
         current_user = {
-            "email": "user@example.com",
-            "is_admin": False,
+            "email": "admin@example.com",
+            "is_admin": True,
             "token_use": "session",
             "jwt_teams_claim": ["", None, 123],  # All non-string or blank
-            "token_teams": None,
+            "token_teams": None,  # Admin bypass
         }
         result = _build_user_context(current_user)
 

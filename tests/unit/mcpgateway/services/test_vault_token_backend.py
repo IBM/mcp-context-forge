@@ -2125,7 +2125,7 @@ class TestVaultTokenBackendStoreTokensEdgeCases:
 
     @pytest.mark.asyncio
     async def test_store_tokens_cache_invalidation_with_cache_enabled(self):
-        """Cache is invalidated when storing new tokens (cache enabled path)."""
+        """Cache entry is expired in-place when storing new tokens (multi-pod safe pattern)."""
         mock_db = MagicMock()
         mock_settings = MagicMock()
         mock_settings.vault_addr = "http://127.0.0.1:8200"
@@ -2145,7 +2145,7 @@ class TestVaultTokenBackendStoreTokensEdgeCases:
         mock_gateway.url = "https://mcp.example.com"
         mock_db.get.return_value = mock_gateway
 
-        # Pre-populate cache
+        # Pre-populate cache with a future-expiry entry
         server_id = backend._hash_server_id("https://mcp.example.com")
         cache_key = ("team1", server_id, "user@test.com")
         VaultTokenBackend._token_cache[cache_key] = {
@@ -2167,5 +2167,9 @@ class TestVaultTokenBackendStoreTokensEdgeCases:
                 scopes=["read"],
             )
 
-            # Assert: cache entry removed (lines 324-326)
-            assert cache_key not in VaultTokenBackend._token_cache
+            # Entry must be present but with an already-expired timestamp so
+            # the next cache-read treats it as stale (expire-in-place pattern).
+            # This is multi-pod safe: other workers also see the expired entry
+            # on their next cache-hit check, bounding stale reads to < cache_ttl.
+            assert cache_key in VaultTokenBackend._token_cache
+            assert VaultTokenBackend._token_cache[cache_key]["cache_expires"] < datetime.now(timezone.utc)
