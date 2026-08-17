@@ -12,7 +12,7 @@ binaries required.
 
 Requirements:
     - Gateway running (default: http://localhost:8080 via docker-compose)
-    - Upstreams ``fast_time_server`` + ``fast_test_server`` registered
+    - Upstream ``fast_time_server`` registered
       (provided by the default compose stack)
     - Environment variables (or defaults):
         MCP_CLI_BASE_URL       Gateway URL (default: http://localhost:8080)
@@ -300,7 +300,7 @@ class TestToolCalls:
     """tools/call against live upstream servers.
 
     Marked flaky(reruns=1) because these hit live upstream MCP servers
-    (fast_time_server, fast_test_server) which may be transiently unavailable.
+    (fast_time_server) which may be transiently unavailable.
     """
 
     async def test_get_system_time(self, client: GatewayClientSession) -> None:
@@ -311,14 +311,6 @@ class TestToolCalls:
         assert text
         print(f"    -> get-system-time(UTC) = {text}")
 
-    async def test_echo(self, client: GatewayClientSession) -> None:
-        test_message = "hello-from-mcp-protocol-e2e"
-        result = await client.call_tool("fast-test-echo", {"message": test_message})
-        assert result.isError is False, f"echo returned error (upstream may be down): {result.content}"
-        text = result.content[0].text
-        assert test_message in text, f"echo did not return message: {text}"
-        print(f"    -> echo('{test_message}') = {text}")
-
     async def test_convert_time(self, client: GatewayClientSession) -> None:
         result = await client.call_tool(
             "fast-time-convert-time",
@@ -328,56 +320,40 @@ class TestToolCalls:
         assert result.content[0].type == "text"
         print(f"    -> convert-time(UTC->NY) = {result.content[0].text}")
 
+    async def test_echo(self, client: GatewayClientSession) -> None:
+        test_message = "hello-from-mcp-protocol-e2e"
+        result = await client.call_tool("fast-time-echo", {"message": test_message})
+        assert result.isError is False, f"echo returned error (upstream may be down): {result.content}"
+        text = result.content[0].text
+        assert test_message in text, f"echo did not return message: {text}"
+        print(f"    -> echo('{test_message}') = {text}")
+
     async def test_get_stats(self, client: GatewayClientSession) -> None:
-        result = await client.call_tool("fast-test-get-stats", {})
+        result = await client.call_tool("fast-time-get-stats", {})
         assert result.isError is False, f"get-stats returned error (upstream may be down): {result.content}"
         print(f"    -> get-stats = {result.content[0].text[:120]}")
 
     async def test_schema_error_preserves_payload(self, client: GatewayClientSession) -> None:
         """End-to-end regression guard for ContextForge #4202.
 
-        Drives the full MCP-federation path — MCP SDK client -> gateway ->
-        federated Rust fast_test_server -> gateway ingress validator ->
-        gateway egress handler -> back to the client. The upstream
-        ``fast-test-schema-error`` tool declares an ``outputSchema`` of
-        ``{"required": ["recognitionId"], ...}`` and always returns
-        ``isError=true`` with the verbatim user text "You cannot send
-        more than 200 points". Every validator in the chain must honour
-        the spec's "error responses do not require structured content"
-        rule and leave the payload untouched.
-
-        Assertion guards specifically against the pre-fix symptom: a
-        payload substituted with a JSON validation-error dict containing
-        ``"validator"`` or ``"required"`` keys.
-
-        Issue: https://github.com/IBM/mcp-context-forge/issues/4202
-        MCP spec: 2025-11-25 "Error Handling".
+        Drives the full MCP federation path through the retained fast-time
+        server. Error responses with an output schema must preserve the
+        original payload rather than replacing it with a validation error.
         """
-        tool = await self._require_declared_output_schema(client, "fast-test-schema-error")
+        tool = await self._require_declared_output_schema(client, "fast-time-schema-error")
         assert tool is not None
-        result = await client.call_tool("fast-test-schema-error", {})
+        result = await client.call_tool("fast-time-schema-error", {})
         assert result.isError is True, f"expected isError=true, got: {result}"
         text = result.content[0].text if result.content else ""
         assert "200 points" in text, f"expected original error text preserved, got: {text!r}"
-        assert '"validator"' not in text and '"required"' not in text, f"error payload appears to have been replaced by a validation error (regression of #4202): {text!r}"
+        assert '"validator"' not in text and '"required"' not in text, f"error payload appears to have been replaced by a validation error: {text!r}"
         print(f"    -> schema_error isError=true preserved: {text}")
 
     async def test_schema_success_validates_payload(self, client: GatewayClientSession) -> None:
-        """End-to-end positive control for the #4202 fix.
-
-        Proves validation *still runs and succeeds* for legitimate
-        responses — catching any over-broad fix that accidentally
-        disables the success path. The upstream
-        ``fast-test-schema-success`` fixture declares the same
-        ``outputSchema`` as ``schema_error`` but returns
-        ``isError=false`` with ``{"recognitionId": "rec-123", ...}``,
-        which satisfies the schema. Also verifies that
-        ``structuredContent`` propagates to the downstream client on
-        successful validation.
-        """
-        tool = await self._require_declared_output_schema(client, "fast-test-schema-success")
+        """Positive control proving valid output-schema responses still validate."""
+        tool = await self._require_declared_output_schema(client, "fast-time-schema-success")
         assert tool is not None
-        result = await client.call_tool("fast-test-schema-success", {})
+        result = await client.call_tool("fast-time-schema-success", {})
         assert result.isError is False, f"expected success, got: {result}"
         payload = json.loads(result.content[0].text)
         assert payload.get("recognitionId") == "rec-123", f"unexpected payload: {payload}"
@@ -385,6 +361,21 @@ class TestToolCalls:
         assert structured is not None, f"expected structured content on successful validation: {result}"
         assert structured.get("recognitionId") == "rec-123", f"unexpected structured content: {structured}"
         print(f"    -> schema_success validated: {payload}")
+
+    @staticmethod
+    async def _require_declared_output_schema(client: GatewayClientSession, tool_name: str):
+        """Require a synced tool with a declared output schema."""
+        tools = (await client.list_tools()).tools
+        match = next((tool for tool in tools if tool.name == tool_name), None)
+        assert match is not None, (
+            f"Tool {tool_name!r} is not registered in the gateway. "
+            "Check that register_fast_time completed and gateway synchronization finished."
+        )
+        assert match.outputSchema, (
+            f"Tool {tool_name!r} has no outputSchema declared in the gateway: {match}. "
+            "Check that the upstream tool declares an output_schema and gateway synchronization completed successfully."
+        )
+        return match
 
     async def test_nonexistent_tool(self, client: GatewayClientSession) -> None:
         """Calling a nonexistent tool surfaces an error, via either path."""
@@ -395,26 +386,6 @@ class TestToolCalls:
             return
         assert result.isError is True, f"expected error for non-existent tool: {result}"
         print(f"    -> isError=True (expected): {result.content[0].text[:100] if result.content else ''}")
-
-    @staticmethod
-    async def _require_declared_output_schema(client: GatewayClientSession, tool_name: str):
-        """Preflight: assert ``tool_name`` is advertised with a non-empty outputSchema.
-
-        Without this guard, a stale fast_test_server image or an incomplete
-        federation sync would cause the actual ``tools/call`` tests to
-        fail with a misleading assertion. Fails fast with an actionable
-        message.
-        """
-        tools = (await client.list_tools()).tools
-        match = next((t for t in tools if t.name == tool_name), None)
-        assert match is not None, (
-            f"Tool {tool_name!r} is not registered in the gateway. " f"Rebuild the fast_test_server image and restart docker-compose so " f"register_fast_test picks up the new schema fixtures."
-        )
-        schema = match.outputSchema
-        assert schema, (
-            f"Tool {tool_name!r} has no outputSchema declared in the gateway: {match}. " "Check that the upstream tool declares an output_schema and that the gateway sync completed successfully."
-        )
-        return match
 
 
 # ---------------------------------------------------------------------------

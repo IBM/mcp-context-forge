@@ -40,7 +40,7 @@ make load-test-ui
     # Concurreny = 800
     # Ramp up = 100
     # Run Time - 10m
-    # uncheck FastTestEchoUser & FastTestTimeUser
+    # uncheck FastTimeUser if the fast-time MCP scenario is not needed
 
 ```
 
