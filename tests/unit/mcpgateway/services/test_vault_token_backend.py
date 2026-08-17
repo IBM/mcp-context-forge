@@ -2338,7 +2338,7 @@ async def test_r7_do_refresh_decryption_setup_exception_preserves_token():
     """Unexpected exception in get_encryption_service → OAuthError → token preserved (lines 976-984)."""
     backend, mock_db = _make_backend_r7()
     gateway = MagicMock()
-    gateway.oauth_config = {"client_secret": "enc-value"}
+    gateway.oauth_config = {"client_secret": "enc-value"}  # pragma: allowlist secret
     gateway.url = "https://mcp.example.com"
     gateway.ca_certificate = None
     gateway.client_cert = None
@@ -2346,7 +2346,7 @@ async def test_r7_do_refresh_decryption_setup_exception_preserves_token():
     gateway.visibility = "public"
     gateway.owner_email = None
     mock_db.query.return_value.filter.return_value.first.return_value = gateway
-    backend.settings.auth_encryption_secret = "some-secret"
+    backend.settings.auth_encryption_secret = "some-secret"  # pragma: allowlist secret
     with patch("mcpgateway.services.encryption_service.get_encryption_service", side_effect=RuntimeError("setup failed")):
         result = await backend._do_refresh_access_token(
             "gw-1", "team-1", "alice@example.com", "rt", {"token": {"scopes": []}}
