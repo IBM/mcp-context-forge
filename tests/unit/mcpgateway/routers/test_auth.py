@@ -783,3 +783,203 @@ class TestSessionRefreshAndValidate:
         assert _session_source_from_payload({"token_use": "session", "auth_provider": "local"}) == "local"
         assert _session_source_from_payload({"token_use": "api"}) == "api_token"
         assert _session_source_from_payload({}) == "local"
+
+
+class TestGetSessionUser:
+    """Tests for the get_session_user dependency."""
+
+    def _request(self, cookies=None):
+        """Create a mock request with the given cookies."""
+        request = MagicMock()
+        request.cookies = cookies or {}
+        return request
+
+    @pytest.mark.asyncio
+    async def test_bearer_header_delegates_to_get_current_user(self):
+        """A bearer header authenticates through get_current_user."""
+        # Third-Party
+        from fastapi.security import HTTPAuthorizationCredentials
+
+        # First-Party
+        from mcpgateway.routers.auth import get_session_user
+
+        creds = HTTPAuthorizationCredentials(scheme="Bearer", credentials="tok")  # pragma: allowlist secret
+        with patch("mcpgateway.routers.auth.get_current_user", new_callable=AsyncMock, return_value="user") as mock_gcu:
+            result = await get_session_user(self._request(), creds)
+
+        assert result == "user"
+        mock_gcu.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_cookie_fallback_uses_validate_token_user(self):
+        """Without a bearer header, the jwt_token cookie authenticates via validate_token_user."""
+        # First-Party
+        from mcpgateway.routers.auth import get_session_user
+
+        with patch("mcpgateway.routers.auth.validate_token_user", new_callable=AsyncMock, return_value="user") as mock_vtu:
+            result = await get_session_user(self._request({"jwt_token": "cookie-tok"}), None)
+
+        assert result == "user"
+        assert mock_vtu.call_args.args[1] == "cookie-tok"
+
+    @pytest.mark.asyncio
+    async def test_no_credentials_rejected(self):
+        """Neither header nor cookie: 401."""
+        # First-Party
+        from mcpgateway.routers.auth import get_session_user
+
+        with pytest.raises(HTTPException) as exc_info:
+            await get_session_user(self._request(), None)
+
+        assert exc_info.value.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_invalid_cookie_rejected(self):
+        """An invalid session cookie is rejected with the validator's status."""
+        # First-Party
+        from mcpgateway.auth import TokenValidationError
+        from mcpgateway.routers.auth import get_session_user
+
+        with patch("mcpgateway.routers.auth.validate_token_user", new_callable=AsyncMock, side_effect=TokenValidationError("bad", status_code=401)):
+            with pytest.raises(HTTPException) as exc_info:
+                await get_session_user(self._request({"jwt_token": "bad-tok"}), None)
+
+        assert exc_info.value.status_code == 401
+
+
+class TestCookieOnlySessionSmoke:
+    """Cookie-only requests reach the session endpoints through the full route path."""
+
+    SECRET = "test-secret-key"  # pragma: allowlist secret
+
+    def _payload(self):
+        """Session JWT payload whose subject matches the smoke user."""
+        # Standard
+        import time as time_mod
+
+        now = int(time_mod.time())
+        return {
+            "sub": "smoke@example.com",
+            "email": "smoke@example.com",
+            "jti": "smoke-jti",
+            "iat": now,
+            "exp": now + 1200,
+            "token_use": "session",
+            "auth_provider": "local",
+        }
+
+    def _user(self):
+        """Mock user satisfying EmailUserResponse.from_email_user."""
+        # Standard
+        from datetime import datetime as dt
+        from datetime import timezone as tz
+
+        user = MagicMock()
+        user.id = "smoke-user-id"
+        user.email = "smoke@example.com"
+        user.full_name = "Smoke User"
+        user.is_admin = False
+        user.is_active = True
+        user.auth_provider = "local"
+        user.created_at = dt.now(tz.utc)
+        user.last_login = None
+        user.password_change_required = False
+        user.failed_login_attempts = 0
+        user.locked_until = None
+        user.is_account_locked.return_value = False
+        user.is_email_verified.return_value = True
+        return user
+
+    def _smoke_patches(self, stack, payload):
+        """Enter the boundary patches shared by the smoke tests (no real DB in unit runs)."""
+        user = self._user()
+        stack.enter_context(patch("mcpgateway.routers.auth.validate_token_user", new_callable=AsyncMock, return_value=user))
+        stack.enter_context(patch("mcpgateway.utils.verify_credentials.verify_jwt_token", new_callable=AsyncMock, return_value=payload))
+        blocklist = MagicMock()
+        blocklist.is_token_revoked.return_value = False
+        blocklist.get_last_activity.return_value = None
+        stack.enter_context(patch("mcpgateway.routers.auth.get_token_blocklist_service", return_value=blocklist))
+        stack.enter_context(patch("mcpgateway.services.token_blocklist_service.get_token_blocklist_service", return_value=blocklist))
+        stack.enter_context(patch("mcpgateway.routers.auth.get_audit_trail_service"))
+        # Middleware-level auth helpers that would otherwise hit the (absent) unit-test DB
+        stack.enter_context(patch("mcpgateway.auth._check_token_revoked_sync", return_value=False))
+        stack.enter_context(patch("mcpgateway.auth._get_user_by_email_sync", return_value=user))
+        stack.enter_context(patch("mcpgateway.auth._is_api_token_jti_sync", return_value=False))
+        stack.enter_context(patch("mcpgateway.auth.resolve_session_teams", new_callable=AsyncMock, return_value=[]))
+        stack.enter_context(patch("mcpgateway.middleware.token_scoping.resolve_session_teams", new_callable=AsyncMock, return_value=[]))
+
+    def test_validate_with_cookie_only(self):
+        """GET /auth/validate succeeds with only the jwt_token cookie (no auth header)."""
+        # Third-Party
+        from fastapi.testclient import TestClient
+        import jwt as jwt_lib
+
+        # First-Party
+        from mcpgateway.main import app
+
+        payload = self._payload()
+        token = jwt_lib.encode(payload, self.SECRET, algorithm="HS256")
+
+        with ExitStack() as stack:
+            self._smoke_patches(stack, payload)
+            client = TestClient(app)
+            client.cookies.set("jwt_token", token)
+            response = client.get("/auth/validate")
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["valid"] is True
+        assert body["session_source"] == "local"
+        assert body["user"]["email"] == "smoke@example.com"
+
+    def test_refresh_with_cookie_only_and_csrf(self):
+        """POST /auth/refresh succeeds cookie-only (with same-origin CSRF token) and re-sets the auth cookie."""
+        # Standard
+        from urllib.parse import urlparse
+
+        # Third-Party
+        from fastapi.testclient import TestClient
+        import jwt as jwt_lib
+
+        # First-Party
+        from mcpgateway.config import settings
+        from mcpgateway.main import app
+        from mcpgateway.services.csrf_service import get_csrf_service
+
+        payload = self._payload()
+        token = jwt_lib.encode(payload, self.SECRET, algorithm="HS256")
+        csrf_token = get_csrf_service().generate_csrf_token(user_id="smoke@example.com", session_id="smoke-jti")
+        parsed_app = urlparse(str(settings.app_domain))
+        app_origin = f"{parsed_app.scheme}://{parsed_app.netloc}"
+
+        with ExitStack() as stack:
+            self._smoke_patches(stack, payload)
+            client = TestClient(app)
+            client.cookies.set("jwt_token", token)
+            client.cookies.set("mcpgateway_csrf_token", csrf_token)
+            response = client.post("/auth/refresh", headers={"X-CSRF-Token": csrf_token, "Origin": app_origin})
+
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["access_token"]
+        assert "jwt_token" in response.cookies
+
+    def test_refresh_with_cookie_only_without_csrf_rejected(self):
+        """POST /auth/refresh cookie-only without a CSRF token is rejected (path not exempt)."""
+        # Third-Party
+        from fastapi.testclient import TestClient
+        import jwt as jwt_lib
+
+        # First-Party
+        from mcpgateway.main import app
+
+        payload = self._payload()
+        token = jwt_lib.encode(payload, self.SECRET, algorithm="HS256")
+
+        with ExitStack() as stack:
+            self._smoke_patches(stack, payload)
+            client = TestClient(app)
+            client.cookies.set("jwt_token", token)
+            response = client.post("/auth/refresh")
+
+        assert response.status_code == 403

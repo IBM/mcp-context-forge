@@ -17,12 +17,13 @@ import uuid
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from fastapi.responses import JSONResponse
+from fastapi.security import HTTPAuthorizationCredentials
 import jwt
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.auth import get_current_user
+from mcpgateway.auth import get_current_user, TokenValidationError, validate_token_user
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import EmailUser, SessionLocal
@@ -34,7 +35,7 @@ from mcpgateway.services.email_auth_service import EmailAuthService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.token_blocklist_service import get_token_blocklist_service
 from mcpgateway.utils.security_cookies import set_auth_cookie
-from mcpgateway.utils.verify_credentials import get_auth_header_value, verify_jwt_token_cached
+from mcpgateway.utils.verify_credentials import get_auth_header_value, security, verify_jwt_token_cached
 
 # Initialize logging
 logging_service = LoggingService()
@@ -364,6 +365,32 @@ class SessionValidateResponse(BaseModel):
     config: Dict[str, Any]
 
 
+async def get_session_user(request: Request, credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)) -> EmailUser:
+    """Authenticate the request via bearer header or session cookie.
+
+    Args:
+        request: FastAPI request object
+        credentials: Optional bearer credentials from the configured auth header
+
+    Returns:
+        EmailUser: Authenticated user
+
+    Raises:
+        HTTPException: 401 if neither a valid bearer token nor a valid session cookie is presented
+    """
+    if credentials and credentials.credentials:
+        return await get_current_user(credentials, request=request)
+
+    cookie_token = request.cookies.get("jwt_token") or request.cookies.get("access_token")
+    if not cookie_token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required", headers={"WWW-Authenticate": "Bearer"})
+
+    try:
+        return await validate_token_user(request, cookie_token)
+    except TokenValidationError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+
+
 def _extract_raw_token(request: Request) -> tuple[Optional[str], bool]:
     """Extract the raw JWT from the auth header or cookie.
 
@@ -476,7 +503,7 @@ def _session_config_hints() -> Dict[str, Any]:
 
 
 @auth_router.get("/validate", response_model=SessionValidateResponse)
-async def validate_session(request: Request, current_user: EmailUser = Depends(get_current_user)) -> SessionValidateResponse:
+async def validate_session(request: Request, current_user: EmailUser = Depends(get_session_user)) -> SessionValidateResponse:
     """Validate the current session and report its expiry, source, and config hints.
 
     Args:
@@ -509,7 +536,7 @@ async def validate_session(request: Request, current_user: EmailUser = Depends(g
 
 
 @auth_router.post("/refresh", response_model=SessionRefreshResponse)
-async def refresh_session(request: Request, current_user: EmailUser = Depends(get_current_user)) -> Response:
+async def refresh_session(request: Request, current_user: EmailUser = Depends(get_session_user)) -> Response:
     """Refresh the current session by issuing a new JWT with extended expiry.
 
     Args:
