@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_580dae60cda9039c_schemas_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.2">coverage.py v7.15.2</a>,
-            created at 2026-07-30 17:23 +0100
+            created at 2026-08-14 09:49 +0100
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -303,7 +303,7 @@
     <p class="pln"><span class="n"><a id="t221" href="#t221">221</a></span><span class="t"><span class="str">    Returns:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t222" href="#t222">222</a></span><span class="t"><span class="str">        Fully qualified Redis key for the per-runtime override hint.</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t223" href="#t223">223</a></span><span class="t"><span class="str">    """</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t224" href="#t224">224</a></span><span class="t">    <span class="key">return</span> <span class="str">f"{RUNTIME_STATE_HINT_KEY_PREFIX}:{_coerce_runtime(runtime).value}"</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t224" href="#t224">224</a></span><span class="t">    <span class="key">return</span> <span class="fst">f"</span><span class="op">{</span><span class="nam">RUNTIME_STATE_HINT_KEY_PREFIX</span><span class="op">}</span><span class="fst">:</span><span class="op">{</span><span class="nam">_coerce_runtime</span><span class="op">(</span><span class="nam">runtime</span><span class="op">)</span><span class="op">.</span><span class="nam">value</span><span class="op">}</span><span class="fst">"</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t225" href="#t225">225</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t226" href="#t226">226</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t227" href="#t227">227</a></span><span class="t"><span class="key">def</span> <span class="nam">_version_key</span><span class="op">(</span><span class="nam">runtime</span><span class="op">:</span> <span class="nam">Union</span><span class="op">[</span><span class="nam">str</span><span class="op">,</span> <span class="nam">RuntimeKind</span><span class="op">]</span><span class="op">)</span> <span class="op">-></span> <span class="nam">str</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
@@ -315,7 +315,7 @@
     <p class="pln"><span class="n"><a id="t233" href="#t233">233</a></span><span class="t"><span class="str">    Returns:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t234" href="#t234">234</a></span><span class="t"><span class="str">        Fully qualified Redis key for the per-runtime version counter.</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t235" href="#t235">235</a></span><span class="t"><span class="str">    """</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t236" href="#t236">236</a></span><span class="t">    <span class="key">return</span> <span class="str">f"{RUNTIME_STATE_VERSION_KEY_PREFIX}:{_coerce_runtime(runtime).value}"</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t236" href="#t236">236</a></span><span class="t">    <span class="key">return</span> <span class="fst">f"</span><span class="op">{</span><span class="nam">RUNTIME_STATE_VERSION_KEY_PREFIX</span><span class="op">}</span><span class="fst">:</span><span class="op">{</span><span class="nam">_coerce_runtime</span><span class="op">(</span><span class="nam">runtime</span><span class="op">)</span><span class="op">.</span><span class="nam">value</span><span class="op">}</span><span class="fst">"</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t237" href="#t237">237</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t238" href="#t238">238</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t239" href="#t239">239</a></span><span class="t"><span class="op">@</span><span class="nam">dataclass</span><span class="op">(</span><span class="nam">frozen</span><span class="op">=</span><span class="key">True</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
@@ -796,7 +796,7 @@
     <p class="run"><span class="n"><a id="t714" href="#t714">714</a></span><span class="t">                <span class="nam">value</span> <span class="op">=</span> <span class="key">await</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_redis</span><span class="op">.</span><span class="nam">incr</span><span class="op">(</span><span class="nam">_version_key</span><span class="op">(</span><span class="nam">runtime</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t715" href="#t715">715</a></span><span class="t">            <span class="key">except</span> <span class="nam">Exception</span> <span class="key">as</span> <span class="nam">exc</span><span class="op">:</span>  <span class="com"># pylint: disable=broad-exception-caught</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t716" href="#t716">716</a></span><span class="t">                <span class="key">raise</span> <span class="nam">RuntimeStateError</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t717" href="#t717">717</a></span><span class="t">                    <span class="str">f"Redis INCR failed for {_version_key(runtime)} ({exc!r}); refusing to allocate a local version that could collide with a concurrent PATCH on another pod. "</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t717" href="#t717">717</a></span><span class="t">                    <span class="fst">f"</span><span class="fst">Redis INCR failed for </span><span class="op">{</span><span class="nam">_version_key</span><span class="op">(</span><span class="nam">runtime</span><span class="op">)</span><span class="op">}</span><span class="fst"> (</span><span class="op">{</span><span class="nam">exc</span><span class="op">!</span><span class="nam">r</span><span class="op">}</span><span class="fst">); refusing to allocate a local version that could collide with a concurrent PATCH on another pod. </span><span class="fst">"</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t718" href="#t718">718</a></span><span class="t">                    <span class="str">"Check Redis connectivity (REDIS_URL, network reachability, auth) before retrying."</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t719" href="#t719">719</a></span><span class="t">                <span class="op">)</span> <span class="key">from</span> <span class="nam">exc</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t720" href="#t720">720</a></span><span class="t">            <span class="key">if</span> <span class="nam">int</span><span class="op">(</span><span class="nam">value</span><span class="op">)</span> <span class="op">></span> <span class="nam">current_version</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
@@ -805,7 +805,7 @@
     <p class="pln"><span class="n"><a id="t723" href="#t723">723</a></span><span class="t">            <span class="com"># the operator sees the inconsistency rather than silently</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t724" href="#t724">724</a></span><span class="t">            <span class="com"># publishing a version that peers will dedup as stale.</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t725" href="#t725">725</a></span><span class="t">            <span class="key">raise</span> <span class="nam">RuntimeStateError</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t726" href="#t726">726</a></span><span class="t">                <span class="str">f"Redis counter at {_version_key(runtime)}={value} is not greater than local version {current_version}; "</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t726" href="#t726">726</a></span><span class="t">                <span class="fst">f"</span><span class="fst">Redis counter at </span><span class="op">{</span><span class="nam">_version_key</span><span class="op">(</span><span class="nam">runtime</span><span class="op">)</span><span class="op">}</span><span class="fst">=</span><span class="op">{</span><span class="nam">value</span><span class="op">}</span><span class="fst"> is not greater than local version </span><span class="op">{</span><span class="nam">current_version</span><span class="op">}</span><span class="fst">; </span><span class="fst">"</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t727" href="#t727">727</a></span><span class="t">                <span class="str">"the counter may have been deleted, rolled back, or rotated under live pods. "</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t728" href="#t728">728</a></span><span class="t">                <span class="str">"Restart the coordinator or restore the counter manually (e.g. SET the key to a value greater than the local floor); "</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t729" href="#t729">729</a></span><span class="t">                <span class="str">"if Redis itself is unhealthy, also check connectivity (REDIS_URL, network reachability, auth)."</span>&nbsp;</span><span class="r"></span></p>
@@ -1065,7 +1065,7 @@
             <a class="nav" href="z_580dae60cda9039c_schemas_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.2">coverage.py v7.15.2</a>,
-            created at 2026-07-30 17:23 +0100
+            created at 2026-08-14 09:49 +0100
         </p>
     </div>
 </footer>

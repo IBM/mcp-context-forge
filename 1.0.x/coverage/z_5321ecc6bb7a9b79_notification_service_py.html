@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_5321ecc6bb7a9b79_oauth_manager_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.2">coverage.py v7.15.2</a>,
-            created at 2026-07-30 17:23 +0100
+            created at 2026-08-14 09:49 +0100
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -794,7 +794,7 @@
     <p class="run run2"><span class="n"><a id="t712" href="#t712">712</a></span><span class="t">                    <span class="nam">exc_info</span><span class="op">=</span><span class="nam">exc</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t713" href="#t713">713</a></span><span class="t">                <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t714" href="#t714">714</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t715" href="#t715">715</a></span><span class="t">        <span class="nam">task</span> <span class="op">=</span> <span class="nam">asyncio</span><span class="op">.</span><span class="nam">create_task</span><span class="op">(</span><span class="nam">hold</span><span class="op">(</span><span class="op">)</span><span class="op">,</span> <span class="nam">name</span><span class="op">=</span><span class="str">f"request-holder:{downstream_session_id[:8]}:{request_id}"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t715" href="#t715">715</a></span><span class="t">        <span class="nam">task</span> <span class="op">=</span> <span class="nam">asyncio</span><span class="op">.</span><span class="nam">create_task</span><span class="op">(</span><span class="nam">hold</span><span class="op">(</span><span class="op">)</span><span class="op">,</span> <span class="nam">name</span><span class="op">=</span><span class="fst">f"</span><span class="fst">request-holder:</span><span class="op">{</span><span class="nam">downstream_session_id</span><span class="op">[</span><span class="op">:</span><span class="num">8</span><span class="op">]</span><span class="op">}</span><span class="fst">:</span><span class="op">{</span><span class="nam">request_id</span><span class="op">}</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t716" href="#t716">716</a></span><span class="t">        <span class="nam">self</span><span class="op">.</span><span class="nam">_pending_holder_tasks</span><span class="op">.</span><span class="nam">add</span><span class="op">(</span><span class="nam">task</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t717" href="#t717">717</a></span><span class="t">        <span class="nam">task</span><span class="op">.</span><span class="nam">add_done_callback</span><span class="op">(</span><span class="nam">_on_holder_done</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t718" href="#t718">718</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
@@ -886,7 +886,7 @@
     <p class="run"><span class="n"><a id="t804" href="#t804">804</a></span><span class="t">            <span class="key">await</span> <span class="nam">responder</span><span class="op">.</span><span class="nam">respond</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t805" href="#t805">805</a></span><span class="t">                <span class="nam">mcp_types</span><span class="op">.</span><span class="nam">ErrorData</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t806" href="#t806">806</a></span><span class="t">                    <span class="nam">code</span><span class="op">=</span><span class="nam">mcp_types</span><span class="op">.</span><span class="nam">INTERNAL_ERROR</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t807" href="#t807">807</a></span><span class="t">                    <span class="nam">message</span><span class="op">=</span><span class="str">f"Downstream returned an unrecognized result: {exc}"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t807" href="#t807">807</a></span><span class="t">                    <span class="nam">message</span><span class="op">=</span><span class="fst">f"</span><span class="fst">Downstream returned an unrecognized result: </span><span class="op">{</span><span class="nam">exc</span><span class="op">}</span><span class="fst">"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t808" href="#t808">808</a></span><span class="t">                    <span class="nam">data</span><span class="op">=</span><span class="key">None</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t809" href="#t809">809</a></span><span class="t">                <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t810" href="#t810">810</a></span><span class="t">            <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
@@ -1048,7 +1048,7 @@
     <p class="run"><span class="n"><a id="t966" href="#t966">966</a></span><span class="t">        <span class="key">except</span> <span class="op">(</span><span class="nam">RuntimeError</span><span class="op">,</span> <span class="nam">BusBackendError</span><span class="op">)</span> <span class="key">as</span> <span class="nam">exc</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t967" href="#t967">967</a></span><span class="t">            <span class="nam">_record_publish_failure</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t968" href="#t968">968</a></span><span class="t">                <span class="nam">downstream_session_id</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t969" href="#t969">969</a></span><span class="t">                <span class="str">f"notif/{method}"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t969" href="#t969">969</a></span><span class="t">                <span class="fst">f"</span><span class="fst">notif/</span><span class="op">{</span><span class="nam">method</span><span class="op">}</span><span class="fst">"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t970" href="#t970">970</a></span><span class="t">                <span class="nam">reason</span><span class="op">=</span><span class="str">"backend_unavailable"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t971" href="#t971">971</a></span><span class="t">                <span class="nam">exc</span><span class="op">=</span><span class="nam">exc</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t972" href="#t972">972</a></span><span class="t">                <span class="nam">counter</span><span class="op">=</span><span class="nam">server_event_bus_publish_failed_counter</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
@@ -1060,7 +1060,7 @@
     <p class="run"><span class="n"><a id="t978" href="#t978">978</a></span><span class="t">            <span class="nam">reason</span> <span class="op">=</span> <span class="str">"backend_unavailable"</span> <span class="key">if</span> <span class="nam">isinstance</span><span class="op">(</span><span class="nam">exc</span><span class="op">,</span> <span class="nam">BusBackendError</span><span class="op">)</span> <span class="key">else</span> <span class="str">"transport_error"</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t979" href="#t979">979</a></span><span class="t">            <span class="nam">_record_publish_failure</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t980" href="#t980">980</a></span><span class="t">                <span class="nam">downstream_session_id</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t981" href="#t981">981</a></span><span class="t">                <span class="str">f"notif/{method}"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t981" href="#t981">981</a></span><span class="t">                <span class="fst">f"</span><span class="fst">notif/</span><span class="op">{</span><span class="nam">method</span><span class="op">}</span><span class="fst">"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t982" href="#t982">982</a></span><span class="t">                <span class="nam">reason</span><span class="op">=</span><span class="nam">reason</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t983" href="#t983">983</a></span><span class="t">                <span class="nam">exc</span><span class="op">=</span><span class="nam">exc</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t984" href="#t984">984</a></span><span class="t">                <span class="nam">counter</span><span class="op">=</span><span class="nam">server_event_bus_publish_failed_counter</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
@@ -1409,7 +1409,7 @@
             <a class="nav" href="z_5321ecc6bb7a9b79_oauth_manager_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.2">coverage.py v7.15.2</a>,
-            created at 2026-07-30 17:23 +0100
+            created at 2026-08-14 09:49 +0100
         </p>
     </div>
 </footer>

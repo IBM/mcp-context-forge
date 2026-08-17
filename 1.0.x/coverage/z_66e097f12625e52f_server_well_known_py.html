@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_66e097f12625e52f_siem_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.2">coverage.py v7.15.2</a>,
-            created at 2026-07-30 17:23 +0100
+            created at 2026-08-14 09:49 +0100
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -144,9 +144,9 @@
     <p class="pln"><span class="n"><a id="t62" href="#t62">62</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t63" href="#t63">63</a></span><span class="t">    <span class="com"># Build RFC 9728 compliant redirect URL</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t64" href="#t64">64</a></span><span class="t">    <span class="nam">base_url</span> <span class="op">=</span> <span class="nam">get_base_url_with_protocol</span><span class="op">(</span><span class="nam">request</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t65" href="#t65">65</a></span><span class="t">    <span class="nam">compliant_url</span> <span class="op">=</span> <span class="str">f"{base_url}/.well-known/oauth-protected-resource/servers/{server_id}/mcp"</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t65" href="#t65">65</a></span><span class="t">    <span class="nam">compliant_url</span> <span class="op">=</span> <span class="fst">f"</span><span class="op">{</span><span class="nam">base_url</span><span class="op">}</span><span class="fst">/.well-known/oauth-protected-resource/servers/</span><span class="op">{</span><span class="nam">server_id</span><span class="op">}</span><span class="fst">/mcp</span><span class="fst">"</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t66" href="#t66">66</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t67" href="#t67">67</a></span><span class="t">    <span class="nam">logger</span><span class="op">.</span><span class="nam">warning</span><span class="op">(</span><span class="str">f"Deprecated server-scoped OAuth metadata endpoint called for server {server_id}. Redirecting to RFC 9728 compliant endpoint: {compliant_url}"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t67" href="#t67">67</a></span><span class="t">    <span class="nam">logger</span><span class="op">.</span><span class="nam">warning</span><span class="op">(</span><span class="fst">f"</span><span class="fst">Deprecated server-scoped OAuth metadata endpoint called for server </span><span class="op">{</span><span class="nam">server_id</span><span class="op">}</span><span class="fst">. Redirecting to RFC 9728 compliant endpoint: </span><span class="op">{</span><span class="nam">compliant_url</span><span class="op">}</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t68" href="#t68">68</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t69" href="#t69">69</a></span><span class="t">    <span class="com"># Return 301 Permanent Redirect</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t70" href="#t70">70</a></span><span class="t">    <span class="key">raise</span> <span class="nam">HTTPException</span><span class="op">(</span><span class="nam">status_code</span><span class="op">=</span><span class="num">301</span><span class="op">,</span> <span class="nam">detail</span><span class="op">=</span><span class="str">"Moved Permanently"</span><span class="op">,</span> <span class="nam">headers</span><span class="op">=</span><span class="op">{</span><span class="str">"Location"</span><span class="op">:</span> <span class="nam">compliant_url</span><span class="op">}</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
@@ -206,7 +206,7 @@
             <a class="nav" href="z_66e097f12625e52f_siem_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.2">coverage.py v7.15.2</a>,
-            created at 2026-07-30 17:23 +0100
+            created at 2026-08-14 09:49 +0100
         </p>
     </div>
 </footer>

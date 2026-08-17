@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_2c74865051463af4_session_registry_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.2">coverage.py v7.15.2</a>,
-            created at 2026-07-30 17:23 +0100
+            created at 2026-08-14 09:49 +0100
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -357,7 +357,7 @@
     <p class="run"><span class="n"><a id="t275" href="#t275">275</a></span><span class="t">            <span class="key">try</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t276" href="#t276">276</a></span><span class="t">                <span class="key">await</span> <span class="nam">asyncio</span><span class="op">.</span><span class="nam">to_thread</span><span class="op">(</span><span class="nam">self</span><span class="op">.</span><span class="nam">_cleanup_once</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t277" href="#t277">277</a></span><span class="t">            <span class="key">except</span> <span class="nam">Exception</span> <span class="key">as</span> <span class="nam">e</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t278" href="#t278">278</a></span><span class="t">                <span class="nam">logger</span><span class="op">.</span><span class="nam">error</span><span class="op">(</span><span class="str">f"Cache cleanup error: {e}"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t278" href="#t278">278</a></span><span class="t">                <span class="nam">logger</span><span class="op">.</span><span class="nam">error</span><span class="op">(</span><span class="fst">f"</span><span class="fst">Cache cleanup error: </span><span class="op">{</span><span class="nam">e</span><span class="op">}</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t279" href="#t279">279</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t280" href="#t280">280</a></span><span class="t">        <span class="key">while</span> <span class="key">True</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t281" href="#t281">281</a></span><span class="t">            <span class="key">await</span> <span class="nam">_run_once</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
@@ -388,7 +388,7 @@
     <p class="run"><span class="n"><a id="t306" href="#t306">306</a></span><span class="t">            <span class="nam">needs_compaction</span> <span class="op">=</span> <span class="nam">len</span><span class="op">(</span><span class="nam">self</span><span class="op">.</span><span class="nam">_expiry_heap</span><span class="op">)</span> <span class="op">></span> <span class="num">2</span> <span class="op">*</span> <span class="nam">self</span><span class="op">.</span><span class="nam">max_size</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t307" href="#t307">307</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t308" href="#t308">308</a></span><span class="t">        <span class="key">if</span> <span class="nam">removed</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t309" href="#t309">309</a></span><span class="t">            <span class="nam">logger</span><span class="op">.</span><span class="nam">debug</span><span class="op">(</span><span class="str">f"Cleaned {removed} expired cache entries"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t309" href="#t309">309</a></span><span class="t">            <span class="nam">logger</span><span class="op">.</span><span class="nam">debug</span><span class="op">(</span><span class="fst">f"</span><span class="fst">Cleaned </span><span class="op">{</span><span class="nam">removed</span><span class="op">}</span><span class="fst"> expired cache entries</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t310" href="#t310">310</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t311" href="#t311">311</a></span><span class="t">        <span class="com"># Compact heap outside the main lock to minimize contention</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t312" href="#t312">312</a></span><span class="t">        <span class="key">if</span> <span class="nam">needs_compaction</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
@@ -419,7 +419,7 @@
     <p class="run"><span class="n"><a id="t337" href="#t337">337</a></span><span class="t">            <span class="key">for</span> <span class="nam">entry</span> <span class="key">in</span> <span class="nam">new_entries</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t338" href="#t338">338</a></span><span class="t">                <span class="nam">heapq</span><span class="op">.</span><span class="nam">heappush</span><span class="op">(</span><span class="nam">self</span><span class="op">.</span><span class="nam">_expiry_heap</span><span class="op">,</span> <span class="nam">entry</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t339" href="#t339">339</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t340" href="#t340">340</a></span><span class="t">        <span class="nam">logger</span><span class="op">.</span><span class="nam">debug</span><span class="op">(</span><span class="str">f"Compacted expiry heap: {old_size} -> {len(self._expiry_heap)} entries"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t340" href="#t340">340</a></span><span class="t">        <span class="nam">logger</span><span class="op">.</span><span class="nam">debug</span><span class="op">(</span><span class="fst">f"</span><span class="fst">Compacted expiry heap: </span><span class="op">{</span><span class="nam">old_size</span><span class="op">}</span><span class="fst"> -> </span><span class="op">{</span><span class="nam">len</span><span class="op">(</span><span class="nam">self</span><span class="op">.</span><span class="nam">_expiry_heap</span><span class="op">)</span><span class="op">}</span><span class="fst"> entries</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t341" href="#t341">341</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t342" href="#t342">342</a></span><span class="t">    <span class="key">def</span> <span class="nam">__len__</span><span class="op">(</span><span class="nam">self</span><span class="op">)</span> <span class="op">-></span> <span class="nam">int</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t343" href="#t343">343</a></span><span class="t">        <span class="str">"""</span>&nbsp;</span><span class="r"></span></p>
@@ -449,7 +449,7 @@
             <a class="nav" href="z_2c74865051463af4_session_registry_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.2">coverage.py v7.15.2</a>,
-            created at 2026-07-30 17:23 +0100
+            created at 2026-08-14 09:49 +0100
         </p>
     </div>
 </footer>

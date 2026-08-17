@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_5321ecc6bb7a9b79_a2a_protocol_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.2">coverage.py v7.15.2</a>,
-            created at 2026-07-30 17:23 +0100
+            created at 2026-08-14 09:49 +0100
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -379,9 +379,9 @@
     <p class="pln"><span class="n"><a id="t297" href="#t297">297</a></span><span class="t"><span class="str">        """</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t298" href="#t298">298</a></span><span class="t">        <span class="nam">binding</span> <span class="op">=</span> <span class="nam">db</span><span class="op">.</span><span class="nam">query</span><span class="op">(</span><span class="nam">A2AAgentPluginBinding</span><span class="op">)</span><span class="op">.</span><span class="nam">filter</span><span class="op">(</span><span class="nam">A2AAgentPluginBinding</span><span class="op">.</span><span class="nam">id</span> <span class="op">==</span> <span class="nam">binding_id</span><span class="op">)</span><span class="op">.</span><span class="nam">first</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t299" href="#t299">299</a></span><span class="t">        <span class="key">if</span> <span class="key">not</span> <span class="nam">binding</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t300" href="#t300">300</a></span><span class="t">            <span class="key">raise</span> <span class="nam">A2AAgentPluginBindingNotFoundError</span><span class="op">(</span><span class="str">f"A2A agent plugin binding '{binding_id}' not found"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t300" href="#t300">300</a></span><span class="t">            <span class="key">raise</span> <span class="nam">A2AAgentPluginBindingNotFoundError</span><span class="op">(</span><span class="fst">f"</span><span class="fst">A2A agent plugin binding '</span><span class="op">{</span><span class="nam">binding_id</span><span class="op">}</span><span class="fst">' not found</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t301" href="#t301">301</a></span><span class="t">        <span class="key">if</span> <span class="nam">allowed_teams</span> <span class="key">is</span> <span class="key">not</span> <span class="key">None</span> <span class="key">and</span> <span class="nam">binding</span><span class="op">.</span><span class="nam">team_id</span> <span class="key">not</span> <span class="key">in</span> <span class="nam">allowed_teams</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t302" href="#t302">302</a></span><span class="t">            <span class="key">raise</span> <span class="nam">A2AAgentPluginBindingForbiddenError</span><span class="op">(</span><span class="str">f"Not authorized to delete binding '{binding_id}' for team '{binding.team_id}'"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t302" href="#t302">302</a></span><span class="t">            <span class="key">raise</span> <span class="nam">A2AAgentPluginBindingForbiddenError</span><span class="op">(</span><span class="fst">f"</span><span class="fst">Not authorized to delete binding '</span><span class="op">{</span><span class="nam">binding_id</span><span class="op">}</span><span class="fst">' for team '</span><span class="op">{</span><span class="nam">binding</span><span class="op">.</span><span class="nam">team_id</span><span class="op">}</span><span class="fst">'</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t303" href="#t303">303</a></span><span class="t">        <span class="nam">response</span> <span class="op">=</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_to_response</span><span class="op">(</span><span class="nam">binding</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t304" href="#t304">304</a></span><span class="t">        <span class="nam">db</span><span class="op">.</span><span class="nam">delete</span><span class="op">(</span><span class="nam">binding</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t305" href="#t305">305</a></span><span class="t">        <span class="nam">db</span><span class="op">.</span><span class="nam">flush</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
@@ -431,7 +431,7 @@
             <a class="nav" href="z_5321ecc6bb7a9b79_a2a_protocol_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.2">coverage.py v7.15.2</a>,
-            created at 2026-07-30 17:23 +0100
+            created at 2026-08-14 09:49 +0100
         </p>
     </div>
 </footer>

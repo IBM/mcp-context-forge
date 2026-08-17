@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-    <title>Coverage for mcpgateway/middleware/observability_middleware.py: 99%</title>
+    <title>Coverage for mcpgateway/middleware/observability_middleware.py: 97%</title>
     <link rel="icon" sizes="32x32" href="favicon_32_cb_c827f16f.png">
     <link rel="stylesheet" href="style_cb_4667309f.css" type="text/css">
     <script src="coverage_html_cb_dd2e7eb5.js" defer></script>
@@ -12,7 +12,7 @@
     <div class="content">
         <h1>
             <span class="text">Coverage for </span><b>mcpgateway<span class="sep">/</span>middleware<span class="sep">/</span>observability_middleware.py</b>:
-            <span class="pc_cov">99%</span>
+            <span class="pc_cov">97%</span>
         </h1>
         <aside id="help_panel_wrapper">
             <input id="help_panel_state" type="checkbox">
@@ -55,8 +55,8 @@
         </aside>
         <h2>
             <span class="text">107 statements &nbsp;</span>
-            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">106<span class="text"> run</span></button>
-            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">1<span class="text"> missing</span></button>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">104<span class="text"> run</span></button>
+            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">3<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
         </h2>
         <p class="text">
@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_7c505f6fa7f5f82c_password_change_enforcement_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.2">coverage.py v7.15.2</a>,
-            created at 2026-07-30 17:23 +0100
+            created at 2026-08-14 09:49 +0100
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -153,12 +153,12 @@
     <p class="pln"><span class="n"><a id="t71" href="#t71">71</a></span><span class="t"><span class="str">        'unknown'</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t72" href="#t72">72</a></span><span class="t"><span class="str">    """</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t73" href="#t73">73</a></span><span class="t">    <span class="key">if</span> <span class="key">not</span> <span class="nam">value</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t74" href="#t74">74</a></span><span class="t">        <span class="key">return</span> <span class="str">"unknown"</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t74" href="#t74">74</a></span><span class="t">        <span class="key">return</span> <span class="str">"unknown"</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t75" href="#t75">75</a></span><span class="t">    <span class="com"># Remove control characters except space and tab</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t76" href="#t76">76</a></span><span class="t">    <span class="nam">clean</span> <span class="op">=</span> <span class="str">""</span><span class="op">.</span><span class="nam">join</span><span class="op">(</span><span class="nam">c</span> <span class="key">for</span> <span class="nam">c</span> <span class="key">in</span> <span class="nam">value</span> <span class="key">if</span> <span class="nam">c</span><span class="op">.</span><span class="nam">isprintable</span><span class="op">(</span><span class="op">)</span> <span class="key">or</span> <span class="nam">c</span> <span class="key">in</span> <span class="str">" \t"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t77" href="#t77">77</a></span><span class="t">    <span class="com"># Truncate to max length</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t78" href="#t78">78</a></span><span class="t">    <span class="key">if</span> <span class="nam">len</span><span class="op">(</span><span class="nam">clean</span><span class="op">)</span> <span class="op">></span> <span class="nam">max_length</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t79" href="#t79">79</a></span><span class="t">        <span class="key">return</span> <span class="nam">clean</span><span class="op">[</span><span class="op">:</span><span class="nam">max_length</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t79" href="#t79">79</a></span><span class="t">        <span class="key">return</span> <span class="nam">clean</span><span class="op">[</span><span class="op">:</span><span class="nam">max_length</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t80" href="#t80">80</a></span><span class="t">    <span class="key">return</span> <span class="nam">clean</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t81" href="#t81">81</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t82" href="#t82">82</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
@@ -183,7 +183,7 @@
     <p class="run"><span class="n"><a id="t101" href="#t101">101</a></span><span class="t">        <span class="nam">super</span><span class="op">(</span><span class="op">)</span><span class="op">.</span><span class="nam">__init__</span><span class="op">(</span><span class="nam">app</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t102" href="#t102">102</a></span><span class="t">        <span class="nam">self</span><span class="op">.</span><span class="nam">enabled</span> <span class="op">=</span> <span class="nam">enabled</span> <span class="key">if</span> <span class="nam">enabled</span> <span class="key">is</span> <span class="key">not</span> <span class="key">None</span> <span class="key">else</span> <span class="nam">getattr</span><span class="op">(</span><span class="nam">settings</span><span class="op">,</span> <span class="str">"observability_enabled"</span><span class="op">,</span> <span class="key">False</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t103" href="#t103">103</a></span><span class="t">        <span class="nam">self</span><span class="op">.</span><span class="nam">service</span> <span class="op">=</span> <span class="nam">service</span> <span class="key">or</span> <span class="nam">ObservabilityService</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t104" href="#t104">104</a></span><span class="t">        <span class="nam">logger</span><span class="op">.</span><span class="nam">info</span><span class="op">(</span><span class="str">f"Observability middleware initialized (enabled={self.enabled})"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t104" href="#t104">104</a></span><span class="t">        <span class="nam">logger</span><span class="op">.</span><span class="nam">info</span><span class="op">(</span><span class="fst">f"</span><span class="fst">Observability middleware initialized (enabled=</span><span class="op">{</span><span class="nam">self</span><span class="op">.</span><span class="nam">enabled</span><span class="op">}</span><span class="fst">)</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t105" href="#t105">105</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t106" href="#t106">106</a></span><span class="t">    <span class="key">async</span> <span class="key">def</span> <span class="nam">dispatch</span><span class="op">(</span><span class="nam">self</span><span class="op">,</span> <span class="nam">request</span><span class="op">:</span> <span class="nam">Request</span><span class="op">,</span> <span class="nam">call_next</span><span class="op">:</span> <span class="nam">Callable</span><span class="op">)</span> <span class="op">-></span> <span class="nam">Response</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t107" href="#t107">107</a></span><span class="t">        <span class="str">"""Process request and create observability trace.</span>&nbsp;</span><span class="r"></span></p>
@@ -228,7 +228,7 @@
     <p class="run"><span class="n"><a id="t146" href="#t146">146</a></span><span class="t">            <span class="nam">parsed</span> <span class="op">=</span> <span class="nam">parse_traceparent</span><span class="op">(</span><span class="nam">traceparent_header</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t147" href="#t147">147</a></span><span class="t">            <span class="key">if</span> <span class="nam">parsed</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t148" href="#t148">148</a></span><span class="t">                <span class="nam">external_trace_id</span><span class="op">,</span> <span class="nam">external_parent_span_id</span><span class="op">,</span> <span class="nam">_flags</span> <span class="op">=</span> <span class="nam">parsed</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t149" href="#t149">149</a></span><span class="t">                <span class="nam">logger</span><span class="op">.</span><span class="nam">debug</span><span class="op">(</span><span class="str">f"Extracted W3C trace context: trace_id={external_trace_id}, parent_span_id={external_parent_span_id}"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t149" href="#t149">149</a></span><span class="t">                <span class="nam">logger</span><span class="op">.</span><span class="nam">debug</span><span class="op">(</span><span class="fst">f"</span><span class="fst">Extracted W3C trace context: trace_id=</span><span class="op">{</span><span class="nam">external_trace_id</span><span class="op">}</span><span class="fst">, parent_span_id=</span><span class="op">{</span><span class="nam">external_parent_span_id</span><span class="op">}</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t150" href="#t150">150</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t151" href="#t151">151</a></span><span class="t">        <span class="nam">trace_id</span> <span class="op">=</span> <span class="key">None</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t152" href="#t152">152</a></span><span class="t">        <span class="nam">span_id</span> <span class="op">=</span> <span class="key">None</span>&nbsp;</span><span class="r"></span></p>
@@ -240,7 +240,7 @@
     <p class="run"><span class="n"><a id="t158" href="#t158">158</a></span><span class="t">        <span class="key">try</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t159" href="#t159">159</a></span><span class="t">            <span class="com"># Start trace (creates independent observability session)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t160" href="#t160">160</a></span><span class="t">            <span class="nam">trace_id</span> <span class="op">=</span> <span class="nam">self</span><span class="op">.</span><span class="nam">service</span><span class="op">.</span><span class="nam">start_trace</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t161" href="#t161">161</a></span><span class="t">                <span class="nam">name</span><span class="op">=</span><span class="str">f"{http_method} {request.url.path}"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t161" href="#t161">161</a></span><span class="t">                <span class="nam">name</span><span class="op">=</span><span class="fst">f"</span><span class="op">{</span><span class="nam">http_method</span><span class="op">}</span><span class="fst"> </span><span class="op">{</span><span class="nam">request</span><span class="op">.</span><span class="nam">url</span><span class="op">.</span><span class="nam">path</span><span class="op">}</span><span class="fst">"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t162" href="#t162">162</a></span><span class="t">                <span class="nam">trace_id</span><span class="op">=</span><span class="nam">external_trace_id</span><span class="op">,</span>  <span class="com"># Use external trace ID if provided</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t163" href="#t163">163</a></span><span class="t">                <span class="nam">parent_span_id</span><span class="op">=</span><span class="nam">external_parent_span_id</span><span class="op">,</span>  <span class="com"># Track parent span from upstream</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t164" href="#t164">164</a></span><span class="t">                <span class="nam">http_method</span><span class="op">=</span><span class="nam">http_method</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
@@ -292,7 +292,7 @@
     <p class="pln"><span class="n"><a id="t210" href="#t210">210</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t211" href="#t211">211</a></span><span class="t">        <span class="key">except</span> <span class="nam">Exception</span> <span class="key">as</span> <span class="nam">e</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t212" href="#t212">212</a></span><span class="t">            <span class="com"># If trace setup failed, log and continue without tracing</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t213" href="#t213">213</a></span><span class="t">            <span class="nam">logger</span><span class="op">.</span><span class="nam">warning</span><span class="op">(</span><span class="str">f"Failed to setup observability trace: {e}"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t213" href="#t213">213</a></span><span class="t">            <span class="nam">logger</span><span class="op">.</span><span class="nam">warning</span><span class="op">(</span><span class="fst">f"</span><span class="fst">Failed to setup observability trace: </span><span class="op">{</span><span class="nam">e</span><span class="op">}</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t214" href="#t214">214</a></span><span class="t">            <span class="com"># Reset whichever ContextVars were set before the failure, then continue without tracing</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t215" href="#t215">215</a></span><span class="t">            <span class="key">if</span> <span class="nam">span_id_token</span> <span class="key">is</span> <span class="key">not</span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="mis show_mis"><span class="n"><a id="t216" href="#t216">216</a></span><span class="t">                <span class="nam">current_span_id</span><span class="op">.</span><span class="nam">reset</span><span class="op">(</span><span class="nam">span_id_token</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
@@ -320,7 +320,7 @@
     <p class="run run2"><span class="n"><a id="t238" href="#t238">238</a></span><span class="t">                            <span class="op">}</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t239" href="#t239">239</a></span><span class="t">                        <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t240" href="#t240">240</a></span><span class="t">                    <span class="key">except</span> <span class="nam">Exception</span> <span class="key">as</span> <span class="nam">end_span_error</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t241" href="#t241">241</a></span><span class="t">                        <span class="nam">logger</span><span class="op">.</span><span class="nam">warning</span><span class="op">(</span><span class="str">f"Failed to end span {span_id}: {end_span_error}"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t241" href="#t241">241</a></span><span class="t">                        <span class="nam">logger</span><span class="op">.</span><span class="nam">warning</span><span class="op">(</span><span class="fst">f"</span><span class="fst">Failed to end span </span><span class="op">{</span><span class="nam">span_id</span><span class="op">}</span><span class="fst">: </span><span class="op">{</span><span class="nam">end_span_error</span><span class="op">}</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t242" href="#t242">242</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t243" href="#t243">243</a></span><span class="t">                <span class="com"># End trace (creates independent observability session)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t244" href="#t244">244</a></span><span class="t">                <span class="key">if</span> <span class="nam">trace_id</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
@@ -333,7 +333,7 @@
     <p class="run run2"><span class="n"><a id="t251" href="#t251">251</a></span><span class="t">                            <span class="nam">attributes</span><span class="op">=</span><span class="op">{</span><span class="str">"response_time_ms"</span><span class="op">:</span> <span class="nam">duration_ms</span><span class="op">}</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t252" href="#t252">252</a></span><span class="t">                        <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t253" href="#t253">253</a></span><span class="t">                    <span class="key">except</span> <span class="nam">Exception</span> <span class="key">as</span> <span class="nam">end_trace_error</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t254" href="#t254">254</a></span><span class="t">                        <span class="nam">logger</span><span class="op">.</span><span class="nam">warning</span><span class="op">(</span><span class="str">f"Failed to end trace {trace_id}: {end_trace_error}"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t254" href="#t254">254</a></span><span class="t">                        <span class="nam">logger</span><span class="op">.</span><span class="nam">warning</span><span class="op">(</span><span class="fst">f"</span><span class="fst">Failed to end trace </span><span class="op">{</span><span class="nam">trace_id</span><span class="op">}</span><span class="fst">: </span><span class="op">{</span><span class="nam">end_trace_error</span><span class="op">}</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t255" href="#t255">255</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t256" href="#t256">256</a></span><span class="t">                <span class="key">return</span> <span class="nam">response</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t257" href="#t257">257</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
@@ -363,7 +363,7 @@
     <p class="run run2"><span class="n"><a id="t281" href="#t281">281</a></span><span class="t">                            <span class="nam">exception_stacktrace</span><span class="op">=</span><span class="nam">traceback</span><span class="op">.</span><span class="nam">format_exc</span><span class="op">(</span><span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t282" href="#t282">282</a></span><span class="t">                        <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t283" href="#t283">283</a></span><span class="t">                    <span class="key">except</span> <span class="nam">Exception</span> <span class="key">as</span> <span class="nam">log_error</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t284" href="#t284">284</a></span><span class="t">                        <span class="nam">logger</span><span class="op">.</span><span class="nam">warning</span><span class="op">(</span><span class="str">f"Failed to log exception in span: {log_error}"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t284" href="#t284">284</a></span><span class="t">                        <span class="nam">logger</span><span class="op">.</span><span class="nam">warning</span><span class="op">(</span><span class="fst">f"</span><span class="fst">Failed to log exception in span: </span><span class="op">{</span><span class="nam">log_error</span><span class="op">}</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t285" href="#t285">285</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t286" href="#t286">286</a></span><span class="t">                <span class="com"># End trace with error (creates independent observability session)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t287" href="#t287">287</a></span><span class="t">                <span class="key">if</span> <span class="nam">trace_id</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
@@ -376,7 +376,7 @@
     <p class="run run2"><span class="n"><a id="t294" href="#t294">294</a></span><span class="t">                            <span class="nam">http_status_code</span><span class="op">=</span><span class="num">500</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t295" href="#t295">295</a></span><span class="t">                        <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t296" href="#t296">296</a></span><span class="t">                    <span class="key">except</span> <span class="nam">Exception</span> <span class="key">as</span> <span class="nam">trace_error</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t297" href="#t297">297</a></span><span class="t">                        <span class="nam">logger</span><span class="op">.</span><span class="nam">warning</span><span class="op">(</span><span class="str">f"Failed to end trace: {trace_error}"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t297" href="#t297">297</a></span><span class="t">                        <span class="nam">logger</span><span class="op">.</span><span class="nam">warning</span><span class="op">(</span><span class="fst">f"</span><span class="fst">Failed to end trace: </span><span class="op">{</span><span class="nam">trace_error</span><span class="op">}</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t298" href="#t298">298</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t299" href="#t299">299</a></span><span class="t">                <span class="com"># Re-raise the original exception</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t300" href="#t300">300</a></span><span class="t">                <span class="key">raise</span>&nbsp;</span><span class="r"></span></p>
@@ -395,7 +395,7 @@
             <a class="nav" href="z_7c505f6fa7f5f82c_password_change_enforcement_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.2">coverage.py v7.15.2</a>,
-            created at 2026-07-30 17:23 +0100
+            created at 2026-08-14 09:49 +0100
         </p>
     </div>
 </footer>

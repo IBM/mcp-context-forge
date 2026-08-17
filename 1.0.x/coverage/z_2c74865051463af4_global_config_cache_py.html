@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-    <title>Coverage for mcpgateway/cache/global_config_cache.py: 100%</title>
+    <title>Coverage for mcpgateway/cache/global_config_cache.py: 97%</title>
     <link rel="icon" sizes="32x32" href="favicon_32_cb_c827f16f.png">
     <link rel="stylesheet" href="style_cb_4667309f.css" type="text/css">
     <script src="coverage_html_cb_dd2e7eb5.js" defer></script>
@@ -12,7 +12,7 @@
     <div class="content">
         <h1>
             <span class="text">Coverage for </span><b>mcpgateway<span class="sep">/</span>cache<span class="sep">/</span>global_config_cache.py</b>:
-            <span class="pc_cov">100%</span>
+            <span class="pc_cov">97%</span>
         </h1>
         <aside id="help_panel_wrapper">
             <input id="help_panel_state" type="checkbox">
@@ -55,8 +55,8 @@
         </aside>
         <h2>
             <span class="text">58 statements &nbsp;</span>
-            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">58<span class="text"> run</span></button>
-            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">0<span class="text"> missing</span></button>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">56<span class="text"> run</span></button>
+            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">2<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
         </h2>
         <p class="text">
@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_2c74865051463af4_metrics_cache_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.2">coverage.py v7.15.2</a>,
-            created at 2026-07-30 17:23 +0100
+            created at 2026-08-14 09:49 +0100
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -239,7 +239,7 @@
     <p class="run"><span class="n"><a id="t157" href="#t157">157</a></span><span class="t">            <span class="nam">self</span><span class="op">.</span><span class="nam">_miss_count</span> <span class="op">+=</span> <span class="num">1</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t158" href="#t158">158</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t159" href="#t159">159</a></span><span class="t">            <span class="key">if</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_cache</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t160" href="#t160">160</a></span><span class="t">                <span class="nam">logger</span><span class="op">.</span><span class="nam">debug</span><span class="op">(</span><span class="str">f"GlobalConfig cache refreshed (TTL: {self.ttl_seconds}s)"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t160" href="#t160">160</a></span><span class="t">                <span class="nam">logger</span><span class="op">.</span><span class="nam">debug</span><span class="op">(</span><span class="fst">f"</span><span class="fst">GlobalConfig cache refreshed (TTL: </span><span class="op">{</span><span class="nam">self</span><span class="op">.</span><span class="nam">ttl_seconds</span><span class="op">}</span><span class="fst">s)</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t161" href="#t161">161</a></span><span class="t">            <span class="key">else</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t162" href="#t162">162</a></span><span class="t">                <span class="nam">logger</span><span class="op">.</span><span class="nam">debug</span><span class="op">(</span><span class="str">"GlobalConfig not found in database, using defaults"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t163" href="#t163">163</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
@@ -313,7 +313,7 @@
     <p class="pln"><span class="n"><a id="t231" href="#t231">231</a></span><span class="t">            <span class="com"># DB values override env for same header (handles case differences)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t232" href="#t232">232</a></span><span class="t">            <span class="nam">merged</span> <span class="op">=</span> <span class="op">{</span><span class="op">**</span><span class="nam">env_headers</span><span class="op">,</span> <span class="op">**</span><span class="nam">db_headers</span><span class="op">}</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t233" href="#t233">233</a></span><span class="t">            <span class="nam">result</span> <span class="op">=</span> <span class="nam">list</span><span class="op">(</span><span class="nam">merged</span><span class="op">.</span><span class="nam">values</span><span class="op">(</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t234" href="#t234">234</a></span><span class="t">            <span class="nam">logger</span><span class="op">.</span><span class="nam">debug</span><span class="op">(</span><span class="str">f"Passthrough headers source=merge: combined {len(result)} headers from env and db"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t234" href="#t234">234</a></span><span class="t">            <span class="nam">logger</span><span class="op">.</span><span class="nam">debug</span><span class="op">(</span><span class="fst">f"</span><span class="fst">Passthrough headers source=merge: combined </span><span class="op">{</span><span class="nam">len</span><span class="op">(</span><span class="nam">result</span><span class="op">)</span><span class="op">}</span><span class="fst"> headers from env and db</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t235" href="#t235">235</a></span><span class="t">            <span class="key">return</span> <span class="nam">result</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t236" href="#t236">236</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t237" href="#t237">237</a></span><span class="t">        <span class="com"># Default "db" mode - current behavior for backward compatibility</span>&nbsp;</span><span class="r"></span></p>
@@ -357,14 +357,14 @@
     <p class="pln"><span class="n"><a id="t275" href="#t275">275</a></span><span class="t"><span class="str">            >>> stats["hit_rate"]</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t276" href="#t276">276</a></span><span class="t"><span class="str">            0.9</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t277" href="#t277">277</a></span><span class="t"><span class="str">        """</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t278" href="#t278">278</a></span><span class="t">        <span class="nam">total</span> <span class="op">=</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_hit_count</span> <span class="op">+</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_miss_count</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t279" href="#t279">279</a></span><span class="t">        <span class="key">return</span> <span class="op">{</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t280" href="#t280">280</a></span><span class="t">            <span class="str">"hit_count"</span><span class="op">:</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_hit_count</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t281" href="#t281">281</a></span><span class="t">            <span class="str">"miss_count"</span><span class="op">:</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_miss_count</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t282" href="#t282">282</a></span><span class="t">            <span class="str">"hit_rate"</span><span class="op">:</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_hit_count</span> <span class="op">/</span> <span class="nam">total</span> <span class="key">if</span> <span class="nam">total</span> <span class="op">></span> <span class="num">0</span> <span class="key">else</span> <span class="num">0.0</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t283" href="#t283">283</a></span><span class="t">            <span class="str">"ttl_seconds"</span><span class="op">:</span> <span class="nam">self</span><span class="op">.</span><span class="nam">ttl_seconds</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t284" href="#t284">284</a></span><span class="t">            <span class="str">"is_cached"</span><span class="op">:</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_cache</span> <span class="key">is</span> <span class="key">not</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_NOT_CACHED</span> <span class="key">and</span> <span class="nam">time</span><span class="op">.</span><span class="nam">time</span><span class="op">(</span><span class="op">)</span> <span class="op">&lt;</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_expiry</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t285" href="#t285">285</a></span><span class="t">        <span class="op">}</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t278" href="#t278">278</a></span><span class="t">        <span class="nam">total</span> <span class="op">=</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_hit_count</span> <span class="op">+</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_miss_count</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t279" href="#t279">279</a></span><span class="t">        <span class="key">return</span> <span class="op">{</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis mis2 show_mis"><span class="n"><a id="t280" href="#t280">280</a></span><span class="t">            <span class="str">"hit_count"</span><span class="op">:</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_hit_count</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis mis2 show_mis"><span class="n"><a id="t281" href="#t281">281</a></span><span class="t">            <span class="str">"miss_count"</span><span class="op">:</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_miss_count</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis mis2 show_mis"><span class="n"><a id="t282" href="#t282">282</a></span><span class="t">            <span class="str">"hit_rate"</span><span class="op">:</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_hit_count</span> <span class="op">/</span> <span class="nam">total</span> <span class="key">if</span> <span class="nam">total</span> <span class="op">></span> <span class="num">0</span> <span class="key">else</span> <span class="num">0.0</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis mis2 show_mis"><span class="n"><a id="t283" href="#t283">283</a></span><span class="t">            <span class="str">"ttl_seconds"</span><span class="op">:</span> <span class="nam">self</span><span class="op">.</span><span class="nam">ttl_seconds</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis mis2 show_mis"><span class="n"><a id="t284" href="#t284">284</a></span><span class="t">            <span class="str">"is_cached"</span><span class="op">:</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_cache</span> <span class="key">is</span> <span class="key">not</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_NOT_CACHED</span> <span class="key">and</span> <span class="nam">time</span><span class="op">.</span><span class="nam">time</span><span class="op">(</span><span class="op">)</span> <span class="op">&lt;</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_expiry</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis mis2 show_mis"><span class="n"><a id="t285" href="#t285">285</a></span><span class="t">        <span class="op">}</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t286" href="#t286">286</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t287" href="#t287">287</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t288" href="#t288">288</a></span><span class="t"><span class="com"># Global singleton instance</span>&nbsp;</span><span class="r"></span></p>
@@ -379,7 +379,7 @@
             <a class="nav" href="z_2c74865051463af4_metrics_cache_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.2">coverage.py v7.15.2</a>,
-            created at 2026-07-30 17:23 +0100
+            created at 2026-08-14 09:49 +0100
         </p>
     </div>
 </footer>

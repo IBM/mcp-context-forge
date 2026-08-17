@@ -4562,7 +4562,7 @@ var CONFIG_CATEGORIES = [
     { name:"BASIC_AUTH_USER", def:"admin", desc:"Admin UI HTTP Basic Auth username", req:true },
     { name:"BASIC_AUTH_PASSWORD", def:"changeme", desc:"Admin UI HTTP Basic Auth password", req:true },
     { name:"JWT_SECRET_KEY", def:"my-test-key-...", desc:"JWT signing secret (min 32 bytes)", req:true },
-    { name:"AUTH_ENCRYPTION_SECRET", def:"my-test-salt", desc:"AES passphrase for encrypting stored secrets", req:true },
+    { name:"AUTH_ENCRYPTION_SECRET", def:"", desc:"AES passphrase for encrypting stored secrets — must be set; generate with: make init-secrets-patch-env", req:true },
     { name:"PLATFORM_ADMIN_EMAIL", def:"admin@example.com", desc:"Bootstrap admin email (email auth)", req:true },
     { name:"PLATFORM_ADMIN_PASSWORD", def:"changeme", desc:"Bootstrap admin password", req:true },
     { name:"DEFAULT_USER_PASSWORD", def:"changeme", desc:"Default password for seeded users", req:true }

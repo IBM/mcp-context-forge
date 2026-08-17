@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_f3f84ded3a2f725a_rust_mcp_public_proxy_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.2">coverage.py v7.15.2</a>,
-            created at 2026-07-30 17:23 +0100
+            created at 2026-08-14 09:49 +0100
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -267,7 +267,7 @@
     <p class="pln"><span class="n"><a id="t185" href="#t185">185</a></span><span class="t"><span class="str">        Returns:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t186" href="#t186">186</a></span><span class="t"><span class="str">            Redis key string.</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t187" href="#t187">187</a></span><span class="t"><span class="str">        """</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t188" href="#t188">188</a></span><span class="t">        <span class="key">return</span> <span class="str">f"{self.key_prefix}:{stream_id}:meta"</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t188" href="#t188">188</a></span><span class="t">        <span class="key">return</span> <span class="fst">f"</span><span class="op">{</span><span class="nam">self</span><span class="op">.</span><span class="nam">key_prefix</span><span class="op">}</span><span class="fst">:</span><span class="op">{</span><span class="nam">stream_id</span><span class="op">}</span><span class="fst">:meta</span><span class="fst">"</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t189" href="#t189">189</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t190" href="#t190">190</a></span><span class="t">    <span class="key">def</span> <span class="nam">_get_stream_events_key</span><span class="op">(</span><span class="nam">self</span><span class="op">,</span> <span class="nam">stream_id</span><span class="op">:</span> <span class="nam">str</span><span class="op">)</span> <span class="op">-></span> <span class="nam">str</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t191" href="#t191">191</a></span><span class="t">        <span class="str">"""Return Redis key for stream events sorted set.</span>&nbsp;</span><span class="r"></span></p>
@@ -278,7 +278,7 @@
     <p class="pln"><span class="n"><a id="t196" href="#t196">196</a></span><span class="t"><span class="str">        Returns:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t197" href="#t197">197</a></span><span class="t"><span class="str">            Redis key string.</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t198" href="#t198">198</a></span><span class="t"><span class="str">        """</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t199" href="#t199">199</a></span><span class="t">        <span class="key">return</span> <span class="str">f"{self.key_prefix}:{stream_id}:events"</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t199" href="#t199">199</a></span><span class="t">        <span class="key">return</span> <span class="fst">f"</span><span class="op">{</span><span class="nam">self</span><span class="op">.</span><span class="nam">key_prefix</span><span class="op">}</span><span class="fst">:</span><span class="op">{</span><span class="nam">stream_id</span><span class="op">}</span><span class="fst">:events</span><span class="fst">"</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t200" href="#t200">200</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t201" href="#t201">201</a></span><span class="t">    <span class="key">def</span> <span class="nam">_get_stream_messages_key</span><span class="op">(</span><span class="nam">self</span><span class="op">,</span> <span class="nam">stream_id</span><span class="op">:</span> <span class="nam">str</span><span class="op">)</span> <span class="op">-></span> <span class="nam">str</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t202" href="#t202">202</a></span><span class="t">        <span class="str">"""Return Redis key for stream messages hash.</span>&nbsp;</span><span class="r"></span></p>
@@ -289,7 +289,7 @@
     <p class="pln"><span class="n"><a id="t207" href="#t207">207</a></span><span class="t"><span class="str">        Returns:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t208" href="#t208">208</a></span><span class="t"><span class="str">            Redis key string.</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t209" href="#t209">209</a></span><span class="t"><span class="str">        """</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t210" href="#t210">210</a></span><span class="t">        <span class="key">return</span> <span class="str">f"{self.key_prefix}:{stream_id}:messages"</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t210" href="#t210">210</a></span><span class="t">        <span class="key">return</span> <span class="fst">f"</span><span class="op">{</span><span class="nam">self</span><span class="op">.</span><span class="nam">key_prefix</span><span class="op">}</span><span class="fst">:</span><span class="op">{</span><span class="nam">stream_id</span><span class="op">}</span><span class="fst">:messages</span><span class="fst">"</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t211" href="#t211">211</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t212" href="#t212">212</a></span><span class="t">    <span class="key">def</span> <span class="nam">_event_index_prefix</span><span class="op">(</span><span class="nam">self</span><span class="op">)</span> <span class="op">-></span> <span class="nam">str</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t213" href="#t213">213</a></span><span class="t">        <span class="str">"""Return prefix for per-event index keys.</span>&nbsp;</span><span class="r"></span></p>
@@ -297,7 +297,7 @@
     <p class="pln"><span class="n"><a id="t215" href="#t215">215</a></span><span class="t"><span class="str">        Returns:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t216" href="#t216">216</a></span><span class="t"><span class="str">            Prefix string for index keys.</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t217" href="#t217">217</a></span><span class="t"><span class="str">        """</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t218" href="#t218">218</a></span><span class="t">        <span class="key">return</span> <span class="str">f"{self.key_prefix}:event_index:"</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t218" href="#t218">218</a></span><span class="t">        <span class="key">return</span> <span class="fst">f"</span><span class="op">{</span><span class="nam">self</span><span class="op">.</span><span class="nam">key_prefix</span><span class="op">}</span><span class="fst">:event_index:</span><span class="fst">"</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t219" href="#t219">219</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t220" href="#t220">220</a></span><span class="t">    <span class="key">def</span> <span class="nam">_event_index_key</span><span class="op">(</span><span class="nam">self</span><span class="op">,</span> <span class="nam">event_id</span><span class="op">:</span> <span class="nam">str</span><span class="op">)</span> <span class="op">-></span> <span class="nam">str</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t221" href="#t221">221</a></span><span class="t">        <span class="str">"""Return Redis key for event index lookup.</span>&nbsp;</span><span class="r"></span></p>
@@ -308,7 +308,7 @@
     <p class="pln"><span class="n"><a id="t226" href="#t226">226</a></span><span class="t"><span class="str">        Returns:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t227" href="#t227">227</a></span><span class="t"><span class="str">            Redis key string.</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t228" href="#t228">228</a></span><span class="t"><span class="str">        """</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t229" href="#t229">229</a></span><span class="t">        <span class="key">return</span> <span class="str">f"{self._event_index_prefix()}{event_id}"</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t229" href="#t229">229</a></span><span class="t">        <span class="key">return</span> <span class="fst">f"</span><span class="op">{</span><span class="nam">self</span><span class="op">.</span><span class="nam">_event_index_prefix</span><span class="op">(</span><span class="op">)</span><span class="op">}</span><span class="op">{</span><span class="nam">event_id</span><span class="op">}</span><span class="fst">"</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t230" href="#t230">230</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t231" href="#t231">231</a></span><span class="t">    <span class="key">async</span> <span class="key">def</span> <span class="nam">store_event</span><span class="op">(</span><span class="nam">self</span><span class="op">,</span> <span class="nam">stream_id</span><span class="op">:</span> <span class="nam">str</span><span class="op">,</span> <span class="nam">message</span><span class="op">:</span> <span class="nam">JSONRPCMessage</span> <span class="op">|</span> <span class="key">None</span><span class="op">)</span> <span class="op">-></span> <span class="nam">str</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t232" href="#t232">232</a></span><span class="t">        <span class="str">"""Store an event in Redis atomically.</span>&nbsp;</span><span class="r"></span></p>
@@ -672,7 +672,7 @@
             <a class="nav" href="z_f3f84ded3a2f725a_rust_mcp_public_proxy_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.2">coverage.py v7.15.2</a>,
-            created at 2026-07-30 17:23 +0100
+            created at 2026-08-14 09:49 +0100
         </p>
     </div>
 </footer>

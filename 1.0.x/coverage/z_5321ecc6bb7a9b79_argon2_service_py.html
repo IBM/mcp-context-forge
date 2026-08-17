@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_5321ecc6bb7a9b79_audit_trail_service_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.2">coverage.py v7.15.2</a>,
-            created at 2026-07-30 17:23 +0100
+            created at 2026-08-14 09:49 +0100
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -196,7 +196,7 @@
     <p class="run"><span class="n"><a id="t114" href="#t114">114</a></span><span class="t">            <span class="key">return</span> <span class="nam">hash_value</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t115" href="#t115">115</a></span><span class="t">        <span class="key">except</span> <span class="nam">HashingError</span> <span class="key">as</span> <span class="nam">e</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t116" href="#t116">116</a></span><span class="t">            <span class="nam">logger</span><span class="op">.</span><span class="nam">error</span><span class="op">(</span><span class="str">"Failed to hash password: %s"</span><span class="op">,</span> <span class="nam">e</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t117" href="#t117">117</a></span><span class="t">            <span class="key">raise</span> <span class="nam">HashingError</span><span class="op">(</span><span class="str">f"Password hashing failed: {e}"</span><span class="op">)</span> <span class="key">from</span> <span class="nam">e</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t117" href="#t117">117</a></span><span class="t">            <span class="key">raise</span> <span class="nam">HashingError</span><span class="op">(</span><span class="fst">f"</span><span class="fst">Password hashing failed: </span><span class="op">{</span><span class="nam">e</span><span class="op">}</span><span class="fst">"</span><span class="op">)</span> <span class="key">from</span> <span class="nam">e</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t118" href="#t118">118</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t119" href="#t119">119</a></span><span class="t">    <span class="key">def</span> <span class="nam">verify_password</span><span class="op">(</span><span class="nam">self</span><span class="op">,</span> <span class="nam">password</span><span class="op">:</span> <span class="nam">str</span><span class="op">,</span> <span class="nam">hash_value</span><span class="op">:</span> <span class="nam">str</span><span class="op">)</span> <span class="op">-></span> <span class="nam">bool</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t120" href="#t120">120</a></span><span class="t">        <span class="str">"""Verify a password against its Argon2id hash.</span>&nbsp;</span><span class="r"></span></p>
@@ -349,7 +349,7 @@
     <p class="exc show_exc"><span class="n"><a id="t267" href="#t267">267</a></span><span class="t"><span class="str">        Returns:</span>&nbsp;</span><span class="r"></span></p>
     <p class="exc show_exc"><span class="n"><a id="t268" href="#t268">268</a></span><span class="t"><span class="str">            str: String representation of Argon2PasswordService instance</span>&nbsp;</span><span class="r"></span></p>
     <p class="exc show_exc"><span class="n"><a id="t269" href="#t269">269</a></span><span class="t"><span class="str">        """</span>&nbsp;</span><span class="r"></span></p>
-    <p class="exc show_exc"><span class="n"><a id="t270" href="#t270">270</a></span><span class="t">        <span class="key">return</span> <span class="str">f"Argon2PasswordService(time_cost={self.time_cost}, memory_cost={self.memory_cost}, parallelism={self.parallelism})"</span>&nbsp;</span><span class="r"></span></p>
+    <p class="exc show_exc"><span class="n"><a id="t270" href="#t270">270</a></span><span class="t">        <span class="key">return</span> <span class="fst">f"</span><span class="fst">Argon2PasswordService(time_cost=</span><span class="op">{</span><span class="nam">self</span><span class="op">.</span><span class="nam">time_cost</span><span class="op">}</span><span class="fst">, memory_cost=</span><span class="op">{</span><span class="nam">self</span><span class="op">.</span><span class="nam">memory_cost</span><span class="op">}</span><span class="fst">, parallelism=</span><span class="op">{</span><span class="nam">self</span><span class="op">.</span><span class="nam">parallelism</span><span class="op">}</span><span class="fst">)</span><span class="fst">"</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t271" href="#t271">271</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t272" href="#t272">272</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t273" href="#t273">273</a></span><span class="t"><span class="com"># Global instance for use throughout the application</span>&nbsp;</span><span class="r"></span></p>
@@ -447,7 +447,7 @@
             <a class="nav" href="z_5321ecc6bb7a9b79_audit_trail_service_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.2">coverage.py v7.15.2</a>,
-            created at 2026-07-30 17:23 +0100
+            created at 2026-08-14 09:49 +0100
         </p>
     </div>
 </footer>

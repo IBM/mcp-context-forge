@@ -62,10 +62,10 @@
         <p class="text">
             <a id="prevFileLink" class="nav" href="z_66e097f12625e52f_observability_py.html">&#xab; prev</a> &nbsp; &nbsp;
             <a id="indexLink" class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
-            <a id="nextFileLink" class="nav" href="z_66e097f12625e52f_rbac_py.html">&#xbb; next</a>
+            <a id="nextFileLink" class="nav" href="z_66e097f12625e52f_plugins_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.2">coverage.py v7.15.2</a>,
-            created at 2026-07-30 17:23 +0100
+            created at 2026-08-14 09:49 +0100
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -153,7 +153,7 @@
     <p class="pln"><span class="n"><a id="t71" href="#t71">71</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t72" href="#t72">72</a></span><span class="t">    <span class="com"># Parse URL to extract base and path</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t73" href="#t73">73</a></span><span class="t">    <span class="nam">parsed</span> <span class="op">=</span> <span class="nam">urllib</span><span class="op">.</span><span class="nam">parse</span><span class="op">.</span><span class="nam">urlparse</span><span class="op">(</span><span class="nam">body</span><span class="op">.</span><span class="nam">url</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t74" href="#t74">74</a></span><span class="t">    <span class="nam">base_url</span> <span class="op">=</span> <span class="str">f"{parsed.scheme}://{parsed.netloc}"</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t74" href="#t74">74</a></span><span class="t">    <span class="nam">base_url</span> <span class="op">=</span> <span class="fst">f"</span><span class="op">{</span><span class="nam">parsed</span><span class="op">.</span><span class="nam">scheme</span><span class="op">}</span><span class="fst">://</span><span class="op">{</span><span class="nam">parsed</span><span class="op">.</span><span class="nam">netloc</span><span class="op">}</span><span class="fst">"</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t75" href="#t75">75</a></span><span class="t">    <span class="nam">tool_path</span> <span class="op">=</span> <span class="nam">parsed</span><span class="op">.</span><span class="nam">path</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t76" href="#t76">76</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t77" href="#t77">77</a></span><span class="t">    <span class="com"># Fetch and extract schemas</span>&nbsp;</span><span class="r"></span></p>
@@ -167,7 +167,7 @@
     <p class="run run2"><span class="n"><a id="t85" href="#t85">85</a></span><span class="t">        <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t86" href="#t86">86</a></span><span class="t">    <span class="key">except</span> <span class="nam">ValueError</span> <span class="key">as</span> <span class="nam">e</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t87" href="#t87">87</a></span><span class="t">        <span class="key">return</span> <span class="nam">ORJSONResponse</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t88" href="#t88">88</a></span><span class="t">            <span class="nam">content</span><span class="op">=</span><span class="op">{</span><span class="str">"message"</span><span class="op">:</span> <span class="str">f"Security validation failed: {str(e)}"</span><span class="op">,</span> <span class="str">"success"</span><span class="op">:</span> <span class="key">False</span><span class="op">}</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t88" href="#t88">88</a></span><span class="t">            <span class="nam">content</span><span class="op">=</span><span class="op">{</span><span class="str">"message"</span><span class="op">:</span> <span class="fst">f"</span><span class="fst">Security validation failed: </span><span class="op">{</span><span class="nam">str</span><span class="op">(</span><span class="nam">e</span><span class="op">)</span><span class="op">}</span><span class="fst">"</span><span class="op">,</span> <span class="str">"success"</span><span class="op">:</span> <span class="key">False</span><span class="op">}</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t89" href="#t89">89</a></span><span class="t">            <span class="nam">status_code</span><span class="op">=</span><span class="num">400</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t90" href="#t90">90</a></span><span class="t">        <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t91" href="#t91">91</a></span><span class="t">    <span class="key">except</span> <span class="nam">KeyError</span> <span class="key">as</span> <span class="nam">e</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
@@ -178,7 +178,7 @@
     <p class="run"><span class="n"><a id="t96" href="#t96">96</a></span><span class="t">    <span class="key">except</span> <span class="nam">httpx</span><span class="op">.</span><span class="nam">HTTPStatusError</span> <span class="key">as</span> <span class="nam">e</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t97" href="#t97">97</a></span><span class="t">        <span class="nam">logger</span><span class="op">.</span><span class="nam">warning</span><span class="op">(</span><span class="str">"OpenAPI spec server returned HTTP %s"</span><span class="op">,</span> <span class="nam">e</span><span class="op">.</span><span class="nam">response</span><span class="op">.</span><span class="nam">status_code</span><span class="op">,</span> <span class="nam">exc_info</span><span class="op">=</span><span class="key">True</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t98" href="#t98">98</a></span><span class="t">        <span class="key">return</span> <span class="nam">ORJSONResponse</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t99" href="#t99">99</a></span><span class="t">            <span class="nam">content</span><span class="op">=</span><span class="op">{</span><span class="str">"message"</span><span class="op">:</span> <span class="str">f"OpenAPI spec server returned HTTP {e.response.status_code}"</span><span class="op">,</span> <span class="str">"success"</span><span class="op">:</span> <span class="key">False</span><span class="op">}</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t99" href="#t99">99</a></span><span class="t">            <span class="nam">content</span><span class="op">=</span><span class="op">{</span><span class="str">"message"</span><span class="op">:</span> <span class="fst">f"</span><span class="fst">OpenAPI spec server returned HTTP </span><span class="op">{</span><span class="nam">e</span><span class="op">.</span><span class="nam">response</span><span class="op">.</span><span class="nam">status_code</span><span class="op">}</span><span class="fst">"</span><span class="op">,</span> <span class="str">"success"</span><span class="op">:</span> <span class="key">False</span><span class="op">}</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t100" href="#t100">100</a></span><span class="t">            <span class="nam">status_code</span><span class="op">=</span><span class="num">502</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t101" href="#t101">101</a></span><span class="t">        <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t102" href="#t102">102</a></span><span class="t">    <span class="key">except</span> <span class="nam">httpx</span><span class="op">.</span><span class="nam">HTTPError</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
@@ -210,10 +210,10 @@
         <p>
             <a class="nav" href="z_66e097f12625e52f_observability_py.html">&#xab; prev</a> &nbsp; &nbsp;
             <a class="nav" href="index.html">&Hat; index</a> &nbsp; &nbsp;
-            <a class="nav" href="z_66e097f12625e52f_rbac_py.html">&#xbb; next</a>
+            <a class="nav" href="z_66e097f12625e52f_plugins_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.2">coverage.py v7.15.2</a>,
-            created at 2026-07-30 17:23 +0100
+            created at 2026-08-14 09:49 +0100
         </p>
     </div>
 </footer>

@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_095c6c0b4411cdd5_services_auth_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.2">coverage.py v7.15.2</a>,
-            created at 2026-07-30 17:23 +0100
+            created at 2026-08-14 09:49 +0100
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -119,7 +119,7 @@
     <p class="pln"><span class="n"><a id="t37" href="#t37">37</a></span><span class="t"><span class="str">        """</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t38" href="#t38">38</a></span><span class="t">        <span class="nam">self</span><span class="op">.</span><span class="nam">cookie_size</span> <span class="op">=</span> <span class="nam">cookie_size</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t39" href="#t39">39</a></span><span class="t">        <span class="nam">self</span><span class="op">.</span><span class="nam">limit</span> <span class="op">=</span> <span class="nam">limit</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t40" href="#t40">40</a></span><span class="t">        <span class="nam">super</span><span class="op">(</span><span class="op">)</span><span class="op">.</span><span class="nam">__init__</span><span class="op">(</span><span class="str">f"Cookie size {cookie_size} bytes exceeds browser limit of {limit} bytes"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t40" href="#t40">40</a></span><span class="t">        <span class="nam">super</span><span class="op">(</span><span class="op">)</span><span class="op">.</span><span class="nam">__init__</span><span class="op">(</span><span class="fst">f"</span><span class="fst">Cookie size </span><span class="op">{</span><span class="nam">cookie_size</span><span class="op">}</span><span class="fst"> bytes exceeds browser limit of </span><span class="op">{</span><span class="nam">limit</span><span class="op">}</span><span class="fst"> bytes</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t41" href="#t41">41</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t42" href="#t42">42</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t43" href="#t43">43</a></span><span class="t"><span class="key">def</span> <span class="nam">set_auth_cookie</span><span class="op">(</span><span class="nam">response</span><span class="op">:</span> <span class="nam">Response</span><span class="op">,</span> <span class="nam">token</span><span class="op">:</span> <span class="nam">str</span><span class="op">,</span> <span class="nam">remember_me</span><span class="op">:</span> <span class="nam">bool</span> <span class="op">=</span> <span class="key">False</span><span class="op">)</span> <span class="op">-></span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
@@ -171,7 +171,7 @@
     <p class="pln"><span class="n"><a id="t89" href="#t89">89</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t90" href="#t90">90</a></span><span class="t">    <span class="com"># Estimate cookie size in bytes (Set-Cookie header format)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t91" href="#t91">91</a></span><span class="t">    <span class="com"># The cookie name, value, and attributes all count toward the limit</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t92" href="#t92">92</a></span><span class="t">    <span class="nam">cookie_header</span> <span class="op">=</span> <span class="str">f"jwt_token={token}; HttpOnly; SameSite={samesite}; Path={path}; Max-Age={max_age}"</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t92" href="#t92">92</a></span><span class="t">    <span class="nam">cookie_header</span> <span class="op">=</span> <span class="fst">f"</span><span class="fst">jwt_token=</span><span class="op">{</span><span class="nam">token</span><span class="op">}</span><span class="fst">; HttpOnly; SameSite=</span><span class="op">{</span><span class="nam">samesite</span><span class="op">}</span><span class="fst">; Path=</span><span class="op">{</span><span class="nam">path</span><span class="op">}</span><span class="fst">; Max-Age=</span><span class="op">{</span><span class="nam">max_age</span><span class="op">}</span><span class="fst">"</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t93" href="#t93">93</a></span><span class="t">    <span class="key">if</span> <span class="nam">use_secure</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t94" href="#t94">94</a></span><span class="t">        <span class="nam">cookie_header</span> <span class="op">+=</span> <span class="str">"; Secure"</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t95" href="#t95">95</a></span><span class="t">    <span class="nam">cookie_size</span> <span class="op">=</span> <span class="nam">len</span><span class="op">(</span><span class="nam">cookie_header</span><span class="op">.</span><span class="nam">encode</span><span class="op">(</span><span class="str">"ascii"</span><span class="op">,</span> <span class="nam">errors</span><span class="op">=</span><span class="str">"replace"</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
@@ -305,7 +305,7 @@
             <a class="nav" href="z_095c6c0b4411cdd5_services_auth_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.2">coverage.py v7.15.2</a>,
-            created at 2026-07-30 17:23 +0100
+            created at 2026-08-14 09:49 +0100
         </p>
     </div>
 </footer>

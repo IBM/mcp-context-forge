@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_5321ecc6bb7a9b79_compliance_service_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.2">coverage.py v7.15.2</a>,
-            created at 2026-07-30 17:23 +0100
+            created at 2026-08-14 09:49 +0100
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -211,7 +211,7 @@
     <p class="run"><span class="n"><a id="t129" href="#t129">129</a></span><span class="t">            <span class="key">elif</span> <span class="nam">ref_type</span> <span class="op">==</span> <span class="str">"ref/resource"</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t130" href="#t130">130</a></span><span class="t">                <span class="nam">result</span> <span class="op">=</span> <span class="key">await</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_complete_resource_uri</span><span class="op">(</span><span class="nam">db</span><span class="op">,</span> <span class="nam">ref</span><span class="op">,</span> <span class="nam">arg_value</span><span class="op">,</span> <span class="nam">user_email</span><span class="op">=</span><span class="nam">user_email</span><span class="op">,</span> <span class="nam">token_teams</span><span class="op">=</span><span class="nam">token_teams</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t131" href="#t131">131</a></span><span class="t">            <span class="key">else</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t132" href="#t132">132</a></span><span class="t">                <span class="key">raise</span> <span class="nam">CompletionError</span><span class="op">(</span><span class="str">f"Invalid reference type: {ref_type}"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t132" href="#t132">132</a></span><span class="t">                <span class="key">raise</span> <span class="nam">CompletionError</span><span class="op">(</span><span class="fst">f"</span><span class="fst">Invalid reference type: </span><span class="op">{</span><span class="nam">ref_type</span><span class="op">}</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t133" href="#t133">133</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t134" href="#t134">134</a></span><span class="t">            <span class="key">return</span> <span class="nam">result</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t135" href="#t135">135</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
@@ -330,7 +330,7 @@
     <p class="run"><span class="n"><a id="t248" href="#t248">248</a></span><span class="t">        <span class="nam">prompt</span> <span class="op">=</span> <span class="nam">db</span><span class="op">.</span><span class="nam">execute</span><span class="op">(</span><span class="nam">stmt</span><span class="op">)</span><span class="op">.</span><span class="nam">scalar_one_or_none</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t249" href="#t249">249</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t250" href="#t250">250</a></span><span class="t">        <span class="key">if</span> <span class="key">not</span> <span class="nam">prompt</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t251" href="#t251">251</a></span><span class="t">            <span class="key">raise</span> <span class="nam">CompletionError</span><span class="op">(</span><span class="str">f"Prompt not found: {prompt_name}"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t251" href="#t251">251</a></span><span class="t">            <span class="key">raise</span> <span class="nam">CompletionError</span><span class="op">(</span><span class="fst">f"</span><span class="fst">Prompt not found: </span><span class="op">{</span><span class="nam">prompt_name</span><span class="op">}</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t252" href="#t252">252</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t253" href="#t253">253</a></span><span class="t">        <span class="com"># Find argument in schema</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t254" href="#t254">254</a></span><span class="t">        <span class="nam">arg_schema</span> <span class="op">=</span> <span class="key">None</span>&nbsp;</span><span class="r"></span></p>
@@ -340,7 +340,7 @@
     <p class="run"><span class="n"><a id="t258" href="#t258">258</a></span><span class="t">                <span class="key">break</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t259" href="#t259">259</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t260" href="#t260">260</a></span><span class="t">        <span class="key">if</span> <span class="key">not</span> <span class="nam">arg_schema</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t261" href="#t261">261</a></span><span class="t">            <span class="key">raise</span> <span class="nam">CompletionError</span><span class="op">(</span><span class="str">f"Argument not found: {arg_name}"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t261" href="#t261">261</a></span><span class="t">            <span class="key">raise</span> <span class="nam">CompletionError</span><span class="op">(</span><span class="fst">f"</span><span class="fst">Argument not found: </span><span class="op">{</span><span class="nam">arg_name</span><span class="op">}</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t262" href="#t262">262</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t263" href="#t263">263</a></span><span class="t">        <span class="com"># Get enum values if defined</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t264" href="#t264">264</a></span><span class="t">        <span class="key">if</span> <span class="str">"enum"</span> <span class="key">in</span> <span class="nam">arg_schema</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
@@ -490,7 +490,7 @@
             <a class="nav" href="z_5321ecc6bb7a9b79_compliance_service_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.2">coverage.py v7.15.2</a>,
-            created at 2026-07-30 17:23 +0100
+            created at 2026-08-14 09:49 +0100
         </p>
     </div>
 </footer>

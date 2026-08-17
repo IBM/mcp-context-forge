@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-    <title>Coverage for mcpgateway/transports/sse_transport.py: 100%</title>
+    <title>Coverage for mcpgateway/transports/sse_transport.py: 97%</title>
     <link rel="icon" sizes="32x32" href="favicon_32_cb_c827f16f.png">
     <link rel="stylesheet" href="style_cb_4667309f.css" type="text/css">
     <script src="coverage_html_cb_dd2e7eb5.js" defer></script>
@@ -12,7 +12,7 @@
     <div class="content">
         <h1>
             <span class="text">Coverage for </span><b>mcpgateway<span class="sep">/</span>transports<span class="sep">/</span>sse_transport.py</b>:
-            <span class="pc_cov">100%</span>
+            <span class="pc_cov">97%</span>
         </h1>
         <aside id="help_panel_wrapper">
             <input id="help_panel_state" type="checkbox">
@@ -55,8 +55,8 @@
         </aside>
         <h2>
             <span class="text">255 statements &nbsp;</span>
-            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">255<span class="text"> run</span></button>
-            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">0<span class="text"> missing</span></button>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">247<span class="text"> run</span></button>
+            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">8<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
         </h2>
         <p class="text">
@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_f3f84ded3a2f725a_stdio_transport_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.2">coverage.py v7.15.2</a>,
-            created at 2026-07-30 17:23 +0100
+            created at 2026-08-14 09:49 +0100
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -459,16 +459,16 @@
     <p class="pln"><span class="n"><a id="t377" href="#t377">377</a></span><span class="t"><span class="str">            False</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t378" href="#t378">378</a></span><span class="t"><span class="str">        """</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t379" href="#t379">379</a></span><span class="t">        <span class="com"># Standard</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t380" href="#t380">380</a></span><span class="t">        <span class="key">import</span> <span class="nam">re</span>  <span class="com"># pylint: disable=import-outside-toplevel</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t380" href="#t380">380</a></span><span class="t">        <span class="key">import</span> <span class="nam">re</span>  <span class="com"># pylint: disable=import-outside-toplevel</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t381" href="#t381">381</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t382" href="#t382">382</a></span><span class="t">        <span class="key">if</span> <span class="key">not</span> <span class="nam">session_id</span> <span class="key">or</span> <span class="nam">len</span><span class="op">(</span><span class="nam">session_id</span><span class="op">)</span> <span class="op">></span> <span class="num">128</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t383" href="#t383">383</a></span><span class="t">            <span class="key">return</span> <span class="key">False</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t382" href="#t382">382</a></span><span class="t">        <span class="key">if</span> <span class="key">not</span> <span class="nam">session_id</span> <span class="key">or</span> <span class="nam">len</span><span class="op">(</span><span class="nam">session_id</span><span class="op">)</span> <span class="op">></span> <span class="num">128</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t383" href="#t383">383</a></span><span class="t">            <span class="key">return</span> <span class="key">False</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t384" href="#t384">384</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t385" href="#t385">385</a></span><span class="t">        <span class="com"># Lazy compile pattern</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t386" href="#t386">386</a></span><span class="t">        <span class="key">if</span> <span class="nam">SSETransport</span><span class="op">.</span><span class="nam">_SESSION_ID_PATTERN</span> <span class="key">is</span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t387" href="#t387">387</a></span><span class="t">            <span class="nam">SSETransport</span><span class="op">.</span><span class="nam">_SESSION_ID_PATTERN</span> <span class="op">=</span> <span class="nam">re</span><span class="op">.</span><span class="nam">compile</span><span class="op">(</span><span class="str">r"^[a-zA-Z0-9_-]+$"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t386" href="#t386">386</a></span><span class="t">        <span class="key">if</span> <span class="nam">SSETransport</span><span class="op">.</span><span class="nam">_SESSION_ID_PATTERN</span> <span class="key">is</span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t387" href="#t387">387</a></span><span class="t">            <span class="nam">SSETransport</span><span class="op">.</span><span class="nam">_SESSION_ID_PATTERN</span> <span class="op">=</span> <span class="nam">re</span><span class="op">.</span><span class="nam">compile</span><span class="op">(</span><span class="str">r"^[a-zA-Z0-9_-]+$"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t388" href="#t388">388</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t389" href="#t389">389</a></span><span class="t">        <span class="key">return</span> <span class="nam">bool</span><span class="op">(</span><span class="nam">SSETransport</span><span class="op">.</span><span class="nam">_SESSION_ID_PATTERN</span><span class="op">.</span><span class="nam">match</span><span class="op">(</span><span class="nam">session_id</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t389" href="#t389">389</a></span><span class="t">        <span class="key">return</span> <span class="nam">bool</span><span class="op">(</span><span class="nam">SSETransport</span><span class="op">.</span><span class="nam">_SESSION_ID_PATTERN</span><span class="op">.</span><span class="nam">match</span><span class="op">(</span><span class="nam">session_id</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t390" href="#t390">390</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t391" href="#t391">391</a></span><span class="t">    <span class="key">def</span> <span class="nam">__init__</span><span class="op">(</span><span class="nam">self</span><span class="op">,</span> <span class="nam">base_url</span><span class="op">:</span> <span class="nam">str</span> <span class="op">=</span> <span class="key">None</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t392" href="#t392">392</a></span><span class="t">        <span class="str">"""Initialize SSE transport.</span>&nbsp;</span><span class="r"></span></p>
@@ -499,7 +499,7 @@
     <p class="pln"><span class="n"><a id="t417" href="#t417">417</a></span><span class="t"><span class="str">            >>> transport1.session_id != transport2.session_id</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t418" href="#t418">418</a></span><span class="t"><span class="str">            True</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t419" href="#t419">419</a></span><span class="t"><span class="str">        """</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t420" href="#t420">420</a></span><span class="t">        <span class="nam">self</span><span class="op">.</span><span class="nam">_base_url</span> <span class="op">=</span> <span class="nam">base_url</span> <span class="key">or</span> <span class="str">f"http://{settings.host}:{settings.port}"</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t420" href="#t420">420</a></span><span class="t">        <span class="nam">self</span><span class="op">.</span><span class="nam">_base_url</span> <span class="op">=</span> <span class="nam">base_url</span> <span class="key">or</span> <span class="fst">f"</span><span class="fst">http://</span><span class="op">{</span><span class="nam">settings</span><span class="op">.</span><span class="nam">host</span><span class="op">}</span><span class="fst">:</span><span class="op">{</span><span class="nam">settings</span><span class="op">.</span><span class="nam">port</span><span class="op">}</span><span class="fst">"</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t421" href="#t421">421</a></span><span class="t">        <span class="nam">self</span><span class="op">.</span><span class="nam">_connected</span> <span class="op">=</span> <span class="key">False</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t422" href="#t422">422</a></span><span class="t">        <span class="nam">self</span><span class="op">.</span><span class="nam">_message_queue</span> <span class="op">=</span> <span class="nam">asyncio</span><span class="op">.</span><span class="nam">Queue</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t423" href="#t423">423</a></span><span class="t">        <span class="nam">self</span><span class="op">.</span><span class="nam">_client_gone</span> <span class="op">=</span> <span class="nam">asyncio</span><span class="op">.</span><span class="nam">Event</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
@@ -665,7 +665,7 @@
     <p class="pln"><span class="n"><a id="t583" href="#t583">583</a></span><span class="t"><span class="str">            True</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t584" href="#t584">584</a></span><span class="t"><span class="str">        """</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t585" href="#t585">585</a></span><span class="t">        <span class="key">if</span> <span class="key">not</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_connected</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t586" href="#t586">586</a></span><span class="t">            <span class="key">raise</span> <span class="nam">RuntimeError</span><span class="op">(</span><span class="str">"Transport not connected"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t586" href="#t586">586</a></span><span class="t">            <span class="key">raise</span> <span class="nam">RuntimeError</span><span class="op">(</span><span class="str">"Transport not connected"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t587" href="#t587">587</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t588" href="#t588">588</a></span><span class="t">        <span class="com"># For SSE, we set up a loop to wait for messages which are delivered via POST</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t589" href="#t589">589</a></span><span class="t">        <span class="com"># Most messages come via the POST endpoint, but we yield an initial initialize placeholder</span>&nbsp;</span><span class="r"></span></p>
@@ -771,7 +771,7 @@
     <p class="pln"><span class="n"><a id="t689" href="#t689">689</a></span><span class="t"><span class="str">            >>> callable(transport.create_sse_response)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t690" href="#t690">690</a></span><span class="t"><span class="str">            True</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t691" href="#t691">691</a></span><span class="t"><span class="str">        """</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t692" href="#t692">692</a></span><span class="t">        <span class="nam">endpoint_url</span> <span class="op">=</span> <span class="str">f"{self._base_url}/message?session_id={self._session_id}"</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t692" href="#t692">692</a></span><span class="t">        <span class="nam">endpoint_url</span> <span class="op">=</span> <span class="fst">f"</span><span class="op">{</span><span class="nam">self</span><span class="op">.</span><span class="nam">_base_url</span><span class="op">}</span><span class="fst">/message?session_id=</span><span class="op">{</span><span class="nam">self</span><span class="op">.</span><span class="nam">_session_id</span><span class="op">}</span><span class="fst">"</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t693" href="#t693">693</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t694" href="#t694">694</a></span><span class="t">        <span class="key">async</span> <span class="key">def</span> <span class="nam">event_generator</span><span class="op">(</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t695" href="#t695">695</a></span><span class="t">            <span class="str">"""Generate SSE events.</span>&nbsp;</span><span class="r"></span></p>
@@ -993,7 +993,7 @@
     <p class="pln"><span class="n"><a id="t911" href="#t911">911</a></span><span class="t"><span class="str">            >>> transport1.session_id != transport2.session_id</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t912" href="#t912">912</a></span><span class="t"><span class="str">            True</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t913" href="#t913">913</a></span><span class="t"><span class="str">        """</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t914" href="#t914">914</a></span><span class="t">        <span class="key">return</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_session_id</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t914" href="#t914">914</a></span><span class="t">        <span class="key">return</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_session_id</span>&nbsp;</span><span class="r"></span></p>
 </main>
 <footer>
     <div class="content">
@@ -1003,7 +1003,7 @@
             <a class="nav" href="z_f3f84ded3a2f725a_stdio_transport_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.2">coverage.py v7.15.2</a>,
-            created at 2026-07-30 17:23 +0100
+            created at 2026-08-14 09:49 +0100
         </p>
     </div>
 </footer>
