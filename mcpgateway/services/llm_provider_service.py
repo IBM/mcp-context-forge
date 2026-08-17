@@ -16,7 +16,7 @@ import re
 from typing import Any, Dict, List, Optional, Tuple
 
 # Third-Party
-import httpx
+import httpx2 as httpx
 from sqlalchemy import and_, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session

@@ -9,7 +9,7 @@ license = { text = "Apache-2.0" }
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "fastmcp>=3.4.4",
+    "fastmcp==4.0.0b2",
     "feedparser>=6.0.12",
     "httpx>=0.28.1",
     "orjson>=3.11.9",

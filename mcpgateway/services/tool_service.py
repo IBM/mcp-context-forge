@@ -44,13 +44,13 @@ from cpex.framework import (
     ToolPreInvokePayload,
 )
 from cpex.framework.constants import GATEWAY_METADATA, TOOL_METADATA
-import httpx
+import httpx2 as httpx
 import jq
 import jsonschema
 from jsonschema import Draft4Validator, Draft6Validator, Draft7Validator, validators
 from mcp import ClientSession, types
 from mcp.client.sse import sse_client
-from mcp.client.streamable_http import streamablehttp_client
+from mcp.client.streamable_http import streamable_http_client as streamablehttp_client
 import orjson
 from pydantic import BaseModel, ValidationError
 from sqlalchemy import and_, delete, desc, or_, select

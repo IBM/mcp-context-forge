@@ -29,7 +29,7 @@ from jinja2.exceptions import SecurityError as JinjaSecurityError
 from jinja2.sandbox import SandboxedEnvironment
 from mcp import ClientSession, types
 from mcp.client.sse import sse_client
-from mcp.client.streamable_http import streamablehttp_client
+from mcp.client.streamable_http import streamable_http_client as streamablehttp_client
 from mcp.types import GetPromptRequest, GetPromptRequestParams
 import orjson
 from pydantic import ValidationError

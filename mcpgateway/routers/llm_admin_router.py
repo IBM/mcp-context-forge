@@ -683,7 +683,7 @@ async def fetch_provider_models(
         HTTPException: If provider is not found.
     """
     # Third-Party
-    import httpx
+    import httpx2 as httpx
 
     # First-Party
     from mcpgateway.utils.services_auth import decode_auth

@@ -67,7 +67,7 @@ from urllib.parse import urlsplit, urlunsplit
 from fastapi import Cookie, Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBasic, HTTPBasicCredentials, HTTPBearer
 from fastapi.security.utils import get_authorization_scheme_param
-import httpx
+import httpx2 as httpx
 import jwt
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session

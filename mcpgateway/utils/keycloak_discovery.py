@@ -12,7 +12,7 @@ from typing import Dict, Optional
 from urllib.parse import urlsplit, urlunsplit
 
 # Third-Party
-import httpx
+import httpx2 as httpx
 
 # Logger
 logger = logging.getLogger(__name__)

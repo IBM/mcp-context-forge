@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from typing import Any, AsyncGenerator, Dict, List, NamedTuple, Optional, Union
 
 # Third-Party
-import httpx
+import httpx2 as httpx
 from pydantic import ValidationError
 from sqlalchemy import and_, delete, desc
 from sqlalchemy import inspect as sa_inspect

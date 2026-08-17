@@ -154,7 +154,7 @@ import random
 from typing import Any, AsyncContextManager, Dict, Optional
 
 # Third-Party
-import httpx
+import httpx2 as httpx
 
 # First-Party
 from mcpgateway.config import settings

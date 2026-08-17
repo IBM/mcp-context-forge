@@ -20,7 +20,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 from urllib.parse import urlparse
 
 # Third-Party
-import httpx
+import httpx2 as httpx
 from pydantic import ValidationError
 from sqlalchemy import and_, delete, desc, or_, select, update
 from sqlalchemy.exc import IntegrityError

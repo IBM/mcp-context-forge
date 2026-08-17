@@ -9,13 +9,14 @@ import sys
 
 async def main():
     # Import MCP client
-    from mcp.client.streamable_http import streamablehttp_client
+    from mcp.client.streamable_http import streamable_http_client as streamablehttp_client
     from mcp.client.session import ClientSession
 
     # Generate JWT token
     token_result = subprocess.run(
         [sys.executable, "-m", "mcpgateway.utils.create_jwt_token", "--username", "admin@example.com", "--exp", "0", "--secret", "my-test-key-but-now-longer-than-32-bytes"],
         capture_output=True,
+        check=False,
         text=True,
     )
     token = token_result.stdout.strip()
@@ -62,11 +63,11 @@ async def main():
                     tools = tools_result.tools
                     print(f"   Total tools: {len(tools)}")
                     if tools:
-                        print(f"\n   First 3 tools:")
+                        print("\n   First 3 tools:")
                         for i, tool in enumerate(tools[:3]):
                             print(f"     [{i+1}] {tool.name}")
                             print(f"         Description: {tool.description[:60]}...")
-                        print(f"\n   Last 3 tools:")
+                        print("\n   Last 3 tools:")
                         for i, tool in enumerate(tools[-3:]):
                             print(f"     [{len(tools)-2+i}] {tool.name}")
 
@@ -77,7 +78,7 @@ async def main():
                     resources = resources_result.resources
                     print(f"   Total resources: {len(resources)}")
                     if resources:
-                        print(f"   First 3 resources:")
+                        print("   First 3 resources:")
                         for i, res in enumerate(resources[:3]):
                             print(f"     [{i+1}] {res.name} ({res.uri})")
 
@@ -88,7 +89,7 @@ async def main():
                     prompts = prompts_result.prompts
                     print(f"   Total prompts: {len(prompts)}")
                     if prompts:
-                        print(f"   First 3 prompts:")
+                        print("   First 3 prompts:")
                         for i, prompt in enumerate(prompts[:3]):
                             print(f"     [{i+1}] {prompt.name}")
 
@@ -111,7 +112,7 @@ async def main():
 
                         try:
                             call_result = await session.call_tool(tool_to_call.name, args)
-                            print(f"   Result:")
+                            print("   Result:")
                             for content in call_result.content:
                                 if hasattr(content, "text"):
                                     text = content.text

@@ -32,7 +32,7 @@ import jwt
 import time
 import sys
 from dataclasses import dataclass
-from typing import Optional, List, Dict, Any
+from typing import Optional, List
 
 # Colors for output
 GREEN = "\033[0;32m"
@@ -151,10 +151,10 @@ async def run_tests(base_url: str, team_id: str):
     print(f"{CYAN}{'='*70}{NC}")
     print(f"\nBase URL: {base_url}")
     print(f"Team ID: {team_id}")
-    print(f"\nCurrent tool state (5 tools):")
-    print(f"  - fast-time-get-system-time: visibility=TEAM")
-    print(f"  - fast-time-convert-time: visibility=public")
-    print(f"  - fast-test-*: 3 tools, visibility=public")
+    print("\nCurrent tool state (5 tools):")
+    print("  - fast-time-get-system-time: visibility=TEAM")
+    print("  - fast-time-convert-time: visibility=public")
+    print("  - fast-test-*: 3 tools, visibility=public")
 
     results = []
 
@@ -227,7 +227,7 @@ async def run_tests(base_url: str, team_id: str):
 
     print(f"\n{GREEN}Passed: {passed}{NC} | {RED}Failed: {failed}{NC}")
 
-    print(f"""
+    print("""
 ┌────────────────────────────────────────────────────────────────────────┐
 │                    Token Scoping Results                               │
 ├────────────────────────────────────────────────────────────────────────┤
@@ -252,7 +252,7 @@ async def test_mcp_transport(mcp_url: str, token: str, test_name: str, expected_
     print(f"  Expected tools: {expected_count}")
 
     try:
-        from mcp.client.streamable_http import streamablehttp_client
+        from mcp.client.streamable_http import streamable_http_client as streamablehttp_client
         from mcp.client.session import ClientSession
 
         headers = {"Authorization": f"Bearer {token}"}
@@ -276,9 +276,9 @@ async def test_mcp_transport(mcp_url: str, token: str, test_name: str, expected_
                     tool = tools.tools[0]
                     try:
                         if "time" in tool.name:
-                            result = await session.call_tool(tool.name, {"timezone": "UTC"})
+                            await session.call_tool(tool.name, {"timezone": "UTC"})
                         else:
-                            result = await session.call_tool(tool.name, {})
+                            await session.call_tool(tool.name, {})
                         print(f"  {GREEN}Tool call succeeded{NC}")
                     except Exception as e:
                         print(f"  {RED}Tool call failed: {e}{NC}")

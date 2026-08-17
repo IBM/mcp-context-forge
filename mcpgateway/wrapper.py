@@ -53,7 +53,7 @@ from typing import Any, AsyncIterator, Dict, List, Optional, Union
 from urllib.parse import urlencode
 
 # Third-Party
-import httpx
+import httpx2 as httpx
 import orjson
 
 # First-Party

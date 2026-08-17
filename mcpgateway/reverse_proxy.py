@@ -47,7 +47,7 @@ import orjson
 
 try:
     # Third-Party
-    import httpx
+    import httpx2 as httpx
 except ImportError:
     httpx = None  # type: ignore[assignment]
 

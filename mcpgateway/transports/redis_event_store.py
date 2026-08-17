@@ -23,6 +23,7 @@ import uuid
 from mcp.server.streamable_http import EventCallback, EventStore
 from mcp.types import JSONRPCMessage
 import orjson
+from pydantic import TypeAdapter
 
 # First-Party
 from mcpgateway.utils.redis_client import get_redis_client
@@ -32,6 +33,7 @@ if TYPE_CHECKING:  # pragma: no cover
     from redis.asyncio import Redis
 
 logger = logging.getLogger(__name__)
+_JSONRPC_MESSAGE_ADAPTER = TypeAdapter(JSONRPCMessage)
 
 
 _STORE_EVENT_LUA = r"""
@@ -444,7 +446,7 @@ class RedisEventStore(EventStore):
                 if raw is None:
                     continue
                 try:
-                    msg = JSONRPCMessage.model_validate(orjson.loads(raw))
+                    msg = _JSONRPC_MESSAGE_ADAPTER.validate_python(orjson.loads(raw))
                 except Exception as exc:
                     logger.warning("Discarding malformed event %s for %s: %s", ev_id, stream_id, exc)
                     continue
@@ -507,7 +509,7 @@ class RedisEventStore(EventStore):
             if raw is None:
                 continue
             try:
-                msg = JSONRPCMessage.model_validate(orjson.loads(raw))
+                msg = _JSONRPC_MESSAGE_ADAPTER.validate_python(orjson.loads(raw))
             except Exception as exc:
                 logger.warning("Discarding malformed event %s for %s: %s", ev_id, stream_id, exc)
                 continue
@@ -577,7 +579,7 @@ class RedisEventStore(EventStore):
         if raw is None:
             return None
         try:
-            return JSONRPCMessage.model_validate(orjson.loads(raw))
+            return _JSONRPC_MESSAGE_ADAPTER.validate_python(orjson.loads(raw))
         except Exception as exc:
             logger.warning("Discarding malformed event %s for %s: %s", event_id, stream_id, exc)
             return None

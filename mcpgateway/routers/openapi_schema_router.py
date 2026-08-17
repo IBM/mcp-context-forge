@@ -18,7 +18,7 @@ import urllib.parse
 # Third-Party
 from fastapi import APIRouter, Body, Depends
 from fastapi.responses import JSONResponse
-import httpx
+import httpx2 as httpx
 from pydantic import BaseModel, Field
 
 # First-Party

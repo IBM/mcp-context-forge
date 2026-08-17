@@ -18,14 +18,13 @@ from __future__ import annotations
 # Standard
 import asyncio
 import time
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 # Third-Party
 import pytest
 
 # First-Party
 from mcpgateway.services.notification_service import (
-    GatewayCapabilities,
     NotificationService,
     NotificationType,
     PendingRefresh,
@@ -520,21 +519,36 @@ class TestGlobalSingleton:
 class TestServerInitiatedRequestCorrelation:
     """Cover the message-handler ``RequestResponder`` path and ``complete_request``."""
 
+    class _FakeRequestResponder:
+        """Small structural stand-in for the SDK request responder."""
+
+        def __init__(self, request_id: str, request, on_complete=None):
+            self.request_id = request_id
+            self.request = request
+            self.on_complete = on_complete
+            self._completed = False
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, _exc_type, _exc, _tb):
+            if self._completed and self.on_complete is not None:
+                self.on_complete(self)
+
+        async def respond(self, _payload):
+            self._completed = True
+
+        async def cancel(self):
+            self._completed = True
+
     @staticmethod
     def _make_responder(request_id: str, method: str = "roots/list"):
         """Build a fake ``RequestResponder`` with respond/cancel captured."""
         # Third-Party
-        from mcp.shared.session import RequestResponder
-        from mcp.types import ListRootsRequest, ServerRequest
+        from mcp.types import ListRootsRequest
 
-        request = ServerRequest(ListRootsRequest(method=method, params=None))
-        responder = RequestResponder(
-            request_id=request_id,
-            request_meta=None,
-            request=request,
-            session=MagicMock(_send_response=MagicMock()),
-            on_complete=lambda r: None,
-        )
+        request = ListRootsRequest(method=method, params=None)
+        responder = TestServerInitiatedRequestCorrelation._FakeRequestResponder(request_id=request_id, request=request, on_complete=lambda r: None)
         captured: dict[str, object] = {"responded": None, "cancelled": False}
 
         async def captured_respond(payload):
@@ -584,7 +598,7 @@ class TestServerInitiatedRequestCorrelation:
 
         await asyncio.wait_for(consumer, timeout=2.0)
         assert len(received) == 1
-        envelope = received[0].message.root  # type: ignore[union-attr]
+        envelope = received[0].message.root if hasattr(received[0].message, "root") else received[0].message  # type: ignore[union-attr]
         assert envelope.method == "roots/list"
         assert envelope.id == "req-1"
 
@@ -837,7 +851,7 @@ class TestServerInitiatedRequestCorrelation:
     async def test_forward_notification_to_stream_publishes_typed_envelope(self, monkeypatch):
         """ServerNotification fanout has its own envelope construction; regression guard."""
         # First-Party
-        from mcp.types import ServerNotification, ToolListChangedNotification
+        from mcp.types import ToolListChangedNotification
         from mcpgateway.config import settings
         from mcpgateway.services.notification_service import NotificationService
         from mcpgateway.transports.server_event_bus import (
@@ -862,14 +876,14 @@ class TestServerInitiatedRequestCorrelation:
         consumer = asyncio.create_task(consume())
         await asyncio.sleep(0.02)
 
-        notif = ServerNotification(ToolListChangedNotification(method="notifications/tools/list_changed"))
+        notif = ToolListChangedNotification(method="notifications/tools/list_changed")
         await svc._forward_notification_to_stream(sid, notif)
 
         await asyncio.wait_for(consumer, timeout=2.0)
         await reset_server_event_bus()
 
         assert len(received) == 1
-        envelope = received[0].message.root  # type: ignore[union-attr]
+        envelope = received[0].message.root if hasattr(received[0].message, "root") else received[0].message  # type: ignore[union-attr]
         assert envelope.method == "notifications/tools/list_changed"
 
     @pytest.mark.asyncio
@@ -1277,17 +1291,14 @@ class TestForwardRequestHolderBranches:
         # escape the ``with responder:`` block in hold() after a successful
         # respond() sets _completed=True.
         # Third-Party
-        from mcp.shared.session import RequestResponder
-        from mcp.types import ListRootsRequest, ServerRequest
+        from mcp.types import ListRootsRequest
 
         def _boom_on_complete(_resp):
             raise RuntimeError("on_complete blew up")
 
-        responder = RequestResponder(
+        responder = TestServerInitiatedRequestCorrelation._FakeRequestResponder(
             request_id="req-exit-shadow",
-            request_meta=None,
-            request=ServerRequest(ListRootsRequest(method="roots/list", params=None)),
-            session=MagicMock(_send_response=MagicMock()),
+            request=ListRootsRequest(method="roots/list", params=None),
             on_complete=_boom_on_complete,
         )
 
@@ -1320,8 +1331,7 @@ class TestHolderExitShadowsPrimary:
     async def test_exit_shadow_logged_when_cancel_path_exits_raise(self, monkeypatch, caplog):
         """External task cancel → primary_exc=CancelledError → ``__exit__`` raises → shadow log fires."""
         # First-Party
-        from mcp.shared.session import RequestResponder
-        from mcp.types import ListRootsRequest, ServerRequest
+        from mcp.types import ListRootsRequest
         from mcpgateway.config import settings
         from mcpgateway.services.notification_service import NotificationService
         from mcpgateway.transports.server_event_bus import (
@@ -1349,11 +1359,9 @@ class TestHolderExitShadowsPrimary:
         def _boom(_resp):
             raise RuntimeError("exit boom")
 
-        responder = RequestResponder(
+        responder = TestServerInitiatedRequestCorrelation._FakeRequestResponder(
             request_id="req-shadow",
-            request_meta=None,
-            request=ServerRequest(ListRootsRequest(method="roots/list", params=None)),
-            session=MagicMock(_send_response=MagicMock()),
+            request=ListRootsRequest(method="roots/list", params=None),
             on_complete=_boom,
         )
 
@@ -1409,22 +1417,24 @@ class TestRespondWithPayloadValidationBranches:
     async def test_unvalidatable_result_falls_back_to_error(self, monkeypatch, caplog):
         """If ClientResult validation fails, respond with an ErrorData containing the message."""
         # Third-Party
-        import mcp.types as mcp_types
         from mcp.types import ErrorData, INTERNAL_ERROR
         from pydantic import ValidationError
-
-        # Force ClientResult.model_validate to raise.
-        class StubValidationError(Exception):
-            pass
 
         def raise_validation(*_args, **_kwargs):
             # Construct a real ValidationError via pydantic for accurate typing.
             try:
-                mcp_types.ErrorData.model_validate({})
+                ErrorData.model_validate({})
             except ValidationError as e:
                 raise e
 
-        monkeypatch.setattr(mcp_types.ClientResult, "model_validate", classmethod(lambda cls, *a, **k: raise_validation()))
+        class BrokenClientResultAdapter:
+            """Adapter stand-in that forces the validation fallback path."""
+
+            @staticmethod
+            def validate_python(*_args, **_kwargs):
+                raise_validation()
+
+        monkeypatch.setattr("mcpgateway.services.notification_service._CLIENT_RESULT_ADAPTER", BrokenClientResultAdapter())
 
         responder, captured = TestServerInitiatedRequestCorrelation._make_responder("req-bad-result")
         with caplog.at_level("WARNING", logger="mcpgateway.services.notification_service"):
@@ -1503,7 +1513,7 @@ class TestForwardNotificationErrorBranches:
     async def test_notification_get_bus_runtime_error(self, monkeypatch):
         """``get_server_event_bus`` raising during notification fanout → backend_unavailable metric."""
         # First-Party
-        from mcp.types import ServerNotification, ToolListChangedNotification
+        from mcp.types import ToolListChangedNotification
         from mcpgateway.config import settings
         from mcpgateway.services.metrics import server_event_bus_publish_failed_counter
 
@@ -1515,7 +1525,7 @@ class TestForwardNotificationErrorBranches:
         monkeypatch.setattr("mcpgateway.transports.server_event_bus.get_server_event_bus", _bus)
 
         svc = NotificationService()
-        notif = ServerNotification(ToolListChangedNotification(method="notifications/tools/list_changed"))
+        notif = ToolListChangedNotification(method="notifications/tools/list_changed")
         before = server_event_bus_publish_failed_counter.labels(reason="backend_unavailable")._value.get()
 
         await svc._forward_notification_to_stream("sess-nb", notif)
@@ -1526,7 +1536,7 @@ class TestForwardNotificationErrorBranches:
     async def test_notification_publish_transport_error(self, monkeypatch):
         """``bus.publish`` raising ConnectionError → transport_error metric."""
         # First-Party
-        from mcp.types import ServerNotification, ToolListChangedNotification
+        from mcp.types import ToolListChangedNotification
         from mcpgateway.config import settings
         from mcpgateway.services.metrics import server_event_bus_publish_failed_counter
 
@@ -1542,7 +1552,7 @@ class TestForwardNotificationErrorBranches:
         monkeypatch.setattr("mcpgateway.transports.server_event_bus.get_server_event_bus", _bus)
 
         svc = NotificationService()
-        notif = ServerNotification(ToolListChangedNotification(method="notifications/tools/list_changed"))
+        notif = ToolListChangedNotification(method="notifications/tools/list_changed")
         before = server_event_bus_publish_failed_counter.labels(reason="transport_error")._value.get()
 
         await svc._forward_notification_to_stream("sess-nt", notif)
@@ -1553,7 +1563,7 @@ class TestForwardNotificationErrorBranches:
     async def test_notification_publish_backend_error(self, monkeypatch):
         """``bus.publish`` raising BusBackendError → backend_unavailable metric."""
         # First-Party
-        from mcp.types import ServerNotification, ToolListChangedNotification
+        from mcp.types import ToolListChangedNotification
         from mcpgateway.config import settings
         from mcpgateway.services.metrics import server_event_bus_publish_failed_counter
         from mcpgateway.transports.server_event_bus import BusBackendError
@@ -1570,7 +1580,7 @@ class TestForwardNotificationErrorBranches:
         monkeypatch.setattr("mcpgateway.transports.server_event_bus.get_server_event_bus", _bus)
 
         svc = NotificationService()
-        notif = ServerNotification(ToolListChangedNotification(method="notifications/tools/list_changed"))
+        notif = ToolListChangedNotification(method="notifications/tools/list_changed")
         before = server_event_bus_publish_failed_counter.labels(reason="backend_unavailable")._value.get()
 
         await svc._forward_notification_to_stream("sess-nbe", notif)
@@ -1604,7 +1614,7 @@ class TestMessageHandlerServerNotification:
     async def test_server_notification_dispatched_and_fanned_out(self, monkeypatch):
         """A ServerNotification arriving at the handler triggers both handle and fanout."""
         # Third-Party
-        from mcp.types import ServerNotification, ToolListChangedNotification
+        from mcp.types import ToolListChangedNotification
 
         # First-Party
         from mcpgateway.config import settings
@@ -1618,7 +1628,7 @@ class TestMessageHandlerServerNotification:
         svc._forward_notification_to_stream = AsyncMock()  # type: ignore[assignment]
 
         handler = svc.create_message_handler("gw-1", "http://u", downstream_session_id="sess-sn")
-        notif = ServerNotification(ToolListChangedNotification(method="notifications/tools/list_changed"))
+        notif = ToolListChangedNotification(method="notifications/tools/list_changed")
 
         await handler(notif)
 
@@ -1629,14 +1639,14 @@ class TestMessageHandlerServerNotification:
     async def test_server_notification_without_session_id_skips_fanout(self):
         """No downstream_session_id → only internal handling, no fanout."""
         # Third-Party
-        from mcp.types import ServerNotification, ToolListChangedNotification
+        from mcp.types import ToolListChangedNotification
 
         svc = NotificationService()
         svc._handle_notification = AsyncMock()  # type: ignore[assignment]
         svc._forward_notification_to_stream = AsyncMock()  # type: ignore[assignment]
 
         handler = svc.create_message_handler("gw-1")
-        notif = ServerNotification(ToolListChangedNotification(method="notifications/tools/list_changed"))
+        notif = ToolListChangedNotification(method="notifications/tools/list_changed")
 
         await handler(notif)
 

@@ -34,10 +34,10 @@ from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 import uuid
 
 # Third-Party
-import httpx
+import httpx2 as httpx
 from mcp import ClientSession, types
 from mcp.client.sse import sse_client
-from mcp.client.streamable_http import streamablehttp_client
+from mcp.client.streamable_http import streamable_http_client as streamablehttp_client
 from mcp.types import ReadResourceRequest, ReadResourceRequestParams
 import parse
 from pydantic import ValidationError
