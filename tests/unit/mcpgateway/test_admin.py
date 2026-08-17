@@ -26736,6 +26736,25 @@ class TestTransferGatewayOwnership:
             )
         assert exc_info.value.status_code == 400
 
+    @pytest.mark.asyncio
+    async def test_transfer_gateway_ownership_non_admin_denied(self, monkeypatch, mock_db):
+        """require_admin_permission() must block non-admin callers with 403."""
+        mock_perm_service = MagicMock()
+        mock_perm_service.check_admin_permission = AsyncMock(return_value=False)
+        monkeypatch.setattr("mcpgateway.middleware.rbac.PermissionService", lambda db: mock_perm_service)
+        monkeypatch.setattr("mcpgateway.admin.PermissionService", lambda db: mock_perm_service)
+        monkeypatch.setattr("mcpgateway.admin.is_unrestricted_platform_admin", AsyncMock(return_value=False))
+        monkeypatch.setattr("mcpgateway.plugins.get_plugin_manager", AsyncMock(return_value=None))
+
+        with pytest.raises(HTTPException) as exc_info:
+            await transfer_gateway_ownership(
+                gateway_id="gw-1",
+                transfer=GatewayOwnershipTransferRequest(target_owner_email="new@x.com"),
+                db=mock_db,
+                _user={"email": "user@x.com", "is_admin": False, "db": mock_db},
+            )
+        assert exc_info.value.status_code == 403
+
 
 class TestCatalogPermissionErrorBranches:
     """Tests for CatalogRegistrationPermissionError handling in catalog endpoints."""

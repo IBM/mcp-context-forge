@@ -207,3 +207,45 @@ async def test_transfer_updates_linked_entities_and_team(service, mock_db):
     assert resource.team_id == "new-team"
     assert prompt.owner_email == "target@example.com"
     assert prompt.team_id == "new-team"
+
+
+@pytest.mark.asyncio
+async def test_transfer_private_gateway_to_team_coerces_visibility(service, mock_db):
+    """Private gateway+linked entities become team-visible when transferred to a team."""
+    gateway = MagicMock()
+    gateway.visibility = "private"
+    gateway.team_id = None
+    gateway.owner_email = "old@example.com"
+    gateway.id = "gw-priv"
+
+    tool = MagicMock()
+    tool.visibility = "private"
+    resource = MagicMock()
+    resource.visibility = "private"
+    prompt = MagicMock()
+    prompt.visibility = "private"
+    user = MagicMock()
+    member = MagicMock()
+
+    mock_db.execute.side_effect = [
+        _scalar_result(user),
+        _scalar_result(member),
+        _scalars_result([tool]),
+        _scalars_result([resource]),
+        _scalars_result([prompt]),
+    ]
+
+    with (
+        patch("mcpgateway.services.gateway_service.get_for_update", return_value=gateway),
+        patch("mcpgateway.services.gateway_service.get_audit_trail_service") as mock_audit_fn,
+        patch.object(service, "convert_gateway_to_read", return_value=MagicMock()),
+    ):
+        mock_audit_fn.return_value = MagicMock()
+        await service.transfer_gateway_ownership(
+            mock_db, "gw-priv", "target@example.com", "actor@example.com", target_team_id="new-team"
+        )
+
+    assert gateway.visibility == "team"
+    assert tool.visibility == "team"
+    assert resource.visibility == "team"
+    assert prompt.visibility == "team"

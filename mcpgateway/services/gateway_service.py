@@ -5703,6 +5703,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         gateway.owner_email = target_owner_email
         if target_team_id:
             gateway.team_id = target_team_id
+            # Private gateways assigned to a team must become team-visible so members can access them
+            if gateway.visibility == "private":
+                gateway.visibility = "team"
 
         # Update linked tools
         tools = db.execute(select(DbTool).where(DbTool.gateway_id == gateway_id)).scalars().all()
@@ -5710,6 +5713,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             tool.owner_email = target_owner_email
             if target_team_id:
                 tool.team_id = target_team_id
+                if tool.visibility == "private":
+                    tool.visibility = "team"
 
         # Update linked resources
         resources = db.execute(select(DbResource).where(DbResource.gateway_id == gateway_id)).scalars().all()
@@ -5717,6 +5722,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             resource.owner_email = target_owner_email
             if target_team_id:
                 resource.team_id = target_team_id
+                if resource.visibility == "private":
+                    resource.visibility = "team"
 
         # Update linked prompts
         prompts = db.execute(select(DbPrompt).where(DbPrompt.gateway_id == gateway_id)).scalars().all()
@@ -5724,6 +5731,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             prompt.owner_email = target_owner_email
             if target_team_id:
                 prompt.team_id = target_team_id
+                if prompt.visibility == "private":
+                    prompt.visibility = "team"
 
         db.commit()
         db.refresh(gateway)
