@@ -2055,7 +2055,16 @@ class EmailAuthService:
                 for team in teams_owned:
                     # Find other team owners who can take ownership
                     potential_owners_stmt = (
-                        select(EmailTeamMember).where(EmailTeamMember.team_id == team.id, EmailTeamMember.user_email != email, EmailTeamMember.role == "owner").order_by(EmailTeamMember.role.desc())
+                        select(EmailTeamMember)
+                        .join(EmailUser, EmailUser.email == EmailTeamMember.user_email)
+                        .where(
+                            EmailTeamMember.team_id == team.id,
+                            EmailTeamMember.user_email != email,
+                            EmailTeamMember.role == "owner",
+                            EmailTeamMember.is_active == True,  # noqa: E712  # pylint: disable=singleton-comparison
+                            EmailUser.is_active == True,  # noqa: E712  # pylint: disable=singleton-comparison
+                        )
+                        .order_by(EmailTeamMember.user_email)
                     )
 
                     potential_owners = self.db.execute(potential_owners_stmt).scalars().all()
@@ -2103,10 +2112,12 @@ class EmailAuthService:
                     alternate = (
                         self.db.execute(
                             select(EmailTeamMember)
+                            .join(EmailUser, EmailUser.email == EmailTeamMember.user_email)
                             .where(
                                 EmailTeamMember.team_id == gw.team_id,
                                 EmailTeamMember.user_email != email,
                                 EmailTeamMember.is_active == True,  # noqa: E712  # pylint: disable=singleton-comparison
+                                EmailUser.is_active == True,  # noqa: E712  # pylint: disable=singleton-comparison
                             )
                             .order_by(EmailTeamMember.user_email)
                         )

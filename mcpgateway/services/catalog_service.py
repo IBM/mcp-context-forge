@@ -92,6 +92,10 @@ class CatalogService:
         if token_teams is not None and len(token_teams) == 0 and visibility != "public":
             raise CatalogRegistrationPermissionError("Public-only tokens can only create public catalog registrations")
 
+        # Block public visibility for team-scoped registrations when the platform flag is disabled
+        if not settings.allow_public_visibility and visibility == "public" and requested_team_id:
+            raise CatalogRegistrationPermissionError("Public visibility is disabled by platform configuration (ALLOW_PUBLIC_VISIBILITY=false).")
+
         # Team visibility requires a team_id
         if visibility == "team" and not requested_team_id:
             raise CatalogRegistrationPermissionError("team_id is required when visibility is 'team'")
@@ -100,27 +104,27 @@ class CatalogService:
         if requested_team_id and token_teams is not None and requested_team_id not in token_teams:
             raise CatalogRegistrationPermissionError("Requested team is not in the caller's token scope")
 
-        # Validate team membership when a team is specified
+        # Validate team membership when a team is specified.
+        # One JOIN mirrors TeamManagementService's verify_team_for_user approach and
+        # avoids two serial round-trips + an intermediate commit.
         if requested_team_id:
             # First-Party
             from mcpgateway.db import EmailTeam as DbEmailTeam  # pylint: disable=import-outside-toplevel
             from mcpgateway.db import EmailTeamMember as DbEmailTeamMember  # pylint: disable=import-outside-toplevel
 
-            team = db.execute(select(DbEmailTeam).where(DbEmailTeam.id == requested_team_id, DbEmailTeam.is_active == True)).scalar_one_or_none()  # noqa: E712  # pylint: disable=singleton-comparison
-            if not team:
-                raise CatalogRegistrationPermissionError(f"Team '{requested_team_id}' not found or inactive")
-
             membership = db.execute(
-                select(DbEmailTeamMember).where(
+                select(DbEmailTeamMember)
+                .join(DbEmailTeam, DbEmailTeam.id == DbEmailTeamMember.team_id)
+                .where(
                     DbEmailTeamMember.team_id == requested_team_id,
                     DbEmailTeamMember.user_email == owner_email,
                     DbEmailTeamMember.is_active == True,  # noqa: E712  # pylint: disable=singleton-comparison
+                    DbEmailTeam.is_active == True,  # noqa: E712  # pylint: disable=singleton-comparison
                 )
             ).scalar_one_or_none()
             if not membership:
-                raise CatalogRegistrationPermissionError(f"Caller is not an active member of team '{requested_team_id}'")
+                raise CatalogRegistrationPermissionError(f"Caller is not an active member of team '{requested_team_id}' or team is inactive")
 
-            # Release the read transaction
             db.commit()
 
         return (visibility, requested_team_id)
@@ -361,6 +365,7 @@ class CatalogService:
         created_by: str,
         owner_email: str,
         token_teams: Optional[List[str]],
+        _resolved_scope: Optional[tuple] = None,
     ) -> CatalogServerRegisterResponse:
         """Register a catalog server as a gateway.
 
@@ -371,6 +376,8 @@ class CatalogService:
             created_by: Identity of the caller creating the gateway
             owner_email: Email of the gateway owner (derived from auth, never client-supplied)
             token_teams: Token-scoped team list (None=admin bypass, []=public-only)
+            _resolved_scope: Pre-validated (visibility, team_id) tuple; skips re-validation when set.
+                Only pass from bulk_register_servers after upfront validation.
 
         Returns:
             Registration response
@@ -380,8 +387,10 @@ class CatalogService:
         """
         try:
             # Resolve visibility and team scope before any persistence
-            visibility, resolved_team_id = self._resolve_registration_scope(db, request, owner_email, token_teams)
-
+            if _resolved_scope is not None:
+                visibility, resolved_team_id = _resolved_scope
+            else:
+                visibility, resolved_team_id = self._resolve_registration_scope(db, request, owner_email, token_teams)
             # Load catalog to find the server
             catalog_data = await self.load_catalog()
             servers = catalog_data.get("catalog_servers", [])
@@ -703,21 +712,19 @@ class CatalogService:
         Raises:
             CatalogRegistrationPermissionError: If scope validation fails on the common scope.
         """
-        # Validate common scope once before iterating
-        # Build a synthetic request carrying the bulk-level visibility/team
+        # Validate scope once; pass the result to each per-server call to skip re-validation.
         scope_request = CatalogServerRegisterRequest(
             server_id="__bulk_validation__",
             visibility=request.visibility,
             team_id=request.team_id,
         )
-        self._resolve_registration_scope(db, scope_request, owner_email, token_teams)
+        resolved_scope = self._resolve_registration_scope(db, scope_request, owner_email, token_teams)
 
         successful = []
         failed = []
 
         for server_id in request.server_ids:
             try:
-                # Build per-server request carrying the bulk-level visibility/team
                 per_server_request = CatalogServerRegisterRequest(
                     server_id=server_id,
                     visibility=request.visibility,
@@ -730,6 +737,7 @@ class CatalogService:
                     created_by=created_by,
                     owner_email=owner_email,
                     token_teams=token_teams,
+                    _resolved_scope=resolved_scope,
                 )
 
                 if response.success:
