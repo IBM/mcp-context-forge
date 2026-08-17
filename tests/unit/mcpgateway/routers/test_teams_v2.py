@@ -15,7 +15,7 @@ from uuid import uuid4
 
 # Third-Party
 import pytest
-from fastapi import HTTPException, status
+from fastapi import BackgroundTasks, HTTPException, status
 from sqlalchemy.orm import Session
 
 
@@ -139,7 +139,7 @@ class TestTeamsRouterV2:
             mock_service.create_team_with_members = AsyncMock(return_value=TeamSeedResult(team=mock_team))
             MockService.return_value = mock_service
 
-            result = await teams.create_team(request, current_user_ctx=mock_user_context, db=mock_db)
+            result = await teams.create_team(request, BackgroundTasks(), current_user_ctx=mock_user_context, db=mock_db)
 
             assert result.id == mock_team.id
             assert result.name == mock_team.name
@@ -172,7 +172,7 @@ class TestTeamsRouterV2:
             MockService.return_value = mock_service
 
             with pytest.raises(HTTPException) as exc_info:
-                await teams.create_team(request, current_user_ctx=mock_user_context)
+                await teams.create_team(request, BackgroundTasks(), current_user_ctx=mock_user_context)
 
             assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
             assert "Team name cannot be empty" in str(exc_info.value.detail)

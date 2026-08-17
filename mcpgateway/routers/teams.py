@@ -22,7 +22,7 @@ Examples:
 from typing import Any, cast, List, Optional, Union
 
 # Third-Party
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -41,6 +41,7 @@ from mcpgateway.schemas import (
     TeamCreateRequest,
     TeamCreateResponse,
     TeamDiscoveryResponse,
+    TeamInvitationCreateResponse,
     TeamInvitationResponse,
     TeamInviteRequest,
     TeamJoinRequest,
@@ -54,7 +55,7 @@ from mcpgateway.schemas import (
 )
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.permission_service import PermissionService
-from mcpgateway.services.team_invitation_service import TeamInvitationService
+from mcpgateway.services.team_invitation_service import failed_invitation_delivery_result, TeamInvitationService
 from mcpgateway.services.team_management_service import (
     InvalidRoleError,
     JoinRequestNotFoundError,
@@ -82,7 +83,9 @@ teams_router = APIRouter()
 
 @teams_router.post("/", response_model=TeamCreateResponse, status_code=status.HTTP_201_CREATED)
 @require_permission("teams.create")
-async def create_team(request: TeamCreateRequest, current_user_ctx: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> TeamCreateResponse:
+async def create_team(
+    request: TeamCreateRequest, background_tasks: BackgroundTasks, current_user_ctx: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)
+) -> TeamCreateResponse:
     """Create a new team, optionally seeding it with members.
 
     Members supplied in the request are routed by the server: an address that
@@ -93,6 +96,7 @@ async def create_team(request: TeamCreateRequest, current_user_ctx: dict = Depen
 
     Args:
         request: Team creation request data
+        background_tasks: Response-scoped background task scheduler
         current_user_ctx: Currently authenticated user context
         db: Database session
 
@@ -147,8 +151,17 @@ async def create_team(request: TeamCreateRequest, current_user_ctx: dict = Depen
             members_added=[SeededMemberResponse(email=member.email, role=member.role) for member in result.members_added],
             invitations_sent=[SeededInvitationResponse(email=invite.email, role=invite.role, invitation_id=invite.invitation_id) for invite in result.invitations_sent],
         )
+        invitation_service = TeamInvitationService(db) if result.invitations_to_deliver else None
         db.commit()
         db.close()
+
+        if invitation_service:
+            background_tasks.add_task(
+                invitation_service.deliver_invitation_emails,
+                result.invitations_to_deliver,
+                team.name,
+                current_user_ctx.get("full_name") or current_user_ctx["email"],
+            )
         return response
     except HTTPException:
         raise
@@ -735,9 +748,9 @@ async def remove_team_member(team_id: str, user_email: str, current_user: dict =
 # ---------------------------------------------------------------------------
 
 
-@teams_router.post("/{team_id}/invitations", response_model=TeamInvitationResponse, status_code=status.HTTP_201_CREATED)
+@teams_router.post("/{team_id}/invitations", response_model=TeamInvitationCreateResponse, status_code=status.HTTP_201_CREATED)
 @require_permission("teams.manage_members")
-async def invite_team_member(team_id: str, request: TeamInviteRequest, current_user: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> TeamInvitationResponse:
+async def invite_team_member(team_id: str, request: TeamInviteRequest, current_user: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> TeamInvitationCreateResponse:
     """Invite a user to join a team.
 
     Args:
@@ -747,7 +760,7 @@ async def invite_team_member(team_id: str, request: TeamInviteRequest, current_u
         db: Database session
 
     Returns:
-        TeamInvitationResponse: Created invitation data
+        TeamInvitationCreateResponse: Created invitation and email delivery data
 
     Raises:
         HTTPException: If team not found, access denied, or invitation fails
@@ -774,7 +787,17 @@ async def invite_team_member(team_id: str, request: TeamInviteRequest, current_u
 
         db.commit()
         db.close()
-        return TeamInvitationResponse(
+        try:
+            delivery = await invitation_service.deliver_invitation_email(
+                invitation=invitation,
+                team_name=team_name,
+                inviter_name=current_user.get("full_name") or current_user["email"],
+            )
+        except Exception:  # pragma: no cover - final boundary after persistence
+            logger.warning("Team invitation email delivery failed for invitation %s", SecurityValidator.sanitize_log_message(invitation.id))
+            delivery = failed_invitation_delivery_result()
+
+        return TeamInvitationCreateResponse(
             id=invitation.id,
             team_id=invitation.team_id,
             team_name=team_name,
@@ -786,6 +809,9 @@ async def invite_team_member(team_id: str, request: TeamInviteRequest, current_u
             token=invitation.token,
             is_active=invitation.is_active,
             is_expired=invitation.is_expired(),
+            invitation_url=delivery.invitation_url,
+            email_delivery_status=delivery.status,
+            warning=delivery.warning,
         )
     except HTTPException:
         raise

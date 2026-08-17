@@ -14,7 +14,7 @@ from uuid import uuid4
 
 # Third-Party
 import pytest
-from fastapi import HTTPException, status
+from fastapi import BackgroundTasks, HTTPException, status
 from sqlalchemy.orm import Session
 
 
@@ -165,7 +165,7 @@ class TestUpdateTeamMaxMembersCap:
 
             req = TeamCreateRequest(name="BigTeam", max_members=200)
             with pytest.raises(HTTPException) as exc:
-                await teams.create_team(req, current_user_ctx=user_ctx, db=db)
+                await teams.create_team(req, BackgroundTasks(), current_user_ctx=user_ctx, db=db)
             assert exc.value.status_code == status.HTTP_400_BAD_REQUEST
             assert "cannot exceed" in exc.value.detail
 
@@ -177,7 +177,7 @@ class TestUpdateTeamMaxMembersCap:
             from mcpgateway.schemas import TeamCreateRequest
 
             req = TeamCreateRequest(name="BigTeam", max_members=500)
-            result = await teams.create_team(req, current_user_ctx=admin_ctx, db=db)
+            result = await teams.create_team(req, BackgroundTasks(), current_user_ctx=admin_ctx, db=db)
             assert result.max_members == 500
 
     @pytest.mark.asyncio
@@ -188,7 +188,7 @@ class TestUpdateTeamMaxMembersCap:
             from mcpgateway.schemas import TeamCreateRequest
 
             req = TeamCreateRequest(name="Team", max_members=100)
-            result = await teams.create_team(req, current_user_ctx=user_ctx, db=db)
+            result = await teams.create_team(req, BackgroundTasks(), current_user_ctx=user_ctx, db=db)
             assert result.max_members == 100
 
     @pytest.mark.asyncio

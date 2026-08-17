@@ -52,6 +52,67 @@ def test_parse_allowed_origins_json_and_csv():
     assert s_csv.allowed_origins == {"https://x.com", "https://y.com"}
 
 
+@pytest.mark.parametrize(
+    ("url", "message"),
+    [
+        ("https://user:password@ui.example.com", "credentials"),  # pragma: allowlist secret
+        ("https://ui.example.com/app?tenant=one", "query string"),
+        ("https://ui.example.com/app#fragment", "fragment"),
+    ],
+)
+def test_ui_base_url_rejects_unsafe_components(url, message):
+    """Frontend base URL must not carry credentials or URL suffix state."""
+    with pytest.raises(ValueError, match=message):
+        Settings(ui_base_url=url, environment="development", _env_file=None)
+
+
+def test_ui_base_url_allows_path_prefix():
+    """Frontend base URL may include a deployment path prefix."""
+    configured = Settings(ui_base_url="https://ui.example.com/contextforge", environment="development", _env_file=None)
+    assert str(configured.ui_base_url) == "https://ui.example.com/contextforge"
+
+
+def test_ui_base_url_treats_blank_string_as_unset():
+    """Blank environment override preserves gateway UI fallback behavior."""
+    configured = Settings(ui_base_url="", environment="development", _env_file=None)
+    assert configured.ui_base_url is None
+
+
+@pytest.mark.parametrize(
+    ("admin_api_enabled", "expected_password_route"),
+    [
+        (True, "legacy /admin routes"),
+        (False, "frontend /forgot-password and /reset-password/{token} routes"),
+    ],
+)
+def test_smtp_without_ui_base_url_warns_about_frontend_routes(caplog, admin_api_enabled, expected_password_route):
+    """SMTP fallback warning describes active invitation and password routes."""
+    caplog.set_level(logging.WARNING, logger="mcpgateway.config")
+
+    Settings(smtp_enabled=True, ui_base_url=None, mcpgateway_admin_api_enabled=admin_api_enabled, environment="development", _env_file=None)
+
+    warnings = [record.getMessage() for record in caplog.records]
+    assert any("SMTP_ENABLED=true while UI_BASE_URL is unset" in message for message in warnings)
+    assert any("/accept-invitation/{token}" in message for message in warnings)
+    assert any(expected_password_route in message for message in warnings)
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"smtp_enabled": False, "ui_base_url": None},
+        {"smtp_enabled": True, "ui_base_url": "https://ui.example.com/contextforge"},
+    ],
+)
+def test_frontend_route_warning_only_for_smtp_fallback(caplog, overrides):
+    """Configured UI links and disabled SMTP do not produce fallback warnings."""
+    caplog.set_level(logging.WARNING, logger="mcpgateway.config")
+
+    Settings(environment="development", _env_file=None, **overrides)
+
+    assert not any("SMTP_ENABLED=true while UI_BASE_URL is unset" in record.getMessage() for record in caplog.records)
+
+
 # --------------------------------------------------------------------------- #
 #                         SSO field validators                            #
 # --------------------------------------------------------------------------- #
