@@ -71,15 +71,23 @@ class TestAuthEmailNotificationService:
 
         assert result == "https://ui.example.com/contextforge/accept-invitation/tok%2Fen%20%3F"
 
-    def test_build_frontend_url_falls_back_to_domain_and_root_path(self):
-        """Password links fall back to bundled Admin UI routes."""
+    @pytest.mark.parametrize(
+        ("admin_api_enabled", "expected_url"),
+        [
+            (True, "https://gateway.example.com/root/admin/forgot-password"),
+            (False, "https://gateway.example.com/root/forgot-password"),
+        ],
+    )
+    def test_build_frontend_url_falls_back_to_domain_and_root_path(self, admin_api_enabled, expected_url):
+        """Password fallback uses Admin UI only when its routes are mounted."""
         with patch("mcpgateway.services.email_notification_service.settings") as mock_settings:
             mock_settings.ui_base_url = None
             mock_settings.app_domain = "https://gateway.example.com/"
             mock_settings.app_root_path = "/root/"
+            mock_settings.mcpgateway_admin_api_enabled = admin_api_enabled
             result = build_frontend_url("/forgot-password")
 
-        assert result == "https://gateway.example.com/root/admin/forgot-password"
+        assert result == expected_url
 
     def test_build_frontend_url_invitation_fallback_remains_frontend_route(self):
         """Invitation fallback does not inherit legacy Admin UI prefix."""

@@ -78,16 +78,23 @@ def test_ui_base_url_treats_blank_string_as_unset():
     assert configured.ui_base_url is None
 
 
-def test_smtp_without_ui_base_url_warns_about_frontend_routes(caplog):
-    """SMTP fallback warns about invitation and legacy password routes."""
+@pytest.mark.parametrize(
+    ("admin_api_enabled", "expected_password_route"),
+    [
+        (True, "legacy /admin routes"),
+        (False, "frontend /forgot-password and /reset-password/{token} routes"),
+    ],
+)
+def test_smtp_without_ui_base_url_warns_about_frontend_routes(caplog, admin_api_enabled, expected_password_route):
+    """SMTP fallback warning describes active invitation and password routes."""
     caplog.set_level(logging.WARNING, logger="mcpgateway.config")
 
-    Settings(smtp_enabled=True, ui_base_url=None, environment="development", _env_file=None)
+    Settings(smtp_enabled=True, ui_base_url=None, mcpgateway_admin_api_enabled=admin_api_enabled, environment="development", _env_file=None)
 
     warnings = [record.getMessage() for record in caplog.records]
     assert any("SMTP_ENABLED=true while UI_BASE_URL is unset" in message for message in warnings)
     assert any("/accept-invitation/{token}" in message for message in warnings)
-    assert any("MCPGATEWAY_ADMIN_API_ENABLED=true" in message for message in warnings)
+    assert any(expected_password_route in message for message in warnings)
 
 
 @pytest.mark.parametrize(
