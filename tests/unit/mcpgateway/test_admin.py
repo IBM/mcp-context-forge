@@ -13762,21 +13762,48 @@ async def test_admin_search_endpoints_support_tags_without_query(monkeypatch, mo
 @pytest.mark.asyncio
 async def test_admin_search_catalog_returns_open_catalog_matches(monkeypatch, mock_db, allow_permission):
     catalog_search = AsyncMock(return_value=SimpleNamespace(servers=[SimpleNamespace(id="cloudflare-docs", name="Cloudflare Docs", description="Cloudflare documentation")]))
+    access_context = MagicMock(return_value=("user@example.com", ["team-1"]))
     monkeypatch.setattr("mcpgateway.admin.catalog_service.get_catalog_servers", catalog_search)
+    monkeypatch.setattr("mcpgateway.admin.get_scoped_resource_access_context", access_context)
+    request = MagicMock(spec=Request)
+    user = {"email": "user@example.com", "db": mock_db}
 
     result = await admin_search_catalog(
         q=" Cloudflare ",
         limit=5,
         db=mock_db,
-        user={"email": "user@example.com", "db": mock_db, "_cached_team_ids": ["team-1"]},
+        user=user,
+        request=request,
     )
 
     assert result["catalog"] == [{"id": "cloudflare-docs", "name": "Cloudflare Docs", "description": "Cloudflare documentation"}]
-    catalog_request = catalog_search.await_args.args[0]
+    catalog_call = catalog_search.await_args
+    assert catalog_call is not None
+    catalog_request = catalog_call.args[0]
     assert catalog_request.search == "cloudflare"
     assert catalog_request.auth_type == "Open"
     assert catalog_request.limit == 5
-    assert catalog_search.await_args.kwargs == {"user_email": "user@example.com", "token_teams": ["team-1"]}
+    assert catalog_call.kwargs == {"user_email": "user@example.com", "token_teams": ["team-1"]}
+    access_context.assert_called_once_with(request, user)
+
+
+@pytest.mark.asyncio
+async def test_admin_search_catalog_preserves_admin_scope_bypass(monkeypatch, mock_db, allow_permission):
+    catalog_search = AsyncMock(return_value=SimpleNamespace(servers=[]))
+    monkeypatch.setattr("mcpgateway.admin.catalog_service.get_catalog_servers", catalog_search)
+    monkeypatch.setattr("mcpgateway.admin.get_scoped_resource_access_context", MagicMock(return_value=("admin@example.com", None)))
+
+    await admin_search_catalog(
+        q="cloudflare",
+        limit=5,
+        db=mock_db,
+        user={"email": "admin@example.com", "is_admin": True},
+        request=MagicMock(spec=Request),
+    )
+
+    catalog_call = catalog_search.await_args
+    assert catalog_call is not None
+    assert catalog_call.kwargs == {"user_email": "admin@example.com", "token_teams": None}
 
 
 @pytest.mark.asyncio
@@ -13790,6 +13817,7 @@ async def test_admin_search_catalog_disabled_returns_empty(monkeypatch, mock_db,
         limit=5,
         db=mock_db,
         user={"email": "user@example.com", "db": mock_db, "_cached_team_ids": []},
+        request=MagicMock(spec=Request),
     )
 
     assert result["catalog"] == []

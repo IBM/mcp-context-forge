@@ -11585,18 +11585,20 @@ async def admin_search_catalog(
     limit: int,
     db: Session,
     user: Any,
+    request: Request,
 ) -> dict[str, Any]:
     """Search visible open-auth catalog servers by name or description."""
     search_query = _normalize_search_query(q)
     if not search_query or not settings.mcpgateway_catalog_enabled:
         return _build_search_response(entity_key="catalog", entity_type="catalog", items=[], query=search_query, tags="", tag_groups=[])
 
+    user_email, token_teams = get_scoped_resource_access_context(request, user)
     catalog_request = CatalogListRequest(search=search_query, auth_type="Open", limit=limit)
     catalog_response = await catalog_service.get_catalog_servers(
         catalog_request,
         db,
-        user_email=get_user_email(user),
-        token_teams=await _get_user_team_ids(user, db),
+        user_email=user_email,
+        token_teams=token_teams,
     )
     items = [{"id": server.id, "name": server.name, "description": server.description} for server in catalog_response.servers]
     return _build_search_response(entity_key="catalog", entity_type="catalog", items=items, query=search_query, tags="", tag_groups=[])
@@ -11862,6 +11864,7 @@ async def perform_unified_search(
         catalog_result = await _safe_entity_search(
             admin_search_catalog,
             "catalog",
+            request=request,
             q=search_query,
             limit=effective_limit,
             db=db,
