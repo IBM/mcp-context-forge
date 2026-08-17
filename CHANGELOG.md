@@ -99,7 +99,7 @@ Release 1.0.8 consolidates **29 PRs** focused on **plugin discovery and catalog 
 | [#6158](https://github.com/IBM/mcp-context-forge/pull/6158) | chore: update python dependencies/update min supported version to py3.12 |
 | [#6160](https://github.com/IBM/mcp-context-forge/pull/6160) | chore: routine npm/rust dependency updates |
 | [#6133](https://github.com/IBM/mcp-context-forge/pull/6133) | chore: remove experimental Rust request-logging masking extension |
-| [#6108](https://github.com/IBM/mcp-context-forge/pull/6108) | chore: restore AUTH_ENCRYPTION_SECRET unconditional strength enforcement |
+| [#6108](https://github.com/IBM/mcp-context-forge/pull/6108) | chore: added AUTH_ENCRYPTION_SECRET unconditional strength enforcement |
 | [#6125](https://github.com/IBM/mcp-context-forge/pull/6125) | test: replace fastmcp with the official mcp SDK in live-gateway tests |
 | [#6234](https://github.com/IBM/mcp-context-forge/pull/6234) | chore: remove stale suggestion-mode option from .pylintrc |
 | [#6231](https://github.com/IBM/mcp-context-forge/pull/6231) | chore: remove cpex_compat.py shim since cpex>=0.1.2 is declared |
