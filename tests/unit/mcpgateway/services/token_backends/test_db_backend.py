@@ -1103,7 +1103,7 @@ def test_db_backend_encryption_import_error():
 
     db = MagicMock()
     settings = MagicMock()
-    settings.auth_encryption_secret = "test-secret"
+    settings.auth_encryption_secret = "test-secret"  # pragma: allowlist secret
 
     with patch("mcpgateway.services.token_backends.db_backend.get_encryption_service", side_effect=ImportError("no crypto")):
         backend = DatabaseTokenBackend(db, settings)
