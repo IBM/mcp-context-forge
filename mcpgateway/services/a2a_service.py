@@ -20,7 +20,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 from urllib.parse import urlparse
 
 # Third-Party
-import httpx2 as httpx
+import httpx
 from pydantic import ValidationError
 from sqlalchemy import and_, delete, desc, or_, select, update
 from sqlalchemy.exc import IntegrityError
@@ -2250,14 +2250,16 @@ class A2AAgentService(BaseService):
         # ═══════════════════════════════════════════════════════════════════════════
         # PHASE 2b: Plugin context setup and PRE_INVOKE hook
         # ═══════════════════════════════════════════════════════════════════════════
-        # First-Party
-        from mcpgateway.plugins.cpex_compat import (
+        # Third-Party
+        from cpex.framework import (
             AgentHookType,
             AgentPreInvokePayload,
             GlobalContext,
             HttpHeaderPayload,
             PluginViolationError,
-        )  # pylint: disable=import-outside-toplevel
+        )
+
+        # First-Party
         from mcpgateway.plugins.gateway_plugin_manager import make_context_id  # pylint: disable=import-outside-toplevel
         from mcpgateway.schemas import A2A_AGENT_METADATA, PydanticA2AAgent  # pylint: disable=import-outside-toplevel
 
@@ -2512,8 +2514,8 @@ class A2AAgentService(BaseService):
                 # ═══════════════════════════════════════════════════════════════════════════
                 if plugin_manager and plugin_manager.has_hooks_for(AgentHookType.AGENT_POST_INVOKE):
                     try:
-                        # First-Party
-                        from mcpgateway.plugins.cpex_compat import AgentPostInvokePayload  # pylint: disable=import-outside-toplevel
+                        # Third-Party
+                        from cpex.framework import AgentPostInvokePayload  # pylint: disable=import-outside-toplevel
 
                         post_result, _ = await plugin_manager.invoke_hook(
                             AgentHookType.AGENT_POST_INVOKE,

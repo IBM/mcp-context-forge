@@ -14,8 +14,8 @@ import math
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
-# First-Party
-from mcpgateway.plugins.cpex_compat import Extensions, RequestExtension
+# Third-Party
+from cpex.framework.extensions import Extensions, RequestExtension
 
 logger = logging.getLogger(__name__)
 

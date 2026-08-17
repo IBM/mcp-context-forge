@@ -1,6 +1,4 @@
 # -*- coding: utf-8 -*-
-# pylint: disable=wrong-import-position,wrong-import-order,no-name-in-module
-# ruff: noqa: E402
 """Location: ./mcpgateway/plugins/cpex_compat.py
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
@@ -24,109 +22,10 @@ Examples:
     []
 """
 
+# Standard
 from typing import Any, List, Optional
 
-# First-Party
-# isort: off
-from mcpgateway.utils.mcp_v2_compat import install_mcp_v2_cpex_compat
-
-install_mcp_v2_cpex_compat()
-
-# Third-Party
-from cpex.framework import (
-    AgentHookType,
-    AgentPostInvokePayload,
-    AgentPreInvokePayload,
-    ConfigLoader,
-    GlobalContext,
-    HookPayloadPolicy,
-    HttpAuthCheckPermissionPayload,
-    HttpAuthResolveUserPayload,
-    HttpHeaderPayload,
-    HttpHookType,
-    HttpPostRequestPayload,
-    HttpPreRequestPayload,
-    ObservabilityProvider,
-    OnError,
-    PluginContextTable,
-    PluginError,
-    PluginManager,
-    PluginMode,
-    PluginViolationError,
-    PromptHookType,
-    PromptPosthookPayload,
-    PromptPrehookPayload,
-    ResourceHookType,
-    ResourcePostFetchPayload,
-    ResourcePreFetchPayload,
-    TenantPluginManager,
-    ToolHookType,
-    ToolPostInvokePayload,
-    ToolPreInvokePayload,
-    UserContext,
-)
-from cpex.framework.constants import GATEWAY_METADATA, TOOL_METADATA
-from cpex.framework.extensions import Extensions, RequestExtension
-from cpex.framework.models import Config
-from cpex.framework.observability import current_trace_id
-from cpex.framework.settings import settings as plugin_settings
-from cpex.framework.utils import parse_class_name, payload_matches
-
-# isort: on
-
-__all__ = [
-    "AgentHookType",
-    "AgentPostInvokePayload",
-    "AgentPreInvokePayload",
-    "Config",
-    "ConfigLoader",
-    "Extensions",
-    "GATEWAY_METADATA",
-    "GlobalContext",
-    "HookPayloadPolicy",
-    "HttpAuthCheckPermissionPayload",
-    "HttpAuthResolveUserPayload",
-    "HttpHeaderPayload",
-    "HttpHookType",
-    "HttpPostRequestPayload",
-    "HttpPreRequestPayload",
-    "ObservabilityProvider",
-    "OnError",
-    "PluginContextTable",
-    "PluginError",
-    "PluginManager",
-    "PluginMode",
-    "PluginViolationError",
-    "PromptHookType",
-    "PromptPosthookPayload",
-    "PromptPrehookPayload",
-    "RequestExtension",
-    "ResourceHookType",
-    "ResourcePostFetchPayload",
-    "ResourcePreFetchPayload",
-    "TOOL_METADATA",
-    "TenantPluginManager",
-    "ToolHookType",
-    "ToolPostInvokePayload",
-    "ToolPreInvokePayload",
-    "UserContext",
-    "current_trace_id",
-    "execution_records_supported",
-    "get_cpex_cli_module",
-    "get_executions",
-    "parse_class_name",
-    "payload_matches",
-    "plugin_settings",
-]
-
 _EXECUTION_RECORDS_SUPPORTED: Optional[bool] = None
-
-
-def get_cpex_cli_module() -> Any:
-    """Return the CPEX Typer CLI module after installing MCP v2 aliases."""
-    import cpex.tools.cli as plugins  # pylint: disable=import-outside-toplevel
-
-    return plugins
 
 
 def execution_records_supported() -> bool:

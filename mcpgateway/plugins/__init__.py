@@ -25,6 +25,8 @@ import random
 import time
 from typing import Any, Callable, Literal, Optional, TYPE_CHECKING, Union
 
+# Third-Party
+from cpex.framework import ObservabilityProvider, TenantPluginManager
 from pydantic import BaseModel, TypeAdapter
 from pydantic import ValidationError as _ValidationError
 
@@ -33,8 +35,6 @@ from mcpgateway.plugins import _state
 from mcpgateway.plugins._redis import get_shared_redis_client as _redis
 
 if TYPE_CHECKING:
-    from cpex.framework import ObservabilityProvider, TenantPluginManager
-
     from mcpgateway.plugins.gateway_plugin_manager import TenantPluginManagerFactory
 
 # --- Global plugin manager factory singleton ---

@@ -25,7 +25,7 @@ import sys
 from typing import Any, Dict, Optional
 
 # Third-Party
-import httpx2 as httpx
+import httpx
 import orjson
 
 # First-Party

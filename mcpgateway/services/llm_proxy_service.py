@@ -16,7 +16,7 @@ from typing import Any, AsyncGenerator, Dict, Optional, Tuple
 import uuid
 
 # Third-Party
-import httpx2 as httpx
+import httpx
 import orjson
 from sqlalchemy import select
 from sqlalchemy.orm import Session

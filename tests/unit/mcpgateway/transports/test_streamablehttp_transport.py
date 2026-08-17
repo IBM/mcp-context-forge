@@ -8099,7 +8099,7 @@ async def test_handle_streamable_http_get_heartbeat_loss_closes_stream_then_recl
 async def test_handle_streamable_http_get_replays_from_last_event_id(monkeypatch):
     """ADR-052 resume: ``Last-Event-Id`` causes replay of buffered events on connect."""
     # Third-Party
-    from mcp.types import JSONRPCNotification
+    from mcp.types import JSONRPCMessage, JSONRPCNotification
 
     # First-Party
     from mcpgateway.services.session_affinity import init_session_affinity  # pylint: disable=import-outside-toplevel
@@ -8120,8 +8120,8 @@ async def test_handle_streamable_http_get_replays_from_last_event_id(monkeypatch
 
     sid = "abc-123-resume"
     bus = await get_server_event_bus()
-    eid_a = await bus.publish(sid, JSONRPCNotification(jsonrpc="2.0", method="notifications/a"))
-    eid_b = await bus.publish(sid, JSONRPCNotification(jsonrpc="2.0", method="notifications/b"))
+    eid_a = await bus.publish(sid, JSONRPCMessage(JSONRPCNotification(jsonrpc="2.0", method="notifications/a")))
+    eid_b = await bus.publish(sid, JSONRPCMessage(JSONRPCNotification(jsonrpc="2.0", method="notifications/b")))
 
     wrapper = SessionManagerWrapper()
     await wrapper.initialize()
@@ -8252,7 +8252,7 @@ async def test_handle_streamable_http_get_preempt_then_reclaim_replays_gap_event
     publish.
     """
     # Third-Party
-    from mcp.types import JSONRPCNotification  # pylint: disable=import-outside-toplevel
+    from mcp.types import JSONRPCMessage, JSONRPCNotification  # pylint: disable=import-outside-toplevel
 
     # First-Party
     from mcpgateway.services.session_affinity import (  # pylint: disable=import-outside-toplevel
@@ -8278,14 +8278,14 @@ async def test_handle_streamable_http_get_preempt_then_reclaim_replays_gap_event
     sid = "sid-preempt-gap"
     bus = await get_server_event_bus()
     # Pre-existing event the first listener saw (we'll resume after this id).
-    eid_before = await bus.publish(sid, JSONRPCNotification(jsonrpc="2.0", method="notifications/before"))
+    eid_before = await bus.publish(sid, JSONRPCMessage(JSONRPCNotification(jsonrpc="2.0", method="notifications/before")))
 
     # Simulate a previous listener having held the slot, then losing it
     # via heartbeat preemption. The transport's heartbeat-loss test
     # already exercises that preemption path; here we just leave the
     # claim slot vacant and publish a "gap" event before the second
     # listener resumes.
-    eid_gap = await bus.publish(sid, JSONRPCNotification(jsonrpc="2.0", method="notifications/gap"))
+    eid_gap = await bus.publish(sid, JSONRPCMessage(JSONRPCNotification(jsonrpc="2.0", method="notifications/gap")))
 
     wrapper = SessionManagerWrapper()
     await wrapper.initialize()
@@ -9580,6 +9580,8 @@ async def test_local_affinity_post_routes_to_rpc(monkeypatch):
 
     await wrapper.shutdown()
     assert messages[0]["status"] == 200
+
+
 
 
 @pytest.mark.asyncio
@@ -16964,7 +16966,7 @@ async def test_dispatch_peek_outcome_body_none_on_fallthrough_raises_runtime_err
     # impossible "body=None on fall-through" shape that the invariant
     # guard must reject.
     peek = _BodyPeekResult(body=None, intercepted=False, disconnected=True)
-    object.__setattr__(peek, "disconnected", False)  # noqa: PLC2801
+    object.__setattr__(peek, "disconnected", False)
     with pytest.raises(RuntimeError, match="_BodyPeekResult invariant violation"):
         await _dispatch_peek_outcome(
             peek,

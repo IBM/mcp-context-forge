@@ -19,8 +19,8 @@ from __future__ import annotations
 import contextvars
 from typing import Any, Dict, Optional
 
-# First-Party
-from mcpgateway.plugins.cpex_compat import UserContext
+# Third-Party
+from cpex.framework import UserContext
 
 # Per-request HTTP headers. Set by the streamable-http ASGI layer before
 # dispatching into business logic; read by anything that needs the caller's

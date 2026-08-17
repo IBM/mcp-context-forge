@@ -19,7 +19,7 @@ import re
 from urllib.parse import urlsplit, urlunsplit
 
 # Third-Party
-import httpx2 as httpx
+import httpx
 from sqlalchemy import exists as sa_exists
 from starlette.types import Receive, Scope, Send
 

@@ -26,7 +26,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 import urllib.parse
 
 # Third-Party
-import httpx2 as httpx
+import httpx
 import jwt
 import orjson
 from sqlalchemy import and_, select

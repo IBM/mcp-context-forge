@@ -25,13 +25,14 @@ import time
 from typing import Any, Callable, Optional
 
 # Third-Party
+from cpex.framework import ConfigLoader, HookPayloadPolicy, ObservabilityProvider, OnError, PluginMode, TenantPluginManager
+from cpex.framework.models import Config
 from pydantic import BaseModel, ValidationError
 from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.plugins._redis import get_shared_redis_client as _redis
 from mcpgateway.plugins._state import active_local_mode_overrides, prune_expired_local_overrides
-from mcpgateway.plugins.cpex_compat import Config, ConfigLoader, HookPayloadPolicy, ObservabilityProvider, OnError, PluginMode, TenantPluginManager
 from mcpgateway.plugins.metadata import enrich_config_plugin_metadata
 from mcpgateway.services.tool_plugin_binding_service import get_bindings_for_tool
 

@@ -22,7 +22,7 @@ from typing import Any, Dict, List, Optional, Union
 from urllib.parse import parse_qsl, quote, urlparse
 
 # Third-Party
-import httpx2 as httpx
+import httpx
 import orjson
 from requests_oauthlib import OAuth2Session
 

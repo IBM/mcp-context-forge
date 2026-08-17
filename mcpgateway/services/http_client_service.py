@@ -49,7 +49,7 @@ import ssl
 from typing import AsyncIterator, Optional
 
 # Third-Party
-import httpx2 as httpx
+import httpx
 
 logger = logging.getLogger(__name__)
 

@@ -15,6 +15,7 @@ import logging
 from typing import Optional
 
 # Third-Party
+from cpex.framework import GlobalContext, HttpHeaderPayload, HttpHookType, HttpPostRequestPayload, HttpPreRequestPayload, PluginManager
 from fastapi import Request
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
@@ -22,7 +23,6 @@ from starlette.types import ASGIApp
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.plugins import get_plugin_manager
-from mcpgateway.plugins.cpex_compat import GlobalContext, HttpHeaderPayload, HttpHookType, HttpPostRequestPayload, HttpPreRequestPayload, PluginManager
 from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
 from mcpgateway.services.observability_service import current_trace_id
 from mcpgateway.utils.correlation_id import generate_correlation_id, get_correlation_id

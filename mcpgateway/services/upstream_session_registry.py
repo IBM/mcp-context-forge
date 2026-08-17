@@ -33,16 +33,15 @@ from typing import Any, AsyncIterator, Awaitable, Callable, Mapping, Optional, P
 
 # Third-Party
 import anyio
-import httpx2 as httpx
-from mcp import ClientSession
-from mcp import MCPError as McpError
+import httpx
+from mcp import ClientSession, McpError
 from mcp.client.sse import sse_client
+from mcp.client.streamable_http import streamablehttp_client
+from mcp.shared.session import RequestResponder
 import mcp.types as mcp_types
 
 # First-Party
-from mcpgateway.services.notification_service import RequestResponder
 from mcpgateway.transports.context import request_headers_var
-from mcpgateway.utils.mcp_v2_compat import streamablehttp_client
 from mcpgateway.utils.url_auth import sanitize_url_for_logging
 
 logger = logging.getLogger(__name__)

@@ -38,7 +38,7 @@ from typing import Any, Dict, Optional
 import uuid
 
 # Third-Party
-import httpx2 as httpx
+import httpx
 import orjson
 
 # First-Party

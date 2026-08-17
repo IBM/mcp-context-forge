@@ -49,9 +49,10 @@ import asyncio
 from dataclasses import dataclass, field
 from enum import Enum
 import time
-from typing import Any, Awaitable, Callable, Dict, Generic, Optional, Protocol, Set, TYPE_CHECKING, TypeVar, runtime_checkable
+from typing import Any, Awaitable, Callable, Dict, Optional, Set, TYPE_CHECKING
 
 # Third-Party
+from mcp.shared.session import RequestResponder
 import mcp.types as mcp_types
 
 # First-Party
@@ -60,38 +61,6 @@ from mcpgateway.services.logging_service import LoggingService
 if TYPE_CHECKING:
     # First-Party
     from mcpgateway.services.gateway_service import GatewayService
-
-_RequestT = TypeVar("_RequestT")
-_ResultT = TypeVar("_ResultT")
-
-
-@runtime_checkable
-class RequestResponder(Protocol, Generic[_RequestT, _ResultT]):
-    """Structural subset of the MCP responder used by notification forwarding.
-
-    ``runtime_checkable`` verifies attribute presence only; call signatures are
-    exercised by the forwarding tests and real SDK integration paths.
-    """
-
-    request_id: mcp_types.RequestId
-    request: _RequestT
-
-    def __enter__(self) -> "RequestResponder[_RequestT, _ResultT]":
-        """Enter the SDK responder context."""
-        ...
-
-    def __exit__(self, exc_type: Any, exc: Any, tb: Any) -> bool | None:
-        """Exit the SDK responder context."""
-        ...
-
-    async def respond(self, response: _ResultT) -> None:
-        """Send the downstream response back upstream."""
-        ...
-
-    async def cancel(self) -> None:
-        """Cancel the upstream request."""
-        ...
-
 
 # Type alias for message handler callback
 MessageHandlerCallback = Callable[
@@ -579,7 +548,7 @@ class NotificationService:
         """
         try:
             # Third-Party
-            from mcp.types import JSONRPCRequest  # pylint: disable=import-outside-toplevel
+            from mcp.types import JSONRPCMessage, JSONRPCRequest  # pylint: disable=import-outside-toplevel
 
             # First-Party
             from mcpgateway.transports.server_event_bus import get_server_event_bus  # pylint: disable=import-outside-toplevel
@@ -629,11 +598,13 @@ class NotificationService:
             with responder:
                 await responder.cancel()
             return
-        envelope = JSONRPCRequest(
-            jsonrpc="2.0",
-            id=responder.request_id,
-            method=method,
-            params=payload.get("params"),
+        envelope = JSONRPCMessage(
+            JSONRPCRequest(
+                jsonrpc="2.0",
+                id=responder.request_id,
+                method=method,
+                params=payload.get("params"),
+            )
         )
 
         loop = asyncio.get_running_loop()
@@ -827,7 +798,7 @@ class NotificationService:
             await responder.respond(error)
             return
         try:
-            result = mcp_types.client_result_adapter.validate_python(payload.get("result") or {})
+            result = mcp_types.ClientResult.model_validate(payload.get("result") or {})
         except ValidationError as exc:
             logger.warning("Could not validate downstream result, sending error: %s", exc)
             await responder.respond(
@@ -939,7 +910,7 @@ class NotificationService:
         """
         try:
             # Third-Party
-            from mcp.types import JSONRPCNotification  # pylint: disable=import-outside-toplevel
+            from mcp.types import JSONRPCMessage, JSONRPCNotification  # pylint: disable=import-outside-toplevel
 
             # First-Party
             from mcpgateway.transports.server_event_bus import get_server_event_bus  # pylint: disable=import-outside-toplevel
@@ -957,10 +928,11 @@ class NotificationService:
         # with a traceback rather than being bucketed as a publish
         # failure.
         try:
-            # Transitional while MCP v2 branches are rebased: older wrappers
-            # expose the typed notification under ``root``; MCP v2 passes the
-            # concrete notification model directly.
-            inner = notification.root if hasattr(notification, "root") else notification
+            # ServerNotification.root is the underlying typed notification
+            # (e.g. ToolsListChangedNotification). We re-wrap as a
+            # JSON-RPC envelope so the SSE listener can serialize it
+            # without knowing about MCP's typed-union shape.
+            inner = notification.root
             payload = inner.model_dump(by_alias=True, exclude_none=True)
         except (AttributeError, ValidationError, TypeError, ValueError) as exc:
             logger.warning(
@@ -980,10 +952,12 @@ class NotificationService:
                 sorted(payload.keys()) if isinstance(payload, dict) else type(payload).__name__,
             )
             return
-        envelope = JSONRPCNotification(
-            jsonrpc="2.0",
-            method=method,
-            params=payload.get("params"),
+        envelope = JSONRPCMessage(
+            JSONRPCNotification(
+                jsonrpc="2.0",
+                method=method,
+                params=payload.get("params"),
+            )
         )
         # Separate try for bus-get vs publish so a ``get_server_event_bus``
         # programming bug doesn't get bucketed as ``transport_error``.
@@ -1025,9 +999,9 @@ class NotificationService:
         """
         self._notifications_received += 1
 
-        # Transitional while MCP v2 branches are rebased: older wrappers used
-        # ``root``; MCP v2 passes the concrete notification model directly.
-        notification_root = notification.root if hasattr(notification, "root") else notification
+        # Extract notification type from the notification object
+        # ServerNotification has a 'root' attribute containing the actual notification
+        notification_root = notification.root
 
         # Check for list_changed notifications
         notification_type: Optional[NotificationType] = None

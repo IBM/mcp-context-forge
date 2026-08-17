@@ -14,10 +14,9 @@ import logging
 from typing import Any, Dict, List, Optional, Union
 
 # Third-Party
+from cpex.framework import PluginManager
+from cpex.framework.models import PluginMode
 from fastapi import Request
-
-# First-Party
-from mcpgateway.plugins.cpex_compat import PluginManager, PluginMode
 
 logger = logging.getLogger(__name__)
 

@@ -33,12 +33,24 @@ import uuid
 
 # Third-Party
 import anyio
-import httpx2 as httpx
+from cpex.framework import (
+    GlobalContext,
+    HttpHeaderPayload,
+    PluginContextTable,
+    PluginError,
+    PluginViolationError,
+    ToolHookType,
+    ToolPostInvokePayload,
+    ToolPreInvokePayload,
+)
+from cpex.framework.constants import GATEWAY_METADATA, TOOL_METADATA
+import httpx
 import jq
 import jsonschema
 from jsonschema import Draft4Validator, Draft6Validator, Draft7Validator, validators
 from mcp import ClientSession, types
 from mcp.client.sse import sse_client
+from mcp.client.streamable_http import streamablehttp_client
 import orjson
 from pydantic import BaseModel, ValidationError
 from sqlalchemy import and_, delete, desc, or_, select
@@ -60,20 +72,6 @@ from mcpgateway.db import get_for_update, server_tool_association
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric, ToolMetricsHourly
 from mcpgateway.observability import create_child_span, create_span, inject_trace_context_headers, otel_context_active, set_span_attribute, set_span_error
-from mcpgateway.plugins.cpex_compat import (
-    GATEWAY_METADATA,
-    GlobalContext,
-    HttpHeaderPayload,
-    payload_matches,
-    PluginContextTable,
-    PluginError,
-    PluginMode,
-    PluginViolationError,
-    ToolHookType,
-    ToolPostInvokePayload,
-    ToolPreInvokePayload,
-    TOOL_METADATA,
-)
 from mcpgateway.plugins.control_telemetry import ControlTelemetryAccumulator, record_control_telemetry
 from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
 from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolMetrics, ToolRead, ToolUpdate, TopPerformer
@@ -105,7 +103,6 @@ from mcpgateway.utils.header_filtering import filter_sensitive_headers
 from mcpgateway.utils.identity_propagation import build_identity_headers, build_identity_meta
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
 from mcpgateway.utils.metrics_common import build_top_performers
-from mcpgateway.utils.mcp_v2_compat import streamablehttp_client
 from mcpgateway.utils.pagination import decode_cursor, encode_cursor, unified_paginate
 from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cached
 from mcpgateway.utils.retry_manager import ResilientHttpClient
@@ -4611,6 +4608,10 @@ class ToolService(BaseService):
         """
         if not plugin_manager or not plugin_manager.has_hooks_for(ToolHookType.TOOL_POST_INVOKE):
             return (None, False)
+
+        # Third-Party
+        from cpex.framework import PluginMode  # pylint: disable=import-outside-toplevel
+        from cpex.framework.utils import payload_matches  # pylint: disable=import-outside-toplevel
 
         global_context = hook_global_context or GlobalContext(request_id=get_correlation_id() or uuid.uuid4().hex)
         payload = ToolPostInvokePayload(name=tool_name, result={})

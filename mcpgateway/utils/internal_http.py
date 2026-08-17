@@ -13,7 +13,7 @@ self-calls to local endpoints like /rpc.
 import os
 
 # Third-Party
-import httpx2 as httpx
+import httpx
 
 # First-Party
 from mcpgateway.config import settings

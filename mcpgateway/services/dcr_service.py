@@ -18,7 +18,7 @@ from typing import Any, Dict, List
 from urllib.parse import urlsplit
 
 # Third-Party
-import httpx2 as httpx
+import httpx
 import orjson
 from sqlalchemy.orm import Session
 
