@@ -1186,6 +1186,49 @@ class Settings(BaseSettings):
 
     # Domain configuration
     app_domain: HttpUrl = Field(default=HttpUrl("http://localhost:4444"))
+    ui_base_url: Optional[HttpUrl] = Field(
+        default=None,
+        description="Trusted base URL for browser-facing UI links. Falls back to APP_DOMAIN plus APP_ROOT_PATH when unset.",
+    )
+
+    @field_validator("ui_base_url", mode="before")
+    @classmethod
+    def normalize_ui_base_url(cls, value: object) -> object:
+        """Treat an empty environment override as unset.
+
+        Args:
+            value: Raw configured frontend base URL.
+
+        Returns:
+            object: ``None`` for blank strings, otherwise the original value.
+        """
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
+    @field_validator("ui_base_url")
+    @classmethod
+    def validate_ui_base_url(cls, value: Optional[HttpUrl]) -> Optional[HttpUrl]:
+        """Reject URL components unsuitable for a trusted frontend base.
+
+        Args:
+            value: Configured frontend base URL.
+
+        Returns:
+            Optional[HttpUrl]: Validated frontend base URL.
+
+        Raises:
+            ValueError: If credentials, query parameters, or fragments are present.
+        """
+        if value is None:
+            return None
+        if value.username or value.password:
+            raise ValueError("UI_BASE_URL must not contain credentials")
+        if value.query:
+            raise ValueError("UI_BASE_URL must not contain a query string")
+        if value.fragment:
+            raise ValueError("UI_BASE_URL must not contain a fragment")
+        return value
 
     # Security settings
     secure_cookies: bool = Field(default=True)
@@ -1587,6 +1630,18 @@ class Settings(BaseSettings):
 
             if self.debug and not self.dev_mode:
                 logger.warning("🐛 SECURITY WARNING: Debug mode is enabled in non-dev mode. This may leak sensitive information! Set DEBUG=false for production.")
+
+            if self.smtp_enabled and self.ui_base_url is None:
+                password_route_warning = (
+                    "Password-recovery links will use legacy /admin routes because MCPGATEWAY_ADMIN_API_ENABLED=true."
+                    if self.mcpgateway_admin_api_enabled
+                    else "Password-recovery links will use frontend /forgot-password and /reset-password/{token} routes because MCPGATEWAY_ADMIN_API_ENABLED=false."
+                )
+                logger.warning(
+                    "SMTP_ENABLED=true while UI_BASE_URL is unset. Invitation links will use APP_DOMAIN plus "
+                    "APP_ROOT_PATH and require /accept-invitation/{token}. %s Configure UI_BASE_URL for the React client.",
+                    password_route_warning,
+                )
 
         # CSRF secret key fallback to JWT secret key.
         # NOTE: SecretStr("") is truthy, so the emptiness check must go through

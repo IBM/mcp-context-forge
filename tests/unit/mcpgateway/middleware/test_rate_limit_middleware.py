@@ -114,6 +114,7 @@ class TestRateLimitMiddlewareTiers:
     def mock_request(self):
         """Create mock HTTP request."""
         request = MagicMock()
+        request.method = "GET"
         request.headers = {}
         request.client.host = "192.168.1.100"
         request.url.path = "/api/test"
@@ -149,6 +150,36 @@ class TestRateLimitMiddlewareTiers:
         tier = middleware.get_endpoint_tier("/auth/email/login")
         assert tier["limit"] == 10
         assert tier["burst"] == 0
+
+    def test_endpoint_tier_critical_for_team_invitations(self, middleware):
+        """Only SMTP-producing POST invitation requests use the strict tier."""
+        for path in ("/teams/team-123/invitations", "/v1/teams/team-123/invitations"):
+            post_tier = middleware.get_endpoint_tier(path, "POST")
+
+            assert post_tier["limit"] == 10
+            assert post_tier["burst"] == 0
+            assert middleware._get_tier_name(path, "POST") == "CRITICAL_INVITATION"
+            assert middleware.get_endpoint_tier(path, "GET") == middleware.default_tier
+            assert middleware._get_tier_name(path, "GET") == "LOW"
+
+    @pytest.mark.asyncio
+    async def test_invitation_get_and_post_use_separate_rate_limit_buckets(self, middleware, mock_request):
+        """Read-only invitation polling cannot consume SMTP invitation quota."""
+        mock_request.url.path = "/teams/team-123/invitations"
+        mock_request.state.user_email = None
+        mock_request.state.user = None
+        mock_request.state.team_id = None
+        call_next = AsyncMock(side_effect=lambda _request: MagicMock(headers={}))
+
+        mock_request.method = "GET"
+        get_response = await middleware.dispatch(mock_request, call_next)
+        mock_request.method = "POST"
+        post_response = await middleware.dispatch(mock_request, call_next)
+
+        assert get_response.headers["X-RateLimit-Limit"] == "500"
+        assert post_response.headers["X-RateLimit-Limit"] == "10"
+        assert "ratelimit:ip:192.168.1.100:LOW" in middleware._memory_store
+        assert "ratelimit:ip:192.168.1.100:CRITICAL_INVITATION" in middleware._memory_store
 
     def test_endpoint_tier_high(self, middleware):
         """Test HIGH tier detection for token endpoints."""

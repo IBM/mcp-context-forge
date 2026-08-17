@@ -16,16 +16,52 @@ import re
 import smtplib
 import ssl
 from typing import Any, Dict, Optional
+import urllib.parse
 
 # Third-Party
 from jinja2 import Environment, FileSystemLoader, select_autoescape, TemplateNotFound
 
 # First-Party
+from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
+from mcpgateway.schemas import EmailDeliveryStatus
 from mcpgateway.services.logging_service import LoggingService
 
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
+
+
+def build_frontend_url(path: str, token: Optional[str] = None) -> str:
+    """Build a trusted browser-facing URL for email notifications.
+
+    Args:
+        path: Frontend route beginning with ``/``.
+        token: Optional secret token appended as one URL-encoded path segment.
+
+    Returns:
+        str: Absolute frontend URL.
+
+    Raises:
+        ValueError: If path is not an absolute frontend route.
+    """
+    if not path.startswith("/") or path.startswith("//"):
+        raise ValueError("Frontend path must start with exactly one slash")
+
+    configured_ui_base = getattr(settings, "ui_base_url", None)
+    if configured_ui_base:
+        base_url = str(configured_ui_base).rstrip("/")
+    else:
+        app_domain = str(getattr(settings, "app_domain", "http://localhost:4444")).rstrip("/")
+        root_path = str(getattr(settings, "app_root_path", "") or "").strip("/")
+        base_url = f"{app_domain}/{root_path}" if root_path else app_domain
+        # Preserve bundled Admin UI password recovery only when those routes are mounted.
+        if path in {"/forgot-password", "/reset-password"} and settings.mcpgateway_admin_api_enabled:
+            path = f"/admin{path}"
+
+    url = f"{base_url}{path}"
+    if token is not None:
+        url = f"{url.rstrip('/')}/{urllib.parse.quote(token, safe='')}"
+    return url
 
 
 class AuthEmailNotificationService:
@@ -97,13 +133,14 @@ class AuthEmailNotificationService:
         compact = re.sub(r"\s+", " ", no_tags).strip()
         return compact
 
-    async def _send_email(self, to_email: str, subject: str, html_body: str) -> bool:
+    async def _send_email(self, to_email: str, subject: str, html_body: str, text_body: Optional[str] = None) -> bool:
         """Send an email asynchronously.
 
         Args:
             to_email: Destination email address.
             subject: Message subject.
             html_body: HTML message body.
+            text_body: Optional explicit plaintext message body.
 
         Returns:
             bool: True when message is sent successfully.
@@ -111,15 +148,16 @@ class AuthEmailNotificationService:
         if not self._smtp_ready():
             logger.info("SMTP not configured. Skipping email to %s with subject '%s'.", to_email, subject)
             return False
-        return await asyncio.to_thread(self._send_email_sync, to_email, subject, html_body)
+        return await asyncio.to_thread(self._send_email_sync, to_email, subject, html_body, text_body)
 
-    def _send_email_sync(self, to_email: str, subject: str, html_body: str) -> bool:
+    def _send_email_sync(self, to_email: str, subject: str, html_body: str, text_body: Optional[str] = None) -> bool:
         """Send an email synchronously over SMTP.
 
         Args:
             to_email: Destination email address.
             subject: Message subject.
             html_body: HTML message body.
+            text_body: Optional explicit plaintext message body.
 
         Returns:
             bool: True when message is sent successfully.
@@ -133,7 +171,7 @@ class AuthEmailNotificationService:
         message["Subject"] = subject
         message["From"] = formataddr((from_name, from_email))
         message["To"] = to_email
-        message.set_content(self._html_to_text(html_body))
+        message.set_content(text_body or self._html_to_text(html_body))
         message.add_alternative(html_body, subtype="html")
 
         smtp_host = str(getattr(settings, "smtp_host", ""))
@@ -161,8 +199,103 @@ class AuthEmailNotificationService:
             logger.info("Auth notification email sent to %s", to_email)
             return True
         except Exception as exc:
-            logger.warning("Failed to send auth notification email to %s: %s", to_email, exc)
+            logger.warning("Failed to send auth notification email to %s (%s)", to_email, type(exc).__name__)
             return False
+
+    async def send_team_invitation_email(
+        self,
+        to_email: str,
+        team_name: str,
+        inviter_name: str,
+        role: str,
+        invitation_url: str,
+        expires_at: str,
+        token: str,
+    ) -> bool:
+        """Send a team invitation email.
+
+        Args:
+            to_email: Destination email address.
+            team_name: Invited team display name.
+            inviter_name: Inviter display name.
+            role: Role granted after acceptance.
+            invitation_url: Trusted frontend acceptance URL.
+            expires_at: Invitation expiry timestamp.
+            token: Raw invitation token included as fallback.
+
+        Returns:
+            bool: True when message is sent successfully.
+        """
+        subject = f"Invitation to join {team_name} on ContextForge"
+        html_body = self._render_template(
+            template_name="team_invitation_email.html",
+            context={
+                "recipient_email": to_email,
+                "team_name": team_name,
+                "inviter_name": inviter_name,
+                "role": role,
+                "invitation_url": invitation_url,
+                "expires_at": expires_at,
+                "token": token,
+            },
+            fallback_title="Team invitation",
+            fallback_body=f"{inviter_name} invited you to join {team_name} as {role}. Accept: {invitation_url}\nExpires: {expires_at}\nToken: {token}",
+        )
+        text_body = (
+            "ContextForge team invitation\n\n"
+            f"{inviter_name} invited you to join {team_name} as {role}.\n\n"
+            f"Accept invitation: {invitation_url}\n"
+            f"Expires: {expires_at}\n\n"
+            f"Fallback invitation token: {token}\n"
+        )
+        return await self._send_email(to_email, subject, html_body, text_body)
+
+    async def deliver_team_invitation_email(
+        self,
+        invitation_id: str,
+        to_email: str,
+        team_name: str,
+        inviter_name: str,
+        role: str,
+        invitation_url: str,
+        expires_at: str,
+        token: str,
+    ) -> EmailDeliveryStatus:
+        """Deliver a persisted invitation without exposing transport failures.
+
+        Args:
+            invitation_id: Persisted invitation identifier used for safe logging.
+            to_email: Destination email address.
+            team_name: Invited team display name.
+            inviter_name: Inviter display name.
+            role: Role granted after acceptance.
+            invitation_url: Trusted frontend acceptance URL.
+            expires_at: Invitation expiry timestamp.
+            token: Raw invitation token included in the email only.
+
+        Returns:
+            EmailDeliveryStatus: Delivery outcome.
+        """
+        if not getattr(settings, "smtp_enabled", False):
+            return EmailDeliveryStatus.DISABLED
+
+        try:
+            sent = await self.send_team_invitation_email(
+                to_email=to_email,
+                team_name=team_name,
+                inviter_name=inviter_name,
+                role=role,
+                invitation_url=invitation_url,
+                expires_at=expires_at,
+                token=token,
+            )
+        except Exception:  # pragma: no cover - defensive boundary around best-effort delivery
+            sent = False
+
+        if sent:
+            return EmailDeliveryStatus.SENT
+        logger.warning("Team invitation email delivery failed for invitation %s", SecurityValidator.sanitize_log_message(invitation_id))
+        return EmailDeliveryStatus.FAILED
 
     async def send_password_reset_email(self, to_email: str, full_name: Optional[str], reset_url: str, expires_minutes: int) -> bool:
         """Send password-reset email containing a one-time reset link.
