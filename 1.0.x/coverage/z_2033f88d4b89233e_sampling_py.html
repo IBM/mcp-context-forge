@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-    <title>Coverage for mcpgateway/handlers/sampling.py: 99%</title>
+    <title>Coverage for mcpgateway/handlers/sampling.py: 97%</title>
     <link rel="icon" sizes="32x32" href="favicon_32_cb_c827f16f.png">
     <link rel="stylesheet" href="style_cb_4667309f.css" type="text/css">
     <script src="coverage_html_cb_dd2e7eb5.js" defer></script>
@@ -12,7 +12,7 @@
     <div class="content">
         <h1>
             <span class="text">Coverage for </span><b>mcpgateway<span class="sep">/</span>handlers<span class="sep">/</span>sampling.py</b>:
-            <span class="pc_cov">99%</span>
+            <span class="pc_cov">97%</span>
         </h1>
         <aside id="help_panel_wrapper">
             <input id="help_panel_state" type="checkbox">
@@ -55,8 +55,8 @@
         </aside>
         <h2>
             <span class="text">88 statements &nbsp;</span>
-            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">87<span class="text"> run</span></button>
-            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">1<span class="text"> missing</span></button>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">85<span class="text"> run</span></button>
+            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">3<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
         </h2>
         <p class="text">
@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_2033f88d4b89233e_signal_handlers_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.2">coverage.py v7.15.2</a>,
-            created at 2026-07-30 17:23 +0100
+            created at 2026-08-14 09:49 +0100
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -187,7 +187,7 @@
     <p class="pln"><span class="n"><a id="t105" href="#t105">105</a></span><span class="t"><span class="str">            >>> asyncio.run(handler.initialize())</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t106" href="#t106">106</a></span><span class="t"><span class="str">            >>> # Handler is now initialized</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t107" href="#t107">107</a></span><span class="t"><span class="str">        """</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t108" href="#t108">108</a></span><span class="t">        <span class="nam">logger</span><span class="op">.</span><span class="nam">info</span><span class="op">(</span><span class="str">"Initializing sampling handler"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t108" href="#t108">108</a></span><span class="t">        <span class="nam">logger</span><span class="op">.</span><span class="nam">info</span><span class="op">(</span><span class="str">"Initializing sampling handler"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t109" href="#t109">109</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t110" href="#t110">110</a></span><span class="t">    <span class="key">async</span> <span class="key">def</span> <span class="nam">shutdown</span><span class="op">(</span><span class="nam">self</span><span class="op">)</span> <span class="op">-></span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t111" href="#t111">111</a></span><span class="t">        <span class="str">"""Shutdown sampling handler.</span>&nbsp;</span><span class="r"></span></p>
@@ -199,7 +199,7 @@
     <p class="pln"><span class="n"><a id="t117" href="#t117">117</a></span><span class="t"><span class="str">            >>> asyncio.run(handler.shutdown())</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t118" href="#t118">118</a></span><span class="t"><span class="str">            >>> # Handler is now shut down</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t119" href="#t119">119</a></span><span class="t"><span class="str">        """</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t120" href="#t120">120</a></span><span class="t">        <span class="nam">logger</span><span class="op">.</span><span class="nam">info</span><span class="op">(</span><span class="str">"Shutting down sampling handler"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t120" href="#t120">120</a></span><span class="t">        <span class="nam">logger</span><span class="op">.</span><span class="nam">info</span><span class="op">(</span><span class="str">"Shutting down sampling handler"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t121" href="#t121">121</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t122" href="#t122">122</a></span><span class="t">    <span class="key">async</span> <span class="key">def</span> <span class="nam">create_message</span><span class="op">(</span><span class="nam">self</span><span class="op">,</span> <span class="nam">db</span><span class="op">:</span> <span class="nam">Session</span><span class="op">,</span> <span class="nam">request</span><span class="op">:</span> <span class="nam">Dict</span><span class="op">[</span><span class="nam">str</span><span class="op">,</span> <span class="nam">Any</span><span class="op">]</span><span class="op">)</span> <span class="op">-></span> <span class="nam">CreateMessageResult</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t123" href="#t123">123</a></span><span class="t">        <span class="str">"""Create message from sampling request.</span>&nbsp;</span><span class="r"></span></p>
@@ -288,7 +288,7 @@
     <p class="pln"><span class="n"><a id="t206" href="#t206">206</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t207" href="#t207">207</a></span><span class="t">            <span class="com"># Select model</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t208" href="#t208">208</a></span><span class="t">            <span class="nam">model</span> <span class="op">=</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_select_model</span><span class="op">(</span><span class="nam">model_prefs</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t209" href="#t209">209</a></span><span class="t">            <span class="nam">logger</span><span class="op">.</span><span class="nam">info</span><span class="op">(</span><span class="str">f"Selected model: {model}"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t209" href="#t209">209</a></span><span class="t">            <span class="nam">logger</span><span class="op">.</span><span class="nam">info</span><span class="op">(</span><span class="fst">f"</span><span class="fst">Selected model: </span><span class="op">{</span><span class="nam">model</span><span class="op">}</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t210" href="#t210">210</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t211" href="#t211">211</a></span><span class="t">            <span class="com"># Include context if requested</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t212" href="#t212">212</a></span><span class="t">            <span class="key">if</span> <span class="nam">include_context</span> <span class="op">!=</span> <span class="str">"none"</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
@@ -297,7 +297,7 @@
     <p class="pln"><span class="n"><a id="t215" href="#t215">215</a></span><span class="t">            <span class="com"># Validate messages</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t216" href="#t216">216</a></span><span class="t">            <span class="key">for</span> <span class="nam">msg</span> <span class="key">in</span> <span class="nam">messages</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t217" href="#t217">217</a></span><span class="t">                <span class="key">if</span> <span class="key">not</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_validate_message</span><span class="op">(</span><span class="nam">msg</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t218" href="#t218">218</a></span><span class="t">                    <span class="key">raise</span> <span class="nam">SamplingError</span><span class="op">(</span><span class="str">f"Invalid message format: {msg}"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t218" href="#t218">218</a></span><span class="t">                    <span class="key">raise</span> <span class="nam">SamplingError</span><span class="op">(</span><span class="fst">f"</span><span class="fst">Invalid message format: </span><span class="op">{</span><span class="nam">msg</span><span class="op">}</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t219" href="#t219">219</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t220" href="#t220">220</a></span><span class="t">            <span class="com"># TODO: Implement actual model sampling - currently returns mock response  # pylint: disable=fixme</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t221" href="#t221">221</a></span><span class="t">            <span class="com"># For now return mock response</span>&nbsp;</span><span class="r"></span></p>
@@ -312,7 +312,7 @@
     <p class="run run2"><span class="n"><a id="t230" href="#t230">230</a></span><span class="t">            <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t231" href="#t231">231</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t232" href="#t232">232</a></span><span class="t">        <span class="key">except</span> <span class="nam">Exception</span> <span class="key">as</span> <span class="nam">e</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t233" href="#t233">233</a></span><span class="t">            <span class="nam">logger</span><span class="op">.</span><span class="nam">error</span><span class="op">(</span><span class="str">f"Sampling error: {e}"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t233" href="#t233">233</a></span><span class="t">            <span class="nam">logger</span><span class="op">.</span><span class="nam">error</span><span class="op">(</span><span class="fst">f"</span><span class="fst">Sampling error: </span><span class="op">{</span><span class="nam">e</span><span class="op">}</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t234" href="#t234">234</a></span><span class="t">            <span class="key">raise</span> <span class="nam">SamplingError</span><span class="op">(</span><span class="nam">str</span><span class="op">(</span><span class="nam">e</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t235" href="#t235">235</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t236" href="#t236">236</a></span><span class="t">    <span class="key">def</span> <span class="nam">_select_model</span><span class="op">(</span><span class="nam">self</span><span class="op">,</span> <span class="nam">preferences</span><span class="op">:</span> <span class="nam">ModelPreferences</span><span class="op">)</span> <span class="op">-></span> <span class="nam">str</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
@@ -596,7 +596,7 @@
     <p class="run"><span class="n"><a id="t514" href="#t514">514</a></span><span class="t">            <span class="nam">user_text</span> <span class="op">=</span> <span class="str">"I see the image you shared."</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t515" href="#t515">515</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t516" href="#t516">516</a></span><span class="t">        <span class="com"># Generate simple response</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t517" href="#t517">517</a></span><span class="t">        <span class="key">return</span> <span class="str">f"You said: {user_text}\nHere is my response..."</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t517" href="#t517">517</a></span><span class="t">        <span class="key">return</span> <span class="fst">f"</span><span class="fst">You said: </span><span class="op">{</span><span class="nam">user_text</span><span class="op">}</span><span class="fst">\nHere is my response...</span><span class="fst">"</span>&nbsp;</span><span class="r"></span></p>
 </main>
 <footer>
     <div class="content">
@@ -606,7 +606,7 @@
             <a class="nav" href="z_2033f88d4b89233e_signal_handlers_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.2">coverage.py v7.15.2</a>,
-            created at 2026-07-30 17:23 +0100
+            created at 2026-08-14 09:49 +0100
         </p>
     </div>
 </footer>

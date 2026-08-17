@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_de063dc4b78b8d71_metadata_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.2">coverage.py v7.15.2</a>,
-            created at 2026-07-30 17:23 +0100
+            created at 2026-08-14 09:49 +0100
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -335,7 +335,7 @@
     <p class="run"><span class="n"><a id="t253" href="#t253">253</a></span><span class="t">            <span class="nam">client</span> <span class="op">=</span> <span class="key">None</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t254" href="#t254">254</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t255" href="#t255">255</a></span><span class="t">        <span class="key">if</span> <span class="nam">client</span> <span class="key">is</span> <span class="key">not</span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t256" href="#t256">256</a></span><span class="t">            <span class="nam">keys</span> <span class="op">=</span> <span class="op">[</span><span class="str">f"plugin:{p.name}:mode"</span> <span class="key">for</span> <span class="nam">p</span> <span class="key">in</span> <span class="nam">config</span><span class="op">.</span><span class="nam">plugins</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t256" href="#t256">256</a></span><span class="t">            <span class="nam">keys</span> <span class="op">=</span> <span class="op">[</span><span class="fst">f"</span><span class="fst">plugin:</span><span class="op">{</span><span class="nam">p</span><span class="op">.</span><span class="nam">name</span><span class="op">}</span><span class="fst">:mode</span><span class="fst">"</span> <span class="key">for</span> <span class="nam">p</span> <span class="key">in</span> <span class="nam">config</span><span class="op">.</span><span class="nam">plugins</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t257" href="#t257">257</a></span><span class="t">            <span class="key">try</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t258" href="#t258">258</a></span><span class="t">                <span class="nam">redis_values</span> <span class="op">=</span> <span class="nam">list</span><span class="op">(</span><span class="key">await</span> <span class="nam">client</span><span class="op">.</span><span class="nam">mget</span><span class="op">(</span><span class="nam">keys</span><span class="op">)</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t259" href="#t259">259</a></span><span class="t">            <span class="key">except</span> <span class="nam">Exception</span> <span class="key">as</span> <span class="nam">exc</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
@@ -503,7 +503,7 @@
     <p class="run"><span class="n"><a id="t421" href="#t421">421</a></span><span class="t">    <span class="key">async</span> <span class="key">def</span> <span class="nam">invalidate_team</span><span class="op">(</span><span class="nam">self</span><span class="op">,</span> <span class="nam">team_id</span><span class="op">:</span> <span class="nam">str</span><span class="op">,</span> <span class="nam">separator</span><span class="op">:</span> <span class="nam">Optional</span><span class="op">[</span><span class="nam">str</span><span class="op">]</span> <span class="op">=</span> <span class="key">None</span><span class="op">)</span> <span class="op">-></span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t422" href="#t422">422</a></span><span class="t">        <span class="str">"""Reload every cached manager whose context_id starts with team_id plus separator."""</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t423" href="#t423">423</a></span><span class="t">        <span class="nam">sep</span> <span class="op">=</span> <span class="nam">separator</span> <span class="key">if</span> <span class="nam">separator</span> <span class="key">is</span> <span class="key">not</span> <span class="key">None</span> <span class="key">else</span> <span class="nam">CONTEXT_ID_SEPARATOR</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t424" href="#t424">424</a></span><span class="t">        <span class="nam">prefix</span> <span class="op">=</span> <span class="str">f"{team_id}{sep}"</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t424" href="#t424">424</a></span><span class="t">        <span class="nam">prefix</span> <span class="op">=</span> <span class="fst">f"</span><span class="op">{</span><span class="nam">team_id</span><span class="op">}</span><span class="op">{</span><span class="nam">sep</span><span class="op">}</span><span class="fst">"</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t425" href="#t425">425</a></span><span class="t">        <span class="key">async</span> <span class="key">with</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_lock</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t426" href="#t426">426</a></span><span class="t">            <span class="nam">context_ids</span> <span class="op">=</span> <span class="op">[</span><span class="nam">cid</span> <span class="key">for</span> <span class="nam">cid</span> <span class="key">in</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_managers</span> <span class="key">if</span> <span class="nam">cid</span><span class="op">.</span><span class="nam">startswith</span><span class="op">(</span><span class="nam">prefix</span><span class="op">)</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t427" href="#t427">427</a></span><span class="t">        <span class="nam">results</span> <span class="op">=</span> <span class="key">await</span> <span class="nam">asyncio</span><span class="op">.</span><span class="nam">gather</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
@@ -526,7 +526,7 @@
     <p class="pln"><span class="n"><a id="t444" href="#t444">444</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t445" href="#t445">445</a></span><span class="t"><span class="key">def</span> <span class="nam">make_context_id</span><span class="op">(</span><span class="nam">team_id</span><span class="op">:</span> <span class="nam">str</span><span class="op">,</span> <span class="nam">tool_name</span><span class="op">:</span> <span class="nam">str</span><span class="op">)</span> <span class="op">-></span> <span class="nam">str</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t446" href="#t446">446</a></span><span class="t">    <span class="str">"""Build the context_id string expected by TenantPluginManagerFactory."""</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t447" href="#t447">447</a></span><span class="t">    <span class="key">return</span> <span class="str">f"{team_id}{CONTEXT_ID_SEPARATOR}{tool_name}"</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t447" href="#t447">447</a></span><span class="t">    <span class="key">return</span> <span class="fst">f"</span><span class="op">{</span><span class="nam">team_id</span><span class="op">}</span><span class="op">{</span><span class="nam">CONTEXT_ID_SEPARATOR</span><span class="op">}</span><span class="op">{</span><span class="nam">tool_name</span><span class="op">}</span><span class="fst">"</span>&nbsp;</span><span class="r"></span></p>
 </main>
 <footer>
     <div class="content">
@@ -536,7 +536,7 @@
             <a class="nav" href="z_de063dc4b78b8d71_metadata_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.2">coverage.py v7.15.2</a>,
-            created at 2026-07-30 17:23 +0100
+            created at 2026-08-14 09:49 +0100
         </p>
     </div>
 </footer>

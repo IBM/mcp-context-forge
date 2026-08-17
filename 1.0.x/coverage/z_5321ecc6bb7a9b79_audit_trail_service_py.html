@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_5321ecc6bb7a9b79_base_service_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.2">coverage.py v7.15.2</a>,
-            created at 2026-07-30 17:23 +0100
+            created at 2026-08-14 09:49 +0100
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -422,14 +422,14 @@
     <p class="pln"><span class="n"><a id="t340" href="#t340">340</a></span><span class="t">        <span class="key">else</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t341" href="#t341">341</a></span><span class="t">            <span class="nam">severity</span> <span class="op">=</span> <span class="str">"LOW"</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t342" href="#t342">342</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t343" href="#t343">343</a></span><span class="t">        <span class="nam">description</span> <span class="op">=</span> <span class="str">f"Audit action {action_normalized} on {resource_type}/{resource_id}"</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t343" href="#t343">343</a></span><span class="t">        <span class="nam">description</span> <span class="op">=</span> <span class="fst">f"</span><span class="fst">Audit action </span><span class="op">{</span><span class="nam">action_normalized</span><span class="op">}</span><span class="fst"> on </span><span class="op">{</span><span class="nam">resource_type</span><span class="op">}</span><span class="fst">/</span><span class="op">{</span><span class="nam">resource_id</span><span class="op">}</span><span class="fst">"</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t344" href="#t344">344</a></span><span class="t">        <span class="key">if</span> <span class="nam">resource_name</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t345" href="#t345">345</a></span><span class="t">            <span class="nam">description</span> <span class="op">=</span> <span class="str">f"{description} ({resource_name})"</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t345" href="#t345">345</a></span><span class="t">            <span class="nam">description</span> <span class="op">=</span> <span class="fst">f"</span><span class="op">{</span><span class="nam">description</span><span class="op">}</span><span class="fst"> (</span><span class="op">{</span><span class="nam">resource_name</span><span class="op">}</span><span class="fst">)</span><span class="fst">"</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t346" href="#t346">346</a></span><span class="t">        <span class="key">if</span> <span class="nam">error_message</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t347" href="#t347">347</a></span><span class="t">            <span class="nam">description</span> <span class="op">=</span> <span class="str">f"{description}: {error_message}"</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t347" href="#t347">347</a></span><span class="t">            <span class="nam">description</span> <span class="op">=</span> <span class="fst">f"</span><span class="op">{</span><span class="nam">description</span><span class="op">}</span><span class="fst">: </span><span class="op">{</span><span class="nam">error_message</span><span class="op">}</span><span class="fst">"</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t348" href="#t348">348</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t349" href="#t349">349</a></span><span class="t">        <span class="nam">event_payload</span><span class="op">:</span> <span class="nam">Dict</span><span class="op">[</span><span class="nam">str</span><span class="op">,</span> <span class="nam">Any</span><span class="op">]</span> <span class="op">=</span> <span class="op">{</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t350" href="#t350">350</a></span><span class="t">            <span class="str">"event_type"</span><span class="op">:</span> <span class="str">f"audit_{action_normalized.lower()}"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t350" href="#t350">350</a></span><span class="t">            <span class="str">"event_type"</span><span class="op">:</span> <span class="fst">f"</span><span class="fst">audit_</span><span class="op">{</span><span class="nam">action_normalized</span><span class="op">.</span><span class="nam">lower</span><span class="op">(</span><span class="op">)</span><span class="op">}</span><span class="fst">"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t351" href="#t351">351</a></span><span class="t">            <span class="str">"severity"</span><span class="op">:</span> <span class="nam">severity</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t352" href="#t352">352</a></span><span class="t">            <span class="str">"category"</span><span class="op">:</span> <span class="str">"audit"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t353" href="#t353">353</a></span><span class="t">            <span class="str">"description"</span><span class="op">:</span> <span class="nam">description</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
@@ -692,7 +692,7 @@
             <a class="nav" href="z_5321ecc6bb7a9b79_base_service_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.2">coverage.py v7.15.2</a>,
-            created at 2026-07-30 17:23 +0100
+            created at 2026-08-14 09:49 +0100
         </p>
     </div>
 </footer>

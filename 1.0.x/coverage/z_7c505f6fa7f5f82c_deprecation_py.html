@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
-    <title>Coverage for mcpgateway/middleware/deprecation.py: 100%</title>
+    <title>Coverage for mcpgateway/middleware/deprecation.py: 97%</title>
     <link rel="icon" sizes="32x32" href="favicon_32_cb_c827f16f.png">
     <link rel="stylesheet" href="style_cb_4667309f.css" type="text/css">
     <script src="coverage_html_cb_dd2e7eb5.js" defer></script>
@@ -12,7 +12,7 @@
     <div class="content">
         <h1>
             <span class="text">Coverage for </span><b>mcpgateway<span class="sep">/</span>middleware<span class="sep">/</span>deprecation.py</b>:
-            <span class="pc_cov">100%</span>
+            <span class="pc_cov">97%</span>
         </h1>
         <aside id="help_panel_wrapper">
             <input id="help_panel_state" type="checkbox">
@@ -55,8 +55,8 @@
         </aside>
         <h2>
             <span class="text">62 statements &nbsp;</span>
-            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">62<span class="text"> run</span></button>
-            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">0<span class="text"> missing</span></button>
+            <button type="button" class="run button_toggle_run" value="run" data-shortcut="r" title="Toggle lines run">60<span class="text"> run</span></button>
+            <button type="button" class="mis show_mis button_toggle_mis" value="mis" data-shortcut="m" title="Toggle lines missing">2<span class="text"> missing</span></button>
             <button type="button" class="exc show_exc button_toggle_exc" value="exc" data-shortcut="x" title="Toggle lines excluded">0<span class="text"> excluded</span></button>
         </h2>
         <p class="text">
@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_7c505f6fa7f5f82c_forwarded_host_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.2">coverage.py v7.15.2</a>,
-            created at 2026-07-30 17:23 +0100
+            created at 2026-08-14 09:49 +0100
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -211,9 +211,9 @@
     <p class="pln"><span class="n"><a id="t129" href="#t129">129</a></span><span class="t"><span class="str">    """</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t130" href="#t130">130</a></span><span class="t">    <span class="com"># Validate path structure</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t131" href="#t131">131</a></span><span class="t">    <span class="key">if</span> <span class="key">not</span> <span class="nam">path</span> <span class="key">or</span> <span class="key">not</span> <span class="nam">isinstance</span><span class="op">(</span><span class="nam">path</span><span class="op">,</span> <span class="nam">str</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t132" href="#t132">132</a></span><span class="t">        <span class="key">return</span> <span class="key">False</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t132" href="#t132">132</a></span><span class="t">        <span class="key">return</span> <span class="key">False</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t133" href="#t133">133</a></span><span class="t">    <span class="key">if</span> <span class="key">not</span> <span class="nam">path</span><span class="op">.</span><span class="nam">startswith</span><span class="op">(</span><span class="str">"/"</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t134" href="#t134">134</a></span><span class="t">        <span class="key">return</span> <span class="key">False</span>&nbsp;</span><span class="r"></span></p>
+    <p class="mis show_mis"><span class="n"><a id="t134" href="#t134">134</a></span><span class="t">        <span class="key">return</span> <span class="key">False</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t135" href="#t135">135</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t136" href="#t136">136</a></span><span class="t">    <span class="com"># Fast-exit for versioned routes &#8212; majority of post-migration traffic hits</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t137" href="#t137">137</a></span><span class="t">    <span class="com"># /v1/** and never needs the O(N) control-char scan below.</span>&nbsp;</span><span class="r"></span></p>
@@ -332,15 +332,15 @@
     <p class="run"><span class="n"><a id="t250" href="#t250">250</a></span><span class="t">            <span class="key">return</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t251" href="#t251">251</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t252" href="#t252">252</a></span><span class="t">        <span class="com"># Build the canonical /v1 link once per request.</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t253" href="#t253">253</a></span><span class="t">        <span class="nam">canonical</span> <span class="op">=</span> <span class="str">f"/v1{path}"</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t253" href="#t253">253</a></span><span class="t">        <span class="nam">canonical</span> <span class="op">=</span> <span class="fst">f"</span><span class="fst">/v1</span><span class="op">{</span><span class="nam">path</span><span class="op">}</span><span class="fst">"</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t254" href="#t254">254</a></span><span class="t">        <span class="nam">sunset</span> <span class="op">=</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_sunset_date</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t255" href="#t255">255</a></span><span class="t">        <span class="nam">extra_headers</span><span class="op">:</span> <span class="nam">list</span><span class="op">[</span><span class="nam">tuple</span><span class="op">[</span><span class="nam">bytes</span><span class="op">,</span> <span class="nam">bytes</span><span class="op">]</span><span class="op">]</span> <span class="op">=</span> <span class="op">[</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t256" href="#t256">256</a></span><span class="t">            <span class="op">(</span><span class="str">b"sunset"</span><span class="op">,</span> <span class="nam">sunset</span><span class="op">.</span><span class="nam">encode</span><span class="op">(</span><span class="op">)</span><span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t257" href="#t257">257</a></span><span class="t">            <span class="op">(</span><span class="str">b"deprecation"</span><span class="op">,</span> <span class="str">b"true"</span><span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t258" href="#t258">258</a></span><span class="t">            <span class="op">(</span><span class="str">b"link"</span><span class="op">,</span> <span class="str">f'&lt;{canonical}>; rel="successor-version"'</span><span class="op">.</span><span class="nam">encode</span><span class="op">(</span><span class="op">)</span><span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t258" href="#t258">258</a></span><span class="t">            <span class="op">(</span><span class="str">b"link"</span><span class="op">,</span> <span class="fst">f'</span><span class="fst">&lt;</span><span class="op">{</span><span class="nam">canonical</span><span class="op">}</span><span class="fst">>; rel="successor-version"</span><span class="fst">'</span><span class="op">.</span><span class="nam">encode</span><span class="op">(</span><span class="op">)</span><span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t259" href="#t259">259</a></span><span class="t">            <span class="op">(</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t260" href="#t260">260</a></span><span class="t">                <span class="str">b"x-deprecated-endpoint"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t261" href="#t261">261</a></span><span class="t">                <span class="op">(</span><span class="str">f"This endpoint is deprecated. Use {canonical} instead. It will be removed after {sunset}."</span><span class="op">)</span><span class="op">.</span><span class="nam">encode</span><span class="op">(</span><span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t261" href="#t261">261</a></span><span class="t">                <span class="op">(</span><span class="fst">f"</span><span class="fst">This endpoint is deprecated. Use </span><span class="op">{</span><span class="nam">canonical</span><span class="op">}</span><span class="fst"> instead. It will be removed after </span><span class="op">{</span><span class="nam">sunset</span><span class="op">}</span><span class="fst">.</span><span class="fst">"</span><span class="op">)</span><span class="op">.</span><span class="nam">encode</span><span class="op">(</span><span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t262" href="#t262">262</a></span><span class="t">            <span class="op">)</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t263" href="#t263">263</a></span><span class="t">        <span class="op">]</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t264" href="#t264">264</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
@@ -370,7 +370,7 @@
             <a class="nav" href="z_7c505f6fa7f5f82c_forwarded_host_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.2">coverage.py v7.15.2</a>,
-            created at 2026-07-30 17:23 +0100
+            created at 2026-08-14 09:49 +0100
         </p>
     </div>
 </footer>

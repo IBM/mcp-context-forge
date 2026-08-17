@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_095c6c0b4411cdd5_validate_signature_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.2">coverage.py v7.15.2</a>,
-            created at 2026-07-30 17:23 +0100
+            created at 2026-08-14 09:49 +0100
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -224,7 +224,7 @@
     <p class="run"><span class="n"><a id="t142" href="#t142">142</a></span><span class="t">    <span class="key">if</span> <span class="nam">parsed</span><span class="op">.</span><span class="nam">username</span> <span class="key">or</span> <span class="nam">parsed</span><span class="op">.</span><span class="nam">password</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t143" href="#t143">143</a></span><span class="t">        <span class="com"># Extract host:port from original netloc (preserves IPv6 brackets, handles None hostname)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t144" href="#t144">144</a></span><span class="t">        <span class="nam">host_part</span> <span class="op">=</span> <span class="nam">parsed</span><span class="op">.</span><span class="nam">netloc</span><span class="op">.</span><span class="nam">split</span><span class="op">(</span><span class="str">"@"</span><span class="op">,</span> <span class="num">1</span><span class="op">)</span><span class="op">[</span><span class="op">-</span><span class="num">1</span><span class="op">]</span> <span class="key">if</span> <span class="str">"@"</span> <span class="key">in</span> <span class="nam">parsed</span><span class="op">.</span><span class="nam">netloc</span> <span class="key">else</span> <span class="nam">parsed</span><span class="op">.</span><span class="nam">netloc</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t145" href="#t145">145</a></span><span class="t">        <span class="nam">netloc</span> <span class="op">=</span> <span class="str">f"REDACTED:REDACTED@{host_part}"</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t145" href="#t145">145</a></span><span class="t">        <span class="nam">netloc</span> <span class="op">=</span> <span class="fst">f"</span><span class="fst">REDACTED:REDACTED@</span><span class="op">{</span><span class="nam">host_part</span><span class="op">}</span><span class="fst">"</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t146" href="#t146">146</a></span><span class="t">        <span class="nam">parsed</span> <span class="op">=</span> <span class="nam">parsed</span><span class="op">.</span><span class="nam">_replace</span><span class="op">(</span><span class="nam">netloc</span><span class="op">=</span><span class="nam">netloc</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t147" href="#t147">147</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t148" href="#t148">148</a></span><span class="t">    <span class="key">if</span> <span class="key">not</span> <span class="nam">parsed</span><span class="op">.</span><span class="nam">query</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
@@ -315,7 +315,7 @@
             <a class="nav" href="z_095c6c0b4411cdd5_validate_signature_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.2">coverage.py v7.15.2</a>,
-            created at 2026-07-30 17:23 +0100
+            created at 2026-08-14 09:49 +0100
         </p>
     </div>
 </footer>

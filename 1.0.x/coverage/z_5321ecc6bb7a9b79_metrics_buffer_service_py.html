@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_5321ecc6bb7a9b79_metrics_cleanup_service_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.2">coverage.py v7.15.2</a>,
-            created at 2026-07-30 17:23 +0100
+            created at 2026-08-14 09:49 +0100
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -298,7 +298,7 @@
     <p class="pln"><span class="n"><a id="t216" href="#t216">216</a></span><span class="t">        <span class="com"># Final flush to persist any remaining metrics</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t217" href="#t217">217</a></span><span class="t">        <span class="key">await</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_flush_all</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t218" href="#t218">218</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t219" href="#t219">219</a></span><span class="t">        <span class="nam">logger</span><span class="op">.</span><span class="nam">info</span><span class="op">(</span><span class="str">f"MetricsBufferService shutdown complete: total_buffered={self._total_buffered}, total_flushed={self._total_flushed}, flush_count={self._flush_count}"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t219" href="#t219">219</a></span><span class="t">        <span class="nam">logger</span><span class="op">.</span><span class="nam">info</span><span class="op">(</span><span class="fst">f"</span><span class="fst">MetricsBufferService shutdown complete: total_buffered=</span><span class="op">{</span><span class="nam">self</span><span class="op">.</span><span class="nam">_total_buffered</span><span class="op">}</span><span class="fst">, total_flushed=</span><span class="op">{</span><span class="nam">self</span><span class="op">.</span><span class="nam">_total_flushed</span><span class="op">}</span><span class="fst">, flush_count=</span><span class="op">{</span><span class="nam">self</span><span class="op">.</span><span class="nam">_flush_count</span><span class="op">}</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t220" href="#t220">220</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t221" href="#t221">221</a></span><span class="t">    <span class="key">def</span> <span class="nam">record_tool_metric</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t222" href="#t222">222</a></span><span class="t">        <span class="nam">self</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
@@ -631,7 +631,7 @@
     <p class="mis show_mis"><span class="n"><a id="t549" href="#t549">549</a></span><span class="t">            <span class="key">return</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t550" href="#t550">550</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t551" href="#t551">551</a></span><span class="t">        <span class="nam">logger</span><span class="op">.</span><span class="nam">debug</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t552" href="#t552">552</a></span><span class="t">            <span class="str">f"Flushing {total} metrics: tools={len(tool_metrics)}, resources={len(resource_metrics)}, prompts={len(prompt_metrics)}, servers={len(server_metrics)}, a2a_agents={len(a2a_agent_metrics)}"</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t552" href="#t552">552</a></span><span class="t">            <span class="fst">f"</span><span class="fst">Flushing </span><span class="op">{</span><span class="nam">total</span><span class="op">}</span><span class="fst"> metrics: tools=</span><span class="op">{</span><span class="nam">len</span><span class="op">(</span><span class="nam">tool_metrics</span><span class="op">)</span><span class="op">}</span><span class="fst">, resources=</span><span class="op">{</span><span class="nam">len</span><span class="op">(</span><span class="nam">resource_metrics</span><span class="op">)</span><span class="op">}</span><span class="fst">, prompts=</span><span class="op">{</span><span class="nam">len</span><span class="op">(</span><span class="nam">prompt_metrics</span><span class="op">)</span><span class="op">}</span><span class="fst">, servers=</span><span class="op">{</span><span class="nam">len</span><span class="op">(</span><span class="nam">server_metrics</span><span class="op">)</span><span class="op">}</span><span class="fst">, a2a_agents=</span><span class="op">{</span><span class="nam">len</span><span class="op">(</span><span class="nam">a2a_agent_metrics</span><span class="op">)</span><span class="op">}</span><span class="fst">"</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t553" href="#t553">553</a></span><span class="t">        <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t554" href="#t554">554</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t555" href="#t555">555</a></span><span class="t">        <span class="com"># Flush in thread to avoid blocking event loop</span>&nbsp;</span><span class="r"></span></p>
@@ -1055,7 +1055,7 @@
             <a class="nav" href="z_5321ecc6bb7a9b79_metrics_cleanup_service_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.2">coverage.py v7.15.2</a>,
-            created at 2026-07-30 17:23 +0100
+            created at 2026-08-14 09:49 +0100
         </p>
     </div>
 </footer>

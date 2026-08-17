@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_5321ecc6bb7a9b79_metrics_rollup_service_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.2">coverage.py v7.15.2</a>,
-            created at 2026-07-30 17:23 +0100
+            created at 2026-08-14 09:49 +0100
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -307,7 +307,7 @@
     <p class="pln"><span class="n"><a id="t225" href="#t225">225</a></span><span class="t"><span class="str">        ValueError: If metric_type is not recognized.</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t226" href="#t226">226</a></span><span class="t"><span class="str">    """</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t227" href="#t227">227</a></span><span class="t">    <span class="key">if</span> <span class="nam">metric_type</span> <span class="key">not</span> <span class="key">in</span> <span class="nam">METRIC_MODELS</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t228" href="#t228">228</a></span><span class="t">        <span class="key">raise</span> <span class="nam">ValueError</span><span class="op">(</span><span class="str">f"Unknown metric type: {metric_type}"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t228" href="#t228">228</a></span><span class="t">        <span class="key">raise</span> <span class="nam">ValueError</span><span class="op">(</span><span class="fst">f"</span><span class="fst">Unknown metric type: </span><span class="op">{</span><span class="nam">metric_type</span><span class="op">}</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t229" href="#t229">229</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t230" href="#t230">230</a></span><span class="t">    <span class="nam">raw_model</span><span class="op">,</span> <span class="nam">_</span><span class="op">,</span> <span class="nam">id_col</span><span class="op">,</span> <span class="nam">_</span> <span class="op">=</span> <span class="nam">METRIC_MODELS</span><span class="op">[</span><span class="nam">metric_type</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t231" href="#t231">231</a></span><span class="t">    <span class="nam">current_hour_start</span> <span class="op">=</span> <span class="nam">get_current_hour_start</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
@@ -378,7 +378,7 @@
     <p class="pln"><span class="n"><a id="t296" href="#t296">296</a></span><span class="t"><span class="str">        ValueError: If metric_type is not recognized.</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t297" href="#t297">297</a></span><span class="t"><span class="str">    """</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t298" href="#t298">298</a></span><span class="t">    <span class="key">if</span> <span class="nam">metric_type</span> <span class="key">not</span> <span class="key">in</span> <span class="nam">METRIC_MODELS</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t299" href="#t299">299</a></span><span class="t">        <span class="key">raise</span> <span class="nam">ValueError</span><span class="op">(</span><span class="str">f"Unknown metric type: {metric_type}"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t299" href="#t299">299</a></span><span class="t">        <span class="key">raise</span> <span class="nam">ValueError</span><span class="op">(</span><span class="fst">f"</span><span class="fst">Unknown metric type: </span><span class="op">{</span><span class="nam">metric_type</span><span class="op">}</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t300" href="#t300">300</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t301" href="#t301">301</a></span><span class="t">    <span class="nam">raw_model</span><span class="op">,</span> <span class="nam">hourly_model</span><span class="op">,</span> <span class="nam">id_col</span><span class="op">,</span> <span class="nam">_</span> <span class="op">=</span> <span class="nam">METRIC_MODELS</span><span class="op">[</span><span class="nam">metric_type</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t302" href="#t302">302</a></span><span class="t">    <span class="nam">cutoff</span> <span class="op">=</span> <span class="nam">get_retention_cutoff</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
@@ -536,7 +536,7 @@
     <p class="pln"><span class="n"><a id="t454" href="#t454">454</a></span><span class="t"><span class="str">        ValueError: If metric_type is not recognized.</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t455" href="#t455">455</a></span><span class="t"><span class="str">    """</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t456" href="#t456">456</a></span><span class="t">    <span class="key">if</span> <span class="nam">metric_type</span> <span class="key">not</span> <span class="key">in</span> <span class="nam">METRIC_MODELS</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t457" href="#t457">457</a></span><span class="t">        <span class="key">raise</span> <span class="nam">ValueError</span><span class="op">(</span><span class="str">f"Unknown metric type: {metric_type}"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t457" href="#t457">457</a></span><span class="t">        <span class="key">raise</span> <span class="nam">ValueError</span><span class="op">(</span><span class="fst">f"</span><span class="fst">Unknown metric type: </span><span class="op">{</span><span class="nam">metric_type</span><span class="op">}</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t458" href="#t458">458</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t459" href="#t459">459</a></span><span class="t">    <span class="nam">raw_model</span><span class="op">,</span> <span class="nam">hourly_model</span><span class="op">,</span> <span class="nam">id_col</span><span class="op">,</span> <span class="nam">preserved_name_col</span> <span class="op">=</span> <span class="nam">METRIC_MODELS</span><span class="op">[</span><span class="nam">metric_type</span><span class="op">]</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t460" href="#t460">460</a></span><span class="t">    <span class="nam">cutoff</span> <span class="op">=</span> <span class="nam">get_retention_cutoff</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
@@ -750,7 +750,7 @@
             <a class="nav" href="z_5321ecc6bb7a9b79_metrics_rollup_service_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.2">coverage.py v7.15.2</a>,
-            created at 2026-07-30 17:23 +0100
+            created at 2026-08-14 09:49 +0100
         </p>
     </div>
 </footer>

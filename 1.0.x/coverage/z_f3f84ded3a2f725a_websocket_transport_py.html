@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_095c6c0b4411cdd5_admin_check_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.2">coverage.py v7.15.2</a>,
-            created at 2026-07-30 17:23 +0100
+            created at 2026-08-14 09:49 +0100
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -298,7 +298,7 @@
     <p class="run"><span class="n"><a id="t216" href="#t216">216</a></span><span class="t">        <span class="key">try</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t217" href="#t217">217</a></span><span class="t">            <span class="key">await</span> <span class="nam">self</span><span class="op">.</span><span class="nam">_websocket</span><span class="op">.</span><span class="nam">send_json</span><span class="op">(</span><span class="nam">message</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t218" href="#t218">218</a></span><span class="t">        <span class="key">except</span> <span class="nam">Exception</span> <span class="key">as</span> <span class="nam">e</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t219" href="#t219">219</a></span><span class="t">            <span class="nam">logger</span><span class="op">.</span><span class="nam">error</span><span class="op">(</span><span class="str">f"Failed to send message: {e}"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t219" href="#t219">219</a></span><span class="t">            <span class="nam">logger</span><span class="op">.</span><span class="nam">error</span><span class="op">(</span><span class="fst">f"</span><span class="fst">Failed to send message: </span><span class="op">{</span><span class="nam">e</span><span class="op">}</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t220" href="#t220">220</a></span><span class="t">            <span class="key">raise</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t221" href="#t221">221</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t222" href="#t222">222</a></span><span class="t">    <span class="key">async</span> <span class="key">def</span> <span class="nam">receive_message</span><span class="op">(</span><span class="nam">self</span><span class="op">)</span> <span class="op">-></span> <span class="nam">AsyncGenerator</span><span class="op">[</span><span class="nam">Dict</span><span class="op">[</span><span class="nam">str</span><span class="op">,</span> <span class="nam">Any</span><span class="op">]</span><span class="op">,</span> <span class="key">None</span><span class="op">]</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
@@ -355,7 +355,7 @@
     <p class="run"><span class="n"><a id="t273" href="#t273">273</a></span><span class="t">            <span class="nam">logger</span><span class="op">.</span><span class="nam">info</span><span class="op">(</span><span class="str">"WebSocket client disconnected"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t274" href="#t274">274</a></span><span class="t">            <span class="nam">self</span><span class="op">.</span><span class="nam">_connected</span> <span class="op">=</span> <span class="key">False</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t275" href="#t275">275</a></span><span class="t">        <span class="key">except</span> <span class="nam">Exception</span> <span class="key">as</span> <span class="nam">e</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t276" href="#t276">276</a></span><span class="t">            <span class="nam">logger</span><span class="op">.</span><span class="nam">error</span><span class="op">(</span><span class="str">f"Error receiving message: {e}"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t276" href="#t276">276</a></span><span class="t">            <span class="nam">logger</span><span class="op">.</span><span class="nam">error</span><span class="op">(</span><span class="fst">f"</span><span class="fst">Error receiving message: </span><span class="op">{</span><span class="nam">e</span><span class="op">}</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t277" href="#t277">277</a></span><span class="t">            <span class="nam">self</span><span class="op">.</span><span class="nam">_connected</span> <span class="op">=</span> <span class="key">False</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t278" href="#t278">278</a></span><span class="t">        <span class="key">finally</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t279" href="#t279">279</a></span><span class="t">            <span class="key">await</span> <span class="nam">self</span><span class="op">.</span><span class="nam">disconnect</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
@@ -418,7 +418,7 @@
     <p class="run"><span class="n"><a id="t336" href="#t336">336</a></span><span class="t">                    <span class="nam">logger</span><span class="op">.</span><span class="nam">warning</span><span class="op">(</span><span class="str">"Ping timeout"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t337" href="#t337">337</a></span><span class="t">                    <span class="key">break</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t338" href="#t338">338</a></span><span class="t">        <span class="key">except</span> <span class="nam">Exception</span> <span class="key">as</span> <span class="nam">e</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t339" href="#t339">339</a></span><span class="t">            <span class="nam">logger</span><span class="op">.</span><span class="nam">error</span><span class="op">(</span><span class="str">f"Ping loop error: {e}"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t339" href="#t339">339</a></span><span class="t">            <span class="nam">logger</span><span class="op">.</span><span class="nam">error</span><span class="op">(</span><span class="fst">f"</span><span class="fst">Ping loop error: </span><span class="op">{</span><span class="nam">e</span><span class="op">}</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t340" href="#t340">340</a></span><span class="t">        <span class="key">finally</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t341" href="#t341">341</a></span><span class="t">            <span class="key">await</span> <span class="nam">self</span><span class="op">.</span><span class="nam">disconnect</span><span class="op">(</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t342" href="#t342">342</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
@@ -458,7 +458,7 @@
             <a class="nav" href="z_095c6c0b4411cdd5_admin_check_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.2">coverage.py v7.15.2</a>,
-            created at 2026-07-30 17:23 +0100
+            created at 2026-08-14 09:49 +0100
         </p>
     </div>
 </footer>

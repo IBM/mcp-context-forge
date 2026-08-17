@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_7c505f6fa7f5f82c_rate_limit_middleware_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.2">coverage.py v7.15.2</a>,
-            created at 2026-07-30 17:23 +0100
+            created at 2026-08-14 09:49 +0100
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -198,15 +198,15 @@
     <p class="pln"><span class="n"><a id="t116" href="#t116">116</a></span><span class="t">        <span class="com"># If no protocol version provided, assume default version (backwards compatibility)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t117" href="#t117">117</a></span><span class="t">        <span class="key">if</span> <span class="nam">protocol_version</span> <span class="key">is</span> <span class="key">None</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t118" href="#t118">118</a></span><span class="t">            <span class="nam">protocol_version</span> <span class="op">=</span> <span class="nam">DEFAULT_PROTOCOL_VERSION</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t119" href="#t119">119</a></span><span class="t">            <span class="nam">logger</span><span class="op">.</span><span class="nam">debug</span><span class="op">(</span><span class="str">f"No MCP-Protocol-Version header, assuming {DEFAULT_PROTOCOL_VERSION}"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t119" href="#t119">119</a></span><span class="t">            <span class="nam">logger</span><span class="op">.</span><span class="nam">debug</span><span class="op">(</span><span class="fst">f"</span><span class="fst">No MCP-Protocol-Version header, assuming </span><span class="op">{</span><span class="nam">DEFAULT_PROTOCOL_VERSION</span><span class="op">}</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t120" href="#t120">120</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t121" href="#t121">121</a></span><span class="t">        <span class="com"># Validate protocol version</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t122" href="#t122">122</a></span><span class="t">        <span class="key">if</span> <span class="nam">protocol_version</span> <span class="key">not</span> <span class="key">in</span> <span class="nam">SUPPORTED_PROTOCOL_VERSIONS</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t123" href="#t123">123</a></span><span class="t">            <span class="nam">supported</span> <span class="op">=</span> <span class="str">", "</span><span class="op">.</span><span class="nam">join</span><span class="op">(</span><span class="nam">SUPPORTED_PROTOCOL_VERSIONS</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t124" href="#t124">124</a></span><span class="t">            <span class="nam">logger</span><span class="op">.</span><span class="nam">warning</span><span class="op">(</span><span class="str">f"Unsupported protocol version: {protocol_version}"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t124" href="#t124">124</a></span><span class="t">            <span class="nam">logger</span><span class="op">.</span><span class="nam">warning</span><span class="op">(</span><span class="fst">f"</span><span class="fst">Unsupported protocol version: </span><span class="op">{</span><span class="nam">protocol_version</span><span class="op">}</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t125" href="#t125">125</a></span><span class="t">            <span class="key">return</span> <span class="nam">ORJSONResponse</span><span class="op">(</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t126" href="#t126">126</a></span><span class="t">                <span class="nam">status_code</span><span class="op">=</span><span class="num">400</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t127" href="#t127">127</a></span><span class="t">                <span class="nam">content</span><span class="op">=</span><span class="op">{</span><span class="str">"error"</span><span class="op">:</span> <span class="str">"Bad Request"</span><span class="op">,</span> <span class="str">"message"</span><span class="op">:</span> <span class="str">f"Unsupported protocol version: {protocol_version}. Supported versions: {supported}"</span><span class="op">}</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t127" href="#t127">127</a></span><span class="t">                <span class="nam">content</span><span class="op">=</span><span class="op">{</span><span class="str">"error"</span><span class="op">:</span> <span class="str">"Bad Request"</span><span class="op">,</span> <span class="str">"message"</span><span class="op">:</span> <span class="fst">f"</span><span class="fst">Unsupported protocol version: </span><span class="op">{</span><span class="nam">protocol_version</span><span class="op">}</span><span class="fst">. Supported versions: </span><span class="op">{</span><span class="nam">supported</span><span class="op">}</span><span class="fst">"</span><span class="op">}</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t128" href="#t128">128</a></span><span class="t">            <span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t129" href="#t129">129</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t130" href="#t130">130</a></span><span class="t">        <span class="com"># Store validated version in request state for use by handlers</span>&nbsp;</span><span class="r"></span></p>
@@ -250,7 +250,7 @@
             <a class="nav" href="z_7c505f6fa7f5f82c_rate_limit_middleware_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.2">coverage.py v7.15.2</a>,
-            created at 2026-07-30 17:23 +0100
+            created at 2026-08-14 09:49 +0100
         </p>
     </div>
 </footer>

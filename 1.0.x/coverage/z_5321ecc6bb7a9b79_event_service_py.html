@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_5321ecc6bb7a9b79_export_service_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.2">coverage.py v7.15.2</a>,
-            created at 2026-07-30 17:23 +0100
+            created at 2026-08-14 09:49 +0100
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -375,7 +375,7 @@
     <p class="run"><span class="n"><a id="t293" href="#t293">293</a></span><span class="t">        <span class="key">try</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t294" href="#t294">294</a></span><span class="t">            <span class="key">async</span> <span class="key">for</span> <span class="nam">event</span> <span class="key">in</span> <span class="nam">self</span><span class="op">.</span><span class="nam">subscribe_events</span><span class="op">(</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t295" href="#t295">295</a></span><span class="t">                <span class="com"># Serialize the dictionary to a JSON string and format as SSE</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t296" href="#t296">296</a></span><span class="t">                <span class="key">yield</span> <span class="str">f"data: {orjson.dumps(event).decode()}\n\n"</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t296" href="#t296">296</a></span><span class="t">                <span class="key">yield</span> <span class="fst">f"</span><span class="fst">data: </span><span class="op">{</span><span class="nam">orjson</span><span class="op">.</span><span class="nam">dumps</span><span class="op">(</span><span class="nam">event</span><span class="op">)</span><span class="op">.</span><span class="nam">decode</span><span class="op">(</span><span class="op">)</span><span class="op">}</span><span class="fst">\n\n</span><span class="fst">"</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t297" href="#t297">297</a></span><span class="t">        <span class="key">except</span> <span class="nam">asyncio</span><span class="op">.</span><span class="nam">CancelledError</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t298" href="#t298">298</a></span><span class="t">            <span class="com"># Handle client disconnection gracefully</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t299" href="#t299">299</a></span><span class="t">            <span class="nam">logger</span><span class="op">.</span><span class="nam">info</span><span class="op">(</span><span class="str">"Client disconnected from event stream: %s"</span><span class="op">,</span> <span class="nam">self</span><span class="op">.</span><span class="nam">channel_name</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
@@ -407,7 +407,7 @@
             <a class="nav" href="z_5321ecc6bb7a9b79_export_service_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.2">coverage.py v7.15.2</a>,
-            created at 2026-07-30 17:23 +0100
+            created at 2026-08-14 09:49 +0100
         </p>
     </div>
 </footer>

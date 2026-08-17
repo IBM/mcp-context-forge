@@ -65,7 +65,7 @@
             <a id="nextFileLink" class="nav" href="z_7c505f6fa7f5f82c_token_scoping_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.2">coverage.py v7.15.2</a>,
-            created at 2026-07-30 17:23 +0100
+            created at 2026-08-14 09:49 +0100
         </p>
         <aside class="hidden">
             <button type="button" class="button_next_chunk" data-shortcut="j"></button>
@@ -508,7 +508,7 @@
     <p class="run"><span class="n"><a id="t426" href="#t426">426</a></span><span class="t">        <span class="key">if</span> <span class="key">not</span> <span class="nam">skip_csp_for_docs</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t427" href="#t427">427</a></span><span class="t">            <span class="nam">csp_directives</span> <span class="op">=</span> <span class="op">[</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t428" href="#t428">428</a></span><span class="t">                <span class="str">"default-src 'self'"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run run2"><span class="n"><a id="t429" href="#t429">429</a></span><span class="t">                <span class="str">f"script-src-elem 'self' 'nonce-{csp_nonce}'"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run run2"><span class="n"><a id="t429" href="#t429">429</a></span><span class="t">                <span class="fst">f"</span><span class="fst">script-src-elem 'self' 'nonce-</span><span class="op">{</span><span class="nam">csp_nonce</span><span class="op">}</span><span class="fst">'</span><span class="fst">"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t430" href="#t430">430</a></span><span class="t">                <span class="str">"script-src-attr 'unsafe-inline'"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t431" href="#t431">431</a></span><span class="t">                <span class="str">"script-src 'self'"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
     <p class="run run2"><span class="n"><a id="t432" href="#t432">432</a></span><span class="t">                <span class="str">"style-src 'self' 'unsafe-inline'"</span><span class="op">,</span>&nbsp;</span><span class="r"></span></p>
@@ -534,12 +534,12 @@
     <p class="pln"><span class="n"><a id="t452" href="#t452">452</a></span><span class="t">                    <span class="com"># Default to none for unknown values (matches DENY default)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t453" href="#t453">453</a></span><span class="t">                    <span class="nam">frame_ancestors</span> <span class="op">=</span> <span class="str">"'none'"</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t454" href="#t454">454</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t455" href="#t455">455</a></span><span class="t">                <span class="nam">csp_directives</span><span class="op">.</span><span class="nam">append</span><span class="op">(</span><span class="str">f"frame-ancestors {frame_ancestors}"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t455" href="#t455">455</a></span><span class="t">                <span class="nam">csp_directives</span><span class="op">.</span><span class="nam">append</span><span class="op">(</span><span class="fst">f"</span><span class="fst">frame-ancestors </span><span class="op">{</span><span class="nam">frame_ancestors</span><span class="op">}</span><span class="fst">"</span><span class="op">)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t456" href="#t456">456</a></span><span class="t">            <span class="nam">response</span><span class="op">.</span><span class="nam">headers</span><span class="op">[</span><span class="str">"Content-Security-Policy"</span><span class="op">]</span> <span class="op">=</span> <span class="str">"; "</span><span class="op">.</span><span class="nam">join</span><span class="op">(</span><span class="nam">csp_directives</span><span class="op">)</span> <span class="op">+</span> <span class="str">";"</span>&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t457" href="#t457">457</a></span><span class="t">&nbsp;</span><span class="r"></span></p>
     <p class="pln"><span class="n"><a id="t458" href="#t458">458</a></span><span class="t">        <span class="com"># HSTS for HTTPS connections (configurable)</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t459" href="#t459">459</a></span><span class="t">        <span class="key">if</span> <span class="nam">settings</span><span class="op">.</span><span class="nam">hsts_enabled</span> <span class="key">and</span> <span class="op">(</span><span class="nam">request</span><span class="op">.</span><span class="nam">url</span><span class="op">.</span><span class="nam">scheme</span> <span class="op">==</span> <span class="str">"https"</span> <span class="key">or</span> <span class="nam">request</span><span class="op">.</span><span class="nam">headers</span><span class="op">.</span><span class="nam">get</span><span class="op">(</span><span class="str">"X-Forwarded-Proto"</span><span class="op">)</span> <span class="op">==</span> <span class="str">"https"</span><span class="op">)</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
-    <p class="run"><span class="n"><a id="t460" href="#t460">460</a></span><span class="t">            <span class="nam">hsts_value</span> <span class="op">=</span> <span class="str">f"max-age={settings.hsts_max_age}"</span>&nbsp;</span><span class="r"></span></p>
+    <p class="run"><span class="n"><a id="t460" href="#t460">460</a></span><span class="t">            <span class="nam">hsts_value</span> <span class="op">=</span> <span class="fst">f"</span><span class="fst">max-age=</span><span class="op">{</span><span class="nam">settings</span><span class="op">.</span><span class="nam">hsts_max_age</span><span class="op">}</span><span class="fst">"</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t461" href="#t461">461</a></span><span class="t">            <span class="key">if</span> <span class="nam">settings</span><span class="op">.</span><span class="nam">hsts_include_subdomains</span><span class="op">:</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t462" href="#t462">462</a></span><span class="t">                <span class="nam">hsts_value</span> <span class="op">+=</span> <span class="str">"; includeSubDomains"</span>&nbsp;</span><span class="r"></span></p>
     <p class="run"><span class="n"><a id="t463" href="#t463">463</a></span><span class="t">            <span class="nam">response</span><span class="op">.</span><span class="nam">headers</span><span class="op">[</span><span class="str">"Strict-Transport-Security"</span><span class="op">]</span> <span class="op">=</span> <span class="nam">hsts_value</span>&nbsp;</span><span class="r"></span></p>
@@ -606,7 +606,7 @@
             <a class="nav" href="z_7c505f6fa7f5f82c_token_scoping_py.html">&#xbb; next</a>
             &nbsp; &nbsp; &nbsp;
             <a class="nav" href="https://coverage.readthedocs.io/en/7.15.2">coverage.py v7.15.2</a>,
-            created at 2026-07-30 17:23 +0100
+            created at 2026-08-14 09:49 +0100
         </p>
     </div>
 </footer>
