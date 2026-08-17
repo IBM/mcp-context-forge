@@ -949,10 +949,13 @@ class OAuthManager:
         if self.token_storage and hasattr(self.token_storage, "user_context"):
             user_context = self.token_storage.user_context or {}
             teams = user_context.get("teams", [])
-            logger.info(f"OAuth initiate: user_context={user_context}, teams={teams}")
             if isinstance(teams, list) and teams:
                 team_id = teams[0]  # Use first team (see authority decision above)
-                logger.info(f"OAuth initiate: extracted team_id={team_id} from user_context for user {app_user_email}")
+                logger.debug(
+                    "OAuth initiate: extracted team_id=%s for user %s",
+                    team_id,
+                    app_user_email,
+                )
 
         # Store state with code_verifier and team_id in session/cache for validation
         if self.token_storage:
@@ -1256,10 +1259,10 @@ class OAuthManager:
         self,
         gateway_id: str,
         state: str,
-        code_verifier: str = None,
-        app_user_email: str = None,
-        redirect_uri: str = None,
-        team_id: str = None,
+        code_verifier: Optional[str] = None,
+        app_user_email: Optional[str] = None,
+        redirect_uri: Optional[str] = None,
+        team_id: Optional[str] = None,
     ) -> None:
         """Store authorization state for validation with TTL.
 

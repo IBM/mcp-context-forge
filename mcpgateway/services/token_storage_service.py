@@ -129,10 +129,10 @@ class TokenStorageService:
         settings = get_settings()
 
         # Select backend based on configuration
-        if settings.oauth_token_backend == "vault":
+        if settings.oauth_token_backend == "vault":  # nosec B105 - config discriminator, not a password
             self._backend: AbstractTokenBackend = VaultTokenBackend(db, settings)
             logger.info("Token storage backend: Vault (addr=%s)", settings.vault_addr)
-        elif settings.oauth_token_backend == "database":
+        elif settings.oauth_token_backend == "database":  # nosec B105 - config discriminator, not a password
             self._backend = DatabaseTokenBackend(db, settings)
             logger.debug("Token storage backend: Database")
         else:
@@ -438,9 +438,8 @@ class TokenStorageService:
         # Type check: Only DatabaseTokenBackend uses this signature
         if not isinstance(self._backend, DatabaseTokenBackend):
             raise TypeError(
-                f"_refresh_access_token façade only supports DatabaseTokenBackend, "
-                f"but backend is {type(self._backend).__name__}. "
-                f"VaultTokenBackend has a different signature and should not use this façade."
+                "_refresh_access_token façade is only available for DatabaseTokenBackend. "
+                "VaultTokenBackend uses a different internal signature and should not use this façade."
             )
 
         # pylint: disable=protected-access,no-value-for-parameter

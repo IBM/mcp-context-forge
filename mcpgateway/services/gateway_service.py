@@ -2271,7 +2271,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 }
                 token_storage = TokenStorageService(db, user_context=user_context)
                 access_token = await token_storage.get_user_token(gateway.id, app_user_email)
-                token_source = "shared path (Admin UI)"
+                token_source = "shared path (Admin UI)"  # nosec B105 - log label, not a password
 
                 if not access_token:
                     raise GatewayConnectionError(f"No OAuth token found for user {app_user_email} in shared path. Please authorize this gateway via the Admin UI.")

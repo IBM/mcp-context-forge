@@ -132,6 +132,8 @@ _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     ("PUT", re.compile(r"^/gateways/[^/]+(?:$|/)"), Permissions.GATEWAYS_UPDATE),
     ("DELETE", re.compile(r"^/gateways/[^/]+(?:$|/)"), Permissions.GATEWAYS_DELETE),
     # Vault OAuth authorize — initiates Authorization Code flow via virtual server ID.
+    # Router is registered only when OAUTH_TOKEN_BACKEND=vault (see main.py); this
+    # pattern is harmless when the router is absent (no matching route exists).
     # The handler enforces gateway-level access via _enforce_gateway_access, so this
     # entry adds defence-in-depth only: it ensures a server-scoped API token whose
     # permissions list does not include gateways.read is rejected at the middleware

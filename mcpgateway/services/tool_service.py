@@ -4180,7 +4180,7 @@ class ToolService(BaseService):
         Returns:
             Dict of ``{header: value}`` pairs if found, otherwise ``None``.
         """
-        if not app_user_email or settings.oauth_token_backend != "vault":
+        if not app_user_email or settings.oauth_token_backend != "vault":  # nosec B105 - config discriminator, not a password
             return None
         try:
             from mcpgateway.services.token_storage_service import TokenStorageService, build_token_user_context  # pylint: disable=import-outside-toplevel
