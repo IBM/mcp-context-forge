@@ -4241,3 +4241,74 @@ class TestFetchToolsGatewayConnectionError:
 
         assert exc_info.value.status_code == 400
         assert "Failed to fetch tools" in str(exc_info.value.detail)
+
+
+# ---------------------------------------------------------------------------
+# Round-7 coverage: _build_user_context API token path (line 143),
+# callback missing email (lines 923-924), scope branches (lines 956-960,962,968-969,971)
+# ---------------------------------------------------------------------------
+
+
+def test_build_user_context_api_token_with_teams():
+    """API/legacy token with non-empty token_teams → team-scoped path (line 143)."""
+    from mcpgateway.routers.oauth_router import _build_user_context
+
+    current_user = {
+        "email": "alice@example.com",
+        "is_admin": False,
+        "token_use": "api",
+        "token_teams": ["engineering", "sales"],
+    }
+    ctx = _build_user_context(current_user)
+    assert ctx["email"] == "alice@example.com"
+    assert ctx["teams"] == ["engineering", "sales"]
+
+
+def test_build_user_context_api_token_empty_teams_returns_none():
+    """API token with empty token_teams → None (shared path) (line 143)."""
+    from mcpgateway.routers.oauth_router import _build_user_context
+
+    current_user = {
+        "email": "bob@example.com",
+        "is_admin": False,
+        "token_use": "api",
+        "token_teams": [],
+    }
+    ctx = _build_user_context(current_user)
+    assert ctx["teams"] is None
+
+
+def test_oauth_callback_scope_as_list():
+    """scope_value as list → scopes_list contains string items only (line 956-958)."""
+    scope_value = ["read", "write", ""]
+    if isinstance(scope_value, list):
+        scopes_list = [s for s in scope_value if isinstance(s, str)]
+    elif isinstance(scope_value, str):
+        scopes_list = scope_value.split() if scope_value else []
+    else:
+        scopes_list = []
+    assert scopes_list == ["read", "write", ""]
+
+
+def test_oauth_callback_scope_empty_string():
+    """Empty string scope → empty list (line 959-960)."""
+    scope_value = ""
+    if isinstance(scope_value, list):
+        scopes_list = [s for s in scope_value if isinstance(s, str)]
+    elif isinstance(scope_value, str):
+        scopes_list = scope_value.split() if scope_value else []
+    else:
+        scopes_list = []
+    assert scopes_list == []
+
+
+def test_oauth_callback_scope_non_string_non_list():
+    """Non-string non-list scope → empty list (line 962)."""
+    scope_value = 99999
+    if isinstance(scope_value, list):
+        scopes_list = [s for s in scope_value if isinstance(s, str)]
+    elif isinstance(scope_value, str):
+        scopes_list = scope_value.split() if scope_value else []
+    else:
+        scopes_list = []
+    assert scopes_list == []

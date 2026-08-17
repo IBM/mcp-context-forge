@@ -347,3 +347,75 @@ class TestVaultAuthorizeDenyPaths:
 
         assert exc_info.value.status_code == 403
         mock_resolve.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Round-7 coverage: _resolve_oauth_gateway preferred_url not found (line 79),
+# missing oauth_config (lines 159,163), generic exception → 500 (lines 226-227,233)
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_oauth_gateway_preferred_url_not_found():
+    """Returns None when preferred_url does not match any gateway (line 79)."""
+    from mcpgateway.routers.vault_router import _resolve_oauth_gateway
+
+    server = MagicMock()
+    server.id = "srv-1"
+
+    gw1 = MagicMock()
+    gw1.id = "gw-1"
+    gw1.url = "https://mcp1.example.com"
+    gw1.auth_type = "oauth"
+
+    db = MagicMock()
+    mock_scalars = MagicMock()
+    mock_scalars.all.return_value = [gw1]
+    db.execute.side_effect = [
+        MagicMock(all=MagicMock(return_value=[("gw-1",)])),
+        MagicMock(scalars=MagicMock(return_value=mock_scalars)),
+    ]
+
+    result = _resolve_oauth_gateway(server, db, preferred_url="https://notfound.example.com")
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_vault_authorize_missing_oauth_config():
+    """Returns 400 when resolved gateway has no oauth_config (lines 159,163)."""
+    from mcpgateway.routers.vault_router import vault_authorize
+
+    server = MagicMock()
+    server.id = "srv-1"
+    gateway = MagicMock()
+    gateway.id = "gw-1"
+    gateway.oauth_config = None
+    gateway.auth_type = "oauth"
+
+    db = MagicMock()
+    db.get.return_value = server
+    current_user = {"email": "alice@example.com", "token_teams": ["eng"], "is_admin": False}
+    request = MagicMock()
+    request.url.scheme = "https"
+    request.url.netloc = "host.example.com"
+
+    with patch("mcpgateway.routers.vault_router._check_server_visibility", return_value=True), \
+         patch("mcpgateway.routers.vault_router._resolve_oauth_gateway", return_value=gateway), \
+         patch("mcpgateway.routers.vault_router._enforce_gateway_access", new_callable=AsyncMock):
+        with pytest.raises(HTTPException) as exc_info:
+            await vault_authorize(request, "srv-1", None, db, current_user)
+    assert exc_info.value.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_vault_authorize_generic_exception_returns_500():
+    """Generic exception in vault_authorize → 500 HTTPException (lines 226-227,233)."""
+    from mcpgateway.routers.vault_router import vault_authorize
+
+    db = MagicMock()
+    db.get.side_effect = RuntimeError("unexpected db error")
+    current_user = {"email": "alice@example.com", "token_teams": ["eng"], "is_admin": False}
+    request = MagicMock()
+
+    with pytest.raises(HTTPException) as exc_info:
+        await vault_authorize(request, "srv-1", None, db, current_user)
+    assert exc_info.value.status_code == 500

@@ -2173,3 +2173,182 @@ class TestVaultTokenBackendStoreTokensEdgeCases:
             # on their next cache-hit check, bounding stale reads to < cache_ttl.
             assert cache_key in VaultTokenBackend._token_cache
             assert VaultTokenBackend._token_cache[cache_key]["cache_expires"] < datetime.now(timezone.utc)
+
+
+# ---------------------------------------------------------------------------
+# Round-7 coverage: Vault error handlers in get_user_token, get_user_auth_headers,
+# get_token_info, revoke_user_tokens (lines 467-468,474,509-510,516,563-564,570,620)
+# _refresh_access_token re-read branches (843-849,881-894,898,903-915)
+# _do_refresh_access_token decryption failures (965-984)
+# All tests are self-contained (no class fixtures needed)
+# ---------------------------------------------------------------------------
+
+
+def _make_backend_r7():
+    """Return a VaultTokenBackend with self-contained mock db/settings."""
+    mock_db = MagicMock()
+    mock_db.get.return_value = MagicMock(url="https://mcp.example.com")
+    mock_settings = MagicMock()
+    mock_settings.vault_addr = "http://127.0.0.1:8200"
+    mock_settings.vault_token = SecretStr("hvs.test")  # pragma: allowlist secret
+    mock_settings.vault_namespace = ""
+    mock_settings.vault_kv_mount = "secret"
+    mock_settings.vault_kv_path_prefix = "contextforge/oauth"
+    mock_settings.vault_tls_verify = True
+    mock_settings.vault_token_cache_enabled = False
+    mock_settings.vault_token_cache_ttl = 300
+    mock_settings.vault_token_cache_max_size = 1000
+    mock_settings.auth_encryption_secret = None
+    return VaultTokenBackend(mock_db, mock_settings), mock_db
+
+
+@pytest.mark.asyncio
+async def test_r7_get_user_token_vault_connection_error():
+    """get_user_token returns None on VaultConnectionError (lines 467-468,474)."""
+    backend, _ = _make_backend_r7()
+    with patch.object(backend, "_vault_request", side_effect=VaultConnectionError("Vault down")):
+        result = await backend.get_user_token("gw-1", "team-1", "alice@example.com")
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_r7_get_user_token_vault_auth_error():
+    """get_user_token returns None on VaultAuthError (lines 467-468,474)."""
+    backend, _ = _make_backend_r7()
+    with patch.object(backend, "_vault_request", side_effect=VaultAuthError("Token invalid")):
+        result = await backend.get_user_token("gw-1", "team-1", "alice@example.com")
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_r7_get_user_auth_headers_vault_connection_error():
+    """get_user_auth_headers returns None on VaultConnectionError (lines 509-510,516)."""
+    backend, _ = _make_backend_r7()
+    with patch.object(backend, "_vault_request", side_effect=VaultConnectionError("Vault down")):
+        result = await backend.get_user_auth_headers("gw-1", "team-1", "alice@example.com")
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_r7_get_user_auth_headers_vault_auth_error():
+    """get_user_auth_headers returns None on VaultAuthError (lines 509-510,516)."""
+    backend, _ = _make_backend_r7()
+    with patch.object(backend, "_vault_request", side_effect=VaultAuthError("Token invalid")):
+        result = await backend.get_user_auth_headers("gw-1", "team-1", "alice@example.com")
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_r7_get_token_info_vault_connection_error():
+    """get_token_info returns None on VaultConnectionError (lines 563-564,570)."""
+    backend, _ = _make_backend_r7()
+    with patch.object(backend, "_vault_request", side_effect=VaultConnectionError("Vault down")):
+        result = await backend.get_token_info("gw-1", "team-1", "alice@example.com")
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_r7_get_token_info_vault_auth_error():
+    """get_token_info returns None on VaultAuthError (lines 563-564,570)."""
+    backend, _ = _make_backend_r7()
+    with patch.object(backend, "_vault_request", side_effect=VaultAuthError("Token invalid")):
+        result = await backend.get_token_info("gw-1", "team-1", "alice@example.com")
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_r7_revoke_user_tokens_generic_exception_returns_false():
+    """revoke_user_tokens returns False on generic non-Vault exception (line 620)."""
+    backend, _ = _make_backend_r7()
+    with patch.object(backend, "_vault_request", side_effect=RuntimeError("unexpected")):
+        result = await backend.revoke_user_tokens("gw-1", "team-1", "alice@example.com")
+    assert result is False
+
+
+@pytest.mark.asyncio
+async def test_r7_refresh_lock_no_expiry_in_reread():
+    """Re-read under lock shows token with no expiry → return immediately (lines 843-849)."""
+    backend, _ = _make_backend_r7()
+    fresh_result = {"data": {"data": {"token": {"access_token": "fresh-token"}, "expires_at": None}}}
+    with patch.object(backend, "_vault_request", new_callable=AsyncMock, return_value=fresh_result):
+        result = await backend._refresh_access_token("gw-1", "team-1", "alice@example.com", "rt", {})
+    assert result == "fresh-token"
+
+
+@pytest.mark.asyncio
+async def test_r7_refresh_lock_already_refreshed():
+    """Re-read shows non-near-expiry token → return without calling IdP (lines 881-894)."""
+    backend, _ = _make_backend_r7()
+    future = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
+    fresh_result = {"data": {"data": {"token": {"access_token": "already-refreshed"}, "expires_at": future}}}
+    with patch.object(backend, "_vault_request", new_callable=AsyncMock, return_value=fresh_result):
+        result = await backend._refresh_access_token("gw-1", "team-1", "alice@example.com", "rt", {})
+    assert result == "already-refreshed"
+
+
+@pytest.mark.asyncio
+async def test_r7_refresh_lock_still_near_expiry_calls_do_refresh():
+    """Re-read shows near-expiry token → _do_refresh_access_token is called (lines 898,903-915)."""
+    backend, _ = _make_backend_r7()
+    near = (datetime.now(timezone.utc) + timedelta(seconds=10)).isoformat()
+    fresh_result = {"data": {"data": {"token": {"access_token": "near-expiry"}, "expires_at": near}}}
+    with patch.object(backend, "_vault_request", new_callable=AsyncMock, return_value=fresh_result):
+        with patch.object(backend, "_do_refresh_access_token", new_callable=AsyncMock, return_value="new-tok") as mock_do:
+            result = await backend._refresh_access_token("gw-1", "team-1", "alice@example.com", "rt", {}, threshold_seconds=300)
+    assert result == "new-tok"
+    mock_do.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_r7_refresh_lock_empty_reread_calls_do_refresh():
+    """Re-read returns empty → _do_refresh_access_token is called."""
+    backend, _ = _make_backend_r7()
+    with patch.object(backend, "_vault_request", new_callable=AsyncMock, return_value=None):
+        with patch.object(backend, "_do_refresh_access_token", new_callable=AsyncMock, return_value="brand-new") as mock_do:
+            result = await backend._refresh_access_token("gw-1", "team-1", "alice@example.com", "rt", {})
+    assert result == "brand-new"
+    mock_do.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_r7_do_refresh_decryption_returns_none_preserves_token():
+    """decrypt_secret_async returning None raises OAuthError → token preserved (lines 965-971)."""
+    backend, mock_db = _make_backend_r7()
+    gateway = MagicMock()
+    gateway.oauth_config = {"client_secret": "enc-value", "grant_type": "authorization_code"}
+    gateway.url = "https://mcp.example.com"
+    gateway.ca_certificate = None
+    gateway.client_cert = None
+    gateway.client_key = None
+    gateway.visibility = "public"
+    gateway.owner_email = None
+    mock_db.query.return_value.filter.return_value.first.return_value = gateway
+    backend.settings.auth_encryption_secret = "some-secret"
+    mock_enc = AsyncMock()
+    mock_enc.decrypt_secret_async = AsyncMock(return_value=None)
+    with patch("mcpgateway.services.encryption_service.get_encryption_service", return_value=mock_enc):
+        result = await backend._do_refresh_access_token(
+            "gw-1", "team-1", "alice@example.com", "rt", {"token": {"scopes": ["read"]}}
+        )
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_r7_do_refresh_decryption_setup_exception_preserves_token():
+    """Unexpected exception in get_encryption_service → OAuthError → token preserved (lines 976-984)."""
+    backend, mock_db = _make_backend_r7()
+    gateway = MagicMock()
+    gateway.oauth_config = {"client_secret": "enc-value"}
+    gateway.url = "https://mcp.example.com"
+    gateway.ca_certificate = None
+    gateway.client_cert = None
+    gateway.client_key = None
+    gateway.visibility = "public"
+    gateway.owner_email = None
+    mock_db.query.return_value.filter.return_value.first.return_value = gateway
+    backend.settings.auth_encryption_secret = "some-secret"
+    with patch("mcpgateway.services.encryption_service.get_encryption_service", side_effect=RuntimeError("setup failed")):
+        result = await backend._do_refresh_access_token(
+            "gw-1", "team-1", "alice@example.com", "rt", {"token": {"scopes": []}}
+        )
+    assert result is None
