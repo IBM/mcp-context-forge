@@ -3,7 +3,7 @@
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 
-AUTH_ENCRYPTION_SECRET migration script — 1.0.7 → 1.0.8 upgrade path.
+AUTH_ENCRYPTION_SECRET migration script — 1.0.7 → 1.0.8+ upgrade path.
 
 Operators who deployed 1.0.7 with a weak ``AUTH_ENCRYPTION_SECRET`` (e.g.
 ``my-test-salt``) and then upgrade to 1.0.8 face two failure modes:
