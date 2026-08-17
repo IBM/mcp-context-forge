@@ -380,7 +380,9 @@ class Settings(BaseSettings):
         le=10080,
         description="Absolute maximum session lifetime in minutes, enforced at refresh (0 disables the cap). A session cannot be extended past this age regardless of activity.",
     )
-    session_refresh_rate_limit: int = Field(default=10, ge=1, le=600, description="Maximum POST /auth/refresh requests per minute per client dimension (IP/user/team), enforced by RateLimitMiddleware.")
+    session_refresh_rate_limit: int = Field(
+        default=10, ge=1, le=600, description="Maximum POST /auth/refresh requests per minute per client dimension (IP/user/team), enforced by RateLimitMiddleware."
+    )
     session_warning_time: int = Field(default=60, ge=10, le=3600, description="Seconds before session expiry at which UI clients should warn the user (client-behavior hint).")
     session_refresh_buffer: int = Field(default=300, ge=30, le=3600, description="Seconds before token expiry at which UI clients should silently refresh the session (client-behavior hint).")
     session_activity_tracking: bool = Field(

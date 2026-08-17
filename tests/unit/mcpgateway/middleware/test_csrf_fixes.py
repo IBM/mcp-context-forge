@@ -295,10 +295,9 @@ async def test_token_rotation_on_login():
         patch("mcpgateway.routers.auth.create_access_token") as mock_create_token,
         patch("mcpgateway.routers.auth.settings") as mock_settings,
         patch("jwt.decode") as mock_jwt_decode,
-        patch("mcpgateway.services.csrf_service.generate_csrf_token") as mock_gen_csrf,
-        patch("mcpgateway.services.csrf_service.set_csrf_cookie") as mock_set_cookie,
+        patch("mcpgateway.routers.auth.generate_csrf_token") as mock_gen_csrf,
+        patch("mcpgateway.routers.auth.set_csrf_cookie") as mock_set_cookie,
     ):
-
         # Setup mocks
         mock_settings.csrf_rotate_on_login = True
         mock_settings.csrf_secret_key = SecretStr("test-secret")  # pragma: allowlist secret

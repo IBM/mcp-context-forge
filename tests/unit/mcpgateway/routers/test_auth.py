@@ -7,6 +7,7 @@ Tests for the auth router module.
 """
 
 # Standard
+from contextlib import ExitStack
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -481,10 +482,9 @@ class TestSessionRefreshAndValidate:
             request.cookies = {}
         return request
 
-    def _patch_stack(self, new_token="newtok", expires_in=1200):
-        """Patch collaborators of refresh_session; returns the context managers dict."""
+    def _patch_stack(self, payload, expires_in=1200):
+        """Patch session-endpoint collaborators for the given verified payload."""
         # Standard
-        # Real JWT for the newly issued token so its exp can be decoded
         import time as time_mod
 
         # Third-Party
@@ -492,7 +492,11 @@ class TestSessionRefreshAndValidate:
 
         now = int(time_mod.time())
         issued = jwt_lib.encode({"jti": "new-jti", "exp": now + expires_in}, self.SECRET, algorithm="HS256")
+        blocklist = MagicMock()
+        blocklist.is_token_revoked.return_value = False
         return {
+            "verify": patch("mcpgateway.routers.auth.verify_jwt_token_cached", new_callable=AsyncMock, return_value=payload),
+            "blocklist": patch("mcpgateway.routers.auth.get_token_blocklist_service", return_value=blocklist),
             "create_token": patch("mcpgateway.routers.auth.create_access_token", new_callable=AsyncMock, return_value=(issued, expires_in)),
             "csrf": patch("mcpgateway.routers.auth.generate_csrf_token", return_value="csrf-rotated"),
             "set_csrf": patch("mcpgateway.routers.auth.set_csrf_cookie"),
@@ -513,10 +517,10 @@ class TestSessionRefreshAndValidate:
         # First-Party
         from mcpgateway.routers.auth import refresh_session
 
-        token, _ = self._make_token()
+        token, payload = self._make_token()
         request = self._make_request(token)
-        patches = self._patch_stack()
-        with patches["create_token"] as mock_create, patches["csrf"], patches["set_csrf"], patches["set_auth"] as mock_set_auth, patches["audit"] as mock_audit:
+        with ExitStack() as stack:
+            mocks = {name: stack.enter_context(p) for name, p in self._patch_stack(payload).items()}
             response = await refresh_session(request, mock_user)
 
         body = json.loads(response.body)
@@ -525,14 +529,13 @@ class TestSessionRefreshAndValidate:
         assert body["expires_at"]
         assert body["csrf_token"] == "csrf-rotated"
         # Header-authenticated request must NOT receive an auth cookie
-        mock_set_auth.assert_not_called()
-        mock_audit.return_value.log_action.assert_called_once()
-        audit_kwargs = mock_audit.return_value.log_action.call_args.kwargs
+        mocks["set_auth"].assert_not_called()
+        mocks["audit"].return_value.log_action.assert_called_once()
+        audit_kwargs = mocks["audit"].return_value.log_action.call_args.kwargs
         assert audit_kwargs["action"] == "session_refresh"
         assert "db" not in audit_kwargs
         # session_start carried into the new token
-        create_kwargs = mock_create.call_args.kwargs
-        assert "session_start" in create_kwargs["extra_claims"]
+        assert "session_start" in mocks["create_token"].call_args.kwargs["extra_claims"]
 
     @pytest.mark.asyncio
     async def test_refresh_success_cookie_sets_auth_cookie(self, mock_user):
@@ -540,13 +543,13 @@ class TestSessionRefreshAndValidate:
         # First-Party
         from mcpgateway.routers.auth import refresh_session
 
-        token, _ = self._make_token()
+        token, payload = self._make_token()
         request = self._make_request(token, via_cookie=True)
-        patches = self._patch_stack()
-        with patches["create_token"], patches["csrf"], patches["set_csrf"], patches["set_auth"] as mock_set_auth, patches["audit"]:
+        with ExitStack() as stack:
+            mocks = {name: stack.enter_context(p) for name, p in self._patch_stack(payload).items()}
             await refresh_session(request, mock_user)
 
-        mock_set_auth.assert_called_once()
+        mocks["set_auth"].assert_called_once()
 
     @pytest.mark.asyncio
     async def test_refresh_preserves_session_start_claim(self, mock_user):
@@ -554,16 +557,17 @@ class TestSessionRefreshAndValidate:
         # First-Party
         from mcpgateway.routers.auth import refresh_session
 
-        token, _ = self._make_token(session_start=1000000000, iat=1000000000)
+        token, payload = self._make_token(session_start=1000000000, iat=1000000000)
         request = self._make_request(token)
-        patches = self._patch_stack()
-        with patch("mcpgateway.routers.auth.settings") as mock_settings, patches["create_token"] as mock_create, patches["csrf"], patches["set_csrf"], patches["set_auth"], patches["audit"]:
+        with ExitStack() as stack:
+            mock_settings = stack.enter_context(patch("mcpgateway.routers.auth.settings"))
             mock_settings.session_max_lifetime = 0  # disable the cap for this test
             mock_settings.csrf_secret_key = SecretStr(self.SECRET)
             mock_settings.csrf_token_expiry = 3600
+            mocks = {name: stack.enter_context(p) for name, p in self._patch_stack(payload).items()}
             await refresh_session(request, mock_user)
 
-        assert mock_create.call_args.kwargs["extra_claims"]["session_start"] == 1000000000
+        assert mocks["create_token"].call_args.kwargs["extra_claims"]["session_start"] == 1000000000
 
     @pytest.mark.asyncio
     async def test_refresh_refuses_api_token(self, mock_user):
@@ -571,11 +575,14 @@ class TestSessionRefreshAndValidate:
         # First-Party
         from mcpgateway.routers.auth import refresh_session
 
-        token, _ = self._make_token(token_use="api")
+        token, payload = self._make_token(token_use="api")
         request = self._make_request(token)
 
-        with pytest.raises(HTTPException) as exc_info:
-            await refresh_session(request, mock_user)
+        with ExitStack() as stack:
+            for name in ("verify", "blocklist"):
+                stack.enter_context(self._patch_stack(payload)[name])
+            with pytest.raises(HTTPException) as exc_info:
+                await refresh_session(request, mock_user)
 
         assert exc_info.value.status_code == 403
 
@@ -585,11 +592,14 @@ class TestSessionRefreshAndValidate:
         # First-Party
         from mcpgateway.routers.auth import refresh_session
 
-        token, _ = self._make_token(token_use=None)
+        token, payload = self._make_token(token_use=None)
         request = self._make_request(token)
 
-        with pytest.raises(HTTPException) as exc_info:
-            await refresh_session(request, mock_user)
+        with ExitStack() as stack:
+            for name in ("verify", "blocklist"):
+                stack.enter_context(self._patch_stack(payload)[name])
+            with pytest.raises(HTTPException) as exc_info:
+                await refresh_session(request, mock_user)
 
         assert exc_info.value.status_code == 403
 
@@ -609,16 +619,69 @@ class TestSessionRefreshAndValidate:
         assert exc_info.value.status_code == 401
 
     @pytest.mark.asyncio
+    async def test_refresh_refuses_forged_token(self, mock_user):
+        """A token that fails signature verification is rejected with 401."""
+        # First-Party
+        from mcpgateway.routers.auth import refresh_session
+
+        token, _ = self._make_token()
+        request = self._make_request(token)
+
+        with patch("mcpgateway.routers.auth.verify_jwt_token_cached", new_callable=AsyncMock, side_effect=Exception("bad signature")):
+            with pytest.raises(HTTPException) as exc_info:
+                await refresh_session(request, mock_user)
+
+        assert exc_info.value.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_refresh_refuses_revoked_token(self, mock_user):
+        """A revoked (blocklisted) token cannot refresh: 401."""
+        # First-Party
+        from mcpgateway.routers.auth import refresh_session
+
+        token, payload = self._make_token()
+        request = self._make_request(token)
+        patches = self._patch_stack(payload)
+
+        blocklist = MagicMock()
+        blocklist.is_token_revoked.return_value = True
+        with patches["verify"], patch("mcpgateway.routers.auth.get_token_blocklist_service", return_value=blocklist):
+            with pytest.raises(HTTPException) as exc_info:
+                await refresh_session(request, mock_user)
+
+        assert exc_info.value.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_refresh_refuses_subject_mismatch(self, mock_user):
+        """A verified token whose subject is a different user is rejected with 401."""
+        # First-Party
+        from mcpgateway.routers.auth import refresh_session
+
+        token, payload = self._make_token(sub="another-user-id")
+        request = self._make_request(token)
+
+        with ExitStack() as stack:
+            for name in ("verify", "blocklist"):
+                stack.enter_context(self._patch_stack(payload)[name])
+            with pytest.raises(HTTPException) as exc_info:
+                await refresh_session(request, mock_user)
+
+        assert exc_info.value.status_code == 401
+
+    @pytest.mark.asyncio
     async def test_refresh_enforces_max_lifetime(self, mock_user):
         """A session older than SESSION_MAX_LIFETIME cannot be refreshed: 401."""
         # First-Party
         from mcpgateway.routers.auth import refresh_session
 
-        token, _ = self._make_token(session_start=1000000000)  # ancient session
+        token, payload = self._make_token(session_start=1000000000)  # ancient session
         request = self._make_request(token)
 
-        with pytest.raises(HTTPException) as exc_info:
-            await refresh_session(request, mock_user)
+        with ExitStack() as stack:
+            for name in ("verify", "blocklist"):
+                stack.enter_context(self._patch_stack(payload)[name])
+            with pytest.raises(HTTPException) as exc_info:
+                await refresh_session(request, mock_user)
 
         assert exc_info.value.status_code == 401
         assert "maximum lifetime" in exc_info.value.detail
@@ -636,7 +699,10 @@ class TestSessionRefreshAndValidate:
         token, payload = self._make_token()
         request = self._make_request(token)
 
-        result = await validate_session(request, mock_user)
+        with ExitStack() as stack:
+            for name in ("verify", "blocklist"):
+                stack.enter_context(self._patch_stack(payload)[name])
+            result = await validate_session(request, mock_user)
 
         assert result.valid is True
         assert result.session_source == "local"
@@ -652,10 +718,13 @@ class TestSessionRefreshAndValidate:
         # First-Party
         from mcpgateway.routers.auth import validate_session
 
-        token, _ = self._make_token(auth_provider="github")
+        token, payload = self._make_token(auth_provider="github")
         request = self._make_request(token)
 
-        result = await validate_session(request, mock_user)
+        with ExitStack() as stack:
+            for name in ("verify", "blocklist"):
+                stack.enter_context(self._patch_stack(payload)[name])
+            result = await validate_session(request, mock_user)
 
         assert result.session_source == "sso"
 
@@ -665,12 +734,45 @@ class TestSessionRefreshAndValidate:
         # First-Party
         from mcpgateway.routers.auth import validate_session
 
-        token, _ = self._make_token(token_use="api")
+        token, payload = self._make_token(token_use="api")
         request = self._make_request(token)
 
-        result = await validate_session(request, mock_user)
+        with ExitStack() as stack:
+            for name in ("verify", "blocklist"):
+                stack.enter_context(self._patch_stack(payload)[name])
+            result = await validate_session(request, mock_user)
 
         assert result.session_source == "api_token"
+
+    @pytest.mark.asyncio
+    async def test_validate_refuses_forged_token(self, mock_user):
+        """A token that fails signature verification is rejected with 401."""
+        # First-Party
+        from mcpgateway.routers.auth import validate_session
+
+        token, _ = self._make_token()
+        request = self._make_request(token)
+
+        with patch("mcpgateway.routers.auth.verify_jwt_token_cached", new_callable=AsyncMock, side_effect=Exception("bad signature")):
+            with pytest.raises(HTTPException) as exc_info:
+                await validate_session(request, mock_user)
+
+        assert exc_info.value.status_code == 401
+
+    @pytest.mark.asyncio
+    async def test_validate_refuses_when_no_token_present(self, mock_user):
+        """Non-JWT auth has no session token to validate: 401."""
+        # First-Party
+        from mcpgateway.routers.auth import validate_session
+
+        request = MagicMock()
+        request.headers = {"user-agent": "test-agent"}
+        request.cookies = {}
+
+        with pytest.raises(HTTPException) as exc_info:
+            await validate_session(request, mock_user)
+
+        assert exc_info.value.status_code == 401
 
     def test_session_source_external_idp(self):
         """Tokens minted for external-IdP identities classify as sso."""

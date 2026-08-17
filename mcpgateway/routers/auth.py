@@ -9,6 +9,7 @@ It serves as the primary entry point for authentication workflows.
 """
 
 # Standard
+import asyncio
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 import uuid
@@ -33,7 +34,7 @@ from mcpgateway.services.email_auth_service import EmailAuthService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.token_blocklist_service import get_token_blocklist_service
 from mcpgateway.utils.security_cookies import set_auth_cookie
-from mcpgateway.utils.verify_credentials import get_auth_header_value
+from mcpgateway.utils.verify_credentials import get_auth_header_value, verify_jwt_token_cached
 
 # Initialize logging
 logging_service = LoggingService()
@@ -383,7 +384,7 @@ def _extract_raw_token(request: Request) -> tuple[Optional[str], bool]:
 
 
 def _decode_token_unverified(raw_token: str) -> Dict[str, Any]:
-    """Decode a JWT payload without re-verifying the signature (claims already verified by auth).
+    """Decode a JWT payload without verifying the signature (only for tokens this gateway just minted).
 
     Args:
         raw_token: Raw JWT string
@@ -395,6 +396,50 @@ def _decode_token_unverified(raw_token: str) -> Dict[str, Any]:
         return jwt.decode(raw_token, options={"verify_signature": False})
     except jwt.DecodeError:
         return {}
+
+
+async def _verify_session_token(raw_token: str, request: Request, current_user: EmailUser) -> Dict[str, Any]:
+    """Verify the request's session token and bind it to the authenticated user.
+
+    Full signature/expiry verification plus revocation and subject checks, so
+    claims are never trusted from a token that was not verified by the gateway
+    (the auth dependency may have authenticated via a non-JWT mechanism).
+
+    Args:
+        raw_token: Raw JWT string extracted from the request
+        request: FastAPI request object
+        current_user: Currently authenticated user
+
+    Returns:
+        Verified JWT payload
+
+    Raises:
+        HTTPException: 401 if the token is invalid, expired, revoked, or its
+            subject does not match the authenticated user
+    """
+    try:
+        payload = await verify_jwt_token_cached(raw_token, request)
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid session token")
+
+    jti = payload.get("jti")
+    if jti:
+        blocklist_service = get_token_blocklist_service()
+        if await asyncio.to_thread(blocklist_service.is_token_revoked, jti):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session token has been revoked")
+
+    subject = str(payload.get("sub") or "")
+    if subject not in (str(current_user.id), str(current_user.email)):
+        logger.warning(
+            "Session token subject mismatch for %s",
+            SecurityValidator.sanitize_log_message(str(current_user.email)),
+            extra={"security_event": "token_subject_mismatch", "security_severity": "medium", "user_email": current_user.email},
+        )
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session token does not match authenticated user")
+
+    return payload
 
 
 def _session_source_from_payload(payload: Dict[str, Any]) -> str:
@@ -442,7 +487,9 @@ async def validate_session(request: Request, current_user: EmailUser = Depends(g
         SessionValidateResponse: Session expiry, user profile, session source, and config hints
     """
     raw_token, _ = _extract_raw_token(request)
-    payload = _decode_token_unverified(raw_token) if raw_token else {}
+    if not raw_token:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="No session token to validate")
+    payload = await _verify_session_token(raw_token, request, current_user)
 
     expires_at: Optional[str] = None
     expires_in: Optional[int] = None
@@ -481,9 +528,7 @@ async def refresh_session(request: Request, current_user: EmailUser = Depends(ge
         # Non-JWT auth (basic/proxy) has no session token to refresh
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="No session token to refresh")
 
-    payload = _decode_token_unverified(raw_token)
-    if not payload:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid session token")
+    payload = await _verify_session_token(raw_token, request, current_user)
 
     if payload.get("token_use") != "session":  # nosec B105 - Not a password; token_use is a JWT claim type
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Only session tokens can be refreshed. API tokens have their own expiry and revocation lifecycle.")

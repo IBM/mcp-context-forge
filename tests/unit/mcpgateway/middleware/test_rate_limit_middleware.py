@@ -466,7 +466,10 @@ class TestRateLimitMiddlewareTiers:
         mock_script = MagicMock()
         mock_client.register_script.return_value = mock_script
 
-        with patch("mcpgateway.middleware.rate_limit_middleware.settings") as mock_settings, patch("mcpgateway.middleware.rate_limit_middleware.auth._get_ratelimiter_redis_client", return_value=mock_client):
+        with (
+            patch("mcpgateway.middleware.rate_limit_middleware.settings") as mock_settings,
+            patch("mcpgateway.middleware.rate_limit_middleware.auth._get_ratelimiter_redis_client", return_value=mock_client),
+        ):
             mock_settings.rate_limiting_enabled = True
             mock_settings.rate_limiting_redis_enabled = True
             mock_settings.trust_proxy_auth = True
