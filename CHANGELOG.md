@@ -12,7 +12,7 @@
 
 Release 1.0.8 consolidates **29 PRs** focused on **plugin discovery and catalog registration**, **MCP Apps bridge messaging**, **security hardening**, **auth-secret migration tooling**, and **operational reliability**:
 
-- **API & Platform** - Added v1 plugin discovery API, non-admin v1 catalog registration endpoint, and frontend-compatible email links.
+- **API & Platform** - Added v1 plugin discovery API, non-admin v1 catalog registration endpoint and frontend-compatible email links.
 - **MCP Apps** - Standard MCP message support over the AppBridge for broader client compatibility.
 - **Security** - Centralized Layer-1 visibility filtering across REST endpoints, sandboxed jq filter execution, login CSRF cookie binding to email and session jti, and admin team listing scoping by token teams.
 - **Plugins** - A2A agent support in Vault plugin.
