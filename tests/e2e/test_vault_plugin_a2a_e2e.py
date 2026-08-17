@@ -104,6 +104,8 @@ def live_stack():
         # Echo backends
         procs.append(subprocess.Popen([PYBIN, "plugins/vault/echo_mcp.py"], cwd=REPO, stdout=logs[0], stderr=subprocess.STDOUT))
         procs.append(subprocess.Popen([PYBIN, "plugins/vault/echo_a2a.py"], cwd=REPO, stdout=logs[1], stderr=subprocess.STDOUT))
+        if not _wait_http("http://localhost:8001/sse"):
+            pytest.skip("echo_mcp backend did not become ready")
         if not _wait_http("http://localhost:8002/health"):
             pytest.skip("echo_a2a backend did not become ready")
 
