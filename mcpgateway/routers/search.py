@@ -65,7 +65,7 @@ async def unified_search(
         tags (Optional[str]): Tag filter expression (comma=OR, plus=AND).
         entity_types (Optional[str]): Optional comma-separated entity type list.
             Supported values: servers, gateways, tools, resources, prompts,
-            agents, teams, users, roots.
+            agents, teams, users, roots, catalog. Catalog must be explicitly requested.
         include_inactive (bool): Whether to include inactive entities.
         limit (int): Default per-entity limit for returned items.
         limit_per_type (Optional[int]): Optional alias overriding ``limit``.
