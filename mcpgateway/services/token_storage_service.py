@@ -437,10 +437,7 @@ class TokenStorageService:
         """
         # Type check: Only DatabaseTokenBackend uses this signature
         if not isinstance(self._backend, DatabaseTokenBackend):
-            raise TypeError(
-                "_refresh_access_token façade is only available for DatabaseTokenBackend. "
-                "VaultTokenBackend uses a different internal signature and should not use this façade."
-            )
+            raise TypeError("_refresh_access_token façade is only available for DatabaseTokenBackend. VaultTokenBackend uses a different internal signature and should not use this façade.")
 
         # pylint: disable=protected-access,no-value-for-parameter
         # protected-access: Calling backend's private method for test compatibility
