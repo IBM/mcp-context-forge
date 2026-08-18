@@ -1459,7 +1459,12 @@ async def _run_reverse_proxy_reaper() -> None:
         if relay is not None and release_owners is not None:
             await release_owners(relay, evictions)
         try:
-            await gateway_service.mark_reverse_proxy_gateways_unreachable(session_manager, evictions, seen_at=seen_at)
+            await gateway_service.mark_reverse_proxy_gateways_unreachable(
+                session_manager,
+                evictions,
+                seen_at=seen_at,
+                authority_check=relay.is_unowned if relay is not None else None,
+            )
         except Exception as persistence_error:  # best-effort observability state must not stop session cleanup
             logger.warning("Reverse-proxy reachability persistence failed", exc_info=persistence_error)
 

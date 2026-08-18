@@ -14046,12 +14046,20 @@ async def test_reverse_proxy_reaper_release_failure_still_persists_and_continues
     monkeypatch.setattr(main_mod.asyncio, "sleep", AsyncMock())
     monkeypatch.setattr(main_mod.settings, "mcpgateway_reverse_proxy_distributed_enabled", True)
     monkeypatch.setattr(main_mod.settings, "mcpgateway_reverse_proxy_heartbeat_timeout", 90.0)
-    main_mod.gateway_service.mark_reverse_proxy_gateways_unreachable = AsyncMock()
+    mark_unreachable = AsyncMock()
+    main_mod.gateway_service.mark_reverse_proxy_gateways_unreachable = mark_unreachable
 
     with pytest.raises(asyncio.CancelledError):
         await main_mod._run_reverse_proxy_reaper()
 
-    main_mod.gateway_service.mark_reverse_proxy_gateways_unreachable.assert_awaited_once_with(manager, (eviction,), seen_at=main_mod.gateway_service.mark_reverse_proxy_gateways_unreachable.await_args.kwargs["seen_at"])
+    await_args = mark_unreachable.await_args
+    assert await_args is not None
+    mark_unreachable.assert_awaited_once_with(
+        manager,
+        (eviction,),
+        seen_at=await_args.kwargs["seen_at"],
+        authority_check=relay.is_unowned,
+    )
     assert manager.reap_stale.await_count == 2
 
 
@@ -14076,6 +14084,10 @@ async def test_lifespan_cancels_reaper_before_service_shutdown(monkeypatch):
     async def shutdown_services(_services) -> None:
         events.append("shutdown")
 
+    def create_reaper_task(coroutine):  # noqa: ANN001
+        coroutine.close()
+        return ReaperTask()
+
     # Reuse the established lifespan stubs and intercept only task ownership.
     test_case = TestLifespanAdvanced()
     await test_case._prepare_lifespan_stubs(monkeypatch, plugins_enabled=False)
@@ -14083,7 +14095,9 @@ async def test_lifespan_cancels_reaper_before_service_shutdown(monkeypatch):
     monkeypatch.setattr("mcpgateway.bootstrap_db.main", AsyncMock())
     monkeypatch.setattr(main_mod.settings, "mcpgateway_reverse_proxy_enabled", True)
     monkeypatch.setattr(main_mod.settings, "mcpgateway_reverse_proxy_heartbeat_timeout", 90.0)
-    monkeypatch.setattr(main_mod.asyncio, "create_task", MagicMock(return_value=ReaperTask()))
+    notification_service = MagicMock(initialize=AsyncMock(), shutdown=AsyncMock())
+    monkeypatch.setattr("mcpgateway.services.notification_service.init_notification_service", MagicMock(return_value=notification_service))
+    monkeypatch.setattr(main_mod.asyncio, "create_task", create_reaper_task)
     monkeypatch.setattr(main_mod, "shutdown_services", shutdown_services)
     monkeypatch.setattr(main_mod, "init_plugin_manager_factory", MagicMock())
 
@@ -14128,7 +14142,7 @@ async def test_lifespan_distributed_subscribe_failure_propagates_and_cleans_up(m
 
 
 @pytest.mark.asyncio
-async def test_lifespan_distributed_heartbeat_failure_is_supervised(monkeypatch):
+async def test_lifespan_distributed_heartbeat_failure_retries_under_supervision(monkeypatch):
     import anyio
     from anyio import TASK_STATUS_IGNORED
 
@@ -14150,19 +14164,31 @@ async def test_lifespan_distributed_heartbeat_failure_is_supervised(monkeypatch)
     notification_service.shutdown = AsyncMock()
     monkeypatch.setattr("mcpgateway.services.notification_service.init_notification_service", MagicMock(return_value=notification_service))
     relay = MagicMock()
+    heartbeat_retried = anyio.Event()
+    heartbeat_calls = 0
 
     async def listen(*, task_status=TASK_STATUS_IGNORED) -> None:
         task_status.started()
         await anyio.sleep_forever()
 
+    async def heartbeat() -> None:
+        nonlocal heartbeat_calls
+        heartbeat_calls += 1
+        if heartbeat_calls == 2:
+            raise RelayUnavailableError
+        if heartbeat_calls >= 3:
+            heartbeat_retried.set()
+
     relay.listen = listen
-    relay.heartbeat = AsyncMock(side_effect=[None, RelayUnavailableError()])
+    relay.heartbeat = heartbeat
     monkeypatch.setattr(reverse_proxy_relay_runtime, "get_reverse_proxy_relay", AsyncMock(return_value=relay))
 
-    with anyio.fail_after(1):
-        with pytest.raises(BaseExceptionGroup):
-            async with main_mod.lifespan(main_mod.app):
-                await anyio.sleep_forever()
+    with anyio.fail_after(2):
+        async with main_mod.lifespan(main_mod.app):
+            await heartbeat_retried.wait()
+
+    assert heartbeat_calls >= 3
+    assert reverse_proxy_relay_runtime._default_relay is None
 
 
 @pytest.mark.asyncio

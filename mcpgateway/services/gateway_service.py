@@ -1729,6 +1729,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         evictions: tuple[ReverseProxyEviction, ...],
         *,
         seen_at: datetime,
+        authority_check: Callable[[ReverseProxyEviction], Awaitable[bool]] | None = None,
     ) -> None:
         """Persist generation-safe disconnect state for authoritative PROXIED rows."""
         if not evictions:
@@ -1739,6 +1740,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             try:
                 async with session_manager.registration_lock(eviction.stable_id):
                     if session_manager.resolve_connection_id(eviction.stable_id) is not None:
+                        continue
+                    if authority_check is not None and not await authority_check(eviction):
                         continue
                     with fresh_db_session() as db:
                         gateway = db.get(DbGateway, str(eviction.stable_id))
