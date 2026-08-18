@@ -5005,7 +5005,8 @@ class ToolService(BaseService):
                 relay = await get_reverse_proxy_relay()
                 response = await relay.send_request_by_stable_id(stable_id, request_payload, timeout_seconds=effective_timeout, auth=downstream_auth)
             else:
-                assert session_manager is not None and connection_id is not None
+                if session_manager is None or connection_id is None:
+                    raise ToolInvocationError(f"No active reverse-proxy connection for gateway '{gateway_id_str}'")
                 response = await session_manager.send_request(connection_id, request_payload, timeout_seconds=effective_timeout, auth=downstream_auth)
         except RelayUnavailableError:
             raise ToolInvocationError(f"Reverse-proxy relay unavailable for gateway '{gateway_id_str}'") from None
