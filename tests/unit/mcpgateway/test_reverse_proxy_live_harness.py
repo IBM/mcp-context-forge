@@ -15,6 +15,7 @@ from typing import Final
 
 RUNNER: Final = Path(__file__).parents[2] / "live_gateway" / "reverse_proxy" / "run.sh"
 NAMESPACE_KEYS: Final = (
+    "IMAGE_LOCAL",
     "REVERSE_PROXY_E2E_COMPOSE_PROJECT",
     "REVERSE_PROXY_E2E_ARTIFACTS",
     "REVERSE_PROXY_E2E_FAST_SERVER_NAME",

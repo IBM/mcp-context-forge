@@ -8,7 +8,7 @@ RUN_SLUG=$(printf '%s' "$RUN_ID" | tr '[:upper:]' '[:lower:]' | tr -c '[:alnum:]
 RUN_SLUG=${RUN_SLUG:0:32}
 PROJECT="mcpgw-rp-e2e-$RUN_SLUG"
 ARTIFACTS="$ROOT/artifacts/reverse-proxy-e2e/$RUN_SLUG"
-export IMAGE_LOCAL=${RP_GATEWAY_IMAGE:-mcpgateway/mcpgateway:reverse-proxy-e2e}
+export IMAGE_LOCAL=${RP_GATEWAY_IMAGE:-mcpgateway/mcpgateway:reverse-proxy-e2e-$RUN_SLUG}
 export JWT_SECRET_KEY=${RP_JWT_SECRET_KEY:-"t8-jwt-$RUN_SLUG-0123456789abcdef0123456789abcdef"}
 export AUTH_ENCRYPTION_SECRET=${RP_AUTH_ENCRYPTION_SECRET:-"t8-auth-$RUN_SLUG-0123456789abcdef0123456789abcdef"}
 export REVERSE_PROXY_E2E_RUN_SLUG="$RUN_SLUG"
@@ -57,6 +57,7 @@ cleanup() {
   docker rm -f "$RP_FEATURE_OFF_CONTAINER" >/dev/null 2>&1 || true
   "${COMPOSE[@]}" rm -sf fast_test_server >/dev/null 2>&1 || true
   "${COMPOSE[@]}" down -v --remove-orphans || status=1
+  if [[ -z "${RP_GATEWAY_IMAGE:-}" ]]; then docker rmi -f "$IMAGE_LOCAL" >/dev/null 2>&1 || true; fi
   if [[ -n "$(docker ps -aq --filter "label=com.docker.compose.project=$PROJECT")" ]] ||
     [[ -n "$(docker network ls -q --filter "label=com.docker.compose.project=$PROJECT")" ]] ||
     [[ -n "$(docker volume ls -q --filter "label=com.docker.compose.project=$PROJECT")" ]]; then
