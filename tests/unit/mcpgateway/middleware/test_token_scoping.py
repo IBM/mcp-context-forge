@@ -375,6 +375,34 @@ class TestTokenScopingMiddleware:
         result = middleware._check_permission_restrictions("/catalog/foo", "POST", [Permissions.SERVERS_CREATE])
         assert result is False, "POST /catalog/{id} without the /register suffix must stay default-denied"
 
+    @pytest.mark.parametrize(
+        "route",
+        [
+            ("GET", "/reverse-proxy/sessions", Permissions.GATEWAYS_READ),
+            ("GET", "/reverse-proxy/sse/session-1", Permissions.GATEWAYS_READ),
+            ("DELETE", "/reverse-proxy/sessions/session-1", Permissions.GATEWAYS_DELETE),
+            ("POST", "/reverse-proxy/sessions/session-1/request", Permissions.TOOLS_EXECUTE),
+        ],
+    )
+    def test_reverse_proxy_routes_map_to_declared_permission(self, middleware, route):
+        """Each reverse-proxy HTTP session route allows its declared scoped permission."""
+        method, path, permission = route
+        assert middleware._check_permission_restrictions(path, method, [permission]) is True
+
+    @pytest.mark.parametrize(
+        "route",
+        [
+            ("GET", "/reverse-proxy/sessions", Permissions.TOOLS_READ),
+            ("GET", "/reverse-proxy/sse/session-1", Permissions.TOOLS_READ),
+            ("DELETE", "/reverse-proxy/sessions/session-1", Permissions.GATEWAYS_READ),
+            ("POST", "/reverse-proxy/sessions/session-1/request", Permissions.TOOLS_READ),
+        ],
+    )
+    def test_reverse_proxy_routes_reject_unrelated_permission(self, middleware, route):
+        """An unrelated scoped permission remains denied for reverse-proxy session routes."""
+        method, path, permission = route
+        assert middleware._check_permission_restrictions(path, method, [permission]) is False
+
     @pytest.mark.asyncio
     async def test_observability_metrics_endpoints_require_metrics_read(self, middleware):
         """GET /observability/metrics/* is mapped to metrics:read, not default-denied.
