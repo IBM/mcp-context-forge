@@ -8,13 +8,15 @@ Internal reverse-proxy gateway registration tests.
 
 from types import SimpleNamespace
 from datetime import datetime, timezone
-from contextlib import nullcontext
+from contextlib import asynccontextmanager, nullcontext
+from collections.abc import AsyncIterator
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.services.gateway_service import GatewayService, ReverseProxyGatewayRegistration, ReverseProxyGatewayScope
+from mcpgateway.services.reverse_proxy_relay import ReverseProxyRelay
 from mcpgateway.services.reverse_proxy_sessions import ConnectionId, LocalSessionId, ReverseProxyEviction, ReverseProxySessionManager, StableGatewayId
 
 
@@ -186,23 +188,145 @@ async def test_unreachable_persistence_skips_live_replacement(test_db, monkeypat
 
 @pytest.mark.asyncio
 async def test_unreachable_persistence_requires_distributed_owner_absence(test_db, monkeypatch):
-    """A replacement Redis generation prevents an old worker from persisting unreachable."""
+    """A denied distributed authority guard prevents an old worker from persisting unreachable."""
     gateway = DbGateway(id="distributed-replacement", name="replacement", slug="distributed-replacement", url="reverse-proxy://catalog/distributed-replacement", transport="PROXIED", created_via="reverse_proxy", reachable=True, capabilities={})
     test_db.add(gateway)
     test_db.commit()
     monkeypatch.setattr("mcpgateway.services.gateway_service.fresh_db_session", lambda: nullcontext(test_db))
     cache = SimpleNamespace(invalidate_gateways=AsyncMock())
     monkeypatch.setattr("mcpgateway.services.gateway_service._get_registry_cache", lambda: cache)
-    authority_check = AsyncMock(return_value=False)
+    guard_calls: list[ReverseProxyEviction] = []
+
+    @asynccontextmanager
+    async def denying_guard(eviction: ReverseProxyEviction) -> AsyncIterator[bool]:
+        guard_calls.append(eviction)
+        yield False
+
     eviction = ReverseProxyEviction(StableGatewayId(gateway.id), ConnectionId("old-generation"))
 
     await GatewayService().mark_reverse_proxy_gateways_unreachable(
         ReverseProxySessionManager(),
         (eviction,),
         seen_at=datetime.now(tz=timezone.utc),
-        authority_check=authority_check,
+        authority_guard=denying_guard,
     )
 
-    authority_check.assert_awaited_once_with(eviction)
+    assert guard_calls == [eviction]
     assert gateway.reachable is True
     cache.invalidate_gateways.assert_not_awaited()
+
+
+def _lease_fake_redis() -> MagicMock:
+    """Deterministic Redis subset with SET NX and fenced-eval semantics for registration leases."""
+    store: dict[str, bytes] = {}
+    redis = MagicMock(name="lease-redis")
+    redis.store = store
+
+    async def set_value(key: str, value: str, *, nx: bool = False, ex: int | None = None) -> bool | None:
+        del ex
+        if nx and key in store:
+            return None
+        store[key] = value.encode()
+        return True
+
+    async def get_value(key: str) -> bytes | None:
+        return store.get(key)
+
+    async def eval_script(script: str, numkeys: int, *args: str | int) -> int:
+        del script
+        keys = tuple(str(arg) for arg in args[:numkeys])
+        argv = tuple(str(arg) for arg in args[numkeys:])
+        current = store.get(keys[0])
+        if current is None or current.decode() != argv[0]:
+            return 0
+        if numkeys == 2:
+            store[keys[1]] = argv[1].encode()
+            return 1
+        store.pop(keys[0])
+        return 1
+
+    redis.set = AsyncMock(side_effect=set_value)
+    redis.get = AsyncMock(side_effect=get_value)
+    redis.eval = AsyncMock(side_effect=eval_script)
+    return redis
+
+
+@pytest.mark.asyncio
+async def test_unreachable_write_is_serialized_against_replacement_registration_lease(test_db, monkeypatch):
+    """An old worker cannot commit unreachable while a replacement holds only its registration lease.
+
+    Forces the exact TOCTOU interleaving from the distributed lifecycle: the
+    replacement's owner promotion and reachable commit are armed to land at the
+    old worker's commit point, so the lease guard must deny the write first.
+    """
+    gateway = DbGateway(id="lease-race-proxied", name="lease-race", slug="lease-race", url="reverse-proxy://catalog/lease-race", transport="PROXIED", created_via="reverse_proxy", reachable=True, capabilities={})
+    test_db.add(gateway)
+    test_db.commit()
+    monkeypatch.setattr("mcpgateway.services.gateway_service.fresh_db_session", lambda: nullcontext(test_db))
+    cache = SimpleNamespace(invalidate_gateways=AsyncMock())
+    monkeypatch.setattr("mcpgateway.services.gateway_service._get_registry_cache", lambda: cache)
+
+    redis = _lease_fake_redis()
+    manager = ReverseProxySessionManager()
+    stable_id = StableGatewayId(gateway.id)
+    old_worker = ReverseProxyRelay(manager, redis=redis, worker_id=lambda: "worker-old", owner_ttl_seconds=300)
+    replacement = ReverseProxyRelay(manager, redis=redis, worker_id=lambda: "worker-new", owner_ttl_seconds=300)
+    replacement_connection = ConnectionId("replacement-connection")
+    assert await replacement.claim_registration(stable_id, replacement_connection)
+
+    promoted = False
+    original_commit = test_db.commit
+
+    def commit_after_replacement_promotion() -> None:
+        nonlocal promoted
+        if not promoted:
+            promoted = True
+            redis.store[old_worker.owner_key(stable_id)] = replacement.owner_value(replacement_connection).encode()
+            gateway.reachable = True
+        original_commit()
+
+    monkeypatch.setattr(test_db, "commit", commit_after_replacement_promotion)
+
+    await GatewayService().mark_reverse_proxy_gateways_unreachable(
+        manager,
+        (ReverseProxyEviction(stable_id, ConnectionId("old-generation")),),
+        seen_at=datetime.now(tz=timezone.utc),
+        authority_guard=old_worker.unreachable_write_guard,
+    )
+
+    # The write was denied at lease acquisition: no commit ever ran, so the
+    # armed replacement promotion never had to fire and reachability survives.
+    assert promoted is False
+    assert gateway.reachable is True
+    cache.invalidate_gateways.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_unreachable_write_proceeds_once_failed_replacement_releases_lease(test_db, monkeypatch):
+    """Once a failed replacement releases its lease without promoting, the eviction write persists unreachable."""
+    gateway = DbGateway(id="lease-released-proxied", name="lease-released", slug="lease-released", url="reverse-proxy://catalog/lease-released", transport="PROXIED", created_via="reverse_proxy", reachable=True, capabilities={})
+    test_db.add(gateway)
+    test_db.commit()
+    monkeypatch.setattr("mcpgateway.services.gateway_service.fresh_db_session", lambda: nullcontext(test_db))
+    cache = SimpleNamespace(invalidate_gateways=AsyncMock())
+    monkeypatch.setattr("mcpgateway.services.gateway_service._get_registry_cache", lambda: cache)
+
+    redis = _lease_fake_redis()
+    manager = ReverseProxySessionManager()
+    stable_id = StableGatewayId(gateway.id)
+    old_worker = ReverseProxyRelay(manager, redis=redis, worker_id=lambda: "worker-old", owner_ttl_seconds=300)
+    replacement = ReverseProxyRelay(manager, redis=redis, worker_id=lambda: "worker-new", owner_ttl_seconds=300)
+    replacement_connection = ConnectionId("replacement-connection")
+    assert await replacement.claim_registration(stable_id, replacement_connection)
+    assert await replacement.release_registration(stable_id, replacement_connection)
+
+    await GatewayService().mark_reverse_proxy_gateways_unreachable(
+        manager,
+        (ReverseProxyEviction(stable_id, ConnectionId("old-generation")),),
+        seen_at=datetime.now(tz=timezone.utc),
+        authority_guard=old_worker.unreachable_write_guard,
+    )
+
+    assert gateway.reachable is False
+    assert old_worker.registration_key(stable_id) not in redis.store
+    cache.invalidate_gateways.assert_awaited_once()

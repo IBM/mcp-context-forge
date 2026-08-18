@@ -12,6 +12,7 @@ from __future__ import annotations
 
 # Standard
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 import logging
 import math
@@ -244,6 +245,41 @@ class ReverseProxyRelay:
     async def is_unowned(self, eviction: ReverseProxyEviction) -> bool:
         """Return whether Redis has no owner after one exact generation was evicted."""
         return await self._read_owner(eviction.stable_id) is None
+
+    @asynccontextmanager
+    async def unreachable_write_guard(self, eviction: ReverseProxyEviction) -> AsyncIterator[bool]:
+        """Serialize one unreachable write against concurrent replacement registration.
+
+        Acquiring ``mcpgw:rp_registration:{stable_id}`` for the evicted
+        generation closes the check-then-commit race: while a replacement holds
+        the lease the guard denies the write, and while the guard holds the
+        lease no replacement can publish its owner through
+        ``promote_registration``. The owner-absence decision therefore stays
+        valid through the caller's persistence commit. The lease carries the
+        owner TTL and is released fenced on exit, best-effort.
+        """
+        if self._redis is None:
+            yield await self.is_unowned(eviction)
+            return
+        claimed = await self._redis_operation(
+            self._redis.set(
+                self.registration_key(eviction.stable_id),
+                self.owner_value(eviction.connection_id),
+                nx=True,
+                ex=self._owner_ttl_seconds,
+            )
+        )
+        if not claimed:
+            yield False
+            return
+        try:
+            yield await self.is_unowned(eviction)
+        finally:
+            try:
+                await self._redis_operation(self._redis.eval(_OWNER_RELEASE_LUA, 1, self.registration_key(eviction.stable_id), self.owner_value(eviction.connection_id)))
+            except RelayUnavailableError:
+                # The lease still expires by TTL; a lost release must not mask the write outcome.
+                LOGGER.warning("Reverse-proxy unreachable-write lease release failed", extra={"stable_id": str(eviction.stable_id)})
 
     async def publish_session(self, stable_id: StableGatewayId, connection_id: ConnectionId) -> RelaySessionEntry:
         """Publish typed session metadata for worker-independent control-plane lookup."""
