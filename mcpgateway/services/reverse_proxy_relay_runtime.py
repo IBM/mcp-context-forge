@@ -50,7 +50,7 @@ class _GatewayReachabilityService(Protocol):
         evictions: tuple[ReverseProxyEviction, ...],
         *,
         seen_at: datetime,
-        authority_check=None,
+        authority_guard=None,
     ) -> None:
         """Persist replacement-aware reverse-proxy reachability loss."""
 
@@ -117,7 +117,7 @@ async def _persist_lost_authority(evictions: tuple[ReverseProxyEviction, ...]) -
             manager,
             evictions,
             seen_at=datetime.now(tz=timezone.utc),
-            authority_check=relay.is_unowned,
+            authority_guard=relay.unreachable_write_guard,
         )
     except Exception:  # best-effort persistence must not restore stale authority
         LOGGER.warning("Reverse-proxy authority-loss persistence failed")

@@ -70,16 +70,16 @@ async def _persist_unreachable_best_effort(session_manager, evictions) -> None:
     try:
         from mcpgateway.services.gateway_service import gateway_service  # pylint: disable=import-outside-toplevel,no-name-in-module
 
-        authority_check = None
+        authority_guard = None
         if settings.mcpgateway_reverse_proxy_distributed_enabled:
             from mcpgateway.services.reverse_proxy_relay_runtime import get_reverse_proxy_relay  # pylint: disable=import-outside-toplevel
 
-            authority_check = (await get_reverse_proxy_relay()).is_unowned
+            authority_guard = (await get_reverse_proxy_relay()).unreachable_write_guard
         await gateway_service.mark_reverse_proxy_gateways_unreachable(
             session_manager,
             evictions,
             seen_at=datetime.now(tz=timezone.utc),
-            authority_check=authority_check,
+            authority_guard=authority_guard,
         )
     except Exception as persistence_error:
         LOGGER.warning("Reverse-proxy reachability persistence failed", exc_info=persistence_error)
@@ -330,7 +330,12 @@ async def websocket_endpoint(
             ownership_promoted = False
 
             async def compensate() -> None:
-                """Leave persisted and routing state fail-closed after registration failure."""
+                """Leave persisted and routing state fail-closed after registration failure.
+
+                Local restore, demotion, and retirement are guaranteed; every
+                Redis cleanup is independently best-effort so a relay outage can
+                never strand routing state or skip the registration-error response.
+                """
                 nonlocal registration_claimed
                 if stable_id is None:
                     return
@@ -346,22 +351,44 @@ async def websocket_endpoint(
                         extra={"connection_id": str(connection_id), "stable_id": str(stable_id)},
                         exc_info=True,
                     )
-                if ownership_promoted and relay is not None:
-                    if release_owners is None:
-                        raise RuntimeError("reverse-proxy owner release is unavailable")
-                    await release_owners(relay, (ReverseProxyEviction(stable_id, connection_id),))
-                    await relay.remove_session(connection_id)
-                if registration_claimed and relay is not None:
-                    await relay.release_registration(stable_id, connection_id)
-                    registration_claimed = False
-                if not committed and quiesced_started:
-                    await session_manager.restore_stable_id(stable_id, quiesced, connection_id)
-                    return
-                if not committed:
-                    return
-                await session_manager.restore_stable_id(stable_id, None, connection_id)
-                if quiesced is not None and quiesced != connection_id:
-                    await session_manager.retire_connection(quiesced)
+                try:
+                    if not committed and quiesced_started:
+                        await session_manager.restore_stable_id(stable_id, quiesced, connection_id)
+                        return
+                    if not committed:
+                        return
+                    await session_manager.restore_stable_id(stable_id, None, connection_id)
+                    if quiesced is not None and quiesced != connection_id:
+                        await session_manager.retire_connection(quiesced)
+                finally:
+                    if relay is not None:
+                        if ownership_promoted:
+                            if release_owners is None:
+                                LOGGER.error(
+                                    "Reverse proxy owner release is unavailable during registration compensation",
+                                    extra={"connection_id": str(connection_id), "stable_id": str(stable_id)},
+                                )
+                            else:
+                                await release_owners(relay, (ReverseProxyEviction(stable_id, connection_id),))
+                            try:
+                                await relay.remove_session(connection_id)
+                            except Exception:  # pylint: disable=broad-exception-caught  # best-effort directory cleanup
+                                LOGGER.warning(
+                                    "Reverse proxy session directory cleanup failed during registration compensation",
+                                    extra={"connection_id": str(connection_id), "stable_id": str(stable_id)},
+                                    exc_info=True,
+                                )
+                        if registration_claimed:
+                            try:
+                                await relay.release_registration(stable_id, connection_id)
+                            except Exception:  # pylint: disable=broad-exception-caught  # the lease still expires by TTL
+                                LOGGER.warning(
+                                    "Reverse proxy registration lease release failed during compensation",
+                                    extra={"connection_id": str(connection_id), "stable_id": str(stable_id)},
+                                    exc_info=True,
+                                )
+                            else:
+                                registration_claimed = False
 
             try:
                 registration_context = AuthenticatedRegistrationContext(owner_email=authenticated_context.owner_email, team_id=authenticated_context.team_id)
@@ -507,12 +534,18 @@ async def websocket_endpoint(
         # Shield typed disconnect so cancellation cannot skip authoritative cleanup.
         with anyio.CancelScope(shield=True):
             disconnected_stable_ids = await session_manager.disconnect(connection_id)
-            if relay is not None:
-                if release_owners is None:
-                    raise RuntimeError("reverse-proxy owner release is unavailable")
-                await release_owners(relay, disconnected_stable_ids)
-                await relay.remove_session(connection_id)
-            await _persist_unreachable_best_effort(session_manager, disconnected_stable_ids)
+            try:
+                if relay is not None:
+                    if release_owners is None:
+                        LOGGER.error("Reverse-proxy owner release is unavailable during session teardown", extra={"connection_id": str(connection_id)})
+                    else:
+                        await release_owners(relay, disconnected_stable_ids)
+                    try:
+                        await relay.remove_session(connection_id)
+                    except Exception:  # pylint: disable=broad-exception-caught  # best-effort directory cleanup
+                        LOGGER.warning("Reverse-proxy session directory cleanup failed during session teardown", extra={"connection_id": str(connection_id)}, exc_info=True)
+            finally:
+                await _persist_unreachable_best_effort(session_manager, disconnected_stable_ids)
         LOGGER.info(f"Reverse proxy session ended: {connection_id}")
 
 

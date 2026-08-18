@@ -1463,7 +1463,7 @@ async def _run_reverse_proxy_reaper() -> None:
                 session_manager,
                 evictions,
                 seen_at=seen_at,
-                authority_check=relay.is_unowned if relay is not None else None,
+                authority_guard=relay.unreachable_write_guard if relay is not None else None,
             )
         except Exception as persistence_error:  # best-effort observability state must not stop session cleanup
             logger.warning("Reverse-proxy reachability persistence failed", exc_info=persistence_error)

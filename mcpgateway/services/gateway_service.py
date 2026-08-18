@@ -43,6 +43,7 @@ Examples:
 # Standard
 import asyncio
 import binascii
+from contextlib import AbstractAsyncContextManager, nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import logging
@@ -1729,9 +1730,15 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         evictions: tuple[ReverseProxyEviction, ...],
         *,
         seen_at: datetime,
-        authority_check: Callable[[ReverseProxyEviction], Awaitable[bool]] | None = None,
+        authority_guard: Callable[[ReverseProxyEviction], AbstractAsyncContextManager[bool]] | None = None,
     ) -> None:
-        """Persist generation-safe disconnect state for authoritative PROXIED rows."""
+        """Persist generation-safe disconnect state for authoritative PROXIED rows.
+
+        When ``authority_guard`` is given it is entered around the whole
+        check-and-commit window, so a distributed guard can serialize this
+        write against a concurrent replacement registration; the write is
+        skipped whenever the guard yields ``False``.
+        """
         if not evictions:
             return
         changed = False
@@ -1741,15 +1748,17 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 async with session_manager.registration_lock(eviction.stable_id):
                     if session_manager.resolve_connection_id(eviction.stable_id) is not None:
                         continue
-                    if authority_check is not None and not await authority_check(eviction):
-                        continue
-                    with fresh_db_session() as db:
-                        gateway = db.get(DbGateway, str(eviction.stable_id))
-                        if gateway is not None and _is_internal_proxied_gateway(gateway):
-                            gateway.reachable = False
-                            gateway.last_seen = seen_at
-                            db.commit()
-                            changed = True
+                    guard = authority_guard(eviction) if authority_guard is not None else nullcontext(True)
+                    async with guard as permitted:
+                        if not permitted:
+                            continue
+                        with fresh_db_session() as db:
+                            gateway = db.get(DbGateway, str(eviction.stable_id))
+                            if gateway is not None and _is_internal_proxied_gateway(gateway):
+                                gateway.reachable = False
+                                gateway.last_seen = seen_at
+                                db.commit()
+                                changed = True
             except Exception as persistence_error:  # pylint: disable=broad-exception-caught
                 if first_error is None:
                     first_error = persistence_error
