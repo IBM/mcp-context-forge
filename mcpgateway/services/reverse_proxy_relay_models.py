@@ -7,7 +7,7 @@ Strict Redis boundary contracts for reverse-proxy relay messages.
 """
 # pylint: disable=unnecessary-ellipsis
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Set
 from typing import Annotated, Literal, Protocol, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue, StrictStr, StringConstraints, model_validator
@@ -58,6 +58,22 @@ class RelayRedis(Protocol):
         """Return whether a key exists."""
         ...
 
+    async def delete(self, *keys: str) -> int:
+        """Delete keys and return the number removed."""
+        ...
+
+    async def sadd(self, key: str, *values: str) -> int:
+        """Add values to a set."""
+        ...
+
+    async def srem(self, key: str, *values: str) -> int:
+        """Remove values from a set."""
+        ...
+
+    async def smembers(self, key: str) -> Set[bytes | str]:
+        """Read all members from a set."""
+        ...
+
     async def eval(self, script: str, numkeys: int, *args: str | int) -> int:
         """Execute one ownership CAS script."""
         ...
@@ -82,6 +98,20 @@ class RelayOwner(_RelayModel):
 
     worker_id: RelayIdentifier
     connection_id: RelayIdentifier
+
+
+class RelaySessionEntry(_RelayModel):
+    """Redis directory metadata for one globally addressable connection."""
+
+    connection_id: RelayIdentifier
+    stable_id: RelayIdentifier
+    owner: RelayOwner
+    owner_email: StrictStr | None = None
+    connected_at: StrictStr
+    last_activity: StrictStr
+    message_count: int = Field(ge=0)
+    bytes_transferred: int = Field(ge=0)
+    server_info: dict[StrictStr, JsonValue]
 
 
 class RelayAuth(_RelayModel):
@@ -109,6 +139,7 @@ class RelayRequestEnvelope(_RelayModel):
     payload: JsonRpcRequest
     auth: RelayAuth | None = None
     deadline_utc: float = Field(gt=0, allow_inf_nan=False)
+    expect_response: bool = True
     forward_sig: str = Field(min_length=64, max_length=64)
 
 
@@ -116,6 +147,17 @@ class RelayCancelEnvelope(_RelayModel):
     """Signed cancellation for one owner-side request task."""
 
     type: Literal["rp_cancel"]
+    request_id: RelayIdentifier
+    stable_id: RelayIdentifier
+    owner_connection_id: RelayIdentifier
+    origin_worker_id: RelayIdentifier
+    forward_sig: str = Field(min_length=64, max_length=64)
+
+
+class RelayDisconnectEnvelope(_RelayModel):
+    """Signed request for the exact owner worker to retire one session."""
+
+    type: Literal["rp_disconnect"]
     request_id: RelayIdentifier
     stable_id: RelayIdentifier
     owner_connection_id: RelayIdentifier
@@ -140,5 +182,5 @@ class RelayResponseEnvelope(_RelayModel):
         return self
 
 
-RelayInboundEnvelope: TypeAlias = RelayRequestEnvelope | RelayCancelEnvelope
+RelayInboundEnvelope: TypeAlias = RelayRequestEnvelope | RelayCancelEnvelope | RelayDisconnectEnvelope
 RelayJson: TypeAlias = dict[str, JsonValue]

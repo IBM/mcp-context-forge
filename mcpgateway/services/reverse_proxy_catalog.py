@@ -69,6 +69,9 @@ class ReverseProxyCatalogEntry:
     stable_id: str
     gateway: GatewayRead
     server: ServerRead
+    gateway_created: bool = False
+    server_created: bool = False
+    server_changed: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,6 +117,8 @@ class ReverseProxyCatalogService:
         db: Session,
         context: AuthenticatedRegistrationContext,
         registration: RegistrationServer,
+        *,
+        commit: bool = True,
     ) -> ReverseProxyCatalogEntry:
         """Create or reconcile the authenticated proxy's stable catalog pair."""
         catalog_id = stable_proxy_id(context, registration)
@@ -213,28 +218,59 @@ class ReverseProxyCatalogService:
                     visibility=scope.visibility,
                     commit=False,
                 )
-            db.commit()
+            if commit:
+                db.commit()
+            else:
+                db.flush()
         except GatewayNameConflictError as exc:
+            db.rollback()
             raise ReverseProxyCatalogConflictError(stable_id=catalog_id, reason=str(exc)) from exc
         except ServerNameConflictError as exc:
+            db.rollback()
             raise ReverseProxyCatalogConflictError(stable_id=catalog_id, reason=str(exc)) from exc
-        finally:
-            if db.in_transaction():
-                db.rollback()
+        except Exception:
+            db.rollback()
+            raise
 
         db_gateway = db.get(DbGateway, catalog_id)
         db_server = db.get(DbServer, catalog_id)
         if db_gateway is None or db_server is None:
             raise ReverseProxyCatalogConflictError(stable_id=catalog_id, reason="catalog pair was not persisted")
-        await self._gateway_service.finalize_reverse_proxy_gateway(db_gateway, gateway_registration, created=gateway_created)
-        if server_changed:
-            await self._server_service.finalize_reverse_proxy_server(
-                db_server,
-                created=existing is None,
-                user_email=context.canonical_owner_email,
-            )
-        return ReverseProxyCatalogEntry(
+        entry = ReverseProxyCatalogEntry(
             stable_id=catalog_id,
             gateway=self._gateway_service.convert_gateway_to_read(db_gateway),
             server=self._server_service.convert_server_to_read(db_server),
+            gateway_created=gateway_created,
+            server_created=existing is None,
+            server_changed=server_changed,
         )
+        if commit:
+            await self.publish_post_commit_effects(db, context, registration, entry)
+        return entry
+
+    async def publish_post_commit_effects(
+        self,
+        db: Session,
+        context: AuthenticatedRegistrationContext,
+        registration: RegistrationServer,
+        entry: ReverseProxyCatalogEntry,
+    ) -> None:
+        """Publish catalog notifications only after the caller commits staged rows."""
+        db_gateway = db.get(DbGateway, entry.stable_id)
+        db_server = db.get(DbServer, entry.stable_id)
+        if db_gateway is None or db_server is None:
+            raise ReverseProxyCatalogConflictError(stable_id=entry.stable_id, reason="catalog pair was not persisted")
+        gateway_registration = ReverseProxyGatewayRegistration(
+            stable_id=entry.stable_id,
+            name=registration.name,
+            description=db_gateway.description,
+            owner_email=context.canonical_owner_email,
+            scope=ReverseProxyGatewayScope(team_id=context.canonical_team_id, visibility=context.visibility),
+        )
+        await self._gateway_service.finalize_reverse_proxy_gateway(db_gateway, gateway_registration, created=entry.gateway_created)
+        if entry.server_changed:
+            await self._server_service.finalize_reverse_proxy_server(
+                db_server,
+                created=entry.server_created,
+                user_email=context.canonical_owner_email,
+            )

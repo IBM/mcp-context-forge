@@ -23,6 +23,7 @@ import uuid
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
+from mcpgateway import __version__
 from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Server as DbServer
@@ -40,7 +41,7 @@ from mcpgateway.services.server_service import ServerService
 
 logger = logging.getLogger(__name__)
 
-MCP_CLIENT_PROTOCOL_VERSION: Final = "2024-11-05"
+MCP_CLIENT_PROTOCOL_VERSION: Final = "2025-11-25"
 MCP_CLIENT_NAME: Final = "mcp-context-forge"
 MAX_LIST_PAGES: Final = 100
 REVERSE_PROXY_CREATED_VIA: Final = "reverse_proxy"
@@ -110,6 +111,9 @@ class ReverseProxyDiscoveryService:
         db_gateway: DbGateway,
         db_server: DbServer,
         timeout_seconds: float | None = None,
+        *,
+        commit: bool = True,
+        mark_reachable: bool = True,
     ) -> ReverseProxyDiscoveryResult:
         """Run MCP discovery on one connection and reconcile the stable catalog pair.
 
@@ -127,6 +131,8 @@ class ReverseProxyDiscoveryService:
             db_gateway: Stable PROXIED gateway row created at registration.
             db_server: Virtual server row paired with the gateway.
             timeout_seconds: Per-request timeout; defaults to ``settings.tool_timeout``.
+            commit: Whether to commit the reconciled catalog transaction.
+            mark_reachable: Whether the reconciled gateway should be marked reachable.
 
         Returns:
             The negotiated capabilities, per-type reconciliation counts, and
@@ -154,7 +160,7 @@ class ReverseProxyDiscoveryService:
         prompts = self._build_prompts(prompt_dicts)
 
         db_gateway.capabilities = dict(capabilities)
-        db_gateway.reachable = True
+        db_gateway.reachable = mark_reachable
         db_gateway.last_seen = datetime.now(timezone.utc)
 
         catalog_sync = self._gateway_service._sync_gateway_catalog(  # pylint: disable=protected-access
@@ -180,7 +186,10 @@ class ReverseProxyDiscoveryService:
         db_server.tools = list(db_gateway.tools)
         db_server.resources = list(db_gateway.resources)
         db_server.prompts = list(db_gateway.prompts)
-        db.commit()
+        if commit:
+            db.commit()
+        else:
+            db.flush()
 
         return ReverseProxyDiscoveryResult(
             capabilities=capabilities,
@@ -199,7 +208,7 @@ class ReverseProxyDiscoveryService:
             session_manager,
             connection_id,
             "initialize",
-            {"protocolVersion": MCP_CLIENT_PROTOCOL_VERSION, "capabilities": {}, "clientInfo": {"name": MCP_CLIENT_NAME}},
+            {"protocolVersion": MCP_CLIENT_PROTOCOL_VERSION, "capabilities": {}, "clientInfo": {"name": MCP_CLIENT_NAME, "version": __version__}},
             timeout_seconds,
         )
         capabilities = result.get("capabilities", {})

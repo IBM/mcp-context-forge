@@ -200,7 +200,7 @@ async def test_initialize_precedes_initialized_and_lists(discovery, test_db, pro
     assert methods[0] == "initialize"
     initialize = fake.sent[0]
     assert isinstance(initialize, JsonRpcRequest)
-    assert initialize.params == {"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "mcp-context-forge"}}
+    assert initialize.params == {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "mcp-context-forge", "version": "1.0.7"}}
     initialized_at = methods.index("notifications/initialized")
     assert initialized_at == 1
     assert isinstance(fake.sent[initialized_at], JsonRpcNotification)

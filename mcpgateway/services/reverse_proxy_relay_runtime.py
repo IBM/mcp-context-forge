@@ -50,6 +50,7 @@ class _GatewayReachabilityService(Protocol):
         evictions: tuple[ReverseProxyEviction, ...],
         *,
         seen_at: datetime,
+        authority_check=None,
     ) -> None:
         """Persist replacement-aware reverse-proxy reachability loss."""
 
@@ -97,16 +98,27 @@ async def run_reverse_proxy_relay_heartbeat(relay: ReverseProxyRelay | None = No
     """Refresh relay liveness until lifespan cancellation."""
     active_relay = relay or await get_reverse_proxy_relay()
     while True:
-        await active_relay.heartbeat()
-        await anyio.sleep(_OWNER_TTL_SECONDS / 3)
+        try:
+            await active_relay.heartbeat()
+        except RelayUnavailableError:
+            LOGGER.warning("Reverse-proxy relay heartbeat unavailable; retrying")
+            await anyio.sleep(1)
+        else:
+            await anyio.sleep(_OWNER_TTL_SECONDS / 3)
 
 
 async def _persist_lost_authority(evictions: tuple[ReverseProxyEviction, ...]) -> None:
     """Persist authority loss through the replacement-aware gateway policy."""
     gateway_service: _GatewayReachabilityService = getattr(import_module("mcpgateway.services.gateway_service"), "gateway_service")
     manager = await get_reverse_proxy_session_manager()
+    relay = await get_reverse_proxy_relay()
     try:
-        await gateway_service.mark_reverse_proxy_gateways_unreachable(manager, evictions, seen_at=datetime.now(tz=timezone.utc))
+        await gateway_service.mark_reverse_proxy_gateways_unreachable(
+            manager,
+            evictions,
+            seen_at=datetime.now(tz=timezone.utc),
+            authority_check=relay.is_unowned,
+        )
     except Exception:  # best-effort persistence must not restore stale authority
         LOGGER.warning("Reverse-proxy authority-loss persistence failed")
 

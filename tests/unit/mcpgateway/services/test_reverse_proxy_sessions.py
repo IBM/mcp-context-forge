@@ -423,6 +423,23 @@ async def test_immediate_response_is_correlated_before_websocket_send() -> None:
 
 
 @pytest.mark.asyncio
+async def test_send_request_nowait_delivers_without_pending_response() -> None:
+    """One-way HTTP control delivery writes the request frame without awaiting MCP output."""
+    manager = ReverseProxySessionManager()
+    websocket = RecordingWebSocket()
+    session = await manager.connect(websocket, LocalSessionId("local-1"))
+
+    await manager.send_request_nowait(session.connection_id, _request_payload("http-1"), timeout_seconds=1)
+
+    assert json.loads(websocket.frames[0]) == {
+        "sessionId": str(session.connection_id),
+        "type": "request",
+        "payload": {"jsonrpc": "2.0", "id": "http-1", "method": "tools/list"},
+    }
+    assert manager.pending_count(session.connection_id) == 0
+
+
+@pytest.mark.asyncio
 async def test_response_cannot_resolve_another_connections_request() -> None:
     manager = ReverseProxySessionManager()
     websocket = RecordingWebSocket()

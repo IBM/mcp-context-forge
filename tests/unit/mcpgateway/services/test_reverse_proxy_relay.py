@@ -4,6 +4,7 @@ Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 
 Focused tests for the isolated Redis reverse-proxy relay.
+Audit marker: # noqa: SIZE_OK — deterministic fake and relay matrix stay co-located.
 """
 
 # T6 explicitly co-locates its deterministic Redis fake and focused relay matrix.
@@ -13,6 +14,7 @@ Focused tests for the isolated Redis reverse-proxy relay.
 from __future__ import annotations
 
 # Standard
+import builtins
 from collections import defaultdict
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
@@ -108,6 +110,7 @@ class _FakeRedis:
 
     def __init__(self) -> None:
         self.store: dict[str, bytes] = {}
+        self.sets: dict[str, set[bytes]] = defaultdict(set)
         self.subscribers: dict[str, set[_FakePubSub]] = defaultdict(set)
         self.published: list[tuple[str, bytes]] = []
         self.eval_calls: list[tuple[str, tuple[str | int, ...]]] = []
@@ -131,19 +134,47 @@ class _FakeRedis:
     async def exists(self, key: str) -> int:
         return int(key in self.store)
 
+    async def delete(self, *keys: str) -> int:
+        removed = 0
+        for key in keys:
+            removed += int(self.store.pop(key, None) is not None)
+        return removed
+
+    async def sadd(self, key: str, *values: str) -> int:
+        before = len(self.sets[key])
+        self.sets[key].update(value.encode() for value in values)
+        return len(self.sets[key]) - before
+
+    async def srem(self, key: str, *values: str) -> int:
+        removed = 0
+        for value in values:
+            encoded = value.encode()
+            if encoded in self.sets[key]:
+                self.sets[key].remove(encoded)
+                removed += 1
+        return removed
+
+    async def smembers(self, key: str) -> builtins.set[bytes]:
+        return builtins.set(self.sets[key])
+
     async def eval(self, script: str, numkeys: int, *args: str | int) -> int:
-        del numkeys
         self.eval_calls.append((script, args))
-        key, expected = str(args[0]), str(args[1])
+        keys = tuple(str(arg) for arg in args[:numkeys])
+        argv = args[numkeys:]
+        key, expected = keys[0], str(argv[0])
         current = self.store.get(key)
         if current is None or current.decode() != expected:
             return 0
-        if len(args) == 2:
+        if numkeys == 2 and len(argv) == 3:
+            owner_key, owner_value, _owner_ttl = keys[1], str(argv[1]), int(argv[2])
+            self.store[owner_key] = owner_value.encode()
+            return 1
+        if len(argv) == 1:
             self.store.pop(key)
             return 1
-        if len(args) == 3:
+        if len(argv) == 2:
             return 1
-        raise AssertionError(f"unexpected CAS argument count: {len(args)}")
+        raise AssertionError(f"unexpected CAS argument count: {len(argv)}")
 
     def pubsub(self) -> _FakePubSub:
         return _FakePubSub(self)
@@ -165,7 +196,63 @@ class _ControlFrameRedis(_FakeRedis):
         return _ControlFramePubSub(self)
 
 
-@dataclass
+class _TransientListenerPubSub(_FakePubSub):
+    def __init__(self, redis: _FakeRedis, *, fail: bool, recovered: anyio.Event) -> None:
+        super().__init__(redis)
+        self._fail = fail
+        self._recovered = recovered
+
+    async def listen(self) -> AsyncIterator[dict[str, str | bytes | int | None]]:
+        if self._fail:
+            raise RedisConnectionError("transient listener failure")
+        self._recovered.set()
+        async for entry in super().listen():
+            yield entry
+
+
+class _TransientListenerRedis(_FakeRedis):
+    def __init__(self) -> None:
+        super().__init__()
+        self.listener_failed = False
+        self.listener_recovered = anyio.Event()
+
+    def pubsub(self) -> _TransientListenerPubSub:
+        fail = not self.listener_failed
+        self.listener_failed = True
+        return _TransientListenerPubSub(self, fail=fail, recovered=self.listener_recovered)
+
+
+class _SubscribeFailurePubSub(_FakePubSub):
+    async def subscribe(self, *channels: str) -> None:
+        await super().subscribe(*channels)
+        raise RedisConnectionError("transient subscribe failure")
+
+
+class _SubscribeFailureRedis(_FakeRedis):
+    def __init__(self) -> None:
+        super().__init__()
+        self.pubsubs: list[_SubscribeFailurePubSub] = []
+
+    def pubsub(self) -> _SubscribeFailurePubSub:
+        pubsub = _SubscribeFailurePubSub(self)
+        self.pubsubs.append(pubsub)
+        return pubsub
+
+
+class _TransientFactoryRedis(_FakeRedis):
+    def __init__(self) -> None:
+        super().__init__()
+        self.pubsub_calls = 0
+        self.listener_recovered = anyio.Event()
+
+    def pubsub(self) -> _TransientListenerPubSub:
+        self.pubsub_calls += 1
+        if self.pubsub_calls == 2:
+            raise RedisConnectionError("transient pubsub factory failure")
+        return _TransientListenerPubSub(self, fail=self.pubsub_calls == 1, recovered=self.listener_recovered)
+
+
+@dataclass(frozen=True, slots=True)
 class _CleanupFailure:
     unsubscribe: bool = False
     aclose: bool = False
@@ -259,10 +346,42 @@ class _BlockingWebSocket:
         return
 
 
+class _OneWayWebSocket:
+    """Recording socket that never synthesizes a downstream response."""
+
+    def __init__(self) -> None:
+        self.frames: list[str] = []
+        self.closed = anyio.Event()
+
+    async def send_text(self, data: str) -> None:
+        self.frames.append(data)
+
+    async def close(self) -> None:
+        self.closed.set()
+
+
+class _GatedOneWayWebSocket(_OneWayWebSocket):
+    """One-way socket whose write completion is controlled by the test."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.sent = anyio.Event()
+        self.release = anyio.Event()
+
+    async def send_text(self, data: str) -> None:
+        self.frames.append(data)
+        self.sent.set()
+        await self.release.wait()
+
+
+class _SyntheticOwnerError(RuntimeError):
+    """Synthetic owner failure used to verify secret-safe error boundaries."""
+
+
 class _SecretFailureWebSocket:
     async def send_text(self, data: str) -> None:
         del data
-        raise RuntimeError("Bearer oracle-secret-must-not-escape")
+        raise _SyntheticOwnerError("Bearer oracle-secret-must-not-escape")
 
     async def close(self) -> None:
         return
@@ -315,6 +434,58 @@ async def test_owner_claim_is_single_writer_and_old_generation_cannot_release_re
     redis.store[relay_a.owner_key(STABLE_ID)] = relay_b.owner_value(connection_b).encode()
     assert await relay_a.release_owner(STABLE_ID, connection_a) is False
     assert redis.store[relay_a.owner_key(STABLE_ID)] == relay_b.owner_value(connection_b).encode()
+
+
+@pytest.mark.asyncio
+async def test_registration_lease_is_single_writer_and_only_holder_can_promote_owner() -> None:
+    redis = _FakeRedis()
+    manager_a, _, connection_a = await _local_manager()
+    manager_b, _, connection_b = await _local_manager()
+    relay_a = _relay(manager_a, redis, WORKER_A)
+    relay_b = _relay(manager_b, redis, WORKER_B)
+
+    assert await relay_a.claim_registration(STABLE_ID, connection_a)
+    assert not await relay_b.claim_registration(STABLE_ID, connection_b)
+    assert await relay_a.heartbeat_registration(STABLE_ID, connection_a)
+    assert not await relay_b.promote_registration(STABLE_ID, connection_b)
+    assert await relay_a.promote_registration(STABLE_ID, connection_a)
+    promote_args = redis.eval_calls[-1][1]
+    assert promote_args == (
+        relay_a.registration_key(STABLE_ID),
+        relay_a.owner_key(STABLE_ID),
+        relay_a.owner_value(connection_a),
+        relay_a.owner_value(connection_a),
+        OWNER_TTL,
+    )
+
+    assert relay_a.registration_key(STABLE_ID) in redis.store
+    assert redis.store[relay_a.owner_key(STABLE_ID)] == relay_a.owner_value(connection_a).encode()
+    assert not await relay_b.release_registration(STABLE_ID, connection_b)
+    assert await relay_a.release_registration(STABLE_ID, connection_a)
+    assert relay_a.registration_key(STABLE_ID) not in redis.store
+
+
+@pytest.mark.asyncio
+async def test_distributed_session_directory_round_trips_and_removes_typed_metadata() -> None:
+    redis = _FakeRedis()
+    manager = ReverseProxySessionManager()
+    websocket = _OneWayWebSocket()
+    session = await manager.connect(websocket, LocalSessionId("directory"), owner_email="owner@example.com")
+    await manager.record_server_info(session.connection_id, {"name": "directory-server"})
+    await manager.promote_stable_id(STABLE_ID, session.connection_id)
+    relay = _relay(manager, redis, WORKER_A)
+    assert await relay.claim_owner(STABLE_ID, session.connection_id)
+
+    published = await relay.publish_session(STABLE_ID, session.connection_id)
+    assert published.connection_id == str(session.connection_id)
+    assert published.owner_email == "owner@example.com"
+    assert published.server_info == {"name": "directory-server"}
+    assert await relay.get_session_entry(session.connection_id) == published
+    assert await relay.list_session_entries() == (published,)
+
+    await relay.remove_session(session.connection_id)
+    assert await relay.get_session_entry(session.connection_id) is None
+    assert await relay.list_session_entries() == ()
 
 
 @pytest.mark.asyncio
@@ -587,6 +758,107 @@ async def test_owner_rejects_signed_request_after_exact_ownership_moves() -> Non
     assert not await relay.handle_message(orjson.dumps(envelope))
     assert websocket.frames == []
     assert redis.published == []
+
+
+@pytest.mark.parametrize("nowait", [False, True])
+@pytest.mark.asyncio
+async def test_local_connection_id_dispatch_requires_current_redis_generation(nowait: bool) -> None:
+    redis = _FakeRedis()
+    manager, websocket, connection_id = await _local_manager()
+    relay = _relay(manager, redis, WORKER_A)
+    redis.store[relay.owner_key(STABLE_ID)] = RelayOwner(worker_id=WORKER_B, connection_id="replacement").model_dump_json().encode()
+
+    with pytest.raises(ConnectionNotFoundError):
+        if nowait:
+            await relay.send_request_by_connection_id_nowait(connection_id, _request("moved-owner"), timeout_seconds=1)
+        else:
+            await relay.send_request_by_connection_id(connection_id, _request("moved-owner"), timeout_seconds=1)
+
+    assert websocket.frames == []
+
+
+@pytest.mark.parametrize("nowait", [False, True])
+@pytest.mark.asyncio
+async def test_local_connection_id_dispatch_fails_closed_when_redis_is_unavailable(nowait: bool) -> None:
+    redis = _FakeRedis()
+    redis.get = AsyncMock(side_effect=RedisConnectionError("unavailable"))
+    manager, websocket, connection_id = await _local_manager()
+    relay = _relay(manager, redis, WORKER_A)
+
+    with pytest.raises(RelayUnavailableError):
+        if nowait:
+            await relay.send_request_by_connection_id_nowait(connection_id, _request("redis-down"), timeout_seconds=1)
+        else:
+            await relay.send_request_by_connection_id(connection_id, _request("redis-down"), timeout_seconds=1)
+
+    assert websocket.frames == []
+
+
+@pytest.mark.asyncio
+async def test_owner_consumes_signed_request_id_before_dispatch() -> None:
+    redis = _FakeRedis()
+    manager, websocket, connection_id = await _local_manager()
+    relay = _relay(manager, redis, WORKER_A)
+    assert await relay.claim_owner(STABLE_ID, connection_id)
+    envelope = {
+        "type": "rp_request",
+        "request_id": "single-use-request",
+        "stable_id": str(STABLE_ID),
+        "owner_connection_id": str(connection_id),
+        "origin_worker_id": WORKER_B,
+        "payload": _request("single-use-request").model_dump(mode="json", exclude_none=True),
+        "auth": None,
+        "deadline_utc": time.time() + 30,
+        "expect_response": True,
+    }
+    envelope[FORWARD_SIG_FIELD] = sign_redis_forward_envelope(envelope)
+    raw = orjson.dumps(envelope)
+
+    assert await relay.handle_message(raw)
+    assert not await relay.handle_message(raw)
+    assert len(websocket.frames) == 1
+
+
+@pytest.mark.asyncio
+async def test_listener_consumes_duplicate_signed_request_before_owner_dispatch() -> None:
+    # Given a listening owner and one valid request envelope delivered twice.
+    redis = _FakeRedis()
+    manager = ReverseProxySessionManager()
+    websocket = _GatedOneWayWebSocket()
+    session = await manager.connect(websocket, LocalSessionId("listener-replay"))
+    await manager.promote_stable_id(STABLE_ID, session.connection_id)
+    relay = _relay(manager, redis, WORKER_A)
+    assert await relay.claim_owner(STABLE_ID, session.connection_id)
+    envelope = {
+        "type": "rp_request",
+        "request_id": "listener-single-use-request",
+        "stable_id": str(STABLE_ID),
+        "owner_connection_id": str(session.connection_id),
+        "origin_worker_id": WORKER_B,
+        "payload": _request("listener-single-use-request").model_dump(mode="json", exclude_none=True),
+        "auth": None,
+        "deadline_utc": time.time() + 30,
+        "expect_response": False,
+    }
+    envelope[FORWARD_SIG_FIELD] = sign_redis_forward_envelope(envelope)
+    raw = orjson.dumps(envelope)
+
+    async with anyio.create_task_group() as task_group:
+        await task_group.start(relay.listen)
+
+        # When Redis redelivers the exact authenticated request while its first dispatch is active.
+        assert await redis.publish(f"mcpgw:pool_rp:{WORKER_A}", raw) == 1
+        assert await redis.publish(f"mcpgw:pool_rp:{WORKER_A}", raw) == 1
+        with anyio.fail_after(1):
+            await websocket.sent.wait()
+        websocket.release.set()
+        with anyio.fail_after(1):
+            await relay.wait_for_idle()
+
+        # Then only the consumed request reaches the downstream connection.
+        assert len(websocket.frames) == 1
+        assert relay.owner_request_count == 0
+        task_group.cancel_scope.cancel()
 
 
 @pytest.mark.asyncio
@@ -949,6 +1221,113 @@ async def test_two_worker_fake_redis_relays_all_dispatch_methods(method: str) ->
 
 
 @pytest.mark.asyncio
+async def test_two_worker_session_directory_supports_one_way_send_and_disconnect() -> None:
+    redis = _FakeRedis()
+    manager_a = ReverseProxySessionManager()
+    websocket = _GatedOneWayWebSocket()
+    session = await manager_a.connect(websocket, LocalSessionId("one-way"), owner_email="owner@example.com")
+    await manager_a.record_server_info(session.connection_id, {"name": "remote-server"})
+    await manager_a.promote_stable_id(STABLE_ID, session.connection_id)
+    relay_a = _relay(manager_a, redis, WORKER_A)
+    relay_b = _relay(ReverseProxySessionManager(), redis, WORKER_B)
+    assert await relay_a.claim_owner(STABLE_ID, session.connection_id)
+    assert await relay_a.heartbeat_worker()
+    published = await relay_a.publish_session(STABLE_ID, session.connection_id)
+
+    async with anyio.create_task_group() as task_group:
+        await task_group.start(relay_a.listen)
+        listed = await relay_b.list_session_entries()
+        resolved = await relay_b.get_session_entry(session.connection_id)
+        delivery_completed = anyio.Event()
+
+        async def deliver() -> None:
+            await relay_b.send_request_by_connection_id_nowait(session.connection_id, _request("http-1"), timeout_seconds=1)
+            delivery_completed.set()
+
+        task_group.start_soon(deliver)
+        with anyio.fail_after(1):
+            await websocket.sent.wait()
+        assert not delivery_completed.is_set()
+        websocket.release.set()
+        with anyio.fail_after(1):
+            await delivery_completed.wait()
+        assert await relay_b.disconnect_session(session.connection_id)
+        with anyio.fail_after(1):
+            await websocket.closed.wait()
+        assert resolved == published
+        assert listed == (published,)
+        assert json.loads(websocket.frames[0])["payload"]["id"] == "http-1"
+        assert manager_a.pending_count(session.connection_id) == 0
+        assert manager_a.get_session(session.connection_id) is None
+        assert await relay_b.get_session_entry(session.connection_id) is None
+        assert await relay_b._read_owner(STABLE_ID) is None
+        task_group.cancel_scope.cancel()
+
+
+@pytest.mark.asyncio
+async def test_listener_reconnects_after_post_start_redis_failure() -> None:
+    redis = _TransientListenerRedis()
+    relay = _relay(ReverseProxySessionManager(), redis, WORKER_A)
+
+    async with anyio.create_task_group() as task_group:
+        await task_group.start(relay.listen)
+        with anyio.fail_after(2):
+            await redis.listener_recovered.wait()
+        task_group.cancel_scope.cancel()
+
+    assert redis.listener_failed is True
+
+
+@pytest.mark.asyncio
+async def test_remote_subscribe_failure_closes_partially_subscribed_pubsub() -> None:
+    # Given a remote owner and a pub/sub object whose subscribe call fails after registration.
+    redis = _SubscribeFailureRedis()
+    relay = _relay(ReverseProxySessionManager(), redis, WORKER_B)
+    owner = RelayOwner(worker_id=WORKER_A, connection_id="owner-generation")
+    redis.store[relay.owner_key(STABLE_ID)] = owner.model_dump_json().encode()
+    redis.store[f"mcpgw:worker_heartbeat:{WORKER_A}"] = b"alive"
+
+    # When a remote request attempts to subscribe for its response.
+    with pytest.raises(RelayUnavailableError):
+        await relay.send_request_by_stable_id(STABLE_ID, _request(), timeout_seconds=1)
+
+    # Then the partially subscribed pub/sub resource is fully closed.
+    assert len(redis.pubsubs) == 1
+    assert redis.pubsubs[0].closed is True
+    assert redis.subscription_count() == 0
+
+
+@pytest.mark.asyncio
+async def test_listener_retries_post_start_pubsub_factory_failure() -> None:
+    # Given a listener that first loses its stream and then cannot create one replacement.
+    redis = _TransientFactoryRedis()
+    relay = _relay(ReverseProxySessionManager(), redis, WORKER_A)
+
+    # When the supervised listener reconnects.
+    async with anyio.create_task_group() as task_group:
+        await task_group.start(relay.listen)
+        with anyio.fail_after(3):
+            await redis.listener_recovered.wait()
+        task_group.cancel_scope.cancel()
+
+    # Then acquisition was retried through the transient factory failure.
+    assert redis.pubsub_calls == 3
+
+
+@pytest.mark.asyncio
+async def test_claim_owner_replaces_stale_same_worker_generation() -> None:
+    redis = _FakeRedis()
+    manager = ReverseProxySessionManager()
+    relay = _relay(manager, redis, WORKER_A)
+    redis.store[relay.owner_key(STABLE_ID)] = relay.owner_value(ConnectionId("stale-generation")).encode()
+
+    claimed = await relay.claim_owner(STABLE_ID, ConnectionId("replacement-generation"))
+
+    assert claimed is True
+    assert await relay._read_owner(STABLE_ID) == RelayOwner(worker_id=WORKER_A, connection_id="replacement-generation")
+
+
+@pytest.mark.asyncio
 async def test_local_mapping_is_retired_when_redis_owner_generation_moves() -> None:
     redis = _FakeRedis()
     manager, websocket, connection_id = await _local_manager()
@@ -1003,7 +1382,7 @@ async def test_runtime_lifespan_propagates_listener_subscribe_failure_without_ha
 
 
 @pytest.mark.asyncio
-async def test_release_outage_is_best_effort_for_every_eviction(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_release_outage_is_best_effort_for_every_eviction() -> None:
     # First-Party
     from mcpgateway.services import reverse_proxy_relay_runtime
     from mcpgateway.services.reverse_proxy_sessions import ReverseProxyEviction
@@ -1020,7 +1399,7 @@ async def test_release_outage_is_best_effort_for_every_eviction(monkeypatch: pyt
 
 
 @pytest.mark.asyncio
-async def test_runtime_lifespan_propagates_heartbeat_failure_and_resets(monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_runtime_lifespan_retries_heartbeat_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     # First-Party
     from mcpgateway.services import reverse_proxy_relay_runtime
 
@@ -1030,16 +1409,27 @@ async def test_runtime_lifespan_propagates_heartbeat_failure_and_resets(monkeypa
         task_status.started()
         await anyio.sleep_forever()
 
+    heartbeat_calls = 0
+    heartbeat_recovered = anyio.Event()
+
+    async def heartbeat() -> None:
+        nonlocal heartbeat_calls
+        heartbeat_calls += 1
+        if heartbeat_calls == 2:
+            raise RelayUnavailableError
+        if heartbeat_calls == 3:
+            heartbeat_recovered.set()
+
     monkeypatch.setattr(relay, "listen", listen)
-    monkeypatch.setattr(relay, "heartbeat", AsyncMock(side_effect=[None, RelayUnavailableError()]))
+    monkeypatch.setattr(relay, "heartbeat", heartbeat)
+    monkeypatch.setattr(reverse_proxy_relay_runtime, "_OWNER_TTL_SECONDS", 0.03)
     monkeypatch.setattr(reverse_proxy_relay_runtime, "get_reverse_proxy_relay", AsyncMock(return_value=relay))
 
-    with anyio.fail_after(1):
-        with pytest.raises(BaseExceptionGroup) as caught:
-            async with reverse_proxy_relay_runtime.reverse_proxy_relay_lifespan():
-                await anyio.sleep_forever()
+    with anyio.fail_after(2):
+        async with reverse_proxy_relay_runtime.reverse_proxy_relay_lifespan():
+            await heartbeat_recovered.wait()
 
-    assert any(isinstance(error, RelayUnavailableError) for error in caught.value.exceptions)
+    assert heartbeat_calls >= 3
     assert reverse_proxy_relay_runtime._default_relay is None
 
 

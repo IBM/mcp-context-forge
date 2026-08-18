@@ -182,3 +182,27 @@ async def test_unreachable_persistence_skips_live_replacement(test_db, monkeypat
 
     assert gateway.reachable is True
     cache.invalidate_gateways.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_unreachable_persistence_requires_distributed_owner_absence(test_db, monkeypatch):
+    """A replacement Redis generation prevents an old worker from persisting unreachable."""
+    gateway = DbGateway(id="distributed-replacement", name="replacement", slug="distributed-replacement", url="reverse-proxy://catalog/distributed-replacement", transport="PROXIED", created_via="reverse_proxy", reachable=True, capabilities={})
+    test_db.add(gateway)
+    test_db.commit()
+    monkeypatch.setattr("mcpgateway.services.gateway_service.fresh_db_session", lambda: nullcontext(test_db))
+    cache = SimpleNamespace(invalidate_gateways=AsyncMock())
+    monkeypatch.setattr("mcpgateway.services.gateway_service._get_registry_cache", lambda: cache)
+    authority_check = AsyncMock(return_value=False)
+    eviction = ReverseProxyEviction(StableGatewayId(gateway.id), ConnectionId("old-generation"))
+
+    await GatewayService().mark_reverse_proxy_gateways_unreachable(
+        ReverseProxySessionManager(),
+        (eviction,),
+        seen_at=datetime.now(tz=timezone.utc),
+        authority_check=authority_check,
+    )
+
+    authority_check.assert_awaited_once_with(eviction)
+    assert gateway.reachable is True
+    cache.invalidate_gateways.assert_not_awaited()
