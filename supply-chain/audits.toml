@@ -12,6 +12,12 @@ criteria = "safe-to-deploy"
 version = "0.21.1"
 notes = "CIDR network parsing for backend URL validation SSRF protection. Reviewed for safe IP/CIDR parsing with no unsafe code or network I/O."
 
+[[audits.quinn-proto]]
+who = "prakhar-singh1928 <prakhar.singh1928@ibm.com>"
+criteria = "safe-to-deploy"
+delta = "0.11.16 -> 0.11.17"
+notes = "Patch release published by Ralith. Reviewed full diff: no unsafe code changes, no new powerful imports. Fixes: CUBIC congestion-window u64 overflow via saturating_add; stream assembler chunk-count DoS bound (COMPACT_THRESHOLD); datagram buffer memory accounting includes struct overhead; CID retirement extracted into helper. All changes are pure bug-fixes with new regression tests."
+
 [[audits.rustls-webpki]]
 who = "lucarlig <luca.carlig@ibm.com>"
 criteria = "safe-to-deploy"
@@ -94,6 +100,12 @@ start = "2019-07-23"
 end = "2027-04-13"
 notes = "Trusted upstream maintainer for widely used foundational crates"
 
+[[trusted.autocfg]]
+criteria = "safe-to-deploy"
+user-id = 539 # Josh Stone (cuviper)
+start = "2019-05-22"
+end = "2027-08-17"
+
 [[trusted.aws-lc-rs]]
 criteria = "safe-to-deploy"
 user-id = 156764 # Justin W Smith (justsmth)
@@ -107,6 +119,12 @@ user-id = 156764 # Justin W Smith (justsmth)
 start = "2022-11-09"
 end = "2027-04-13"
 notes = "Trusted upstream maintainer for aws-lc crates used by rustls stack"
+
+[[trusted.axum]]
+criteria = "safe-to-deploy"
+user-id = 6741 # Alice Ryhl (Darksonn)
+start = "2026-04-14"
+end = "2027-08-17"
 
 [[trusted.base64ct]]
 criteria = "safe-to-deploy"
@@ -163,6 +181,12 @@ user-id = 55123 # rust-lang-owner
 start = "2025-06-09"
 end = "2027-04-13"
 notes = "Trusted upstream publisher for core Rust ecosystem crates"
+
+[[trusted.chacha20]]
+criteria = "safe-to-deploy"
+user-id = 267 # Tony Arcieri (tarcieri)
+start = "2019-06-24"
+end = "2027-08-17"
 
 [[trusted.chrono]]
 criteria = "safe-to-deploy"
@@ -297,6 +321,18 @@ start = "2019-06-30"
 end = "2027-04-13"
 notes = "Trusted upstream maintainer for getrandom crate versions in this graph"
 
+[[trusted.displaydoc]]
+criteria = "safe-to-deploy"
+user-id = 1139 # Manish Goregaokar (Manishearth)
+start = "2024-06-20"
+end = "2027-08-17"
+
+[[trusted.either]]
+criteria = "safe-to-deploy"
+user-id = 539 # Josh Stone (cuviper)
+start = "2019-04-02"
+end = "2027-08-17"
+
 [[trusted.fallible-iterator]]
 criteria = "safe-to-deploy"
 user-id = 5 # Steven Fackler (sfackler)
@@ -352,6 +388,12 @@ user-id = 359 # Sean McArthur (seanmonstar)
 start = "2019-04-05"
 end = "2027-04-13"
 notes = "Trusted upstream maintainer for hyper and reqwest stack"
+
+[[trusted.http-body]]
+criteria = "safe-to-deploy"
+user-id = 359 # Sean McArthur (seanmonstar)
+start = "2019-10-01"
+end = "2027-08-17"
 
 [[trusted.http-body-util]]
 criteria = "safe-to-deploy"
@@ -535,6 +577,12 @@ start = "2019-09-04"
 end = "2027-04-13"
 notes = "Trusted upstream maintainer for indexmap and num-bigint ecosystem crates"
 
+[[trusted.num-integer]]
+criteria = "safe-to-deploy"
+user-id = 539 # Josh Stone (cuviper)
+start = "2019-05-20"
+end = "2027-08-17"
+
 [[trusted.num_cpus]]
 criteria = "safe-to-deploy"
 user-id = 359 # Sean McArthur (seanmonstar)
@@ -710,6 +758,12 @@ start = "2019-09-09"
 end = "2027-04-13"
 notes = "Trusted upstream maintainer for rustls and networking ecosystem crates"
 
+[[trusted.quinn-udp]]
+criteria = "safe-to-deploy"
+user-id = 4556 # Dirkjan Ochtman (djc)
+start = "2021-10-07"
+end = "2027-08-17"
+
 [[trusted.quote]]
 criteria = "safe-to-deploy"
 user-id = 3618 # David Tolnay (dtolnay)
@@ -814,6 +868,12 @@ user-id = 4556 # Dirkjan Ochtman (djc)
 start = "2023-09-01"
 end = "2027-04-13"
 notes = "Trusted upstream maintainer for rustls and networking ecosystem crates"
+
+[[trusted.rustversion]]
+criteria = "safe-to-deploy"
+user-id = 3618 # David Tolnay (dtolnay)
+start = "2019-07-08"
+end = "2027-08-17"
 
 [[trusted.ryu]]
 criteria = "safe-to-deploy"
@@ -975,6 +1035,12 @@ user-id = 3618 # David Tolnay (dtolnay)
 start = "2019-10-09"
 end = "2027-04-13"
 notes = "Trusted upstream maintainer for widely used foundational crates"
+
+[[trusted.thread_local]]
+criteria = "safe-to-deploy"
+user-id = 2915 # Amanieu d'Antras (Amanieu)
+start = "2019-09-07"
+end = "2027-08-17"
 
 [[trusted.tinystr]]
 criteria = "safe-to-deploy"
@@ -1493,6 +1559,12 @@ user-id = 1139 # Manish Goregaokar (Manishearth)
 start = "2022-04-06"
 end = "2027-04-13"
 notes = "Trusted upstream maintainer for ICU4X and url ecosystem crates"
+
+[[trusted.zeroize]]
+criteria = "safe-to-deploy"
+user-id = 267 # Tony Arcieri (tarcieri)
+start = "2021-11-05"
+end = "2027-08-17"
 
 [[trusted.zeroize_derive]]
 criteria = "safe-to-deploy"
