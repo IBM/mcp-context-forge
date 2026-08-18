@@ -130,6 +130,11 @@ _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     ("POST", re.compile(r"^/servers/[^/]+/mcp(?:$|/)"), Permissions.SERVERS_USE),  # Server MCP access endpoint
     ("PUT", re.compile(r"^/servers/[^/]+(?:$|/)"), Permissions.SERVERS_UPDATE),
     ("DELETE", re.compile(r"^/servers/[^/]+(?:$|/)"), Permissions.SERVERS_DELETE),
+    # Reverse-proxy session permissions
+    ("GET", re.compile(r"^/reverse-proxy/sessions/?$"), Permissions.GATEWAYS_READ),
+    ("GET", re.compile(r"^/reverse-proxy/sse/[^/]+/?$"), Permissions.GATEWAYS_READ),
+    ("DELETE", re.compile(r"^/reverse-proxy/sessions/[^/]+/?$"), Permissions.GATEWAYS_DELETE),
+    ("POST", re.compile(r"^/reverse-proxy/sessions/[^/]+/request/?$"), Permissions.TOOLS_EXECUTE),
     # Gateway permissions
     # Connectivity test and handshake probe exposed through the /v1/mcp-servers product alias.
     # They must precede the generic POST sub-resource rule below.
