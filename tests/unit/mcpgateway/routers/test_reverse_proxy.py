@@ -10,6 +10,7 @@ session management, and HTTP endpoints.
 
 # Standard
 import asyncio
+from contextlib import nullcontext
 from dataclasses import replace
 from datetime import datetime, timezone
 import math
@@ -29,13 +30,13 @@ from fastapi.testclient import TestClient
 import pytest
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import Permissions
-from mcpgateway.services.gateway_service import GatewayCatalogReconcileResult
+from mcpgateway.db import Gateway as DbGateway, Permissions
+from mcpgateway.services.gateway_service import GatewayCatalogReconcileResult, GatewayService
 from mcpgateway.routers.reverse_proxy import router
 from mcpgateway.services.reverse_proxy_catalog import AuthenticatedRegistrationContext, ReverseProxyCatalogService
 from mcpgateway.services.reverse_proxy_discovery import ReverseProxyDiscoveryService
 from mcpgateway.services.reverse_proxy_protocol import JsonRpcRequest
-from mcpgateway.services.reverse_proxy_relay import RelayUnavailableError
+from mcpgateway.services.reverse_proxy_relay import RelayUnavailableError, ReverseProxyRelay
 from mcpgateway.services.reverse_proxy_relay_models import RelayOwner, RelaySessionEntry
 from mcpgateway.services.reverse_proxy_sessions import ConnectionClosedError, ConnectionId, LocalSessionId, ReverseProxyEviction, ReverseProxySessionManager, StableGatewayId
 from mcpgateway.services.reverse_proxy_sessions import ReverseProxySession as ManagedSession
@@ -199,6 +200,41 @@ class PendingTrackedWebSocket(TrackedRegistrationWebSocket):
             self.registration_completed.set()
         elif frame_type == "request":
             self.request_sent.set()
+
+
+def _lease_fake_redis() -> MagicMock:
+    """Deterministic Redis subset with SET NX and fenced-eval semantics for registration leases."""
+    store: dict[str, bytes] = {}
+    redis = MagicMock(name="lease-redis")
+    redis.store = store
+
+    async def set_value(key: str, value: str, *, nx: bool = False, ex: int | None = None) -> bool | None:
+        del ex
+        if nx and key in store:
+            return None
+        store[key] = value.encode()
+        return True
+
+    async def get_value(key: str) -> bytes | None:
+        return store.get(key)
+
+    async def eval_script(script: str, numkeys: int, *args: str | int) -> int:
+        del script
+        keys = tuple(str(arg) for arg in args[:numkeys])
+        argv = tuple(str(arg) for arg in args[numkeys:])
+        current = store.get(keys[0])
+        if current is None or current.decode() != argv[0]:
+            return 0
+        if numkeys == 2:
+            store[keys[1]] = argv[1].encode()
+            return 1
+        store.pop(keys[0])
+        return 1
+
+    redis.set = AsyncMock(side_effect=set_value)
+    redis.get = AsyncMock(side_effect=get_value)
+    redis.eval = AsyncMock(side_effect=eval_script)
+    return redis
 
 
 # --------------------------------------------------------------------------- #
@@ -489,6 +525,97 @@ class TestWebSocketEndpoint:
         session_manager.retire_connection.assert_awaited_once_with(predecessor)
         distributed_relay.release_owner.assert_awaited_once_with(StableGatewayId(self._STABLE_ID), self._CONNECTION_ID)
         assert websocket.closed_code == status.WS_1008_POLICY_VIOLATION
+
+    @pytest.mark.asyncio
+    async def test_failed_replacement_repersists_unreachable_after_lease_release(self, session_manager, distributed_relay, catalog_service, discovery_service, test_db, monkeypatch):
+        """A denied old-worker eviction is re-evaluated when the replacement fails pre-commit with no restored predecessor."""
+        stale_gateway = DbGateway(id=self._STABLE_ID, name="stale", slug="stale", url=f"reverse-proxy://catalog/{self._STABLE_ID}", transport="PROXIED", created_via="reverse_proxy", reachable=True, capabilities={})
+        test_db.add(stale_gateway)
+        test_db.commit()
+        monkeypatch.setattr("mcpgateway.services.gateway_service.fresh_db_session", lambda: nullcontext(test_db))
+        cache = SimpleNamespace(invalidate_gateways=AsyncMock())
+        monkeypatch.setattr("mcpgateway.services.gateway_service._get_registry_cache", lambda: cache)
+
+        redis = _lease_fake_redis()
+        real_relay = ReverseProxyRelay(ReverseProxySessionManager(), redis=redis, worker_id=lambda: "worker-b", owner_ttl_seconds=300)
+        distributed_relay.claim_registration = AsyncMock(side_effect=real_relay.claim_registration)
+        distributed_relay.release_registration = AsyncMock(side_effect=real_relay.release_registration)
+        distributed_relay.unreachable_write_guard = real_relay.unreachable_write_guard
+        session_manager.resolve_connection_id.return_value = None
+        stable_id = StableGatewayId(self._STABLE_ID)
+
+        async def discover_and_fail(*args, **kwargs):
+            # The replacement holds the lease here, so the old worker's disconnect
+            # eviction is denied and dropped - the gap this regression covers.
+            await GatewayService().mark_reverse_proxy_gateways_unreachable(
+                session_manager,
+                (ReverseProxyEviction(stable_id, ConnectionId("old-generation")),),
+                seen_at=datetime.now(tz=timezone.utc),
+                authority_guard=real_relay.unreachable_write_guard,
+            )
+            assert stale_gateway.reachable is True
+            cache.invalidate_gateways.assert_not_awaited()
+            raise RuntimeError("discovery exploded")
+
+        discovery_service.discover_and_reconcile.side_effect = discover_and_fail
+        websocket = ScriptedReverseProxyWebSocket()
+        websocket.queue_client_frame({"type": "register", "server": {"name": "test-server"}})
+        db = Mock()
+        db.get.side_effect = [MagicMock(name="db_gateway"), MagicMock(name="db_server")]
+
+        # First-Party
+        from mcpgateway.routers.reverse_proxy import websocket_endpoint
+
+        await websocket_endpoint(cast(WebSocket, websocket), db)
+
+        # The replacement failed pre-commit with no predecessor to restore: after
+        # its lease release, compensation re-persists the denied eviction's state.
+        assert stale_gateway.reachable is False
+        cache.invalidate_gateways.assert_awaited_once()
+        assert real_relay.registration_key(stable_id) not in redis.store
+        session_manager.restore_stable_id.assert_awaited_once_with(stable_id, None, self._CONNECTION_ID)
+        frames = websocket.sent_frames
+        assert [frame["type"] for frame in frames] == ["register_ack", "register_complete"]
+        assert frames[1]["status"] == "error"
+        assert websocket.closed_code == status.WS_1008_POLICY_VIOLATION
+
+    @pytest.mark.asyncio
+    async def test_failed_replacement_with_restored_predecessor_keeps_reachable(self, session_manager, distributed_relay, catalog_service, discovery_service, test_db, monkeypatch):
+        """A pre-commit failure that restores the quiesced predecessor must not persist unreachable."""
+        stale_gateway = DbGateway(id="stable-restored-id", name="stale", slug="stale", url="reverse-proxy://catalog/stable-restored-id", transport="PROXIED", created_via="reverse_proxy", reachable=True, capabilities={})
+        test_db.add(stale_gateway)
+        test_db.commit()
+        monkeypatch.setattr("mcpgateway.services.gateway_service.fresh_db_session", lambda: nullcontext(test_db))
+        cache = SimpleNamespace(invalidate_gateways=AsyncMock())
+        monkeypatch.setattr("mcpgateway.services.gateway_service._get_registry_cache", lambda: cache)
+
+        redis = _lease_fake_redis()
+        real_relay = ReverseProxyRelay(ReverseProxySessionManager(), redis=redis, worker_id=lambda: "worker-b", owner_ttl_seconds=300)
+        distributed_relay.claim_registration = AsyncMock(side_effect=real_relay.claim_registration)
+        distributed_relay.release_registration = AsyncMock(side_effect=real_relay.release_registration)
+        distributed_relay.unreachable_write_guard = real_relay.unreachable_write_guard
+        session_manager.resolve_connection_id.return_value = None
+        predecessor = ConnectionId("predecessor-connection")
+        session_manager.quiesce_stable_id.return_value = predecessor
+        stable_id = StableGatewayId("stable-restored-id")
+        catalog_service.register.return_value = SimpleNamespace(stable_id=str(stable_id), gateway=Mock(), server=Mock())
+        discovery_service.discover_and_reconcile.side_effect = RuntimeError("discovery exploded")
+        websocket = ScriptedReverseProxyWebSocket()
+        websocket.queue_client_frame({"type": "register", "server": {"name": "test-server"}})
+        db = Mock()
+        db.get.side_effect = [MagicMock(name="db_gateway"), MagicMock(name="db_server")]
+
+        # First-Party
+        from mcpgateway.routers.reverse_proxy import websocket_endpoint
+
+        with patch("mcpgateway.routers.reverse_proxy.stable_proxy_id", return_value=str(stable_id)):
+            await websocket_endpoint(cast(WebSocket, websocket), db)
+
+        # The predecessor was restored, so the gateway stays legitimately reachable
+        # and no synthetic eviction persistence fires.
+        assert stale_gateway.reachable is True
+        cache.invalidate_gateways.assert_not_awaited()
+        session_manager.restore_stable_id.assert_awaited_once_with(stable_id, predecessor, self._CONNECTION_ID)
 
     @pytest.mark.asyncio
     async def test_websocket_heartbeat_message(self, mock_websocket, session_manager, catalog_service):
