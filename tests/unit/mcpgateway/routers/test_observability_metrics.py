@@ -326,3 +326,29 @@ def test_postgres_buckets_with_naive_timestamps_labeled_utc(non_utc_host_timezon
     assert percentiles["buckets"] == ["2025-01-01T12:00:00+00:00"]
     assert percentiles["p95"] == [190.0]
     assert percentiles["p99"] == [198.0]
+
+
+@pytest.mark.parametrize("handler", (call_timeseries, call_percentiles))
+@pytest.mark.asyncio
+async def test_metrics_permission_check_is_global_only(db_session, monkeypatch, handler):
+    """Team-scoped roles can never satisfy metrics:read on these endpoints.
+
+    The aggregation queries have no team/tenant filter, so the isolation guarantee
+    must live in the decorator (global_only=True) rather than depending on which
+    roles happen to be granted the permission. Without it, check_any_team=True
+    would let a team-scoped grant pass RBAC and return platform-wide data.
+    """
+    captured = {}
+
+    async def _check(self, **kwargs):  # type: ignore[no-self-use]
+        captured.update(kwargs)
+        return True
+
+    monkeypatch.setattr(rbac_module.PermissionService, "check_permission", _check)
+
+    await handler(db_session)
+
+    assert captured["permission"] == "metrics:read"
+    assert captured["team_id"] is None
+    assert captured["check_any_team"] is False
+    assert captured["allow_admin_bypass"] is False
