@@ -9869,6 +9869,28 @@ class TestUpdateProxiedGateway:
         assert persisted.transport == "PROXIED"
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "gateway_update",
+        [
+            GatewayUpdate(name="spoofed-name"),
+            GatewayUpdate(owner_email="attacker@example.com"),
+            GatewayUpdate(team_id="attacker-team"),
+            GatewayUpdate(visibility="private"),
+        ],
+    )
+    async def test_server_owned_identity_mutation_rejected(self, gateway_service, proxied_gateway_row, test_db, gateway_update):
+        """Client updates cannot mutate identity derived from the authenticated registration."""
+        with pytest.raises(GatewayError, match="identity"):
+            await gateway_service.update_gateway(test_db, proxied_gateway_row.id, gateway_update)
+
+        test_db.expire_all()
+        persisted = test_db.get(DbGateway, proxied_gateway_row.id)
+        assert persisted.name == "proxied-update-target"
+        assert persisted.owner_email == "owner@example.com"
+        assert persisted.team_id is None
+        assert persisted.visibility == "public"
+
+    @pytest.mark.asyncio
     async def test_one_time_auth_rejected(self, gateway_service, proxied_gateway_row, test_db):
         """One-time auth semantics require a network init that PROXIED rows never perform — rejected, not half-applied."""
         with pytest.raises(GatewayError, match="one-time"):

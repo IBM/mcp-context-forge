@@ -2828,6 +2828,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             proxied_internal = _is_internal_proxied_gateway(gateway)
             update_transport = getattr(gateway_update, "transport", None)
             if proxied_internal:
+                immutable_identity_fields = {"name", "owner_email", "team_id", "visibility"}
+                attempted_identity_fields = immutable_identity_fields.intersection(gateway_update.model_fields_set)
+                if attempted_identity_fields:
+                    raise GatewayError("Cannot change server-owned identity fields of a reverse-proxy (PROXIED) gateway")
                 if gateway_update.url is not None:
                     raise GatewayError("Cannot change the URL of a reverse-proxy (PROXIED) gateway")
                 if update_transport is not None and str(update_transport).upper() != "PROXIED":
