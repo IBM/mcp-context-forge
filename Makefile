@@ -6254,12 +6254,12 @@ ibmcloud-push:
 ibmcloud-deploy:
 	@echo "🚀 Deploying image to Code Engine as '$(IBMCLOUD_CODE_ENGINE_APP)' using registry secret $(IBMCLOUD_REGISTRY_SECRET)..."
 	@# Create the runtime env secret from .env if it does not exist yet
-	@if ! ibmcloud ce secret get --name mcpgw-env > /dev/null 2>&1; then \
+	@if ! ibmcloud ce secret get --name $(IBMCLOUD_CODE_ENGINE_APP)-env > /dev/null 2>&1; then \
 		echo "🔐 Creating runtime env secret from .env..."; \
-		ibmcloud ce secret create --name mcpgw-env --from-env-file .env; \
+		ibmcloud ce secret create --name $(IBMCLOUD_CODE_ENGINE_APP)-env --from-env-file .env; \
 	else \
 		echo "🔐 Updating runtime env secret from .env..."; \
-		ibmcloud ce secret update --name mcpgw-env --from-env-file .env; \
+		ibmcloud ce secret update --name $(IBMCLOUD_CODE_ENGINE_APP)-env --from-env-file .env; \
 	fi
 	@if ibmcloud ce application get --name $(IBMCLOUD_CODE_ENGINE_APP) > /dev/null 2>&1; then \
 		echo "🔁 Updating existing app..."; \
@@ -6267,7 +6267,7 @@ ibmcloud-deploy:
 			--image $(IBMCLOUD_IMAGE_NAME) \
 			--cpu $(IBMCLOUD_CPU) --memory $(IBMCLOUD_MEMORY) \
 			--registry-secret $(IBMCLOUD_REGISTRY_SECRET) \
-			--env-from-secret mcpgw-env; \
+			--env-from-secret $(IBMCLOUD_CODE_ENGINE_APP)-env; \
 	else \
 		echo "🆕 Creating new app..."; \
 		ibmcloud ce application create --name $(IBMCLOUD_CODE_ENGINE_APP) \
@@ -6275,7 +6275,7 @@ ibmcloud-deploy:
 			--cpu $(IBMCLOUD_CPU) --memory $(IBMCLOUD_MEMORY) \
 			--port 4444 \
 			--registry-secret $(IBMCLOUD_REGISTRY_SECRET) \
-			--env-from-secret mcpgw-env; \
+			--env-from-secret $(IBMCLOUD_CODE_ENGINE_APP)-env; \
 	fi
 
 .PHONY: ibmcloud-ce-logs
