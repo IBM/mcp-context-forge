@@ -28,7 +28,7 @@ from mcpgateway.db import Base, ObservabilityTrace
 from mcpgateway.middleware import rbac as rbac_module
 from mcpgateway.middleware.rbac import get_current_user_with_permissions
 from mcpgateway.routers import observability as observability_module
-from mcpgateway.services.observability_service import _execution_timeseries_postgresql, _latency_percentiles_postgresql
+from mcpgateway.services.observability_service import _execution_timeseries_postgresql, _latency_percentiles_postgresql, ObservabilityService
 
 BASE_TIME = datetime(2025, 1, 1, 12, 0, 0, tzinfo=timezone.utc)
 
@@ -352,3 +352,45 @@ async def test_metrics_permission_check_is_global_only(db_session, monkeypatch, 
     assert captured["team_id"] is None
     assert captured["check_any_team"] is False
     assert captured["allow_admin_bypass"] is False
+
+
+@pytest.mark.parametrize(
+    "service_method,expected_keys",
+    [
+        ("get_execution_timeseries", ("buckets", "values")),
+        ("get_latency_percentiles", ("buckets", "p50", "p95", "p99")),
+    ],
+)
+def test_service_dispatches_to_postgresql_path_when_empty(service_method, expected_keys):
+    """The public dispatch methods route to the PostgreSQL helpers on that dialect.
+
+    A mocked postgresql dialect with no rows also exercises the helpers' own
+    empty-results branch, which the SQLite-backed handler tests never reach
+    since observability-disabled short-circuits before either helper runs.
+    """
+    db = MagicMock()
+    db.get_bind.return_value.dialect.name = "postgresql"
+    db.execute.return_value.fetchall.return_value = []
+
+    result = getattr(ObservabilityService(), service_method)(db, BASE_TIME - timedelta(hours=24), 60)
+
+    assert result["buckets"] == []
+    for key in expected_keys[1:]:
+        assert result[key] == []
+    db.execute.assert_called_once()
+
+
+@pytest.mark.parametrize("handler,service_method", [(call_timeseries, "get_execution_timeseries"), (call_percentiles, "get_latency_percentiles")])
+@pytest.mark.asyncio
+async def test_metrics_endpoint_returns_500_on_service_error(db_session, grant_permissions, monkeypatch, handler, service_method):
+    """A service-layer failure surfaces as a 500, not an unhandled exception."""
+    grant_permissions()
+
+    def _raise(self, *args, **kwargs):
+        raise RuntimeError("aggregation query failed")
+
+    monkeypatch.setattr(ObservabilityService, service_method, _raise)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await handler(db_session)
+    assert exc_info.value.status_code == 500
