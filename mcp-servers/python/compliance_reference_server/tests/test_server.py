@@ -7,6 +7,7 @@ import json
 
 import pytest
 from fastmcp.client import Client
+from mcp.types import BlobResourceContents
 
 from compliance_reference_server.server import mcp
 
@@ -49,6 +50,17 @@ async def test_static_resource_listed_and_readable() -> None:
 
         read = await client.read_resource("reference://static/greeting")
     assert any("hello from compliance-reference-server" in str(c) for c in read)
+
+
+@pytest.mark.asyncio
+async def test_binary_resource_returns_blob_with_runtime_mime_type() -> None:
+    async with Client(mcp) as client:
+        read = await client.read_resource("reference://static/blob")
+
+    assert len(read) == 1
+    assert isinstance(read[0], BlobResourceContents)
+    assert read[0].blob == "dDgtYmluYXJ5"
+    assert read[0].mimeType == "application/x-t8-binary"
 
 
 @pytest.mark.asyncio

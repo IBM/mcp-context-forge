@@ -20,7 +20,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import json
-from typing import Any
 
 from fastmcp import Context, FastMCP
 from pydantic import BaseModel
@@ -275,6 +274,16 @@ async def log_at_level(ctx: Context, level: str = "info", message: str = "hello 
 )
 def greeting_resource() -> str:
     return "hello from compliance-reference-server"
+
+
+@mcp.resource(
+    "reference://static/blob",
+    name="binary-blob",
+    description="Static binary resource for transport verification.",
+    mime_type="application/x-t8-binary",
+)
+def binary_blob_resource() -> bytes:
+    return b"t8-binary"
 
 
 @mcp.resource(
