@@ -14060,7 +14060,7 @@ async def test_reverse_proxy_reaper_release_failure_still_persists_and_continues
         manager,
         (eviction,),
         seen_at=await_args.kwargs["seen_at"],
-        authority_check=relay.is_unowned,
+        authority_guard=relay.unreachable_write_guard,
     )
     assert manager.reap_stale.await_count == 2
 

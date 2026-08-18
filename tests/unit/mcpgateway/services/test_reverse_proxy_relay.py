@@ -466,6 +466,98 @@ async def test_registration_lease_is_single_writer_and_only_holder_can_promote_o
 
 
 @pytest.mark.asyncio
+async def test_unreachable_write_guard_denies_while_replacement_registration_lease_is_held() -> None:
+    redis = _FakeRedis()
+    manager = ReverseProxySessionManager()
+    relay_a = _relay(manager, redis, WORKER_A)
+    relay_b = _relay(manager, redis, WORKER_B)
+    replacement_connection = ConnectionId("replacement")
+    eviction = ReverseProxyEviction(STABLE_ID, ConnectionId("evicted-generation"))
+
+    assert await relay_b.claim_registration(STABLE_ID, replacement_connection)
+
+    async with relay_a.unreachable_write_guard(eviction) as permitted:
+        assert permitted is False
+
+    # The denied guard never disturbs the replacement's in-flight lease.
+    assert redis.store[relay_b.registration_key(STABLE_ID)] == relay_b.owner_value(replacement_connection).encode()
+
+
+@pytest.mark.asyncio
+async def test_unreachable_write_guard_denies_live_owner_and_releases_lease_on_exit() -> None:
+    redis = _FakeRedis()
+    manager = ReverseProxySessionManager()
+    relay_a = _relay(manager, redis, WORKER_A)
+    relay_b = _relay(manager, redis, WORKER_B)
+    connection_a = ConnectionId("guard-writer")
+    replacement_connection = ConnectionId("replacement")
+    eviction = ReverseProxyEviction(STABLE_ID, ConnectionId("evicted-generation"))
+
+    # A promoted owner survives its registration window, so the lease is free but ownership is live.
+    assert await relay_b.claim_registration(STABLE_ID, replacement_connection)
+    assert await relay_b.promote_registration(STABLE_ID, replacement_connection)
+    assert await relay_b.release_registration(STABLE_ID, replacement_connection)
+
+    async with relay_a.unreachable_write_guard(eviction) as permitted:
+        assert permitted is False
+        # The guard holds its own lease for the whole decision window.
+        assert not await relay_a.claim_registration(STABLE_ID, connection_a)
+
+    # The lease is released on exit, so later registrations are not blocked.
+    assert await relay_a.claim_registration(STABLE_ID, connection_a)
+
+
+@pytest.mark.asyncio
+async def test_unreachable_write_guard_serializes_permitted_write_and_releases_on_exit() -> None:
+    redis = _FakeRedis()
+    manager = ReverseProxySessionManager()
+    relay_a = _relay(manager, redis, WORKER_A)
+    relay_b = _relay(manager, redis, WORKER_B)
+    replacement_connection = ConnectionId("replacement")
+    eviction = ReverseProxyEviction(STABLE_ID, ConnectionId("evicted-generation"))
+
+    async with relay_a.unreachable_write_guard(eviction) as permitted:
+        assert permitted is True
+        # While the write holds the lease, a replacement registration cannot start...
+        assert not await relay_b.claim_registration(STABLE_ID, replacement_connection)
+        # ...and another generation cannot release the guard's fenced lease value.
+        assert not await relay_b.release_registration(STABLE_ID, replacement_connection)
+
+    # After the commit window the lease is gone and a registration proceeds.
+    assert await relay_b.claim_registration(STABLE_ID, replacement_connection)
+
+
+@pytest.mark.asyncio
+async def test_unreachable_write_guard_release_failure_is_logged_not_raised(caplog: pytest.LogCaptureFixture) -> None:
+    class _ReleaseFailureRedis(_FakeRedis):
+        async def eval(self, script: str, numkeys: int, *args: str | int) -> int:
+            if numkeys == 1:
+                raise RedisConnectionError("release lost")
+            return await super().eval(script, numkeys, *args)
+
+    redis = _ReleaseFailureRedis()
+    manager = ReverseProxySessionManager()
+    relay_a = _relay(manager, redis, WORKER_A)
+    eviction = ReverseProxyEviction(STABLE_ID, ConnectionId("evicted-generation"))
+
+    with caplog.at_level(logging.WARNING):
+        async with relay_a.unreachable_write_guard(eviction) as permitted:
+            assert permitted is True
+
+    assert "unreachable-write lease release failed" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_unreachable_write_guard_without_redis_falls_back_to_owner_absence() -> None:
+    manager = ReverseProxySessionManager()
+    relay = _relay(manager, None, WORKER_A)
+    eviction = ReverseProxyEviction(STABLE_ID, ConnectionId("evicted-generation"))
+
+    async with relay.unreachable_write_guard(eviction) as permitted:
+        assert permitted is True
+
+
+@pytest.mark.asyncio
 async def test_distributed_session_directory_round_trips_and_removes_typed_metadata() -> None:
     redis = _FakeRedis()
     manager = ReverseProxySessionManager()

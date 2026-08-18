@@ -35,6 +35,7 @@ from mcpgateway.routers.reverse_proxy import router
 from mcpgateway.services.reverse_proxy_catalog import AuthenticatedRegistrationContext, ReverseProxyCatalogService
 from mcpgateway.services.reverse_proxy_discovery import ReverseProxyDiscoveryService
 from mcpgateway.services.reverse_proxy_protocol import JsonRpcRequest
+from mcpgateway.services.reverse_proxy_relay import RelayUnavailableError
 from mcpgateway.services.reverse_proxy_relay_models import RelayOwner, RelaySessionEntry
 from mcpgateway.services.reverse_proxy_sessions import ConnectionClosedError, ConnectionId, LocalSessionId, ReverseProxyEviction, ReverseProxySessionManager, StableGatewayId
 from mcpgateway.services.reverse_proxy_sessions import ReverseProxySession as ManagedSession
@@ -443,6 +444,53 @@ class TestWebSocketEndpoint:
         assert websocket.closed_code == status.WS_1008_POLICY_VIOLATION
 
     @pytest.mark.asyncio
+    async def test_compensation_pre_commit_redis_outage_still_restores_quiesced_predecessor(self, session_manager, distributed_relay, catalog_service, discovery_service):
+        """Redis loss inside pre-commit compensation cannot strand the quiesced predecessor unroutable or skip the error response."""
+        predecessor = ConnectionId("predecessor-connection")
+        session_manager.quiesce_stable_id.return_value = predecessor
+        discovery_service.discover_and_reconcile.side_effect = RuntimeError("discovery exploded")
+        distributed_relay.release_registration.side_effect = RelayUnavailableError()
+        websocket = ScriptedReverseProxyWebSocket()
+        websocket.queue_client_frame({"type": "register", "server": {"name": "test-server"}})
+
+        # First-Party
+        from mcpgateway.routers.reverse_proxy import websocket_endpoint
+
+        await websocket_endpoint(cast(WebSocket, websocket), Mock())
+
+        frames = websocket.sent_frames
+        assert [frame["type"] for frame in frames] == ["register_ack", "register_complete"]
+        assert frames[1]["status"] == "error"
+        session_manager.restore_stable_id.assert_awaited_once_with(StableGatewayId(self._STABLE_ID), predecessor, self._CONNECTION_ID)
+        assert websocket.closed_code == status.WS_1008_POLICY_VIOLATION
+
+    @pytest.mark.asyncio
+    async def test_compensation_post_commit_redis_outage_still_demotes_and_notifies(self, session_manager, distributed_relay, catalog_service, discovery_service):
+        """Redis loss after the catalog commit cannot skip local demotion, predecessor retirement, or the error response."""
+        predecessor = ConnectionId("predecessor-connection")
+        session_manager.quiesce_stable_id.return_value = predecessor
+        distributed_relay.publish_session.side_effect = RelayUnavailableError()
+        distributed_relay.remove_session.side_effect = RelayUnavailableError()
+        distributed_relay.release_registration.side_effect = RelayUnavailableError()
+        websocket = ScriptedReverseProxyWebSocket()
+        websocket.queue_client_frame({"type": "register", "server": {"name": "test-server"}})
+        db = Mock()
+        db.get.side_effect = [MagicMock(name="db_gateway"), MagicMock(name="db_server")]
+
+        # First-Party
+        from mcpgateway.routers.reverse_proxy import websocket_endpoint
+
+        await websocket_endpoint(cast(WebSocket, websocket), db)
+
+        frames = websocket.sent_frames
+        assert [frame["type"] for frame in frames] == ["register_ack", "register_complete"]
+        assert frames[1]["status"] == "error"
+        session_manager.restore_stable_id.assert_awaited_once_with(StableGatewayId(self._STABLE_ID), None, self._CONNECTION_ID)
+        session_manager.retire_connection.assert_awaited_once_with(predecessor)
+        distributed_relay.release_owner.assert_awaited_once_with(StableGatewayId(self._STABLE_ID), self._CONNECTION_ID)
+        assert websocket.closed_code == status.WS_1008_POLICY_VIOLATION
+
+    @pytest.mark.asyncio
     async def test_websocket_heartbeat_message(self, mock_websocket, session_manager, catalog_service):
         """Heartbeat is acknowledged with the connection-scoped id and a timestamp."""
         heartbeat_msg = {"type": "heartbeat"}
@@ -628,6 +676,24 @@ class TestWebSocketEndpoint:
         with patch.object(gateway_service, "mark_reverse_proxy_gateways_unreachable", new=AsyncMock(side_effect=RuntimeError("db unavailable"))):
             with pytest.raises(RuntimeError, match="primary boom"):
                 await websocket_endpoint(mock_websocket, Mock())
+
+    @pytest.mark.asyncio
+    async def test_teardown_redis_outage_still_persists_unreachable(self, mock_websocket, session_manager, distributed_relay):
+        """A Redis failure in endpoint teardown cannot skip reachability persistence."""
+        mock_websocket.receive_text.side_effect = WebSocketDisconnect()
+        eviction = ReverseProxyEviction(StableGatewayId(self._STABLE_ID), self._CONNECTION_ID)
+        session_manager.disconnect.return_value = (eviction,)
+        distributed_relay.remove_session.side_effect = RelayUnavailableError()
+
+        # First-Party
+        from mcpgateway.services.gateway_service import gateway_service
+        from mcpgateway.routers.reverse_proxy import websocket_endpoint
+
+        with patch.object(gateway_service, "mark_reverse_proxy_gateways_unreachable", new=AsyncMock()) as mark_unreachable:
+            await websocket_endpoint(mock_websocket, Mock())
+
+        mark_unreachable.assert_awaited_once()
+        session_manager.disconnect.assert_awaited_once_with(self._CONNECTION_ID)
 
     @pytest.mark.asyncio
     async def test_websocket_registration_failure_notification_is_best_effort(self, session_manager, catalog_service, discovery_service):
