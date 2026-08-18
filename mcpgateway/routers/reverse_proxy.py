@@ -335,6 +335,10 @@ async def websocket_endpoint(
                 Local restore, demotion, and retirement are guaranteed; every
                 Redis cleanup is independently best-effort so a relay outage can
                 never strand routing state or skip the registration-error response.
+                A pre-commit failure that restored no predecessor re-evaluates
+                reachability through the guarded persistence path once this
+                registrant's lease is released, so an eviction denied by that
+                lease is not permanently dropped.
                 """
                 nonlocal registration_claimed
                 if stable_id is None:
@@ -351,15 +355,21 @@ async def websocket_endpoint(
                         extra={"connection_id": str(connection_id), "stable_id": str(stable_id)},
                         exc_info=True,
                     )
+                persist_unreachable = False
                 try:
-                    if not committed and quiesced_started:
+                    if not committed and quiesced_started and quiesced is not None:
+                        # A restored predecessor keeps the gateway legitimately reachable.
                         await session_manager.restore_stable_id(stable_id, quiesced, connection_id)
-                        return
-                    if not committed:
-                        return
-                    await session_manager.restore_stable_id(stable_id, None, connection_id)
-                    if quiesced is not None and quiesced != connection_id:
-                        await session_manager.retire_connection(quiesced)
+                    elif not committed:
+                        # No predecessor was restored (quiesce never ran or found no local
+                        # mapping): re-evaluate reachability once the lease release below lands.
+                        if quiesced_started:
+                            await session_manager.restore_stable_id(stable_id, quiesced, connection_id)
+                        persist_unreachable = True
+                    else:
+                        await session_manager.restore_stable_id(stable_id, None, connection_id)
+                        if quiesced is not None and quiesced != connection_id:
+                            await session_manager.retire_connection(quiesced)
                 finally:
                     if relay is not None:
                         if ownership_promoted:
@@ -389,6 +399,12 @@ async def websocket_endpoint(
                                 )
                             else:
                                 registration_claimed = False
+
+                if persist_unreachable:
+                    # Runs only after the finally's lease release: a registration
+                    # lease still held by this registrant would deny the synthetic
+                    # eviction's guard, re-dropping the denied old-worker write.
+                    await _persist_unreachable_best_effort(session_manager, (ReverseProxyEviction(stable_id, connection_id),))
 
             try:
                 registration_context = AuthenticatedRegistrationContext(owner_email=authenticated_context.owner_email, team_id=authenticated_context.team_id)
