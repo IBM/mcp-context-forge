@@ -338,7 +338,10 @@ async def websocket_endpoint(
                 A pre-commit failure that restored no predecessor re-evaluates
                 reachability through the guarded persistence path once this
                 registrant's lease is released, so an eviction denied by that
-                lease is not permanently dropped.
+                lease is not permanently dropped. Restoration of the quiesced
+                predecessor is verified against the live mapping; when it cannot
+                be confirmed, the predecessor's stale owner generation is
+                compare-released fenced before that re-evaluation.
                 """
                 nonlocal registration_claimed
                 if stable_id is None:
@@ -356,10 +359,15 @@ async def websocket_endpoint(
                         exc_info=True,
                     )
                 persist_unreachable = False
+                stale_predecessor: ConnectionId | None = None
                 try:
                     if not committed and quiesced_started and quiesced is not None:
-                        # A restored predecessor keeps the gateway legitimately reachable.
                         await session_manager.restore_stable_id(stable_id, quiesced, connection_id)
+                        if session_manager.resolve_connection_id(stable_id) != quiesced:
+                            # The quiesced predecessor is already gone, so restoration was a
+                            # silent no-op: only a verified restore keeps the gateway reachable.
+                            stale_predecessor = quiesced
+                            persist_unreachable = True
                     elif not committed:
                         # No predecessor was restored (quiesce never ran or found no local
                         # mapping): re-evaluate reachability once the lease release below lands.
@@ -372,6 +380,15 @@ async def websocket_endpoint(
                             await session_manager.retire_connection(quiesced)
                 finally:
                     if relay is not None:
+                        if stale_predecessor is not None:
+                            if release_owners is None:
+                                LOGGER.error(
+                                    "Reverse proxy owner release is unavailable during registration compensation",
+                                    extra={"connection_id": str(connection_id), "stable_id": str(stable_id)},
+                                )
+                            else:
+                                # Fenced compare-delete: a newer owner generation never matches.
+                                await release_owners(relay, (ReverseProxyEviction(stable_id, stale_predecessor),))
                         if ownership_promoted:
                             if release_owners is None:
                                 LOGGER.error(

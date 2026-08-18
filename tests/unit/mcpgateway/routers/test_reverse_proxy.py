@@ -594,9 +594,10 @@ class TestWebSocketEndpoint:
         distributed_relay.claim_registration = AsyncMock(side_effect=real_relay.claim_registration)
         distributed_relay.release_registration = AsyncMock(side_effect=real_relay.release_registration)
         distributed_relay.unreachable_write_guard = real_relay.unreachable_write_guard
-        session_manager.resolve_connection_id.return_value = None
         predecessor = ConnectionId("predecessor-connection")
         session_manager.quiesce_stable_id.return_value = predecessor
+        # Restoration reads back the predecessor mapping, so compensation skips persistence.
+        session_manager.resolve_connection_id.return_value = predecessor
         stable_id = StableGatewayId("stable-restored-id")
         catalog_service.register.return_value = SimpleNamespace(stable_id=str(stable_id), gateway=Mock(), server=Mock())
         discovery_service.discover_and_reconcile.side_effect = RuntimeError("discovery exploded")
@@ -616,6 +617,60 @@ class TestWebSocketEndpoint:
         assert stale_gateway.reachable is True
         cache.invalidate_gateways.assert_not_awaited()
         session_manager.restore_stable_id.assert_awaited_once_with(stable_id, predecessor, self._CONNECTION_ID)
+
+    @pytest.mark.asyncio
+    async def test_failed_replacement_with_lost_predecessor_releases_owner_and_persists_unreachable(self, distributed_relay, catalog_service, discovery_service, test_db, monkeypatch):
+        """A quiesced predecessor lost mid-registration leaves no owner and reachable=False after compensation."""
+        stale_gateway = DbGateway(id="stable-lost-predecessor", name="stale", slug="stale", url="reverse-proxy://catalog/stable-lost-predecessor", transport="PROXIED", created_via="reverse_proxy", reachable=True, capabilities={})
+        test_db.add(stale_gateway)
+        test_db.commit()
+        monkeypatch.setattr("mcpgateway.services.gateway_service.fresh_db_session", lambda: nullcontext(test_db))
+        cache = SimpleNamespace(invalidate_gateways=AsyncMock())
+        monkeypatch.setattr("mcpgateway.services.gateway_service._get_registry_cache", lambda: cache)
+
+        redis = _lease_fake_redis()
+        real_manager = ReverseProxySessionManager()
+        real_relay = ReverseProxyRelay(real_manager, redis=redis, worker_id=lambda: "worker-b", owner_ttl_seconds=300)
+        distributed_relay.claim_registration = AsyncMock(side_effect=real_relay.claim_registration)
+        distributed_relay.release_registration = AsyncMock(side_effect=real_relay.release_registration)
+        distributed_relay.release_owner = AsyncMock(side_effect=real_relay.release_owner)
+        distributed_relay.unreachable_write_guard = real_relay.unreachable_write_guard
+        stable_id = StableGatewayId("stable-lost-predecessor")
+
+        # The live generation being replaced: local mapping plus its Redis owner.
+        predecessor_session = await real_manager.connect(ScriptedReverseProxyWebSocket(), LocalSessionId("local-old"))
+        predecessor = predecessor_session.connection_id
+        await real_manager.promote_stable_id(stable_id, predecessor)
+        assert await real_relay.claim_owner(stable_id, predecessor)
+
+        async def discover_and_fail(*args, **kwargs):
+            # The quiesced predecessor is lost mid-discovery; with no stable mapping
+            # left to evict, its disconnect releases and persists nothing.
+            assert await real_manager.disconnect(predecessor) == ()
+            raise RuntimeError("discovery exploded")
+
+        catalog_service.register.return_value = SimpleNamespace(stable_id=str(stable_id), gateway=Mock(), server=Mock())
+        discovery_service.discover_and_reconcile.side_effect = discover_and_fail
+        websocket = ScriptedReverseProxyWebSocket()
+        websocket.queue_client_frame({"type": "register", "server": {"name": "test-server"}})
+        db = Mock()
+        db.get.side_effect = [MagicMock(name="db_gateway"), MagicMock(name="db_server")]
+
+        # First-Party
+        from mcpgateway.routers.reverse_proxy import websocket_endpoint
+
+        with (
+            patch("mcpgateway.routers.reverse_proxy.get_reverse_proxy_session_manager", new=AsyncMock(return_value=real_manager)),
+            patch("mcpgateway.routers.reverse_proxy.stable_proxy_id", return_value=str(stable_id)),
+        ):
+            await websocket_endpoint(cast(WebSocket, websocket), db)
+
+        # Restoration could not bring the lost predecessor back: its stale owner
+        # generation is compare-released and the denied eviction's state persisted.
+        assert real_relay.owner_key(stable_id) not in redis.store
+        assert stale_gateway.reachable is False
+        cache.invalidate_gateways.assert_awaited_once()
+        assert real_manager.resolve_connection_id(stable_id) is None
 
     @pytest.mark.asyncio
     async def test_websocket_heartbeat_message(self, mock_websocket, session_manager, catalog_service):
