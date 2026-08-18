@@ -14,7 +14,7 @@ from pydantic import ValidationError
 
 from mcpgateway.auth_context import FORWARD_SIG_FIELD, sign_redis_forward_envelope, verify_redis_forward_envelope
 from mcpgateway.services.reverse_proxy_protocol import JsonRpcId, ResponseMessage
-from mcpgateway.services.reverse_proxy_relay_models import RelayCancelEnvelope, RelayInboundEnvelope, RelayPubSub, RelayRequestEnvelope, RelayResponseEnvelope
+from mcpgateway.services.reverse_proxy_relay_models import RelayCancelEnvelope, RelayDisconnectEnvelope, RelayInboundEnvelope, RelayPubSub, RelayRequestEnvelope, RelayResponseEnvelope
 from mcpgateway.services.reverse_proxy_sessions import ConnectionClosedError, ConnectionId, ConnectionNotFoundError
 
 
@@ -45,6 +45,8 @@ def parse_inbound(raw: str | bytes, max_payload_bytes: int) -> RelayInboundEnvel
                 return RelayRequestEnvelope.model_validate(decoded)
             case "rp_cancel":
                 return RelayCancelEnvelope.model_validate(decoded)
+            case "rp_disconnect":
+                return RelayDisconnectEnvelope.model_validate(decoded)
             case _:
                 return None
     except (orjson.JSONDecodeError, ValidationError, TypeError, AttributeError):

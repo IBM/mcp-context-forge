@@ -178,7 +178,8 @@ class _PendingResponse:
     def result(self) -> ResponseMessage:
         """Return the response or raise the captured connection error."""
         result = self._result
-        assert result is not None
+        if result is None:
+            raise RuntimeError("pending reverse-proxy response is incomplete")
         match result:
             case ResponseMessage():
                 return result
@@ -412,6 +413,19 @@ class ReverseProxySessionManager:
         finally:
             if self._pending.get(key) is pending:
                 self._pending.pop(key)
+
+    async def send_request_nowait(self, connection_id: ConnectionId, payload: JsonRpcRequest, timeout_seconds: float, *, now: datetime | None = None) -> None:
+        """Send a request frame without installing response correlation."""
+        session = self._sessions.get(connection_id)
+        if session is None:
+            raise ConnectionNotFoundError(connection_id=connection_id)
+        with anyio.fail_after(timeout_seconds):
+            frame = encode_server_message(request(str(connection_id), payload))
+            await session.websocket.send_text(frame)
+            try:
+                self.record_sent(connection_id, character_count=len(frame), now=now)
+            except ConnectionNotFoundError:
+                raise ConnectionClosedError(connection_id=connection_id) from None
 
     async def send_notification(self, connection_id: ConnectionId, payload: JsonRpcNotification, timeout_seconds: float, *, now: datetime | None = None) -> None:
         """Send a notification without installing response correlation."""
