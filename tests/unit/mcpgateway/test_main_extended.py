@@ -4912,6 +4912,36 @@ class TestReadResourceEndpointCoverage:
     """Cover read_resource() serialization branches."""
 
     @pytest.mark.asyncio
+    async def test_read_resource_serializes_mcp_blob_content(self, monkeypatch):
+        # First-Party
+        import mcpgateway.main as main_mod
+        from mcpgateway.common.models import BlobResourceContents
+
+        request = MagicMock(spec=Request)
+        request.headers = {"X-Request-ID": "rid", "X-Server-ID": "sid"}
+        request.state = SimpleNamespace(plugin_context_table=None, plugin_global_context=None)
+        db = MagicMock()
+        monkeypatch.setattr(
+            main_mod.resource_service,
+            "read_resource",
+            AsyncMock(
+                return_value=BlobResourceContents(
+                    uri="reference://static/blob",
+                    mimeType="application/x-t8-binary",
+                    blob="dDgtYmluYXJ5",
+                )
+            ),
+        )
+
+        result = await main_mod.read_resource("res-blob", request=request, db=db, user={"email": "user@example.com", "is_admin": False})
+
+        assert result == {
+            "uri": "reference://static/blob",
+            "mimeType": "application/x-t8-binary",
+            "blob": "dDgtYmluYXJ5",
+        }
+
+    @pytest.mark.asyncio
     async def test_read_resource_serializes_text_bytes_and_str(self, monkeypatch):
         # First-Party
         import mcpgateway.main as main_mod

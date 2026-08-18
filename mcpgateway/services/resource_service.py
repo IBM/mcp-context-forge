@@ -46,7 +46,7 @@ from sqlalchemy.exc import IntegrityError, MultipleResultsFound, OperationalErro
 from sqlalchemy.orm import joinedload, selectinload, Session
 
 # First-Party
-from mcpgateway.common.models import ResourceContent, ResourceContents, ResourceTemplate, TextContent
+from mcpgateway.common.models import BlobResourceContents, ResourceContent, ResourceContents, ResourceTemplate, TextContent, TextResourceContents
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.common.validators import validate_meta_data as _validate_meta_data
 from mcpgateway.config import settings
@@ -120,6 +120,15 @@ def _get_registry_cache():
 
         _REGISTRY_CACHE = registry_cache
     return _REGISTRY_CACHE
+
+
+def _resource_content_for_read(resource: DbResource) -> ResourceContent:
+    """Return cached content or a dispatch placeholder for an internal PROXIED row."""
+    gateway = resource.gateway
+    is_internal_proxied = str(getattr(gateway, "transport", "") or "").upper() == "PROXIED" and getattr(gateway, "created_via", None) == "reverse_proxy"
+    if is_internal_proxied:
+        return ResourceContent(type="resource", id=str(resource.id), uri=resource.uri, mimeType=resource.mime_type, text="", _meta=None)
+    return resource.content
 
 
 # Initialize logging service first
@@ -1652,7 +1661,13 @@ class ResourceService(BaseService):
         """
         return get_cached_ssl_context(ca_certificate)
 
-    async def _read_reverse_proxied_resource(self, gateway_id_str: str, uri: str, effective_timeout: float, downstream_auth: Optional[DownstreamAuth] = None) -> str:
+    async def _read_reverse_proxied_resource(
+        self,
+        gateway_id_str: str,
+        uri: str,
+        effective_timeout: float,
+        downstream_auth: Optional[DownstreamAuth] = None,
+    ) -> ResourceContents:
         """Dispatch ``resources/read`` to a PROXIED gateway over its reverse-proxy session.
 
         The request resolves the process-local connection for the persisted stable
@@ -1670,7 +1685,7 @@ class ResourceService(BaseService):
             downstream_auth: Optional stored gateway credentials to forward downstream.
 
         Returns:
-            The text (or base64 blob) payload of the first ``result.contents`` entry.
+            The typed first ``result.contents`` entry, preserving blob/text and MIME metadata.
 
         Raises:
             ResourceError: If no live connection exists for the gateway, the
@@ -1706,7 +1721,8 @@ class ResourceService(BaseService):
                 relay = await get_reverse_proxy_relay()
                 response = await relay.send_request_by_stable_id(stable_id, request_payload, timeout_seconds=effective_timeout, auth=downstream_auth)
             else:
-                assert session_manager is not None and connection_id is not None
+                if session_manager is None or connection_id is None:
+                    raise ResourceError(f"No active reverse-proxy connection for gateway '{gateway_id_str}'")
                 response = await session_manager.send_request(connection_id, request_payload, timeout_seconds=effective_timeout, auth=downstream_auth)
         except RelayUnavailableError:
             raise ResourceError(f"Reverse-proxy relay unavailable for gateway '{gateway_id_str}'") from None
@@ -1777,7 +1793,13 @@ class ResourceService(BaseService):
             raise ResourceError(f"Upstream resources/read for gateway '{gateway_id_str}' returned no contents")
 
         first_content = validated_result.contents[0]
-        content_payload = first_content.text if isinstance(first_content, types.TextResourceContents) else first_content.blob
+        content_uri = str(first_content.uri)
+        content_mime_type = first_content.mimeType
+        content_meta = first_content.meta
+        if isinstance(first_content, types.TextResourceContents):
+            content = TextResourceContents(uri=content_uri, mimeType=content_mime_type, text=first_content.text, _meta=content_meta)
+        else:
+            content = BlobResourceContents(uri=content_uri, mimeType=content_mime_type, blob=first_content.blob, _meta=content_meta)
 
         mcp_duration_ms = (time.time() - mcp_start_time) * 1000
         structured_logger.log(
@@ -1788,7 +1810,7 @@ class ResourceService(BaseService):
             duration_ms=mcp_duration_ms,
             metadata={"event": "mcp_call_completed", "resource_uri": uri, "gateway_id": gateway_id_str, "transport": "proxied", "success": True},
         )
-        return content_payload
+        return content
 
     async def invoke_resource(  # pylint: disable=unused-argument
         self,
@@ -2525,7 +2547,7 @@ class ResourceService(BaseService):
                 # Check enabled status in Python (avoids redundant Q3/Q4 re-fetches)
                 if not include_inactive and not resource_db.enabled:
                     raise ResourceNotFoundError(f"Resource '{resource_id}' exists but is inactive")
-                content = resource_db.content
+                content = _resource_content_for_read(resource_db)
             else:
                 uri = None
 
@@ -2680,10 +2702,7 @@ class ResourceService(BaseService):
 
                         logger.info("Using direct_proxy mode for resource '%s' via gateway %s", uri, resource_db.gateway.id)
 
-                        try:  # First-Party
-                            # First-Party
-                            from mcpgateway.common.models import BlobResourceContents, TextResourceContents  # pylint: disable=import-outside-toplevel
-
+                        try:
                             gateway = resource_db.gateway
 
                             # Prepare headers with gateway auth
@@ -2728,7 +2747,7 @@ class ResourceService(BaseService):
 
                     elif resource_db:
                         # Normal cache mode - resource found in DB
-                        content = resource_db.content
+                        content = _resource_content_for_read(resource_db)
                     else:
                         # Check the inactivity first using the same server scope that
                         # governed the active lookup. Without this, duplicate URIs
@@ -2799,7 +2818,7 @@ class ResourceService(BaseService):
                     resource_db = db.execute(query).scalar_one_or_none()
                     if resource_db:
                         original_uri = resource_db.uri or None
-                        content = resource_db.content
+                        content = _resource_content_for_read(resource_db)
                     else:
                         check_inactivity = db.execute(select(DbResource).where(DbResource.id == str(resource_id)).where(not_(DbResource.enabled))).scalar_one_or_none()
                         if check_inactivity:
@@ -2871,7 +2890,10 @@ class ResourceService(BaseService):
                         )
                         raise ResourceError(f"Resource template '{template_uri}' did not resolve URI '{requested_uri}'")
 
-                if isinstance(content, (ResourceContent, ResourceContents, TextContent)):
+                if isinstance(content, ResourceContents):
+                    # Already resolved typed content (direct_proxy or PROXIED dispatch) - no re-invocation
+                    pass
+                elif isinstance(content, (ResourceContent, TextContent)):
                     # Metrics are recorded in read_resource finally block for all resources
                     resource_response = await self.invoke_resource(
                         db,
@@ -2885,7 +2907,10 @@ class ResourceService(BaseService):
                         server_id=server_id,
                         request_headers=request_headers,
                     )
-                    _set_gateway_content(content, "text", resource_response)
+                    if isinstance(resource_response, ResourceContents):
+                        content = resource_response
+                    else:
+                        _set_gateway_content(content, "text", resource_response)
                 # If content is any object that quacks like content
                 elif hasattr(content, "text") or hasattr(content, "blob"):
                     # Metrics are recorded in read_resource finally block for all resources
