@@ -245,8 +245,8 @@ user-login = "newpavlov"
 user-name = "Artyom Pavlov"
 
 [[publisher.h2]]
-version = "0.4.15"
-when = "2026-06-15"
+version = "0.4.16"
+when = "2026-08-17"
 user-id = 359
 user-login = "seanmonstar"
 user-name = "Sean McArthur"
@@ -1187,6 +1187,13 @@ user-name = "Manish Goregaokar"
 [[publisher.zerofrom-derive]]
 version = "0.1.7"
 when = "2026-04-01"
+user-id = 1139
+user-login = "Manishearth"
+user-name = "Manish Goregaokar"
+
+[[publisher.zerovec-derive]]
+version = "0.11.5"
+when = "2026-08-18"
 user-id = 1139
 user-login = "Manishearth"
 user-name = "Manish Goregaokar"

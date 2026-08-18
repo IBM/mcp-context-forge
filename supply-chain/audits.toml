@@ -12,6 +12,12 @@ criteria = "safe-to-deploy"
 version = "0.21.1"
 notes = "CIDR network parsing for backend URL validation SSRF protection. Reviewed for safe IP/CIDR parsing with no unsafe code or network I/O."
 
+[[audits.quinn-proto]]
+who = "prakhar-singh1928 <prakhar.singh1928@ibm.com>"
+criteria = "safe-to-deploy"
+delta = "0.11.16 -> 0.11.17"
+notes = "Patch release published by Ralith. Reviewed full diff: no unsafe code changes, no new powerful imports. Fixes: CUBIC congestion-window u64 overflow via saturating_add; stream assembler chunk-count DoS bound (COMPACT_THRESHOLD); datagram buffer memory accounting includes struct overhead; CID retirement extracted into helper. All changes are pure bug-fixes with new regression tests."
+
 [[audits.rustls-webpki]]
 who = "lucarlig <luca.carlig@ibm.com>"
 criteria = "safe-to-deploy"

@@ -560,7 +560,3 @@ criteria = "safe-to-deploy"
 [[exemptions.zerovec]]
 version = "0.11.7"
 criteria = "safe-to-deploy"
-
-[[exemptions.zerovec-derive]]
-version = "0.11.4"
-criteria = "safe-to-deploy"
