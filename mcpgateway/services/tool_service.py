@@ -3703,10 +3703,11 @@ class ToolService(BaseService):
 
         Returns:
             CallToolResult from the remote MCP server (as-is, no normalization).
+            Returns a CallToolResult with isError=True if the tool invocation fails at runtime.
 
         Raises:
             ToolNotFoundError: If gateway not found or access denied.
-            ToolInvocationError: If invocation fails.
+            ToolInvocationError: If gateway is not in direct_proxy mode.
         """
         logger.info("Direct proxy tool invocation: %s via gateway %s", name, SecurityValidator.sanitize_log_message(gateway_id))
         # Look up gateway
@@ -3816,8 +3817,8 @@ class ToolService(BaseService):
             logger.exception("Direct proxy tool invocation failed for %s: %s", name, e)
             # Return a properly structured MCP error response instead of raising an exception.
             # This ensures the response conforms to the MCP protocol specification, which requires
-            # all tool results to have a 'content' field. Raising ToolInvocationError would result
-            # in a JSON-RPC error response, violating the MCP spec.
+            # all tool results to have a 'content' field. Previously raised ToolInvocationError,
+            # which resulted in a JSON-RPC error response, violating the MCP spec.
             error_message = f"MCP server error: {str(e)}"
             return types.CallToolResult(content=[types.TextContent(type="text", text=error_message)], isError=True)
 
