@@ -776,6 +776,20 @@
                 "false"
               ]
             },
+            "MCPGATEWAY_REVERSE_PROXY_DISTRIBUTED_ENABLED": {
+              "type": "string",
+              "description": "Enable Redis-backed cross-worker reverse-proxy routing",
+              "default": "false",
+              "enum": [
+                "true",
+                "false"
+              ]
+            },
+            "MCPGATEWAY_REVERSE_PROXY_HEARTBEAT_TIMEOUT": {
+              "type": "string",
+              "description": "Seconds before a silent reverse-proxy client is evicted; 0 disables eviction",
+              "default": "90"
+            },
             "MCPGATEWAY_SESSION_AFFINITY_ENABLED": {
               "type": "string"
             },
