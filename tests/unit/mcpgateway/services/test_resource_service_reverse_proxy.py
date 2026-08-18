@@ -17,14 +17,14 @@ existing MCP-path error taxonomy.
 
 # Standard
 import logging
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch, PropertyMock
 
 # Third-Party
 from pydantic import ValidationError
 import pytest
 
 # First-Party
-from mcpgateway.common.models import ResourceContent
+from mcpgateway.common.models import BlobResourceContents, ResourceContent, TextResourceContents
 from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Resource as DbResource
@@ -63,6 +63,7 @@ def proxied_gateway():
     gateway.name = "proxied_gateway"
     gateway.url = "reverse-proxy://local"
     gateway.transport = "PROXIED"
+    gateway.created_via = "reverse_proxy"
     gateway.auth_type = None
     gateway.auth_value = None
     gateway.auth_query_params = None
@@ -126,6 +127,31 @@ class TestReadResourceReverseProxied:
     """PROXIED gateway resource reads dispatch through the reverse-proxy session manager."""
 
     @pytest.mark.asyncio
+    async def test_read_resource_without_cached_content_dispatches_to_proxied_gateway(self, resource_service, proxied_gateway, mock_logging_services):
+        """A discovered PROXIED resource has metadata only; its body comes from resources/read."""
+        resource = MagicMock(spec=DbResource)
+        resource.id = "res-1"
+        resource.uri = PROXIED_RESOURCE_URI
+        resource.mime_type = "text/markdown"
+        resource.enabled = True
+        resource.gateway = proxied_gateway
+        resource.gateway_id = proxied_gateway.id
+        resource.extension_metadata = None
+        type(resource).content = PropertyMock(side_effect=ValueError("Resource has no content"))
+        db = MagicMock()
+        db.get.return_value = resource
+
+        with (
+            patch.object(resource_service, "_check_resource_access", AsyncMock(return_value=True)),
+            patch.object(resource_service, "_get_plugin_manager", AsyncMock(return_value=None)),
+            patch.object(resource_service, "invoke_resource", AsyncMock(return_value="live downstream text")) as invoke,
+        ):
+            result = await resource_service.read_resource(db, resource_id=resource.id)
+
+        assert result.text == "live downstream text"
+        invoke.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_distributed_dispatch_uses_relay_stable_id_api(self, resource_service, monkeypatch):
         relay = MagicMock(send_request_by_stable_id=AsyncMock(return_value=_success_response("relay", {"contents": [{"uri": "file:///upstream", "text": "relay resource"}]})))
         monkeypatch.setattr(settings, "mcpgateway_reverse_proxy_distributed_enabled", True)
@@ -137,7 +163,8 @@ class TestReadResourceReverseProxied:
         assert stable_id == "proxied-gw-1"
         assert request.method == "resources/read"
         assert request.params == {"uri": "file:///upstream"}
-        assert result == "relay resource"
+        assert isinstance(result, TextResourceContents)
+        assert result.text == "relay resource"
 
     @pytest.mark.asyncio
     async def test_distributed_redis_failure_maps_to_code_only_resource_error(self, resource_service, monkeypatch):
@@ -166,7 +193,9 @@ class TestReadResourceReverseProxied:
         assert sent_request.params == {"uri": PROXIED_RESOURCE_URI}
         assert manager.send_request.await_args.kwargs["timeout_seconds"] == settings.health_check_timeout
 
-        assert result == "proxied ok"
+        assert isinstance(result, TextResourceContents)
+        assert result.text == "proxied ok"
+        assert result.mime_type == "text/markdown"
 
         events = _structured_log_events(mock_logging_services["structured_logger"])
         assert events["mcp_call_started"]["transport"] == "proxied"
@@ -194,7 +223,8 @@ class TestReadResourceReverseProxied:
         sent_request = manager.send_request.await_args.args[1]
         assert sent_request.method == "resources/read"
         assert sent_request.params == {"uri": PROXIED_SUBSTITUTED_URI}
-        assert result == "proxied ok"
+        assert isinstance(result, TextResourceContents)
+        assert result.text == "proxied ok"
 
     @pytest.mark.asyncio
     async def test_absent_stable_id_mapping_fails_closed(self, resource_service, proxied_resource):
@@ -285,6 +315,7 @@ class TestReadResourceReverseProxied:
         resource_db = MagicMock(spec=DbResource)
         resource_db.id = "res-1"
         resource_db.uri = PROXIED_RESOURCE_URI
+        resource_db.mime_type = "text/markdown"
         resource_db.enabled = True
         resource_db.visibility = "public"
         resource_db.team_id = None
@@ -307,13 +338,62 @@ class TestReadResourceReverseProxied:
 
     @pytest.mark.asyncio
     async def test_blob_contents_return_blob_payload(self, resource_service, proxied_resource):
-        """BlobResourceContents from the upstream resolve to the base64 blob payload."""
+        """BlobResourceContents remain typed with their runtime MIME metadata."""
         manager = _manager_mock(send_return=_success_response("req-1", PROXIED_BLOB_RESULT))
 
         with patch("mcpgateway.services.resource_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)):
             result = await resource_service.invoke_resource(MagicMock(), "res-1", PROXIED_RESOURCE_URI, resource_obj=proxied_resource, gateway_obj=proxied_resource.gateway)
 
-        assert result == "aGVsbG8="
+        assert isinstance(result, BlobResourceContents)
+        assert result.blob == "aGVsbG8="
+        assert result.mime_type == "application/octet-stream"
+
+    @pytest.mark.asyncio
+    async def test_read_resource_preserves_blob_type_and_runtime_mime_type(self, resource_service, proxied_gateway):
+        """The public read path returns the upstream blob model without scalar conversion."""
+        resource_db = MagicMock(spec=DbResource)
+        resource_db.id = "res-1"
+        resource_db.uri = PROXIED_RESOURCE_URI
+        resource_db.mime_type = "text/plain"
+        resource_db.enabled = True
+        resource_db.visibility = "public"
+        resource_db.team_id = None
+        resource_db.owner_email = "admin@example.com"
+        resource_db.gateway = proxied_gateway
+        db = MagicMock()
+        db.get.return_value = resource_db
+        manager = _manager_mock(send_return=_success_response("req-1", PROXIED_BLOB_RESULT))
+
+        with patch("mcpgateway.services.resource_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)):
+            result = await resource_service.read_resource(db, resource_id="res-1")
+
+        assert isinstance(result, BlobResourceContents)
+        assert result.blob == "aGVsbG8="
+        assert result.mime_type == "application/octet-stream"
+
+    @pytest.mark.asyncio
+    async def test_read_resource_preserves_runtime_text_mime_type(self, resource_service, proxied_gateway):
+        """Runtime resources/read MIME metadata overrides stale persisted discovery metadata."""
+        resource_db = MagicMock(spec=DbResource)
+        resource_db.id = "res-1"
+        resource_db.uri = PROXIED_RESOURCE_URI
+        resource_db.mime_type = "text/plain"
+        resource_db.enabled = True
+        resource_db.visibility = "public"
+        resource_db.team_id = None
+        resource_db.owner_email = "admin@example.com"
+        resource_db.gateway = proxied_gateway
+        db = MagicMock()
+        db.get.return_value = resource_db
+        runtime_result = {"contents": [{"uri": PROXIED_RESOURCE_URI, "mimeType": "application/json", "text": '{"ok":true}'}]}
+        manager = _manager_mock(send_return=_success_response("req-1", runtime_result))
+
+        with patch("mcpgateway.services.resource_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)):
+            result = await resource_service.read_resource(db, resource_id="res-1")
+
+        assert isinstance(result, TextResourceContents)
+        assert result.text == '{"ok":true}'
+        assert result.mime_type == "application/json"
 
     @pytest.mark.asyncio
     async def test_malformed_upstream_result_raises_validation_error(self, resource_service, mock_logging_services):
@@ -404,6 +484,7 @@ class TestReadResourceReverseProxied:
         resource_db = MagicMock(spec=DbResource)
         resource_db.id = "res-1"
         resource_db.uri = PROXIED_RESOURCE_URI
+        resource_db.mime_type = "text/markdown"
         resource_db.enabled = True
         resource_db.visibility = "team"
         resource_db.team_id = "team-a"
@@ -437,7 +518,8 @@ class TestReadResourceReverseProxiedAuth:
         with patch("mcpgateway.services.resource_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)):
             result = await resource_service.invoke_resource(MagicMock(), "res-1", PROXIED_RESOURCE_URI, resource_obj=proxied_resource, gateway_obj=proxied_gateway)
 
-        assert result == "proxied ok"
+        assert isinstance(result, TextResourceContents)
+        assert result.text == "proxied ok"
         manager.send_request.assert_awaited_once()
         attached_auth = manager.send_request.await_args.kwargs["auth"]
         assert attached_auth is not None
@@ -452,7 +534,8 @@ class TestReadResourceReverseProxiedAuth:
         with patch("mcpgateway.services.resource_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)):
             result = await resource_service.invoke_resource(MagicMock(), "res-1", PROXIED_RESOURCE_URI, resource_obj=proxied_resource, gateway_obj=proxied_resource.gateway)
 
-        assert result == "proxied ok"
+        assert isinstance(result, TextResourceContents)
+        assert result.text == "proxied ok"
         manager.send_request.assert_awaited_once()
         assert manager.send_request.await_args.kwargs["auth"] is None
 
@@ -493,7 +576,8 @@ class TestReadResourceReverseProxiedAuth:
         with patch("mcpgateway.services.resource_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)):
             result = await resource_service.invoke_resource(MagicMock(), "res-1", PROXIED_RESOURCE_URI, resource_obj=proxied_resource, gateway_obj=proxied_gateway)
 
-        assert result == "proxied ok"
+        assert isinstance(result, TextResourceContents)
+        assert result.text == "proxied ok"
         attached_auth = manager.send_request.await_args.kwargs["auth"]
         assert attached_auth is not None
         assert attached_auth.headers == {"Authorization": "Basic dXNlcjpwYXNz"}
@@ -510,7 +594,8 @@ class TestReadResourceReverseProxiedAuth:
         with patch("mcpgateway.services.resource_service.get_reverse_proxy_session_manager", AsyncMock(return_value=manager)):
             result = await resource_service.invoke_resource(MagicMock(), "res-1", PROXIED_RESOURCE_URI, resource_obj=proxied_resource, gateway_obj=proxied_gateway)
 
-        assert result == "proxied ok"
+        assert isinstance(result, TextResourceContents)
+        assert result.text == "proxied ok"
         attached_auth = manager.send_request.await_args.kwargs["auth"]
         assert attached_auth is not None
         assert attached_auth.headers == {"X-Api-Key": "proxied-resource-key", "X-Tenant": "acme"}  # pragma: allowlist secret
@@ -573,7 +658,8 @@ class TestReadResourceReverseProxiedAuth:
         ):
             result = await resource_service.invoke_resource(MagicMock(), "res-1", PROXIED_RESOURCE_URI, user_identity=identity, resource_obj=proxied_resource, gateway_obj=proxied_gateway)
 
-        assert result == "proxied ok"
+        assert isinstance(result, TextResourceContents)
+        assert result.text == "proxied ok"
         attached_auth = manager.send_request.await_args.kwargs["auth"]
         assert attached_auth is not None
         assert attached_auth.headers == {"Authorization": "Bearer proxied-resource-secret"}

@@ -6465,7 +6465,7 @@ async def read_resource(resource_id: str, request: Request, db: Session = Depend
     # Ensure a plain JSON-serializable structure
     try:
         # First-Party
-        from mcpgateway.common.models import ResourceContent, TextContent  # pylint: disable=import-outside-toplevel
+        from mcpgateway.common.models import ResourceContent, ResourceContents, TextContent  # pylint: disable=import-outside-toplevel
 
         # If already a ResourceContent, serialize directly
         if isinstance(content, ResourceContent):
@@ -6473,6 +6473,9 @@ async def read_resource(resource_id: str, request: Request, db: Session = Depend
             if payload.get("meta") is None:
                 payload.pop("meta", None)
             return payload
+
+        if isinstance(content, ResourceContents):
+            return content.model_dump(by_alias=True, exclude_none=True)
 
         # If TextContent, wrap into resource envelope with text
         if isinstance(content, TextContent):
