@@ -10146,9 +10146,7 @@ class TestInvokeToolMcpSseTimeoutAndErrors:
 
             # Verify the result is a proper MCP error response
             assert result is not None
-            assert hasattr(result, "is_error") or hasattr(result, "isError")
-            is_error = getattr(result, "is_error", None) or getattr(result, "isError", None)
-            assert is_error is True
+            assert result.is_error is True
             assert hasattr(result, "content")
             assert len(result.content) > 0
             assert "timed out" in str(result.content[0])
@@ -10203,9 +10201,7 @@ class TestInvokeToolMcpSseTimeoutAndErrors:
 
             # Verify the result is a proper MCP error response
             assert result is not None
-            assert hasattr(result, "is_error") or hasattr(result, "isError")
-            is_error = getattr(result, "is_error", None) or getattr(result, "isError", None)
-            assert is_error is True
+            assert result.is_error is True
             assert hasattr(result, "content")
             assert len(result.content) > 0
             # The root cause "root" should be in the error message
@@ -10388,9 +10384,7 @@ class TestInvokeToolMcpStreamableHttpCoverage:
 
             # Verify the result is a proper MCP error response
             assert result is not None
-            assert hasattr(result, "is_error") or hasattr(result, "isError")
-            is_error = getattr(result, "is_error", None) or getattr(result, "isError", None)
-            assert is_error is True
+            assert result.is_error is True
             assert hasattr(result, "content")
             assert len(result.content) > 0
             assert "timed out" in str(result.content[0])
@@ -10436,9 +10430,7 @@ class TestInvokeToolMcpStreamableHttpCoverage:
 
             # Verify the result is a proper MCP error response
             assert result is not None
-            assert hasattr(result, "is_error") or hasattr(result, "isError")
-            is_error = getattr(result, "is_error", None) or getattr(result, "isError", None)
-            assert is_error is True
+            assert result.is_error is True
             assert hasattr(result, "content")
             assert len(result.content) > 0
             # The root cause "root" should be in the error message
