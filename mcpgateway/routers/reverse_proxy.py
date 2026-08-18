@@ -19,7 +19,7 @@ import uuid
 # Third-Party
 import anyio
 from fastapi import APIRouter, Depends, HTTPException, Request, status, WebSocket, WebSocketDisconnect
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.security import HTTPAuthorizationCredentials
 import orjson
 from pydantic import ValidationError
@@ -27,7 +27,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.auth import get_current_user
-from mcpgateway.auth_context import get_jwt_user_email_from_payload, get_user_email
+from mcpgateway.auth_context import get_jwt_user_email_from_payload, get_request_identity, get_user_email
 from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import get_db, Permissions
@@ -35,8 +35,9 @@ from mcpgateway.db import Server as DbServer
 from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, PermissionChecker, token_scope_grants
 from mcpgateway.middleware.token_scoping import token_scoping_middleware
 from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.services.reverse_proxy_catalog import AuthenticatedRegistrationContext, ReverseProxyCatalogConflictError, ReverseProxyCatalogService
+from mcpgateway.services.reverse_proxy_catalog import AuthenticatedRegistrationContext, ReverseProxyCatalogConflictError, ReverseProxyCatalogService, stable_proxy_id
 from mcpgateway.services.reverse_proxy_discovery import ReverseProxyDiscoveryService
+from mcpgateway.services.reverse_proxy_relay_models import RelaySessionEntry
 from mcpgateway.services.reverse_proxy_protocol import (
     encode_server_message,
     error,
@@ -69,7 +70,17 @@ async def _persist_unreachable_best_effort(session_manager, evictions) -> None:
     try:
         from mcpgateway.services.gateway_service import gateway_service  # pylint: disable=import-outside-toplevel,no-name-in-module
 
-        await gateway_service.mark_reverse_proxy_gateways_unreachable(session_manager, evictions, seen_at=datetime.now(tz=timezone.utc))
+        authority_check = None
+        if settings.mcpgateway_reverse_proxy_distributed_enabled:
+            from mcpgateway.services.reverse_proxy_relay_runtime import get_reverse_proxy_relay  # pylint: disable=import-outside-toplevel
+
+            authority_check = (await get_reverse_proxy_relay()).is_unowned
+        await gateway_service.mark_reverse_proxy_gateways_unreachable(
+            session_manager,
+            evictions,
+            seen_at=datetime.now(tz=timezone.utc),
+            authority_check=authority_check,
+        )
     except Exception as persistence_error:
         LOGGER.warning("Reverse-proxy reachability persistence failed", exc_info=persistence_error)
 
@@ -107,6 +118,7 @@ _REVERSE_PROXY_CONNECT_PERMISSIONS: Final = (Permissions.GATEWAYS_CREATE, Permis
 # Bounded best-effort socket close for HTTP-initiated disconnects: authoritative
 # typed session cleanup must never wait on a stalled socket.
 _HTTP_DISCONNECT_CLOSE_TIMEOUT_SECONDS: Final = 5.0
+_MAX_WEBSOCKET_FRAME_BYTES: Final = 1024 * 1024
 
 
 @dataclass(frozen=True, slots=True)
@@ -115,6 +127,32 @@ class ReverseProxyAuthenticatedContext:
 
     owner_email: str
     team_id: str | None
+
+
+async def _require_http_permission(request: Request, credentials: str | dict[str, Any], permission: str) -> None:
+    """Enforce one method-specific Layer-2 permission before session access."""
+    requesting_user, is_admin = _get_user_from_credentials(credentials)
+    request_scope = getattr(request, "scope", {})
+    scope_state = request_scope.get("state", {}) if isinstance(request_scope, dict) else {}
+    team_id = scope_state.get("team_id") if isinstance(scope_state, dict) else None
+    token_teams = scope_state.get("token_teams") if isinstance(scope_state, dict) else None
+    token_scopes = scope_state.get("token_scopes") if isinstance(scope_state, dict) else None
+    checker = PermissionChecker(
+        {
+            "email": requesting_user,
+            "is_admin": is_admin,
+            "team_id": team_id,
+            "token_teams": token_teams,
+            "token_scopes": token_scopes,
+        }
+    )
+    if not await checker.has_permission(permission, team_id=team_id):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
+
+
+def _encode_sse_event(event: str, data: dict[str, JsonValue]) -> str:
+    """Serialize one standards-compliant SSE event frame."""
+    return f"event: {event}\ndata: {orjson.dumps(data).decode()}\n\n"
 
 
 def _get_websocket_bearer_token(websocket: WebSocket) -> Optional[str]:
@@ -157,9 +195,9 @@ async def _authenticate_reverse_proxy_websocket(websocket: WebSocket) -> Reverse
     auth_request = Request(auth_scope)
     user = await get_current_user(credentials, request=auth_request)
     owner_email = get_user_email(user)
-    team_id: str | None = getattr(websocket.state, "team_id", None)
-    token_teams: list[str] | None = getattr(websocket.state, "token_teams", None)
-    token_scopes: list[str] | None = getattr(websocket.state, "token_scopes", None)
+    team_id: str | None = getattr(auth_request.state, "team_id", None)
+    token_teams: list[str] | None = getattr(auth_request.state, "token_teams", None)
+    token_scopes: list[str] | None = getattr(auth_request.state, "token_scopes", None)
 
     cached_payload = getattr(auth_request.state, "_jwt_verified_payload", None)
     if isinstance(cached_payload, tuple) and len(cached_payload) == 2 and cached_payload[0] == auth_token and isinstance(cached_payload[1], dict):
@@ -197,7 +235,7 @@ async def _authenticate_reverse_proxy_websocket(websocket: WebSocket) -> Reverse
         "user_agent": websocket.headers.get("user-agent"),
         "team_id": team_id,
         "token_teams": token_teams,
-        "token_use": getattr(websocket.state, "token_use", None),
+        "token_use": getattr(auth_request.state, "token_use", None),
     }
     checker = PermissionChecker(user_context)
     for permission in _REVERSE_PROXY_CONNECT_PERMISSIONS:
@@ -238,7 +276,7 @@ async def websocket_endpoint(
             "Reverse proxy WebSocket admission rejected",
             extra={"event": "reverse_proxy.websocket.rejected", "status_code": exc.status_code, "reason": str(exc.detail)},
         )
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason=str(exc.detail))
+        await websocket.send_denial_response(JSONResponse(status_code=exc.status_code, content={"detail": exc.detail}))
         return
 
     # Accept only after authentication and both authorization layers succeed.
@@ -284,86 +322,122 @@ async def websocket_endpoint(
             nonlocal registration_state
             stable_id: StableGatewayId | None = None
             quiesced: ConnectionId | None = None
+            quiesced_started = False
+            db_gateway: DbGateway | None = None
             committed = False
-            ownership_claimed = False
+            reachable_committed = False
+            registration_claimed = False
+            ownership_promoted = False
+
+            async def compensate() -> None:
+                """Leave persisted and routing state fail-closed after registration failure."""
+                nonlocal registration_claimed
+                if stable_id is None:
+                    return
+                try:
+                    db.rollback()
+                    if reachable_committed and db_gateway is not None:
+                        db_gateway.reachable = False
+                        db_gateway.last_seen = datetime.now(tz=timezone.utc)
+                        db.commit()
+                except Exception:  # pylint: disable=broad-exception-caught
+                    LOGGER.warning(
+                        "Reverse proxy registration compensation persistence failed",
+                        extra={"connection_id": str(connection_id), "stable_id": str(stable_id)},
+                        exc_info=True,
+                    )
+                if ownership_promoted and relay is not None:
+                    if release_owners is None:
+                        raise RuntimeError("reverse-proxy owner release is unavailable")
+                    await release_owners(relay, (ReverseProxyEviction(stable_id, connection_id),))
+                    await relay.remove_session(connection_id)
+                if registration_claimed and relay is not None:
+                    await relay.release_registration(stable_id, connection_id)
+                    registration_claimed = False
+                if not committed and quiesced_started:
+                    await session_manager.restore_stable_id(stable_id, quiesced, connection_id)
+                    return
+                if not committed:
+                    return
+                await session_manager.restore_stable_id(stable_id, None, connection_id)
+                if quiesced is not None and quiesced != connection_id:
+                    await session_manager.retire_connection(quiesced)
+
             try:
                 registration_context = AuthenticatedRegistrationContext(owner_email=authenticated_context.owner_email, team_id=authenticated_context.team_id)
+                stable_id = StableGatewayId(stable_proxy_id(registration_context, server))
+                if relay is not None:
+                    registration_claimed = await relay.claim_registration(stable_id, connection_id)
+                    if not registration_claimed:
+                        raise RuntimeError("reverse-proxy stable gateway registration is already in progress")
                 await session_manager.record_server_info(connection_id, server.model_dump(exclude_none=True))
-                entry = await ReverseProxyCatalogService(gateway_service=gateway_service, server_service=server_service).register(db, registration_context, server)
-                stable_id = StableGatewayId(entry.stable_id)
-                db_gateway = db.get(DbGateway, entry.stable_id)
-                db_server = db.get(DbServer, entry.stable_id)
-                if db_gateway is None or db_server is None:
-                    raise ReverseProxyCatalogConflictError(stable_id=entry.stable_id, reason="catalog pair was not persisted")
+                catalog = ReverseProxyCatalogService(gateway_service=gateway_service, server_service=server_service)
                 discovery = ReverseProxyDiscoveryService(gateway_service=gateway_service, server_service=server_service)
-                async with session_manager.registration_lock(stable_id):
-                    # Quiesce first: re-registration makes invokes fail closed
-                    # for the discovery window, in exchange for the never-split
-                    # invariant that catalog and routing are always consistent.
-                    quiesced = await session_manager.quiesce_stable_id(stable_id)
-                    # Discovery commits only at its end; a raise leaves the
-                    # catalog untouched, so the predecessor mapping is restored.
-                    await discovery.discover_and_reconcile(db, session_manager, connection_id, db_gateway, db_server, timeout_seconds=float(settings.tool_timeout))
-                    committed = True
-                    # Publish while unmapped, then promote last: once the
-                    # catalog is committed the stable ID must never route to
-                    # the incompatible predecessor again, so any later failure
-                    # stays fail-closed.
-                    await discovery.publish_post_commit_effects(db_gateway, db_server)
-                    await session_manager.promote_stable_id(stable_id, connection_id)
+                async with anyio.create_task_group() as lease_tasks:
                     if relay is not None:
-                        if quiesced is not None:
-                            await relay.release_owner(stable_id, quiesced)
-                        ownership_claimed = await relay.claim_owner(stable_id, connection_id)
-                        if not ownership_claimed:
-                            raise RuntimeError("reverse-proxy stable gateway is already owned")
-                registration_state = "registered"
-                LOGGER.info(f"Registered server for connection {connection_id}: {server.name}")
-                await send_frame(encode_server_message(register_complete(str(connection_id), RegistrationStatus.SUCCESS)))
+                        lease_tasks.start_soon(relay.maintain_registration, stable_id, connection_id)
+                    entry = await catalog.register(db, registration_context, server, commit=False)
+                    if entry.stable_id != stable_id:
+                        raise ReverseProxyCatalogConflictError(stable_id=entry.stable_id, reason="catalog returned an unexpected stable ID")
+                    db_gateway = db.get(DbGateway, entry.stable_id)
+                    db_server = db.get(DbServer, entry.stable_id)
+                    if db_gateway is None or db_server is None:
+                        raise ReverseProxyCatalogConflictError(stable_id=entry.stable_id, reason="catalog pair was not persisted")
+                    async with session_manager.registration_lock(stable_id):
+                        quiesced = await session_manager.quiesce_stable_id(stable_id)
+                        quiesced_started = True
+                        await discovery.discover_and_reconcile(
+                            db,
+                            session_manager,
+                            connection_id,
+                            db_gateway,
+                            db_server,
+                            timeout_seconds=float(settings.tool_timeout),
+                            commit=False,
+                            mark_reachable=False,
+                        )
+                        if relay is not None and not await relay.heartbeat_registration(stable_id, connection_id):
+                            raise RuntimeError("reverse-proxy registration authority was lost")
+                        db.commit()
+                        committed = True
+                        if relay is not None:
+                            ownership_promoted = await relay.promote_registration(stable_id, connection_id)
+                            if not ownership_promoted:
+                                raise RuntimeError("reverse-proxy registration authority was lost")
+                        await session_manager.promote_stable_id(stable_id, connection_id)
+                        db_gateway.reachable = True
+                        db_gateway.last_seen = datetime.now(tz=timezone.utc)
+                        if relay is not None and not await relay.heartbeat_registration(stable_id, connection_id):
+                            raise RuntimeError("reverse-proxy registration authority was lost")
+                        db.commit()
+                        reachable_committed = True
+                        if relay is not None:
+                            await relay.publish_session(stable_id, connection_id)
+                        await catalog.publish_post_commit_effects(db, registration_context, server, entry)
+                        await discovery.publish_post_commit_effects(db_gateway, db_server)
+                    registration_state = "registered"
+                    LOGGER.info(f"Registered server for connection {connection_id}: {server.name}")
+                    await send_frame(encode_server_message(register_complete(str(connection_id), RegistrationStatus.SUCCESS)))
+                    if relay is not None:
+                        await relay.release_registration(stable_id, connection_id)
+                        registration_claimed = False
+                    lease_tasks.cancel_scope.cancel()
                 # Retire the quiesced predecessor only after the replacement is
                 # acknowledged, so its client reconnects cleanly.
                 if quiesced is not None and quiesced != connection_id:
                     await session_manager.retire_connection(quiesced)
+                    if relay is not None:
+                        await relay.remove_session(quiesced)
             except anyio.get_cancelled_exc_class():
                 # Task-group cancellation (disconnect, unregister, duplicate
                 # register) still compensates under a shield, then re-raises.
                 with anyio.CancelScope(shield=True):
-                    if stable_id is not None:
-                        if ownership_claimed and relay is not None:
-                            assert release_owners is not None
-                            await release_owners(relay, (ReverseProxyEviction(stable_id, connection_id),))
-                        if not committed:
-                            # Catalog untouched: restoring the predecessor is safe.
-                            await session_manager.restore_stable_id(stable_id, quiesced, connection_id)
-                        else:
-                            # Post-commit: demote the candidate, stay fail-closed, and
-                            # retire the quiesced predecessor so its client reconnects
-                            # clean - mirrors the ordinary post-commit failure branch.
-                            await session_manager.restore_stable_id(stable_id, None, connection_id)
-                            if quiesced is not None and quiesced != connection_id:
-                                await session_manager.retire_connection(quiesced)
+                    await compensate()
                 raise
             except Exception:
                 LOGGER.error("Reverse proxy registration failed for connection %s", connection_id, exc_info=True)
-                if stable_id is not None:
-                    # Shield the compensation: a registration failure usually means
-                    # the client is gone, so the receive pump is concurrently
-                    # cancelling this task group, and the demote/retire must still
-                    # complete to keep catalog and routing consistent.
-                    with anyio.CancelScope(shield=True):
-                        if ownership_claimed and relay is not None:
-                            assert release_owners is not None
-                            await release_owners(relay, (ReverseProxyEviction(stable_id, connection_id),))
-                        if not committed:
-                            # Pre-commit failure: restore the catalog-compatible predecessor.
-                            await session_manager.restore_stable_id(stable_id, quiesced, connection_id)
-                        else:
-                            # Post-commit failure: demote the candidate, never restore a
-                            # catalog-incompatible predecessor; retire the quiesced
-                            # predecessor so its client reconnects clean.
-                            await session_manager.restore_stable_id(stable_id, None, connection_id)
-                            if quiesced is not None and quiesced != connection_id:
-                                await session_manager.retire_connection(quiesced)
+                with anyio.CancelScope(shield=True):
+                    await compensate()
                 try:
                     await send_frame(encode_server_message(register_complete(str(connection_id), RegistrationStatus.ERROR, "registration failed")))
                     await connection_io.close(code=status.WS_1008_POLICY_VIOLATION, reason="registration failed")
@@ -382,6 +456,9 @@ async def websocket_endpoint(
                     while True:
                         try:
                             frame = await connection_io.receive_text()
+                            if len(frame.encode("utf-8")) > _MAX_WEBSOCKET_FRAME_BYTES:
+                                await connection_io.close(code=status.WS_1009_MESSAGE_TOO_BIG, reason="message too large")
+                                break
                             session_manager.record_received(connection_id, character_count=len(frame))
                             message = parse_client_message(frame)
                         except WebSocketDisconnect:
@@ -431,8 +508,10 @@ async def websocket_endpoint(
         with anyio.CancelScope(shield=True):
             disconnected_stable_ids = await session_manager.disconnect(connection_id)
             if relay is not None:
-                assert release_owners is not None
+                if release_owners is None:
+                    raise RuntimeError("reverse-proxy owner release is unavailable")
                 await release_owners(relay, disconnected_stable_ids)
+                await relay.remove_session(connection_id)
             await _persist_unreachable_best_effort(session_manager, disconnected_stable_ids)
         LOGGER.info(f"Reverse proxy session ended: {connection_id}")
 
@@ -454,11 +533,17 @@ async def list_sessions(
     Returns:
         List of session information (filtered by ownership).
     """
-    requesting_user, is_admin = _get_user_from_credentials(credentials)
-    session_manager = await get_reverse_proxy_session_manager()
-    sessions = session_manager.list_sessions()
+    await _require_http_permission(request, credentials, Permissions.GATEWAYS_READ)
+    requesting_user, is_admin = get_request_identity(request, credentials)
+    if settings.mcpgateway_reverse_proxy_distributed_enabled:
+        from mcpgateway.services.reverse_proxy_relay_runtime import get_reverse_proxy_relay  # pylint: disable=import-outside-toplevel
+
+        sessions = await (await get_reverse_proxy_relay()).list_session_entries()
+    else:
+        session_manager = await get_reverse_proxy_session_manager()
+        sessions = session_manager.list_sessions()
     visible = sessions if is_admin else tuple(session for session in sessions if not session.owner_email or session.owner_email == requesting_user)
-    payload = [_session_payload(session) for session in visible]
+    payload = [_session_payload(session) if isinstance(session, ReverseProxySession) else _relay_session_payload(session) for session in visible]
     return {"sessions": payload, "total": len(payload)}
 
 
@@ -469,6 +554,19 @@ def _session_payload(session: ReverseProxySession) -> dict[str, JsonValue]:
         "server_info": dict(session.server_info),
         "connected_at": session.connected_at.isoformat(),
         "last_activity": session.last_activity.isoformat(),
+        "message_count": session.message_count,
+        "bytes_transferred": session.bytes_transferred,
+        "user": session.owner_email,
+    }
+
+
+def _relay_session_payload(session: RelaySessionEntry) -> dict[str, JsonValue]:
+    """Serialize distributed directory metadata using the established response shape."""
+    return {
+        "session_id": session.connection_id,
+        "server_info": dict(session.server_info),
+        "connected_at": session.connected_at,
+        "last_activity": session.last_activity,
         "message_count": session.message_count,
         "bytes_transferred": session.bytes_transferred,
         "user": session.owner_email,
@@ -497,13 +595,25 @@ async def disconnect_session(
     Raises:
         HTTPException: If session is not found or user is not authorized.
     """
+    await _require_http_permission(request, credentials, Permissions.GATEWAYS_DELETE)
     session_manager = await get_reverse_proxy_session_manager()
+    if settings.mcpgateway_reverse_proxy_distributed_enabled:
+        from mcpgateway.services.reverse_proxy_relay_runtime import get_reverse_proxy_relay  # pylint: disable=import-outside-toplevel
+
+        relay = await get_reverse_proxy_relay()
+        session = session_manager.get_session(ConnectionId(session_id)) or await relay.get_session_entry(ConnectionId(session_id))
+        if not session:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+        _validate_session_ownership(session, credentials, "disconnect", request=request)
+        if not await relay.disconnect_session(ConnectionId(session_id)):
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+        return {"status": "disconnected", "session_id": session_id}
     session = session_manager.get_session(ConnectionId(session_id))
     if not session:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
 
     # Validate session ownership
-    _validate_session_ownership(session, credentials, "disconnect")
+    _validate_session_ownership(session, credentials, "disconnect", request=request)
 
     # Clear typed session state first so stable mappings and pending calls fail
     # closed immediately, then close the socket bounded
@@ -548,16 +658,31 @@ async def send_request_to_session(
     Raises:
         HTTPException: If session is not found, user is not authorized, or request fails.
     """
+    await _require_http_permission(request, credentials, Permissions.TOOLS_EXECUTE)
     session_manager = await get_reverse_proxy_session_manager()
+    if settings.mcpgateway_reverse_proxy_distributed_enabled:
+        from mcpgateway.services.reverse_proxy_relay_runtime import get_reverse_proxy_relay  # pylint: disable=import-outside-toplevel
+
+        relay = await get_reverse_proxy_relay()
+        session = session_manager.get_session(ConnectionId(session_id)) or await relay.get_session_entry(ConnectionId(session_id))
+        if not session:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
+        _validate_session_ownership(session, credentials, "send request to", request=request)
+        try:
+            await relay.send_request_by_connection_id_nowait(ConnectionId(session_id), mcp_request, timeout_seconds=float(settings.tool_timeout))
+            return {"status": "sent", "session_id": session_id}
+        except Exception:
+            LOGGER.error("Failed to send request to session %s", session_id, exc_info=True)
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to send request")
     session = session_manager.get_session(ConnectionId(session_id))
     if not session:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
 
     # Validate session ownership
-    _validate_session_ownership(session, credentials, "send request to")
+    _validate_session_ownership(session, credentials, "send request to", request=request)
 
     try:
-        await session_manager.send_request(ConnectionId(session_id), mcp_request, timeout_seconds=float(settings.tool_timeout))
+        await session_manager.send_request_nowait(ConnectionId(session_id), mcp_request, timeout_seconds=float(settings.tool_timeout))
         return {"status": "sent", "session_id": session_id}
     except Exception:
         LOGGER.error("Failed to send request to session %s", session_id, exc_info=True)
@@ -585,13 +710,14 @@ def _get_user_from_credentials(credentials: str | dict[str, Any] | None) -> tupl
     return None, False
 
 
-def _validate_session_ownership(session: ReverseProxySession, credentials: str | dict[str, Any] | None, action: str) -> None:
+def _validate_session_ownership(session: ReverseProxySession | RelaySessionEntry, credentials: str | dict[str, Any] | None, action: str, *, request: Request | None = None) -> None:
     """Validate that the requesting user owns the session or is admin.
 
     Args:
         session: The session to validate ownership for
         credentials: Auth credentials from require_auth
         action: Description of the action for logging
+        request: Request context used for authoritative session-token admin state.
 
     Raises:
         HTTPException: 403 if user is not authorized for the session
@@ -600,7 +726,7 @@ def _validate_session_ownership(session: ReverseProxySession, credentials: str |
         # Session was created without auth - allow access
         return
 
-    requesting_user, is_admin = _get_user_from_credentials(credentials)
+    requesting_user, is_admin = get_request_identity(request, credentials) if request is not None else _get_user_from_credentials(credentials)
 
     # Admins can access any session
     if is_admin:
@@ -638,13 +764,18 @@ async def sse_endpoint(
     Raises:
         HTTPException: If session is not found or user is not authorized.
     """
+    await _require_http_permission(request, credentials, Permissions.GATEWAYS_READ)
     session_manager = await get_reverse_proxy_session_manager()
-    session = session_manager.get_session(ConnectionId(session_id))
+    session: ReverseProxySession | RelaySessionEntry | None = session_manager.get_session(ConnectionId(session_id))
+    if session is None and settings.mcpgateway_reverse_proxy_distributed_enabled:
+        from mcpgateway.services.reverse_proxy_relay_runtime import get_reverse_proxy_relay  # pylint: disable=import-outside-toplevel
+
+        session = await (await get_reverse_proxy_relay()).get_session_entry(ConnectionId(session_id))
     if not session:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Session {session_id} not found")
 
     # Validate session ownership
-    _validate_session_ownership(session, credentials, "subscribe to SSE for")
+    _validate_session_ownership(session, credentials, "subscribe to SSE for", request=request)
 
     async def event_generator():
         """Generate SSE events.
@@ -657,12 +788,12 @@ async def sse_endpoint(
         """
         try:
             # Send initial connection event
-            yield {"event": "connected", "data": orjson.dumps({"sessionId": session_id, "serverInfo": session.server_info}).decode()}
+            yield _encode_sse_event("connected", {"sessionId": session_id, "serverInfo": dict(session.server_info)})
 
             # TODO: Implement message queue for SSE delivery
             while not await request.is_disconnected():
                 await asyncio.sleep(30)  # Keepalive
-                yield {"event": "keepalive", "data": orjson.dumps({"timestamp": datetime.now(tz=timezone.utc).isoformat()}).decode()}
+                yield _encode_sse_event("keepalive", {"timestamp": datetime.now(tz=timezone.utc).isoformat()})
 
         except asyncio.CancelledError:
             raise
