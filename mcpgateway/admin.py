@@ -180,6 +180,7 @@ from mcpgateway.services.import_service import ConflictStrategy
 from mcpgateway.services.import_service import ImportError as ImportServiceError
 from mcpgateway.services.import_service import ImportService, ImportValidationError
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.observability_service import ensure_timezone_aware
 from mcpgateway.services.openapi_service import fetch_and_extract_schemas
 from mcpgateway.services.password_policy_service import PasswordPolicyService
 from mcpgateway.services.performance_service import get_performance_service
@@ -19002,7 +19003,7 @@ def _get_latency_percentiles_postgresql(db: Session, cutoff_time: datetime, inte
     p99_values = []
 
     for row in results:
-        timestamps.append(row.bucket.astimezone(timezone.utc).isoformat() if row.bucket else "")
+        timestamps.append(ensure_timezone_aware(row.bucket).astimezone(timezone.utc).isoformat() if row.bucket else "")
         p50_values.append(round(float(row.p50), 2) if row.p50 else 0)
         p90_values.append(round(float(row.p90), 2) if row.p90 else 0)
         p95_values.append(round(float(row.p95), 2) if row.p95 else 0)
@@ -19167,7 +19168,7 @@ def _get_timeseries_metrics_postgresql(db: Session, cutoff_time: datetime, inter
         error = row.error or 0
         error_rate = (error / total * 100) if total > 0 else 0
 
-        timestamps.append(row.bucket.astimezone(timezone.utc).isoformat() if row.bucket else "")
+        timestamps.append(ensure_timezone_aware(row.bucket).astimezone(timezone.utc).isoformat() if row.bucket else "")
         request_counts.append(total)
         success_counts.append(row.success or 0)
         error_counts.append(error)

@@ -285,3 +285,44 @@ def test_postgres_buckets_normalized_to_utc():
     percentiles = _latency_percentiles_postgresql(db, BASE_TIME - timedelta(hours=24), 60)
     assert percentiles["buckets"] == ["2025-01-01T12:00:00+00:00"]
     assert percentiles["p50"] == [100.0]
+
+
+@pytest.fixture
+def non_utc_host_timezone():
+    """Force a non-UTC host timezone so naive-datetime handling is observable."""
+    # Standard
+    import os
+    import time
+
+    original = os.environ.get("TZ")
+    os.environ["TZ"] = "America/New_York"
+    time.tzset()
+    try:
+        yield
+    finally:
+        if original is None:
+            os.environ.pop("TZ", None)
+        else:
+            os.environ["TZ"] = original
+        time.tzset()
+
+
+def test_postgres_buckets_with_naive_timestamps_labeled_utc(non_utc_host_timezone):
+    """A naive bucket is labeled UTC rather than shifted by the host's local offset.
+
+    Guards the ensure_timezone_aware() call: a bare .astimezone() would read a
+    naive value as host-local time, so on this fixture's America/New_York host
+    the bucket would serialize as 17:00Z instead of 12:00Z.
+    """
+    naive_bucket = datetime(2025, 1, 1, 12, 0, 0)
+
+    db = MagicMock()
+    db.execute.return_value.fetchall.return_value = [SimpleNamespace(bucket=naive_bucket, total=2)]
+    timeseries = _execution_timeseries_postgresql(db, BASE_TIME - timedelta(hours=24), 60)
+    assert timeseries["buckets"] == ["2025-01-01T12:00:00+00:00"]
+
+    db.execute.return_value.fetchall.return_value = [SimpleNamespace(bucket=naive_bucket, p50=100.0, p95=190.0, p99=198.0)]
+    percentiles = _latency_percentiles_postgresql(db, BASE_TIME - timedelta(hours=24), 60)
+    assert percentiles["buckets"] == ["2025-01-01T12:00:00+00:00"]
+    assert percentiles["p95"] == [190.0]
+    assert percentiles["p99"] == [198.0]
