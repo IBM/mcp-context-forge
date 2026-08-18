@@ -156,6 +156,7 @@ class TeamInvitationService:
         semaphore = asyncio.Semaphore(_INVITATION_EMAIL_CONCURRENCY)
 
         async def deliver(invitation: EmailTeamInvitation) -> InvitationDeliveryResult:
+            """Deliver a single invitation email within the concurrency semaphore."""
             async with semaphore:
                 try:
                     return await self.deliver_invitation_email(invitation, team_name, inviter_name)
