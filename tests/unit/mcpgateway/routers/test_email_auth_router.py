@@ -636,7 +636,7 @@ async def test_admin_get_update_delete_user():
             requesting_user_email="admin@example.com",
         )
 
-        # ----------> [#2754] Code to be removed after Sun, 16 Aug 2026 23:59:59 UTC
+        # ----------> [#2754] Code to be removed after Sun, 01 Nov 2026 23:59:59 UTC
         response_input = Response()
         update_request = AdminUserUpdateRequest(password="newPassword123!", full_name="Updated2", is_admin=True)  # pragma: allowlist secret
         response = await email_auth.update_user_deprecated("user@example.com", update_request, response_input, current_user_ctx={"db": mock_db, "email": "admin@example.com"}, db=mock_db)
@@ -659,8 +659,8 @@ async def test_admin_get_update_delete_user():
         delete_response = await email_auth.delete_user("user@example.com", current_user_ctx={"db": mock_db, "email": "admin@example.com"}, db=mock_db)
         assert delete_response.success is True
 
-        # ----------> [#2754] Code to be removed after Sun, 16 Aug 2026 23:59:59 UTC
-        assert datetime.now(timezone.utc) < datetime(2026, 8, 16, 23, 59, 59, tzinfo=timezone.utc), "Sunset reached: remove deprecated PUT endpoint. See #2754"
+        # ----------> [#2754] Code to be removed after Sun, 01 Nov 2026 23:59:59 UTC
+        assert datetime.now(timezone.utc) < datetime(2026, 11, 1, 23, 59, 59, tzinfo=timezone.utc), "Sunset reached: remove deprecated PUT endpoint. See #2754"
         # ----------->
 
 

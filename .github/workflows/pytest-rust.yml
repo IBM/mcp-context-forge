@@ -100,6 +100,7 @@ jobs:
             --durations=5 \
             --ignore=tests/fuzz \
             --cov=mcpgateway \
+            --cov-config=.github/pytest-branch-coverage.coveragerc \
             --cov-report=xml \
             --cov-report=html \
             --cov-report=term \
