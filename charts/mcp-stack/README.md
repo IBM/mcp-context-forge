@@ -505,6 +505,8 @@ For detailed guidance on resource limits and process management, see `docs/docs/
 | mcpContextForge.config.TRANSPORT_TYPE | string | `"all"` |  |
 | mcpContextForge.config.MCPGATEWAY_WS_RELAY_ENABLED | string | `"false"` |  |
 | mcpContextForge.config.MCPGATEWAY_REVERSE_PROXY_ENABLED | string | `"false"` |  |
+| mcpContextForge.config.MCPGATEWAY_REVERSE_PROXY_DISTRIBUTED_ENABLED | string | `"false"` | Redis-backed cross-worker routing; requires reverse proxy and Redis |
+| mcpContextForge.config.MCPGATEWAY_REVERSE_PROXY_HEARTBEAT_TIMEOUT | string | `"90"` | Seconds before a silent client is evicted; 0 disables eviction |
 | mcpContextForge.config.WEBSOCKET_PING_INTERVAL | string | `"30"` |  |
 | mcpContextForge.config.SSE_RETRY_TIMEOUT | string | `"5000"` |  |
 | mcpContextForge.config.SSE_KEEPALIVE_ENABLED | string | `"true"` |  |
