@@ -12631,6 +12631,7 @@ class TestRemainingCoverageGaps:
         # Provide lightweight router modules to avoid importing heavy optional dependencies.
         monkeypatch.setitem(sys.modules, "mcpgateway.routers.observability", ModuleType("mcpgateway.routers.observability"))
         sys.modules["mcpgateway.routers.observability"].router = APIRouter()
+        sys.modules["mcpgateway.routers.observability"].observability_metrics_router = APIRouter()
 
         # Force ImportError branches for optional routers.
         force_error = {
@@ -13244,6 +13245,7 @@ class TestRemainingCoverageGaps:
         # Keep router imports light.
         monkeypatch.setitem(sys.modules, "mcpgateway.routers.observability", ModuleType("mcpgateway.routers.observability"))
         sys.modules["mcpgateway.routers.observability"].router = APIRouter()
+        sys.modules["mcpgateway.routers.observability"].observability_metrics_router = APIRouter()
 
         overrides = {
             "structured_logging_enabled": True,
