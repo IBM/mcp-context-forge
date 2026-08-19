@@ -218,6 +218,7 @@ Full runbook, environment variable reference, and results template: [`tests/manu
 - [Load Testing Hints](load-testing-hints.md) - environment variables and workflows for containerized load tests
 - [Acceptance Testing](acceptance.md) - formal acceptance criteria
 - [Fuzzing](fuzzing.md) - fuzz testing for edge cases
+- [Reverse Proxy E2E Harness](../development/reverse-proxy.md) - manually invoked live end-to-end verification for the reverse-proxy service (not part of `make test` or CI)
 
 For database performance testing, see [Database Performance](../development/db-performance.md).
 
