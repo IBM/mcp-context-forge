@@ -120,9 +120,6 @@ from mcpgateway.services.tool_service import ToolError, ToolNotFoundError
 from mcpgateway.transports.streamablehttp_transport import user_context_var
 from mcpgateway.validation.jsonrpc import JSONRPCError
 
-# Local
-from tests.helpers.router_helpers import collect_routes
-
 
 def _make_request(
     path: str,
@@ -3066,6 +3063,9 @@ class TestMCPPathRewriteMiddleware:
 
     def test_versioned_virtual_server_well_known_alias_registered(self):
         """The per-server well-known router is available under the new v1 alias."""
+        # Local
+        from tests.helpers.router_helpers import collect_routes
+
         paths = {path for path, *_ in collect_routes(app.router)}
 
         assert "/v1/virtual-servers/{server_id}/.well-known/oauth-protected-resource" in paths
