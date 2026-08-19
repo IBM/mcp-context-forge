@@ -223,7 +223,7 @@ from mcpgateway.utils.jq_runner import shutdown_jq_pool, start_jq_pool
 from mcpgateway.utils.metadata_capture import MetadataCapture
 from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.passthrough_headers import set_global_passthrough_headers
-from mcpgateway.utils.paths import resolve_root_path
+from mcpgateway.utils.paths import replace_api_path_alias, resolve_root_path
 from mcpgateway.utils.redis_client import close_redis_client, get_redis_client, is_redis_available
 from mcpgateway.utils.redis_isready import wait_for_redis_ready
 from mcpgateway.utils.retry_manager import ResilientHttpClient
@@ -3210,15 +3210,14 @@ class MCPPathRewriteMiddleware:
         # We need to strip this prefix to correctly match server-scoped patterns.
         root_path = (scope.get("root_path") or settings.app_root_path or "").rstrip("/")
         app_path = _normalize_scope_path(original_path, root_path)
+        internal_app_path = replace_api_path_alias(app_path)
 
         # streamable_http_auth() only extracts the server ID from "/servers/{id}/mcp";
         # present the alias in that shape here, then restore it.
         auth_path = original_path
-        if not app_path.startswith("/.well-known/") and app_path.startswith("/v1/virtual-servers/"):
-            _alias_auth_match = re.fullmatch(r"/v1/virtual-servers/([^/]+)/mcp/?", app_path)
-            if _alias_auth_match:
-                trailing_slash = "/" if app_path.endswith("/") else ""
-                auth_path = f"/servers/{_alias_auth_match.group(1)}/mcp{trailing_slash}"
+        internal_mcp_match = re.fullmatch(r"/servers/([^/]+)/mcp/?", internal_app_path)
+        if internal_app_path != app_path and internal_mcp_match:
+            auth_path = internal_app_path
 
         if auth_path != original_path:
             scope["path"] = auth_path
@@ -3250,13 +3249,11 @@ class MCPPathRewriteMiddleware:
                 # /mcp/ as that would expose the global MCP transport under
                 # undocumented aliases, broadening the externally reachable
                 # route surface.
-                if app_path.startswith("/servers/"):
+                if internal_app_path.startswith("/servers/"):
                     # Validate that a non-empty server_id segment is present.
                     # Without this check, paths like /servers//mcp (empty ID)
                     # would be rewritten and silently fall through (#3891).
-                    _srv_match = re.fullmatch(r"/servers/([^/]+)/mcp/?", app_path)
-                elif app_path.startswith("/v1/virtual-servers/"):
-                    _srv_match = re.fullmatch(r"/v1/virtual-servers/([^/]+)/mcp/?", app_path)
+                    _srv_match = re.fullmatch(r"/servers/([^/]+)/mcp/?", internal_app_path)
                 else:
                     # Not a recognised server-scoped path — do not rewrite.
                     await self.application(scope, receive, send)
@@ -3267,13 +3264,12 @@ class MCPPathRewriteMiddleware:
                     await response(scope, receive, send)
                     return
 
-                if app_path.startswith("/v1/virtual-servers/"):
+                if internal_app_path != app_path:
                     # Downstream Python and Rust MCP transports extract the
                     # server ID from the canonical /servers/{id}/mcp shape.
                     # Preserve that scoped identity while rewriting the public
                     # alias to the shared /mcp/ mount.
-                    trailing_slash = "/" if app_path.endswith("/") else ""
-                    scope["modified_path"] = f"/servers/{_srv_match.group(1)}/mcp{trailing_slash}"
+                    scope["modified_path"] = internal_app_path
                 # Rewrite to /mcp/ and continue through middleware (lets CORSMiddleware handle preflight)
                 # Preserve root_path prefix when rewriting
                 self._apply_mcp_rewrite(scope, root_path)

@@ -13,7 +13,7 @@ import asyncio
 import pytest
 
 # First-Party
-from mcpgateway.middleware.client_disconnect import ClientDisconnectMiddleware
+from mcpgateway.middleware.client_disconnect import _is_server_streaming_path, ClientDisconnectMiddleware
 
 
 async def _ok_app(scope, receive, send):  # type: ignore[no-untyped-def]
@@ -56,6 +56,23 @@ async def _receive_messages(messages):  # type: ignore[no-untyped-def]
         return {"type": "http.disconnect"}  # pragma: no cover
 
     return receive
+
+
+@pytest.mark.parametrize(
+    ("path", "expected"),
+    [
+        ("/servers/abc/mcp", True),
+        ("/v1/virtual-servers/abc/mcp", True),
+        ("/v1/virtual-servers/abc/mcp/", True),
+        ("/v1/virtual-servers/abc/sse", True),
+        ("/v1/virtual-servers/abc/tools", False),
+        ("/v1/virtual-servers//mcp", False),
+        ("/v1/virtual-servers/abc/mcp/extra", False),
+    ],
+)
+def test_is_server_streaming_path_replaces_alias(path: str, expected: bool) -> None:
+    """The virtual-server alias follows the standard streaming-path rules."""
+    assert _is_server_streaming_path(path) is expected
 
 
 @pytest.mark.asyncio

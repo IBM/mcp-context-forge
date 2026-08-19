@@ -21,6 +21,7 @@ from starlette.responses import Response
 
 # First-Party
 from mcpgateway.config import settings
+from mcpgateway.utils.paths import replace_api_path_alias
 
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
@@ -107,10 +108,8 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     PROTECTED_PATH_PATTERNS: Set[str] = {
         r"^/tools(/.*)?$",
         r"^/servers(/.*)?$",
-        r"^/v1/virtual-servers(/.*)?$",
         r"^/resources(/.*)?$",
         r"^/gateways(/.*)?$",
-        r"^/v1/mcp-servers(/.*)?$",
         r"^/prompts(/.*)?$",
         r"^/tags(/.*)?$",
         r"^/roots(/.*)?$",
@@ -141,7 +140,6 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         r"^/ready$",
         r"^/\.well-known/.*$",
         r"^/servers/[^/]+/\.well-known/.*$",
-        r"^/v1/virtual-servers/[^/]+/\.well-known/.*$",
     }
 
     def __init__(self, app: Any) -> None:
@@ -161,6 +159,8 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         Returns:
             True if the path should have no-cache headers, False otherwise
         """
+        path = replace_api_path_alias(path)
+
         # First check if path is exempted (can be cached)
         for pattern in self._exempted_patterns:
             if pattern.match(path):

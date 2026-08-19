@@ -18,6 +18,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 
 # First-Party
 from mcpgateway.utils.orjson_response import ORJSONResponse
+from mcpgateway.utils.paths import replace_api_path_alias
 
 logger = logging.getLogger(__name__)
 
@@ -152,12 +153,14 @@ class MCPProtocolVersionMiddleware(BaseHTTPMiddleware):
         Returns:
             bool: True if path is an MCP protocol endpoint, False otherwise
         """
+        path = replace_api_path_alias(path)
+
         # Exact match for main RPC endpoint
         if path in ("/mcp", "/mcp/", "/rpc", "/rpc/"):
             return True
 
         # Prefix matches for SSE/WebSocket/Server endpoints
-        if path.startswith(("/servers/", "/v1/virtual-servers/")) and (path.endswith("/sse") or path.endswith("/ws")):
+        if path.startswith("/servers/") and (path.endswith("/sse") or path.endswith("/ws")):
             return True
 
         return False

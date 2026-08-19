@@ -24,6 +24,7 @@ import pytest
 from mcpgateway.config import settings
 from mcpgateway.db import Permissions
 from mcpgateway.middleware.token_scoping import ResourceOwnershipResult, _get_llm_permission_patterns, TokenScopingMiddleware
+from mcpgateway.utils.paths import replace_api_path_alias
 
 
 def _trusted_internal_runtime_headers() -> dict[str, str]:
@@ -346,7 +347,7 @@ class TestTokenScopingMiddleware:
             response = await middleware(mock_request, call_next)
 
         assert response.status_code == status.HTTP_403_FORBIDDEN
-        ownership_check.assert_called_once_with(path, ["team-1"], db=db, _user_email="user@example.com")
+        ownership_check.assert_called_once_with(replace_api_path_alias(path), ["team-1"], db=db, _user_email="user@example.com")
         call_next.assert_not_called()
 
     @pytest.mark.asyncio
