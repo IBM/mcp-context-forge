@@ -282,6 +282,10 @@ DETECT_SECRETS_SPEC     ?= git+https://github.com/ibm/detect-secrets.git@076672a
 
 .PHONY: venv
 venv: uv
+	@if [ -d "$(VENV_DIR)" ] && [ ! -e "$(VENV_DIR)/bin/python3" ]; then \
+		echo "⚠️  Cached virtual env has a broken Python interpreter symlink; recreating."; \
+		rm -rf "$(VENV_DIR)"; \
+	fi
 	@if [ ! -d "$(VENV_DIR)" ]; then \
 		$(UV_BIN) venv "$(VENV_DIR)"; \
 		echo -e "✅  Virtual env created.\n💡  Enter it with:\n    . $(VENV_DIR)/bin/activate\n"; \
