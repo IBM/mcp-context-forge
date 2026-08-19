@@ -3,12 +3,13 @@
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 
-Typed wire models for reverse-proxy WebSocket text frames.
+Typed wire models for reverse-proxy WebSocket text frames, plus the canonical
+PROXIED transport-kind and provenance predicates shared by the catalog services.
 """
 
 from datetime import datetime
 from enum import StrEnum
-from typing import Annotated, Literal, Mapping, TypeAlias
+from typing import Annotated, Any, Final, Literal, Mapping, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, JsonValue, StrictInt, StrictStr, StringConstraints, TypeAdapter
 from pydantic_core import PydanticCustomError
@@ -21,6 +22,32 @@ JsonParams: TypeAlias = JsonObject | JsonArray
 BoundedName: TypeAlias = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=128)]
 BoundedDescription: TypeAlias = Annotated[str, StringConstraints(max_length=1024)]
 JsonRpcMethod: TypeAlias = Annotated[StrictStr, StringConstraints(min_length=1)]
+
+
+# Transport kind minted on catalog rows for reverse-proxy-registered servers, and the
+# matching provenance marker. Both are server-owned: client-supplied fields alone must
+# never confer PROXIED authority.
+PROXIED_TRANSPORT: Final = "PROXIED"
+REVERSE_PROXY_CREATED_VIA: Final = "reverse_proxy"
+
+
+def is_proxied_transport(transport: Any) -> bool:
+    """Return whether a transport value names the internal PROXIED kind.
+
+    Normalizes None/strings case-insensitively so payloads, ORM rows, and schema
+    fields all share one spelling of the check.
+    """
+    return str(transport or "").upper() == PROXIED_TRANSPORT
+
+
+def is_internal_proxied_gateway(gateway: Any) -> bool:
+    """Identify server-minted reverse-proxy catalog rows by transport AND provenance.
+
+    Both halves are server-owned: PROXIED transport plus
+    ``created_via == "reverse_proxy"``. Client-supplied update fields alone (e.g. a
+    transport string on an update payload) must never confer PROXIED authority.
+    """
+    return is_proxied_transport(getattr(gateway, "transport", None)) and getattr(gateway, "created_via", None) == REVERSE_PROXY_CREATED_VIA
 
 
 class _WireModel(BaseModel):

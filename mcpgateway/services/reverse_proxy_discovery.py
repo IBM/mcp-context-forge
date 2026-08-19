@@ -35,7 +35,7 @@ from mcpgateway.services.gateway_service import (
     _get_tool_lookup_cache,
 )
 from mcpgateway.services.mcp_apps import merge_mcp_protocol_meta
-from mcpgateway.services.reverse_proxy_protocol import JsonObject, JsonRpcErrorResponse, JsonRpcNotification, JsonRpcRequest
+from mcpgateway.services.reverse_proxy_protocol import JsonObject, JsonRpcErrorResponse, JsonRpcNotification, JsonRpcRequest, REVERSE_PROXY_CREATED_VIA
 from mcpgateway.services.reverse_proxy_sessions import ConnectionClosedError, ConnectionId, ConnectionNotFoundError, ReverseProxySessionManager
 from mcpgateway.services.server_service import ServerService
 
@@ -44,7 +44,6 @@ logger = logging.getLogger(__name__)
 MCP_CLIENT_PROTOCOL_VERSION: Final = "2025-11-25"
 MCP_CLIENT_NAME: Final = "mcp-context-forge"
 MAX_LIST_PAGES: Final = 100
-REVERSE_PROXY_CREATED_VIA: Final = "reverse_proxy"
 PEER_AUTHORITY_FIELDS: Final = ("visibility", "team_id", "teamId", "owner_email", "ownerEmail", "gateway_id", "gatewayId")
 
 

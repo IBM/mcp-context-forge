@@ -72,7 +72,7 @@ from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_servic
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
-from mcpgateway.services.reverse_proxy_protocol import DownstreamAuth, JsonRpcErrorResponse, JsonRpcRequest
+from mcpgateway.services.reverse_proxy_protocol import DownstreamAuth, is_internal_proxied_gateway, is_proxied_transport, JsonRpcErrorResponse, JsonRpcRequest
 from mcpgateway.services.reverse_proxy_relay import RelayUnavailableError
 from mcpgateway.services.reverse_proxy_sessions import ConnectionClosedError, ConnectionNotFoundError, get_reverse_proxy_session_manager, StableGatewayId
 from mcpgateway.services.structured_logger import get_structured_logger
@@ -80,7 +80,7 @@ from mcpgateway.services.upstream_session_registry import downstream_session_id_
 from mcpgateway.services.upstream_session_registry import get_upstream_session_registry, RegistryNotInitializedError, TransportType
 from mcpgateway.utils.admin_check import is_admin_bypass_granted, is_user_admin
 from mcpgateway.utils.correlation_id import get_correlation_id
-from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access, GatewayAuthValueError, normalize_downstream_auth_headers
+from mcpgateway.utils.gateway_access import build_downstream_auth, build_gateway_auth_headers, check_gateway_access, GatewayAuthValueError
 from mcpgateway.utils.identity_propagation import build_identity_headers
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import unified_paginate
@@ -125,8 +125,7 @@ def _get_registry_cache():
 def _resource_content_for_read(resource: DbResource) -> ResourceContent:
     """Return cached content or a dispatch placeholder for an internal PROXIED row."""
     gateway = resource.gateway
-    is_internal_proxied = str(getattr(gateway, "transport", "") or "").upper() == "PROXIED" and getattr(gateway, "created_via", None) == "reverse_proxy"
-    if is_internal_proxied:
+    if is_internal_proxied_gateway(gateway):
         return ResourceContent(type="resource", id=str(resource.id), uri=resource.uri, mimeType=resource.mime_type, text="", _meta=None)
     return resource.content
 
@@ -2387,7 +2386,7 @@ class ResourceService(BaseService):
                             set_span_attribute(span, "success", True)
                             set_span_attribute(span, "duration.ms", (time.monotonic() - start_time) * 1000)
 
-                        if str(gateway_transport).lower() == "proxied":
+                        if is_proxied_transport(gateway_transport):
                             # PROXIED gateways dispatch over the reverse-proxy session, never a direct
                             # upstream connection; the gateway URL is only a registration placeholder.
                             if uri is None:
@@ -2396,10 +2395,9 @@ class ResourceService(BaseService):
                             # are rejected rather than silently omitted); the shared ``headers`` may carry inbound
                             # identity-propagation fields that must never ride the proxy envelope. Never logged.
                             try:
-                                stored_auth_headers = normalize_downstream_auth_headers(getattr(gateway, "auth_type", None), getattr(gateway, "auth_value", None))
+                                downstream_auth = build_downstream_auth(getattr(gateway, "auth_type", None), getattr(gateway, "auth_value", None))
                             except GatewayAuthValueError as auth_err:
                                 raise ResourceError(f"Gateway credentials cannot be forwarded downstream: {auth_err}") from auth_err
-                            downstream_auth = DownstreamAuth(headers=stored_auth_headers, auth_type=getattr(gateway, "auth_type", None)) if stored_auth_headers else None
                             resource_text = await self._read_reverse_proxied_resource(str(gateway.id), uri, float(settings.health_check_timeout), downstream_auth)
                         elif (gateway_transport).lower() == "sse":
                             resource_text = await connect_to_sse_session(server_url=gateway_url, authentication=headers, uri=uri)
