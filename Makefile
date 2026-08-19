@@ -811,8 +811,8 @@ clean:
 # help: test-mcp-access-matrix - MCP role/access matrix (Rust transport, edge/full mode)
 # help: test-mcp-plugin-parity - MCP plugin parity E2E for current Python or Rust stack
 # help: test-mcp-session-isolation - MCP session/auth isolation tests for Rust public transport
-# help: test-e2e-sso         - E2E tests requiring a live Keycloak SSO identity provider
 # help: test-live-gateway    - Run ALL live-gateway tests (mcp + sso + e2e_rust)
+# help: test-live-gateway    - Run ALL live-gateway tests (mcp + sso + protocol_compliance + e2e_rust)
 # help: test-plugin-integration - Self-contained plugin E2E tests (boots gateway; PLUGIN=<name> ENFORCEMENT=static|binding|both)
 # help: test-plugin-secrets-detection  - Plugin E2E: SecretsDetection
 # help: test-plugin-encoded-exfil      - Plugin E2E: EncodedExfil
@@ -1585,10 +1585,7 @@ langfuse-up:                               ## Start Langfuse LLM observability s
 	@# Bring up the same lightweight MCP/A2A test targets used by the live smoke
 	@# suites so Langfuse runs can generate real end-to-end tool traffic without
 	@# depending on stale registrations from the testing profile.
-	$(LANGFUSE_COMPOSE) up -d fast_test_server a2a_echo_agent
-	@# Re-run the one-shot registrar now that the test targets exist; its first
-	@# pass ran with the default stack and skipped these profile-gated upstreams.
-	$(LANGFUSE_COMPOSE) up -d --force-recreate register
+	$(LANGFUSE_COMPOSE) up -d fast_test_server register_fast_test a2a_echo_agent register_a2a_echo
 	$(VERIFY_LANGFUSE_GATEWAY_EXPORT)
 	@echo "⏳ Waiting for Langfuse to be ready..."
 	@for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do \
@@ -1745,9 +1742,9 @@ testing-up:                                ## Start testing stack (Locust + A2A 
 	@echo ""
 	@echo "   🔒 For DAST security scanning, also start ZAP: make testing-zap-up"
 	@echo ""
-	@echo "   📝 Auto-registered (one-shot 'register' container):"
-	@echo "      • MCP gateways: fast_time, fast_test"
-	@echo "      • A2A agent:    a2a-echo-agent"
+	@echo "   📝 Auto-registered:"
+	@echo "      • MCP gateway: fast_test (from fast_test_server)"
+	@echo "      • A2A agent:   a2a-echo-agent"
 	@echo ""
 	@echo "   Next:"
 	@echo "      • Open Locust: http://localhost:8089 (default host is http://nginx:80)"
