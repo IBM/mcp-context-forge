@@ -4541,7 +4541,15 @@ class ToolService(BaseService):
             # from Vault FIRST, then fall back to the gateway-wide (admin-set) static auth. ICA
             # writes the per-user credential as a plain {header: value} dict under a `headers` field
             # at the same per-user Vault path used for OAuth tokens.
-            vault_headers = await self._resolve_vault_auth_headers(app_user_email, token_teams, gateway_id_str, gateway_name)
+            try:
+                vault_headers = await self._resolve_vault_auth_headers(app_user_email, token_teams, gateway_id_str, gateway_name)
+            except (VaultConnectionError, VaultAuthError) as vault_err:
+                # Vault is down or auth failed — surface a 503-style error rather than
+                # falling back to shared credentials (CWE-284 credential isolation).
+                raise ToolInvocationError(
+                    f"Vault unavailable for gateway '{gateway_name}': {vault_err}. "
+                    "Tool invocation refused to protect per-user credential isolation."
+                ) from vault_err
             headers = vault_headers or (decode_auth(gateway_auth_value) if gateway_auth_value else {})
 
         if request_headers:
@@ -5989,7 +5997,15 @@ class ToolService(BaseService):
                                 raise ToolInvocationError(f"OAuth authentication failed for gateway: {str(e)}")
                     else:
                         # Non-OAuth: per-user Vault creds FIRST, then gateway-wide static auth.
-                        vault_headers = await self._resolve_vault_auth_headers(app_user_email, token_teams, gateway_id_str, gateway_name)
+                        try:
+                            vault_headers = await self._resolve_vault_auth_headers(app_user_email, token_teams, gateway_id_str, gateway_name)
+                        except (VaultConnectionError, VaultAuthError) as vault_err:
+                            # Vault is down or auth failed — surface a clear error rather than
+                            # falling back to shared credentials (CWE-284 credential isolation).
+                            raise ToolInvocationError(
+                                f"Vault unavailable for gateway '{gateway_name}': {vault_err}. "
+                                "Tool invocation refused to protect per-user credential isolation."
+                            ) from vault_err
                         headers = vault_headers or (decode_auth(gateway_auth_value) if gateway_auth_value else {})
 
                     # Use cached passthrough headers (no DB query needed)

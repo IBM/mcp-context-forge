@@ -396,14 +396,14 @@ class DatabaseTokenBackend(AbstractTokenBackend):
         """
         try:
             if not token_record.refresh_token:
-                logger.warning("No refresh token available for gateway %s", token_record.gateway_id)
+                logger.warning("No refresh token available for gateway %s", SecurityValidator.sanitize_log_message(token_record.gateway_id))
                 return None
 
             # Get the gateway configuration
             gateway = self.db.query(Gateway).filter(Gateway.id == token_record.gateway_id).first()
 
             if not gateway or not gateway.oauth_config:
-                logger.error("No OAuth configuration found for gateway %s", token_record.gateway_id)
+                logger.error("No OAuth configuration found for gateway %s", SecurityValidator.sanitize_log_message(token_record.gateway_id))
                 return None
 
             # PR #4341: Refuse refresh on private gateway whose owner != token owner
@@ -452,7 +452,11 @@ class DatabaseTokenBackend(AbstractTokenBackend):
             # Use OAuthManager to refresh the token
             oauth_manager = OAuthManager()
 
-            logger.info("Attempting to refresh token for gateway %s, user %s", token_record.gateway_id, token_record.app_user_email)
+            logger.info(
+                "Attempting to refresh token for gateway %s, user %s",
+                SecurityValidator.sanitize_log_message(token_record.gateway_id),
+                SecurityValidator.sanitize_log_message(token_record.app_user_email),
+            )
             token_response = await oauth_manager.refresh_token(
                 refresh_token,
                 oauth_config,
@@ -493,7 +497,11 @@ class DatabaseTokenBackend(AbstractTokenBackend):
             token_record.updated_at = now
 
             self.db.commit()
-            logger.info("Successfully refreshed token for gateway %s, user %s", token_record.gateway_id, token_record.app_user_email)
+            logger.info(
+                "Successfully refreshed token for gateway %s, user %s",
+                SecurityValidator.sanitize_log_message(token_record.gateway_id),
+                SecurityValidator.sanitize_log_message(token_record.app_user_email),
+            )
 
             return new_access_token
 
