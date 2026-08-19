@@ -19,7 +19,6 @@ import pytest
 # First-Party
 from mcpgateway.db import Gateway
 from mcpgateway.services.oauth_manager import OAuthError, OAuthInvalidGrantError
-from mcpgateway.services.token_backends.base import TokenRecord
 from mcpgateway.services.token_backends.vault_backend import VaultAuthError, VaultConnectionError, VaultTokenBackend
 
 
@@ -1444,7 +1443,6 @@ class TestVaultTokenBackendExpiredTokenHandling:
                 assert token == "refreshed_token"
                 mock_refresh.assert_called_once()
 
-
     @pytest.mark.asyncio
     async def test_get_user_token_expired_no_refresh_token(self):
         """Test that expired token without refresh_token returns None."""
@@ -1499,7 +1497,6 @@ class TestVaultTokenBackendExpiredTokenHandling:
             )
 
             assert token is None
-
 
 
 # ============================================================================
@@ -1742,7 +1739,7 @@ class TestVaultTokenBackendPR5244:
             })
             mock_oauth_cls.return_value = mock_oauth_mgr
 
-            result = await backend._do_refresh_access_token(
+            await backend._do_refresh_access_token(
                 gateway_id="gw-test-123",
                 team_id="team-1",
                 app_user_email="user@test.com",
@@ -1884,8 +1881,6 @@ class TestVaultTokenBackendPR5244:
             # Assert: store_tokens called with NEW TTL (7200 seconds)
             call_kwargs = backend.store_tokens.call_args.kwargs
             assert call_kwargs["expires_in"] == 7200  # New TTL, not preserved
-
-
 
 
 # ============================================================================
@@ -2222,20 +2217,20 @@ async def test_r7_get_user_token_vault_auth_error():
 
 @pytest.mark.asyncio
 async def test_r7_get_user_auth_headers_vault_connection_error():
-    """get_user_auth_headers returns None on VaultConnectionError (lines 509-510,516)."""
+    """get_user_auth_headers re-raises VaultConnectionError (fail-closed for CWE-284 isolation)."""
     backend, _ = _make_backend_r7()
     with patch.object(backend, "_vault_request", side_effect=VaultConnectionError("Vault down")):
-        result = await backend.get_user_auth_headers("gw-1", "team-1", "alice@example.com")
-    assert result is None
+        with pytest.raises(VaultConnectionError):
+            await backend.get_user_auth_headers("gw-1", "team-1", "alice@example.com")
 
 
 @pytest.mark.asyncio
 async def test_r7_get_user_auth_headers_vault_auth_error():
-    """get_user_auth_headers returns None on VaultAuthError (lines 509-510,516)."""
+    """get_user_auth_headers re-raises VaultAuthError (fail-closed for CWE-284 isolation)."""
     backend, _ = _make_backend_r7()
     with patch.object(backend, "_vault_request", side_effect=VaultAuthError("Token invalid")):
-        result = await backend.get_user_auth_headers("gw-1", "team-1", "alice@example.com")
-    assert result is None
+        with pytest.raises(VaultAuthError):
+            await backend.get_user_auth_headers("gw-1", "team-1", "alice@example.com")
 
 
 @pytest.mark.asyncio

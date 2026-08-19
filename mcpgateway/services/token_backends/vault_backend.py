@@ -507,13 +507,17 @@ class VaultTokenBackend(AbstractTokenBackend):
                 return {str(k): str(v) for k, v in headers.items() if k and v}
             return None
         except (VaultConnectionError, VaultAuthError) as e:
+            # Re-raise so _resolve_vault_auth_headers in tool_service.py fails closed
+            # rather than silently falling back to the shared gateway credential during
+            # a Vault outage — preserves per-user credential isolation (CWE-284).
             logger.warning(
-                "Vault unavailable in get_user_auth_headers for gateway %s, user %s: %s",
+                "Vault unavailable in get_user_auth_headers for gateway %s, user %s: %s"
+                " — failing closed to protect per-user credential isolation",
                 SecurityValidator.sanitize_log_message(gateway_id),
                 SecurityValidator.sanitize_log_message(app_user_email),
                 str(e),
             )
-            return None
+            raise
 
     async def get_token_info(
         self,
@@ -939,7 +943,7 @@ class VaultTokenBackend(AbstractTokenBackend):
             gateway = self.db.query(Gateway).filter(Gateway.id == gateway_id).first()
 
             if not gateway or not gateway.oauth_config:
-                logger.error("No OAuth configuration found for gateway %s", gateway_id)
+                logger.error("No OAuth configuration found for gateway %s", SecurityValidator.sanitize_log_message(gateway_id))
                 return None
 
             # PR #4341: Refuse refresh on private gateway whose owner != token owner
@@ -990,7 +994,11 @@ class VaultTokenBackend(AbstractTokenBackend):
             # Use OAuthManager to refresh the token
             oauth_manager = OAuthManager()
 
-            logger.info("Attempting to refresh token in Vault for gateway %s, user %s", gateway_id, app_user_email)
+            logger.info(
+                "Attempting to refresh token in Vault for gateway %s, user %s",
+                SecurityValidator.sanitize_log_message(gateway_id),
+                SecurityValidator.sanitize_log_message(app_user_email),
+            )
             token_response = await oauth_manager.refresh_token(
                 refresh_token,
                 oauth_config,
@@ -1034,7 +1042,11 @@ class VaultTokenBackend(AbstractTokenBackend):
                 learned_iss=vault_data.get("learned_iss"),
             )
 
-            logger.info("Successfully refreshed token in Vault for gateway %s, user %s", gateway_id, app_user_email)
+            logger.info(
+                "Successfully refreshed token in Vault for gateway %s, user %s",
+                SecurityValidator.sanitize_log_message(gateway_id),
+                SecurityValidator.sanitize_log_message(app_user_email),
+            )
 
             return new_access_token
 
@@ -1046,7 +1058,7 @@ class VaultTokenBackend(AbstractTokenBackend):
             # this match is based on structured type, not substring heuristics.
             logger.warning(
                 "Refresh token is permanently invalid for gateway %s (invalid_grant). Deleting token to force re-authorization. Error: %s",
-                gateway_id,
+                SecurityValidator.sanitize_log_message(gateway_id),
                 str(e),
             )
             await self.revoke_user_tokens(gateway_id, team_id, app_user_email)
@@ -1058,12 +1070,16 @@ class VaultTokenBackend(AbstractTokenBackend):
             # token failure.  Preserve the token so a later retry can succeed.
             logger.error(
                 "Token refresh failed for gateway %s but error does not indicate invalid refresh token. Preserving token for retry. Error: %s",
-                gateway_id,
+                SecurityValidator.sanitize_log_message(gateway_id),
                 str(e),
             )
             return None
         except Exception as e:
             # Non-OAuth errors (network, parsing, Vault connectivity, etc.)
-            logger.error("Unexpected error refreshing token in Vault for gateway %s: %s", gateway_id, str(e))
+            logger.error(
+                "Unexpected error refreshing token in Vault for gateway %s: %s",
+                SecurityValidator.sanitize_log_message(gateway_id),
+                str(e),
+            )
             # Preserve token - this is likely a transient or configuration issue
             return None

@@ -65,8 +65,14 @@ def _resolve_oauth_gateway(
     if not gateway_ids:
         return None
 
-    # Filter to OAuth-enabled gateways
-    gateways_result = db.execute(select(Gateway).where(Gateway.id.in_(gateway_ids)).where(Gateway.auth_type == "oauth"))
+    # Filter to OAuth-enabled gateways — ORDER BY id for deterministic selection
+    # across concurrent calls, workers, and replicas (issue #4 fix).
+    gateways_result = db.execute(
+        select(Gateway)
+        .where(Gateway.id.in_(gateway_ids))
+        .where(Gateway.auth_type == "oauth")
+        .order_by(Gateway.id)
+    )
     gateways = list(gateways_result.scalars().all())
 
     if not gateways:
@@ -195,6 +201,20 @@ async def vault_authorize(
         # Add callback URL to oauth_config for this flow
         oauth_config_with_callback = gateway.oauth_config.copy()
         oauth_config_with_callback["redirect_uri"] = callback_url
+
+        # Guard: if the gateway has an issuer but no client_id (DCR-only config),
+        # return a clear 400 rather than letting initiate_authorization_code_flow
+        # raise an opaque KeyError on credentials["client_id"].
+        # Full DCR auto-registration parity with /oauth/authorize is tracked separately.
+        if not oauth_config_with_callback.get("client_id"):
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "OAuth configuration missing client_id. "
+                    "For DCR-configured gateways use /oauth/authorize/{gateway_id} directly, "
+                    "or configure client_id/client_secret on the gateway manually."
+                ),
+            )
 
         # B2e: pass popup=True so the /oauth/callback handler routes this flow
         # through _popup_callback_response and never executes the session-cookie-set

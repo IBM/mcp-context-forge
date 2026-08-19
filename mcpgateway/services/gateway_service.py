@@ -4767,6 +4767,13 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                                     # token. Use None (shared path) as the team scope — this is the
                                     # correct fallback for background processes per AGENTS.md Layer 1
                                     # invariant. Do NOT query EmailTeamMember here.
+                                    #
+                                    # Known limitation: team-scoped Vault tokens stored under a team
+                                    # path (e.g. engineering/…) will not be found by this lookup
+                                    # because background health checks have no JWT to derive the team
+                                    # from. The health check gracefully degrades to an unauthenticated
+                                    # probe in that case — no credential is leaked and no hard failure
+                                    # occurs. Full fix (jwt_teams_claim threading) is deferred.
                                     with fresh_db_session() as token_db:
                                         user_context = build_token_user_context(token_db, user_email, None)
                                         token_storage = TokenStorageService(token_db, user_context=user_context)
