@@ -31,6 +31,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 # First-Party
 from mcpgateway.config import settings
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.utils.paths import replace_api_path_alias
 
 logger = LoggingService().get_logger(__name__)
 
@@ -61,11 +62,9 @@ def _is_server_streaming_path(path: str) -> bool:
     matching regular REST endpoints like ``/servers/{id}`` or
     ``/v1/virtual-servers/{id}/tools``.
     """
-    normalized = path.rstrip("/")
+    normalized = replace_api_path_alias(path).rstrip("/")
     parts = normalized.split("/")
-    if len(parts) == 4:
-        return parts[1] == "servers" and parts[3] in ("sse", "mcp")
-    return len(parts) == 5 and parts[1:3] == ["v1", "virtual-servers"] and parts[4] in ("sse", "mcp")
+    return len(parts) == 4 and parts[1] == "servers" and bool(parts[2]) and parts[3] in ("sse", "mcp")
 
 
 # Paths that manage their own disconnect handling (SSE, WebSocket, streaming)
