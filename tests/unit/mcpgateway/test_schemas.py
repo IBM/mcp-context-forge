@@ -55,6 +55,8 @@ def test_root_create_rejects_unknown_fields():
         RootCreate(uri="https://example.com/root", unexpected=True)
 
     assert excinfo.value.errors()[0]["type"] == "extra_forbidden"
+
+
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.schemas import (
     AdminGatewayCreate,
@@ -1282,10 +1284,10 @@ class TestSchemaValidators:
         assert extra["auth_type"] == "bearer"
         assert extra["auth_assembled"] is True
 
-    def test_tool_create_sets_default_timeout(self):
-        """REST passthrough tools should default timeout_ms when missing."""
+    def test_tool_create_uses_protocol_timeout_when_override_is_missing(self):
+        """REST tools should leave timeout_ms unset so runtime protocol defaults apply."""
         tool = ToolCreate(name="rest-tool", integration_type="REST", request_type="GET", url="http://example.com")
-        assert tool.timeout_ms == 20000
+        assert tool.timeout_ms is None
 
     def test_tool_update_extracts_base_url_and_path(self):
         """ToolUpdate should parse URL into base_url and path_template."""
@@ -1298,7 +1300,7 @@ class TestSchemaValidators:
         with pytest.raises(ValidationError, match="path_template must start"):
             ToolUpdate(path_template="no-leading-slash")
 
-        with pytest.raises(ValidationError, match="timeout_ms must be a positive integer"):
+        with pytest.raises(ValidationError, match="greater than 0"):
             ToolUpdate(timeout_ms=0)
 
         with pytest.raises(ValidationError, match="Invalid host/scheme"):

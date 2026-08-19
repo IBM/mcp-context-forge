@@ -7,21 +7,29 @@ Governed external SQL discovery and shared REST/MCP execution.
 """
 
 # Standard
+import asyncio
+from collections import OrderedDict
+from contextlib import contextmanager, ExitStack
+from contextvars import ContextVar
 from datetime import date, datetime, time, timezone
 from decimal import Decimal
 import hashlib
 import json
+import logging
+import math
 from pathlib import Path
 import ssl
+import threading
 from time import monotonic
-from typing import Any, Iterable, Optional
+from typing import Any, Generator, Iterable, Optional
 
 # Third-Party
 import orjson
-from sqlalchemy import create_engine, delete, inspect, MetaData, select, Table, update
+from sqlalchemy import create_engine, delete, event, exc as sqlalchemy_exc, inspect, MetaData, select, Table, update, util as sqlalchemy_util
 from sqlalchemy.engine import Connection, Engine, make_url, URL
 from sqlalchemy.orm import Session
-from sqlalchemy.pool import NullPool
+from sqlalchemy.pool import NullPool, QueuePool, StaticPool
+from sqlalchemy.util import queue as sqlalchemy_queue
 
 # First-Party
 from mcpgateway.common.validators import SecurityValidator
@@ -34,6 +42,8 @@ from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.display_name import generate_display_name
 
 SUPPORTED_SQL_DIALECTS = {"postgresql+psycopg", "mysql+pymysql", "sqlite+pysqlite"}
+LOGGER = logging.getLogger(__name__)
+_SQL_EXECUTION_DEADLINE: ContextVar[Optional[float]] = ContextVar("sql_execution_deadline", default=None)
 
 
 class SQLDataError(ValueError):
@@ -46,6 +56,83 @@ class SQLDataNotFoundError(SQLDataError):
 
 class SQLDataForbiddenError(SQLDataError):
     """Raised when a table policy does not allow an operation."""
+
+
+class _SQLEngineCacheEntry:
+    """One refcounted process-local SQLAlchemy engine cache entry."""
+
+    __slots__ = ("closed", "engine", "refcount", "retired", "source_id")
+
+    def __init__(self, engine: Engine, source_id: str) -> None:
+        """Initialize an idle cache entry for one SQL data source."""
+        self.engine = engine
+        self.source_id = source_id
+        self.refcount = 0
+        self.retired = False
+        self.closed = False
+
+    def close(self) -> None:
+        """Dispose the engine once, logging cleanup failures without leaking secrets."""
+        if self.closed:
+            return
+        try:
+            self.engine.dispose()
+        except Exception as exc:  # pylint: disable=broad-except
+            LOGGER.warning("Failed to dispose cached SQL engine for source %s: %s", self.source_id, type(exc).__name__)
+        finally:
+            self.closed = True
+
+
+class _DeadlineQueuePool(QueuePool):
+    """QueuePool whose checkout wait honors the current invocation deadline."""
+
+    def _do_get(self):  # pylint: disable=protected-access
+        deadline = _SQL_EXECUTION_DEADLINE.get()
+        if deadline is None:
+            return super()._do_get()
+
+        checkout_timeout = min(float(self._timeout), max(0.0, deadline - monotonic()))
+        use_overflow = self._max_overflow > -1
+        wait = use_overflow and self._overflow >= self._max_overflow
+        try:
+            return self._pool.get(wait, checkout_timeout)
+        except sqlalchemy_queue.Empty:
+            pass
+        if use_overflow and self._overflow >= self._max_overflow:
+            if not wait:
+                return self._do_get()
+            raise sqlalchemy_exc.TimeoutError(
+                "QueuePool limit of size %d overflow %d reached, connection timed out, timeout %0.2f"
+                % (self.size(), self.overflow(), checkout_timeout),
+                code="3o7r",
+            )
+        if self._inc_overflow():
+            try:
+                return self._create_connection()
+            except BaseException:
+                with sqlalchemy_util.safe_reraise():
+                    self._dec_overflow()
+        return self._do_get()
+
+
+def _reset_sqlite_progress_handler(dbapi_connection, _connection_record) -> None:
+    """Remove an absolute SQLite query deadline before a pooled connection is reused."""
+    if dbapi_connection is not None:
+        dbapi_connection.set_progress_handler(None, 0)
+
+
+def _apply_connect_deadline(dialect, _connection_record, _cargs, connection_parameters) -> None:
+    """Clamp DBAPI connection establishment to the invocation deadline."""
+    deadline = _SQL_EXECUTION_DEADLINE.get()
+    if deadline is None:
+        return
+    remaining = deadline - monotonic()
+    if remaining <= 0:
+        raise sqlalchemy_exc.TimeoutError("SQL operation timed out before connection establishment")
+    if dialect.name in {"postgresql", "mysql"}:
+        connection_parameters["connect_timeout"] = max(1, math.ceil(remaining))
+    elif dialect.name == "sqlite":
+        connection_parameters["timeout"] = remaining
 
 
 def _json_value(value: Any) -> Any:
@@ -65,6 +152,11 @@ def _json_value(value: Any) -> Any:
 
 class SQLDataService:
     """Manage SQL catalog metadata and execute allowlisted Core statements."""
+
+    _engine_cache: "OrderedDict[tuple[Any, ...], _SQLEngineCacheEntry]" = OrderedDict()
+    _engine_cache_lock = threading.Lock()
+    _engine_cache_epoch = 0
+    _engine_cache_source_generations: dict[str, int] = {}
 
     @staticmethod
     def validate_connection_url(connection_url: str) -> URL:
@@ -116,7 +208,7 @@ class SQLDataService:
 
     @classmethod
     def _engine(cls, source: SQLDataSource, timeout: Optional[float] = None) -> Engine:
-        """Create a short-lived engine with dialect-specific connection timeouts."""
+        """Create an engine with dialect-specific connection and pool limits."""
         url = cls.validate_connection_url(source.connection_url)
         timeout_seconds = float(timeout if timeout is not None else settings.mcpgateway_sql_timeout)
         connect_args: dict[str, Any] = {}
@@ -128,7 +220,256 @@ class SQLDataService:
             connect_args["ssl"] = {"check_hostname": True, "verify_mode": ssl.CERT_REQUIRED}
         elif url.get_backend_name() == "sqlite":
             connect_args.update({"timeout": timeout_seconds, "check_same_thread": False})
-        return create_engine(url, poolclass=NullPool, pool_pre_ping=True, connect_args=connect_args)
+
+        engine_kwargs: dict[str, Any] = {"pool_pre_ping": True, "connect_args": connect_args}
+        if not settings.mcpgateway_sql_engine_cache_enabled:
+            engine_kwargs["poolclass"] = NullPool
+        elif url.get_backend_name() == "sqlite" and url.database == ":memory:":
+            engine_kwargs["poolclass"] = StaticPool
+        else:
+            engine_kwargs.update(
+                {
+                    "poolclass": _DeadlineQueuePool,
+                    "pool_size": settings.mcpgateway_sql_pool_size,
+                    "max_overflow": settings.mcpgateway_sql_pool_max_overflow,
+                    "pool_timeout": settings.mcpgateway_sql_pool_checkout_timeout,
+                    "pool_recycle": settings.mcpgateway_sql_pool_recycle_seconds,
+                    "pool_use_lifo": True,
+                }
+            )
+        engine = create_engine(url, **engine_kwargs)
+        if isinstance(engine, Engine):
+            event.listen(engine, "do_connect", _apply_connect_deadline)
+            if url.get_backend_name() == "sqlite":
+                event.listen(engine, "checkin", _reset_sqlite_progress_handler)
+        return engine
+
+    @classmethod
+    def _engine_cache_key(cls, source: SQLDataSource) -> tuple[Any, ...]:
+        """Build a credential-safe identity from source config and stable pool settings.
+
+        Per-invocation deadlines deliberately do not participate in this key.
+        Tool invocations pass their *remaining* deadline, which varies slightly
+        on every call; including it would create a new engine (and therefore a
+        new connection pool) for otherwise identical requests. The cached
+        engine uses the configured protocol timeout for DBAPI connection setup,
+        while :meth:`execute` applies the caller's current deadline to each SQL
+        statement independently.
+        """
+        source_id = str(getattr(source, "id", None) or "<unpersisted>")
+        dialect = str(getattr(source, "dialect", ""))
+        fingerprint = hashlib.sha256(f"{dialect}\0{source.connection_url}".encode()).hexdigest()
+        return (
+            source_id,
+            fingerprint,
+            float(settings.mcpgateway_sql_timeout),
+            settings.mcpgateway_sql_pool_size,
+            settings.mcpgateway_sql_pool_max_overflow,
+            settings.mcpgateway_sql_pool_checkout_timeout,
+            settings.mcpgateway_sql_pool_recycle_seconds,
+        )
+
+    @classmethod
+    @contextmanager
+    def _engine_lease(cls, source: SQLDataSource, timeout: Optional[float] = None) -> Generator[Engine, None, None]:
+        """Lease a bounded cached engine without closing it under an in-flight call."""
+        timeout_seconds = float(timeout if timeout is not None else settings.mcpgateway_sql_timeout)
+        # Re-run the existing URL, filesystem, TLS, and SSRF checks on every
+        # lease, including cache hits. A warm pool must never bypass policy.
+        cls.validate_connection_url(source.connection_url)
+
+        if not settings.mcpgateway_sql_engine_cache_enabled:
+            cls.clear_engine_cache()
+            engine = cls._engine(source, timeout=timeout_seconds)
+            try:
+                yield engine
+            finally:
+                engine.dispose()
+            return
+
+        key = cls._engine_cache_key(source)
+        source_id = str(key[0])
+        entry: Optional[_SQLEngineCacheEntry]
+        with cls._engine_cache_lock:
+            cache_epoch = cls._engine_cache_epoch
+            source_generation = cls._engine_cache_source_generations.get(source_id, 0)
+            entry = cls._engine_cache.get(key)
+            if entry is not None:
+                cls._engine_cache.move_to_end(key)
+                entry.refcount += 1
+                cls._evict_engine_cache_locked()
+
+        if entry is None:
+            # A pooled engine must have stable connection arguments so callers
+            # with different remaining deadlines can share it. Statement-level
+            # deadlines remain per invocation in ``execute`` below.
+            candidate = cls._engine(source, timeout=float(settings.mcpgateway_sql_timeout))
+            discard_candidate = False
+            with cls._engine_cache_lock:
+                cache_invalidated = cache_epoch != cls._engine_cache_epoch or source_generation != cls._engine_cache_source_generations.get(source_id, 0)
+                entry = None if cache_invalidated else cls._engine_cache.get(key)
+                if cache_invalidated:
+                    entry = _SQLEngineCacheEntry(candidate, source_id)
+                    entry.retired = True
+                elif entry is None:
+                    entry = _SQLEngineCacheEntry(candidate, source_id)
+                    cls._engine_cache[key] = entry
+                    cls._engine_cache.move_to_end(key)
+                    cls._evict_engine_cache_locked()
+                else:
+                    cls._engine_cache.move_to_end(key)
+                    discard_candidate = True
+                entry.refcount += 1
+            if discard_candidate:
+                candidate.dispose()
+
+        assert entry is not None
+        try:
+            yield entry.engine
+        finally:
+            with cls._engine_cache_lock:
+                entry.refcount -= 1
+                if entry.retired and entry.refcount == 0:
+                    entry.close()
+
+    @classmethod
+    def _evict_engine_cache_locked(cls) -> None:
+        """Evict least-recently-used engines while holding the cache lock."""
+        max_entries = settings.mcpgateway_sql_engine_cache_max_entries
+        while len(cls._engine_cache) > max_entries:
+            _key, entry = cls._engine_cache.popitem(last=False)
+            entry.retired = True
+            if entry.refcount == 0:
+                entry.close()
+
+    @classmethod
+    def invalidate_engine_cache(cls, source_id: str) -> None:
+        """Retire every cached engine belonging to a changed or deleted source."""
+        normalized_source_id = str(source_id)
+        with cls._engine_cache_lock:
+            cls._engine_cache_source_generations[normalized_source_id] = cls._engine_cache_source_generations.get(normalized_source_id, 0) + 1
+            keys = [key for key, entry in cls._engine_cache.items() if entry.source_id == normalized_source_id]
+            for key in keys:
+                entry = cls._engine_cache.pop(key)
+                entry.retired = True
+                if entry.refcount == 0:
+                    entry.close()
+
+    @classmethod
+    def clear_engine_cache(cls) -> None:
+        """Retire all cached engines, disposing idle entries immediately."""
+        with cls._engine_cache_lock:
+            cls._engine_cache_epoch += 1
+            cls._engine_cache_source_generations.clear()
+            entries = list(cls._engine_cache.values())
+            cls._engine_cache.clear()
+            for entry in entries:
+                entry.retired = True
+                if entry.refcount == 0:
+                    entry.close()
+
+    @classmethod
+    def engine_cache_size(cls) -> int:
+        """Return the number of engines currently retained by this worker."""
+        with cls._engine_cache_lock:
+            return len(cls._engine_cache)
+
+    @staticmethod
+    def invalidate_result_cache_tables(table_ids: Iterable[str]) -> None:
+        """Invalidate cached governed queries after catalog/config mutations."""
+        # First-Party
+        from mcpgateway.cache.tool_result_cache import tool_result_cache  # pylint: disable=import-outside-toplevel
+
+        tool_result_cache.invalidate_sql_tables_sync(tuple(str(table_id) for table_id in table_ids))
+
+    @staticmethod
+    async def invalidate_result_cache_tables_async(table_ids: Iterable[str]) -> None:
+        """Invalidate governed queries and await the distributed cache barrier."""
+        # First-Party
+        from mcpgateway.cache.tool_result_cache import tool_result_cache  # pylint: disable=import-outside-toplevel
+
+        await tool_result_cache.invalidate_sql_tables(tuple(str(table_id) for table_id in table_ids))
+
+    @staticmethod
+    def tool_cache_references(db: Session, table_ids: Iterable[str]) -> tuple[tuple[str, str, Optional[str]], ...]:
+        """Return immutable cache identities for tools generated from tables."""
+        normalized = tuple(sorted({str(table_id) for table_id in table_ids if table_id}))
+        if not normalized:
+            return ()
+        tools = db.execute(select(DbTool).where(DbTool.sql_table_id.in_(normalized))).scalars()
+        return tuple((str(tool.id), str(tool.name), str(tool.gateway_id) if tool.gateway_id else None) for tool in tools)
+
+    @staticmethod
+    def invalidate_tool_caches(tool_references: Iterable[tuple[str, str, Optional[str]]]) -> None:
+        """Synchronously invalidate generated Tool lookup, registry, and result caches."""
+        references = tuple({(str(tool_id), str(name), str(gateway_id) if gateway_id else None) for tool_id, name, gateway_id in tool_references if tool_id and name})
+        if not references:
+            return
+        # First-Party
+        from mcpgateway.cache.registry_cache import registry_cache  # pylint: disable=import-outside-toplevel
+        from mcpgateway.cache.tool_lookup_cache import tool_lookup_cache  # pylint: disable=import-outside-toplevel
+        from mcpgateway.cache.tool_result_cache import tool_result_cache  # pylint: disable=import-outside-toplevel
+
+        registry_cache.invalidate_tools_local()
+        tool_lookup_cache.invalidate_many_local(name for _tool_id, name, _gateway_id in references)
+        for tool_id, _name, _gateway_id in references:
+            tool_result_cache.invalidate_tool_local(tool_id)
+        registry_cache.invalidate_tools_sync()
+        tool_lookup_cache.invalidate_many_sync(tuple((name, gateway_id) for _tool_id, name, gateway_id in references))
+        tool_result_cache.invalidate_tools_sync(tuple(tool_id for tool_id, _name, _gateway_id in references))
+
+    @staticmethod
+    async def invalidate_tool_caches_async(tool_references: Iterable[tuple[str, str, Optional[str]]]) -> None:
+        """Await generated Tool lookup, registry, and result-cache invalidation."""
+        references = tuple({(str(tool_id), str(name), str(gateway_id) if gateway_id else None) for tool_id, name, gateway_id in tool_references if tool_id and name})
+        if not references:
+            return
+        # First-Party
+        from mcpgateway.cache.registry_cache import registry_cache  # pylint: disable=import-outside-toplevel
+        from mcpgateway.cache.tool_lookup_cache import tool_lookup_cache  # pylint: disable=import-outside-toplevel
+        from mcpgateway.cache.tool_result_cache import tool_result_cache  # pylint: disable=import-outside-toplevel
+
+        registry_cache.invalidate_tools_local()
+        tool_lookup_cache.invalidate_many_local(name for _tool_id, name, _gateway_id in references)
+        for tool_id, _name, _gateway_id in references:
+            tool_result_cache.invalidate_tool_local(tool_id)
+        await asyncio.gather(
+            registry_cache.invalidate_tools(),
+            *(tool_lookup_cache.invalidate(name, gateway_id=gateway_id) for _tool_id, name, gateway_id in references),
+            *(tool_result_cache.invalidate_tool(tool_id) for tool_id, _name, _gateway_id in references),
+        )
+
+    @staticmethod
+    async def invalidate_catalog_caches_async(
+        table_ids: Iterable[str],
+        tool_references: Iterable[tuple[str, str, Optional[str]]],
+    ) -> None:
+        """Atomically prepare local catalog invalidation, then await every Redis barrier."""
+        normalized_tables = tuple(sorted({str(table_id) for table_id in table_ids if table_id}))
+        references = tuple({(str(tool_id), str(name), str(gateway_id) if gateway_id else None) for tool_id, name, gateway_id in tool_references if tool_id and name})
+
+        # First-Party
+        from mcpgateway.cache.registry_cache import registry_cache  # pylint: disable=import-outside-toplevel
+        from mcpgateway.cache.tool_lookup_cache import tool_lookup_cache  # pylint: disable=import-outside-toplevel
+        from mcpgateway.cache.tool_result_cache import tool_result_cache  # pylint: disable=import-outside-toplevel
+
+        prepared_tables = tool_result_cache.invalidate_sql_tables_local(normalized_tables)
+        if references:
+            registry_cache.invalidate_tools_local()
+            tool_lookup_cache.invalidate_many_local(name for _tool_id, name, _gateway_id in references)
+            for tool_id, _name, _gateway_id in references:
+                tool_result_cache.invalidate_tool_local(tool_id)
+
+        distributed_invalidations = [tool_result_cache.invalidate_sql_tables_distributed(prepared_tables)]
+        if references:
+            distributed_invalidations.extend(
+                (
+                    registry_cache.invalidate_tools(),
+                    *(tool_lookup_cache.invalidate(name, gateway_id=gateway_id) for _tool_id, name, gateway_id in references),
+                    *(tool_result_cache.invalidate_tool(tool_id) for tool_id, _name, _gateway_id in references),
+                )
+            )
+        await asyncio.gather(*distributed_invalidations)
 
     @staticmethod
     def _apply_statement_timeout(connection: Connection, dialect: str, timeout: float) -> None:
@@ -141,7 +482,19 @@ class SQLDataService:
             connection.exec_driver_sql(f"SET SESSION innodb_lock_wait_timeout = {max(1, int(timeout))}")
         elif dialect == "sqlite+pysqlite":
             deadline = monotonic() + timeout
-            connection.connection.driver_connection.set_progress_handler(lambda: 1 if monotonic() >= deadline else 0, 1000)
+            driver_connection = connection.connection.driver_connection
+            set_progress_handler = getattr(driver_connection, "set_progress_handler", None)
+            if not callable(set_progress_handler):
+                raise SQLDataError("SQLite driver does not support query timeout enforcement")
+            set_progress_handler(lambda: 1 if monotonic() >= deadline else 0, 1000)
+
+    @staticmethod
+    def _remaining_timeout(deadline: float) -> float:
+        """Return positive time remaining or raise a stable timeout error."""
+        remaining = deadline - monotonic()
+        if remaining <= 0:
+            raise SQLDataError("SQL operation timed out")
+        return remaining
 
     @classmethod
     def create_source(cls, db: Session, data: SQLDataSourceCreate, user_email: Optional[str]) -> SQLDataSource:
@@ -163,11 +516,22 @@ class SQLDataService:
         return source
 
     @classmethod
-    def update_source(cls, db: Session, source_id: str, data: SQLDataSourceUpdate) -> SQLDataSource:
+    def update_source(
+        cls,
+        db: Session,
+        source_id: str,
+        data: SQLDataSourceUpdate,
+        *,
+        defer_result_cache_invalidation: bool = False,
+        defer_tool_cache_invalidation: bool = False,
+    ) -> SQLDataSource:
         """Update a source and invalidate connectivity state when credentials change."""
         source = db.get(SQLDataSource, source_id)
         if source is None:
             raise SQLDataNotFoundError("SQL data source not found")
+        tables = list(db.execute(select(DbSQLTable).where(DbSQLTable.source_id == source.id)).scalars())
+        table_ids = [table.id for table in tables]
+        tool_references = cls.tool_cache_references(db, table_ids)
         values = data.model_dump(exclude_unset=True)
         if "connection_url" in values:
             url = cls.validate_connection_url(values["connection_url"])
@@ -175,16 +539,24 @@ class SQLDataService:
             source.dialect = f"{url.get_backend_name()}+{url.get_driver_name()}"
             source.masked_url = cls.mask_connection_url(url)
             source.reachable = False
-            for table in db.execute(select(DbSQLTable).where(DbSQLTable.source_id == source.id)).scalars():
+            for table in tables:
                 table.stale = True
                 table.exposed = False
-                db.execute(update(DbTool).where(DbTool.sql_table_id == table.id).values(enabled=False, deprecated=True, reachable=False))
         for field, value in values.items():
             setattr(source, field, value)
         if data.name:
             source.slug = slugify(data.name)
         source.updated_at = datetime.now(timezone.utc)
+        changed_tools: list[DbTool] = []
+        for table in tables:
+            changed_tools.extend(cls.sync_tools(db, table.id, commit=False, defer_cache_invalidation=True))
         db.commit()
+        tool_references = tuple({*tool_references, *((str(tool.id), str(tool.name), str(tool.gateway_id) if tool.gateway_id else None) for tool in changed_tools)})
+        cls.invalidate_engine_cache(source.id)
+        if not defer_tool_cache_invalidation:
+            cls.invalidate_tool_caches(tool_references)
+        if not defer_result_cache_invalidation:
+            cls.invalidate_result_cache_tables(table_ids)
         db.refresh(source)
         return source
 
@@ -194,18 +566,16 @@ class SQLDataService:
         source = db.get(SQLDataSource, source_id)
         if source is None:
             raise SQLDataNotFoundError("SQL data source not found")
-        engine = cls._engine(source)
         started = datetime.now(timezone.utc)
         try:
-            with engine.connect() as connection:
-                connection.exec_driver_sql("SELECT 1")
+            with cls._engine_lease(source) as engine:
+                with engine.connect() as connection:
+                    connection.exec_driver_sql("SELECT 1")
             source.reachable = True
             source.last_error = None
         except Exception as exc:
             source.reachable = False
             source.last_error = SecurityValidator.sanitize_display_text(str(exc), "SQL connection error")[:1000]
-        finally:
-            engine.dispose()
         source.last_tested_at = datetime.now(timezone.utc)
         db.commit()
         return {"reachable": source.reachable, "latency_ms": (datetime.now(timezone.utc) - started).total_seconds() * 1000, "error": source.last_error}
@@ -230,22 +600,30 @@ class SQLDataService:
             return default
 
     @classmethod
-    def discover(cls, db: Session, source_id: str) -> list[DbSQLTable]:
+    def discover(
+        cls,
+        db: Session,
+        source_id: str,
+        *,
+        defer_result_cache_invalidation: bool = False,
+        defer_tool_cache_invalidation: bool = False,
+    ) -> list[DbSQLTable]:
         """Reflect tables/views, upsert hashes, preserve stale records, and discover FKs."""
         source = db.get(SQLDataSource, source_id)
         if source is None:
             raise SQLDataNotFoundError("SQL data source not found")
         if not source.enabled:
             raise SQLDataForbiddenError("SQL data source is disabled")
-        engine: Optional[Engine] = None
+        engine_stack = ExitStack()
         seen: set[tuple[str, str]] = set()
         foreign_keys: list[tuple[str, str, dict[str, Any]]] = []
         discovered_records: list[DbSQLTable] = []
         # Snapshot the active catalog before reflecting, so candidate validation
         # compares against what was there before this discovery started.
         existing_before = list(db.execute(select(DbSQLTable).where(DbSQLTable.source_id == source.id)).scalars())
+        tool_references = cls.tool_cache_references(db, (record.id for record in existing_before))
         try:
-            engine = cls._engine(source)
+            engine = engine_stack.enter_context(cls._engine_lease(source))
             inspector = inspect(engine)
             source_url = cls.validate_connection_url(source.connection_url)
             for schema_name in cls._schema_names(inspector, source.dialect, source_url.database):
@@ -320,7 +698,6 @@ class SQLDataService:
                 if (record.schema_name, record.table_name) not in seen:
                     record.stale = True
                     record.exposed = False
-                    db.execute(update(DbTool).where(DbTool.sql_table_id == record.id).values(enabled=False, deprecated=True, reachable=False))
 
             record_map = {(record.schema_name, record.table_name): record for record in existing_records + discovered_records}
             db.execute(update(SQLRelation).where(SQLRelation.source_table_id.in_([record.id for record in record_map.values()])).values(stale=True))
@@ -354,14 +731,20 @@ class SQLDataService:
                     relation.local_columns = local_columns
                     relation.remote_columns = remote_columns
                     relation.stale = False
-            for record in discovered_records:
-                if record.exposed:
-                    cls.sync_tools(db, record.id, commit=False)
             source.reachable = True
             source.last_error = None
+            changed_tools: list[DbTool] = []
+            for record in record_map.values():
+                changed_tools.extend(cls.sync_tools(db, record.id, commit=False, defer_cache_invalidation=True))
             source.last_discovered_at = datetime.now(timezone.utc)
             db.commit()
-            return list(db.execute(select(DbSQLTable).where(DbSQLTable.source_id == source.id).order_by(DbSQLTable.schema_name, DbSQLTable.table_name)).scalars())
+            result = list(db.execute(select(DbSQLTable).where(DbSQLTable.source_id == source.id).order_by(DbSQLTable.schema_name, DbSQLTable.table_name)).scalars())
+            tool_references = tuple({*tool_references, *((str(tool.id), str(tool.name), str(tool.gateway_id) if tool.gateway_id else None) for tool in changed_tools)})
+            if not defer_tool_cache_invalidation:
+                cls.invalidate_tool_caches(tool_references)
+            if not defer_result_cache_invalidation:
+                cls.invalidate_result_cache_tables(record.id for record in result)
+            return result
         except SQLDataError as exc:
             # Candidate validation rejected the replacement (empty catalog / all
             # tables disappearing), or connection validation failed before
@@ -387,15 +770,15 @@ class SQLDataService:
                 db.commit()
             raise SQLDataError("SQL discovery failed") from exc
         finally:
-            if engine is not None:
-                engine.dispose()
+            engine_stack.close()
 
     @staticmethod
     def _column_schema(column: dict[str, Any]) -> dict[str, Any]:
         """Map reflected SQL type names to a conservative JSON Schema shape."""
         sql_type = str(column.get("type") or "").upper()
+        schema: dict[str, Any]
         if any(fragment in sql_type for fragment in ("INT", "SERIAL")):
-            schema: dict[str, Any] = {"type": "integer"}
+            schema = {"type": "integer"}
         elif any(fragment in sql_type for fragment in ("NUMERIC", "DECIMAL", "REAL", "FLOAT", "DOUBLE")):
             schema = {"type": "number"}
         elif "BOOL" in sql_type:
@@ -455,7 +838,7 @@ class SQLDataService:
         return schema
 
     @classmethod
-    def sync_tools(cls, db: Session, table_id: str, *, commit: bool = True) -> list[DbTool]:
+    def sync_tools(cls, db: Session, table_id: str, *, commit: bool = True, defer_cache_invalidation: bool = False) -> list[DbTool]:
         """Create/update stable SQL tools and disable operations no longer exposed."""
         table = db.get(DbSQLTable, table_id)
         if table is None:
@@ -465,15 +848,19 @@ class SQLDataService:
             raise SQLDataNotFoundError("SQL data source not found")
         key_available = bool(table.primary_key or table.unique_keys)
         desired = {
-            "query": table.exposed and table.allow_query and not table.stale,
-            "insert": table.exposed and table.allow_insert and table.object_type == "table" and not table.stale,
-            "update": table.exposed and table.allow_update and table.object_type == "table" and key_available and not table.stale,
-            "delete": table.exposed and table.allow_delete and table.object_type == "table" and key_available and not table.stale,
+            "query": source.enabled and table.exposed and table.allow_query and not table.stale,
+            "insert": source.enabled and table.exposed and table.allow_insert and table.object_type == "table" and not table.stale,
+            "update": source.enabled and table.exposed and table.allow_update and table.object_type == "table" and key_available and not table.stale,
+            "delete": source.enabled and table.exposed and table.allow_delete and table.object_type == "table" and key_available and not table.stale,
         }
         result: list[DbTool] = []
         for operation, enabled in desired.items():
             name = f"sql.{source.slug}.{table.schema_slug}.{table.table_slug}.{operation}"
+            annotations: dict[str, Any] = {"readOnlyHint": operation == "query", "destructiveHint": operation == "delete"}
+            if operation == "query":
+                annotations["x-contextforge-result-cache"] = {"enabled": True}
             tool = db.execute(select(DbTool).where(DbTool.sql_table_id == table.id, DbTool.source_operation == operation)).scalar_one_or_none()
+            existing_tool = tool is not None
             if tool is None and enabled:
                 tool = DbTool(
                     original_name=name,
@@ -487,7 +874,7 @@ class SQLDataService:
                     request_type="POST",
                     input_schema=cls._tool_schema(operation, table),
                     output_schema={"type": "object"},
-                    annotations={"readOnlyHint": operation == "query", "destructiveHint": operation == "delete"},
+                    annotations=annotations,
                     created_by="system",
                     created_via="sql-discovery",
                     federation_source=source.name,
@@ -500,7 +887,10 @@ class SQLDataService:
                 db.add(tool)
                 db.flush()
             if tool is not None:
+                if existing_tool:
+                    tool.version = (tool.version or 0) + 1
                 tool.input_schema = cls._tool_schema(operation, table)
+                tool.annotations = annotations
                 tool.url = f"/api/v1/data/{source.slug}/{table.schema_slug}/{table.table_slug}"
                 tool.enabled = enabled
                 tool.deprecated = not enabled
@@ -522,10 +912,21 @@ class SQLDataService:
                 result.append(tool)
         if commit:
             db.commit()
+            if not defer_cache_invalidation:
+                cls.invalidate_tool_caches((str(tool.id), str(tool.name), str(tool.gateway_id) if tool.gateway_id else None) for tool in result)
         return result
 
     @classmethod
-    def update_table(cls, db: Session, table_id: str, data: SQLTableUpdate, user_email: Optional[str]) -> DbSQLTable:
+    def update_table(
+        cls,
+        db: Session,
+        table_id: str,
+        data: SQLTableUpdate,
+        user_email: Optional[str],
+        *,
+        defer_result_cache_invalidation: bool = False,
+        defer_tool_cache_invalidation: bool = False,
+    ) -> DbSQLTable:
         """Apply team/exposure policy and synchronize generated tools."""
         table = db.get(DbSQLTable, table_id)
         if table is None:
@@ -541,7 +942,9 @@ class SQLDataService:
             table.owner_email = user_email
         table.updated_at = datetime.now(timezone.utc)
         db.flush()
-        cls.sync_tools(db, table.id)
+        cls.sync_tools(db, table.id, defer_cache_invalidation=defer_tool_cache_invalidation)
+        if not defer_result_cache_invalidation:
+            cls.invalidate_result_cache_tables((table.id,))
         db.refresh(table)
         return table
 
@@ -586,11 +989,15 @@ class SQLDataService:
         effective_timeout = float(timeout if timeout is not None else settings.mcpgateway_sql_timeout)
         if not 0 < effective_timeout <= 600:
             raise SQLDataError("SQL timeout must be greater than zero and no more than 600 seconds")
-        engine = cls._engine(source, timeout=effective_timeout)
+        deadline = monotonic() + effective_timeout
+        deadline_token = _SQL_EXECUTION_DEADLINE.set(deadline)
+        engine_stack = ExitStack()
         try:
-            reflected = Table(catalog.table_name, MetaData(), schema=catalog.schema_name or None, autoload_with=engine)
+            engine = engine_stack.enter_context(cls._engine_lease(source, timeout=effective_timeout))
             with engine.begin() as connection:
-                cls._apply_statement_timeout(connection, source.dialect, effective_timeout)
+                cls._apply_statement_timeout(connection, source.dialect, cls._remaining_timeout(deadline))
+                reflected = Table(catalog.table_name, MetaData(), schema=catalog.schema_name or None, autoload_with=connection)
+                cls._apply_statement_timeout(connection, source.dialect, cls._remaining_timeout(deadline))
                 if operation == "query":
                     fields = arguments.get("fields") or list(reflected.c.keys())
                     cls._validate_columns(reflected, fields)
@@ -617,24 +1024,29 @@ class SQLDataService:
                         raise SQLDataError("limit must be at least 1")
                     limit = min(requested_limit, settings.mcpgateway_sql_max_limit)
                     offset = max(int(arguments.get("offset") or 0), 0)
+                    cls._apply_statement_timeout(connection, source.dialect, cls._remaining_timeout(deadline))
                     rows = [dict(row._mapping) for row in connection.execute(statement.limit(limit).offset(offset))]  # pylint: disable=protected-access
-                    cls._expand_relations(db, connection, rows, catalog, arguments.get("include") or [])
+                    cls._expand_relations(db, connection, rows, catalog, arguments.get("include") or [], deadline=deadline, dialect=source.dialect)
                     response: dict[str, Any] = {"items": _json_value(rows), "count": len(rows), "limit": limit, "offset": offset}
                 elif operation == "insert":
                     values = arguments.get("values")
                     if not isinstance(values, dict) or not values:
                         raise SQLDataError("values must be a non-empty JSON object")
                     cls._validate_columns(reflected, values)
+                    cls._apply_statement_timeout(connection, source.dialect, cls._remaining_timeout(deadline))
                     result = connection.execute(reflected.insert().values(**values))
-                    response = {"affected": result.rowcount, "inserted_primary_key": _json_value(list(result.inserted_primary_key))}
+                    inserted_primary_key = result.inserted_primary_key
+                    response = {"affected": result.rowcount, "inserted_primary_key": _json_value(list(inserted_primary_key) if inserted_primary_key is not None else [])}
                 elif operation == "update":
                     values = arguments.get("values")
                     if not isinstance(values, dict) or not values:
                         raise SQLDataError("values must be a non-empty JSON object")
                     cls._validate_columns(reflected, values)
+                    cls._apply_statement_timeout(connection, source.dialect, cls._remaining_timeout(deadline))
                     result = connection.execute(reflected.update().where(*cls._key_clause(reflected, catalog, arguments.get("key"))).values(**values))
                     response = {"affected": result.rowcount}
                 elif operation == "delete":
+                    cls._apply_statement_timeout(connection, source.dialect, cls._remaining_timeout(deadline))
                     result = connection.execute(reflected.delete().where(*cls._key_clause(reflected, catalog, arguments.get("key"))))
                     response = {"affected": result.rowcount}
                 else:
@@ -642,12 +1054,26 @@ class SQLDataService:
                 serialized = orjson.dumps(response, default=str)
                 if len(serialized) > settings.mcpgateway_sql_max_response_bytes:
                     raise SQLDataError("SQL response exceeds the configured size limit")
+                cls._remaining_timeout(deadline)
             return response
+        except sqlalchemy_exc.TimeoutError as exc:
+            raise SQLDataError("SQL operation timed out") from exc
         finally:
-            engine.dispose()
+            engine_stack.close()
+            _SQL_EXECUTION_DEADLINE.reset(deadline_token)
 
     @classmethod
-    def _expand_relations(cls, db: Session, connection: Connection, rows: list[dict[str, Any]], catalog: DbSQLTable, includes: Any) -> None:
+    def _expand_relations(
+        cls,
+        db: Session,
+        connection: Connection,
+        rows: list[dict[str, Any]],
+        catalog: DbSQLTable,
+        includes: Any,
+        *,
+        deadline: float,
+        dialect: str,
+    ) -> None:
         """Expand explicitly enabled, visible one-hop relations only."""
         if isinstance(includes, str):
             includes = [item for item in includes.split(",") if item]
@@ -678,11 +1104,40 @@ class SQLDataService:
                 raise SQLDataForbiddenError("Related table is not visible in the caller's scope")
             if not relation.local_columns or len(relation.local_columns) != len(relation.remote_columns):
                 raise SQLDataForbiddenError("Relation column mapping is invalid")
+            cls._apply_statement_timeout(connection, dialect, cls._remaining_timeout(deadline))
             target_table = Table(target.table_name, MetaData(), schema=target.schema_name or None, autoload_with=connection)
             for row in rows:
                 predicates = [target_table.c[remote] == row.get(local) for local, remote in zip(relation.local_columns, relation.remote_columns)]
+                cls._apply_statement_timeout(connection, dialect, cls._remaining_timeout(deadline))
                 related = connection.execute(select(target_table).where(*predicates).limit(settings.mcpgateway_sql_default_limit)).mappings().all()
                 row[relation.name] = [dict(item) for item in related]
+
+    @staticmethod
+    def cache_dependency_table_ids(db: Session, table_id: str, includes: Any) -> tuple[str, ...]:
+        """Return the base and enabled one-hop table IDs read by a query.
+
+        The dependency set is used only for result-cache indexing. Query
+        execution remains the authority for validating relation visibility and
+        mappings. Including target IDs ensures a write to an included table
+        invalidates cached parent rows as well.
+        """
+        if isinstance(includes, str):
+            includes = [item for item in includes.split(",") if item]
+        if not isinstance(includes, list) or not includes:
+            return (table_id,)
+        relation_names = [name for name in includes if isinstance(name, str)]
+        if not relation_names:
+            return (table_id,)
+        relations = db.execute(
+            select(SQLRelation).where(
+                SQLRelation.source_table_id == table_id,
+                SQLRelation.name.in_(relation_names),
+                SQLRelation.enabled.is_(True),
+                SQLRelation.stale.is_(False),
+            )
+        ).scalars().all()
+        dependency_ids = {table_id, *(str(relation.target_table_id) for relation in relations)}
+        return tuple(sorted(dependency_ids))
 
     @staticmethod
     def create_binding(db: Session, tool_id: str, table_id: str, access_mode: str, created_by: Optional[str]) -> APISQLTableBinding:
@@ -695,15 +1150,28 @@ class SQLDataService:
         db.refresh(binding)
         return binding
 
-    @staticmethod
-    def delete_source(db: Session, source_id: str) -> None:
+    @classmethod
+    def delete_source(
+        cls,
+        db: Session,
+        source_id: str,
+        *,
+        defer_result_cache_invalidation: bool = False,
+        defer_tool_cache_invalidation: bool = False,
+    ) -> None:
         """Delete a source and generated catalog records."""
         source = db.get(SQLDataSource, source_id)
         if source is None:
             raise SQLDataNotFoundError("SQL data source not found")
         table_ids = list(db.execute(select(DbSQLTable.id).where(DbSQLTable.source_id == source_id)).scalars())
+        tool_references = cls.tool_cache_references(db, table_ids)
         if table_ids:
-            db.execute(update(DbTool).where(DbTool.sql_table_id.in_(table_ids)).values(sql_table_id=None, enabled=False, deprecated=True, reachable=False))
+            db.execute(update(DbTool).where(DbTool.sql_table_id.in_(table_ids)).values(sql_table_id=None, enabled=False, deprecated=True, reachable=False, version=DbTool.version + 1))
             db.execute(delete(APISQLTableBinding).where(APISQLTableBinding.sql_table_id.in_(table_ids)))
         db.delete(source)
         db.commit()
+        cls.invalidate_engine_cache(source_id)
+        if not defer_tool_cache_invalidation:
+            cls.invalidate_tool_caches(tool_references)
+        if not defer_result_cache_invalidation:
+            cls.invalidate_result_cache_tables(table_ids)

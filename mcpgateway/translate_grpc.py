@@ -13,9 +13,11 @@ gRPC 到 MCP 的转换模块
 # 标准库
 import asyncio
 import base64
+from concurrent.futures import ThreadPoolExecutor
 from functools import lru_cache
 from pathlib import Path
-from typing import Any, AsyncGenerator, Dict, List, Optional, Sequence
+import time
+from typing import Any, AsyncGenerator, Callable, Dict, List, Optional, Sequence, TypeVar
 
 try:
     # 第三方库
@@ -38,12 +40,41 @@ except ImportError:
     reflection_pb2_grpc = None  # type: ignore
 
 # 第一方（项目内部）模块
+from mcpgateway.config import settings
 from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.utils.grpc_validation import _validate_grpc_target, _validate_tls_path
+from mcpgateway.utils.grpc_validation import _validate_grpc_target, _validate_tls_path, GrpcServiceError
 
 # 初始化日志
 logging_service = LoggingService()
 logger = logging_service.get_logger(__name__)
+
+_BlockingResult = TypeVar("_BlockingResult")
+
+
+async def _run_bounded_blocking_call(call: Callable[[], _BlockingResult], *, executor: Optional[ThreadPoolExecutor] = None) -> _BlockingResult:
+    """Run one deadline-bounded blocking gRPC iterator without retaining a pool.
+
+    A dedicated short-lived executor avoids leaving idle reflection threads on
+    the event loop's shared executor. The reflection RPC itself always carries
+    a deadline, so shutdown cannot wait indefinitely on an orphaned iterator.
+    """
+    owned_executor = executor is None
+    executor = executor or ThreadPoolExecutor(max_workers=1, thread_name_prefix="grpc-blocking")
+    try:
+        future = asyncio.get_running_loop().run_in_executor(executor, call)
+        if not hasattr(future, "done"):
+            # Compatibility with small embedders/tests that provide an async
+            # loop adapter instead of an asyncio Future.
+            return await future
+        # Keep a bounded timer in the loop while the worker runs. Besides
+        # making cancellation checks prompt, this remains reliable in hardened
+        # runtimes where cross-thread event-loop wakeup sockets are restricted.
+        while not future.done():
+            await asyncio.sleep(0.01)
+        return future.result()
+    finally:
+        if owned_executor:
+            executor.shutdown(wait=True, cancel_futures=True)
 
 
 @lru_cache(maxsize=1)
@@ -77,7 +108,7 @@ class GrpcEndpoint:
         tls_cert_path: Optional[str] = None,
         tls_key_path: Optional[str] = None,
         metadata: Optional[Dict[str, str]] = None,
-        channel: Optional[grpc.Channel] = None,
+        channel: Optional[Any] = None,
         pool: Optional[Any] = None,
         method_class_cache: Optional[Dict[str, Any]] = None,
         owns_channel: bool = True,
@@ -181,10 +212,15 @@ class GrpcEndpoint:
             # 因此 start() 不得重建它。
             logger.debug("Reusing injected gRPC channel for %s", self._target)
         elif self._tls_enabled:
-            if self._tls_cert_path and self._tls_key_path:
+            if self._tls_key_path and not self._tls_cert_path:
+                raise GrpcServiceError("TLS key path requires a TLS certificate path")
+            if self._tls_cert_path:
                 cert = await asyncio.to_thread(Path(self._tls_cert_path).read_bytes)
-                key = await asyncio.to_thread(Path(self._tls_key_path).read_bytes)
-                credentials = grpc.ssl_channel_credentials(root_certificates=cert, private_key=key)
+                if self._tls_key_path:
+                    key = await asyncio.to_thread(Path(self._tls_key_path).read_bytes)
+                    credentials = grpc.ssl_channel_credentials(private_key=key, certificate_chain=cert)
+                else:
+                    credentials = grpc.ssl_channel_credentials(root_certificates=cert)
                 self._channel = grpc.secure_channel(self._target, credentials)
             else:
                 credentials = grpc.ssl_channel_credentials()
@@ -208,27 +244,39 @@ class GrpcEndpoint:
         logger.info(f"Discovering services on {self._target} via reflection")
 
         try:
+            timeout = float(settings.mcpgateway_grpc_timeout) if timeout is None else timeout
             stub = reflection_pb2_grpc.ServerReflectionStub(self._channel)
+            deadline = time.monotonic() + timeout if timeout is not None else None
 
-            # 列出所有服务
-            request = reflection_pb2.ServerReflectionRequest(list_services="")  # pylint: disable=no-member
+            def remaining_timeout() -> Optional[float]:
+                if deadline is None:
+                    return None
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise TimeoutError("gRPC reflection deadline exceeded")
+                return remaining
 
-            response = stub.ServerReflectionInfo(iter([request]), timeout=timeout) if timeout is not None else stub.ServerReflectionInfo(iter([request]))
+            def list_service_names() -> list[str]:
+                """Run the blocking reflection iterator outside the event loop."""
+                request = reflection_pb2.ServerReflectionRequest(list_services="")  # pylint: disable=no-member
+                remaining = remaining_timeout()
+                response = stub.ServerReflectionInfo(iter([request]), timeout=remaining) if remaining is not None else stub.ServerReflectionInfo(iter([request]))
+                names: list[str] = []
+                for resp in response:
+                    if resp.HasField("list_services_response"):
+                        for svc in resp.list_services_response.service:
+                            service_name = svc.name
+                            if "ServerReflection" in service_name:
+                                continue
+                            names.append(service_name)
+                            logger.debug(f"Discovered service: {service_name}")
+                return names
 
-            service_names = []
-            for resp in response:
-                if resp.HasField("list_services_response"):
-                    for svc in resp.list_services_response.service:
-                        service_name = svc.name
-                        # 跳过反射服务本身
-                        if "ServerReflection" in service_name:
-                            continue
-                        service_names.append(service_name)
-                        logger.debug(f"Discovered service: {service_name}")
+            service_names = await _run_bounded_blocking_call(list_service_names)
 
             # 为每个服务获取文件描述符
             for service_name in service_names:
-                await self._discover_service_details(stub, service_name, timeout=timeout)
+                await self._discover_service_details(stub, service_name, timeout=remaining_timeout())
 
             logger.info(f"Discovered {len(self._services)} gRPC services")
 
@@ -244,34 +292,26 @@ class GrpcEndpoint:
             service_name: 要发现的服务名称
             timeout: 应用于反射 RPC 的单次调用 gRPC 截止时间。
         """
-        try:  # pylint: disable=too-many-nested-blocks
-            # 请求包含此服务的文件描述符
-            request = reflection_pb2.ServerReflectionRequest(file_containing_symbol=service_name)  # pylint: disable=no-member
+        def discover_details() -> None:
+            """Consume one blocking reflection stream in a worker thread."""
+            try:  # pylint: disable=too-many-nested-blocks
+                request = reflection_pb2.ServerReflectionRequest(file_containing_symbol=service_name)  # pylint: disable=no-member
+                response = stub.ServerReflectionInfo(iter([request]), timeout=timeout) if timeout is not None else stub.ServerReflectionInfo(iter([request]))
 
-            response = stub.ServerReflectionInfo(iter([request]), timeout=timeout) if timeout is not None else stub.ServerReflectionInfo(iter([request]))
+                for resp in response:
+                    if resp.HasField("file_descriptor_response"):
+                        for file_desc_proto_bytes in resp.file_descriptor_response.file_descriptor_proto:
+                            file_desc_proto = FileDescriptorProto()
+                            file_desc_proto.ParseFromString(file_desc_proto_bytes)
+                            try:
+                                self._pool.Add(file_desc_proto)
+                            except Exception as e:  # pylint: disable=broad-except
+                                logger.debug(f"Descriptor already in pool: {e}")
 
-            for resp in response:
-                if resp.HasField("file_descriptor_response"):
-                    # 处理所有文件描述符
-                    for file_desc_proto_bytes in resp.file_descriptor_response.file_descriptor_proto:
-                        file_desc_proto = FileDescriptorProto()
-                        file_desc_proto.ParseFromString(file_desc_proto_bytes)
-
-                        # 加入池中（已存在则忽略）
-                        try:
-                            self._pool.Add(file_desc_proto)
-                        except Exception as e:  # pylint: disable=broad-except
-                            # 描述符已在池中，跳过是安全的
-                            logger.debug(f"Descriptor already in pool: {e}")
-
-                        # 提取服务和方法的描述信息
-                        for service_desc in file_desc_proto.service:
-                            if service_desc.name in service_name or service_name.endswith(service_desc.name):
-                                full_service_name = f"{file_desc_proto.package}.{service_desc.name}" if file_desc_proto.package else service_desc.name
-
-                                methods = []
-                                for method_desc in service_desc.method:
-                                    methods.append(
+                            for service_desc in file_desc_proto.service:
+                                if service_desc.name in service_name or service_name.endswith(service_desc.name):
+                                    full_service_name = f"{file_desc_proto.package}.{service_desc.name}" if file_desc_proto.package else service_desc.name
+                                    methods = [
                                         {
                                             "name": method_desc.name,
                                             "input_type": method_desc.input_type,
@@ -279,26 +319,20 @@ class GrpcEndpoint:
                                             "client_streaming": method_desc.client_streaming,
                                             "server_streaming": method_desc.server_streaming,
                                         }
-                                    )
+                                        for method_desc in service_desc.method
+                                    ]
+                                    self._services[full_service_name] = {
+                                        "name": full_service_name,
+                                        "methods": methods,
+                                        "package": file_desc_proto.package,
+                                    }
+                                    self._descriptors[full_service_name] = file_desc_proto
+                                    logger.debug(f"Service {full_service_name} has {len(methods)} methods")
+            except Exception as e:
+                logger.warning(f"Failed to get details for {service_name}: {e}")
+                self._services[service_name] = {"name": service_name, "methods": []}
 
-                                self._services[full_service_name] = {
-                                    "name": full_service_name,
-                                    "methods": methods,
-                                    "package": file_desc_proto.package,
-                                }
-
-                                # 存储此服务的描述符
-                                self._descriptors[full_service_name] = file_desc_proto
-
-                                logger.debug(f"Service {full_service_name} has {len(methods)} methods")
-
-        except Exception as e:
-            logger.warning(f"Failed to get details for {service_name}: {e}")
-            # 即使详情获取失败，也仍然添加基本服务信息
-            self._services[service_name] = {
-                "name": service_name,
-                "methods": [],
-            }
+        await _run_bounded_blocking_call(discover_details)
 
     async def invoke(
         self,
@@ -374,7 +408,7 @@ class GrpcEndpoint:
             metadata = list(self._metadata.items())
             return unary.with_call(req, timeout=timeout, metadata=metadata) if timeout is not None else unary.with_call(req, metadata=metadata)
 
-        response_msg, call = await asyncio.get_event_loop().run_in_executor(None, _call, request_msg)
+        response_msg, call = await _run_bounded_blocking_call(lambda: _call(request_msg))
         self._last_call_metadata = {
             "headers": self._metadata_values(call.initial_metadata()),
             "trailers": self._metadata_values(call.trailing_metadata()),
@@ -468,6 +502,7 @@ class GrpcEndpoint:
             code = stream_call.code()
             return stream_call.trailing_metadata(), code.name if code is not None else None
 
+        stream_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="grpc-stream")
         try:
             iterator = iter(stream_call)
 
@@ -475,7 +510,7 @@ class GrpcEndpoint:
                 """在执行器线程中读取流的初始元数据。"""
                 return stream_call.initial_metadata()
 
-            initial_metadata = await asyncio.get_running_loop().run_in_executor(None, _initial_metadata)
+            initial_metadata = await _run_bounded_blocking_call(_initial_metadata, executor=stream_executor)
             self._last_call_metadata = {"headers": self._metadata_values(initial_metadata), "trailers": {}, "status": None}
 
             def _next_response():
@@ -486,7 +521,7 @@ class GrpcEndpoint:
                     return None
 
             while True:
-                response_msg = await asyncio.get_running_loop().run_in_executor(None, _next_response)
+                response_msg = await _run_bounded_blocking_call(_next_response, executor=stream_executor)
                 if response_msg is None:
                     stream_completed = True
                     break
@@ -501,19 +536,20 @@ class GrpcEndpoint:
                 stream_call.cancel()
 
             try:
-                trailing_metadata, status_code = await asyncio.get_running_loop().run_in_executor(None, _final_metadata)
+                trailing_metadata, status_code = await _run_bounded_blocking_call(_final_metadata, executor=stream_executor)
                 self._last_call_metadata["trailers"] = self._metadata_values(trailing_metadata)
                 self._last_call_metadata["status"] = status_code
             except Exception:  # pylint: disable=broad-except
                 logger.debug("Unable to capture final gRPC streaming metadata", exc_info=True)
             if stream_completed:
                 stream_call.cancel()
+            stream_executor.shutdown(wait=True, cancel_futures=True)
 
         logger.debug(f"Streaming complete for {service}.{method}")
 
     async def close(self) -> None:
         """当该端点拥有 channel 时，关闭这个 gRPC channel。"""
-        if self._channel is not None and self._owns_channel:
+        if self._channel is not None and getattr(self, "_owns_channel", True):
             self._channel.close()
             logger.info("Closed gRPC connection to %s", self._target)
 
@@ -531,10 +567,16 @@ class GrpcEndpoint:
         返回:
             消息类。
         """
-        cached = self._method_class_cache.get(type_name)
+        method_class_cache = getattr(self, "_method_class_cache", None)
+        if method_class_cache is None:
+            # Keep lightweight/test-created endpoints and older embedders that
+            # bypassed __init__ compatible with the shared class cache.
+            method_class_cache = {}
+            self._method_class_cache = method_class_cache
+        cached = method_class_cache.get(type_name)
         if cached is None:
             cached = message_factory.GetMessageClass(message_descriptor)
-            self._method_class_cache[type_name] = cached
+            method_class_cache[type_name] = cached
         return cached
 
     def load_file_descriptors(self, file_descriptor_protos: Sequence[bytes]) -> None:

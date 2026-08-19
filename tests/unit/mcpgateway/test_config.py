@@ -28,6 +28,22 @@ from mcpgateway.config import (
 )
 
 
+@pytest.mark.parametrize(
+    "field_name",
+    [
+        "mcpgateway_rest_timeout",
+        "mcpgateway_mcp_timeout",
+        "mcpgateway_grpc_timeout",
+        "mcpgateway_sql_timeout",
+        "mcpgateway_a2a_default_timeout",
+    ],
+)
+def test_protocol_timeouts_must_be_positive(field_name):
+    """Every protocol-specific invocation deadline fails fast on zero."""
+    with pytest.raises(ValidationError):
+        Settings(**{field_name: 0}, environment="development", _env_file=None)
+
+
 def test_root_policy_configuration_validation():
     with pytest.raises(ValidationError):
         Settings(root_allow_file_scheme=True, root_allowed_file_prefixes=[], _env_file=None)

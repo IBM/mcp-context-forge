@@ -357,6 +357,41 @@ async def close_redis_client() -> None:
     _initialized = False
 
 
+def create_redis_client_sync() -> Optional[Any]:
+    """Create a short-lived synchronous Redis client with canonical settings.
+
+    This is intended for synchronous mutation barriers that cannot safely
+    drive the shared async client from a nested or different event loop. The
+    caller owns the returned client and must close it.
+
+    Returns:
+        Optional[Redis]: A new synchronous client, or ``None`` when Redis is
+        disabled, unavailable, or misconfigured.
+    """
+    # First-Party
+    from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
+
+    if settings.cache_type != "redis" or not settings.redis_url:
+        return None
+    try:
+        # Third-Party
+        import redis  # pylint: disable=import-outside-toplevel,redefined-outer-name
+
+        connection_kwargs: dict[str, Any] = {
+            "decode_responses": settings.redis_decode_responses,
+            "max_connections": settings.redis_max_connections,
+            "socket_timeout": settings.redis_socket_timeout,
+            "socket_connect_timeout": settings.redis_socket_connect_timeout,
+            "retry_on_timeout": settings.redis_retry_on_timeout,
+            "health_check_interval": settings.redis_health_check_interval,
+        }
+        connection_kwargs.update(_build_ssl_kwargs(settings))
+        return redis.Redis.from_url(settings.redis_url, **connection_kwargs)
+    except Exception as exc:  # pragma: no cover - backend-specific failures
+        logger.debug("Failed to create synchronous Redis client: %s", _sanitize(str(exc)))
+        return None
+
+
 def get_redis_client_sync() -> Optional[Any]:
     """Get cached Redis client synchronously (returns None if not initialized).
 

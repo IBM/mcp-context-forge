@@ -39,6 +39,16 @@ const setup = ({ candidateId } = {}) => {
   initializeDataOperations();
 };
 
+const lineageHtml = () => `
+  <select id="grpc-lineage-service"><option value="svc-1" selected>Demo</option></select>
+  <input id="grpc-lineage-search" />
+  <input id="grpc-lineage-include-unbound" type="checkbox" checked />
+  <button id="grpc-lineage-refresh" type="button">Refresh</button>
+  <div id="grpc-lineage-summary"></div>
+  <div id="grpc-lineage-list"></div>
+  <div id="grpc-lineage-semantics"></div>
+`;
+
 const mockFetchJson = (payload, status = 200) => {
   global.fetch = vi.fn().mockResolvedValue({
     ok: status >= 200 && status < 300,
@@ -178,6 +188,63 @@ describe("grpc Tool Sync Preview rendering", () => {
       expect(
         document.querySelector(".grpc-sync-preview-body").textContent
       ).toContain("Preview failed")
+    );
+  });
+});
+
+describe("gRPC API to data lineage rendering", () => {
+  test("renders a left-to-right path and applies the method filter", async () => {
+    document.body.innerHTML = lineageHtml();
+    mockFetchJson({
+      paths: [
+        {
+          id: "path-1",
+          method_name: "demo.Greeter.SayHello",
+          has_mcp_exposure: true,
+          has_data_binding: true,
+          stages: [
+            { kind: "grpc_service", label: "Greeter", detail: "localhost:50051", state: "active", attributes: {} },
+            { kind: "grpc_method", label: "demo.Greeter.SayHello", detail: "Request → Reply", state: "active", attributes: {} },
+            { kind: "mcp_tool", label: "Say Hello", detail: "demo.Greeter.SayHello", state: "active", attributes: {} },
+            { kind: "mcp_server", label: "Demo MCP", detail: "/servers/server-1/mcp", state: "active", attributes: {} },
+            { kind: "data_binding", label: "read (manual)", detail: "Catalog/impact relationship", state: "active", attributes: {} },
+            { kind: "sql_source", label: "Customer DB", detail: "postgresql", state: "active", attributes: {} },
+            { kind: "sql_table", label: "public.customers", detail: "table", state: "active", attributes: {} },
+          ],
+        },
+      ],
+      summary: {
+        service_count: 1,
+        method_count: 1,
+        tool_count: 1,
+        mcp_exposed_tool_count: 1,
+        data_bound_tool_count: 1,
+        path_count: 1,
+      },
+      truncated: false,
+      relationship_semantics: "Catalog relationship only.",
+    });
+
+    initializeDataOperations();
+    await vi.waitFor(() => expect(global.fetch).toHaveBeenCalledTimes(1));
+    expect(global.fetch.mock.calls[0][0]).toBe(
+      "/admin/grpc/lineage?service_id=svc-1&include_unbound=true"
+    );
+    await vi.waitFor(() =>
+      expect(document.querySelector("#grpc-lineage-list").textContent).toContain(
+        "public.customers"
+      )
+    );
+    expect(document.querySelectorAll("[data-kind]")).toHaveLength(7);
+    expect(document.querySelector("#grpc-lineage-summary").textContent).toContain(
+      "1 shown / 1 paths"
+    );
+
+    const filter = document.querySelector("#grpc-lineage-search");
+    filter.value = "not-present";
+    filter.dispatchEvent(new Event("input", { bubbles: true }));
+    expect(document.querySelector("#grpc-lineage-list").textContent).toContain(
+      "No lineage paths match"
     );
   });
 });

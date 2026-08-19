@@ -109,6 +109,7 @@ class TestGrpcEndpoint:
                 await endpoint_with_tls.start(trusted_local=True)
 
         assert endpoint_with_tls._channel == mock_channel
+        mock_grpc.ssl_channel_credentials.assert_called_once_with(private_key=b"cert_data", certificate_chain=b"cert_data")
         mock_grpc.secure_channel.assert_called_once()
 
     @patch("mcpgateway.translate_grpc.grpc")

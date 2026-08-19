@@ -350,7 +350,7 @@ async def test_build_external_identity_uses_session_token_use_and_db_admin(monke
 
     prov = _fake_provider("https://kc/realms/m")
     prov.id = "keycloak"
-    claims = {"iss": "https://kc/realms/m", "sub": "agent", "email": "agent@corp.com"}
+    claims = {"iss": "https://kc/realms/m", "sub": "agent", "email": "agent@corp.com", "exp": "2000000000", "jti": "external-jti-1"}
 
     svc = MagicMock()
     # Claim maps to admin-looking groups...
@@ -387,6 +387,8 @@ async def test_build_external_identity_uses_session_token_use_and_db_admin(monke
     assert payload["is_admin"] is False  # C2: DB authority, not claim
     assert payload["teams"] == ["team-a"]
     assert payload["auth_provider"] == "keycloak"
+    assert payload["exp"] == "2000000000"
+    assert payload["jti"] == "external-jti-1"
     # C2: resolve_session_teams called with the DB user object, signature (payload, email, user_info)
     assert captured["args"][1] == "agent@corp.com"
     assert captured["args"][2] is db_user

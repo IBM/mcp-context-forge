@@ -15316,8 +15316,9 @@ async def test_admin_generate_support_bundle_exception_raises_http_500(monkeypat
 async def test_admin_grpc_endpoints_disabled(monkeypatch, mock_db):
     monkeypatch.setattr("mcpgateway.admin.GRPC_AVAILABLE", False)
     monkeypatch.setattr(settings, "mcpgateway_grpc_enabled", True)
+    request = MagicMock(spec=Request)
     with pytest.raises(HTTPException) as excinfo:
-        await admin_list_grpc_services(include_inactive=False, team_id=None, db=mock_db, user={"email": "user@example.com", "db": mock_db})
+        await admin_list_grpc_services(request, include_inactive=False, team_id=None, db=mock_db, user={"email": "user@example.com", "db": mock_db})
     assert excinfo.value.status_code == 404
 
 
@@ -15336,12 +15337,12 @@ async def test_admin_grpc_endpoints_disabled_all_routes(monkeypatch, mock_db):
 
     coros = [
         admin_create_grpc_service(service, request, db=mock_db, user={"email": "user@example.com", "db": mock_db}),
-        admin_get_grpc_service("svc-1", db=mock_db, user={"email": "user@example.com", "db": mock_db}),
+        admin_get_grpc_service("svc-1", request, db=mock_db, user={"email": "user@example.com", "db": mock_db}),
         admin_update_grpc_service("svc-1", update, request, db=mock_db, user={"email": "user@example.com", "db": mock_db}),
-        admin_set_grpc_service_state("svc-1", activate=None, db=mock_db, user={"email": "user@example.com", "db": mock_db}),
-        admin_reflect_grpc_service("svc-1", db=mock_db, user={"email": "user@example.com", "db": mock_db}),
-        admin_get_grpc_methods("svc-1", db=mock_db, user={"email": "user@example.com", "db": mock_db}),
-        admin_delete_grpc_service("svc-1", db=mock_db, user={"email": "user@example.com", "db": mock_db}),
+        admin_set_grpc_service_state("svc-1", request, activate=None, db=mock_db, user={"email": "user@example.com", "db": mock_db}),
+        admin_reflect_grpc_service("svc-1", request, db=mock_db, user={"email": "user@example.com", "db": mock_db}),
+        admin_get_grpc_methods("svc-1", request, db=mock_db, user={"email": "user@example.com", "db": mock_db}),
+        admin_delete_grpc_service("svc-1", request, db=mock_db, user={"email": "user@example.com", "db": mock_db}),
     ]
 
     for c in coros:
@@ -15354,6 +15355,7 @@ async def test_admin_grpc_endpoints_disabled_all_routes(monkeypatch, mock_db):
 async def test_admin_grpc_endpoints_enabled(monkeypatch, mock_db):
     monkeypatch.setattr("mcpgateway.admin.GRPC_AVAILABLE", True)
     monkeypatch.setattr(settings, "mcpgateway_grpc_enabled", True)
+    monkeypatch.setattr("mcpgateway.admin.get_scoped_resource_access_context", lambda _request, _user: ("user@example.com", ["team-1"]))
 
     mgr = MagicMock()
     # Mock paginated response from list_services
@@ -15402,7 +15404,7 @@ async def test_admin_grpc_endpoints_enabled(monkeypatch, mock_db):
     service = GrpcServiceCreate(name="grpc-service", target="localhost:50051")
     update = GrpcServiceUpdate(name="grpc-service-updated")
 
-    result = await admin_list_grpc_services(page=1, per_page=50, include_inactive=False, team_id=None, db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    result = await admin_list_grpc_services(request, page=1, per_page=50, include_inactive=False, team_id=None, db=mock_db, user={"email": "user@example.com", "db": mock_db})
     assert "data" in result
     assert len(result["data"]) == 1
     assert result["data"][0]["id"] == "svc-1"
@@ -15412,22 +15414,22 @@ async def test_admin_grpc_endpoints_enabled(monkeypatch, mock_db):
     assert response.media_type == "application/json"
     assert response.status_code == 201
 
-    result = await admin_get_grpc_service("svc-1", db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    result = await admin_get_grpc_service("svc-1", request, db=mock_db, user={"email": "user@example.com", "db": mock_db})
     assert result.enabled is True
 
     response = await admin_update_grpc_service("svc-1", update, request, db=mock_db, user={"email": "user@example.com", "db": mock_db})
     assert response.media_type == "application/json"
 
-    response = await admin_set_grpc_service_state("svc-1", activate=None, db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    response = await admin_set_grpc_service_state("svc-1", request, activate=None, db=mock_db, user={"email": "user@example.com", "db": mock_db})
     assert response.media_type == "application/json"
 
-    response = await admin_reflect_grpc_service("svc-1", db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    response = await admin_reflect_grpc_service("svc-1", request, db=mock_db, user={"email": "user@example.com", "db": mock_db})
     assert response.media_type == "application/json"
 
-    response = await admin_get_grpc_methods("svc-1", db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    response = await admin_get_grpc_methods("svc-1", request, db=mock_db, user={"email": "user@example.com", "db": mock_db})
     assert response.media_type == "application/json"
 
-    response = await admin_delete_grpc_service("svc-1", db=mock_db, user={"email": "user@example.com", "db": mock_db})
+    response = await admin_delete_grpc_service("svc-1", request, db=mock_db, user={"email": "user@example.com", "db": mock_db})
     assert response.status_code == 204
 
 
@@ -15441,7 +15443,9 @@ async def test_admin_update_grpc_service_error_handlers(monkeypatch, mock_db):
     monkeypatch.setattr(settings, "mcpgateway_grpc_enabled", True)
 
     mgr = MagicMock()
+    mgr.get_service = AsyncMock(return_value=SimpleNamespace(enabled=True))
     monkeypatch.setattr("mcpgateway.admin.grpc_service_mgr", mgr)
+    monkeypatch.setattr("mcpgateway.admin.get_scoped_resource_access_context", lambda _request, _user: ("user@example.com", ["team-1"]))
 
     metadata = MagicMock()
     metadata.extract_modification_metadata = MagicMock(
@@ -15523,9 +15527,11 @@ async def test_admin_get_grpc_service_not_found(monkeypatch, mock_db):
     mgr = MagicMock()
     mgr.get_service = AsyncMock(side_effect=admin_mod.GrpcServiceNotFoundError("missing"))
     monkeypatch.setattr("mcpgateway.admin.grpc_service_mgr", mgr)
+    monkeypatch.setattr("mcpgateway.admin.get_scoped_resource_access_context", lambda _request, _user: ("user@example.com", ["team-1"]))
+    request = MagicMock(spec=Request)
 
     with pytest.raises(HTTPException) as excinfo:
-        await admin_get_grpc_service("svc-missing", db=mock_db, user={"email": "user@example.com", "db": mock_db})
+        await admin_get_grpc_service("svc-missing", request, db=mock_db, user={"email": "user@example.com", "db": mock_db})
     assert excinfo.value.status_code == 404
 
 
@@ -15543,17 +15549,19 @@ async def test_admin_grpc_state_delete_methods_not_found(monkeypatch, mock_db):
     mgr.delete_service = AsyncMock(side_effect=admin_mod.GrpcServiceNotFoundError("missing"))
     mgr.get_service_methods = AsyncMock(side_effect=admin_mod.GrpcServiceNotFoundError("missing"))
     monkeypatch.setattr("mcpgateway.admin.grpc_service_mgr", mgr)
+    monkeypatch.setattr("mcpgateway.admin.get_scoped_resource_access_context", lambda _request, _user: ("user@example.com", ["team-1"]))
+    request = MagicMock(spec=Request)
 
     with pytest.raises(HTTPException) as excinfo:
-        await admin_set_grpc_service_state("svc-missing", activate=None, db=mock_db, user={"email": "user@example.com", "db": mock_db})
+        await admin_set_grpc_service_state("svc-missing", request, activate=None, db=mock_db, user={"email": "user@example.com", "db": mock_db})
     assert excinfo.value.status_code == 404
 
     with pytest.raises(HTTPException) as excinfo:
-        await admin_delete_grpc_service("svc-missing", db=mock_db, user={"email": "user@example.com", "db": mock_db})
+        await admin_delete_grpc_service("svc-missing", request, db=mock_db, user={"email": "user@example.com", "db": mock_db})
     assert excinfo.value.status_code == 404
 
     with pytest.raises(HTTPException) as excinfo:
-        await admin_get_grpc_methods("svc-missing", db=mock_db, user={"email": "user@example.com", "db": mock_db})
+        await admin_get_grpc_methods("svc-missing", request, db=mock_db, user={"email": "user@example.com", "db": mock_db})
     assert excinfo.value.status_code == 404
 
 
@@ -15567,16 +15575,19 @@ async def test_admin_reflect_grpc_service_error_handlers(monkeypatch, mock_db):
     monkeypatch.setattr(settings, "mcpgateway_grpc_enabled", True)
 
     mgr = MagicMock()
+    mgr.get_service = AsyncMock(return_value=SimpleNamespace(enabled=True))
     monkeypatch.setattr("mcpgateway.admin.grpc_service_mgr", mgr)
+    monkeypatch.setattr("mcpgateway.admin.get_scoped_resource_access_context", lambda _request, _user: ("user@example.com", ["team-1"]))
+    request = MagicMock(spec=Request)
 
     mgr.reflect_service = AsyncMock(side_effect=admin_mod.GrpcServiceNotFoundError("missing"))
     with pytest.raises(HTTPException) as excinfo:
-        await admin_reflect_grpc_service("svc-missing", db=mock_db, user={"email": "user@example.com", "db": mock_db})
+        await admin_reflect_grpc_service("svc-missing", request, db=mock_db, user={"email": "user@example.com", "db": mock_db})
     assert excinfo.value.status_code == 404
 
     mgr.reflect_service = AsyncMock(side_effect=admin_mod.GrpcServiceError("boom"))
     with pytest.raises(HTTPException) as excinfo:
-        await admin_reflect_grpc_service("svc-1", db=mock_db, user={"email": "user@example.com", "db": mock_db})
+        await admin_reflect_grpc_service("svc-1", request, db=mock_db, user={"email": "user@example.com", "db": mock_db})
     assert excinfo.value.status_code == 500
 
 
@@ -20629,12 +20640,44 @@ class TestObservability:
 
         request = MagicMock(spec=Request)
         request.scope = {"root_path": ""}
+        request.headers = {"HX-Request": "true"}
         request.app = MagicMock()
         request.app.state.templates = MagicMock()
         request.app.state.templates.TemplateResponse.return_value = HTMLResponse("<html>Stats</html>")
 
         result = await get_observability_stats(request, hours=24, _user={"email": "admin@test.com"}, db=mock_session)
         assert isinstance(result, HTMLResponse)
+        mock_session.commit.assert_not_called()
+        mock_session.close.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_get_observability_stats_json_contract(self, monkeypatch, allow_permission):
+        mock_result = MagicMock()
+        mock_result.total_traces = 100
+        mock_result.success_count = 90
+        mock_result.error_count = 10
+        mock_result.avg_duration_ms = 50.5
+
+        mock_session = MagicMock()
+        mock_session.execute.return_value.one.return_value = mock_result
+        mock_session.commit = MagicMock()
+        mock_session.close = MagicMock()
+        monkeypatch.setattr("mcpgateway.admin.get_db", lambda: iter([mock_session]))
+
+        request = MagicMock(spec=Request)
+        request.headers = {}
+
+        result = await get_observability_stats(request, hours=24, _user={"email": "admin@test.com"}, db=mock_session)
+
+        assert isinstance(result, JSONResponse)
+        assert json.loads(result.body) == {
+            "total_traces": 100,
+            "success_count": 90,
+            "error_count": 10,
+            "avg_duration_ms": 50.5,
+        }
+        mock_session.commit.assert_not_called()
+        mock_session.close.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_get_observability_trace_detail_success(self, monkeypatch, allow_permission):

@@ -193,6 +193,7 @@ from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.tag_service import TagService
 from mcpgateway.services.team_management_service import JoinRequestNotFoundError, TeamManagementService, UNSET
 from mcpgateway.services.token_catalog_service import TokenCatalogService
+from mcpgateway.services.tool_service import tool_service as shared_tool_service
 from mcpgateway.services.tool_service import ToolError, ToolLockConflictError, ToolNameConflictError, ToolNotFoundError, ToolService
 from mcpgateway.utils.create_jwt_token import create_jwt_token, get_jwt_token
 from mcpgateway.utils.error_formatter import ErrorFormatter, sanitize_validation_error_for_log
@@ -742,6 +743,10 @@ UI_ACTION_PERMISSIONS = {
     "can_create_user": "admin.user_management",
     "can_create_token": "tokens.read",  # Token creation uses tokens.read, setting nosec cause this is false positive as router uses this permission key.  # nosec B105
     "can_create_agent": "a2a.create",
+    # Composite gRPC-to-data views must not reveal SQL catalog/source metadata
+    # to callers who can administer gRPC but lack the corresponding SQL access.
+    "can_read_sql_tables": "sql.tables.read",
+    "can_read_sql_sources": "admin.sql_sources",
 }
 
 
@@ -849,7 +854,7 @@ if logging_service is None:
 
 # Initialize services
 server_service: ServerService = ServerService()
-tool_service: ToolService = ToolService()
+tool_service: ToolService = shared_tool_service
 prompt_service: PromptService = PromptService()
 gateway_service: GatewayService = GatewayService()
 resource_service: ResourceService = ResourceService()
@@ -2344,12 +2349,11 @@ async def get_overview_partial(
                 redis_reachable = False
 
         # Aggregate metrics from services
-        overview_tool_service = ToolService()
         overview_server_service = ServerService()
         overview_prompt_service = PromptService()
         overview_resource_service = ResourceService()
 
-        tool_metrics = await overview_tool_service.aggregate_metrics(db)
+        tool_metrics = await tool_service.aggregate_metrics(db)
         server_metrics = await overview_server_service.aggregate_metrics(db)
         prompt_metrics = await overview_prompt_service.aggregate_metrics(db)
         resource_metrics = await overview_resource_service.aggregate_metrics(db)
@@ -3830,7 +3834,7 @@ async def admin_ui(
     # Only apply permission-based hiding when email auth is enabled
     # --------------------------------------------------------------------------------
     is_admin_user = bool(user.get("is_admin", False) if isinstance(user, dict) else getattr(user, "is_admin", False))
-    token_teams = user.get("token_teams") if isinstance(user, dict) else getattr(user, "token_teams", None)
+    scoped_user_email, token_teams = get_scoped_resource_access_context(request, user)
 
     if getattr(settings, "email_auth_enabled", False):
         permission_hidden_sections = await get_hidden_sections_for_user(
@@ -4219,8 +4223,9 @@ async def admin_ui(
             grpc_services_raw, _ = await grpc_service_mgr.list_services(
                 db,
                 include_inactive=include_inactive,
-                user_email=user_email,
+                user_email=scoped_user_email,
                 team_id=selected_team_id,
+                token_teams=token_teams,
             )
             grpc_services = [service.model_dump(by_alias=True) for service in grpc_services_raw]
             grpc_services = _to_dict_and_filter(grpc_services) if isinstance(grpc_services, (list, tuple)) else grpc_services
@@ -16722,6 +16727,7 @@ async def admin_test_a2a_agent(
 @admin_router.get("/grpc", response_model=PaginatedResponse)
 @require_permission("admin.grpc", allow_admin_bypass=False)
 async def admin_list_grpc_services(
+    request: Request,
     page: int = Query(1, ge=1, description="Page number (1-indexed)"),
     per_page: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Items per page"),
     include_inactive: bool = False,
@@ -16736,6 +16742,7 @@ async def admin_list_grpc_services(
     Uses offset-based (page/per_page) pagination.
 
     Args:
+        request: Current request used to resolve canonical token scope
         page: Page number (1-indexed) for offset pagination
         per_page: Number of items per page
         include_inactive: Whether to include inactive services in the results
@@ -16755,7 +16762,7 @@ async def admin_list_grpc_services(
     if not GRPC_AVAILABLE or not settings.mcpgateway_grpc_enabled:
         raise HTTPException(status_code=404, detail="gRPC support is not available or disabled")
 
-    user_email = get_user_email(user)
+    user_email, token_teams = get_scoped_resource_access_context(request, user)
 
     # Call grpc_service_mgr.list_services with page-based pagination
     paginated_result = await grpc_service_mgr.list_services(
@@ -16765,6 +16772,7 @@ async def admin_list_grpc_services(
         per_page=per_page,
         user_email=user_email,
         team_id=team_id,
+        token_teams=token_teams,
     )
 
     # Return standardized paginated response
@@ -16817,6 +16825,7 @@ async def admin_create_grpc_service(
 @require_permission("admin.grpc", allow_admin_bypass=False)
 async def admin_get_grpc_service(
     service_id: str,
+    request: Request,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
@@ -16824,6 +16833,7 @@ async def admin_get_grpc_service(
 
     Args:
         service_id: Service ID
+        request: Current request used to resolve canonical token scope
         db: Database session
         user: Authenticated user
 
@@ -16837,8 +16847,8 @@ async def admin_get_grpc_service(
         raise HTTPException(status_code=404, detail="gRPC support is not available or disabled")
 
     try:
-        user_email = get_user_email(user)
-        return await grpc_service_mgr.get_service(db, service_id, user_email)
+        user_email, token_teams = get_scoped_resource_access_context(request, user)
+        return await grpc_service_mgr.get_service(db, service_id, user_email, token_teams=token_teams)
     except GrpcServiceNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
 
@@ -16873,7 +16883,8 @@ async def admin_update_grpc_service(
     try:
         _check_public_visibility_allowed(service.visibility or "", team_id=getattr(service, "team_id", None))
         metadata = MetadataCapture.extract_modification_metadata(request, user, 0)
-        user_email = get_user_email(user)
+        user_email, token_teams = get_scoped_resource_access_context(request, user)
+        await grpc_service_mgr.get_service(db, service_id, user_email, token_teams=token_teams)
         result = await grpc_service_mgr.update_service(db, service_id, service, user_email, metadata)
         return ORJSONResponse(content=jsonable_encoder(result))
     except GrpcServiceNotFoundError as e:
@@ -16889,6 +16900,7 @@ async def admin_update_grpc_service(
 @require_permission("admin.grpc", allow_admin_bypass=False)
 async def admin_set_grpc_service_state(
     service_id: str,
+    request: Request,
     activate: Optional[bool] = Query(None, description="Set enabled state. If not provided, inverts current state."),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),  # pylint: disable=unused-argument
@@ -16897,6 +16909,7 @@ async def admin_set_grpc_service_state(
 
     Args:
         service_id: Service ID
+        request: Current request used to resolve canonical token scope
         activate: If provided, sets enabled to this value. If None, inverts current state (legacy behavior).
         db: Database session
         user: Authenticated user
@@ -16911,10 +16924,11 @@ async def admin_set_grpc_service_state(
         raise HTTPException(status_code=404, detail="gRPC support is not available or disabled")
 
     try:
+        user_email, token_teams = get_scoped_resource_access_context(request, user)
+        scoped_service = await grpc_service_mgr.get_service(db, service_id, user_email, token_teams=token_teams)
         if activate is None:
             # Legacy toggle behavior - invert current state
-            service = await grpc_service_mgr.get_service(db, service_id)
-            activate = not service.enabled
+            activate = not scoped_service.enabled
         result = await grpc_service_mgr.set_service_state(db, service_id, activate)
         return ORJSONResponse(content=jsonable_encoder(result))
     except GrpcServiceNotFoundError as e:
@@ -16925,6 +16939,7 @@ async def admin_set_grpc_service_state(
 @require_permission("admin.grpc", allow_admin_bypass=False)
 async def admin_delete_grpc_service(
     service_id: str,
+    request: Request,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),  # pylint: disable=unused-argument
 ):
@@ -16932,6 +16947,7 @@ async def admin_delete_grpc_service(
 
     Args:
         service_id: Service ID
+        request: Current request used to resolve canonical token scope
         db: Database session
         user: Authenticated user
 
@@ -16945,6 +16961,8 @@ async def admin_delete_grpc_service(
         raise HTTPException(status_code=404, detail="gRPC support is not available or disabled")
 
     try:
+        user_email, token_teams = get_scoped_resource_access_context(request, user)
+        await grpc_service_mgr.get_service(db, service_id, user_email, token_teams=token_teams)
         await grpc_service_mgr.delete_service(db, service_id)
         return Response(status_code=204)
     except GrpcServiceNotFoundError as e:
@@ -16955,6 +16973,7 @@ async def admin_delete_grpc_service(
 @require_permission("admin.grpc", allow_admin_bypass=False)
 async def admin_reflect_grpc_service(
     service_id: str,
+    request: Request,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),  # pylint: disable=unused-argument
 ):
@@ -16962,6 +16981,7 @@ async def admin_reflect_grpc_service(
 
     Args:
         service_id: Service ID
+        request: Current request used to resolve canonical token scope
         db: Database session
         user: Authenticated user
 
@@ -16975,6 +16995,8 @@ async def admin_reflect_grpc_service(
         raise HTTPException(status_code=404, detail="gRPC support is not available or disabled")
 
     try:
+        user_email, token_teams = get_scoped_resource_access_context(request, user)
+        await grpc_service_mgr.get_service(db, service_id, user_email, token_teams=token_teams)
         result = await grpc_service_mgr.reflect_service(db, service_id)
         return ORJSONResponse(content=jsonable_encoder(result))
     except GrpcServiceNotFoundError as e:
@@ -16988,6 +17010,7 @@ async def admin_reflect_grpc_service(
 @require_permission("admin.grpc", allow_admin_bypass=False)
 async def admin_get_grpc_methods(
     service_id: str,
+    request: Request,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),  # pylint: disable=unused-argument
 ):
@@ -16995,6 +17018,7 @@ async def admin_get_grpc_methods(
 
     Args:
         service_id: Service ID
+        request: Current request used to resolve canonical token scope
         db: Database session
         user: Authenticated user
 
@@ -17008,7 +17032,8 @@ async def admin_get_grpc_methods(
         raise HTTPException(status_code=404, detail="gRPC support is not available or disabled")
 
     try:
-        methods = await grpc_service_mgr.get_service_methods(db, service_id)
+        user_email, token_teams = get_scoped_resource_access_context(request, user)
+        methods = await grpc_service_mgr.get_service_methods(db, service_id, user_email=user_email, token_teams=token_teams)
         return ORJSONResponse(content={"methods": methods})
     except GrpcServiceNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
@@ -18404,10 +18429,11 @@ async def get_api_metrics_partial(request: Request, _user=Depends(get_current_us
     root_path = _resolve_root_path(request)
     return request.app.state.templates.TemplateResponse(request, "api_metrics_dashboard.html", {"request": request, "root_path": root_path})
 
-@admin_router.get("/observability/stats", response_class=HTMLResponse)
+
+@admin_router.get("/observability/stats")
 @require_permission("admin.system_config", allow_admin_bypass=False)
 async def get_observability_stats(request: Request, hours: int = Query(24, ge=1, le=168), _user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)):
-    """Get observability statistics for the dashboard.
+    """Get observability statistics as HTML for HTMX or JSON for API clients.
 
     Args:
         request: FastAPI request object
@@ -18416,37 +18442,32 @@ async def get_observability_stats(request: Request, hours: int = Query(24, ge=1,
         db: Database session for permission checks.
 
     Returns:
-        HTMLResponse: Rendered statistics template with trace counts and averages
+        Response: Rendered statistics HTML for HTMX requests, otherwise a JSON
+            object with trace counts and average duration.
     """
-    db = next(get_db())
-    try:
-        cutoff_time = datetime.now() - timedelta(hours=hours)
+    cutoff_time = datetime.now(timezone.utc) - timedelta(hours=hours)
 
-        # Consolidate multiple count queries into a single aggregated select
-        # Filter by start_time first (uses index), then aggregate by status
-        result = db.execute(
-            select(
-                func.count(ObservabilityTrace.trace_id).label("total_traces"),  # pylint: disable=not-callable
-                func.sum(case((ObservabilityTrace.status == "ok", 1), else_=0)).label("success_count"),
-                func.sum(case((ObservabilityTrace.status == "error", 1), else_=0)).label("error_count"),
-                func.avg(ObservabilityTrace.duration_ms).label("avg_duration_ms"),
-            ).where(ObservabilityTrace.start_time >= cutoff_time)
-        ).one()
+    # Query through the request-scoped dependency. Its lifecycle is owned by
+    # FastAPI, and read-only statistics must not commit or close it here.
+    result = db.execute(
+        select(
+            func.count(ObservabilityTrace.trace_id).label("total_traces"),  # pylint: disable=not-callable
+            func.sum(case((ObservabilityTrace.status == "ok", 1), else_=0)).label("success_count"),
+            func.sum(case((ObservabilityTrace.status == "error", 1), else_=0)).label("error_count"),
+            func.avg(ObservabilityTrace.duration_ms).label("avg_duration_ms"),
+        ).where(ObservabilityTrace.start_time >= cutoff_time)
+    ).one()
 
-        stats = {
-            "total_traces": int(result.total_traces or 0),
-            "success_count": int(result.success_count or 0),
-            "error_count": int(result.error_count or 0),
-            "avg_duration_ms": float(result.avg_duration_ms or 0),
-        }
+    stats = {
+        "total_traces": int(result.total_traces or 0),
+        "success_count": int(result.success_count or 0),
+        "error_count": int(result.error_count or 0),
+        "avg_duration_ms": float(result.avg_duration_ms or 0),
+    }
 
+    if str(request.headers.get("HX-Request", "")).lower() == "true":
         return request.app.state.templates.TemplateResponse(request, "observability_stats.html", {"request": request, "stats": stats})
-    finally:
-        # Ensure close() always runs even if commit() fails
-        try:
-            db.commit()  # Commit read-only transaction to avoid implicit rollback
-        finally:
-            db.close()
+    return JSONResponse(content=stats)
 
 
 @admin_router.get("/observability/traces", response_class=HTMLResponse)

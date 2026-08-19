@@ -185,9 +185,12 @@ async def test_stats_exclude_metrics_for_tools_outside_token_scope(test_db, monk
     request.state.token_teams = []
 
     hidden = await api_debug.api_call_stats.__wrapped__(request, db=test_db, user={"email": "other@example.com"})
+    owner_public_only = await api_debug.api_call_stats.__wrapped__(request, db=test_db, user={"email": "owner@example.com"})
+    request.state.token_teams = ["team-1"]
     visible = await api_debug.api_call_stats.__wrapped__(request, db=test_db, user={"email": "owner@example.com"})
 
     assert hidden["total_calls"] == 0
+    assert owner_public_only["total_calls"] == 0
     assert visible["total_calls"] == 1
 
 

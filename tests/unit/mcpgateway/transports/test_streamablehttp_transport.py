@@ -10928,6 +10928,60 @@ class TestProxyFunctions:
         mock_session.list_tools.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_proxy_list_tools_reuses_registry_session(self):
+        """A downstream MCP session should reuse its bound upstream connection."""
+        gateway = SimpleNamespace(id="gw-123", url="http://remote-gateway.example.com/mcp", passthrough_headers=None, auth_type=None)
+        tool = SimpleNamespace(name="test_tool", meta=None)
+        session = AsyncMock()
+        session.list_tools.return_value = SimpleNamespace(tools=[tool])
+
+        @asynccontextmanager
+        async def acquire(**_kwargs):
+            yield SimpleNamespace(session=session)
+
+        registry = SimpleNamespace(acquire=MagicMock(side_effect=acquire))
+        context_token = tr.request_headers_var.set({"mcp-session-id": "downstream-1"})
+        try:
+            with patch("mcpgateway.transports.streamablehttp_transport.get_upstream_session_registry", return_value=registry), patch(
+                "mcpgateway.transports.streamablehttp_transport.streamablehttp_client",
+                side_effect=AssertionError("pooled path must not reconnect"),
+            ), patch("mcpgateway.transports.streamablehttp_transport.build_gateway_auth_headers", return_value={}):
+                result = await tr._proxy_list_tools_to_gateway(gateway, {}, {}, None)
+        finally:
+            tr.request_headers_var.reset(context_token)
+
+        assert [item.name for item in result] == ["test_tool"]
+        session.list_tools.assert_awaited_once()
+        assert registry.acquire.call_args.kwargs["downstream_session_id"] == "downstream-1"
+
+    @pytest.mark.asyncio
+    async def test_proxy_list_tools_total_deadline_covers_pooled_rpc(self, monkeypatch):
+        gateway = SimpleNamespace(id="gw-123", url="http://remote-gateway.example.com/mcp", passthrough_headers=None, auth_type=None)
+        session = AsyncMock()
+
+        async def never_returns(**_kwargs):
+            await asyncio.sleep(60)
+
+        session.list_tools.side_effect = never_returns
+
+        @asynccontextmanager
+        async def acquire(**_kwargs):
+            yield SimpleNamespace(session=session)
+
+        registry = SimpleNamespace(acquire=MagicMock(side_effect=acquire))
+        monkeypatch.setattr(tr.settings, "mcpgateway_direct_proxy_timeout", 0.01)
+        context_token = tr.request_headers_var.set({"mcp-session-id": "downstream-1"})
+        try:
+            with patch("mcpgateway.transports.streamablehttp_transport.get_upstream_session_registry", return_value=registry), patch(
+                "mcpgateway.transports.streamablehttp_transport.build_gateway_auth_headers", return_value={}
+            ):
+                result = await tr._proxy_list_tools_to_gateway(gateway, {}, {}, None)
+        finally:
+            tr.request_headers_var.reset(context_token)
+
+        assert result == []
+
+    @pytest.mark.asyncio
     async def test_proxy_list_tools_filters_protocol_app_only_tools(self, monkeypatch):
         """Direct-proxy tools/list should hide upstream app-only MCP Apps helpers."""
         monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)

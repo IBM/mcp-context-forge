@@ -235,11 +235,13 @@ services:
       # Prometheus metrics endpoint (compose enables it by default; requires JWT auth when enabled).
       # Set ENABLE_METRICS=false to disable it for local or resource-constrained runs.
       - ENABLE_METRICS=${ENABLE_METRICS:-true}
-      # Local compose profile: allow local/private upstream URLs used by bundled test services.
-      # Production deployments should override these to stricter values.
+      # Intranet release policy: allow local/private MCP backends while retaining
+      # SSRF validation, hard blocklists, and fail-closed DNS behavior.
+      - SSRF_PROTECTION_ENABLED=${SSRF_PROTECTION_ENABLED:-true}
       - SSRF_ALLOW_LOCALHOST=${SSRF_ALLOW_LOCALHOST:-true}
       - SSRF_ALLOW_PRIVATE_NETWORKS=${SSRF_ALLOW_PRIVATE_NETWORKS:-true}
-      - SSRF_DNS_FAIL_CLOSED=${SSRF_DNS_FAIL_CLOSED:-false}
+      - SSRF_DNS_FAIL_CLOSED=${SSRF_DNS_FAIL_CLOSED:-true}
+      - MCPGATEWAY_GRPC_ENABLED=${MCPGATEWAY_GRPC_ENABLED:-true}
       # Database connection: Via PgBouncer (default) or direct PostgreSQL
       # PgBouncer provides connection pooling for better performance under high concurrency
       - DATABASE_URL=${DATABASE_URL:-postgresql+psycopg://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@pgbouncer:6432/mcp}
@@ -417,8 +419,9 @@ services:
       # ═══════════════════════════════════════════════════════════════════════════
       # SSRF Protection (Server-Side Request Forgery)
       # ═══════════════════════════════════════════════════════════════════════════
-      # Prevents gateway from accessing internal resources or cloud metadata services.
-      # Default: strict mode (external endpoints only).
+      # Controls access to internal resources and blocks cloud metadata services.
+      # The application source fallback is strict; this Compose profile applies
+      # the intranet release defaults above. Use these examples to harden it.
       # Cloud metadata (169.254.169.254, etc.) is ALWAYS blocked by default.
       # - SSRF_PROTECTION_ENABLED=true           # Master switch (default: true)
       # - SSRF_ALLOW_LOCALHOST=false             # Block localhost/loopback (default: false)

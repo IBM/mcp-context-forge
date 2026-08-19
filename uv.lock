@@ -1810,9 +1810,9 @@ dependencies = [
     { name = "grpcio" },
     { name = "protobuf" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/cd/84/5db47abe1b8b946e8edcfcf7fb2116c7a4ab839e23126680a984c88eb424/grpcio_health_checking-1.83.0.tar.gz", hash = "sha256:ad6bc4d5a1103ad704d25ccd82def300dfa27996b185cab3e4cceeef2c6867d4", size = 17107, upload-time = "2026-07-23T15:24:16.466Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/cd/84/5db47abe1b8b946e8edcfcf7fb2116c7a4ab839e23126680a984c88eb424/grpcio_health_checking-1.83.0.tar.gz", hash = "sha256:ad6bc4d5a1103ad704d25ccd82def300dfa27996b185cab3e4cceeef2c6867d4", size = 17061, upload-time = "2026-07-23T15:24:23.019Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c6/9c/8922f2a529bf49361b4f70d6d07adfadc07d1a93eb5ee07f6f66a54445e8/grpcio_health_checking-1.83.0-py3-none-any.whl", hash = "sha256:7d8b47a5bfbc699d4aee0fc7a27f5d0265eb23a6a64db5ac2d8b749a0f8a9911", size = 19120, upload-time = "2026-07-23T15:24:14.873Z" },
+    { url = "https://files.pythonhosted.org/packages/c6/9c/8922f2a529bf49361b4f70d6d07adfadc07d1a93eb5ee07f6f66a54445e8/grpcio_health_checking-1.83.0-py3-none-any.whl", hash = "sha256:7d8b47a5bfbc699d4aee0fc7a27f5d0265eb23a6a64db5ac2d8b749a0f8a9911", size = 19085, upload-time = "2026-07-23T15:24:07.792Z" },
 ]
 
 [[package]]
@@ -3097,6 +3097,9 @@ llmchat = [
     { name = "langgraph" },
     { name = "langsmith" },
 ]
+mysql = [
+    { name = "pymysql" },
+]
 observability = [
     { name = "opentelemetry-api" },
     { name = "opentelemetry-exporter-otlp-proto-grpc" },
@@ -3229,6 +3232,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.140.0" },
     { name = "filelock", specifier = ">=3.32.0,<3.33.0" },
     { name = "grpcio", marker = "extra == 'grpc'", specifier = ">=1.83.0" },
+    { name = "grpcio-health-checking", marker = "extra == 'grpc'", specifier = ">=1.83.0" },
     { name = "grpcio-reflection", marker = "extra == 'grpc'", specifier = ">=1.83.0" },
     { name = "grpcio-tools", marker = "extra == 'grpc'", specifier = ">=1.83.0" },
     { name = "gunicorn", specifier = ">=26.0.0" },
@@ -3267,6 +3271,7 @@ requires-dist = [
     { name = "pydantic", extras = ["email"], specifier = ">=2.13.4" },
     { name = "pydantic-settings", specifier = ">=2.14.2" },
     { name = "pyjwt", specifier = ">=2.13.0" },
+    { name = "pymysql", marker = "extra == 'mysql'", specifier = ">=1.1.2" },
     { name = "python-json-logger", specifier = ">=4.1.0" },
     { name = "python-multipart", specifier = ">=0.0.32" },
     { name = "pyyaml", specifier = ">=6.0.3" },
@@ -3283,7 +3288,7 @@ requires-dist = [
     { name = "urllib3", specifier = ">=2.7.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.51.0" },
 ]
-provides-extras = ["redis", "redis-pure", "postgres", "llmchat", "observability", "aiosqlite", "asyncpg", "profiling", "templating", "plugins", "grpc", "all", "dev-all"]
+provides-extras = ["redis", "redis-pure", "postgres", "mysql", "llmchat", "observability", "aiosqlite", "asyncpg", "profiling", "templating", "plugins", "grpc", "all", "dev-all"]
 
 [package.metadata.requires-dev]
 dev = [
@@ -4657,6 +4662,15 @@ wheels = [
 [package.optional-dependencies]
 crypto = [
     { name = "cryptography" },
+]
+
+[[package]]
+name = "pymysql"
+version = "1.2.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/c9/bc/1c6a92f385940f727daeecf3bacaf186e03875dff57197801046c583bcf0/pymysql-1.2.0.tar.gz", hash = "sha256:6c7b17ca686988104d7426c27895b455cdeea3e9d3ceb1270f0c3704fead8c33", size = 49021, upload-time = "2026-05-19T08:26:22.302Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c4/bd/2534e130295c8cfd4f0a2e31623baab7502278f1e97bcfe61db75656a77f/pymysql-1.2.0-py3-none-any.whl", hash = "sha256:62169ce6d5510f08e140c5e7990ee884a9764024e4a9a27b2cc11f1099322ae0", size = 45716, upload-time = "2026-05-19T08:26:20.974Z" },
 ]
 
 [[package]]

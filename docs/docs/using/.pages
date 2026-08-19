@@ -1,5 +1,6 @@
 nav:
   - index.md
+  - "中文产品使用手册": product-user-manual-zh.md
   - mcpgateway-wrapper.md
   - mcpgateway-translate.md
   - reverse-proxy.md

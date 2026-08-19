@@ -76,6 +76,7 @@ _LEGACY_PREFIXES: frozenset[str] = frozenset(
         "/observability",  # OBSERVABILITY_ENABLED
         "/reverse-proxy",  # MCPGATEWAY_REVERSE_PROXY_ENABLED
         "/cancellation",  # MCPGATEWAY_TOOL_CANCELLATION_ENABLED
+        "/jobs",  # MCPGATEWAY_ASYNC_JOBS_ENABLED
         "/toolops",  # TOOLOPS_ENABLED
         "/auth",  # EMAIL_AUTH_ENABLED
         "/teams",  # EMAIL_AUTH_ENABLED

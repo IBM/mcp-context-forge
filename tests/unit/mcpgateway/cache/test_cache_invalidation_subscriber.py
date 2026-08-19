@@ -150,6 +150,25 @@ class TestCacheInvalidationSubscriber:
                 assert "tool-b" in mock_tool_lookup._cache
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("message", "method_name", "identifier"),
+        [
+            ("tool_result:tool:tool-123", "invalidate_tool_local", "tool-123"),
+            ("tool_result:gateway:gw-123", "invalidate_gateway_local", "gw-123"),
+            ("tool_result:sql_table:table-123", "invalidate_sql_table_local", "table-123"),
+        ],
+    )
+    async def test_process_tool_result_invalidation(self, cache_subscriber, message, method_name, identifier):
+        """Result-cache pubsub messages clear only this worker's L1 entries."""
+        mock_result_cache = MagicMock()
+        getattr(mock_result_cache, method_name).return_value = 1
+
+        with patch.dict("sys.modules", {"mcpgateway.cache.tool_result_cache": MagicMock(tool_result_cache=mock_result_cache)}):
+            await cache_subscriber._process_invalidation(message)
+
+        getattr(mock_result_cache, method_name).assert_called_once_with(identifier)
+
+    @pytest.mark.asyncio
     async def test_process_admin_invalidation(self, cache_subscriber):
         """Test processing of admin:prefix invalidation message."""
         mock_admin_cache = MagicMock()
@@ -343,7 +362,6 @@ class TestCacheInvalidationSubscriber:
                     self.called = True
                     stop_event.set()
                     raise asyncio.TimeoutError()
-                return None
 
         cache_subscriber._pubsub = TimeoutPubSub()
         cache_subscriber._stop_event = stop_event

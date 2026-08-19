@@ -10,6 +10,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 ### Breaking Changes
 
+- **Default connectivity profile now targets trusted intranet deployments** - The chart sets `SSRF_ALLOW_LOCALHOST: "true"`, `SSRF_ALLOW_PRIVATE_NETWORKS: "true"`, and `MCPGATEWAY_GRPC_ENABLED: "true"` while keeping SSRF protection and DNS fail-closed enabled. Externally exposed or segmented deployments should set both `SSRF_ALLOW_LOCALHOST: "false"` and `SSRF_ALLOW_PRIVATE_NETWORKS: "false"`, then configure `SSRF_ALLOWED_NETWORKS` before upgrading.
 - **Root URI policy now defaults to deny** (GHSA-x39c-q2jx-f325) - Before `helm upgrade`, add matching root policy to `mcpContextForge.config`: set `ROOT_ALLOWED_SCHEMES` for network `DEFAULT_ROOTS`, or set both `ROOT_ALLOW_FILE_SCHEME: "true"` and `ROOT_ALLOWED_FILE_PREFIXES` for `file://` roots. Invalid `DEFAULT_ROOTS` abort gateway startup.
 - **Scoped backup exports must exclude roots** - Unfiltered exports include roots and require unrestricted platform-admin credentials. Configure scoped backup jobs with an explicit roots exclusion, or use unrestricted platform-admin credentials.
 
@@ -17,7 +18,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) 
 
 #### **🔐 Production-Hardened Default Values** ([#3550](https://github.com/IBM/mcp-context-forge/pull/3550))
 
-Aligned `values.yaml` with `config.py` secure defaults and tightened for production deployments.
+Aligned most `values.yaml` settings with `config.py` secure defaults and tightened production behavior. The project-specific intranet connectivity profile documented above is the explicit exception.
 
 **Security defaults now match config.py:**
 * `ENVIRONMENT`: `development` → `production`
@@ -42,7 +43,7 @@ Aligned `values.yaml` with `config.py` secure defaults and tightened for product
 **Features disabled by default:**
 * `LLMCHAT_ENABLED`: `true` → `false` (enable only when LLM providers configured)
 * Roots: `DEFAULT_ROOTS/ALLOWED_ROOTS: "[]"`, hidden from UI via `MCPGATEWAY_UI_HIDE_SECTIONS`
-* gRPC, OTEL, plugins, session pool sub-settings collapsed behind disabled master switches
+* OTEL, plugins, and session pool sub-settings collapsed behind disabled master switches; gRPC is enabled by the intranet release profile
 
 **Removed unnecessary settings:**
 * `DB_DRIVER` (chart uses PostgreSQL), `DB_SQLITE_BUSY_TIMEOUT`, `DB_QUERY_LOG_*` (7 dev settings)

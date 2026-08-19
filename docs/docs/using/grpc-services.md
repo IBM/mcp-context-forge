@@ -109,7 +109,7 @@ python3 -m mcpgateway.translate \
 ```
 
 !!! note "SSRF validation of gRPC targets"
-    The gRPC target is validated against the platform SSRF settings before any channel is opened. Because `SSRF_ALLOW_LOCALHOST` and `SSRF_ALLOW_PRIVATE_NETWORKS` default to `false`, targets such as `localhost:50051` or RFC1918 addresses are rejected out of the box with a `GrpcServiceError`. To allow a loopback target, set `SSRF_ALLOW_LOCALHOST=true`; to allow a specific private/RFC1918 range, add it to `SSRF_ALLOWED_NETWORKS`. See the [1.0.0-RC3 upgrade notes](../manage/upgrade-to-1.0.0-rc3.md) for the full table of SSRF defaults.
+    The gRPC target is validated against the platform SSRF settings before any channel is opened. The source fallback keeps `SSRF_ALLOW_LOCALHOST` and `SSRF_ALLOW_PRIVATE_NETWORKS` set to `false`, while this project's intranet release images and deployment manifests explicitly set both to `true`. For stricter deployments, set both flags to `false`, then add the required private/RFC1918 ranges to `SSRF_ALLOWED_NETWORKS`. See the [1.0.0-RC3 upgrade notes](../manage/upgrade-to-1.0.0-rc3.md) for the full table of source defaults.
 
 ### 2. Admin UI: Register a gRPC Service
 

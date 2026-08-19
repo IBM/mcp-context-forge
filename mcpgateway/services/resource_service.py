@@ -34,6 +34,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 import uuid
 
 # Third-Party
+import anyio
 import httpx
 from mcp import ClientSession, types
 from mcp.client.sse import sse_client
@@ -2519,34 +2520,52 @@ class ResourceService(BaseService):
                             if plugin_global_context and plugin_global_context.user_context:
                                 headers.update(build_identity_headers(plugin_global_context.user_context, gateway))
 
-                            # Use MCP SDK to connect and read resource
-                            async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
-                                async with ClientSession(read_stream, write_stream) as session:
-                                    await session.initialize()
-                                    result = await _read_resource_with_meta(session, uri, meta_data)
+                            direct_timeout = float(settings.mcpgateway_direct_proxy_timeout)
+                            downstream_session_id = _downstream_session_id_from_request()
+                            registry = None
+                            if downstream_session_id:
+                                try:
+                                    registry = get_upstream_session_registry()
+                                except RegistryNotInitializedError:
+                                    registry = None
 
-                                    # Convert MCP result to MCP-compliant content models
-                                    # result.contents is a list of TextResourceContents or BlobResourceContents
-                                    if result.contents:
-                                        first_content = result.contents[0]
-                                        if hasattr(first_content, "text"):
-                                            content = TextResourceContents(uri=uri, mimeType=first_content.mimeType if hasattr(first_content, "mimeType") else "text/plain", text=first_content.text)
-                                        elif hasattr(first_content, "blob"):
-                                            content = BlobResourceContents(
-                                                uri=uri, mimeType=first_content.mimeType if hasattr(first_content, "mimeType") else "application/octet-stream", blob=first_content.blob
-                                            )
-                                        else:
-                                            content = TextResourceContents(uri=uri, text="")
-                                    else:
-                                        content = TextResourceContents(uri=uri, text="")
+                            # One budget covers pooled acquire or connect, initialize, and read.
+                            with anyio.fail_after(direct_timeout):
+                                if registry is not None and downstream_session_id:
+                                    async with registry.acquire(
+                                        downstream_session_id=downstream_session_id,
+                                        gateway_id=str(gateway.id),
+                                        url=gateway.url,
+                                        headers=headers,
+                                        transport_type=TransportType.STREAMABLE_HTTP,
+                                    ) as upstream:
+                                        result = await _read_resource_with_meta(upstream.session, uri, meta_data)
+                                else:
+                                    async with streamablehttp_client(url=gateway.url, headers=headers, timeout=direct_timeout) as (read_stream, write_stream, _get_session_id):
+                                        async with ClientSession(read_stream, write_stream) as session:
+                                            await session.initialize()
+                                            result = await _read_resource_with_meta(session, uri, meta_data)
 
-                                    success = True
-                                    logger.info(
-                                        "[READ RESOURCE] Using direct_proxy mode for gateway %s (from X-Context-Forge-Gateway-Id header). Meta Attached: %s",
-                                        SecurityValidator.sanitize_log_message(gateway.id),
-                                        meta_data is not None,
-                                    )
-                                    # Skip the rest of the DB lookup logic
+                            # Convert MCP result to MCP-compliant content models
+                            # result.contents is a list of TextResourceContents or BlobResourceContents
+                            if result.contents:
+                                first_content = result.contents[0]
+                                if hasattr(first_content, "text"):
+                                    content = TextResourceContents(uri=uri, mimeType=first_content.mimeType if hasattr(first_content, "mimeType") else "text/plain", text=first_content.text)
+                                elif hasattr(first_content, "blob"):
+                                    content = BlobResourceContents(uri=uri, mimeType=first_content.mimeType if hasattr(first_content, "mimeType") else "application/octet-stream", blob=first_content.blob)
+                                else:
+                                    content = TextResourceContents(uri=uri, text="")
+                            else:
+                                content = TextResourceContents(uri=uri, text="")
+
+                            success = True
+                            logger.info(
+                                "[READ RESOURCE] Using direct_proxy mode for gateway %s (from X-Context-Forge-Gateway-Id header). Meta Attached: %s",
+                                SecurityValidator.sanitize_log_message(gateway.id),
+                                meta_data is not None,
+                            )
+                            # Skip the rest of the DB lookup logic
 
                         except Exception as e:
                             logger.exception("Error in direct_proxy mode for resource '%s': %s", uri, e)

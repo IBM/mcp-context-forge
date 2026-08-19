@@ -22,6 +22,7 @@ from urllib.parse import urlparse
 from cpex.framework import PluginManager, PluginMode
 from cpex.framework.hooks.tools import ToolHookType
 from cpex.framework.models import PluginResult
+import httpx
 import jsonschema
 import orjson
 import pytest
@@ -30,10 +31,12 @@ from sqlalchemy.exc import IntegrityError
 # First-Party
 from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.cache.tool_lookup_cache import tool_lookup_cache
+from mcpgateway.cache.tool_result_cache import RESULT_CACHE_META_KEY, tool_result_cache
 from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolRead, ToolUpdate
+from mcpgateway.services.sql_data_service import SQLDataService
 from mcpgateway.services.tool_service import (
     _build_pinned_rest_http_client,
     _build_retry_policy_config,
@@ -42,8 +45,11 @@ from mcpgateway.services.tool_service import (
     _encrypt_tool_header_value,
     _get_validator_class_and_check,
     _is_sensitive_tool_header_name,
+    _PinnedRestClientPool,
     _pin_url_to_resolved_ip,
+    _pinned_rest_pool_key,
     _protect_tool_headers_for_storage,
+    _resolve_tool_timeout,
     _sync_meta_traceparent,
     _validate_header_mapping_targets,
     _validate_mapping_contents,
@@ -64,6 +70,156 @@ from mcpgateway.utils.services_auth import encode_auth
 
 # Local
 from tests.helpers.admin_mocks import install_admin_user
+
+
+@pytest.mark.parametrize(
+    ("integration_type", "setting_name", "configured_value"),
+    [
+        ("REST", "mcpgateway_rest_timeout", 11),
+        ("MCP", "mcpgateway_mcp_timeout", 12),
+        ("gRPC", "mcpgateway_grpc_timeout", 13),
+        ("SQL", "mcpgateway_sql_timeout", 14),
+        ("A2A", "mcpgateway_a2a_default_timeout", 15),
+    ],
+)
+def test_resolve_tool_timeout_uses_protocol_default(monkeypatch, integration_type, setting_name, configured_value):
+    """Each integration uses its own default deadline."""
+    monkeypatch.setattr(settings, setting_name, configured_value)
+    assert _resolve_tool_timeout({"integration_type": integration_type, "timeout_ms": None}) == float(configured_value)
+
+
+def test_resolve_tool_timeout_precedence_and_bounds(monkeypatch):
+    """Caller override wins over per-tool and protocol defaults and is bounded."""
+    monkeypatch.setattr(settings, "mcpgateway_grpc_timeout", 30)
+    payload = {"integration_type": "GRPC", "timeout_ms": 4500}
+    assert _resolve_tool_timeout(payload) == 4.5
+    assert _resolve_tool_timeout(payload, 2.25) == 2.25
+    with pytest.raises(ToolInvocationError, match="greater than zero"):
+        _resolve_tool_timeout(payload, 0)
+    with pytest.raises(ToolInvocationError, match="greater than zero"):
+        _resolve_tool_timeout(payload, float("nan"))
+    with pytest.raises(ToolInvocationError, match="greater than zero"):
+        _resolve_tool_timeout({"integration_type": "REST", "timeout_ms": 0})
+
+
+@pytest.mark.asyncio
+async def test_pinned_rest_pool_reuses_same_validated_target_and_closes_on_shutdown():
+    """Repeated calls to the same IP/authority share one keepalive client."""
+    client = SimpleNamespace(aclose=AsyncMock())
+    pool = _PinnedRestClientPool(max_entries=2)
+    key = _pinned_rest_pool_key("https://8.8.8.8:8443/data", "8.8.8.8", "api.example.com", "api.example.com:8443")
+
+    with patch("mcpgateway.services.tool_service._build_pinned_rest_http_client", return_value=client) as build_client:
+        first = await pool.acquire(key)
+        await pool.release(first)
+        second = await pool.acquire(key)
+        await pool.release(second)
+
+    assert first is second
+    build_client.assert_called_once()
+    client.aclose.assert_not_awaited()
+    await pool.close()
+    client.aclose.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_pinned_rest_pool_isolates_ip_sni_and_host_authority():
+    """A TLS connection is never shared across validated target identities."""
+    clients = [SimpleNamespace(aclose=AsyncMock()) for _ in range(5)]
+    pool = _PinnedRestClientPool(max_entries=5)
+    keys = [
+        _pinned_rest_pool_key("https://8.8.8.8:8443/data", "8.8.8.8", "api.example.com", "api.example.com:8443"),
+        _pinned_rest_pool_key("https://8.8.4.4:8443/data", "8.8.4.4", "api.example.com", "api.example.com:8443"),
+        _pinned_rest_pool_key("https://8.8.8.8:8443/data", "8.8.8.8", "other.example.com", "api.example.com:8443"),
+        _pinned_rest_pool_key("https://8.8.8.8:8443/data", "8.8.8.8", "api.example.com", "other.example.com:8443"),
+        _pinned_rest_pool_key("https://8.8.8.8:8443/data", "8.8.8.8", "api.example.com.", "api.example.com:8443"),
+    ]
+
+    with patch("mcpgateway.services.tool_service._build_pinned_rest_http_client", side_effect=clients) as build_client:
+        entries = [await pool.acquire(key) for key in keys]
+        for entry in entries:
+            await pool.release(entry)
+
+    assert len({id(entry) for entry in entries}) == len(keys)
+    assert build_client.call_count == len(keys)
+    await pool.close()
+    for client in clients:
+        client.aclose.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_pinned_rest_pool_uses_transient_client_when_all_cached_entries_are_busy():
+    """Capacity pressure must not evict or close an in-flight cached client."""
+    cached_client = SimpleNamespace(aclose=AsyncMock())
+    transient_client = SimpleNamespace(aclose=AsyncMock())
+    pool = _PinnedRestClientPool(max_entries=1)
+    first_key = _pinned_rest_pool_key("https://8.8.8.8/data", "8.8.8.8", "one.example.com", "one.example.com")
+    second_key = _pinned_rest_pool_key("https://8.8.4.4/data", "8.8.4.4", "two.example.com", "two.example.com")
+
+    with patch("mcpgateway.services.tool_service._build_pinned_rest_http_client", side_effect=[cached_client, transient_client]):
+        cached_entry = await pool.acquire(first_key)
+        transient_entry = await pool.acquire(second_key)
+        assert transient_entry.retired is True
+        cached_client.aclose.assert_not_awaited()
+        await pool.release(transient_entry)
+        transient_client.aclose.assert_awaited_once()
+        await pool.release(cached_entry)
+
+    await pool.close()
+    cached_client.aclose.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_pinned_rest_pool_evicts_least_recently_used_idle_entry():
+    """A recent hit moves an idle entry behind older candidates in LRU order."""
+    first_client = SimpleNamespace(aclose=AsyncMock())
+    lru_client = SimpleNamespace(aclose=AsyncMock())
+    new_client = SimpleNamespace(aclose=AsyncMock())
+    pool = _PinnedRestClientPool(max_entries=2)
+    keys = [
+        _pinned_rest_pool_key("https://8.8.8.8/data", "8.8.8.8", "one.example.com", "one.example.com"),
+        _pinned_rest_pool_key("https://8.8.4.4/data", "8.8.4.4", "two.example.com", "two.example.com"),
+        _pinned_rest_pool_key("https://1.1.1.1/data", "1.1.1.1", "three.example.com", "three.example.com"),
+    ]
+
+    with patch("mcpgateway.services.tool_service._build_pinned_rest_http_client", side_effect=[first_client, lru_client, new_client]) as build_client:
+        first_entry = await pool.acquire(keys[0])
+        await pool.release(first_entry)
+        lru_entry = await pool.acquire(keys[1])
+        await pool.release(lru_entry)
+        reused_first_entry = await pool.acquire(keys[0])
+        await pool.release(reused_first_entry)
+        new_entry = await pool.acquire(keys[2])
+        await pool.release(new_entry)
+        await asyncio.sleep(0)
+
+    assert reused_first_entry is first_entry
+    assert build_client.call_count == 3
+    first_client.aclose.assert_not_awaited()
+    lru_client.aclose.assert_awaited_once()
+    await pool.close()
+    first_client.aclose.assert_awaited_once()
+    new_client.aclose.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_pinned_rest_pool_shutdown_retires_borrower_and_rejects_new_acquires():
+    """Shutdown closes a borrowed client on release and cannot be reopened by a race."""
+    client = SimpleNamespace(aclose=AsyncMock())
+    pool = _PinnedRestClientPool(max_entries=1)
+    key = _pinned_rest_pool_key("https://8.8.8.8/data", "8.8.8.8", "api.example.com", "api.example.com")
+
+    with patch("mcpgateway.services.tool_service._build_pinned_rest_http_client", return_value=client):
+        entry = await pool.acquire(key)
+        await pool.close()
+        client.aclose.assert_not_awaited()
+        with pytest.raises(RuntimeError, match="pool is closed"):
+            await pool.acquire(key)
+        await pool.release(entry)
+
+    client.aclose.assert_awaited_once()
+    with pytest.raises(RuntimeError, match="released more than once"):
+        await pool.release(entry)
 
 
 def test_sync_meta_traceparent_updates_existing_value_from_outbound_header():
@@ -191,8 +347,10 @@ def mock_fresh_db_session():
 def reset_tool_lookup_cache():
     """Clear tool lookup cache between tests to avoid cross-test pollution."""
     tool_lookup_cache.invalidate_all_local()
+    tool_result_cache.invalidate_all_local()
     yield
     tool_lookup_cache.invalidate_all_local()
+    tool_result_cache.invalidate_all_local()
 
 
 @pytest.fixture
@@ -1634,7 +1792,9 @@ class TestToolService:
         tool_service._notify_tool_deleted = AsyncMock()
 
         # Call method
-        await tool_service.delete_tool(test_db, 1)
+        result_cache = AsyncMock()
+        with patch("mcpgateway.services.tool_service._get_tool_result_cache", return_value=result_cache):
+            await tool_service.delete_tool(test_db, 1)
 
         # Verify DB operations
         test_db.get.assert_called_once_with(DbTool, 1)
@@ -1644,6 +1804,7 @@ class TestToolService:
 
         # Verify notification
         tool_service._notify_tool_deleted.assert_called_once()
+        result_cache.invalidate_tool.assert_awaited_once_with(str(mock_tool.id))
 
     @pytest.mark.asyncio
     async def test_delete_tool_purge_metrics(self, tool_service, mock_tool, test_db):
@@ -1971,7 +2132,9 @@ class TestToolService:
         )
 
         # Call method
-        result = await tool_service.update_tool(test_db, 1, tool_update)
+        result_cache = AsyncMock()
+        with patch("mcpgateway.services.tool_service._get_tool_result_cache", return_value=result_cache):
+            result = await tool_service.update_tool(test_db, 1, tool_update)
 
         # Verify DB operations
         test_db.get.assert_called_once_with(DbTool, 1)
@@ -1986,6 +2149,7 @@ class TestToolService:
 
         # Verify notification
         tool_service._notify_tool_updated.assert_called_once()
+        result_cache.invalidate_tool.assert_awaited_once_with(str(mock_tool.id))
 
         # Verify result
         assert result == tool_read
@@ -2401,6 +2565,8 @@ class TestToolService:
             headers={"Content-Type": "application/json", "Host": "api.example.com:8443"},
             extensions={"sni_hostname": "api.example.com"},
         )
+        pinned_client.aclose.assert_not_awaited()
+        await tool_service._pinned_rest_client_pool.close()
         pinned_client.aclose.assert_awaited_once()
         tool_service._http_client.request.assert_not_called()
 
@@ -2444,6 +2610,8 @@ class TestToolService:
             headers={**mock_tool.headers, "Host": "api.example.com"},
             extensions={"sni_hostname": "api.example.com"},
         )
+        pinned_client.aclose.assert_not_awaited()
+        await tool_service._pinned_rest_client_pool.close()
         pinned_client.aclose.assert_awaited_once()
         tool_service._http_client.get.assert_not_called()
 
@@ -2452,14 +2620,22 @@ class TestToolService:
         assert _pin_url_to_resolved_ip("https://api.example.com:8443/path?sig=abc", "2001:4860:4860::8888") == "https://[2001:4860:4860::8888]:8443/path?sig=abc"
 
     @pytest.mark.asyncio
-    async def test_build_pinned_rest_http_client_disables_connection_reuse(self):
-        """Pinned REST calls use an isolated client with keepalive disabled."""
+    async def test_build_pinned_rest_http_client_uses_bounded_keepalive_without_cookies(self):
+        """Pinned REST clients reuse connections but never persist cookies."""
         client = _build_pinned_rest_http_client()
         try:
             limits = client.client_args["limits"]
-            assert limits.max_connections == 1
-            assert limits.max_keepalive_connections == 0
-            assert client.client_args["cookies"] == {}
+            assert limits.max_connections == settings.mcpgateway_rest_client_pool_max_connections
+            assert limits.max_keepalive_connections == settings.mcpgateway_rest_client_pool_max_keepalive_connections
+            assert client.client_args["trust_env"] is False
+
+            response = httpx.Response(
+                200,
+                headers={"Set-Cookie": "upstream_session=secret; Path=/; HttpOnly"},
+                request=httpx.Request("GET", "https://8.8.8.8/data", headers={"Host": "api.example.com"}),
+            )
+            client.client.cookies.extract_cookies(response)
+            assert len(client.client.cookies) == 0
         finally:
             await client.aclose()
 
@@ -2508,6 +2684,8 @@ class TestToolService:
             headers={"X-Custom": "custom-value", "Host": "upload.example.com"},
             extensions={"sni_hostname": "upload.example.com"},
         )
+        pinned_client.aclose.assert_not_awaited()
+        await tool_service._pinned_rest_client_pool.close()
         pinned_client.aclose.assert_awaited_once()
         tool_service._http_client.request.assert_not_called()
 
@@ -3034,7 +3212,7 @@ class TestToolService:
             assert call_args[0][1] == "grpc-svc-123"  # service_id (positional arg 1)
             assert call_args[0][2] == "test.Service.Method"  # method_name (positional arg 2)
             assert call_args[0][3] == {"input": "value"}  # request_data (positional arg 3)
-            assert call_args.kwargs["timeout"] == 12.5
+            assert 12.4 < call_args.kwargs["timeout"] <= 12.5
 
             # Verify the result is properly JSON-serialized
             assert result.content[0].type == "text"
@@ -4247,8 +4425,8 @@ class TestToolService:
         # Reset all metrics
         await tool_service.reset_metrics(test_db)
 
-        # Verify DB operations (raw + hourly rollups)
-        assert test_db.execute.call_count == 2
+        # Verify DB operations (raw + hourly + daily rollups)
+        assert test_db.execute.call_count == 3
         test_db.commit.assert_called_once()
 
         # Reset metrics for specific tool
@@ -4257,8 +4435,8 @@ class TestToolService:
 
         await tool_service.reset_metrics(test_db, tool_id=1)
 
-        # Verify DB operations with tool_id (raw + hourly rollups)
-        assert test_db.execute.call_count == 2
+        # Verify DB operations with tool_id (raw + hourly + daily rollups)
+        assert test_db.execute.call_count == 3
         test_db.commit.assert_called_once()
 
     async def test_record_tool_metric(self, tool_service, mock_tool):
@@ -7964,6 +8142,7 @@ class TestToolServiceHelpers:
             original_description="desc",
             integration_type="http",
             request_type="http",
+            timeout_ms=12500,
             headers=None,
             input_schema=None,
             output_schema={"type": "object"},
@@ -8015,6 +8194,7 @@ class TestToolServiceHelpers:
 
         assert payload["status"] == "active"
         assert payload["tool"]["headers"] == {}
+        assert payload["tool"]["timeout_ms"] == 12500
         assert payload["tool"]["input_schema"]["type"] == "object"
         assert payload["tool"]["query_mapping"] == {}
         assert payload["tool"]["header_mapping"] == {}
@@ -11290,6 +11470,82 @@ class TestGrpcToolInvocation:
 
         assert response.is_error is not True
         assert "ok" in response.content[0].text
+
+    @pytest.mark.asyncio
+    async def test_invoke_grpc_tool_result_cache_short_circuits_upstream(self, tool_service, test_db, mock_grpc_tool, mock_global_config_obj, monkeypatch):
+        """An opted-in read-only cache hit must not invoke the gRPC upstream twice."""
+        mock_grpc_tool.annotations = {
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "x-contextforge-result-cache": {"enabled": True, "ttlSeconds": 30},
+        }
+        mock_grpc_tool.version = 1
+        mock_grpc_tool.query_mapping = None
+        mock_grpc_tool.header_mapping = None
+        mock_grpc_tool.timeout_ms = None
+        mock_grpc_tool.sql_table_id = None
+        mock_grpc_tool.source_operation = None
+        setup_db_execute_mock(test_db, mock_grpc_tool, mock_global_config_obj)
+
+        monkeypatch.setattr(tool_result_cache, "_enabled", True)
+        monkeypatch.setattr(tool_result_cache, "_l2_enabled", False)
+        tool_result_cache.invalidate_all_local()
+
+        with patch("mcpgateway.services.tool_service.fresh_db_session") as mock_fresh_db, patch("mcpgateway.services.grpc_service.GrpcService") as mock_grpc_cls:
+            mock_grpc_manager = AsyncMock()
+            mock_grpc_manager.invoke_method = AsyncMock(return_value={"status": "ok", "value": 42})
+            mock_grpc_cls.return_value = mock_grpc_manager
+            mock_fresh_db.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_fresh_db.return_value.__exit__ = MagicMock(return_value=False)
+
+            first = await tool_service.invoke_tool(test_db, "test.Svc.DoStuff", {"key": "val"}, request_headers=None, user_email="alice@example.com")
+            second = await tool_service.invoke_tool(test_db, "test.Svc.DoStuff", {"key": "val"}, request_headers=None, user_email="alice@example.com")
+
+        assert mock_grpc_manager.invoke_method.await_count == 1
+        assert first.meta[RESULT_CACHE_META_KEY]["hit"] is False
+        assert second.meta[RESULT_CACHE_META_KEY]["hit"] is True
+        assert second.content[0].text == first.content[0].text
+
+    @pytest.mark.asyncio
+    async def test_sql_result_cache_bypasses_failed_generation_read_then_recovers(self, tool_service, test_db, mock_grpc_tool, mock_global_config_obj, monkeypatch):
+        """A Redis generation-read failure must bypass both cache lookup and fill."""
+        mock_grpc_tool.integration_type = "SQL"
+        mock_grpc_tool.request_type = "POST"
+        mock_grpc_tool.sql_table_id = "table-1"
+        mock_grpc_tool.source_operation = "query"
+        mock_grpc_tool.annotations = {
+            "readOnlyHint": True,
+            "destructiveHint": False,
+            "x-contextforge-result-cache": {"enabled": True, "ttlSeconds": 30},
+        }
+        mock_grpc_tool.version = 1
+        mock_grpc_tool.query_mapping = None
+        mock_grpc_tool.header_mapping = None
+        mock_grpc_tool.timeout_ms = None
+        setup_db_execute_mock(test_db, mock_grpc_tool, mock_global_config_obj)
+
+        monkeypatch.setattr(tool_result_cache, "_enabled", True)
+        monkeypatch.setattr(tool_result_cache, "_l2_enabled", False)
+        tool_result_cache.invalidate_all_local()
+        generation_suffix = AsyncMock(side_effect=[None, ":sqlgen:stable", ":sqlgen:stable"])
+        monkeypatch.setattr(tool_result_cache, "sql_generation_key_suffix", generation_suffix)
+        monkeypatch.setattr(SQLDataService, "cache_dependency_table_ids", MagicMock(return_value=("table-1",)))
+        execute = MagicMock(return_value={"items": [{"id": 1}], "count": 1})
+        monkeypatch.setattr(SQLDataService, "execute", execute)
+
+        with patch("mcpgateway.services.tool_service.fresh_db_session") as mock_fresh_db:
+            mock_fresh_db.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_fresh_db.return_value.__exit__ = MagicMock(return_value=False)
+
+            first = await tool_service.invoke_tool(test_db, mock_grpc_tool.name, {}, request_headers=None, user_email="alice@example.com")
+            second = await tool_service.invoke_tool(test_db, mock_grpc_tool.name, {}, request_headers=None, user_email="alice@example.com")
+            third = await tool_service.invoke_tool(test_db, mock_grpc_tool.name, {}, request_headers=None, user_email="alice@example.com")
+
+        assert execute.call_count == 2
+        assert generation_suffix.await_count == 3
+        assert first.meta is None or RESULT_CACHE_META_KEY not in first.meta
+        assert second.meta[RESULT_CACHE_META_KEY]["hit"] is False
+        assert third.meta[RESULT_CACHE_META_KEY]["hit"] is True
 
     @pytest.mark.asyncio
     async def test_invoke_grpc_tool_error(self, tool_service, test_db, mock_grpc_tool, mock_global_config_obj):

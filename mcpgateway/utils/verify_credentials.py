@@ -2288,6 +2288,12 @@ async def build_external_identity(provider: SSOProvider, verified_claims: dict, 
         "iss": verified_claims.get("iss"),
         "auth_provider": provider_id,
     }
+    # Keep signature-verified lifecycle claims so delayed work can recheck the
+    # same expiry and revocation identity as internal JWTs.
+    if "exp" in verified_claims:
+        payload["exp"] = verified_claims["exp"]
+    if isinstance(verified_claims.get("jti"), str) and verified_claims["jti"]:
+        payload["jti"] = verified_claims["jti"]
     teams = await resolve_session_teams(payload, email, db_user)
     payload["teams"] = teams
     payload["is_admin"] = is_admin

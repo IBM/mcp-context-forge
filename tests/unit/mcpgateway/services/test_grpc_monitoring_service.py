@@ -2,9 +2,13 @@
 """Tests for standards-based gRPC health monitoring."""
 
 # Standard
+import asyncio
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
+import os
+from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 # Third-Party
 from fastapi import HTTPException
@@ -19,7 +23,7 @@ from mcpgateway.db import GrpcService as DbGrpcService
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.routers import grpc_schema
 from mcpgateway.services import grpc_monitoring_service as module
-from mcpgateway.services.grpc_monitoring_service import GrpcMonitoringService
+from mcpgateway.services.grpc_monitoring_service import GrpcMonitoringService, GRPC_AVAILABLE
 
 
 async def test_health_samples_apply_failure_threshold_and_recover(test_db, monkeypatch):
@@ -127,7 +131,13 @@ def test_unimplemented_health_service_falls_back_to_channel_readiness(monkeypatc
 
 async def test_grpc_metrics_combines_closed_rollup_and_live_hour(test_db, monkeypatch):
     monkeypatch.setattr(settings, "mcpgateway_grpc_enabled", True)
-    service = DbGrpcService(name="metrics-service", slug="metrics-service", target="grpc.example.com:443", visibility="private")
+    service = DbGrpcService(
+        name="metrics-service",
+        slug="metrics-service",
+        target="grpc.example.com:443",
+        visibility="private",
+        owner_email="admin@example.com",
+    )
     test_db.add(service)
     test_db.flush()
     tool = DbTool(
@@ -208,28 +218,77 @@ def test_grpc_metrics_hides_private_service_outside_token_scope(test_db, monkeyp
         grpc_schema._require_service_access(request, {"email": "other@example.com"}, test_db, service.id)  # pylint: disable=protected-access
 
     assert exc_info.value.status_code == 404
+
+    # A public-only token suppresses private owner visibility by design.
+    with pytest.raises(HTTPException) as owner_public_only:
+        grpc_schema._require_service_access(request, {"email": "owner@example.com"}, test_db, service.id)  # pylint: disable=protected-access
+    assert owner_public_only.value.status_code == 404
+
+    # A team-scoped token may still owner-match a private service.
+    request.state.token_teams = ["team-a"]
     assert grpc_schema._require_service_access(request, {"email": "owner@example.com"}, test_db, service.id).id == service.id  # pylint: disable=protected-access
 
 # ============================================================================
-# New tests: channel pool, concurrency, availability, last_health_success
+# Channel pool, concurrency, availability, and last-health-success tests
 # ============================================================================
-
-import asyncio
-from datetime import datetime, timedelta, timezone
-from types import SimpleNamespace
-
-# Third-Party
-import pytest
-
-# First-Party
-from mcpgateway.db import GrpcHealthSample
-from mcpgateway.db import GrpcService as DbGrpcService
-from mcpgateway.services import grpc_monitoring_service as module
-from mcpgateway.services.grpc_monitoring_service import GrpcMonitoringService, GRPC_AVAILABLE
 
 
 class TestChannelReuse:
     """Tests for channel pooling."""
+
+    def test_mtls_health_channel_uses_client_chain_pair(self, monkeypatch, tmp_path):
+        cert_path = tmp_path / "client.pem"
+        key_path = tmp_path / "client.key"
+        cert_path.write_bytes(b"client-chain")
+        key_path.write_bytes(b"private-key")
+        fake_grpc = MagicMock()
+        fake_grpc.ssl_channel_credentials.return_value = "credentials"
+        monkeypatch.setattr(module, "grpc", fake_grpc)
+        monkeypatch.setattr(module, "_validate_grpc_target", lambda _target: None)
+        monkeypatch.setattr(module, "_validate_tls_path", lambda path, _label: Path(path))
+        service = SimpleNamespace(target="svc:443", tls_enabled=True, tls_cert_path=str(cert_path), tls_key_path=str(key_path))
+
+        GrpcMonitoringService._build_channel(service)  # pylint: disable=protected-access
+
+        fake_grpc.ssl_channel_credentials.assert_called_once_with(private_key=b"private-key", certificate_chain=b"client-chain")
+
+    def test_health_channel_rejects_key_without_certificate(self, monkeypatch, tmp_path):
+        key_path = tmp_path / "client.key"
+        key_path.write_bytes(b"private-key")
+        monkeypatch.setattr(module, "_validate_grpc_target", lambda _target: None)
+        service = SimpleNamespace(target="svc:443", tls_enabled=True, tls_cert_path=None, tls_key_path=str(key_path))
+
+        with pytest.raises(ValueError, match="requires a TLS certificate"):
+            GrpcMonitoringService._build_channel(service)  # pylint: disable=protected-access
+
+    def test_tls_path_is_validated_before_file_open(self, monkeypatch):
+        service = SimpleNamespace(target="svc:443", tls_enabled=True, tls_cert_path="/tmp/outside.pem", tls_key_path=None)
+        monkeypatch.setattr(module, "_validate_grpc_target", lambda _target: None)
+
+        def unexpected_open(*_args, **_kwargs):
+            raise AssertionError("unvalidated path was opened")
+
+        monkeypatch.setattr(module.os, "open", unexpected_open)
+
+        with pytest.raises(module.GrpcServiceError, match="outside allowed certificate directories"):
+            GrpcMonitoringService()._get_channel(service)  # pylint: disable=protected-access
+
+    def test_tls_reader_rejects_fifo_without_blocking(self, monkeypatch, tmp_path):
+        fifo_path = tmp_path / "certificate.pipe"
+        os.mkfifo(fifo_path)
+        monkeypatch.setattr(module, "_validate_tls_path", lambda _path, _label: fifo_path)
+
+        with pytest.raises(module.GrpcServiceError, match="must be a regular file"):
+            GrpcMonitoringService._read_tls_file(str(fifo_path), "TLS cert path")  # pylint: disable=protected-access
+
+    def test_tls_reader_rejects_oversized_file(self, monkeypatch, tmp_path):
+        cert_path = tmp_path / "oversized.pem"
+        cert_path.touch()
+        os.truncate(cert_path, module._TLS_MATERIAL_MAX_BYTES + 1)  # pylint: disable=protected-access
+        monkeypatch.setattr(module, "_validate_tls_path", lambda _path, _label: cert_path)
+
+        with pytest.raises(module.GrpcServiceError, match="exceeds"):
+            GrpcMonitoringService._read_tls_file(str(cert_path), "TLS cert path")  # pylint: disable=protected-access
 
     def test_same_target_reuses_channel(self, monkeypatch):
         """_get_channel returns the same channel for identical service configs."""
@@ -238,12 +297,14 @@ class TestChannelReuse:
 
         monitor = GrpcMonitoringService()
         build_count = [0]
+        monkeypatch.setattr(module, "_validate_grpc_target", lambda _target: None)
 
         class FakeChannel:
             def close(self):
                 pass
 
-        def fake_build(_service):
+        def fake_build(_service, _tls_material=None, *, target_validated=False):
+            assert target_validated is True
             build_count[0] += 1
             return FakeChannel()
 
@@ -271,6 +332,7 @@ class TestChannelReuse:
 
         monitor = GrpcMonitoringService()
         channels_built = []
+        monkeypatch.setattr(module, "_validate_grpc_target", lambda _target: None)
 
         class FakeChannel:
             def __init__(self, label):
@@ -279,7 +341,8 @@ class TestChannelReuse:
             def close(self):
                 pass
 
-        def fake_build(service):
+        def fake_build(service, _tls_material=None, *, target_validated=False):
+            assert target_validated is True
             ch = FakeChannel(service.target)
             channels_built.append(ch)
             return ch
@@ -339,6 +402,11 @@ class TestLastHealthSuccess:
         """check_service sets last_health_success when the check is healthy."""
         from contextlib import contextmanager
 
+        async def run_inline(function, *args, **kwargs):
+            return function(*args, **kwargs)
+
+        monkeypatch.setattr(module.asyncio, "to_thread", run_inline)
+
         service = DbGrpcService(
             name="success-tracker",
             slug="success-tracker",
@@ -389,6 +457,11 @@ class TestLastHealthSuccess:
     async def test_last_health_success_not_updated_on_failure(self, test_db, monkeypatch):
         """last_health_success is not overwritten by a failed check."""
         from contextlib import contextmanager
+
+        async def run_inline(function, *args, **kwargs):
+            return function(*args, **kwargs)
+
+        monkeypatch.setattr(module.asyncio, "to_thread", run_inline)
 
         initial_success = datetime(2024, 1, 15, 10, 0, tzinfo=timezone.utc)
         service = DbGrpcService(

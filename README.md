@@ -427,13 +427,13 @@ uvicorn mcpgateway.main:app --host 0.0.0.0 --port 4444 --workers 4
 
 ## 新增功能
 
-本仓库基于上游 ContextForge 增强的三大功能模块：**gRPC 增强（Schema 服务与健康监控）**、**受管外部 SQL 数据 API**、以及**统一 API 调试平台**。三者默认**关闭**（失败安全），需显式开启。
+本仓库基于上游 ContextForge 增强的三大功能模块：**gRPC 增强（Schema 服务与健康监控）**、**受管外部 SQL 数据 API**、以及**统一 API 调试平台**。源码安全兜底默认关闭这些实验功能；本项目的内网发行镜像、Compose 和 Helm 配置会显式启用 gRPC，SQL 与统一 API 调试平台仍需显式开启。
 
 ### gRPC Schema 服务与健康监控
 
 | 环境变量 | 说明 | 默认 |
 |----------|------|------|
-| `MCPGATEWAY_GRPC_ENABLED` | 启用 gRPC 转 MCP 翻译（实验特性） | `false` |
+| `MCPGATEWAY_GRPC_ENABLED` | 启用 gRPC 转 MCP 翻译（实验特性） | 源码 `false`；发行镜像 `true` |
 | `MCPGATEWAY_GRPC_REFLECTION_ENABLED` | 默认启用 gRPC server reflection | `true` |
 | `MCPGATEWAY_GRPC_HEALTH_ENABLED` | 启用 gRPC 健康监控 | `true` |
 | `MCPGATEWAY_GRPC_HEALTH_INTERVAL` | 健康检查间隔（秒，10–3600） | `60` |

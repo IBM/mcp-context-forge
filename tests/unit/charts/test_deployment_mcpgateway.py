@@ -85,6 +85,14 @@ def _gateway_env(manifests: list[dict[str, Any]]) -> dict[str, str]:
     return out
 
 
+def _gateway_config(manifests: list[dict[str, Any]]) -> dict[str, str]:
+    """Return the rendered gateway ConfigMap data."""
+    for manifest in manifests:
+        if manifest.get("kind") == "ConfigMap" and manifest.get("metadata", {}).get("name", "").endswith("-gateway-config"):
+            return {str(key): str(value) for key, value in (manifest.get("data", {}) or {}).items()}
+    raise AssertionError("gateway ConfigMap not found in rendered chart")
+
+
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
@@ -119,3 +127,16 @@ def test_skip_migrations_default_matches_migration_enabled_default():
     assert env.get("MCPGATEWAY_SKIP_MIGRATIONS") == "true", (
         "Default chart values render to migration.enabled=true, so " "MCPGATEWAY_SKIP_MIGRATIONS must default to 'true'. Got: " f"{env.get('MCPGATEWAY_SKIP_MIGRATIONS')!r}"
     )
+
+
+def test_default_chart_enables_intranet_mcp_and_grpc_backends():
+    """The project release profile must allow trusted in-cluster backends."""
+    config = _gateway_config(_helm_template())
+    expected = {
+        "SSRF_PROTECTION_ENABLED": "true",
+        "SSRF_ALLOW_LOCALHOST": "true",
+        "SSRF_ALLOW_PRIVATE_NETWORKS": "true",
+        "SSRF_DNS_FAIL_CLOSED": "true",
+        "MCPGATEWAY_GRPC_ENABLED": "true",
+    }
+    assert {name: config.get(name) for name in expected} == expected

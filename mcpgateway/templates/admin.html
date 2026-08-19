@@ -463,9 +463,7 @@
               <span x-show="!sidebarCollapsed">Observability</span>
             </a>
             {% endif %}
-          </div>
-          {% endif %}
-
+            {% if 'metrics' not in hidden_sections %}
             <a href="#api-metrics" id="tab-api-metrics"
                class="sidebar-link group flex items-center px-3 py-2 text-sm font-medium rounded-lg transition-colors"
                :class="{ 'justify-center': sidebarCollapsed }"
@@ -473,6 +471,10 @@
               <span class="sidebar-icon text-lg" :class="{ 'mr-3': !sidebarCollapsed }">📈</span>
               <span x-show="!sidebarCollapsed">API Metrics</span>
             </a>
+            {% endif %}
+          </div>
+          {% endif %}
+
           {% if 'plugins' not in hidden_sections %}
           <!-- Extensions Section -->
           <div class="sidebar-section mt-4" x-show="!sidebarCollapsed">
@@ -1494,6 +1496,7 @@
         </div>
       </div>
       {% endif %}
+      {% if 'metrics' not in hidden_sections %}
       <div id="api-metrics-panel" class="tab-panel hidden"
            hx-get="{{ root_path }}/admin/api-metrics/partial"
            hx-trigger="intersect once"
@@ -1506,6 +1509,7 @@
           <span class="ml-3 text-gray-600 dark:text-gray-400">Loading API metrics...</span>
         </div>
       </div>
+      {% endif %}
         {% if llmchat_enabled %}
         <!-- LLM Chat Panel -->
         <div id="llm-chat-panel" class="tab-panel hidden">
@@ -7876,6 +7880,49 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
           <div id="grpcFormError" class="mt-4 text-red-600 dark:text-red-400 hidden"></div>
         </div>
 
+        {% if sql_api_enabled and user_permissions.can_read_sql_tables and user_permissions.can_read_sql_sources %}
+        <!-- gRPC API to data lineage -->
+        <section class="bg-white shadow rounded-lg p-6 mb-6 dark:bg-gray-800" aria-labelledby="grpc-lineage-heading">
+          <div class="flex flex-wrap items-start justify-between gap-3 mb-4">
+            <div>
+              <h3 id="grpc-lineage-heading" class="text-lg font-medium text-gray-900 dark:text-gray-200">
+                gRPC API → Data Lineage
+              </h3>
+              <p class="mt-1 text-sm text-gray-600 dark:text-gray-400">
+                Follow each discovered gRPC method through its generated Tool, virtual MCP endpoint, catalog binding, SQL source, and table.
+              </p>
+            </div>
+            <button id="grpc-lineage-refresh" type="button" class="px-3 py-2 text-sm font-medium rounded-md bg-indigo-600 text-white hover:bg-indigo-700">
+              Refresh lineage
+            </button>
+          </div>
+          <div class="grid grid-cols-1 gap-3 md:grid-cols-3 mb-4">
+            <label class="text-sm text-gray-700 dark:text-gray-300">
+              Service
+              <select id="grpc-lineage-service" class="mt-1 w-full px-3 py-2 rounded-md border border-gray-300 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200">
+                <option value="">All visible services</option>
+                {% for service in grpc_services %}
+                <option value="{{ service.id }}">{{ service.name }}</option>
+                {% endfor %}
+              </select>
+            </label>
+            <label class="text-sm text-gray-700 dark:text-gray-300">
+              Method or entity
+              <input id="grpc-lineage-search" type="search" placeholder="Filter paths" class="mt-1 w-full px-3 py-2 rounded-md border border-gray-300 dark:border-gray-700 dark:bg-gray-900 dark:text-gray-200" />
+            </label>
+            <label class="mt-6 inline-flex items-center gap-2 text-sm text-gray-700 dark:text-gray-300">
+              <input id="grpc-lineage-include-unbound" type="checkbox" checked class="h-4 w-4 rounded border-gray-300 text-indigo-600" />
+              Show incomplete paths
+            </label>
+          </div>
+          <div id="grpc-lineage-summary" class="mb-3 text-sm text-gray-600 dark:text-gray-400" aria-live="polite">
+            Loading lineage…
+          </div>
+          <div id="grpc-lineage-list" class="space-y-3" aria-live="polite"></div>
+          <p id="grpc-lineage-semantics" class="mt-4 text-xs text-gray-500 dark:text-gray-400"></p>
+        </section>
+        {% endif %}
+
         <!-- Registered gRPC Services List -->
         <div class="bg-white shadow rounded-lg p-6 dark:bg-gray-800">
           <h3 class="text-lg font-medium text-gray-900 dark:text-gray-200 mb-4">
@@ -7955,6 +8002,11 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                     >
                       View Methods
                     </button>
+                    {% if sql_api_enabled and user_permissions.can_read_sql_tables and user_permissions.can_read_sql_sources %}
+                    <button type="button" class="grpc-lineage-open px-3 py-1 text-sm font-medium bg-cyan-100 text-cyan-800 rounded-md hover:bg-cyan-200" data-service-id="{{ service.id }}">
+                      View Data Lineage
+                    </button>
+                    {% endif %}
                     <button type="button" class="grpc-health-check px-3 py-1 text-sm font-medium bg-green-100 text-green-800 rounded-md hover:bg-green-200" data-service-id="{{ service.id }}">Check Health</button>
                     <form class="grpc-schema-upload space-y-1" data-service-id="{{ service.id }}">
                       <input type="file" name="artifact" required accept=".proto,.zip,.protoset,.pb,.bin" class="block w-48 text-xs text-gray-600 dark:text-gray-300" />

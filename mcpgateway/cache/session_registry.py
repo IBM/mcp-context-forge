@@ -67,7 +67,7 @@ from mcpgateway.auth_context import get_user_email
 from mcpgateway.common.models import Implementation, InitializeResult, ServerCapabilities
 from mcpgateway.config import settings
 from mcpgateway.db import get_db, SessionMessageRecord, SessionRecord
-from mcpgateway.services import PromptService, ResourceService, ToolService
+from mcpgateway.services import PromptService, ResourceService
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.transports import SSETransport
 from mcpgateway.utils.create_jwt_token import create_jwt_token
@@ -81,7 +81,6 @@ from mcpgateway.validation.jsonrpc import JSONRPCError
 logging_service: LoggingService = LoggingService()
 logger = logging_service.get_logger(__name__)
 
-tool_service: ToolService = ToolService()
 resource_service: ResourceService = ResourceService()
 prompt_service: PromptService = PromptService()
 

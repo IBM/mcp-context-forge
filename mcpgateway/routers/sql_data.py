@@ -12,12 +12,12 @@ from typing import Any, Optional
 # Third-Party
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 import orjson
-from sqlalchemy import delete, or_, select
+from sqlalchemy import delete, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, aliased
 
 # First-Party
-from mcpgateway.auth_context import get_token_teams_from_request, get_user_email
+from mcpgateway.auth_context import get_scoped_resource_access_context, get_user_email
 from mcpgateway.config import settings
 from mcpgateway.db import APISQLTableBinding, EmailTeam, get_db, SQLDataSource, SQLRelation
 from mcpgateway.db import SQLTable as DbSQLTable
@@ -35,12 +35,12 @@ from mcpgateway.schemas import (
     SQLTableRead,
     SQLTableUpdate,
 )
+from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.sql_data_service import SQLDataError, SQLDataForbiddenError, SQLDataNotFoundError, SQLDataService
-from mcpgateway.services.tool_service import ToolNotFoundError, ToolService
+from mcpgateway.services.tool_service import tool_service, ToolNotFoundError
 
 admin_router = APIRouter(prefix="/sql", tags=["SQL Data Catalog"])
 data_router = APIRouter(prefix="/api/v1/data", tags=["SQL Data API"])
-tool_service = ToolService()
 
 
 def _require_sql_enabled() -> None:
@@ -55,36 +55,36 @@ def _require_platform_admin(user: Any) -> None:
         raise HTTPException(status_code=403, detail="Platform administrator access required")
 
 
-def _scoped_tables(request: Request, user: Any, statement):
+def _scoped_model(request: Request, user: Any, statement, model: Any, db: Session):
+    """Apply the canonical Layer-1 visibility contract to one ORM model."""
+    user_email, token_teams = get_scoped_resource_access_context(request, user)
+    return BaseService._apply_visibility_scope(  # pylint: disable=protected-access
+        statement,
+        model,
+        user_email,
+        token_teams,
+        token_teams or [],
+        db,
+    )
+
+
+def _scoped_tables(request: Request, user: Any, statement, db: Session, model: Any = DbSQLTable):
     """Apply canonical token visibility semantics to SQL catalog reads."""
-    token_teams = get_token_teams_from_request(request)
-    if token_teams is None:
-        return statement
-    email = get_user_email(user)
-    clauses = [DbSQLTable.visibility == "public", DbSQLTable.owner_email == email]
-    if token_teams:
-        clauses.append(DbSQLTable.team_id.in_(token_teams))
-    return statement.where(or_(*clauses))
+    return _scoped_model(request, user, statement, model, db)
 
 
-def _scoped_tools(request: Request, user: Any, statement):
+def _scoped_tools(request: Request, user: Any, statement, db: Session, model: Any = DbTool):
     """Apply the same token visibility boundary before resolving a generated SQL tool."""
-    token_teams = get_token_teams_from_request(request)
-    if token_teams is None:
-        return statement
-    clauses = [DbTool.visibility == "public", DbTool.owner_email == get_user_email(user)]
-    if token_teams:
-        clauses.append(DbTool.team_id.in_(token_teams))
-    return statement.where(or_(*clauses))
+    return _scoped_model(request, user, statement, model, db)
 
 
-def _ensure_table_manage_scope(request: Request, table: DbSQLTable) -> None:
-    """Reject table mutations outside the caller's resolved token teams."""
-    token_teams = get_token_teams_from_request(request)
-    if token_teams is None:
-        return
-    if not table.team_id or table.team_id not in token_teams:
-        raise HTTPException(status_code=404, detail="SQL table not found")
+def _ensure_table_manage_scope(request: Request, user: Any, db: Session, table_id: str, *, detail: str = "SQL table not found") -> DbSQLTable:
+    """Resolve a mutation target through canonical Layer-1 visibility."""
+    statement = _scoped_tables(request, user, select(DbSQLTable).where(DbSQLTable.id == table_id), db)
+    table = db.execute(statement).scalar_one_or_none()
+    if table is None:
+        raise HTTPException(status_code=404, detail=detail)
+    return table
 
 
 def _translate_sql_error(exc: SQLDataError) -> HTTPException:
@@ -127,7 +127,18 @@ async def update_source(source_id: str, data: SQLDataSourceUpdate, db: Session =
     _require_sql_enabled()
     _require_platform_admin(user)
     try:
-        return SQLDataService.update_source(db, source_id, data)
+        table_ids = tuple(db.execute(select(DbSQLTable.id).where(DbSQLTable.source_id == source_id)).scalars())
+        tool_references = SQLDataService.tool_cache_references(db, table_ids)
+        source = SQLDataService.update_source(
+            db,
+            source_id,
+            data,
+            defer_result_cache_invalidation=True,
+            defer_tool_cache_invalidation=True,
+        )
+        tool_references = tuple({*tool_references, *SQLDataService.tool_cache_references(db, table_ids)})
+        await SQLDataService.invalidate_catalog_caches_async(table_ids, tool_references)
+        return source
     except SQLDataError as exc:
         raise _translate_sql_error(exc) from exc
 
@@ -139,7 +150,15 @@ async def delete_source(source_id: str, db: Session = Depends(get_db), user=Depe
     _require_sql_enabled()
     _require_platform_admin(user)
     try:
-        SQLDataService.delete_source(db, source_id)
+        table_ids = tuple(db.execute(select(DbSQLTable.id).where(DbSQLTable.source_id == source_id)).scalars())
+        tool_references = SQLDataService.tool_cache_references(db, table_ids)
+        SQLDataService.delete_source(
+            db,
+            source_id,
+            defer_result_cache_invalidation=True,
+            defer_tool_cache_invalidation=True,
+        )
+        await SQLDataService.invalidate_catalog_caches_async(table_ids, tool_references)
     except SQLDataError as exc:
         raise _translate_sql_error(exc) from exc
 
@@ -163,7 +182,18 @@ async def discover_source(source_id: str, db: Session = Depends(get_db), user=De
     _require_sql_enabled()
     _require_platform_admin(user)
     try:
-        return SQLDataService.discover(db, source_id)
+        prior_table_ids = tuple(db.execute(select(DbSQLTable.id).where(DbSQLTable.source_id == source_id)).scalars())
+        tool_references = SQLDataService.tool_cache_references(db, prior_table_ids)
+        tables = SQLDataService.discover(
+            db,
+            source_id,
+            defer_result_cache_invalidation=True,
+            defer_tool_cache_invalidation=True,
+        )
+        table_ids = tuple(table.id for table in tables)
+        tool_references = tuple({*tool_references, *SQLDataService.tool_cache_references(db, table_ids)})
+        await SQLDataService.invalidate_catalog_caches_async(table_ids, tool_references)
+        return tables
     except SQLDataError as exc:
         raise _translate_sql_error(exc) from exc
 
@@ -176,7 +206,7 @@ async def list_tables(request: Request, source_id: Optional[str] = None, db: Ses
     statement = select(DbSQLTable).order_by(DbSQLTable.schema_name, DbSQLTable.table_name)
     if source_id:
         statement = statement.where(DbSQLTable.source_id == source_id)
-    statement = _scoped_tables(request, user, statement)
+    statement = _scoped_tables(request, user, statement, db)
     return list(db.execute(statement).scalars())
 
 
@@ -185,11 +215,8 @@ async def list_tables(request: Request, source_id: Optional[str] = None, db: Ses
 async def update_table(table_id: str, data: SQLTableUpdate, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)):
     """Assign and expose a table operation-by-operation."""
     _require_sql_enabled()
-    table = db.get(DbSQLTable, table_id)
-    if table is None:
-        raise HTTPException(status_code=404, detail="SQL table not found")
-    _ensure_table_manage_scope(request, table)
-    token_teams = get_token_teams_from_request(request)
+    table = _ensure_table_manage_scope(request, user, db, table_id)
+    _scoped_user_email, token_teams = get_scoped_resource_access_context(request, user)
     is_platform_admin = bool(isinstance(user, dict) and user.get("is_admin"))
     if "team_id" in data.model_fields_set and not is_platform_admin and data.team_id != table.team_id:
         raise HTTPException(status_code=403, detail="Only a platform administrator can reassign a SQL table")
@@ -206,7 +233,18 @@ async def update_table(table_id: str, data: SQLTableUpdate, request: Request, db
     if data.visibility == "public" and not settings.allow_public_visibility:
         raise HTTPException(status_code=403, detail="Public visibility is disabled")
     try:
-        return SQLDataService.update_table(db, table_id, data, get_user_email(user))
+        tool_references = SQLDataService.tool_cache_references(db, (table_id,))
+        table = SQLDataService.update_table(
+            db,
+            table_id,
+            data,
+            get_user_email(user),
+            defer_result_cache_invalidation=True,
+            defer_tool_cache_invalidation=True,
+        )
+        tool_references = tuple({*tool_references, *SQLDataService.tool_cache_references(db, (table.id,))})
+        await SQLDataService.invalidate_catalog_caches_async((table.id,), tool_references)
+        return table
     except SQLDataError as exc:
         raise _translate_sql_error(exc) from exc
 
@@ -214,10 +252,18 @@ async def update_table(table_id: str, data: SQLTableUpdate, request: Request, db
 @admin_router.get("/relations", response_model=list[SQLRelationRead])
 @require_permission("sql.tables.read", allow_admin_bypass=False)
 async def list_relations(request: Request, table_id: Optional[str] = None, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)):
-    """List relations whose source table is visible."""
+    """List relations whose source and target tables are both visible."""
     _require_sql_enabled()
-    visible = _scoped_tables(request, user, select(DbSQLTable.id)).subquery()
-    statement = select(SQLRelation).where(SQLRelation.source_table_id.in_(select(visible.c.id))).order_by(SQLRelation.name)
+    source_alias = aliased(DbSQLTable, name="relation_source")
+    target_alias = aliased(DbSQLTable, name="relation_target")
+    statement = (
+        select(SQLRelation)
+        .join(source_alias, source_alias.id == SQLRelation.source_table_id)
+        .join(target_alias, target_alias.id == SQLRelation.target_table_id)
+        .order_by(SQLRelation.name)
+    )
+    statement = _scoped_tables(request, user, statement, db, source_alias)
+    statement = _scoped_tables(request, user, statement, db, target_alias)
     if table_id:
         statement = statement.where(SQLRelation.source_table_id == table_id)
     return list(db.execute(statement).scalars())
@@ -233,12 +279,11 @@ async def update_relation(  # pylint: disable=unused-argument
     relation = db.get(SQLRelation, relation_id)
     if relation is None:
         raise HTTPException(status_code=404, detail="SQL relation not found")
-    table = db.get(DbSQLTable, relation.source_table_id)
-    if table is None:
-        raise HTTPException(status_code=404, detail="SQL relation not found")
-    _ensure_table_manage_scope(request, table)
+    _ensure_table_manage_scope(request, user, db, relation.source_table_id, detail="SQL relation not found")
+    _ensure_table_manage_scope(request, user, db, relation.target_table_id, detail="SQL relation not found")
     relation.enabled = data.enabled
     db.commit()
+    await SQLDataService.invalidate_result_cache_tables_async((relation.source_table_id, relation.target_table_id))
     db.refresh(relation)
     return relation
 
@@ -258,14 +303,14 @@ async def list_bindings(
     tool_alias = aliased(DbTool, name="btool")
     table_alias = aliased(DbSQLTable, name="btable")
     source_alias = aliased(SQLDataSource, name="bsource")
-    visible = _scoped_tables(request, user, select(DbSQLTable.id)).subquery()
     statement = (
         select(APISQLTableBinding, tool_alias, table_alias, source_alias)
         .join(tool_alias, tool_alias.id == APISQLTableBinding.tool_id)
         .join(table_alias, table_alias.id == APISQLTableBinding.sql_table_id)
         .join(source_alias, source_alias.id == table_alias.source_id)
-        .where(APISQLTableBinding.sql_table_id.in_(select(visible.c.id)))
     )
+    statement = _scoped_tables(request, user, statement, db, table_alias)
+    statement = _scoped_tools(request, user, statement, db, tool_alias)
     if tool_id:
         statement = statement.where(APISQLTableBinding.tool_id == tool_id)
     if sql_table_id:
@@ -302,17 +347,14 @@ async def list_bindings(
 async def create_binding(data: APISQLTableBindingCreate, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)):
     """Create a manual impact binding without granting database access."""
     _require_sql_enabled()
-    table = db.get(DbSQLTable, data.sql_table_id)
-    if table is None:
-        raise HTTPException(status_code=404, detail="SQL table not found")
-    _ensure_table_manage_scope(request, table)
-    token_teams = get_token_teams_from_request(request)
+    _ensure_table_manage_scope(request, user, db, data.sql_table_id)
+    scoped_user_email, token_teams = get_scoped_resource_access_context(request, user)
     is_admin_bypass = bool(isinstance(user, dict) and user.get("is_admin") and token_teams is None)
     try:
         await tool_service.get_tool(
             db,
             data.tool_id,
-            requesting_user_email=None if is_admin_bypass else get_user_email(user),
+            requesting_user_email=scoped_user_email,
             requesting_user_is_admin=is_admin_bypass,
             token_teams=token_teams,
         )
@@ -335,10 +377,7 @@ async def delete_binding(binding_id: str, request: Request, db: Session = Depend
     binding = db.get(APISQLTableBinding, binding_id)
     if binding is None or binding.binding_type != "manual":
         raise HTTPException(status_code=404, detail="Manual binding not found")
-    table = db.get(DbSQLTable, binding.sql_table_id)
-    if table is None:
-        raise HTTPException(status_code=404, detail="Manual binding not found")
-    _ensure_table_manage_scope(request, table)
+    _ensure_table_manage_scope(request, user, db, binding.sql_table_id, detail="Manual binding not found")
     db.execute(delete(APISQLTableBinding).where(APISQLTableBinding.id == binding_id))
     db.commit()
 
@@ -369,18 +408,20 @@ async def _invoke_data_tool(request: Request, db: Session, user: Any, source_slu
             DbTool.enabled.is_(True),
         )
     )
-    statement = _scoped_tools(request, user, statement)
+    statement = _scoped_tools(request, user, statement, db)
+    statement = _scoped_tables(request, user, statement, db)
     tool = db.execute(statement).scalar_one_or_none()
     if tool is None:
         raise HTTPException(status_code=404, detail="SQL data endpoint not found")
+    scoped_user_email, token_teams = get_scoped_resource_access_context(request, user)
     result = await tool_service.invoke_tool(
         db,
         tool.name,
         arguments,
         request_headers=dict(request.headers),
         app_user_email=get_user_email(user),
-        user_email=get_user_email(user),
-        token_teams=get_token_teams_from_request(request),
+        user_email=scoped_user_email,
+        token_teams=token_teams,
     )
     if result.is_error:
         message = result.content[0].text if result.content and hasattr(result.content[0], "text") else "SQL operation failed"

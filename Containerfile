@@ -173,6 +173,7 @@ WORKDIR /build
 COPY --chown=1001:1001 package.json package-lock.json* ./
 COPY --chown=1001:1001 tailwind.config.js postcss.config.js ./
 COPY --chown=1001:1001 mcpgateway/templates/ ./mcpgateway/templates/
+COPY --chown=1001:1001 mcpgateway/admin_ui/ ./mcpgateway/admin_ui/
 COPY --chown=1001:1001 mcpgateway/static/ ./mcpgateway/static/
 
 # Install dependencies and build CSS
@@ -422,6 +423,11 @@ ENV PATH="/app/.venv/bin:${PATH}" \
     PYTHONPATH="/app" \
     CONTEXTFORGE_ENABLE_RUST_BUILD=${ENABLE_RUST} \
     CONTEXTFORGE_ENABLE_RUST_MCP_RMCP_BUILD=${ENABLE_RUST_MCP_RMCP} \
+    SSRF_PROTECTION_ENABLED=true \
+    SSRF_ALLOW_LOCALHOST=true \
+    SSRF_ALLOW_PRIVATE_NETWORKS=true \
+    SSRF_DNS_FAIL_CLOSED=true \
+    MCPGATEWAY_GRPC_ENABLED=true \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONHASHSEED=random \

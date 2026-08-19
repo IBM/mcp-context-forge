@@ -17,7 +17,6 @@ from unittest.mock import ANY, AsyncMock, MagicMock, patch
 import pytest
 
 # First-Party
-from mcpgateway.common.models import Tool as PydanticTool
 from mcpgateway.services.prompt_service import PromptService
 from mcpgateway.services.resource_service import ResourceService
 from mcpgateway.services.tool_service import ToolService
@@ -262,6 +261,17 @@ class TestToolServiceMetricsException:
             patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer),
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
             patch("mcpgateway.services.tool_service.logger") as mock_logger,
+            patch(
+                "mcpgateway.services.tool_service.SecurityValidator.validate_url_for_connection_pinning",
+                new=AsyncMock(
+                    return_value={
+                        "validated_url": "http://test.example.com/tool",
+                        "hostname": "test.example.com",
+                        "original_authority": "test.example.com",
+                        "resolved_ip": "93.184.216.34",
+                    }
+                ),
+            ),
             patch("mcpgateway.services.tool_service._build_pinned_rest_http_client", return_value=pinned_client),
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
@@ -277,4 +287,6 @@ class TestToolServiceMetricsException:
 
         # Verify tool invocation still succeeded
         assert result is not None
+        pinned_client.aclose.assert_not_awaited()
+        await tool_service._pinned_rest_client_pool.close()
         pinned_client.aclose.assert_awaited_once()

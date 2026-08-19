@@ -1694,6 +1694,12 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             logger.info("🔒 Header Passthrough: DISABLED")
 
         await tool_service.initialize()
+        if settings.mcpgateway_async_jobs_enabled:
+            # First-Party
+            from mcpgateway.services.async_job_service import get_async_job_service  # pylint: disable=import-outside-toplevel
+
+            await get_async_job_service().start(tool_service)
+            logger.info("Process-local async job service initialized")
         await resource_service.initialize()
         await prompt_service.initialize()
         await gateway_service.initialize()
@@ -1980,6 +1986,13 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         if settings.mcpgateway_tool_cancellation_enabled:
             services_to_shutdown.insert(0, cancellation_service)  # Shutdown early to stop accepting new cancellations
 
+        if settings.mcpgateway_async_jobs_enabled:
+            # Stop job acceptance and active invocations before ToolService.
+            # First-Party
+            from mcpgateway.services.async_job_service import get_async_job_service  # pylint: disable=import-outside-toplevel
+
+            services_to_shutdown.insert(0, get_async_job_service())
+
         if a2a_service:
             services_to_shutdown.insert(4, a2a_service)  # Insert after export_service
 
@@ -2035,6 +2048,25 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             services_to_shutdown.insert(3, dataplane_publisher_service)
 
         await shutdown_services(services_to_shutdown)
+
+        # External SQL engines own process-local connection pools rather than
+        # request-scoped resources. Drain them after callers have stopped and
+        # before the remaining shared transports are torn down.
+        try:
+            # First-Party
+            from mcpgateway.services.sql_data_service import SQLDataService  # pylint: disable=import-outside-toplevel
+
+            SQLDataService.clear_engine_cache()
+        except Exception as e:  # pragma: no cover - defensive shutdown logging
+            logger.debug(f"Error clearing external SQL engine cache: {e}")
+
+        try:
+            # First-Party
+            from mcpgateway.services.grpc_runtime_cache import runtime_cache  # pylint: disable=import-outside-toplevel
+
+            runtime_cache.clear()
+        except Exception as e:  # pragma: no cover - defensive shutdown logging
+            logger.debug(f"Error clearing gRPC runtime cache: {e}")
 
         # Stop the primary-worker elector (releases the redis lease if held).
         if settings.primary_worker_election_backend == "redis":

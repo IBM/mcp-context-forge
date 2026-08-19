@@ -94,7 +94,8 @@ from mcpgateway.services.oauth_manager import OAuthEnforcementUnavailableError, 
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.prompt_service import PromptService
 from mcpgateway.services.resource_service import ResourceError, ResourceNotFoundError, ResourceService
-from mcpgateway.services.tool_service import ToolService
+from mcpgateway.services.tool_service import tool_service
+from mcpgateway.services.upstream_session_registry import downstream_session_id_from_request_context, get_upstream_session_registry, RegistryNotInitializedError, TransportType
 from mcpgateway.transports.context import UserContext
 from mcpgateway.transports.redis_event_store import RedisEventStore
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access, extract_gateway_id_from_headers, GATEWAY_ID_HEADER
@@ -301,7 +302,6 @@ _REJECT = object()
 _MCPGATEWAY_CONTEXT_KEY = "_mcpgateway_context"
 
 # Initialize ToolService, PromptService, ResourceService, CompletionService and MCP Server
-tool_service: ToolService = ToolService()
 prompt_service: PromptService = PromptService()
 resource_service: ResourceService = ResourceService()
 completion_service: CompletionService = CompletionService()
@@ -1451,6 +1451,39 @@ async def _close_streamable_http_session(
     return HTTP_200_OK, {"jsonrpc": "2.0", "result": {}}
 
 
+@asynccontextmanager
+async def _direct_proxy_client_session(gateway: Any, headers: dict[str, str], request_headers: Optional[dict[str, str]] = None) -> AsyncGenerator[ClientSession, None]:
+    """Yield a pooled direct-proxy session when a downstream session is available."""
+    lowered_headers = {str(key).lower(): value for key, value in (request_headers or {}).items()}
+    downstream_session_id = lowered_headers.get("x-mcp-session-id") or lowered_headers.get("mcp-session-id") or downstream_session_id_from_request_context()
+    registry = None
+    if downstream_session_id:
+        try:
+            registry = get_upstream_session_registry()
+        except RegistryNotInitializedError:
+            registry = None
+
+    direct_timeout = float(settings.mcpgateway_direct_proxy_timeout)
+    # One budget covers registry acquire or connect, initialize, and the RPC
+    # performed by the caller while this context manager is yielded.
+    with anyio.fail_after(direct_timeout):
+        if registry is not None and downstream_session_id:
+            async with registry.acquire(
+                downstream_session_id=downstream_session_id,
+                gateway_id=str(gateway.id),
+                url=gateway.url,
+                headers=headers,
+                transport_type=TransportType.STREAMABLE_HTTP,
+            ) as upstream:
+                yield upstream.session
+            return
+
+        async with streamablehttp_client(url=gateway.url, headers=headers, timeout=direct_timeout) as (read_stream, write_stream, _get_session_id):
+            async with ClientSession(read_stream, write_stream) as session:
+                await session.initialize()
+                yield session
+
+
 async def _proxy_list_tools_to_gateway(
     gateway: Any,
     request_headers: dict,
@@ -1493,14 +1526,10 @@ async def _proxy_list_tools_to_gateway(
         if identity:
             headers.update(build_identity_headers(identity, gateway))
 
-        # Use MCP SDK to connect and list tools
-        async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
-            async with ClientSession(read_stream, write_stream) as session:
-                await session.initialize()
-
-                # List tools with _meta forwarded
-                result = await session.list_tools(params=_build_paginated_params(meta))
-                return filter_model_visible_tools(result.tools)
+        async with _direct_proxy_client_session(gateway, headers, request_headers) as session:
+            # List tools with _meta forwarded
+            result = await session.list_tools(params=_build_paginated_params(meta))
+            return filter_model_visible_tools(result.tools)
 
     except Exception as e:
         logger.exception("Error proxying tools/list to gateway %s: %s", gateway.id, e)
@@ -1549,16 +1578,12 @@ async def _proxy_list_resources_to_gateway(gateway: Any, request_headers: dict, 
             # CWE-532: log only key names, never values which may carry PII/tokens
             logger.debug("Forwarding _meta to remote gateway (keys: %s)", sorted(meta.keys()) if isinstance(meta, dict) else type(meta).__name__)
 
-        # Use MCP SDK to connect and list resources
-        async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
-            async with ClientSession(read_stream, write_stream) as session:
-                await session.initialize()
+        async with _direct_proxy_client_session(gateway, headers, request_headers) as session:
+            # List resources with _meta forwarded
+            result = await session.list_resources(params=_build_paginated_params(meta))
 
-                # List resources with _meta forwarded
-                result = await session.list_resources(params=_build_paginated_params(meta))
-
-                logger.info("Received %s resources from gateway %s", len(result.resources), gateway.id)
-                return result.resources
+            logger.info("Received %s resources from gateway %s", len(result.resources), gateway.id)
+            return result.resources
 
     except Exception as e:
         logger.exception("Error proxying resources/list to gateway %s: %s", gateway.id, e)
@@ -1615,31 +1640,27 @@ async def _proxy_read_resource_to_gateway(gateway: Any, resource_uri: str, user_
             # CWE-532: log only key names, never values which may carry PII/tokens
             logger.debug("Forwarding _meta to remote gateway (keys: %s)", sorted(meta.keys()) if isinstance(meta, dict) else type(meta).__name__)
 
-        # Use MCP SDK to connect and read resource
-        async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
-            async with ClientSession(read_stream, write_stream) as session:
-                await session.initialize()
+        async with _direct_proxy_client_session(gateway, headers, request_headers) as session:
+            # Prepare request params with _meta if provided
+            if meta:
+                # Create params and inject _meta
+                # by_alias=True ensures the alias "_meta" key is written so
+                # model_validate resolves it correctly (fixes CWE-20 silent drop)
+                request_params = ReadResourceRequestParams(uri=resource_uri)
+                request_params_dict = request_params.model_dump(by_alias=True)
+                request_params_dict["_meta"] = meta
 
-                # Prepare request params with _meta if provided
-                if meta:
-                    # Create params and inject _meta
-                    # by_alias=True ensures the alias "_meta" key is written so
-                    # model_validate resolves it correctly (fixes CWE-20 silent drop)
-                    request_params = ReadResourceRequestParams(uri=resource_uri)
-                    request_params_dict = request_params.model_dump(by_alias=True)
-                    request_params_dict["_meta"] = meta
+                # Send request with _meta
+                result = await session.send_request(
+                    types.ClientRequest(ReadResourceRequest(params=ReadResourceRequestParams.model_validate(request_params_dict))),
+                    types.ReadResourceResult,
+                )
+            else:
+                # No _meta, use simple read_resource
+                result = await session.read_resource(uri=resource_uri)
 
-                    # Send request with _meta
-                    result = await session.send_request(
-                        types.ClientRequest(ReadResourceRequest(params=ReadResourceRequestParams.model_validate(request_params_dict))),
-                        types.ReadResourceResult,
-                    )
-                else:
-                    # No _meta, use simple read_resource
-                    result = await session.read_resource(uri=resource_uri)
-
-                logger.info("Received %s content items from gateway %s for resource %s", len(result.contents), gateway.id, resource_uri)
-                return result.contents
+            logger.info("Received %s content items from gateway %s for resource %s", len(result.contents), gateway.id, resource_uri)
+            return result.contents
 
     except Exception as e:
         logger.exception("Error proxying resources/read to gateway %s for resource %s: %s", gateway.id, resource_uri, e)

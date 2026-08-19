@@ -805,10 +805,13 @@ mcpContextForge:
     SSRF_ALLOW_PRIVATE_NETWORKS: "true"
 ```
 
-!!! note "Local Development Defaults"
-    The repository's `.env.example` and `docker-compose.yml` intentionally set local-friendly overrides
-    (`SSRF_ALLOW_LOCALHOST=true`, `SSRF_ALLOW_PRIVATE_NETWORKS=true`, `SSRF_DNS_FAIL_CLOSED=false`) so bundled test services can register without extra setup.
-    Keep production deployments on strict SSRF values unless you explicitly need internal destination access.
+!!! note "Intranet Release Defaults"
+    The repository's release image, `.env.example`, Docker Compose profiles, and Helm chart explicitly set
+    `SSRF_PROTECTION_ENABLED=true`, `SSRF_ALLOW_LOCALHOST=true`, `SSRF_ALLOW_PRIVATE_NETWORKS=true`,
+    `SSRF_DNS_FAIL_CLOSED=true`, and `MCPGATEWAY_GRPC_ENABLED=true`. This permits trusted internal MCP and
+    gRPC backends while retaining DNS failure checks and the platform's hard SSRF blocklists. Externally
+    exposed or segmented deployments should set `SSRF_ALLOW_LOCALHOST=false` and
+    `SSRF_ALLOW_PRIVATE_NETWORKS=false`, then configure a specific `SSRF_ALLOWED_NETWORKS` CIDR allowlist.
 
 ### Content Security - Size Limits
 

@@ -408,30 +408,23 @@ mcpContextForge:
     # IDENTITY_CLAIMS_SECRET: ""               # signing secret (uses JWT_SECRET_KEY if unset)
 
     # ─ SSRF Protection (Server-Side Request Forgery) ─
-    # Prevents gateway from accessing internal resources or cloud metadata services.
-    # Default: strict mode (external endpoints only).
-    # Cloud metadata endpoints (169.254.169.254, etc.) are ALWAYS blocked by default.
+    # Intranet release default: allow loopback and RFC 1918 MCP backends while
+    # retaining SSRF validation, fail-closed DNS, and cloud metadata blocklists.
     # Helm testing registration uses private in-cluster Service DNS names by default:
     #   fast-time: http://<release>-mcp-fast-time-server:80/http
     #   fast-test: http://<release>-fast-test-server:8880/mcp
-    # With strict defaults, those targets are rejected with HTTP 422 during gateway registration.
     SSRF_PROTECTION_ENABLED: "true"            # master switch for SSRF protection
-    SSRF_ALLOW_LOCALHOST: "false"              # block localhost/loopback by default
-    SSRF_ALLOW_PRIVATE_NETWORKS: "false"       # block RFC 1918 private IPs by default
+    SSRF_ALLOW_LOCALHOST: "true"               # allow localhost/loopback backends
+    SSRF_ALLOW_PRIVATE_NETWORKS: "true"        # allow RFC 1918 private backends
     SSRF_ALLOWED_NETWORKS: "[]"                # optional CIDR allowlist when private networks are blocked
     SSRF_DNS_FAIL_CLOSED: "true"               # reject on DNS failure by default
     # SSRF_BLOCKED_NETWORKS: '["169.254.169.254/32","169.254.169.123/32","fd00::1/128","169.254.0.0/16","fe80::/10"]'
     # SSRF_BLOCKED_HOSTS: '["metadata.google.internal","metadata.internal"]'
-    # For controlled internal access:
+    # For stricter deployments, disable broad private access and allow only known CIDRs:
     # SSRF_ALLOW_LOCALHOST: "false"
     # SSRF_ALLOW_PRIVATE_NETWORKS: "false"
     # SSRF_DNS_FAIL_CLOSED: "true"
     # SSRF_ALLOWED_NETWORKS: '["10.20.0.0/16"]'
-    # For local benchmark/testing profiles (broadest allowance):
-    # SSRF_ALLOW_PRIVATE_NETWORKS: "true"
-    # For safer Kubernetes setup, keep private networks blocked and allow only Service CIDRs:
-    # SSRF_ALLOW_PRIVATE_NETWORKS: "false"
-    # SSRF_ALLOWED_NETWORKS: '["10.96.0.0/12"]' # example only, adjust to your cluster CIDR
 
     # ─ Content Security - Size Limits ─
     # Maximum content sizes (bytes) to prevent DoS via oversized uploads.
@@ -743,9 +736,9 @@ mcpContextForge:
     # Tool cancellation
     MCPGATEWAY_TOOL_CANCELLATION_ENABLED: "true" # enable tool cancellation
 
-    # gRPC support (experimental — disabled by default)
-    MCPGATEWAY_GRPC_ENABLED: "false" # enable gRPC
-    # Uncomment when enabling gRPC:
+    # gRPC support (enabled for the intranet release profile)
+    MCPGATEWAY_GRPC_ENABLED: "true" # enable gRPC
+    # Optional gRPC overrides:
     # MCPGATEWAY_GRPC_TIMEOUT: "30"
     # MCPGATEWAY_GRPC_MAX_MESSAGE_SIZE: "4194304"
     # MCPGATEWAY_GRPC_REFLECTION_ENABLED: "false"  # keep false in production (exposes service definitions)

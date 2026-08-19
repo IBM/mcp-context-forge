@@ -658,14 +658,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             from mcpgateway.services.resource_service import ResourceService
 
             resource_service = ResourceService()
-        try:
-            # First-Party
-            from mcpgateway.services.tool_service import tool_service
-        except ImportError:
-            # First-Party
-            from mcpgateway.services.tool_service import ToolService
+        # First-Party
+        from mcpgateway.services.tool_service import get_tool_service
 
-            tool_service = ToolService()
+        tool_service = get_tool_service()
 
         self.tool_service = tool_service
         self.prompt_service = prompt_service

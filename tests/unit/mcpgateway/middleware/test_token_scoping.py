@@ -1235,6 +1235,7 @@ class TestTokenScopingMiddleware:
 
         # Other admin route groups
         assert middleware._check_permission_restrictions("/admin/events", "GET", [Permissions.ADMIN_EVENTS]) == True
+        assert middleware._check_permission_restrictions("/admin/api-metrics/partial", "GET", [Permissions.ADMIN_SYSTEM_CONFIG])
         assert middleware._check_permission_restrictions("/admin/grpc", "GET", [Permissions.ADMIN_GRPC]) == True
         assert middleware._check_permission_restrictions("/admin/grpc/service-1/metrics", "GET", [Permissions.METRICS_READ]) == True
         assert middleware._check_permission_restrictions("/admin/grpc/service-1/metrics", "GET", [Permissions.ADMIN_GRPC]) == False
