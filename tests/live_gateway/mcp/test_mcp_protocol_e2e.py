@@ -35,6 +35,7 @@ import subprocess
 import sys
 from datetime import timedelta
 from typing import Any
+import uuid
 
 # Third-Party
 import httpx
@@ -460,6 +461,133 @@ class TestRawJsonRpc:
             payload = bad.text
             assert "error" in payload.lower() or bad.status_code >= 400, f"expected error for invalid method, got {bad.status_code}: {payload}"
             print(f"    -> invalid method -> status={bad.status_code}")
+
+    def test_mcp_apps_capability_advertised_when_enabled(self, jwt_token: str) -> None:
+        """initialize response includes the MCP Apps capability when the feature is on.
+
+        Self-skips when ``MCPGATEWAY_MCP_APPS_ENABLED=false`` on the target gateway
+        so this test is a no-op on stacks that haven't opted in.
+        """
+        headers = {
+            "authorization": f"Bearer {jwt_token}",
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-03-26",
+        }
+        with httpx.Client(timeout=10.0) as http:
+            resp = http.post(f"{BASE_URL}/mcp/", headers=headers, json=build_initialize(1))
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        caps = body.get("result", {}).get("capabilities", {})
+        extensions = caps.get("extensions", {})
+        if "io.modelcontextprotocol/ui" not in extensions:
+            pytest.skip("MCP Apps not enabled on this gateway (MCPGATEWAY_MCP_APPS_ENABLED=false)")
+        ui_cap = extensions["io.modelcontextprotocol/ui"]
+        assert ui_cap.get("version"), f"MCP Apps capability missing version: {ui_cap}"
+        assert "bridge" in ui_cap, f"MCP Apps capability missing bridge key: {ui_cap}"
+        assert "resources" in ui_cap, f"MCP Apps capability missing resources key: {ui_cap}"
+        bridge_methods = ui_cap["bridge"].get("methods", [])
+        assert "tools/call" in bridge_methods, f"bridge.methods missing tools/call: {bridge_methods}"
+        assert "ping" in bridge_methods, f"bridge.methods missing ping: {bridge_methods}"
+        print(f"    -> MCP Apps capability: version={ui_cap['version']} bridge_methods={bridge_methods}")
+
+    def test_appbridge_session_lifecycle(self, jwt_token: str) -> None:
+        """AppBridge session create + ping round-trip against a live gateway.
+
+        Registers a minimal ``ui://`` resource and virtual server, creates an
+        AppBridge session, and pings through it.  All fixtures are cleaned up
+        regardless of outcome.  Self-skips when MCP Apps are disabled on the
+        target gateway.
+        """
+        mcp_headers = {
+            "authorization": f"Bearer {jwt_token}",
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-03-26",
+        }
+        with httpx.Client(timeout=10.0) as http:
+            # Step 1: initialize — confirm MCP Apps enabled and capture mcp-session-id.
+            init_resp = http.post(f"{BASE_URL}/mcp/", headers=mcp_headers, json=build_initialize(1))
+            assert init_resp.status_code == 200, init_resp.text
+            body = init_resp.json()
+            caps = body.get("result", {}).get("capabilities", {})
+            if "io.modelcontextprotocol/ui" not in caps.get("extensions", {}):
+                pytest.skip("MCP Apps not enabled on this gateway (MCPGATEWAY_MCP_APPS_ENABLED=false)")
+            mcp_session_id = init_resp.headers.get("mcp-session-id")
+            assert mcp_session_id, "initialize did not return an mcp-session-id header"
+
+            rest_headers = {
+                "authorization": f"Bearer {jwt_token}",
+                "content-type": "application/json",
+                "mcp-session-id": mcp_session_id,
+            }
+
+            # Step 2: register a throwaway virtual server.
+            uid = uuid.uuid4().hex[:8]
+            server_resp = http.post(
+                f"{BASE_URL}/servers",
+                headers=rest_headers,
+                json={"server": {"name": f"mcp-apps-e2e-{uid}", "description": "MCP Apps E2E test server"}},
+            )
+            assert server_resp.status_code in (200, 201), f"Failed to create server: {server_resp.text}"
+            server_id = server_resp.json()["id"]
+
+            resource_id = None
+            try:
+                # Step 3: register a minimal ui:// resource bound to that server.
+                resource_resp = http.post(
+                    f"{BASE_URL}/resources",
+                    headers=rest_headers,
+                    json={
+                        "name": f"mcp-apps-res-{uid}",
+                        "uri": f"ui://mcp-apps-e2e-{uid}/index",
+                        "mime_type": "text/html;profile=mcp-app",
+                        "content": "<html><body>hello</body></html>",
+                        "associated_servers": [server_id],
+                        "extensionMetadata": {
+                            "io.modelcontextprotocol/ui": {
+                                "csp": {"connectDomains": ["https://example.com"]},
+                                "sandbox": ["allow-scripts"],
+                            }
+                        },
+                    },
+                )
+                assert resource_resp.status_code in (200, 201), f"Failed to create ui:// resource: {resource_resp.text}"
+                resource_id = resource_resp.json()["id"]
+
+                # Step 4: create an AppBridge session for that resource.
+                session_resp = http.post(
+                    f"{BASE_URL}/appbridge/sessions",
+                    headers=rest_headers,
+                    json={
+                        "resourceUri": f"ui://mcp-apps-e2e-{uid}/index",
+                        "serverId": server_id,
+                    },
+                )
+                assert session_resp.status_code == 200, f"AppBridge session create failed: {session_resp.text}"
+                session_body = session_resp.json()
+                app_session_id = session_body["appSessionId"]
+                assert session_body.get("resourceUri", "").startswith("ui://"), f"unexpected resourceUri: {session_body}"
+                assert session_body.get("expiresAt"), f"AppBridge session missing expiresAt: {session_body}"
+                print(f"    -> AppBridge session created: {app_session_id}")
+
+                # Step 5: ping through the session — the simplest AppBridge RPC method.
+                ping_resp = http.post(
+                    f"{BASE_URL}/appbridge/sessions/{app_session_id}/rpc",
+                    headers=rest_headers,
+                    json={"jsonrpc": "2.0", "id": 1, "method": "ping", "params": {}},
+                )
+                assert ping_resp.status_code == 200, f"AppBridge ping failed: {ping_resp.text}"
+                ping_body = ping_resp.json()
+                assert "result" in ping_body, f"AppBridge ping returned no result: {ping_body}"
+                assert "error" not in ping_body, f"AppBridge ping returned error: {ping_body}"
+                print(f"    -> AppBridge ping OK: {ping_body['result']}")
+
+            finally:
+                # Best-effort cleanup so the gateway isn't left with test artifacts.
+                if resource_id:
+                    http.delete(f"{BASE_URL}/resources/{resource_id}", headers=rest_headers)
+                http.delete(f"{BASE_URL}/servers/{server_id}", headers=rest_headers)
 
 
 @skip_no_rust_mcp_gateway
