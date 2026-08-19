@@ -46,7 +46,7 @@ from mcpgateway.db import EmailTeamMember as DbEmailTeamMember
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import get_for_update
 from mcpgateway.db import Prompt as DbPrompt
-from mcpgateway.db import PromptMetric, PromptMetricsHourly, server_prompt_association
+from mcpgateway.db import PromptMetric, PromptMetricsDaily, PromptMetricsHourly, server_prompt_association
 from mcpgateway.observability import create_span, set_span_attribute, set_span_error
 from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
 from mcpgateway.schemas import PromptCreate, PromptMetrics, PromptRead, PromptUpdate, TopPerformer
@@ -3254,6 +3254,7 @@ class PromptService(BaseService):
 
         db.execute(delete(PromptMetric))
         db.execute(delete(PromptMetricsHourly))
+        db.execute(delete(PromptMetricsDaily))
         db.commit()
 
         # Invalidate metrics cache

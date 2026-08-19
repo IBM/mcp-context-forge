@@ -320,6 +320,21 @@ OBSERVABILITY_ENABLED=false
 OTEL_EXPORTER_OTLP_ENDPOINT=          # .env.example sets http://localhost:4317
 ```
 
+### Container Login Cookie Guardrail
+
+- For every new container image or deployment, verify the browser-facing protocol together with `ENVIRONMENT` and `SECURE_COOKIES` before testing the bootstrap administrator's first login.
+- HTTP-only development/test deployments must use `ENVIRONMENT=development` and `SECURE_COOKIES=false`. Otherwise the JWT cookie carries `Secure`, the browser does not return it over HTTP, and the mandatory first-login password change redirects back to `/admin/login?error=session_expired`.
+- Production deployments must use HTTPS. `ENVIRONMENT=production` intentionally forces Secure cookies even when `SECURE_COOKIES=false`; do not weaken this behavior to support production over HTTP.
+- Validate the complete flow after each image refresh: `/admin/login` -> `/admin/change-password-required` -> `/admin`, and confirm the password-change request includes the `jwt_token` cookie.
+- A console 404 from `loadSSOProviders` / `/auth/sso/providers` is a separate SSO-disabled probe and must not be mistaken for the missing-cookie failure above.
+
+### Intranet Release Defaults
+
+- This project's release images and bundled deployment manifests target trusted internal networks where MCP and gRPC backends commonly use loopback, RFC 1918, or in-cluster addresses.
+- Keep these explicit defaults aligned across `Containerfile`, `.env.example`, `docker-compose.yml`, `docker-compose-embedded.yml`, and `charts/mcp-stack/values.yaml`: `SSRF_PROTECTION_ENABLED=true`, `SSRF_ALLOW_LOCALHOST=true`, `SSRF_ALLOW_PRIVATE_NETWORKS=true`, `SSRF_DNS_FAIL_CLOSED=true`, and `MCPGATEWAY_GRPC_ENABLED=true`.
+- Do not disable the SSRF master switch or weaken the blocked-network/blocked-host protections. The intranet policy permits private destinations while retaining cloud-metadata, link-local, reserved, multicast, and DNS failure safeguards.
+- Keep the strict application defaults in `mcpgateway/config.py` as the safe fallback for library and non-release use. Release packaging and deployment layers apply the intranet overrides explicitly. A stricter deployment must be able to override them with `SSRF_ALLOW_LOCALHOST=false`, `SSRF_ALLOW_PRIVATE_NETWORKS=false`, and a narrow `SSRF_ALLOWED_NETWORKS` CIDR list.
+
 ## MCP Helpers
 
 ```bash

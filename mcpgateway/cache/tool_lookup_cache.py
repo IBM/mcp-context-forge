@@ -19,7 +19,7 @@ from dataclasses import dataclass
 import logging
 import threading
 import time
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Iterable, Optional, Sequence
 
 # Third-Party
 import orjson
@@ -338,6 +338,43 @@ class ToolLookupCache:
             await redis.publish("mcpgw:cache:invalidate", f"tool_lookup:{name}")
         except Exception as exc:
             logger.debug("ToolLookupCache Redis invalidate failed: %s", exc)
+
+    def invalidate_many_sync(self, tools: Sequence[tuple[str, Optional[str]]]) -> None:
+        """Synchronously invalidate tool lookups in both cache tiers."""
+        by_name = {str(name): str(gateway_id) if gateway_id else None for name, gateway_id in tools if name}
+        normalized = tuple(sorted(by_name.items()))
+        if not self._enabled or not normalized:
+            return
+        self.invalidate_many_local(name for name, _gateway_id in normalized)
+        if not self._l2_enabled:
+            return
+
+        # First-Party
+        from mcpgateway.utils.redis_client import create_redis_client_sync  # pylint: disable=import-outside-toplevel
+
+        redis = create_redis_client_sync()
+        if not redis:
+            return
+        try:
+            for name, gateway_id in normalized:
+                redis.delete(self._redis_key(name))
+                if gateway_id:
+                    redis.srem(self._gateway_set_key(gateway_id), name)
+                redis.publish("mcpgw:cache:invalidate", f"tool_lookup:{name}")
+        except Exception as exc:  # pragma: no cover - backend-specific failures
+            logger.debug("ToolLookupCache sync Redis invalidate failed: %s", exc)
+        finally:
+            try:
+                redis.close()
+            except Exception as exc:  # pragma: no cover - backend-specific failures
+                logger.debug("ToolLookupCache sync Redis close failed: %s", exc)
+
+    def invalidate_many_local(self, names: Iterable[str]) -> None:
+        """Immediately clear multiple process-local tool lookup entries."""
+        normalized = {str(name) for name in names if name}
+        with self._lock:
+            for name in normalized:
+                self._cache.pop(name, None)
 
     async def invalidate_gateway(self, gateway_id: str) -> None:
         """Invalidate all cached tools for a gateway.

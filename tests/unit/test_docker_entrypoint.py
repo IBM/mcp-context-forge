@@ -3,7 +3,7 @@
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 
-Direct unit tests for docker-entrypoint.sh plugin requirement reload logic.
+Direct unit tests for container release contracts and docker-entrypoint.sh.
 """
 
 # Future
@@ -16,6 +16,25 @@ import subprocess
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 ENTRYPOINT = REPO_ROOT / "docker-entrypoint.sh"
+INTRANET_RELEASE_DEFAULTS = {
+    "SSRF_PROTECTION_ENABLED": "true",
+    "SSRF_ALLOW_LOCALHOST": "true",
+    "SSRF_ALLOW_PRIVATE_NETWORKS": "true",
+    "SSRF_DNS_FAIL_CLOSED": "true",
+    "MCPGATEWAY_GRPC_ENABLED": "true",
+}
+
+
+def _read_active_env(path: Path) -> dict[str, str]:
+    """Return uncommented key/value assignments from an env file."""
+    values: dict[str, str] = {}
+    for line in path.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, value = stripped.split("=", 1)
+        values[key] = value
+    return values
 
 
 def _write_executable(path: Path, content: str) -> None:
@@ -69,6 +88,23 @@ source "{ENTRYPOINT}"
     )
 
 
+def test_intranet_release_defaults_are_baked_into_release_artifacts() -> None:
+    """Release packaging and deployment artifacts must retain intranet access."""
+    containerfile = (REPO_ROOT / "Containerfile").read_text(encoding="utf-8")
+    runtime_stage = containerfile.split("FROM ${UBI_MINIMAL} AS runtime", maxsplit=1)[1]
+    compose = (REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    embedded_compose = (REPO_ROOT / "docker-compose-embedded.yml").read_text(encoding="utf-8")
+    chart_values = (REPO_ROOT / "charts" / "mcp-stack" / "values.yaml").read_text(encoding="utf-8")
+    example_env = _read_active_env(REPO_ROOT / ".env.example")
+
+    for name, expected in INTRANET_RELEASE_DEFAULTS.items():
+        assert f"{name}={expected}" in runtime_stage
+        assert f"- {name}=${{{name}:-{expected}}}" in compose
+        assert f"- {name}=${{{name}:-{expected}}}" in embedded_compose
+        assert f'    {name}: "{expected}"' in chart_values
+        assert example_env.get(name) == expected
+
+
 def test_print_mcp_runtime_mode_warns_when_rust_enabled(tmp_path: Path) -> None:
     app_root = _make_app_root(tmp_path)
 
@@ -83,7 +119,6 @@ def test_print_mcp_runtime_mode_warns_when_rust_enabled(tmp_path: Path) -> None:
 
     assert result.returncode == 0
     assert "Rust MCP runtime sidecar is deprecated as of 2026-06-11 and will sunset on 2026-07-07" in result.stdout
-
 
 
 def test_install_plugin_requirements_refuses_path_outside_app_root(tmp_path: Path) -> None:

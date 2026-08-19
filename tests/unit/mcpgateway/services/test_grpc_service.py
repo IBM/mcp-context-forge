@@ -209,6 +209,27 @@ class TestGrpcService:
             assert next_cursor is None
             mock_team_instance.get_user_teams.assert_awaited_once_with("test@example.com")
 
+    async def test_list_services_uses_canonical_token_scope_without_db_team_expansion(self, service, mock_db, sample_db_service):
+        """A narrowed/public-only token must not be widened to all DB teams."""
+        sample_db_service.team_id = None
+        mock_db.commit = MagicMock()
+
+        with (
+            patch("mcpgateway.services.grpc_service.BaseService._apply_visibility_scope", side_effect=lambda statement, *_args, **_kwargs: statement) as apply_scope,
+            patch("mcpgateway.services.grpc_service.TeamManagementService") as team_service,
+            patch("mcpgateway.services.grpc_service.unified_paginate", new_callable=AsyncMock, return_value=([sample_db_service], None)),
+        ):
+            result, _next_cursor = await service.list_services(
+                mock_db,
+                include_inactive=False,
+                user_email="test@example.com",
+                token_teams=[],
+            )
+
+        assert len(result) == 1
+        assert apply_scope.call_args.kwargs["token_teams"] == []
+        team_service.assert_not_called()
+
     async def test_list_services_with_team_names(self, service, mock_db, sample_db_service):
         """Test listing services with team name resolution."""
         # Set up service with team_id
@@ -1031,9 +1052,11 @@ class TestGrpcService:
         mock_ep_instance.load_file_descriptors.assert_called_once()
         assert "_file_descriptors" not in mock_ep_instance._services
         mock_ep_instance.close.assert_not_called()
+
     @patch("mcpgateway.translate_grpc.GrpcEndpoint")
-    async def test_invoke_method_without_stored_descriptors(self, mock_endpoint_cls, service, mock_db, sample_db_service):
-        """Test invoke_method falls back to reflection when no stored descriptors."""
+    @patch("mcpgateway.services.grpc_service.runtime_cache")
+    async def test_invoke_method_without_stored_descriptors(self, mock_cache, mock_endpoint_cls, service, mock_db, sample_db_service):
+        """Test reflection uses a cached channel and a request-local descriptor pool."""
         sample_db_service.enabled = True
         sample_db_service.discovered_services = {
             "test.Svc": {
@@ -1048,6 +1071,13 @@ class TestGrpcService:
         sample_db_service.tls_key_path = None
         sample_db_service.grpc_metadata = {}
 
+        mock_entry = MagicMock()
+        mock_entry.channel = MagicMock()
+        mock_entry.pool = MagicMock()
+        mock_entry.method_classes = {}
+        mock_cache.key_for.return_value = "reflection-key"
+        mock_cache.acquire.return_value = mock_entry
+
         mock_db.execute.return_value.scalar_one_or_none.return_value = sample_db_service
 
         mock_ep_instance = AsyncMock()
@@ -1061,7 +1091,12 @@ class TestGrpcService:
         # Should have been created with reflection_enabled=True
         call_kwargs = mock_endpoint_cls.call_args[1]
         assert call_kwargs["reflection_enabled"] is True
-        mock_ep_instance.close.assert_called_once()
+        assert call_kwargs["channel"] is mock_entry.channel
+        assert call_kwargs["pool"] is None
+        assert call_kwargs["method_class_cache"] is None
+        assert call_kwargs["owns_channel"] is False
+        mock_cache.release.assert_called_once_with("reflection-key", mock_entry)
+        mock_ep_instance.close.assert_not_called()
 
     @patch("mcpgateway.services.grpc_service.grpc")
     @patch("mcpgateway.services.grpc_service.reflection_pb2_grpc")
@@ -1191,7 +1226,6 @@ class TestReflectionPublicationProtection:
     @pytest.mark.asyncio
     async def test_reflection_success_publishes_candidate_then_activates_and_syncs(self, test_db):
         """Non-empty reflection lands as candidate, then activates and syncs tools."""
-        from mcpgateway.services.grpc_schema_service import GrpcSchemaService
 
         service = DbGrpcService(name="prot-svc", slug="prot-svc", target="localhost:50051", discovery_mode="reflection")
         test_db.add(service)
@@ -1242,7 +1276,7 @@ class TestReflectionPublicationProtection:
 
         with patch("mcpgateway.services.grpc_service.grpc") as mock_grpc, patch(
             "mcpgateway.services.grpc_service.reflection_pb2_grpc"
-        ) as mock_pb2_grpc, patch("mcpgateway.services.grpc_service.reflection_pb2") as mock_pb2, patch.object(
+        ) as mock_pb2_grpc, patch("mcpgateway.services.grpc_service.reflection_pb2"), patch.object(
             GrpcService, "_sync_tools_from_reflection"
         ) as mock_sync:
             mock_stub = MagicMock()
@@ -2053,7 +2087,9 @@ class TestInvokeMethodFinallyClose:
             async def close(self):
                 self.close_called = True
 
-        with patch("mcpgateway.translate_grpc.GrpcEndpoint", CloseSentinelEndpoint):
+        # Exercise the endpoint-owned lifecycle. Cached endpoints borrow their
+        # channel and are released through GrpcRuntimeCache instead of close().
+        with patch("mcpgateway.translate_grpc.GrpcEndpoint", CloseSentinelEndpoint), patch("mcpgateway.services.grpc_service.settings.grpc_runtime_cache_enabled", False):
             with pytest.raises(GrpcServiceError):
                 await GrpcService().invoke_method(mock_db, "svc-1", "svc.Method", {})
 

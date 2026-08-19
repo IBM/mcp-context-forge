@@ -10,7 +10,7 @@
     </div>
     <div class="flex items-center space-x-3">
       <label class="text-sm text-gray-600 dark:text-gray-400">Time Range</label>
-      <select x-model="timeRange" @change="loadAll()"
+      <select x-model.number="timeRange" @change="loadAll()"
         class="rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 px-3 py-2 text-sm focus:ring-2 focus:ring-indigo-500">
         <option value="1">Last 1 hour</option>
         <option value="6">Last 6 hours</option>
@@ -106,8 +106,8 @@
                 <td class="px-4 py-3 text-sm text-right font-semibold text-red-600 dark:text-red-400" x-text="ep.error_count"></td>
                 <td class="px-4 py-3 text-sm text-right">
                   <span class="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium"
-                    :class="ep.error_rate > 50 ? bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400 : bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400"
-                    x-text="ep.error_rate + %"></span>
+                    :class="ep.error_rate > 50 ? 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400' : 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400'"
+                    x-text="ep.error_rate + '%'"></span>
                 </td>
               </tr>
             </template>
@@ -154,13 +154,13 @@
 </div>
 
 <script nonce="{{ csp_nonce(request) }}">
-function apiMetricsDashboard() {
+window.apiMetricsDashboard = function apiMetricsDashboard() {
   return {
     timeRange: 24,
     loading: false,
     error: null,
     stats: { total_traces: 0, success_count: 0, error_count: 0, avg_duration_ms: 0 },
-    percentileData: [],
+    percentileData: { timestamps: [], p50: [], p90: [], p95: [], p99: [] },
     topErrors: [],
     topSlow: [],
 
@@ -172,34 +172,33 @@ function apiMetricsDashboard() {
       this.loading = true;
       this.error = null;
       try {
+        const rootPath = window.ROOT_PATH || '';
         const [statsRes, pctRes, errRes, slowRes] = await Promise.all([
-          fetch(`${window.ROOT_PATH}/admin/observability/stats?hours=${this.timeRange}`),
-          fetch(`${window.ROOT_PATH}/admin/observability/metrics/percentiles?hours=${this.timeRange}&interval_minutes=${this.intervalForRange()}`),
-          fetch(`${window.ROOT_PATH}/admin/observability/metrics/top-errors?hours=${this.timeRange}&limit=10`),
-          fetch(`${window.ROOT_PATH}/admin/observability/metrics/top-slow?hours=${this.timeRange}&limit=10`),
+          fetch(`${rootPath}/admin/observability/stats?hours=${this.timeRange}`),
+          fetch(`${rootPath}/admin/observability/metrics/percentiles?hours=${this.timeRange}&interval_minutes=${this.intervalForRange()}`),
+          fetch(`${rootPath}/admin/observability/metrics/top-errors?hours=${this.timeRange}&limit=10`),
+          fetch(`${rootPath}/admin/observability/metrics/top-slow?hours=${this.timeRange}&limit=10`),
         ]);
 
-        if (!statsRes.ok) throw new Error(`Stats endpoint returned ${statsRes.status}`);
-        const statsData = await statsRes.json();
+        const responses = [
+          ['Stats', statsRes],
+          ['Percentiles', pctRes],
+          ['Top errors', errRes],
+          ['Top slow', slowRes],
+        ];
+        const failed = responses.find(([, response]) => !response.ok);
+        if (failed) {
+          throw new Error(`${failed[0]} endpoint returned ${failed[1].status}`);
+        }
+
+        const [statsData, pctData, errData, slowData] = await Promise.all(responses.map(([, response]) => response.json()));
         this.stats = statsData.stats || statsData;
-
-        if (pctRes.ok) {
-          const pctData = await pctRes.json();
-          this.percentileData = pctData.percentiles || pctData.data || [];
-        }
-
-        if (errRes.ok) {
-          const errData = await errRes.json();
-          this.topErrors = errData.endpoints || [];
-        }
-
-        if (slowRes.ok) {
-          const slowData = await slowRes.json();
-          this.topSlow = slowData.endpoints || [];
-        }
+        this.percentileData = pctData;
+        this.topErrors = errData.endpoints || [];
+        this.topSlow = slowData.endpoints || [];
       } catch (e) {
-        console.error(API Metrics Dashboard error:, e);
-        this.error = Failed to load metrics:  + e.message;
+        console.error('API Metrics Dashboard error:', e);
+        this.error = 'Failed to load metrics: ' + e.message;
       } finally {
         this.loading = false;
       }
@@ -224,71 +223,69 @@ function apiMetricsDashboard() {
 
     successRateColor() {
       const r = this.successRate();
-      if (r >= 99) return text-green-600 dark:text-green-400;
-      if (r >= 95) return text-yellow-600 dark:text-yellow-400;
-      return text-red-600 dark:text-red-400;
+      if (r >= 99) return 'text-green-600 dark:text-green-400';
+      if (r >= 95) return 'text-yellow-600 dark:text-yellow-400';
+      return 'text-red-600 dark:text-red-400';
     },
 
     errorRateColor() {
       const r = this.errorRate();
-      if (r <= 1) return text-green-600 dark:text-green-400;
-      if (r <= 5) return text-yellow-600 dark:text-yellow-400;
-      return text-red-600 dark:text-red-400;
+      if (r <= 1) return 'text-green-600 dark:text-green-400';
+      if (r <= 5) return 'text-yellow-600 dark:text-yellow-400';
+      return 'text-red-600 dark:text-red-400';
     },
 
     latestPercentile(p) {
-      if (!this.percentileData.length) return null;
-      const last = this.percentileData[this.percentileData.length - 1];
-      const key = p + p;
-      return last[key] !== undefined ? last[key] : null;
+      const values = this.percentileData[`p${p}`];
+      return Array.isArray(values) && values.length ? values[values.length - 1] : null;
     },
 
     timeRangeLabel() {
-      if (this.timeRange <= 1) return last hour;
-      if (this.timeRange <= 6) return last 6 hours;
-      if (this.timeRange <= 24) return last 24 hours;
-      return last 7 days;
+      if (this.timeRange <= 1) return 'last hour';
+      if (this.timeRange <= 6) return 'last 6 hours';
+      if (this.timeRange <= 24) return 'last 24 hours';
+      return 'last 7 days';
     },
 
     // Formatting helpers
     fmtCount(v) {
-      if (v == null) return —;
-      if (v >= 1000000) return (v / 1000000).toFixed(1) + M;
-      if (v >= 1000) return (v / 1000).toFixed(1) + K;
+      if (v == null) return '—';
+      if (v >= 1000000) return (v / 1000000).toFixed(1) + 'M';
+      if (v >= 1000) return (v / 1000).toFixed(1) + 'K';
       return String(v);
     },
 
     fmtPct(v) {
-      if (v == null) return —;
-      return v.toFixed(1) + %;
+      if (v == null) return '—';
+      return v.toFixed(1) + '%';
     },
 
     fmtMs(v) {
-      if (v == null) return —;
-      if (v >= 1000) return (v / 1000).toFixed(1) + s;
-      return Math.round(v) +  ms;
+      if (v == null) return '—';
+      if (v >= 1000) return (v / 1000).toFixed(1) + 's';
+      return Math.round(v) + ' ms';
     },
 
     truncateUrl(url, max) {
-      if (!url) return ;
-      return url.length > max ? url.substring(0, max) + … : url;
+      if (!url) return '';
+      return url.length > max ? url.substring(0, max) + '…' : url;
     },
 
     methodBadge(method) {
-      const m = (method || ).toUpperCase();
-      if (m === GET) return bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400;
-      if (m === POST) return bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400;
-      if (m === PUT || m === PATCH) return bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400;
-      if (m === DELETE) return bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400;
-      return bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300;
+      const m = (method || '').toUpperCase();
+      if (m === 'GET') return 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-400';
+      if (m === 'POST') return 'bg-blue-100 text-blue-800 dark:bg-blue-900/30 dark:text-blue-400';
+      if (m === 'PUT' || m === 'PATCH') return 'bg-yellow-100 text-yellow-800 dark:bg-yellow-900/30 dark:text-yellow-400';
+      if (m === 'DELETE') return 'bg-red-100 text-red-800 dark:bg-red-900/30 dark:text-red-400';
+      return 'bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300';
     },
 
     durationColor(ms) {
-      if (ms == null) return text-gray-600 dark:text-gray-400;
-      if (ms >= 1000) return text-red-600 dark:text-red-400;
-      if (ms >= 500) return text-yellow-600 dark:text-yellow-400;
-      return text-green-600 dark:text-green-400;
+      if (ms == null) return 'text-gray-600 dark:text-gray-400';
+      if (ms >= 1000) return 'text-red-600 dark:text-red-400';
+      if (ms >= 500) return 'text-yellow-600 dark:text-yellow-400';
+      return 'text-green-600 dark:text-green-400';
     },
   };
-}
+};
 </script>

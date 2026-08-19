@@ -36,21 +36,26 @@ from mcpgateway.config import settings
 from mcpgateway.db import (
     A2AAgent,
     A2AAgentMetric,
+    A2AAgentMetricsDaily,
     A2AAgentMetricsHourly,
     fresh_db_session,
     GrpcMetricsHourly,
     GrpcService,
     Prompt,
     PromptMetric,
+    PromptMetricsDaily,
     PromptMetricsHourly,
     Resource,
     ResourceMetric,
+    ResourceMetricsDaily,
     ResourceMetricsHourly,
     Server,
     ServerMetric,
+    ServerMetricsDaily,
     ServerMetricsHourly,
     Tool,
     ToolMetric,
+    ToolMetricsDaily,
     ToolMetricsHourly,
 )
 
@@ -86,6 +91,31 @@ class RollupSummary:
 
 
 @dataclass
+class DailyRollupResult:
+    """Result of a daily rollup operation for a single table."""
+
+    table_name: str
+    days_processed: int
+    rollups_created: int
+    rollups_updated: int
+    duration_seconds: float
+    error: Optional[str] = None
+
+
+@dataclass
+class DailyRollupSummary:
+    """Summary of all daily rollup operations."""
+
+    total_days_processed: int
+    total_rollups_created: int
+    total_rollups_updated: int
+    tables: Dict[str, DailyRollupResult]
+    duration_seconds: float
+    started_at: datetime
+    completed_at: datetime
+
+
+@dataclass
 class HourlyAggregation:
     """Aggregated metrics for a single hour."""
 
@@ -101,6 +131,22 @@ class HourlyAggregation:
     p50_response_time: Optional[float]
     p95_response_time: Optional[float]
     p99_response_time: Optional[float]
+    interaction_type: Optional[str] = None  # For A2A agents
+
+
+@dataclass
+class DailyAggregation:
+    """Aggregated metrics for a single day (derived from hourly rollups)."""
+
+    entity_id: str
+    entity_name: str
+    day_start: datetime
+    total_count: int
+    success_count: int
+    failure_count: int
+    min_response_time: Optional[float]
+    max_response_time: Optional[float]
+    avg_response_time: Optional[float]
     interaction_type: Optional[str] = None  # For A2A agents
 
 
@@ -130,6 +176,17 @@ class MetricsRollupService:
         ("a2a_agent_metrics", A2AAgentMetric, A2AAgentMetricsHourly, A2AAgent, "a2a_agent_id", "name"),
     ]
 
+    # Daily rollup configuration: (name, daily_model, hourly_source_model, entity_id_col, entity_name_col)
+    # Daily rollups are derived from HOURLY rollups (not raw), because raw metrics
+    # are deleted shortly after the hourly rollup is produced.
+    DAILY_METRIC_TABLES = [
+        ("tool_metrics_daily", ToolMetricsDaily, ToolMetricsHourly, "tool_id", "tool_name"),
+        ("resource_metrics_daily", ResourceMetricsDaily, ResourceMetricsHourly, "resource_id", "resource_name"),
+        ("prompt_metrics_daily", PromptMetricsDaily, PromptMetricsHourly, "prompt_id", "prompt_name"),
+        ("server_metrics_daily", ServerMetricsDaily, ServerMetricsHourly, "server_id", "server_name"),
+        ("a2a_agent_metrics_daily", A2AAgentMetricsDaily, A2AAgentMetricsHourly, "a2a_agent_id", "agent_name"),
+    ]
+
     def __init__(
         self,
         rollup_interval_hours: Optional[int] = None,
@@ -150,6 +207,12 @@ class MetricsRollupService:
         self.delete_raw_after_rollup = delete_raw_after_rollup if delete_raw_after_rollup is not None else getattr(settings, "metrics_delete_raw_after_rollup", True)
         self.delete_raw_after_rollup_hours = delete_raw_after_rollup_hours or getattr(settings, "metrics_delete_raw_after_rollup_hours", 1)
 
+        # Daily rollup configuration
+        self.daily_rollup_enabled = getattr(settings, "metrics_daily_rollup_enabled", True)
+        self.daily_rollup_interval_hours = getattr(settings, "metrics_daily_rollup_interval_hours", 24)
+        self.daily_rollup_late_days = getattr(settings, "metrics_daily_rollup_late_days", 3)
+        self.daily_rollup_retention_days = getattr(settings, "metrics_daily_rollup_retention_days", 3650)
+
         # Check if using PostgreSQL
         self._is_postgresql = settings.database_url.startswith("postgresql")
 
@@ -165,8 +228,11 @@ class MetricsRollupService:
         self._total_rollups = 0
         self._rollup_runs = 0
 
+        # Last daily rollup pass timestamp (None = run immediately on first cycle)
+        self._last_daily_run: Optional[float] = None
+
         logger.info(
-            f"MetricsRollupService initialized: enabled={self.enabled}, interval_hours={self.rollup_interval_hours}, delete_raw={self.delete_raw_after_rollup}, postgresql={self._is_postgresql}"
+            f"MetricsRollupService initialized: enabled={self.enabled}, interval_hours={self.rollup_interval_hours}, delete_raw={self.delete_raw_after_rollup}, postgresql={self._is_postgresql}, daily_rollup={self.daily_rollup_enabled}"
         )
 
     def pause(self, reason: str = "maintenance") -> None:
@@ -302,6 +368,25 @@ class MetricsRollupService:
                         summary.duration_seconds,
                     )
 
+                # Run daily rollup pass on its own cadence (aggregates completed
+                # days from hourly rollups for efficient long-term queries).
+                if self.daily_rollup_enabled:
+                    now = time.time()
+                    if self._last_daily_run is None or (now - self._last_daily_run) >= self.daily_rollup_interval_hours * 3600:
+                        try:
+                            daily_summary = await self.rollup_daily_all()
+                            self._last_daily_run = now
+                            if daily_summary.total_days_processed > 0 or daily_summary.total_rollups_created > 0 or daily_summary.total_rollups_updated > 0:
+                                logger.info(
+                                    "Daily metrics rollup: processed %s days, created %s, updated %s rollups in %.2fs",
+                                    daily_summary.total_days_processed,
+                                    daily_summary.total_rollups_created,
+                                    daily_summary.total_rollups_updated,
+                                    daily_summary.duration_seconds,
+                                )
+                        except Exception as e:  # pylint: disable=broad-except
+                            logger.error("Error in daily metrics rollup: %s", e, exc_info=True)
+
             except asyncio.CancelledError:
                 logger.debug("Rollup loop cancelled")
                 raise
@@ -411,6 +496,344 @@ class MetricsRollupService:
             started_at=started_at,
             completed_at=completed_at,
         )
+
+    async def rollup_daily_all(self) -> DailyRollupSummary:
+        """Roll up hourly metrics into daily summaries for all tables.
+
+        Aggregates completed days from the hourly rollup tables. Recent days are
+        unconditionally re-aggregated to absorb late-arriving hourly corrections;
+        older days are backfilled only when no daily rollup exists yet.
+
+        Returns:
+            DailyRollupSummary: Summary of all daily rollup operations.
+        """
+        started_at = datetime.now(timezone.utc)
+        start_time = time.monotonic()
+        now = datetime.now(timezone.utc)
+        current_day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        # Only completed days (yesterday and earlier) are eligible.
+        last_completed_day = current_day_start - timedelta(days=1)
+
+        results: Dict[str, DailyRollupResult] = {}
+        total_days = 0
+        total_created = 0
+        total_updated = 0
+
+        for table_name, daily_model, hourly_model, entity_id_col, entity_name_col in self.DAILY_METRIC_TABLES:
+            result = await asyncio.to_thread(
+                self._rollup_daily_table,
+                table_name,
+                daily_model,
+                hourly_model,
+                entity_id_col,
+                entity_name_col,
+                last_completed_day,
+            )
+            results[table_name] = result
+            total_days += result.days_processed
+            total_created += result.rollups_created
+            total_updated += result.rollups_updated
+
+        return DailyRollupSummary(
+            total_days_processed=total_days,
+            total_rollups_created=total_created,
+            total_rollups_updated=total_updated,
+            tables=results,
+            duration_seconds=time.monotonic() - start_time,
+            started_at=started_at,
+            completed_at=datetime.now(timezone.utc),
+        )
+
+    def _rollup_daily_table(
+        self,
+        table_name: str,
+        daily_model: Type,
+        hourly_model: Type,
+        entity_id_col: str,
+        entity_name_col: str,
+        last_completed_day: datetime,
+    ) -> DailyRollupResult:
+        """Roll up hourly metrics into daily summaries for a single table.
+
+        Args:
+            table_name: Name of the daily table being processed.
+            daily_model: SQLAlchemy model for the daily rollup table.
+            hourly_model: SQLAlchemy model for the hourly rollup source table.
+            entity_id_col: Name of the entity ID column (e.g. "tool_id").
+            entity_name_col: Name of the preserved entity name column in the hourly model.
+            last_completed_day: Start of the last fully-completed day (inclusive).
+
+        Returns:
+            DailyRollupResult: Result of the daily rollup for this table.
+        """
+        start_time = time.monotonic()
+        days_processed = 0
+        rollups_created = 0
+        rollups_updated = 0
+        error_msg = None
+
+        is_a2a = table_name == "a2a_agent_metrics_daily"
+        retention_days = self.daily_rollup_retention_days
+        # Days older than the retention window are handled by cleanup, no need to roll up.
+        earliest_day = last_completed_day - timedelta(days=retention_days)
+
+        try:
+            with fresh_db_session() as db:
+                # Determine the earliest day that has hourly data (backfill anchor).
+                # SQLite returns naive datetimes; normalize to aware UTC before
+                # comparing against the aware last_completed_day/earliest_day bounds.
+                earliest_hourly = db.execute(select(func.min(hourly_model.hour_start))).scalar()
+                if earliest_hourly is None:
+                    return DailyRollupResult(
+                        table_name=table_name,
+                        days_processed=0,
+                        rollups_created=0,
+                        rollups_updated=0,
+                        duration_seconds=time.monotonic() - start_time,
+                    )
+                earliest_hourly_day = earliest_hourly.replace(hour=0, minute=0, second=0, microsecond=0)
+                if earliest_hourly_day.tzinfo is None:
+                    earliest_hourly_day = earliest_hourly_day.replace(tzinfo=timezone.utc)
+                # Bound the backfill scan to the retention window to avoid
+                # walking the entire hourly history on every pass.
+                start_day = max(earliest_hourly_day, earliest_day)
+
+                # Existing daily rollups per day (used to decide backfill vs refresh).
+                # Normalize naive SQLite datetimes so `current in existing_days` compares equal.
+                existing_days = set(
+                    d if d.tzinfo is not None else d.replace(tzinfo=timezone.utc)
+                    for d in db.execute(
+                        select(daily_model.day_start).where(daily_model.day_start >= start_day)
+                    ).scalars()
+                )
+
+                current = start_day
+                while current <= last_completed_day:
+                    day_end = current + timedelta(days=1)
+                    day_exists = current in existing_days
+                    is_recent = current >= last_completed_day - timedelta(days=self.daily_rollup_late_days)
+                    # Backfill: only when no daily rollup exists yet for the day.
+                    # Refresh: recent days are always re-aggregated to absorb
+                    # late-arriving hourly data; older existing days are left alone.
+                    if not day_exists or is_recent:
+                        aggregations = self._aggregate_day(
+                            db,
+                            hourly_model,
+                            entity_id_col,
+                            entity_name_col,
+                            current,
+                            day_end,
+                            is_a2a,
+                        )
+                        for agg in aggregations:
+                            created, updated = self._upsert_daily_rollup(
+                                db,
+                                daily_model,
+                                entity_id_col,
+                                agg,
+                                is_a2a,
+                            )
+                            rollups_created += created
+                            rollups_updated += updated
+                        days_processed += 1
+
+                    current = day_end
+
+                db.commit()
+
+        except Exception as e:  # pylint: disable=broad-except
+            logger.error("Error rolling up %s: %s", table_name, e, exc_info=True)
+            error_msg = str(e)
+
+        if rollups_created + rollups_updated > 0:
+            logger.debug(f"Daily rolled up {table_name}: {days_processed} days -> {rollups_created} created, {rollups_updated} updated")
+
+        return DailyRollupResult(
+            table_name=table_name,
+            days_processed=days_processed,
+            rollups_created=rollups_created,
+            rollups_updated=rollups_updated,
+            duration_seconds=time.monotonic() - start_time,
+            error=error_msg,
+        )
+
+    def _aggregate_day(
+        self,
+        db: Session,
+        hourly_model: Type,
+        entity_id_col: str,
+        entity_name_col: str,
+        day_start: datetime,
+        day_end: datetime,
+        is_a2a: bool,
+    ) -> List[DailyAggregation]:
+        """Aggregate hourly rollups for a single day into per-entity daily metrics.
+
+        A single GROUP BY query over the hourly source table for the day yields
+        count/min/max/weighted-avg per entity (24 hourly rows max per entity), so
+        no large raw-data scan is involved. A2A metrics group by interaction_type.
+
+        Args:
+            db: Database session.
+            hourly_model: SQLAlchemy model for the hourly rollup source.
+            entity_id_col: Name of the entity ID column in the hourly model.
+            entity_name_col: Name of the preserved entity name column in the hourly model.
+            day_start: Start of the day (UTC midnight).
+            day_end: End of the day (exclusive).
+            is_a2a: Whether this is A2A agent metrics (has interaction_type).
+
+        Returns:
+            List[DailyAggregation]: Aggregated daily metrics per entity.
+        """
+        entity_id_attr = getattr(hourly_model, entity_id_col)
+        entity_name_attr = getattr(hourly_model, entity_name_col)
+
+        select_cols = [
+            entity_id_attr.label("entity_id"),
+            func.coalesce(entity_name_attr, "unknown").label("entity_name"),
+        ]
+        group_by_cols = [entity_id_attr, entity_name_attr]
+
+        if is_a2a:
+            select_cols.append(hourly_model.interaction_type.label("interaction_type"))
+            group_by_cols.append(hourly_model.interaction_type)
+
+        # pylint: disable=not-callable
+        agg_query = (
+            select(
+                *select_cols,
+                func.sum(hourly_model.total_count).label("total_count"),
+                func.sum(hourly_model.success_count).label("success_count"),
+                func.min(hourly_model.min_response_time).label("min_rt"),
+                func.max(hourly_model.max_response_time).label("max_rt"),
+                (
+                    func.sum(hourly_model.avg_response_time * hourly_model.total_count)
+                    / func.nullif(func.sum(hourly_model.total_count), 0)
+                ).label("avg_rt"),
+            )
+            .where(
+                and_(
+                    hourly_model.hour_start >= day_start,
+                    hourly_model.hour_start < day_end,
+                )
+            )
+            .group_by(*group_by_cols)
+        )
+
+        aggregations: List[DailyAggregation] = []
+        for row in db.execute(agg_query).yield_per(settings.yield_batch_size):
+            total = row.total_count or 0
+            aggregations.append(
+                DailyAggregation(
+                    entity_id=row.entity_id,
+                    entity_name=row.entity_name,
+                    day_start=day_start,
+                    total_count=total,
+                    success_count=row.success_count or 0,
+                    failure_count=total - (row.success_count or 0),
+                    min_response_time=row.min_rt,
+                    max_response_time=row.max_rt,
+                    avg_response_time=row.avg_rt,
+                    interaction_type=row.interaction_type if is_a2a else None,
+                )
+            )
+        return aggregations
+
+    def _upsert_daily_rollup(
+        self,
+        db: Session,
+        daily_model: Type,
+        entity_id_col: str,
+        agg: DailyAggregation,
+        is_a2a: bool,
+    ) -> Tuple[int, int]:
+        """Insert or update a single daily rollup record using a DB-aware UPSERT.
+
+        Mirrors :meth:`_upsert_rollup` for daily buckets. Unique key is
+        (entity_id, day_start [, interaction_type]).
+
+        Args:
+            db: Active SQLAlchemy database session.
+            daily_model: SQLAlchemy model for the daily rollup table.
+            entity_id_col: Name of the entity ID column (e.g. "tool_id").
+            agg: Aggregated daily metrics for a single entity.
+            is_a2a: Whether interaction_type is part of the uniqueness key.
+
+        Returns:
+            Tuple[int, int]: Best-effort (inserted_count, updated_count).
+        """
+        name_col_map = {
+            "tool_id": "tool_name",
+            "resource_id": "resource_name",
+            "prompt_id": "prompt_name",
+            "server_id": "server_name",
+        }
+        name_col = name_col_map.get(entity_id_col, "agent_name")
+
+        day_start = agg.day_start.replace(hour=0, minute=0, second=0, microsecond=0)
+
+        values = {
+            entity_id_col: agg.entity_id,
+            name_col: agg.entity_name,
+            "day_start": day_start,
+            "total_count": agg.total_count,
+            "success_count": agg.success_count,
+            "failure_count": agg.failure_count,
+            "min_response_time": agg.min_response_time,
+            "max_response_time": agg.max_response_time,
+            "avg_response_time": agg.avg_response_time,
+        }
+
+        if is_a2a:
+            values["interaction_type"] = agg.interaction_type
+
+        dialect = db.bind.dialect.name if db.bind else "unknown"
+        conflict_cols = [
+            getattr(daily_model, entity_id_col),
+            daily_model.day_start,
+        ]
+
+        if is_a2a:
+            conflict_cols.append(daily_model.interaction_type)
+
+        if dialect == "postgresql":
+            stmt = pg_insert(daily_model).values(**values)
+            update_cols = {k: stmt.excluded[k] for k in values if k not in (entity_id_col, "day_start", "interaction_type")}
+            stmt = stmt.on_conflict_do_update(index_elements=conflict_cols, set_=update_cols)
+            db.execute(stmt)
+            return (0, 1)
+
+        if "sqlite" in dialect:
+            stmt = sqlite_insert(daily_model).values(**values)
+            update_cols = {k: stmt.excluded[k] for k in values if k not in (entity_id_col, "day_start", "interaction_type")}
+            stmt = stmt.on_conflict_do_update(index_elements=conflict_cols, set_=update_cols)
+            db.execute(stmt)
+            return (0, 1)
+
+        logger.warning(
+            "Dialect does not support native UPSERT. Using Python fallback with conflict handling.",
+            extra={"dialect": dialect},
+        )
+        savepoint = db.begin_nested()
+        try:
+            db.add(daily_model(**values))
+            db.flush()
+            savepoint.commit()
+            return (1, 0)
+        except IntegrityError:
+            savepoint.rollback()
+            entity_id_attr = getattr(daily_model, entity_id_col)
+            filters = [
+                entity_id_attr == agg.entity_id,
+                daily_model.day_start == day_start,
+            ]
+            if is_a2a:
+                filters.append(daily_model.interaction_type == agg.interaction_type)
+            existing = db.execute(select(daily_model).where(and_(*filters))).scalar_one()
+            for key, value in values.items():
+                if key not in (entity_id_col, "day_start", "interaction_type"):
+                    setattr(existing, key, value)
+            return (0, 1)
 
     def _rollup_table(
         self,
@@ -1046,6 +1469,10 @@ class MetricsRollupService:
             "rollup_interval_hours": self.rollup_interval_hours,
             "delete_raw_after_rollup": self.delete_raw_after_rollup,
             "delete_raw_after_rollup_hours": self.delete_raw_after_rollup_hours,
+            "daily_rollup_enabled": self.daily_rollup_enabled,
+            "daily_rollup_interval_hours": self.daily_rollup_interval_hours,
+            "daily_rollup_late_days": self.daily_rollup_late_days,
+            "daily_rollup_retention_days": self.daily_rollup_retention_days,
             "total_rollups": self._total_rollups,
             "rollup_runs": self._rollup_runs,
             "is_postgresql": self._is_postgresql,

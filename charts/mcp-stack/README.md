@@ -27,13 +27,16 @@ Kubernetes: `>=1.21.0-0`
 
 ## SSRF and In-Cluster Tool Registration
 
-By default, the chart uses strict SSRF settings:
+By default, this project's intranet release profile keeps SSRF validation enabled while allowing
+local and private MCP backends:
 
-- `mcpContextForge.config.SSRF_ALLOW_LOCALHOST="false"`
-- `mcpContextForge.config.SSRF_ALLOW_PRIVATE_NETWORKS="false"`
+- `mcpContextForge.config.SSRF_PROTECTION_ENABLED="true"`
+- `mcpContextForge.config.SSRF_ALLOW_LOCALHOST="true"`
+- `mcpContextForge.config.SSRF_ALLOW_PRIVATE_NETWORKS="true"`
 - `mcpContextForge.config.SSRF_ALLOWED_NETWORKS="[]"`
+- `mcpContextForge.config.SSRF_DNS_FAIL_CLOSED="true"`
+- `mcpContextForge.config.MCPGATEWAY_GRPC_ENABLED="true"`
 
-This is the recommended production baseline.
 When you enable testing registration jobs (`testing.fastTime.register.enabled` or
 `testing.fastTest.register.enabled`), those jobs create gateways that point to
 in-cluster service URLs:
@@ -41,9 +44,9 @@ in-cluster service URLs:
 - `fast-time`: `http://<release>-mcp-fast-time-server:80/http`
 - `fast-test`: `http://<release>-fast-test-server:8880/mcp`
 
-Those destinations are private cluster addresses and will be blocked under strict SSRF defaults.
+Those destinations are private cluster addresses and work with the default intranet profile.
 
-### Example: Allow only expected cluster CIDRs (preferred)
+### Example: Stricter deployment allowing only expected cluster CIDRs
 
 ```yaml
 mcpContextForge:
@@ -55,15 +58,16 @@ mcpContextForge:
     SSRF_DNS_FAIL_CLOSED: "true"
 ```
 
-### Example: Local benchmark profile (broader allowance)
+### Default intranet profile
 
 ```yaml
 mcpContextForge:
   config:
     SSRF_PROTECTION_ENABLED: "true"
-    SSRF_ALLOW_LOCALHOST: "false"
+    SSRF_ALLOW_LOCALHOST: "true"
     SSRF_ALLOW_PRIVATE_NETWORKS: "true"
     SSRF_DNS_FAIL_CLOSED: "true"
+    MCPGATEWAY_GRPC_ENABLED: "true"
 ```
 
 If registration fails with `422` and mentions blocked private network addresses, update SSRF values and
@@ -465,8 +469,8 @@ For detailed guidance on resource limits and process management, see `docs/docs/
 | mcpContextForge.config.INSECURE_ALLOW_QUERYPARAM_AUTH | string | `"false"` |  |
 | mcpContextForge.config.INSECURE_QUERYPARAM_AUTH_ALLOWED_HOSTS | string | `"[]"` |  |
 | mcpContextForge.config.SSRF_PROTECTION_ENABLED | string | `"true"` |  |
-| mcpContextForge.config.SSRF_ALLOW_LOCALHOST | string | `"false"` |  |
-| mcpContextForge.config.SSRF_ALLOW_PRIVATE_NETWORKS | string | `"false"` |  |
+| mcpContextForge.config.SSRF_ALLOW_LOCALHOST | string | `"true"` |  |
+| mcpContextForge.config.SSRF_ALLOW_PRIVATE_NETWORKS | string | `"true"` |  |
 | mcpContextForge.config.SSRF_ALLOWED_NETWORKS | string | `"[]"` |  |
 | mcpContextForge.config.SSRF_DNS_FAIL_CLOSED | string | `"true"` |  |
 | mcpContextForge.config.LOG_LEVEL | string | `"INFO"` |  |
@@ -703,7 +707,7 @@ For detailed guidance on resource limits and process management, see `docs/docs/
 | mcpContextForge.config.MCPGATEWAY_ELICITATION_TIMEOUT | string | `"60"` |  |
 | mcpContextForge.config.MCPGATEWAY_ELICITATION_MAX_CONCURRENT | string | `"100"` |  |
 | mcpContextForge.config.MCPGATEWAY_TOOL_CANCELLATION_ENABLED | string | `"true"` |  |
-| mcpContextForge.config.MCPGATEWAY_GRPC_ENABLED | string | `"false"` |  |
+| mcpContextForge.config.MCPGATEWAY_GRPC_ENABLED | string | `"true"` |  |
 | mcpContextForge.config.MCPGATEWAY_GRPC_TIMEOUT | string | `"30"` |  |
 | mcpContextForge.config.MCPGATEWAY_GRPC_MAX_MESSAGE_SIZE | string | `"4194304"` |  |
 | mcpContextForge.config.MCPGATEWAY_GRPC_REFLECTION_ENABLED | string | `"true"` |  |

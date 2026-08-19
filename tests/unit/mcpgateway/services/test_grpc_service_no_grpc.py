@@ -638,6 +638,7 @@ async def test_invoke_method_validates_tls_paths_when_configured(service, db):
 
     with (
         patch("mcpgateway.services.grpc_service._validate_tls_path", side_effect=lambda path_str, _label="TLS path": Path(path_str).resolve()) as mock_validate_tls,
+        patch("mcpgateway.services.grpc_service.settings.grpc_runtime_cache_enabled", False),
         patch("mcpgateway.translate_grpc.GrpcEndpoint", FakeEndpoint),
     ):
         result = await service.invoke_method(db, "svc-1", "pkg.Service.Ping", {"a": 1})
@@ -816,7 +817,7 @@ async def test_perform_reflection_builds_discovery(monkeypatch, service, db):
     assert db_service.service_count == 1
     assert db_service.method_count == 1
     assert db_service.reachable is True
-    assert reflection_timeouts and all(value == float(module.settings.tool_timeout) for value in reflection_timeouts)
+    assert reflection_timeouts and all(0 < value <= float(module.settings.mcpgateway_grpc_timeout) for value in reflection_timeouts)
 
 
 @pytest.mark.asyncio

@@ -2855,6 +2855,123 @@ class A2AAgentMetricsHourly(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 
+class ToolMetricsDaily(Base):
+    """
+    Daily rollup of tool metrics for efficient long-term trend analysis.
+
+    Aggregated from hourly rollups (24 hourly rows per tool per day). Only
+    composable aggregates are stored (counts, min/max/avg) - percentiles are
+    intentionally omitted because they cannot be recomposed across hours.
+    """
+
+    __tablename__ = "tool_metrics_daily"
+    __table_args__ = (
+        UniqueConstraint("tool_id", "day_start", name="uq_tool_metrics_daily_tool_day"),
+        Index("ix_tool_metrics_daily_day_start", "day_start"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    tool_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("tools.id", ondelete="SET NULL"), nullable=True, index=True)
+    tool_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    day_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    total_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    success_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    failure_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    min_response_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    max_response_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    avg_response_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class ResourceMetricsDaily(Base):
+    """Daily rollup of resource metrics for efficient long-term trend analysis."""
+
+    __tablename__ = "resource_metrics_daily"
+    __table_args__ = (
+        UniqueConstraint("resource_id", "day_start", name="uq_resource_metrics_daily_resource_day"),
+        Index("ix_resource_metrics_daily_day_start", "day_start"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    resource_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("resources.id", ondelete="SET NULL"), nullable=True, index=True)
+    resource_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    day_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    total_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    success_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    failure_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    min_response_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    max_response_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    avg_response_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class PromptMetricsDaily(Base):
+    """Daily rollup of prompt metrics for efficient long-term trend analysis."""
+
+    __tablename__ = "prompt_metrics_daily"
+    __table_args__ = (
+        UniqueConstraint("prompt_id", "day_start", name="uq_prompt_metrics_daily_prompt_day"),
+        Index("ix_prompt_metrics_daily_day_start", "day_start"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    prompt_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("prompts.id", ondelete="SET NULL"), nullable=True, index=True)
+    prompt_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    day_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    total_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    success_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    failure_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    min_response_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    max_response_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    avg_response_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class ServerMetricsDaily(Base):
+    """Daily rollup of server metrics for efficient long-term trend analysis."""
+
+    __tablename__ = "server_metrics_daily"
+    __table_args__ = (
+        UniqueConstraint("server_id", "day_start", name="uq_server_metrics_daily_server_day"),
+        Index("ix_server_metrics_daily_day_start", "day_start"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    server_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("servers.id", ondelete="SET NULL"), nullable=True, index=True)
+    server_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    day_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    total_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    success_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    failure_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    min_response_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    max_response_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    avg_response_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
+class A2AAgentMetricsDaily(Base):
+    """Daily rollup of A2A agent metrics for efficient long-term trend analysis."""
+
+    __tablename__ = "a2a_agent_metrics_daily"
+    __table_args__ = (
+        UniqueConstraint("a2a_agent_id", "day_start", "interaction_type", name="uq_a2a_agent_metrics_daily_agent_day_type"),
+        Index("ix_a2a_agent_metrics_daily_day_start", "day_start"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    a2a_agent_id: Mapped[Optional[str]] = mapped_column(String(36), ForeignKey("a2a_agents.id", ondelete="SET NULL"), nullable=True, index=True)
+    agent_name: Mapped[str] = mapped_column(String(255), nullable=False)
+    day_start: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    interaction_type: Mapped[str] = mapped_column(String(50), nullable=False, default="invoke")
+    total_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    success_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    failure_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    min_response_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    max_response_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    avg_response_time: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+
 # ===================================
 # Observability Models (OpenTelemetry-style traces, spans, events)
 # ===================================

@@ -35,7 +35,7 @@ from mcpgateway.db import get_for_update
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import Server as DbServer
-from mcpgateway.db import ServerMetric, ServerMetricsHourly
+from mcpgateway.db import ServerMetric, ServerMetricsDaily, ServerMetricsHourly
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.schemas import ServerCreate, ServerMetrics, ServerRead, ServerUpdate, TopPerformer
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
@@ -1922,6 +1922,7 @@ class ServerService(BaseService):
         """
         db.execute(delete(ServerMetric))
         db.execute(delete(ServerMetricsHourly))
+        db.execute(delete(ServerMetricsDaily))
         db.commit()
 
         # Invalidate metrics cache

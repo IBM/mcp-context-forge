@@ -14,7 +14,10 @@ Primary-worker gRPC health monitoring with production-grade features:
 # Standard
 import asyncio
 from datetime import datetime, timedelta, timezone
+import hashlib
+import os
 import random
+import stat
 import threading
 import time
 from typing import Any, Optional
@@ -47,7 +50,7 @@ from mcpgateway.observability import create_child_span
 from mcpgateway.services.encryption_service import get_encryption_service
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.metrics import grpc_health_checks_counter, grpc_health_status_gauge
-from mcpgateway.utils.grpc_validation import _validate_grpc_target, _validate_tls_path
+from mcpgateway.utils.grpc_validation import _validate_grpc_target, _validate_tls_path, GrpcServiceError
 from mcpgateway.utils.primary_worker import is_primary_worker
 
 logging_service = LoggingService()
@@ -59,6 +62,10 @@ _DEFAULT_MAX_CONCURRENT_CHECKS = 10
 # Channel pool idle TTL (seconds). Channels not used within this window are closed.
 _CHANNEL_IDLE_TTL = 300
 
+# Certificate and private-key files are deliberately bounded before reading.
+# This matches the Admin UI upload limit and prevents a misconfigured health
+# check from consuming unbounded memory.
+_TLS_MATERIAL_MAX_BYTES = 10 * 1024 * 1024
 
 class _HealthChannel:
     """A pooled gRPC channel with last-used tracking for idle pruning."""
@@ -126,14 +133,69 @@ class GrpcMonitoringService:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _channel_key(service: DbGrpcService) -> tuple:
-        """Derive a deterministic pool key from connection-affecting fields."""
-        return (service.target, service.tls_enabled, service.tls_cert_path or "", service.tls_key_path or "")
+    def _read_tls_file(path_str: str, label: str) -> bytes:
+        """Validate and read one bounded regular TLS file without following a final symlink."""
+        path = _validate_tls_path(path_str, label)
+        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
+        descriptor: Optional[int] = None
+        try:
+            descriptor = os.open(path, flags)
+            file_stat = os.fstat(descriptor)
+            if not stat.S_ISREG(file_stat.st_mode):
+                raise GrpcServiceError(f"{label} '{path_str}' must be a regular file")
+            if file_stat.st_size > _TLS_MATERIAL_MAX_BYTES:
+                raise GrpcServiceError(f"{label} '{path_str}' exceeds the {_TLS_MATERIAL_MAX_BYTES}-byte limit")
+            with os.fdopen(descriptor, "rb") as stream:
+                descriptor = None  # fdopen owns and closes the descriptor.
+                content = stream.read(_TLS_MATERIAL_MAX_BYTES + 1)
+        except GrpcServiceError:
+            raise
+        except OSError as exc:
+            raise GrpcServiceError(f"Unable to read {label.lower()} '{path_str}': {exc}") from exc
+        finally:
+            if descriptor is not None:
+                os.close(descriptor)
+        if len(content) > _TLS_MATERIAL_MAX_BYTES:
+            raise GrpcServiceError(f"{label} '{path_str}' exceeds the {_TLS_MATERIAL_MAX_BYTES}-byte limit")
+        return content
 
     @classmethod
-    def _build_channel(cls, service: DbGrpcService) -> Any:
+    def _load_tls_material(cls, service: DbGrpcService) -> tuple[Optional[bytes], Optional[bytes]]:
+        """Return validated certificate/key bytes for one service."""
+        if not service.tls_enabled:
+            return None, None
+        if service.tls_key_path and not service.tls_cert_path:
+            raise ValueError("TLS key path requires a TLS certificate path")
+        if not service.tls_cert_path:
+            return None, None
+        cert = cls._read_tls_file(service.tls_cert_path, "TLS cert path")
+        key = cls._read_tls_file(service.tls_key_path, "TLS key path") if service.tls_key_path else None
+        return cert, key
+
+    @staticmethod
+    def _channel_key(service: DbGrpcService, tls_material: tuple[Optional[bytes], Optional[bytes]]) -> tuple:
+        """Derive a deterministic pool key from validated connection material."""
+        cert, key = tls_material
+        return (
+            service.target,
+            service.tls_enabled,
+            service.tls_cert_path or "",
+            service.tls_key_path or "",
+            hashlib.sha256(cert).hexdigest() if cert is not None else "",
+            hashlib.sha256(key).hexdigest() if key is not None else "",
+        )
+
+    @classmethod
+    def _build_channel(
+        cls,
+        service: DbGrpcService,
+        tls_material: Optional[tuple[Optional[bytes], Optional[bytes]]] = None,
+        *,
+        target_validated: bool = False,
+    ) -> Any:
         """Create a validated gRPC channel with keepalive for health checks."""
-        _validate_grpc_target(service.target)
+        if not target_validated:
+            _validate_grpc_target(service.target)
         keepalive_opts = [
             ("grpc.keepalive_time_ms", 30_000),
             ("grpc.keepalive_timeout_ms", 20_000),
@@ -144,32 +206,28 @@ class GrpcMonitoringService:
         if not service.tls_enabled:
             return grpc.insecure_channel(service.target, options=keepalive_opts)
 
-        root_certificates = None
-        private_key = None
-        certificate_chain = None
-        if service.tls_cert_path:
-            cert_path = _validate_tls_path(service.tls_cert_path, "TLS cert path")
-            root_certificates = cert_path.read_bytes()
-            certificate_chain = root_certificates if service.tls_key_path else None
-        if service.tls_key_path:
-            key_path = _validate_tls_path(service.tls_key_path, "TLS key path")
-            private_key = key_path.read_bytes()
-        credentials = grpc.ssl_channel_credentials(
-            root_certificates=root_certificates,
-            private_key=private_key,
-            certificate_chain=certificate_chain,
-        )
+        cert, key = tls_material if tls_material is not None else cls._load_tls_material(service)
+        if cert is not None:
+            if key is None:
+                credentials = grpc.ssl_channel_credentials(root_certificates=cert)
+                return grpc.secure_channel(service.target, credentials, options=keepalive_opts)
+            credentials = grpc.ssl_channel_credentials(private_key=key, certificate_chain=cert)
+            return grpc.secure_channel(service.target, credentials, options=keepalive_opts)
+
+        credentials = grpc.ssl_channel_credentials()
         return grpc.secure_channel(service.target, credentials, options=keepalive_opts)
 
     def _get_channel(self, service: DbGrpcService) -> Any:
         """Return a warm channel from the pool or create one."""
-        key = self._channel_key(service)
+        _validate_grpc_target(service.target)
+        tls_material = self._load_tls_material(service)
+        key = self._channel_key(service, tls_material)
         with self._channel_lock:
             entry = self._health_channels.get(key)
             if entry is not None:
                 entry.touch()
                 return entry.channel
-            channel = self._build_channel(service)
+            channel = self._build_channel(service, tls_material, target_validated=True)
             self._health_channels[key] = _HealthChannel(channel)
             return channel
 
@@ -231,7 +289,8 @@ class GrpcMonitoringService:
                     healthy = response.status == health_pb2.HealthCheckResponse.SERVING
                     status_code = health_pb2.HealthCheckResponse.ServingStatus.Name(response.status)
                 except grpc.RpcError as exc:
-                    if exc.code() != grpc.StatusCode.UNIMPLEMENTED:
+                    rpc_code = getattr(exc, "code", lambda: None)()
+                    if rpc_code != grpc.StatusCode.UNIMPLEMENTED:
                         raise
                     check_type = "readiness"
                     grpc.channel_ready_future(channel).result(timeout=service.health_check_timeout)
@@ -243,8 +302,10 @@ class GrpcMonitoringService:
                 healthy = True
                 status_code = "READY"
         except grpc.RpcError as exc:
-            status_code = exc.code().name if exc.code() else "UNKNOWN"
-            error = f"{status_code}: {exc.details()}" if exc.details() else status_code
+            rpc_code = getattr(exc, "code", lambda: None)()
+            rpc_details = getattr(exc, "details", lambda: None)()
+            status_code = rpc_code.name if rpc_code else "UNKNOWN"
+            error = f"{status_code}: {rpc_details}" if rpc_details else status_code
         except Exception as exc:  # pylint: disable=broad-except
             status_code = "UNAVAILABLE"
             error = f"UNAVAILABLE: {exc}"
@@ -275,7 +336,7 @@ class GrpcMonitoringService:
                 health_check_timeout=service.health_check_timeout,
             )
         monitor = get_grpc_monitoring_service()
-        channel = monitor._get_channel(snapshot)  # pylint: disable=protected-access
+        channel = await asyncio.to_thread(monitor._get_channel, snapshot)  # pylint: disable=protected-access
         with create_child_span("grpc.health.check", {"rpc.system": "grpc", "server.address": snapshot.target, "grpc.service.id": snapshot.id}):
             healthy, check_type, status_code, error, latency_ms = await asyncio.to_thread(cls._check_blocking, channel, snapshot)
         with fresh_db_session() as write_db:

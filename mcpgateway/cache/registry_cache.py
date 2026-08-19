@@ -694,6 +694,41 @@ class RegistryCache:
         """
         await self.invalidate("tools")
 
+    def invalidate_tools_sync(self) -> None:
+        """Synchronously invalidate tool registries in both cache tiers."""
+        prefix = self._get_redis_key("tools")
+        self.invalidate_tools_local()
+
+        # First-Party
+        from mcpgateway.utils.redis_client import create_redis_client_sync  # pylint: disable=import-outside-toplevel
+
+        redis = create_redis_client_sync()
+        if not redis:
+            return
+        try:
+            keys_to_delete = list(redis.scan_iter(match=f"{prefix}*"))
+            if not all(isinstance(key, (bytes, str)) for key in keys_to_delete):
+                logger.warning("RegistryCache: invalid sync SCAN key type; skipping delete/publish")
+                return
+            if keys_to_delete:
+                redis.delete(*keys_to_delete)
+            redis.publish("mcpgw:cache:invalidate", "registry:tools")
+        except Exception as exc:  # pragma: no cover - backend-specific failures
+            logger.warning("RegistryCache sync Redis invalidate failed: %s", exc)
+        finally:
+            try:
+                redis.close()
+            except Exception as exc:  # pragma: no cover - backend-specific failures
+                logger.debug("RegistryCache sync Redis close failed: %s", exc)
+
+    def invalidate_tools_local(self) -> None:
+        """Immediately clear process-local tool registry entries."""
+        prefix = self._get_redis_key("tools")
+        with self._lock:
+            keys_to_remove = [key for key in self._cache if key.startswith(prefix)]
+            for key in keys_to_remove:
+                self._cache.pop(key, None)
+
     async def invalidate_prompts(self) -> None:
         """Invalidate prompts cache.
 
@@ -873,6 +908,9 @@ class CacheInvalidationSubscriber:
         - registry:{cache_type} - Invalidate registry cache (tools, prompts, etc.)
         - tool_lookup:{name} - Invalidate specific tool lookup
         - tool_lookup:gateway:{gateway_id} - Invalidate all tools for a gateway
+        - tool_result:tool:{tool_id} - Invalidate cached results for a tool
+        - tool_result:gateway:{gateway_id} - Invalidate cached results for a gateway
+        - tool_result:sql_table:{table_id} - Invalidate cached SQL query results
         - admin:{prefix} - Invalidate admin stats cache
         - user:{email} - Invalidate auth user cache
         - revoke:{jti} - Invalidate auth revocation cache
@@ -1060,6 +1098,30 @@ class CacheInvalidationSubscriber:
                     for key in keys_to_remove:
                         cache._cache.pop(key, None)  # pyright: ignore[reportPrivateUsage]
                 logger.debug("CacheInvalidationSubscriber: Cleared local registry:%s cache (%d keys)", cache_type, len(keys_to_remove))
+
+            elif message.startswith("tool_result:tool:"):
+                tool_id = message[len("tool_result:tool:") :]
+                # First-Party
+                from mcpgateway.cache.tool_result_cache import tool_result_cache  # pylint: disable=import-outside-toplevel
+
+                removed = tool_result_cache.invalidate_tool_local(tool_id)
+                logger.debug("CacheInvalidationSubscriber: Cleared local results for tool %s (%d keys)", tool_id, removed)
+
+            elif message.startswith("tool_result:gateway:"):
+                gateway_id = message[len("tool_result:gateway:") :]
+                # First-Party
+                from mcpgateway.cache.tool_result_cache import tool_result_cache  # pylint: disable=import-outside-toplevel
+
+                removed = tool_result_cache.invalidate_gateway_local(gateway_id)
+                logger.debug("CacheInvalidationSubscriber: Cleared local results for gateway %s (%d keys)", gateway_id, removed)
+
+            elif message.startswith("tool_result:sql_table:"):
+                table_id = message[len("tool_result:sql_table:") :]
+                # First-Party
+                from mcpgateway.cache.tool_result_cache import tool_result_cache  # pylint: disable=import-outside-toplevel
+
+                removed = tool_result_cache.invalidate_sql_table_local(table_id)
+                logger.debug("CacheInvalidationSubscriber: Cleared local results for SQL table %s (%d keys)", table_id, removed)
 
             elif message.startswith("tool_lookup:gateway:"):
                 # Handle gateway-wide tool lookup invalidation

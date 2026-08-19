@@ -168,6 +168,7 @@ def mock_tool(mock_gateway):
     tool.original_description = "A test tool original"
     tool.integration_type = "MCP"
     tool.request_type = "SSE"
+    tool.timeout_ms = None
     tool.headers = {"Content-Type": "application/json"}
     tool.input_schema = {"type": "object", "properties": {"param": {"type": "string"}}}
     tool.output_schema = None
@@ -406,8 +407,10 @@ class TestInitializeShutdown:
         """shutdown should close http client and event service."""
         service = ToolService()
         service._http_client = AsyncMock()
+        service._pinned_rest_client_pool = AsyncMock()
         service._event_service = AsyncMock()
         await service.shutdown()
+        service._pinned_rest_client_pool.close.assert_awaited_once()
         service._http_client.aclose.assert_awaited_once()
         service._event_service.shutdown.assert_awaited_once()
 
@@ -439,9 +442,11 @@ class TestBuildCachePayload:
 
     def test_build_tool_cache_payload_with_gateway(self, tool_service, mock_tool, mock_gateway):
         """Cache payload should include both tool and gateway data."""
+        mock_tool.timeout_ms = 12500
         payload = tool_service._build_tool_cache_payload(mock_tool, mock_gateway)
         assert payload["status"] == "active"
         assert payload["tool"]["name"] == mock_tool.name
+        assert payload["tool"]["timeout_ms"] == 12500
         assert payload["gateway"] is not None
         assert payload["gateway"]["id"] == str(mock_gateway.id)
 
@@ -1433,7 +1438,7 @@ class TestResetMetrics:
         """reset_metrics without tool_id should delete all metrics."""
         db = MagicMock()
         await tool_service.reset_metrics(db)
-        assert db.execute.call_count == 2
+        assert db.execute.call_count == 3
         db.commit.assert_called_once()
 
     @pytest.mark.asyncio
@@ -1441,7 +1446,7 @@ class TestResetMetrics:
         """reset_metrics with tool_id should delete only that tool's metrics."""
         db = MagicMock()
         await tool_service.reset_metrics(db, tool_id="tool-1")
-        assert db.execute.call_count == 2
+        assert db.execute.call_count == 3
         db.commit.assert_called_once()
 
 
@@ -6357,8 +6362,13 @@ class TestInvokeToolRestTimeout:
             with pytest.raises(ToolTimeoutError, match="timed out"):
                 await tool_service.invoke_tool(db, "test_tool", {})
 
-        # Pre + post hook should be invoked.
-        assert plugin_manager.has_hooks_for.call_args_list == [call(ToolHookType.TOOL_PRE_INVOKE), call(ToolHookType.TOOL_POST_INVOKE)]
+        # Cache eligibility first probes for a pre hook (cache hits must not
+        # bypass plugins), then the execution path checks pre + post hooks.
+        assert plugin_manager.has_hooks_for.call_args_list == [
+            call(ToolHookType.TOOL_PRE_INVOKE),
+            call(ToolHookType.TOOL_PRE_INVOKE),
+            call(ToolHookType.TOOL_POST_INVOKE),
+        ]
         assert plugin_manager.invoke_hook.await_count == 2
         ctx.set_state.assert_called_with("cb_timeout_failure", True)
 
@@ -7821,6 +7831,8 @@ class TestInvokeToolMcpSessionAffinity:
             )
         assert "x-mcp-session-id" in captured_headers
         assert captured_headers["x-mcp-session-id"] == "session-abc123def456"
+        pinned_client.aclose.assert_not_awaited()
+        await tool_service._pinned_rest_client_pool.close()
         pinned_client.aclose.assert_awaited_once()
 
 
@@ -7879,6 +7891,8 @@ class TestInvokeToolRestPost:
             result = await tool_service.invoke_tool(db, "test_tool", {"key": "val"})
         assert result is not None
         assert result.is_error is not True
+        pinned_client.aclose.assert_not_awaited()
+        await tool_service._pinned_rest_client_pool.close()
         pinned_client.aclose.assert_awaited_once()
 
 

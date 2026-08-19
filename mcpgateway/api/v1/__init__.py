@@ -171,6 +171,15 @@ def _assemble_routers(  # noqa: C901 — deliberate single-function assembly, co
     else:
         logger.info("Tool cancellation feature disabled - cancellation endpoints not available")
 
+    if getattr(settings, "mcpgateway_async_jobs_enabled", False):
+        # First-Party
+        from mcpgateway.routers.async_jobs import router as async_jobs_router  # pylint: disable=import-outside-toplevel
+
+        target_router.include_router(async_jobs_router)
+        logger.info("Process-local async jobs router included")
+    else:
+        logger.info("Process-local async jobs router not included - feature disabled")
+
     if settings.metrics_cleanup_enabled or settings.metrics_rollup_enabled:
         # First-Party
         from mcpgateway.routers.metrics_maintenance import router as metrics_maintenance_router  # pylint: disable=import-outside-toplevel

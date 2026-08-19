@@ -34,10 +34,13 @@ Design constraints:
 
 # Standard
 from collections import OrderedDict
+import hashlib
 from pathlib import Path
 import threading
 from typing import Any, Optional
 
+# Third-Party
+import orjson
 try:
     # Third-Party
     import grpc
@@ -69,6 +72,16 @@ _GRPC_RUNTIME_CACHE_MAX_ENTRIES = 64
 _DEFAULT_KEEPALIVE_MS = 30_000
 
 
+def _tls_material_digest(path: Optional[str]) -> Optional[str]:
+    """Return a content digest so in-place certificate rotation changes the cache key."""
+    if not path:
+        return None
+    try:
+        return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+    except OSError:
+        # Channel construction reports the actionable file error. Preserve a
+        # deterministic identity here so key derivation itself stays side-effect free.
+        return "unreadable"
 class GrpcRuntimeCache:
     """Process-local LRU cache of reusable gRPC runtime resources.
 
@@ -127,20 +140,22 @@ class GrpcRuntimeCache:
         Returns:
             Deterministic cache key string.
         """
-        tls_paths = ""
-        if tls_cert_path or tls_key_path:
-            tls_paths = f"{tls_cert_path or ''}|{tls_key_path or ''}"
-        meta_sorted = sorted((str(k), str(v)) for k, v in metadata.items())
-        return "|".join(
-            (
-                service_id,
-                schema_hash or "<none>",
-                target,
-                "tls" if tls_enabled else "plain",
-                tls_paths,
-                repr(meta_sorted),
-            )
-        )
+        # The cache key is logged on eviction/invalidation.  Never embed
+        # decrypted metadata (Authorization/API keys), internal targets, or
+        # certificate paths in that key.  Hash a canonical representation and
+        # expose only the non-sensitive service identifier plus the digest.
+        fingerprint_material = {
+            "schema_hash": str(schema_hash) if schema_hash is not None else None,
+            "target": str(target),
+            "tls_enabled": bool(tls_enabled),
+            "tls_cert_path": str(tls_cert_path) if tls_cert_path is not None else None,
+            "tls_key_path": str(tls_key_path) if tls_key_path is not None else None,
+            "tls_cert_digest": _tls_material_digest(tls_cert_path) if tls_enabled else None,
+            "tls_key_digest": _tls_material_digest(tls_key_path) if tls_enabled else None,
+            "metadata": {str(key): str(value) for key, value in metadata.items()},
+        }
+        fingerprint = hashlib.sha256(orjson.dumps(fingerprint_material, option=orjson.OPT_SORT_KEYS)).hexdigest()
+        return f"v1:{service_id!s}:{fingerprint}"
 
     def acquire(
         self,
@@ -217,6 +232,18 @@ class GrpcRuntimeCache:
                 entry.close()
                 logger.info("Invalidated gRPC runtime entry %s", key)
 
+    def invalidate_service(self, service_id: str) -> int:
+        """Retire every cached connection fingerprint for one service."""
+        prefix = f"v1:{service_id}:"
+        with self._lock:
+            matches = [(key, entry) for key, entry in self._entries.items() if key.startswith(prefix)]
+            for key, entry in matches:
+                self._entries.pop(key, None)
+                if entry.refcount == 0:
+                    entry.close()
+            if matches:
+                logger.info("Invalidated %d gRPC runtime entr%s for service %s", len(matches), "y" if len(matches) == 1 else "ies", service_id)
+            return len(matches)
     def clear(self) -> None:
         """Drop every entry, closing those with no active caller.
 
@@ -311,11 +338,16 @@ def _build_channel(
         ("grpc.max_receive_message_length", int(getattr(settings, "mcpgateway_grpc_max_message_size", 4 * 1024 * 1024))),
     ]
     if tls_enabled:
-        if tls_cert_path and tls_key_path:
+        if tls_key_path and not tls_cert_path:
+            raise ValueError("TLS key path requires a TLS certificate path")
+        if tls_cert_path:
             try:
                 cert = Path(tls_cert_path).read_bytes()
-                key = Path(tls_key_path).read_bytes()
-                credentials = grpc.ssl_channel_credentials(root_certificates=cert, private_key=key)
+                if tls_key_path:
+                    key = Path(tls_key_path).read_bytes()
+                    credentials = grpc.ssl_channel_credentials(private_key=key, certificate_chain=cert)
+                else:
+                    credentials = grpc.ssl_channel_credentials(root_certificates=cert)
             except OSError as exc:
                 raise ValueError(f"Unable to read TLS certificate or key file: {exc}") from exc
         else:

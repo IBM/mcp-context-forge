@@ -116,8 +116,12 @@ services:
       - SSE_RETRY_TIMEOUT=5000
       - WEBSOCKET_PING_INTERVAL=30
 
-      # ── SSRF (disabled for dev) ──
-      - SSRF_PROTECTION_ENABLED=false
+      # ── Intranet SSRF and gRPC defaults ──
+      - SSRF_PROTECTION_ENABLED=${SSRF_PROTECTION_ENABLED:-true}
+      - SSRF_ALLOW_LOCALHOST=${SSRF_ALLOW_LOCALHOST:-true}
+      - SSRF_ALLOW_PRIVATE_NETWORKS=${SSRF_ALLOW_PRIVATE_NETWORKS:-true}
+      - SSRF_DNS_FAIL_CLOSED=${SSRF_DNS_FAIL_CLOSED:-true}
+      - MCPGATEWAY_GRPC_ENABLED=${MCPGATEWAY_GRPC_ENABLED:-true}
 
       # ── LLM Chat (disabled for embedded) ──
       - LLMCHAT_ENABLED=false

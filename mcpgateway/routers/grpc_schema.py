@@ -12,21 +12,21 @@ from typing import Any, Optional
 
 # Third-Party
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Request, UploadFile
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.auth_context import get_token_teams_from_request, get_user_email
+from mcpgateway.auth_context import get_scoped_resource_access_context, get_user_email
 from mcpgateway.config import settings
 from mcpgateway.db import get_db, GrpcHealthSample, GrpcMetricsHourly
 from mcpgateway.db import GrpcService as DbGrpcService
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
-from mcpgateway.schemas import GrpcRegistrySchemaViewRead, GrpcRegistryServiceRead, GrpcRegistryViewRead, GrpcSchemaArtifactRead, GrpcSchemaDiff
+from mcpgateway.schemas import GrpcDataLineageRead, GrpcRegistrySchemaViewRead, GrpcRegistryServiceRead, GrpcRegistryViewRead, GrpcSchemaArtifactRead, GrpcSchemaDiff, GrpcToolSyncPreview
+from mcpgateway.services.grpc_monitoring_service import get_grpc_monitoring_service
 from mcpgateway.services.grpc_registry_service import GrpcRegistryService
 from mcpgateway.services.grpc_service import GrpcService, GrpcServiceError, GrpcServiceNotFoundError
-from mcpgateway.services.grpc_monitoring_service import get_grpc_monitoring_service
 from mcpgateway.services.proto_scan_service import get_proto_scan_service
 
 router = APIRouter(prefix="/grpc", tags=["gRPC Schema"])
@@ -40,6 +40,12 @@ def _require_grpc_enabled() -> None:
         raise HTTPException(status_code=404, detail="gRPC support is disabled")
 
 
+def _require_sql_lineage_enabled() -> None:
+    """Hide SQL lineage metadata while the governed SQL feature is disabled."""
+    if not settings.mcpgateway_sql_api_enabled:
+        raise HTTPException(status_code=404, detail="SQL data API support is disabled")
+
+
 def _http_error(exc: GrpcServiceError) -> HTTPException:
     """Translate descriptor service errors into stable HTTP statuses."""
     return HTTPException(status_code=404 if isinstance(exc, GrpcServiceNotFoundError) else 422, detail=str(exc))
@@ -47,13 +53,9 @@ def _http_error(exc: GrpcServiceError) -> HTTPException:
 
 def _require_service_access(request: Request, user: Any, db: Session, service_id: str) -> DbGrpcService:
     """Resolve a gRPC service through the caller's canonical token scope."""
+    user_email, token_teams = get_scoped_resource_access_context(request, user)
     statement = select(DbGrpcService).where(DbGrpcService.id == service_id)
-    token_teams = get_token_teams_from_request(request)
-    if token_teams is not None:
-        clauses = [DbGrpcService.visibility == "public", DbGrpcService.owner_email == get_user_email(user)]
-        if token_teams:
-            clauses.append(DbGrpcService.team_id.in_(token_teams))
-        statement = statement.where(or_(*clauses))
+    statement = GrpcRegistryService.scope_statement(statement, DbGrpcService, db, user_email, token_teams)
     service = db.execute(statement).scalar_one_or_none()
     if service is None:
         raise HTTPException(status_code=404, detail="gRPC service not found")
@@ -62,13 +64,9 @@ def _require_service_access(request: Request, user: Any, db: Session, service_id
 
 def _visible_services(request: Request, user: Any, db: Session) -> list[DbGrpcService]:
     """Resolve the services visible to the caller under their token scope."""
+    user_email, token_teams = get_scoped_resource_access_context(request, user)
     statement = select(DbGrpcService).order_by(DbGrpcService.name)
-    token_teams = get_token_teams_from_request(request)
-    if token_teams is not None:
-        clauses = [DbGrpcService.visibility == "public", DbGrpcService.owner_email == get_user_email(user)]
-        if token_teams:
-            clauses.append(DbGrpcService.team_id.in_(token_teams))
-        statement = statement.where(or_(*clauses))
+    statement = GrpcRegistryService.scope_statement(statement, DbGrpcService, db, user_email, token_teams)
     return list(db.execute(statement).scalars().all())
 
 
@@ -118,6 +116,32 @@ async def registry_overview(request: Request, db: Session = Depends(get_db), use
     return GrpcRegistryService.build_registry_view(db, [service.id for service in visible])
 
 
+@router.get("/lineage", response_model=GrpcDataLineageRead)
+@require_permission("admin.grpc", allow_admin_bypass=False)
+@require_permission("sql.tables.read", allow_admin_bypass=False)
+@require_permission("admin.sql_sources", allow_admin_bypass=False)
+async def data_lineage(
+    request: Request,
+    service_id: Optional[str] = None,
+    include_unbound: bool = True,
+    limit: int = Query(500, ge=1, le=2000),
+    db: Session = Depends(get_db),
+    user: Any = Depends(get_current_user_with_permissions),
+) -> GrpcDataLineageRead:
+    """Return token-scoped, linear gRPC method → MCP → SQL lineage paths."""
+    _require_grpc_enabled()
+    _require_sql_lineage_enabled()
+    if service_id:
+        _require_service_access(request, user, db, service_id)
+    user_email, token_teams = get_scoped_resource_access_context(request, user)
+    return GrpcRegistryService.build_data_lineage(
+        db,
+        user_email=user_email,
+        token_teams=token_teams,
+        service_id=service_id,
+        include_unbound=include_unbound,
+        limit=limit,
+    )
 @router.get("/{service_id}/registry", response_model=GrpcRegistryServiceRead)
 @require_permission("admin.grpc", allow_admin_bypass=False)
 async def registry_service_detail(service_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)):
@@ -136,7 +160,7 @@ async def registry_schema_detail(service_id: str, artifact_id: str, request: Req
     """Read-only detail for one schema version: methods with exposure and tool state."""
     _require_grpc_enabled()
     _require_service_access(request, user, db, service_id)
-    view = GrpcRegistryService.build_schema_detail(db, artifact_id)
+    view = GrpcRegistryService.build_schema_detail(db, artifact_id, service_id=service_id)
     if view is None:
         raise HTTPException(status_code=404, detail="Schema artifact not found")
     return view
@@ -169,6 +193,24 @@ async def diff_schemas(
     _require_service_access(request, user, db, service_id)
     try:
         return await grpc_service.diff_schemas(db, service_id, from_artifact_id, to_artifact_id)
+    except GrpcServiceError as exc:
+        raise _http_error(exc) from exc
+
+
+@router.get("/{service_id}/schemas/{artifact_id}/preview", response_model=GrpcToolSyncPreview)
+@require_permission("admin.grpc", allow_admin_bypass=False)
+async def preview_tool_sync(
+    service_id: str,
+    artifact_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),  # pylint: disable=unused-argument
+):
+    """Preview tool synchronization for a candidate schema without mutating anything."""
+    _require_grpc_enabled()
+    _require_service_access(request, user, db, service_id)
+    try:
+        return GrpcRegistryService.build_sync_preview(db, service_id, artifact_id)
     except GrpcServiceError as exc:
         raise _http_error(exc) from exc
 
@@ -210,6 +252,7 @@ async def health_samples(
     """Return recent persisted health samples."""
     _require_grpc_enabled()
     _require_service_access(request, user, db, service_id)
+    # First-Party
     from mcpgateway.services.grpc_monitoring_service import GrpcMonitoringService  # pylint: disable=import-outside-toplevel
     samples = list(db.execute(select(GrpcHealthSample).where(GrpcHealthSample.grpc_service_id == service_id).order_by(GrpcHealthSample.timestamp.desc()).limit(limit)).scalars())
     # Also fetch the service for last_health_success

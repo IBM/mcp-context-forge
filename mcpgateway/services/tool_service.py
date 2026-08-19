@@ -17,11 +17,16 @@ It handles:
 import asyncio
 import base64
 import binascii
+from collections import OrderedDict
 from collections.abc import Mapping
+from contextlib import AsyncExitStack
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import lru_cache
+from http.cookiejar import CookieJar, DefaultCookiePolicy
 import json  # NOTE: httpx uses stdlib json, not orjson, so response.json() raises json.JSONDecodeError
 import logging
+import math
 import os
 import re
 import ssl
@@ -70,7 +75,7 @@ from mcpgateway.db import fresh_db_session
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import get_for_update, server_tool_association
 from mcpgateway.db import Tool as DbTool
-from mcpgateway.db import ToolMetric, ToolMetricsHourly
+from mcpgateway.db import ToolMetric, ToolMetricsDaily, ToolMetricsHourly
 from mcpgateway.observability import create_child_span, create_span, inject_trace_context_headers, otel_context_active, set_span_attribute, set_span_error
 from mcpgateway.plugins.control_telemetry import ControlTelemetryAccumulator, record_control_telemetry
 from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
@@ -119,6 +124,7 @@ from mcpgateway.utils.validate_signature import validate_signature
 # Cache import (lazy to avoid circular dependencies)
 _REGISTRY_CACHE = None
 _TOOL_LOOKUP_CACHE = None
+_TOOL_RESULT_CACHE = None
 
 
 def _get_registry_cache():
@@ -154,6 +160,21 @@ def _get_tool_lookup_cache():
 
         _TOOL_LOOKUP_CACHE = tool_lookup_cache
     return _TOOL_LOOKUP_CACHE
+
+
+def _get_tool_result_cache():
+    """Get the opt-in tool result cache singleton lazily.
+
+    Returns:
+        ToolResultCache instance.
+    """
+    global _TOOL_RESULT_CACHE  # pylint: disable=global-statement
+    if _TOOL_RESULT_CACHE is None:
+        # First-Party
+        from mcpgateway.cache.tool_result_cache import tool_result_cache  # pylint: disable=import-outside-toplevel
+
+        _TOOL_RESULT_CACHE = tool_result_cache
+    return _TOOL_RESULT_CACHE
 
 
 # Initialize logging service first
@@ -240,18 +261,211 @@ def _pin_url_to_resolved_ip(url: str, resolved_ip: str) -> str:
     return parsed._replace(netloc=pinned_netloc).geturl()
 
 
+class _RejectAllCookiesPolicy(DefaultCookiePolicy):
+    """Prevent pooled outbound REST clients from persisting upstream cookies."""
+
+    def set_ok(self, cookie, request):  # noqa: ANN001
+        """Reject every response cookie."""
+        return False
+
+    def return_ok(self, cookie, request):  # noqa: ANN001
+        """Never attach a stored cookie to a request."""
+        return False
+
+
 def _build_pinned_rest_http_client() -> ResilientHttpClient:
-    """Build an isolated client for IP-pinned REST requests."""
+    """Build a reusable client dedicated to one validated IP/authority target."""
     return ResilientHttpClient(
         client_args={
             "timeout": settings.federation_timeout,
             "verify": not settings.skip_ssl_verify,
-            "limits": httpx.Limits(max_connections=1, max_keepalive_connections=0),
-            "cookies": {},
+            # Connection pinning must open the socket to the validated IP. An
+            # HTTP(S)_PROXY inherited from the process would instead connect to
+            # the proxy and let that intermediary choose the final route.
+            "trust_env": False,
+            "limits": httpx.Limits(
+                max_connections=settings.mcpgateway_rest_client_pool_max_connections,
+                max_keepalive_connections=settings.mcpgateway_rest_client_pool_max_keepalive_connections,
+                keepalive_expiry=settings.httpx_keepalive_expiry,
+            ),
+            # A normal httpx cookie jar learns Set-Cookie values. A reject-all
+            # policy is required because this client is shared across callers.
+            "cookies": CookieJar(policy=_RejectAllCookiesPolicy()),
         }
     )
 
 
+_PinnedRestPoolKey = tuple[str, str, str, str, bool]
+
+
+def _pinned_rest_pool_key(url: str, resolved_ip: str, original_hostname: str, original_authority: str) -> _PinnedRestPoolKey:
+    """Build an isolation key for an SSRF-validated pinned REST target."""
+    parsed = urlparse(url)
+    return (
+        parsed.scheme.lower(),
+        resolved_ip,
+        # Keep the exact (case-insensitive) SNI spelling in the key. A trailing
+        # root dot can affect certificate matching and must not share a TLS
+        # connection with the non-dotted spelling.
+        original_hostname.lower(),
+        original_authority.lower(),
+        not settings.skip_ssl_verify,
+    )
+
+
+@dataclass
+class _PinnedRestPoolEntry:
+    """Reference-counted client entry used by the pinned REST LRU."""
+
+    client: ResilientHttpClient
+    borrowers: int = 0
+    retired: bool = False
+    close_task: Optional[asyncio.Task[None]] = None
+
+
+class _PinnedRestClientPool:
+    """Bounded LRU of clients isolated by validated IP, authority, SNI, and TLS mode."""
+
+    def __init__(self, max_entries: int) -> None:
+        if max_entries < 1:
+            raise ValueError("max_entries must be at least one")
+        self._max_entries = max_entries
+        self._entries: OrderedDict[_PinnedRestPoolKey, _PinnedRestPoolEntry] = OrderedDict()
+        self._lock = asyncio.Lock()
+        self._closed = False
+        self._closing_tasks: set[asyncio.Task[None]] = set()
+
+    def _start_close_locked(self, entry: _PinnedRestPoolEntry) -> Optional[asyncio.Task[None]]:
+        """Schedule one non-cancellable close for a retired idle entry."""
+        if entry.borrowers != 0 or entry.close_task is not None:
+            return entry.close_task
+        entry.retired = True
+        close_task = asyncio.create_task(entry.client.aclose())
+        entry.close_task = close_task
+        self._closing_tasks.add(close_task)
+        close_task.add_done_callback(self._close_done)
+        return close_task
+
+    def _close_done(self, close_task: asyncio.Task[None]) -> None:
+        """Forget a completed close task and consume any cleanup exception."""
+        self._closing_tasks.discard(close_task)
+        if close_task.cancelled():
+            return
+        close_error = close_task.exception()
+        if close_error is not None:  # pragma: no cover - defensive transport cleanup
+            logger.warning("Failed to close a pinned REST client: %s", close_error)
+
+    @staticmethod
+    async def _wait_for_close(close_task: Optional[asyncio.Task[None]]) -> None:
+        """Wait for a client close without letting borrower cancellation abort it."""
+        if close_task is None:
+            return
+        try:
+            await asyncio.shield(close_task)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # pragma: no cover - already reported by _close_done
+            return
+
+    async def acquire(self, key: _PinnedRestPoolKey) -> _PinnedRestPoolEntry:
+        """Borrow a cached client, or a transient client when every slot is busy."""
+        async with self._lock:
+            if self._closed:
+                raise RuntimeError("Pinned REST client pool is closed")
+
+            entry = self._entries.get(key)
+            if entry is not None:
+                entry.borrowers += 1
+                self._entries.move_to_end(key)
+                return entry
+
+            # Construct before evicting so a client-construction error cannot
+            # discard a healthy cached entry. There are no awaits from here to
+            # return, so cancellation cannot strand the new reference count.
+            new_entry = _PinnedRestPoolEntry(client=_build_pinned_rest_http_client(), borrowers=1)
+            if len(self._entries) >= self._max_entries:
+                idle_key = next((candidate_key for candidate_key, candidate in self._entries.items() if candidate.borrowers == 0), None)
+                if idle_key is None:
+                    new_entry.retired = True
+                    return new_entry
+                idle_entry = self._entries.pop(idle_key)
+                idle_entry.retired = True
+                self._start_close_locked(idle_entry)
+
+            self._entries[key] = new_entry
+            return new_entry
+
+    async def release(self, entry: _PinnedRestPoolEntry) -> None:
+        """Return a borrowed entry and close it if it was retired."""
+        close_task: Optional[asyncio.Task[None]] = None
+        async with self._lock:
+            if entry.borrowers <= 0:
+                raise RuntimeError("Pinned REST client pool entry released more than once")
+            entry.borrowers -= 1
+            if entry.retired and entry.borrowers == 0:
+                close_task = self._start_close_locked(entry)
+        await self._wait_for_close(close_task)
+
+    async def close(self) -> None:
+        """Retire every cached client and close clients that are not in use."""
+        close_tasks: list[asyncio.Task[None]] = []
+        async with self._lock:
+            self._closed = True
+            entries = list(self._entries.values())
+            self._entries.clear()
+            for entry in entries:
+                entry.retired = True
+                if entry.borrowers == 0:
+                    close_task = self._start_close_locked(entry)
+                    if close_task is not None:
+                        close_tasks.append(close_task)
+            # Include eviction/transient closes already in progress so shutdown
+            # drains every client it currently knows about.
+            close_tasks.extend(task for task in self._closing_tasks if task not in close_tasks)
+        if close_tasks:
+            await asyncio.gather(*(asyncio.shield(task) for task in close_tasks), return_exceptions=True)
+
+
+def _protocol_timeout_default(integration_type: Optional[str]) -> float:
+    """Return the configured default deadline for a tool integration type."""
+    protocol = (integration_type or "").upper()
+    defaults = {
+        "REST": settings.mcpgateway_rest_timeout,
+        "MCP": settings.mcpgateway_mcp_timeout,
+        "GRPC": settings.mcpgateway_grpc_timeout,
+        "SQL": settings.mcpgateway_sql_timeout,
+        "A2A": settings.mcpgateway_a2a_default_timeout,
+    }
+    return float(defaults.get(protocol, settings.tool_timeout))
+
+
+def _resolve_tool_timeout(tool_payload: Mapping[str, Any], timeout_override: Optional[float] = None) -> float:
+    """Resolve explicit, per-tool, then protocol-specific invocation timeout."""
+    if timeout_override is not None:
+        if isinstance(timeout_override, bool):
+            raise ToolInvocationError("timeout_override must be greater than zero and no more than 600 seconds")
+        try:
+            resolved_override = float(timeout_override)
+        except (TypeError, ValueError) as exc:
+            raise ToolInvocationError("timeout_override must be greater than zero and no more than 600 seconds") from exc
+        if not math.isfinite(resolved_override) or not 0 < resolved_override <= 600:
+            raise ToolInvocationError("timeout_override must be greater than zero and no more than 600 seconds")
+        return resolved_override
+    tool_timeout_ms = tool_payload.get("timeout_ms")
+    if tool_timeout_ms is not None:
+        if isinstance(tool_timeout_ms, bool):
+            raise ToolInvocationError("Tool timeout_ms must be greater than zero and no more than 600000 milliseconds")
+        try:
+            resolved_tool_timeout = float(tool_timeout_ms) / 1000
+        except (TypeError, ValueError) as exc:
+            raise ToolInvocationError("Tool timeout_ms must be greater than zero and no more than 600000 milliseconds") from exc
+        if not math.isfinite(resolved_tool_timeout) or not 0 < resolved_tool_timeout <= 600:
+            raise ToolInvocationError("Tool timeout_ms must be greater than zero and no more than 600000 milliseconds")
+        return resolved_tool_timeout
+    protocol_timeout = _protocol_timeout_default(tool_payload.get("integration_type"))
+    if not math.isfinite(protocol_timeout) or protocol_timeout <= 0:
+        raise ToolInvocationError("Configured protocol timeout must be a positive number")
+    return protocol_timeout
 # Initialize performance tracker, structured logger, audit trail, and metrics buffer for tool operations
 perf_tracker = get_performance_tracker()
 structured_logger = get_structured_logger("tool_service")
@@ -1082,6 +1296,7 @@ class ToolService(BaseService):
         """
         self._event_service = EventService(channel_name="mcpgateway:tool_events")
         self._http_client = ResilientHttpClient(client_args={"timeout": settings.federation_timeout, "verify": not settings.skip_ssl_verify})
+        self._pinned_rest_client_pool = _PinnedRestClientPool(settings.mcpgateway_rest_client_pool_max_entries)
         self.oauth_manager = OAuthManager(
             request_timeout=int(settings.oauth_request_timeout if hasattr(settings, "oauth_request_timeout") else 30),
             max_retries=int(settings.oauth_max_retries if hasattr(settings, "oauth_max_retries") else 3),
@@ -1110,8 +1325,15 @@ class ToolService(BaseService):
             >>> import asyncio
             >>> asyncio.run(service.shutdown())  # Should log "Tool service shutdown complete"
         """
-        await self._http_client.aclose()
-        await self._event_service.shutdown()
+        # Stop new pinned borrows first. Nested finally blocks ensure one
+        # transport cleanup failure cannot skip the remaining resources.
+        try:
+            await self._pinned_rest_client_pool.close()
+        finally:
+            try:
+                await self._http_client.aclose()
+            finally:
+                await self._event_service.shutdown()
         logger.info("Tool service shutdown complete")
 
     async def get_top_tools(self, db: Session, limit: Optional[int] = 5, include_deleted: bool = False) -> List[TopPerformer]:
@@ -1182,6 +1404,7 @@ class ToolService(BaseService):
             "original_description": tool.original_description,
             "integration_type": tool.integration_type,
             "request_type": tool.request_type,
+            "timeout_ms": getattr(tool, "timeout_ms", None),
             "headers": tool.headers or {},
             "input_schema": tool.input_schema or {"type": "object", "properties": {}},
             "output_schema": tool.output_schema,
@@ -1203,6 +1426,7 @@ class ToolService(BaseService):
             "team_id": tool.team_id,
             "owner_email": tool.owner_email,
             "visibility": tool.visibility,
+            "version": getattr(tool, "version", 1),
             "query_mapping": tool.query_mapping,
             "header_mapping": tool.header_mapping,
         }
@@ -3471,6 +3695,7 @@ class ToolService(BaseService):
             await cache.invalidate_tools()
             tool_lookup_cache = _get_tool_lookup_cache()
             await tool_lookup_cache.invalidate(tool_name, gateway_id=str(tool.gateway_id) if tool.gateway_id else None)
+            await _get_tool_result_cache().invalidate_tool(str(tool_info["id"]))
             # Also invalidate tags cache since tool tags may have changed
             # First-Party
             from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
@@ -3592,6 +3817,7 @@ class ToolService(BaseService):
                     await cache.invalidate_tools()
                     tool_lookup_cache = _get_tool_lookup_cache()
                     await tool_lookup_cache.invalidate(tool.name, gateway_id=str(tool.gateway_id) if tool.gateway_id else None)
+                    await _get_tool_result_cache().invalidate_tool(str(tool.id))
 
                 if not tool.enabled:
                     # Inactive
@@ -3761,6 +3987,7 @@ class ToolService(BaseService):
                         remote_name = name[len(prefix) :]
 
         # Use MCP SDK to connect and call tool
+        direct_timeout = float(settings.mcpgateway_direct_proxy_timeout)
         try:
             with create_span(
                 "mcp.client.call",
@@ -3776,44 +4003,73 @@ class ToolService(BaseService):
                     "url.full": sanitize_url_for_logging(gateway_url, {}),
                 },
             ):
-                traced_headers = inject_trace_context_headers(headers)
-                request_meta_data = _sync_meta_traceparent(meta_data, traced_headers)
-                async with streamablehttp_client(url=gateway_url, headers=traced_headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
-                    async with ClientSession(read_stream, write_stream) as session:
-                        with create_span("mcp.client.initialize", {"contextforge.transport": "streamablehttp", "contextforge.runtime": "python"}):
-                            await session.initialize()
+                downstream_session_id = _downstream_session_id_from_request()
+                use_registry = bool(downstream_session_id) and not otel_context_active()
+                if use_registry:
+                    try:
+                        registry = get_upstream_session_registry()
+                    except RegistryNotInitializedError:
+                        use_registry = False
 
-                        with create_span(
-                            "mcp.client.request",
-                            {
-                                "mcp.tool.name": remote_name,
-                                "contextforge.gateway_id": str(gateway.id),
-                                "contextforge.runtime": "python",
-                            },
-                        ):
-                            # Call tool with meta if provided
+                # One deadline covers acquire/connect, initialize, and call_tool.
+                # Pooled sessions intentionally keep transport headers stable;
+                # per-request tracing headers are only injected on the fallback.
+                with anyio.fail_after(direct_timeout):
+                    if use_registry:
+                        request_meta_data = meta_data
+                        async with registry.acquire(
+                            downstream_session_id=downstream_session_id,
+                            gateway_id=str(gateway.id),
+                            url=gateway_url,
+                            headers=headers,
+                            transport_type=TransportType.STREAMABLE_HTTP,
+                        ) as upstream:
                             if request_meta_data:
                                 logger.debug("Forwarding _meta to remote gateway: %s", request_meta_data)
-                                tool_result = await session.call_tool(name=remote_name, arguments=arguments, meta=request_meta_data)
+                                tool_result = await upstream.session.call_tool(name=remote_name, arguments=arguments, meta=request_meta_data)
                             else:
-                                tool_result = await session.call_tool(name=remote_name, arguments=arguments)
-                        with create_span(
-                            "mcp.client.response",
-                            {
-                                "mcp.tool.name": remote_name,
-                                "contextforge.gateway_id": str(gateway.id),
-                                "contextforge.runtime": "python",
-                                "upstream.response.success": not getattr(tool_result, "is_error", False) and not getattr(tool_result, "isError", False),
-                            },
-                        ):
-                            pass
+                                tool_result = await upstream.session.call_tool(name=remote_name, arguments=arguments)
+                    else:
+                        traced_headers = inject_trace_context_headers(headers)
+                        request_meta_data = _sync_meta_traceparent(meta_data, traced_headers)
+                        async with streamablehttp_client(url=gateway_url, headers=traced_headers, timeout=direct_timeout) as (read_stream, write_stream, _get_session_id):
+                            async with ClientSession(read_stream, write_stream) as session:
+                                with create_span("mcp.client.initialize", {"contextforge.transport": "streamablehttp", "contextforge.runtime": "python"}):
+                                    await session.initialize()
 
-                        logger.info(
-                            "[INVOKE TOOL] Using direct_proxy mode for gateway %s (from X-Context-Forge-Gateway-Id header). Meta Attached: %s",
-                            SecurityValidator.sanitize_log_message(gateway.id),
-                            meta_data is not None,
-                        )
-                        return tool_result
+                                with create_span(
+                                    "mcp.client.request",
+                                    {
+                                        "mcp.tool.name": remote_name,
+                                        "contextforge.gateway_id": str(gateway.id),
+                                        "contextforge.runtime": "python",
+                                    },
+                                ):
+                                    if request_meta_data:
+                                        logger.debug("Forwarding _meta to remote gateway: %s", request_meta_data)
+                                        tool_result = await session.call_tool(name=remote_name, arguments=arguments, meta=request_meta_data)
+                                    else:
+                                        tool_result = await session.call_tool(name=remote_name, arguments=arguments)
+                    with create_span(
+                        "mcp.client.response",
+                        {
+                            "mcp.tool.name": remote_name,
+                            "contextforge.gateway_id": str(gateway.id),
+                            "contextforge.runtime": "python",
+                            "upstream.response.success": not getattr(tool_result, "is_error", False) and not getattr(tool_result, "isError", False),
+                        },
+                    ):
+                        pass
+
+                    logger.info(
+                        "[INVOKE TOOL] Using direct_proxy mode for gateway %s (from X-Context-Forge-Gateway-Id header). Meta Attached: %s",
+                        SecurityValidator.sanitize_log_message(gateway.id),
+                        meta_data is not None,
+                    )
+                    return tool_result
+        except TimeoutError as e:
+            logger.warning("Direct proxy tool invocation timed out for %s after %ss", name, direct_timeout)
+            raise ToolTimeoutError(f"Tool invocation timed out after {direct_timeout}s") from e
         except Exception as e:
             logger.exception("Direct proxy tool invocation failed for %s: %s", name, e)
             raise ToolInvocationError(f"Direct proxy tool invocation failed: {str(e)}")
@@ -4296,8 +4552,7 @@ class ToolService(BaseService):
         tool_name_original = tool_payload.get("original_name") or tool_payload.get("name") or name
         tool_id = tool_payload.get("id")
         tool_gateway_id = tool_payload.get("gateway_id")
-        tool_timeout_ms = tool_payload.get("timeout_ms")
-        effective_timeout = (tool_timeout_ms / 1000) if tool_timeout_ms else settings.tool_timeout
+        effective_timeout = _resolve_tool_timeout(tool_payload)
 
         # Resolve per-tool context_id for plugin manager (same pattern as invoke_tool)
         # First-Party
@@ -5098,14 +5353,18 @@ class ToolService(BaseService):
         if tool_header_mapping is not None:
             tool_header_mapping = _validate_mapping_contents(tool_header_mapping, "header_mapping", name)
 
-        # Get effective timeout: per-tool timeout_ms (in seconds) or global fallback
-        # timeout_ms is stored in milliseconds, convert to seconds
-        tool_timeout_ms = tool_payload.get("timeout_ms")
-        effective_timeout = (tool_timeout_ms / 1000) if tool_timeout_ms else settings.tool_timeout
-        if timeout_override is not None:
-            if not 0 < timeout_override <= 600:
-                raise ToolInvocationError("timeout_override must be greater than zero and no more than 600 seconds")
-            effective_timeout = timeout_override
+        # Resolve one deadline for the full upstream operation. Precedence is:
+        # explicit caller override, tool timeout_ms, then the protocol default.
+        effective_timeout = _resolve_tool_timeout(tool_payload, timeout_override)
+        invocation_started_at = time.monotonic()
+        invocation_deadline = invocation_started_at + effective_timeout
+
+        def _remaining_tool_timeout() -> float:
+            """Return the remaining end-to-end protocol budget."""
+            remaining = invocation_deadline - time.monotonic()
+            if remaining <= 0:
+                raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s")
+            return remaining
 
         # Save gateway existence as local boolean BEFORE db.close()
         # to avoid checking ORM object truthiness after session is closed
@@ -5211,6 +5470,80 @@ class ToolService(BaseService):
                 if has_gateway and gateway_payload:
                     gateway_metadata = self._pydantic_gateway_from_payload(gateway_payload)
 
+        # Result caching is fail-closed and opt-in.  A tool must explicitly
+        # assert read-only behaviour and enable the namespaced cache annotation.
+        # Calls with tool hooks are excluded so a cache hit can never bypass
+        # authorization, input transformation, output redaction, or audit hooks.
+        # First-Party
+        from mcpgateway.cache.tool_result_cache import build_result_cache_key, resolve_result_cache_policy  # pylint: disable=import-outside-toplevel
+
+        tool_result_cache = _get_tool_result_cache()
+        has_tool_plugins = bool(plugin_manager and (plugin_manager.has_hooks_for(ToolHookType.TOOL_PRE_INVOKE) or plugin_manager.has_hooks_for(ToolHookType.TOOL_POST_INVOKE)))
+        result_cache_policy = resolve_result_cache_policy(
+            globally_enabled=tool_result_cache.enabled,
+            annotations=tool_annotations,
+            integration_type=tool_integration_type,
+            request_type=tool_request_type,
+            source_operation=tool_source_operation,
+            meta_data=meta_data,
+            has_tool_plugins=has_tool_plugins,
+            default_ttl_seconds=tool_result_cache.default_ttl_seconds,
+            max_ttl_seconds=tool_result_cache.max_ttl_seconds,
+        )
+        result_cache_key: Optional[str] = None
+        result_cache_sql_table_ids: tuple[str, ...] = ()
+        if result_cache_policy.enabled:
+            if tool_integration_type == "SQL" and tool_sql_table_id and tool_source_operation == "query":
+                # First-Party
+                from mcpgateway.services.sql_data_service import SQLDataService  # pylint: disable=import-outside-toplevel
+
+                result_cache_sql_table_ids = SQLDataService.cache_dependency_table_ids(
+                    db,
+                    tool_sql_table_id,
+                    (arguments or {}).get("include") or [],
+                )
+            result_cache_key = build_result_cache_key(
+                tool_id=tool_id,
+                tool_version=tool_payload.get("version", 1),
+                arguments=arguments or {},
+                app_user_email=app_user_email,
+                user_email=user_email,
+                token_teams=token_teams,
+                server_id=server_id,
+                request_headers=request_headers,
+                meta_data=meta_data,
+                runtime_config={
+                    "tool": {
+                        "name": tool_name_original,
+                        "url": tool_url,
+                        "integration_type": tool_integration_type,
+                        "request_type": tool_request_type,
+                        "headers": tool_headers,
+                        "auth_type": tool_auth_type,
+                        "auth_value": tool_auth_value,
+                        "oauth_config": tool_oauth_config,
+                        "jsonpath_filter": tool_jsonpath_filter,
+                        "output_schema": tool_output_schema,
+                        "query_mapping": tool_query_mapping,
+                        "header_mapping": tool_header_mapping,
+                        "grpc_service_id": tool_grpc_service_id,
+                        "sql_table_id": tool_sql_table_id,
+                        "source_operation": tool_source_operation,
+                    },
+                    "gateway": {
+                        "id": gateway_id_str,
+                        "url": gateway_url,
+                        "auth_type": gateway_auth_type,
+                        "auth_value": gateway_auth_value,
+                        "auth_query_params": gateway_auth_query_params,
+                        "oauth_config": gateway_oauth_config,
+                        "ca_certificate_sig": gateway_ca_cert_sig,
+                    },
+                },
+            )
+            if result_cache_key is None:
+                logger.debug("Result cache bypassed for tool %s because key material is not canonical JSON", name)
+
         tool_for_validation = tool if tool is not None else SimpleNamespace(output_schema=tool_output_schema, name=tool_name_computed)
 
         # ═══════════════════════════════════════════════════════════════════════════
@@ -5310,12 +5643,14 @@ class ToolService(BaseService):
                 binding_name=gateway_name or server_id or "",
             )
 
-        start_time = time.monotonic()
+        start_time = invocation_started_at
         success = False
         error_message = None
         metric_status_code: Optional[str] = None
         tool_result: Optional[ToolResult] = None
         deferred_grpc_stream_callback: Optional[Callable[[Dict[str, Any]], Awaitable[None]]] = None
+        result_cache_exit_stack: Optional[AsyncExitStack] = None
+        result_cache_sql_generation_snapshot: Optional[Dict[str, int]] = None
         tool_team_scope = format_trace_team_scope(token_teams)
 
         # Get trace_id from context for database span creation
@@ -5366,6 +5701,49 @@ class ToolService(BaseService):
 
         with create_span("tool.invoke", span_attributes) as span:
             try:
+                if result_cache_key:
+                    if result_cache_sql_table_ids:
+                        generation_suffix = await tool_result_cache.sql_generation_key_suffix(result_cache_sql_table_ids)
+                        if generation_suffix is None:
+                            result_cache_key = None
+                        else:
+                            result_cache_key += generation_suffix
+                    # First check is lock-free. On a miss, take the per-key
+                    # single-flight lock and check again before calling upstream;
+                    # concurrent identical requests then share one fill.
+                    if result_cache_key:
+                        cached_result = await tool_result_cache.get(result_cache_key)
+                        if cached_result is None:
+                            result_cache_exit_stack = AsyncExitStack()
+                            await result_cache_exit_stack.enter_async_context(tool_result_cache.single_flight(result_cache_key))
+                            cached_result = await tool_result_cache.get(result_cache_key)
+                        if cached_result is None and result_cache_sql_table_ids:
+                            result_cache_sql_generation_snapshot = tool_result_cache.snapshot_sql_generations(result_cache_sql_table_ids)
+                        if cached_result is not None:
+                            # First-Party
+                            from mcpgateway.cache.tool_result_cache import with_result_cache_metadata  # pylint: disable=import-outside-toplevel
+
+                            tool_result = with_result_cache_metadata(
+                                cached_result.result,
+                                hit=True,
+                                source=cached_result.source,
+                                age_seconds=cached_result.age_seconds,
+                                ttl_seconds=result_cache_policy.ttl_seconds,
+                            )
+                            success = True
+                            metric_status_code = "CACHE_HIT"
+                            if span:
+                                set_span_attribute(span, "tool.result_cache.eligible", True)
+                                set_span_attribute(span, "tool.result_cache.hit", True)
+                                set_span_attribute(span, "tool.result_cache.source", cached_result.source)
+                            _emit_ctl_telemetry()
+                            return tool_result
+
+                if span:
+                    set_span_attribute(span, "tool.result_cache.eligible", bool(result_cache_key))
+                    if result_cache_key:
+                        set_span_attribute(span, "tool.result_cache.hit", False)
+
                 # Create a lightweight lookup child span so Langfuse shows the invoke breakdown.
                 with create_child_span(
                     "tool.lookup",
@@ -5389,13 +5767,18 @@ class ToolService(BaseService):
                         try:
                             # REST invoke path: gateway ORM object is still attached to the
                             # active session, so attribute access is safe here.
-                            access_token = await self.oauth_manager.get_access_token(
-                                tool_oauth_config,
-                                ca_certificate=gateway.ca_certificate if gateway else None,
-                                client_cert=gateway.client_cert if gateway else None,
-                                client_key=gateway.client_key if gateway else None,
+                            access_token = await asyncio.wait_for(
+                                self.oauth_manager.get_access_token(
+                                    tool_oauth_config,
+                                    ca_certificate=gateway.ca_certificate if gateway else None,
+                                    client_cert=gateway.client_cert if gateway else None,
+                                    client_key=gateway.client_key if gateway else None,
+                                ),
+                                timeout=_remaining_tool_timeout(),
                             )
                             headers["Authorization"] = f"Bearer {access_token}"
+                        except (asyncio.TimeoutError, ToolTimeoutError) as timeout_error:
+                            raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s") from timeout_error
                         except Exception as e:
                             logger.error("Failed to obtain OAuth access token for tool %s: %s", tool_name_computed, e)
                             raise ToolInvocationError(f"OAuth authentication failed: {str(e)}")
@@ -5533,8 +5916,15 @@ class ToolService(BaseService):
                     rest_request_extensions: dict[str, str] = {}
                     rest_http_client = self._http_client
                     pinned_rest_http_client: Optional[ResilientHttpClient] = None
+                    pinned_rest_pool_entry: Optional[_PinnedRestPoolEntry] = None
+                    pinned_rest_key: Optional[_PinnedRestPoolKey] = None
                     try:
-                        validated_target = await SecurityValidator.validate_url_for_connection_pinning(final_url, "Tool URL")
+                        validated_target = await asyncio.wait_for(
+                            SecurityValidator.validate_url_for_connection_pinning(final_url, "Tool URL"),
+                            timeout=_remaining_tool_timeout(),
+                        )
+                    except (asyncio.TimeoutError, ToolTimeoutError) as timeout_error:
+                        raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s") from timeout_error
                     except ValueError as validation_error:
                         safe_url = sanitize_url_for_logging(final_url)
                         logger.warning(
@@ -5565,8 +5955,7 @@ class ToolService(BaseService):
                         headers = {hk: hv for hk, hv in headers.items() if hk.lower() != "host"}
                         headers["Host"] = original_authority
                         rest_request_extensions["sni_hostname"] = original_hostname
-                        pinned_rest_http_client = _build_pinned_rest_http_client()
-                        rest_http_client = pinned_rest_http_client
+                        pinned_rest_key = _pinned_rest_pool_key(final_url, resolved_ip, original_hostname, original_authority)
 
                     with create_child_span("tool.gateway_call", {"tool.name": name, "tool.id": tool_id, "tool.integration_type": "REST"}):
                         rest_start_time = time.time()
@@ -5579,7 +5968,7 @@ class ToolService(BaseService):
                             if method == "GET":
                                 return await asyncio.wait_for(
                                     rest_http_client.get(final_url, params=payload, **request_options),
-                                    timeout=effective_timeout,
+                                    timeout=_remaining_tool_timeout(),
                                 )
                             if _ct_base == "application/x-www-form-urlencoded":
                                 # NOTE: Intentional asymmetry with the JSON/default path below.
@@ -5596,7 +5985,7 @@ class ToolService(BaseService):
                                         params=_url_query_params,
                                         **request_options,
                                     ),
-                                    timeout=effective_timeout,
+                                    timeout=_remaining_tool_timeout(),
                                 )
                             if _ct_base == "multipart/form-data":
                                 # Strip Content-Type so httpx can set it with the correct boundary parameter.
@@ -5614,12 +6003,12 @@ class ToolService(BaseService):
                                         params=_url_query_params,
                                         **multipart_request_options,
                                     ),
-                                    timeout=effective_timeout,
+                                    timeout=_remaining_tool_timeout(),
                                 )
                             # For POST/PUT/PATCH/DELETE (JSON body, default path)
                             return await asyncio.wait_for(
                                 rest_http_client.request(method, final_url, json=payload, **request_options),
-                                timeout=effective_timeout,
+                                timeout=_remaining_tool_timeout(),
                             )
 
                         try:
@@ -5647,21 +6036,36 @@ class ToolService(BaseService):
                             # else: No mappings (None or empty) - preserve query params in URL for signed URL support
                             # (Azure SAS, AWS presigned URLs, webhook signatures, etc.)
 
+                            if pinned_rest_key is not None:
+                                if settings.mcpgateway_rest_client_pool_enabled:
+                                    pinned_rest_pool_entry = await self._pinned_rest_client_pool.acquire(pinned_rest_key)
+                                    rest_http_client = pinned_rest_pool_entry.client
+                                else:
+                                    pinned_rest_http_client = _build_pinned_rest_http_client()
+                                    rest_http_client = pinned_rest_http_client
+
                             try:
-                                response = await self._send_with_token_exchange_retry(
-                                    _send,
-                                    headers,
-                                    gateway_oauth_config if (has_gateway and gateway_grant_type == "token-exchange") else None,
-                                    gateway_id_str,
-                                    gateway_name,
-                                    app_user_email,
-                                    request_headers or {},
-                                    ca_certificate=gateway_ca_cert,
-                                    client_cert=gateway_client_cert,
-                                    client_key=gateway_client_key,
+                                # Bound the complete send/re-exchange/retry sequence,
+                                # rather than granting each retry a fresh deadline.
+                                response = await asyncio.wait_for(
+                                    self._send_with_token_exchange_retry(
+                                        _send,
+                                        headers,
+                                        gateway_oauth_config if (has_gateway and gateway_grant_type == "token-exchange") else None,
+                                        gateway_id_str,
+                                        gateway_name,
+                                        app_user_email,
+                                        request_headers or {},
+                                        ca_certificate=gateway_ca_cert,
+                                        client_cert=gateway_client_cert,
+                                        client_key=gateway_client_key,
+                                    ),
+                                    timeout=_remaining_tool_timeout(),
                                 )
                             finally:
-                                if pinned_rest_http_client is not None:
+                                if pinned_rest_pool_entry is not None:
+                                    await self._pinned_rest_client_pool.release(pinned_rest_pool_entry)
+                                elif pinned_rest_http_client is not None:
                                     await pinned_rest_http_client.aclose()
                             metric_status_code = str(response.status_code)
                         except (asyncio.TimeoutError, httpx.TimeoutException):
@@ -5783,7 +6187,10 @@ class ToolService(BaseService):
                                     if not app_user_email:
                                         raise ToolInvocationError(f"User authentication required for OAuth-protected gateway '{gateway_name}'. Please ensure you are authenticated.")
 
-                                    access_token = await token_storage.get_user_token(gateway_id_str, app_user_email)
+                                    access_token = await asyncio.wait_for(
+                                        token_storage.get_user_token(gateway_id_str, app_user_email),
+                                        timeout=_remaining_tool_timeout(),
+                                    )
 
                                 if access_token:
                                     headers = {"Authorization": f"Bearer {access_token}"}
@@ -5799,27 +6206,43 @@ class ToolService(BaseService):
                                         gateway_name,
                                         extra={"gateway_id": gateway_id_str, "user": app_user_email or "<unknown>"},
                                     )
+                            except (asyncio.TimeoutError, ToolTimeoutError) as timeout_error:
+                                raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s") from timeout_error
                             except Exception as e:
                                 logger.error("Failed to obtain stored OAuth token for gateway %s: %s", gateway_name, e)
                                 raise ToolInvocationError(f"OAuth token retrieval failed for gateway: {str(e)}")
                         elif grant_type == "token-exchange":
-                            headers = await self._resolve_token_exchange_header(
-                                gateway_oauth_config,
-                                gateway_id_str,
-                                gateway_name,
-                                app_user_email,
-                                request_headers,
-                                ca_certificate=gateway_ca_cert,
-                                client_cert=gateway_client_cert,
-                                client_key=gateway_client_key,
-                            )
+                            try:
+                                headers = await asyncio.wait_for(
+                                    self._resolve_token_exchange_header(
+                                        gateway_oauth_config,
+                                        gateway_id_str,
+                                        gateway_name,
+                                        app_user_email,
+                                        request_headers,
+                                        ca_certificate=gateway_ca_cert,
+                                        client_cert=gateway_client_cert,
+                                        client_key=gateway_client_key,
+                                    ),
+                                    timeout=_remaining_tool_timeout(),
+                                )
+                            except (asyncio.TimeoutError, ToolTimeoutError) as timeout_error:
+                                raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s") from timeout_error
                         else:
                             # For Client Credentials flow, get token directly (no DB needed)
                             try:
-                                access_token = await self.oauth_manager.get_access_token(
-                                    gateway_oauth_config, ca_certificate=gateway_ca_cert, client_cert=gateway_client_cert, client_key=gateway_client_key
+                                access_token = await asyncio.wait_for(
+                                    self.oauth_manager.get_access_token(
+                                        gateway_oauth_config,
+                                        ca_certificate=gateway_ca_cert,
+                                        client_cert=gateway_client_cert,
+                                        client_key=gateway_client_key,
+                                    ),
+                                    timeout=_remaining_tool_timeout(),
                                 )
                                 headers = {"Authorization": f"Bearer {access_token}"}
+                            except (asyncio.TimeoutError, ToolTimeoutError) as timeout_error:
+                                raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s") from timeout_error
                             except Exception as e:
                                 logger.error("Failed to obtain OAuth access token for gateway %s: %s", gateway_name, e)
                                 raise ToolInvocationError(f"OAuth authentication failed for gateway: {str(e)}")
@@ -5956,7 +6379,7 @@ class ToolService(BaseService):
 
                         # Use effective_timeout for read operations if not explicitly overridden by caller
                         # This ensures the underlying client waits at least as long as the tool configuration requires
-                        factory_timeout = timeout if timeout else get_http_timeout(read_timeout=effective_timeout)
+                        factory_timeout = timeout if timeout else get_http_timeout(read_timeout=_remaining_tool_timeout())
 
                         return httpx.AsyncClient(
                             verify=ctx if ctx else get_default_verify(),
@@ -6037,7 +6460,7 @@ class ToolService(BaseService):
                                     transport_type=TransportType.SSE,
                                     httpx_client_factory=get_httpx_client_factory,
                                 ) as upstream:
-                                    with anyio.fail_after(effective_timeout):
+                                    with anyio.fail_after(_remaining_tool_timeout()):
                                         tool_call_result = await upstream.session.call_tool(tool_name_original, arguments, meta=meta_data)
                             else:
                                 # Fallback: per-call session. Taken when no downstream session id
@@ -6078,7 +6501,7 @@ class ToolService(BaseService):
                                                     "contextforge.runtime": "python",
                                                 },
                                             ):
-                                                with anyio.fail_after(effective_timeout):
+                                                with anyio.fail_after(_remaining_tool_timeout()):
                                                     tool_call_result = await session.call_tool(tool_name_original, arguments, meta=request_meta_data)
                                             with create_span(
                                                 "mcp.client.response",
@@ -6219,7 +6642,7 @@ class ToolService(BaseService):
                                     transport_type=registry_transport_type,
                                     httpx_client_factory=get_httpx_client_factory,
                                 ) as upstream:
-                                    with anyio.fail_after(effective_timeout):
+                                    with anyio.fail_after(_remaining_tool_timeout()):
                                         tool_call_result = await upstream.session.call_tool(tool_name_original, arguments, meta=meta_data)
                             else:
                                 # Fallback: per-call session. Taken when no downstream session id
@@ -6265,7 +6688,7 @@ class ToolService(BaseService):
                                                     "contextforge.runtime": "python",
                                                 },
                                             ):
-                                                with anyio.fail_after(effective_timeout):
+                                                with anyio.fail_after(_remaining_tool_timeout()):
                                                     tool_call_result = await session.call_tool(tool_name_original, arguments, meta=request_meta_data)
                                             with create_span(
                                                 "mcp.client.response",
@@ -6398,10 +6821,19 @@ class ToolService(BaseService):
 
                     with create_child_span("tool.gateway_call", {"tool.name": name, "tool.id": tool_id, "tool.integration_type": "MCP"}):
                         tool_call_result = ToolResult(content=[TextContent(text="", type="text")])
-                        if transport == "sse":
-                            tool_call_result = await connect_to_sse_server(gateway_url, headers=headers)
-                        elif transport == "streamablehttp":
-                            tool_call_result = await connect_to_streamablehttp_server(gateway_url, headers=headers)
+                        try:
+                            if transport == "sse":
+                                tool_call_result = await asyncio.wait_for(
+                                    connect_to_sse_server(gateway_url, headers=headers),
+                                    timeout=_remaining_tool_timeout(),
+                                )
+                            elif transport == "streamablehttp":
+                                tool_call_result = await asyncio.wait_for(
+                                    connect_to_streamablehttp_server(gateway_url, headers=headers),
+                                    timeout=_remaining_tool_timeout(),
+                                )
+                        except (asyncio.TimeoutError, ToolTimeoutError) as timeout_error:
+                            raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s") from timeout_error
 
                         # In direct proxy mode, preserve the upstream response verbatim
                         # (no jsonpath filtering, no structured/unstructured split) but
@@ -6500,7 +6932,7 @@ class ToolService(BaseService):
                         try:
                             http_response = await asyncio.wait_for(
                                 self._http_client.post(prepared.endpoint_url, json=prepared.request_data, headers=prepared.headers),
-                                timeout=effective_timeout,
+                                timeout=_remaining_tool_timeout(),
                             )
                             status_code = http_response.status_code
                             metric_status_code = str(status_code)
@@ -6563,18 +6995,19 @@ class ToolService(BaseService):
                         grpc_status_token = grpc_status_context.set(None)
                         try:
                             with fresh_db_session() as grpc_db:
+                                grpc_timeout = _remaining_tool_timeout()
                                 response = await asyncio.wait_for(
                                     grpc_manager.invoke_method(
                                         grpc_db,
                                         tool_grpc_service_id,
                                         tool_name_original,
                                         arguments or {},
-                                        timeout=effective_timeout,
+                                        timeout=grpc_timeout,
                                         metadata_override=(meta_data or {}).get("grpc_metadata") if isinstance((meta_data or {}).get("grpc_metadata"), dict) else None,
                                         stream_callback=requested_stream_callback,
                                         capture_call_metadata=bool((meta_data or {}).get("capture_grpc_call_metadata")),
                                     ),
-                                    timeout=effective_timeout,
+                                    timeout=grpc_timeout,
                                 )
                         finally:
                             metric_status_code = grpc_status_context.get()
@@ -6613,12 +7046,26 @@ class ToolService(BaseService):
                         def _invoke_sql():
                             """Execute governed SQL with an independent worker-thread session."""
                             with fresh_db_session() as sql_db:
-                                return SQLDataService.execute(sql_db, tool_sql_table_id, tool_source_operation, arguments or {}, timeout=effective_timeout)
+                                return SQLDataService.execute(sql_db, tool_sql_table_id, tool_source_operation, arguments or {}, timeout=sql_timeout)
 
-                        # SQLDataService applies the deadline inside the database driver. Do not
-                        # cancel this worker thread from asyncio: cancellation could return a
-                        # timeout while a write transaction continues and commits in the background.
-                        response = await asyncio.to_thread(_invoke_sql)
+                        # SQLDataService applies the deadline inside the database driver. Shield
+                        # the worker task so coroutine cancellation cannot abandon a transaction
+                        # that is still running in a thread. For a write that commits after the
+                        # caller cancels, finish the table-cache invalidation before propagating
+                        # cancellation; otherwise a cancelled async job could leave stale reads.
+                        sql_timeout = _remaining_tool_timeout()
+                        sql_execution_task = asyncio.create_task(asyncio.to_thread(_invoke_sql))
+                        try:
+                            response = await asyncio.shield(sql_execution_task)
+                        except asyncio.CancelledError:
+                            try:
+                                await asyncio.shield(sql_execution_task)
+                            except Exception as sql_completion_error:  # pylint: disable=broad-except
+                                logger.debug("Cancelled SQL invocation finished with %s", type(sql_completion_error).__name__)
+                            else:
+                                if tool_source_operation != "query":
+                                    await asyncio.shield(tool_result_cache.invalidate_sql_table(tool_sql_table_id))
+                            raise
                         serialized = orjson.dumps(response, option=orjson.OPT_INDENT_2, default=str)
                         tool_result = ToolResult(content=[TextContent(type="text", text=serialized.decode())])
                         success = True
@@ -6714,6 +7161,33 @@ class ToolService(BaseService):
                                     if isinstance(stream_item, dict):
                                         await deferred_grpc_stream_callback(stream_item)
 
+                # Successful governed SQL writes invalidate cached queries for
+                # the same table. External database changes remain bounded by
+                # the configured TTL and can use the explicit invalidation API.
+                if tool_integration_type == "SQL" and tool_sql_table_id and tool_source_operation != "query" and success:
+                    await tool_result_cache.invalidate_sql_table(tool_sql_table_id)
+
+                if result_cache_key and success and tool_result and not tool_result.is_error:
+                    cache_stored = await tool_result_cache.set(
+                        result_cache_key,
+                        tool_result,
+                        ttl_seconds=result_cache_policy.ttl_seconds,
+                        tool_id=tool_id,
+                        gateway_id=tool_gateway_id,
+                        sql_table_ids=result_cache_sql_table_ids,
+                        expected_sql_generations=result_cache_sql_generation_snapshot,
+                    )
+                    # First-Party
+                    from mcpgateway.cache.tool_result_cache import with_result_cache_metadata  # pylint: disable=import-outside-toplevel
+
+                    tool_result = with_result_cache_metadata(
+                        tool_result,
+                        hit=False,
+                        source="upstream" if cache_stored else "upstream-not-stored",
+                        ttl_seconds=result_cache_policy.ttl_seconds if cache_stored else None,
+                    )
+                    if span:
+                        set_span_attribute(span, "tool.result_cache.stored", cache_stored)
                 # Emit CPEX control-execution telemetry for this invocation (best-effort).
                 # Placed here on the normal-return path so both pre and post records are
                 # accumulated before emitting.  Exception paths below also call this helper
@@ -6842,6 +7316,9 @@ class ToolService(BaseService):
 
                 raise ToolInvocationError(f"Tool invocation failed: {error_message}")
             finally:
+                if result_cache_exit_stack is not None:
+                    await result_cache_exit_stack.aclose()
+
                 # Calculate duration
                 duration_ms = (time.monotonic() - start_time) * 1000
 
@@ -7256,6 +7733,7 @@ class ToolService(BaseService):
             tool_lookup_cache = _get_tool_lookup_cache()
             await tool_lookup_cache.invalidate(old_tool_name, gateway_id=str(old_gateway_id) if old_gateway_id else None)
             await tool_lookup_cache.invalidate(tool.name, gateway_id=str(tool.gateway_id) if tool.gateway_id else None)
+            await _get_tool_result_cache().invalidate_tool(str(tool.id))
             # Also invalidate tags cache since tool tags may have changed
             # First-Party
             from mcpgateway.cache.admin_stats_cache import admin_stats_cache  # pylint: disable=import-outside-toplevel
@@ -7592,9 +8070,11 @@ class ToolService(BaseService):
         if tool_id:
             db.execute(delete(ToolMetric).where(ToolMetric.tool_id == tool_id))
             db.execute(delete(ToolMetricsHourly).where(ToolMetricsHourly.tool_id == tool_id))
+            db.execute(delete(ToolMetricsDaily).where(ToolMetricsDaily.tool_id == tool_id))
         else:
             db.execute(delete(ToolMetric))
             db.execute(delete(ToolMetricsHourly))
+            db.execute(delete(ToolMetricsDaily))
         db.commit()
 
         # Invalidate metrics cache
@@ -7912,6 +8392,14 @@ class ToolService(BaseService):
 _tool_service_instance = None  # pylint: disable=invalid-name
 
 
+def get_tool_service() -> ToolService:
+    """Return the process-wide ToolService and its shared connection pools."""
+    global _tool_service_instance  # pylint: disable=global-statement
+    if _tool_service_instance is None:
+        _tool_service_instance = ToolService()
+    return _tool_service_instance
+
+
 def __getattr__(name: str):
     """Module-level __getattr__ for lazy singleton creation.
 
@@ -7924,9 +8412,6 @@ def __getattr__(name: str):
     Raises:
         AttributeError: If the attribute name is not "tool_service".
     """
-    global _tool_service_instance  # pylint: disable=global-statement
     if name == "tool_service":
-        if _tool_service_instance is None:
-            _tool_service_instance = ToolService()
-        return _tool_service_instance
+        return get_tool_service()
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

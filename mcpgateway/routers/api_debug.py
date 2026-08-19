@@ -18,22 +18,23 @@ from typing import Any, AsyncIterator, Awaitable, Callable, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import StreamingResponse
 import orjson
-from sqlalchemy import delete, or_, select
+from sqlalchemy import delete, select
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.auth_context import get_token_teams_from_request, get_user_email
+from mcpgateway.auth_context import get_scoped_resource_access_context, get_token_teams_from_request, get_user_email
 from mcpgateway.config import settings
 from mcpgateway.db import APIDebugHistory, fresh_db_session, get_db, ToolMetric
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.schemas import APIDebugHistoryRead, APIDebugInvokeRequest
+from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.metrics_buffer_service import debug_invocation_context
 from mcpgateway.services.observability_service import current_trace_id
-from mcpgateway.services.tool_service import ToolError, ToolService
+from mcpgateway.services.tool_service import tool_service
+from mcpgateway.services.tool_service import ToolError
 
 router = APIRouter(prefix="/debug", tags=["API Debugger"])
-tool_service = ToolService()
 logger = logging.getLogger(__name__)
 _SENSITIVE_FRAGMENTS = ("authorization", "cookie", "password", "passwd", "secret", "token", "api_key", "apikey", "credential")
 
@@ -61,15 +62,17 @@ def _redact(value: Any, depth: int = 0) -> Any:
     return value
 
 
-def _scope_tool_statement(statement, request: Request, user: Any):
+def _scope_tool_statement(statement, request: Request, user: Any, db: Session):
     """Apply canonical token visibility to debugger catalog, invoke, and metrics reads."""
-    token_teams = get_token_teams_from_request(request)
-    if token_teams is None:
-        return statement
-    clauses = [DbTool.visibility == "public", DbTool.owner_email == get_user_email(user)]
-    if token_teams:
-        clauses.append(DbTool.team_id.in_(token_teams))
-    return statement.where(or_(*clauses))
+    user_email, token_teams = get_scoped_resource_access_context(request, user)
+    return BaseService._apply_visibility_scope(  # pylint: disable=protected-access
+        statement,
+        DbTool,
+        user_email=user_email,
+        token_teams=token_teams,
+        team_ids=token_teams or [],
+        db=db,
+    )
 
 
 def _record_history(
@@ -130,7 +133,7 @@ async def _invoke(
 ) -> dict[str, Any]:
     """Invoke through ToolService and save only metadata/history previews."""
     _require_debug_enabled()
-    tool = db.execute(_scope_tool_statement(select(DbTool).where(DbTool.id == payload.tool_id), request, user)).scalar_one_or_none()
+    tool = db.execute(_scope_tool_statement(select(DbTool).where(DbTool.id == payload.tool_id), request, user, db)).scalar_one_or_none()
     if tool is None:
         raise HTTPException(status_code=404, detail="Tool not found")
     owner_email = get_user_email(user)
@@ -329,7 +332,7 @@ async def api_call_stats(
         .join(DbTool, DbTool.id == ToolMetric.tool_id)
         .where(ToolMetric.timestamp >= start, ToolMetric.timestamp <= end)
     )
-    statement = _scope_tool_statement(statement, request, user)
+    statement = _scope_tool_statement(statement, request, user, db)
     if protocol:
         statement = statement.where(DbTool.integration_type == protocol)
     if service_id:

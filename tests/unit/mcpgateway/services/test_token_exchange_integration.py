@@ -1041,6 +1041,8 @@ class TestRestIntegrationB2Wiring:
         assert len(responses) == 2  # exactly one retry
         # Second attempt carried the freshly re-exchanged Authorization header.
         assert responses[1].get("Authorization") == "Bearer fresh-tok"
+        pinned_client.aclose.assert_not_awaited()
+        await svc._pinned_rest_client_pool.close()
         pinned_client.aclose.assert_awaited_once()
         svc._token_exchange_cache.invalidate.assert_awaited_once()
         svc._resolve_token_exchange_header.assert_awaited_once()

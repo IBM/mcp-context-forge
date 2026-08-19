@@ -783,7 +783,7 @@ class ToolCreate(BaseModel):
     path_template: Optional[str] = Field(None, description="Path template for REST passthrough")
     query_mapping: Optional[Dict[str, str]] = Field(None, description="Query mapping for REST passthrough")
     header_mapping: Optional[Dict[str, str]] = Field(None, description="Header mapping for REST passthrough")
-    timeout_ms: Optional[int] = Field(default=None, description="Timeout in milliseconds for REST passthrough (20000 if integration_type='REST', else None)")
+    timeout_ms: Optional[int] = Field(default=None, gt=0, le=600_000, description="Optional per-tool timeout override in milliseconds (maximum 600 seconds); otherwise the protocol default applies")
     expose_passthrough: Optional[bool] = Field(True, description="Expose passthrough endpoint for this tool")
     allowlist: Optional[List[str]] = Field(None, description="Allowed upstream hosts/schemes for passthrough")
     plugin_chain_pre: Optional[List[str]] = Field(None, description="Pre-plugin chain for passthrough")
@@ -1307,18 +1307,6 @@ class ToolCreate(BaseModel):
         """Reject header_mapping targets that are sensitive or malformed."""
         return _validate_header_mapping_targets(v)
 
-    @model_validator(mode="after")
-    def handle_timeout_ms_defaults(self):
-        """Handle timeout_ms defaults based on integration_type and expose_passthrough.
-
-        Returns:
-            self: The validated model instance with timeout_ms potentially set to default.
-        """
-        # If timeout_ms is None and we have REST with passthrough, set default
-        if self.timeout_ms is None and self.integration_type == "REST" and getattr(self, "expose_passthrough", True):
-            self.timeout_ms = 20000
-        return self
-
 
 class ToolUpdate(BaseModelWithConfigDict):
     """Schema for updating an existing tool.
@@ -1353,7 +1341,7 @@ class ToolUpdate(BaseModelWithConfigDict):
     path_template: Optional[str] = Field(None, description="Path template for REST passthrough")
     query_mapping: Optional[Dict[str, str]] = Field(None, description="Query mapping for REST passthrough")
     header_mapping: Optional[Dict[str, str]] = Field(None, description="Header mapping for REST passthrough")
-    timeout_ms: Optional[int] = Field(default=None, description="Timeout in milliseconds for REST passthrough (20000 if integration_type='REST', else None)")
+    timeout_ms: Optional[int] = Field(default=None, gt=0, le=600_000, description="Optional per-tool timeout override in milliseconds (maximum 600 seconds); otherwise the protocol default applies")
     expose_passthrough: Optional[bool] = Field(True, description="Expose passthrough endpoint for this tool")
     allowlist: Optional[List[str]] = Field(None, description="Allowed upstream hosts/schemes for passthrough")
     plugin_chain_pre: Optional[List[str]] = Field(None, description="Pre-plugin chain for passthrough")
@@ -7873,8 +7861,8 @@ class GrpcServiceCreate(BaseModel):
     description: Optional[str] = Field(None, description="Description of the gRPC service")
     reflection_enabled: bool = Field(default=True, description="Enable gRPC server reflection")
     tls_enabled: bool = Field(default=False, description="Enable TLS for gRPC connection")
-    tls_cert_path: Optional[str] = Field(None, description="Path to TLS certificate file")
-    tls_key_path: Optional[str] = Field(None, description="Path to TLS key file")
+    tls_cert_path: Optional[str] = Field(None, description="Path to a root CA file, or to the client certificate chain when tls_key_path is set")
+    tls_key_path: Optional[str] = Field(None, description="Path to the client private key for mTLS")
     grpc_metadata: Dict[str, str] = Field(default_factory=dict, description="gRPC metadata headers")
     discovery_mode: Literal["auto", "reflection", "artifact"] = Field(default="auto", description="Descriptor discovery mode")
     health_check_enabled: bool = Field(default=True, description="Enable periodic health checks")
@@ -7947,8 +7935,8 @@ class GrpcServiceUpdate(BaseModel):
     description: Optional[str] = Field(None, description="Service description")
     reflection_enabled: Optional[bool] = Field(None, description="Enable server reflection")
     tls_enabled: Optional[bool] = Field(None, description="Enable TLS")
-    tls_cert_path: Optional[str] = Field(None, description="TLS certificate path")
-    tls_key_path: Optional[str] = Field(None, description="TLS key path")
+    tls_cert_path: Optional[str] = Field(None, description="Root CA path, or client certificate-chain path when tls_key_path is set")
+    tls_key_path: Optional[str] = Field(None, description="Client private-key path for mTLS")
     grpc_metadata: Optional[Dict[str, str]] = Field(None, description="gRPC metadata headers")
     discovery_mode: Optional[Literal["auto", "reflection", "artifact"]] = Field(None, description="Descriptor discovery mode")
     health_check_enabled: Optional[bool] = Field(None, description="Enable health checks")
@@ -8027,8 +8015,8 @@ class GrpcServiceRead(BaseModel):
     # Configuration
     reflection_enabled: bool = Field(..., description="Reflection enabled")
     tls_enabled: bool = Field(..., description="TLS enabled")
-    tls_cert_path: Optional[str] = Field(None, description="TLS certificate path")
-    tls_key_path: Optional[str] = Field(None, description="TLS key path")
+    tls_cert_path: Optional[str] = Field(None, description="Root CA or mTLS client certificate-chain path")
+    tls_key_path: Optional[str] = Field(None, description="mTLS client private-key path")
     grpc_metadata: Dict[str, str] = Field(default_factory=dict, description="gRPC metadata")
     discovery_mode: Literal["auto", "reflection", "artifact"] = Field(default="auto", description="Descriptor discovery mode")
     active_artifact_id: Optional[str] = Field(None, description="Active descriptor artifact ID")
@@ -8139,6 +8127,27 @@ class GrpcSchemaDiff(BaseModel):
     changed_methods: List[str] = Field(default_factory=list)
 
 
+class GrpcToolSyncPreview(BaseModel):
+    """Read-only preview of what tool synchronization would do for a candidate schema.
+
+    Computed against the candidate artifact without mutating the Tool table or
+    activating anything. The four lists classify the would-be sync outcomes:
+    - added_tools: methods in the candidate catalog with no current Tool row
+    - modified_tools: methods whose Tool row would be updated (description,
+      schemas, url, or parent token-scoping fields)
+    - disabled_tools: current tools whose method vanished or became
+      client-streaming (soft-disable triad)
+    - methods_needing_reapproval: methods present on both sides whose
+      signature (I/O types, schemas, or streaming flags) changed
+    """
+
+    service_id: str
+    candidate_artifact_id: str
+    added_tools: List[str] = Field(default_factory=list)
+    modified_tools: List[str] = Field(default_factory=list)
+    disabled_tools: List[str] = Field(default_factory=list)
+    methods_needing_reapproval: List[str] = Field(default_factory=list)
+    warning: Optional[str] = None
 class GrpcRegistrySchemaVersionRead(BaseModel):
     """One schema version in the registry view, without descriptor bytes."""
 
@@ -8215,6 +8224,52 @@ class GrpcRegistryViewRead(BaseModel):
     total_exposed_tools: int = Field(default=0)
 
 
+class GrpcDataLineageStageRead(BaseModel):
+    """One ordered stage in a gRPC-to-data lineage path."""
+
+    kind: Literal["grpc_service", "grpc_method", "mcp_tool", "mcp_server", "data_binding", "sql_source", "sql_table"]
+    id: Optional[str] = None
+    label: str
+    detail: Optional[str] = None
+    state: Literal["active", "inactive", "missing", "stale"] = "active"
+    attributes: Dict[str, Any] = Field(default_factory=dict)
+
+
+class GrpcDataLineagePathRead(BaseModel):
+    """A flattened, left-to-right path from one gRPC method to one data table."""
+
+    id: str
+    grpc_service_id: str
+    method_name: str
+    tool_id: Optional[str] = None
+    server_id: Optional[str] = None
+    binding_id: Optional[str] = None
+    sql_table_id: Optional[str] = None
+    has_mcp_exposure: bool = False
+    has_data_binding: bool = False
+    stages: List[GrpcDataLineageStageRead] = Field(default_factory=list)
+
+
+class GrpcDataLineageSummaryRead(BaseModel):
+    """Counts describing the visible gRPC-to-data lineage graph."""
+
+    service_count: int = 0
+    method_count: int = 0
+    tool_count: int = 0
+    mcp_exposed_tool_count: int = 0
+    data_bound_tool_count: int = 0
+    path_count: int = 0
+
+
+class GrpcDataLineageRead(BaseModel):
+    """Token-scoped linear lineage paths rendered by the Admin UI."""
+
+    paths: List[GrpcDataLineagePathRead] = Field(default_factory=list)
+    summary: GrpcDataLineageSummaryRead = Field(default_factory=GrpcDataLineageSummaryRead)
+    truncated: bool = False
+    relationship_semantics: str = Field(
+        default="API/SQL bindings describe catalog/impact metadata; they do not imply that the gRPC request directly executes SQL."
+    )
 class SQLDataSourceCreate(BaseModel):
     """Create an encrypted external SQL data source."""
 
@@ -8372,6 +8427,21 @@ class APISQLTableBindingRead(BaseModel):
     binding_type: Literal["auto", "manual"]
     created_by: Optional[str] = None
     created_at: datetime
+
+
+class APISQLTableBindingReadDetail(APISQLTableBindingRead):
+    """Enriched binding with joined Tool and SQLTable context."""
+
+    tool_name: str
+    tool_display_name: Optional[str] = None
+    tool_integration_type: Optional[str] = None
+    tool_enabled: Optional[bool] = None
+    table_schema: Optional[str] = None
+    table_name: Optional[str] = None
+    object_type: Optional[str] = None
+    table_exposed: Optional[bool] = None
+    source_id: Optional[str] = None
+    source_name: Optional[str] = None
 
 
 class APIDebugInvokeRequest(BaseModel):

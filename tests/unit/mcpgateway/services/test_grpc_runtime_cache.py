@@ -8,9 +8,7 @@ and its integration into GrpcService.invoke_method.
 """
 
 # Standard
-from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
-import uuid
+from unittest.mock import MagicMock, patch
 
 # Third-Party
 import pytest
@@ -18,7 +16,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.db import GrpcService as DbGrpcService
-from mcpgateway.services.grpc_runtime_cache import GrpcRuntimeCache, _CacheEntry, runtime_cache
+from mcpgateway.services.grpc_runtime_cache import _build_channel, GrpcRuntimeCache
 from mcpgateway.services.grpc_service import GrpcService, GrpcServiceError
 
 
@@ -61,12 +59,65 @@ class TestGrpcRuntimeCacheKey:
         key2 = cache.key_for("svc-1", "hash-a", "10.0.0.1:50051", False, None, None, {"a": "2"})
         assert key1 != key2
 
+    def test_key_never_contains_decrypted_connection_secrets(self):
+        cache = GrpcRuntimeCache(max_entries=8)
+        key = cache.key_for(
+            "svc-1",
+            "hash-a",
+            "private.internal:50051",
+            True,
+            "/secrets/client.crt",
+            "/secrets/client.key",
+            {"authorization": "Bearer top-secret", "x-api-key": "api-secret"},
+        )
+
+        assert key.startswith("v1:svc-1:")
+        assert "top-secret" not in key
+        assert "api-secret" not in key
+        assert "private.internal" not in key
+        assert "/secrets/" not in key
     def test_none_schema_hash_is_distinct_identity(self):
         cache = GrpcRuntimeCache(max_entries=8)
         key1 = cache.key_for("svc-1", None, "10.0.0.1:50051", False, None, None, {})
         key2 = cache.key_for("svc-1", "hash-a", "10.0.0.1:50051", False, None, None, {})
         assert key1 != key2
 
+    def test_key_changes_when_tls_material_rotates_in_place(self, tmp_path):
+        cache = GrpcRuntimeCache(max_entries=8)
+        cert_path = tmp_path / "client.pem"
+        cert_path.write_bytes(b"first-certificate")
+        first = cache.key_for("svc-1", "hash-a", "host:443", True, str(cert_path), None, {})
+        cert_path.write_bytes(b"rotated-certificate")
+        second = cache.key_for("svc-1", "hash-a", "host:443", True, str(cert_path), None, {})
+        assert first != second
+
+
+class TestGrpcRuntimeTlsChannel:
+    """TLS credential wiring matches gRPC's CA and mTLS contracts."""
+
+    def test_cert_only_is_custom_root_ca(self, tmp_path):
+        cert_path = tmp_path / "ca.pem"
+        cert_path.write_bytes(b"root-ca")
+        with patch("mcpgateway.services.grpc_runtime_cache.grpc") as mock_grpc:
+            mock_grpc.ssl_channel_credentials.return_value = "credentials"
+            _build_channel("host:443", True, str(cert_path), None)
+        mock_grpc.ssl_channel_credentials.assert_called_once_with(root_certificates=b"root-ca")
+
+    def test_cert_and_key_are_client_chain_pair(self, tmp_path):
+        cert_path = tmp_path / "client.pem"
+        key_path = tmp_path / "client.key"
+        cert_path.write_bytes(b"client-chain")
+        key_path.write_bytes(b"private-key")
+        with patch("mcpgateway.services.grpc_runtime_cache.grpc") as mock_grpc:
+            mock_grpc.ssl_channel_credentials.return_value = "credentials"
+            _build_channel("host:443", True, str(cert_path), str(key_path))
+        mock_grpc.ssl_channel_credentials.assert_called_once_with(private_key=b"private-key", certificate_chain=b"client-chain")
+
+    def test_key_without_certificate_fails_closed(self, tmp_path):
+        key_path = tmp_path / "client.key"
+        key_path.write_bytes(b"private-key")
+        with pytest.raises(ValueError, match="requires a TLS certificate"):
+            _build_channel("host:443", True, None, str(key_path))
 
 class TestGrpcRuntimeCacheAcquireRelease:
     """Refcounted lifecycle: channels close only once idle and evicted."""
@@ -104,7 +155,7 @@ class TestGrpcRuntimeCacheAcquireRelease:
         channel2 = MagicMock()
         with patch("mcpgateway.services.grpc_runtime_cache._build_channel", side_effect=[channel1, channel2]):
             entry1 = cache.acquire("k1", "10.0.0.1:50051", False, None, None)
-            entry2 = cache.acquire("k2", "10.0.0.2:50051", False, None, None)
+            cache.acquire("k2", "10.0.0.2:50051", False, None, None)
         # k1 was evicted (LRU) while still referenced by entry1's holder.
         channel1.close.assert_not_called()
         cache.release("k1", entry1)
@@ -132,6 +183,23 @@ class TestGrpcRuntimeCacheAcquireRelease:
         assert cache.entry_count() == 0
         channel.close.assert_called_once()
 
+    def test_invalidate_service_retires_all_old_fingerprints(self):
+        cache = GrpcRuntimeCache(max_entries=8)
+        channels = [MagicMock(), MagicMock(), MagicMock()]
+        with patch("mcpgateway.services.grpc_runtime_cache._build_channel", side_effect=channels):
+            first = cache.acquire("v1:svc-1:old", "one:1", False, None, None)
+            second = cache.acquire("v1:svc-1:new", "two:2", False, None, None)
+            other = cache.acquire("v1:svc-2:key", "three:3", False, None, None)
+            cache.release("v1:svc-1:old", first)
+            cache.release("v1:svc-1:new", second)
+            cache.release("v1:svc-2:key", other)
+
+            assert cache.invalidate_service("svc-1") == 2
+
+        assert cache.entry_count() == 1
+        channels[0].close.assert_called_once()
+        channels[1].close.assert_called_once()
+        channels[2].close.assert_not_called()
 
 class TestInvokeMethodRuntimeCache:
     """invoke_method uses the runtime cache for store-descriptor services."""
@@ -195,6 +263,51 @@ class TestInvokeMethodRuntimeCache:
         # Both calls went through the SAME cached channel.
         assert invoked[0] is invoked[1]
         assert invoked[0] is cache._entries[list(cache._entries)[0]].channel
+
+    @pytest.mark.asyncio
+    async def test_reflection_only_invocations_reuse_channel_but_not_descriptor_pool(self, monkeypatch):
+        """Live-reflection calls keep transport reuse without sharing schema state."""
+        svc = self._enabled_service(with_schema=False)
+        svc.reflected_schema_hash = "reflection-hash"
+        mock_db = MagicMock(spec=Session)
+        mock_db.execute.return_value.scalar_one_or_none.return_value = svc
+        monkeypatch.setattr("mcpgateway.services.grpc_service._validate_grpc_target", lambda _t: None)
+        monkeypatch.setattr("mcpgateway.services.grpc_service._validate_tls_path", lambda p, label="TLS path": p)
+        monkeypatch.setattr("mcpgateway.services.grpc_service.GrpcSchemaService.descriptors_for_service", lambda db, s: [])
+        monkeypatch.setattr("mcpgateway.services.grpc_service.settings.mcpgateway_grpc_timeout", 17)
+        monkeypatch.setattr("mcpgateway.services.grpc_service.settings.tool_timeout", 99)
+        cache = GrpcRuntimeCache(max_entries=8)
+        channels = []
+        endpoint_pools = []
+        deadlines = []
+
+        class RecordingEndpoint:
+            def __init__(self, **kw):
+                channels.append(kw.get("channel"))
+                endpoint_pools.append(kw.get("pool"))
+                self._services = {}
+
+            async def start(self, timeout=None, trusted_local=False):
+                deadlines.append(timeout)
+
+            async def invoke(self, *_a, **kwargs):
+                deadlines.append(kwargs.get("timeout"))
+                return {"result": "ok"}
+
+            async def close(self):
+                pass
+
+        with patch("mcpgateway.translate_grpc.GrpcEndpoint", RecordingEndpoint), patch("mcpgateway.services.grpc_service.runtime_cache", cache):
+            await GrpcService().invoke_method(mock_db, "svc-1", "mysvc.Service.DoThing", {})
+            await GrpcService().invoke_method(mock_db, "svc-1", "mysvc.Service.DoThing", {})
+
+        assert channels[0] is channels[1]
+        assert endpoint_pools == [None, None]
+        assert cache.entry_count() == 1
+        assert len(deadlines) == 4
+        assert all(0 < deadline <= 17.0 for deadline in deadlines)
+        assert deadlines[1] <= deadlines[0]
+        assert deadlines[3] <= deadlines[2]
 
     @pytest.mark.asyncio
     async def test_schema_change_invalidates_cache(self, monkeypatch):

@@ -14,6 +14,7 @@ These tests verify the security fixes for:
 
 # Standard
 from types import SimpleNamespace
+from urllib.parse import urlparse
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 # Third-Party
@@ -26,12 +27,23 @@ from mcpgateway.db import Tool as DbTool
 from mcpgateway.services.prompt_service import PromptService
 from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService
 from mcpgateway.services.tool_service import ToolNotFoundError, ToolService
-from tests.helpers.admin_mocks import install_admin_user
 
 
 @pytest.fixture
-def tool_service():
+def tool_service(monkeypatch):
     """Create a tool service instance."""
+
+    async def validate_without_pinning(value: str, _field_name: str = "URL"):
+        parsed = urlparse(value)
+        return {
+            "validated_url": value,
+            "hostname": parsed.hostname,
+            "original_authority": parsed.netloc,
+            "resolved_ip": "93.184.216.34",
+        }
+
+    monkeypatch.setattr("mcpgateway.services.tool_service.SecurityValidator.validate_url_for_connection_pinning", validate_without_pinning)
+    monkeypatch.setattr("mcpgateway.services.tool_service.settings.ssrf_protection_enabled", False)
     service = ToolService()
     service._http_client = AsyncMock()
     return service
@@ -516,6 +528,8 @@ class TestInvokeToolAuthorization:
         assert result is not None
         assert result.content[0].text is not None
         pinned_client.get.assert_awaited_once()
+        pinned_client.aclose.assert_not_awaited()
+        await tool_service._pinned_rest_client_pool.close()
         pinned_client.aclose.assert_awaited_once()
 
     @pytest.mark.asyncio
@@ -615,6 +629,8 @@ class TestInvokeToolAuthorization:
         assert result is not None
         assert result.content[0].text is not None
         pinned_client.get.assert_awaited_once()
+        pinned_client.aclose.assert_not_awaited()
+        await tool_service._pinned_rest_client_pool.close()
         pinned_client.aclose.assert_awaited_once()
 
 

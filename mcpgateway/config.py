@@ -1133,10 +1133,15 @@ class Settings(BaseSettings):
     # Tool Execution Cancellation
     mcpgateway_tool_cancellation_enabled: bool = Field(default=True, description="Enable gateway-authoritative tool execution cancellation with REST API endpoints")
 
+    # Protocol-specific invocation deadlines. Explicit request overrides and a
+    # tool's timeout_ms take precedence over these defaults.
+    mcpgateway_rest_timeout: int = Field(default=60, ge=1, le=600, description="Default REST tool invocation timeout in seconds")
+    mcpgateway_mcp_timeout: int = Field(default=60, ge=1, le=600, description="Default MCP tool invocation timeout in seconds")
+
     # A2A (Agent-to-Agent) Feature Flags
     mcpgateway_a2a_enabled: bool = True
     mcpgateway_a2a_max_agents: int = 100
-    mcpgateway_a2a_default_timeout: int = 30
+    mcpgateway_a2a_default_timeout: int = Field(default=30, ge=1, le=600, description="Default A2A tool invocation timeout in seconds")
     mcpgateway_a2a_max_retries: int = 3
     mcpgateway_a2a_metrics_enabled: bool = True
 
@@ -1144,7 +1149,7 @@ class Settings(BaseSettings):
     mcpgateway_grpc_enabled: bool = Field(default=False, description="Enable gRPC to MCP translation support (experimental feature)")
     mcpgateway_grpc_reflection_enabled: bool = Field(default=True, description="Enable gRPC server reflection by default")
     mcpgateway_grpc_max_message_size: int = Field(default=4194304, description="Maximum gRPC message size in bytes (4MB)")
-    mcpgateway_grpc_timeout: int = Field(default=30, description="Default gRPC call timeout in seconds")
+    mcpgateway_grpc_timeout: int = Field(default=30, ge=1, le=600, description="Default gRPC call timeout in seconds")
     mcpgateway_grpc_tls_enabled: bool = Field(default=False, description="Enable TLS for gRPC connections by default")
     mcpgateway_grpc_health_enabled: bool = Field(default=True, description="Enable gRPC health monitoring when gRPC support is enabled")
     mcpgateway_grpc_health_interval: int = Field(default=60, ge=10, le=3600, description="Default gRPC health-check interval in seconds")
@@ -1171,6 +1176,12 @@ class Settings(BaseSettings):
     mcpgateway_sql_default_limit: int = Field(default=100, ge=1, le=1000, description="Default SQL data query row limit")
     mcpgateway_sql_max_limit: int = Field(default=1000, ge=1, le=1000, description="Maximum SQL data query row limit")
     mcpgateway_sql_timeout: int = Field(default=30, ge=1, le=300, description="External SQL statement timeout in seconds")
+    mcpgateway_sql_engine_cache_enabled: bool = Field(default=True, description="Enable bounded process-local reuse of external SQLAlchemy engines and connections")
+    mcpgateway_sql_engine_cache_max_entries: int = Field(default=16, ge=1, le=256, description="Maximum cached external SQL engines per worker")
+    mcpgateway_sql_pool_size: int = Field(default=2, ge=1, le=50, description="Persistent connections retained by each cached external SQL engine")
+    mcpgateway_sql_pool_max_overflow: int = Field(default=2, ge=0, le=100, description="Burst connections allowed above each external SQL engine pool size")
+    mcpgateway_sql_pool_checkout_timeout: int = Field(default=5, ge=1, le=60, description="Seconds to wait for an external SQL pooled connection")
+    mcpgateway_sql_pool_recycle_seconds: int = Field(default=300, ge=30, le=86400, description="Maximum age of a pooled external SQL connection before recycling")
     mcpgateway_sql_max_response_bytes: int = Field(default=4194304, ge=1024, le=67108864, description="Maximum serialized SQL response size")
     mcpgateway_sql_max_includes: int = Field(default=5, ge=0, le=5, description="Maximum enabled one-hop relations expanded per query")
     mcpgateway_sqlite_allowed_roots: Annotated[list[str], NoDecode] = Field(
@@ -1180,9 +1191,29 @@ class Settings(BaseSettings):
     mcpgateway_api_debug_retention_days: int = Field(default=7, ge=1, le=90, description="Debugger history retention in days")
     mcpgateway_api_debug_max_history: int = Field(default=100, ge=1, le=1000, description="Maximum debugger history entries retained per user")
 
+    # Process-local asynchronous ToolService jobs. Disabled by default because
+    # state is intentionally worker-local until a durable broker is introduced.
+    mcpgateway_async_jobs_enabled: bool = Field(default=False, description="Enable process-local asynchronous tool invocation jobs")
+    mcpgateway_async_jobs_queue_capacity: int = Field(default=100, ge=1, le=10000, description="Maximum queued async jobs per worker process")
+    mcpgateway_async_jobs_worker_count: int = Field(default=4, ge=1, le=64, description="Concurrent async job workers per process")
+    mcpgateway_async_jobs_default_timeout: float = Field(default=60.0, gt=0, le=600, description="Default async tool invocation timeout in seconds")
+    mcpgateway_async_jobs_max_timeout: float = Field(default=600.0, gt=0, le=600, description="Maximum caller-selected async tool invocation timeout")
+    mcpgateway_async_jobs_retention_seconds: int = Field(default=3600, ge=60, le=86400, description="Terminal async job result retention per process")
+    mcpgateway_async_jobs_cleanup_interval: int = Field(default=60, ge=1, le=3600, description="Async job result cleanup interval in seconds")
+    mcpgateway_async_jobs_max_retained: int = Field(default=1000, ge=1, le=100000, description="Maximum retained terminal jobs per process")
+    mcpgateway_async_jobs_max_payload_bytes: int = Field(default=1048576, ge=1024, le=67108864, description="Maximum serialized arguments, headers, and metadata retained by one async job")
+    mcpgateway_async_jobs_max_result_bytes: int = Field(default=4194304, ge=1024, le=67108864, description="Maximum serialized result retained by one async job")
+    mcpgateway_async_jobs_max_retained_result_bytes: int = Field(
+        default=67108864,
+        ge=1024,
+        le=1073741824,
+        description="Maximum aggregate serialized async job result bytes retained per worker process",
+    )
+    mcpgateway_async_jobs_shutdown_timeout: float = Field(default=10.0, gt=0, le=120, description="Graceful async job worker shutdown timeout")
+
     # Direct Proxy Configuration (disabled by default)
     mcpgateway_direct_proxy_enabled: bool = Field(default=False, description="Enable direct_proxy gateway mode for pass-through MCP operations")
-    mcpgateway_direct_proxy_timeout: int = Field(default=30, description="Default timeout in seconds for direct proxy MCP operations")
+    mcpgateway_direct_proxy_timeout: int = Field(default=30, ge=1, le=600, description="End-to-end timeout in seconds for direct proxy MCP operations")
 
     # ===================================
     # Performance Monitoring Configuration
@@ -1946,6 +1977,10 @@ class Settings(BaseSettings):
         le=120.0,
         description="Timeout in seconds waiting for a connection from the pool (fail fast on exhaustion)",
     )
+    mcpgateway_rest_client_pool_enabled: bool = Field(default=True, description="Reuse SSRF-safe IP-pinned REST clients for the same validated target")
+    mcpgateway_rest_client_pool_max_entries: int = Field(default=64, ge=1, le=1024, description="Maximum IP-pinned REST target pools retained by each ToolService")
+    mcpgateway_rest_client_pool_max_connections: int = Field(default=20, ge=1, le=200, description="Maximum concurrent connections for each validated IP-pinned REST target")
+    mcpgateway_rest_client_pool_max_keepalive_connections: int = Field(default=10, ge=1, le=100, description="Maximum idle keepalive connections retained for each validated IP-pinned REST target")
     httpx_http2_enabled: bool = Field(
         default=False,
         description="Enable HTTP/2 (requires h2 package; enable only if upstreams support HTTP/2)",
@@ -2312,6 +2347,15 @@ class Settings(BaseSettings):
     metrics_delete_raw_after_rollup: bool = Field(default=True, description="Delete raw metrics after hourly rollup exists (recommended for production)")
     metrics_delete_raw_after_rollup_hours: int = Field(default=1, ge=1, le=8760, description="Hours to retain raw metrics when hourly rollup exists")
 
+    # Metrics Daily Rollup Configuration (daily aggregation from hourly rollups for long-term queries)
+    metrics_daily_rollup_enabled: bool = Field(default=True, description="Enable daily metrics rollup (aggregates hourly rollups into daily summaries for efficient long-term queries)")
+    metrics_daily_rollup_interval_hours: int = Field(default=24, ge=1, le=168, description="Hours between daily rollup passes")
+    metrics_daily_rollup_cutoff_days: int = Field(
+        default=90, ge=1, le=3650, description="Days before which historical statistics read from daily rollups instead of hourly rollups (recent data stays on hourly)"
+    )
+    metrics_daily_rollup_late_days: int = Field(default=3, ge=1, le=30, description="Days to re-aggregate on each daily pass to catch late-arriving hourly rollups")
+    metrics_daily_rollup_retention_days: int = Field(default=3650, ge=30, le=36500, description="Days to retain daily rollup data")
+
     # Auth Cache Configuration (reduces DB queries during authentication)
     auth_cache_enabled: bool = Field(default=True, description="Enable Redis/in-memory caching for authentication data (user, team, revocation)")
     auth_cache_user_ttl: int = Field(default=60, ge=10, le=300, description="TTL in seconds for cached user data")
@@ -2338,6 +2382,15 @@ class Settings(BaseSettings):
     tool_lookup_cache_negative_ttl_seconds: int = Field(default=10, ge=1, le=60, description="TTL in seconds for negative tool lookup cache entries")
     tool_lookup_cache_l1_maxsize: int = Field(default=10000, ge=100, le=1000000, description="Max entries for in-memory tool lookup cache (L1)")
     tool_lookup_cache_l2_enabled: bool = Field(default=True, description="Enable Redis-backed tool lookup cache (L2) when cache_type=redis")
+
+    # Tool Result Cache Configuration (opt-in data cache for read-only tools)
+    tool_result_cache_enabled: bool = Field(default=False, description="Enable opt-in caching of successful read-only tool invocation results")
+    tool_result_cache_default_ttl_seconds: int = Field(default=60, ge=1, le=86400, description="Default TTL for an opted-in tool result cache entry")
+    tool_result_cache_max_ttl_seconds: int = Field(default=3600, ge=1, le=86400, description="Maximum TTL accepted from a tool result-cache annotation")
+    tool_result_cache_l1_max_entries: int = Field(default=1000, ge=1, le=100000, description="Maximum process-local cached tool results per worker")
+    tool_result_cache_l1_max_bytes: int = Field(default=67108864, ge=1024, le=1073741824, description="Maximum serialized payload bytes retained by the process-local tool result cache")
+    tool_result_cache_max_entry_bytes: int = Field(default=1048576, ge=1024, le=67108864, description="Maximum serialized size of one cached tool result")
+    tool_result_cache_l2_enabled: bool = Field(default=True, description="Enable Redis-backed tool result cache (L2) when cache_type=redis")
 
     # Admin Stats Cache Configuration (reduces dashboard query overhead)
     admin_stats_cache_enabled: bool = Field(default=True, description="Enable caching for admin dashboard statistics")

@@ -173,6 +173,7 @@ WORKDIR /build
 COPY --chown=1001:1001 package.json package-lock.json* ./
 COPY --chown=1001:1001 tailwind.config.js postcss.config.js ./
 COPY --chown=1001:1001 mcpgateway/templates/ ./mcpgateway/templates/
+COPY --chown=1001:1001 mcpgateway/admin_ui/ ./mcpgateway/admin_ui/
 COPY --chown=1001:1001 mcpgateway/static/ ./mcpgateway/static/
 
 # Install dependencies and build CSS
@@ -273,6 +274,8 @@ COPY --chmod=0755 scripts/verify-native-extensions.py /tmp/verify-native-extensi
 #  - Upgrade pip, setuptools, wheel, uv
 #  - Install project dependencies and package
 #  - Include observability packages for OpenTelemetry support
+#  - Include gRPC packages because the Admin UI imports the gRPC management
+#    service even when the experimental runtime feature is disabled
 #  - Install plugins from PyPI (cpex-* packages)
 #  - Install local native extensions from pre-built wheels (if built)
 #  - Optionally install profiling tools (memray, py-spy) if ENABLE_PROFILING=true
@@ -288,9 +291,9 @@ RUN set -euo pipefail \
     && /app/.venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel uv \
     && if [ -n "$(ls -A /tmp/wheels/*.whl 2>/dev/null)" ]; then \
         echo "📦 Hermetic install from prebuilt wheel closure"; \
-        /app/.venv/bin/uv pip install --no-index --find-links=/tmp/wheels ".[redis,observability,plugins,llmchat]" "psycopg[c]>=3.3.3"; \
+        /app/.venv/bin/uv pip install --no-index --find-links=/tmp/wheels ".[redis,observability,plugins,llmchat,grpc]" "psycopg[c]>=3.3.3"; \
     else \
-        /app/.venv/bin/uv pip install ".[redis,postgres,observability,plugins,llmchat]"; \
+        /app/.venv/bin/uv pip install ".[redis,postgres,observability,plugins,llmchat,grpc]"; \
     fi \
     && echo "✅ Plugins installed from PyPI via [plugins] extra" \
     && if [ "$ENABLE_RUST" = "true" ] && ls "/tmp/local-native-extension-wheels/"*.whl 1> /dev/null 2>&1; then \
@@ -420,6 +423,11 @@ ENV PATH="/app/.venv/bin:${PATH}" \
     PYTHONPATH="/app" \
     CONTEXTFORGE_ENABLE_RUST_BUILD=${ENABLE_RUST} \
     CONTEXTFORGE_ENABLE_RUST_MCP_RMCP_BUILD=${ENABLE_RUST_MCP_RMCP} \
+    SSRF_PROTECTION_ENABLED=true \
+    SSRF_ALLOW_LOCALHOST=true \
+    SSRF_ALLOW_PRIVATE_NETWORKS=true \
+    SSRF_DNS_FAIL_CLOSED=true \
+    MCPGATEWAY_GRPC_ENABLED=true \
     PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PYTHONHASHSEED=random \

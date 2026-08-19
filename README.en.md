@@ -496,10 +496,11 @@ kubectl exec deployment/mcp-gateway-mcp-context-forge -- \
   --username admin@yourcompany.com --exp 10080 --secret "${JWT_SECRET}"
 ```
 
-> SSRF note: Helm defaults to strict SSRF settings (`SSRF_ALLOW_PRIVATE_NETWORKS=false`).
-> If you register in-cluster tool URLs (for example fast-time or fast-test services),
-> allow only your cluster CIDRs via `mcpContextForge.config.SSRF_ALLOWED_NETWORKS` or,
-> for local-only benchmark setups, temporarily set `SSRF_ALLOW_PRIVATE_NETWORKS=true`.
+> SSRF note: this project's intranet release profile keeps SSRF protection enabled while defaulting
+> `SSRF_ALLOW_LOCALHOST=true`, `SSRF_ALLOW_PRIVATE_NETWORKS=true`, and `SSRF_DNS_FAIL_CLOSED=true`.
+> Externally exposed or segmented deployments should set `SSRF_ALLOW_LOCALHOST=false` and
+> `SSRF_ALLOW_PRIVATE_NETWORKS=false`, then allow only required cluster CIDRs via
+> `mcpContextForge.config.SSRF_ALLOWED_NETWORKS`.
 > See `docs/docs/manage/configuration.md#ssrf-protection` and `docs/docs/deployment/helm.md`.
 
 **Enterprise Features:**

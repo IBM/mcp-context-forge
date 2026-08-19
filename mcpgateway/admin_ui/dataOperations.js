@@ -1,8 +1,11 @@
 import { getCookie } from "./utils.js";
+import { escapeHtml } from "./security.js";
 
 const rootPath = () => window.ROOT_PATH || "";
 
 const byId = (id) => document.getElementById(id);
+
+let grpcLineageSnapshot = null;
 
 const errorDetail = (body, fallback) => {
   if (typeof body?.detail === "string") return body.detail;
@@ -624,24 +627,272 @@ const setupDebugPanel = async () => {
   }
 };
 
+const showGrpcSyncPreview = async (box) => {
+  const serviceId = box.dataset.serviceId;
+  const candidateId = box.dataset.candidateId;
+  const panel = box.querySelector(".grpc-sync-preview-panel");
+  const body = box.querySelector(".grpc-sync-preview-body");
+  if (!serviceId || !candidateId || !panel || !body) return;
+  const toggle = box.querySelector(".grpc-sync-preview-toggle");
+  if (toggle) toggle.classList.remove("hidden");
+  panel.classList.remove("hidden");
+  body.textContent = "Loading…";
+  try {
+    const preview = await requestJson(
+      `/admin/grpc/${serviceId}/schemas/${candidateId}/preview`
+    );
+    const rows = [
+      ["Added", "added_tools", "bg-green-100 text-green-800"],
+      ["Modified", "modified_tools", "bg-yellow-100 text-yellow-800"],
+      ["Disabled", "disabled_tools", "bg-red-100 text-red-800"],
+      ["Re-approval", "methods_needing_reapproval", "bg-orange-100 text-orange-800"],
+    ];
+    const listHtml = (items, chipClass) =>
+      items.length
+        ? `<ul class="space-y-0.5">${items
+            .map((item) => `<li><span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium ${chipClass}">${escapeHtml(item)}</span></li>`)
+            .join("")}</ul>`
+        : '<p class="text-gray-500 dark:text-gray-400">None</p>';
+    const rendered = rows
+      .map(
+        ([label, key, chip]) =>
+          `<div>
+            <div class="flex items-center gap-2">
+              <span class="font-medium">${label}</span>
+              <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-gray-100 dark:bg-gray-800 text-gray-700 dark:text-gray-300">${(preview[key] || []).length}</span>
+            </div>
+            ${listHtml(preview[key] || [], chip)}
+          </div>`
+      )
+      .join("");
+    const warning = preview.warning
+      ? `<p class="text-amber-700 dark:text-amber-400 mt-1">⚠️ ${escapeHtml(preview.warning)}</p>`
+      : "";
+    body.innerHTML = `<div class="space-y-2">${rendered}${warning}</div>`;
+  } catch (error) {
+    body.textContent = `Preview failed: ${error.message}`;
+  }
+};
+
+const lineageStageTitles = {
+  grpc_service: "gRPC service",
+  grpc_method: "gRPC method",
+  mcp_tool: "MCP Tool",
+  mcp_server: "Virtual MCP server",
+  data_binding: "API / SQL binding",
+  sql_source: "SQL source",
+  sql_table: "Data table",
+};
+
+const lineageStateClasses = (state) => {
+  if (state === "active") {
+    return "border-green-300 bg-green-50 dark:border-green-800 dark:bg-green-900/20";
+  }
+  if (state === "stale") {
+    return "border-orange-300 bg-orange-50 dark:border-orange-800 dark:bg-orange-900/20";
+  }
+  if (state === "inactive") {
+    return "border-yellow-300 bg-yellow-50 dark:border-yellow-800 dark:bg-yellow-900/20";
+  }
+  return "border-dashed border-gray-300 bg-gray-50 dark:border-gray-600 dark:bg-gray-900/40";
+};
+
+const createLineageStage = (stage) => {
+  const card = document.createElement("div");
+  card.className = `min-w-48 max-w-64 rounded-lg border p-3 ${lineageStateClasses(stage.state)}`;
+  card.dataset.kind = stage.kind;
+  card.dataset.state = stage.state;
+
+  const type = document.createElement("div");
+  type.className =
+    "text-[10px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400";
+  type.textContent = lineageStageTitles[stage.kind] || stage.kind;
+  const label = document.createElement("div");
+  label.className =
+    "mt-1 break-words text-sm font-medium text-gray-900 dark:text-gray-100";
+  label.textContent = stage.label;
+  card.append(type, label);
+
+  if (stage.detail) {
+    const detail = document.createElement("div");
+    detail.className =
+      "mt-1 break-all text-xs text-gray-600 dark:text-gray-400";
+    detail.textContent = stage.detail;
+    card.append(detail);
+  }
+
+  const state = document.createElement("span");
+  state.className =
+    "mt-2 inline-flex rounded-full bg-white/70 px-2 py-0.5 text-[10px] font-medium text-gray-600 dark:bg-gray-800 dark:text-gray-300";
+  state.textContent = stage.state;
+  card.append(state);
+  return card;
+};
+
+const renderGrpcLineage = () => {
+  const container = byId("grpc-lineage-list");
+  if (!container || !grpcLineageSnapshot) return;
+  container.replaceChildren();
+  const search = (byId("grpc-lineage-search")?.value || "")
+    .trim()
+    .toLowerCase();
+  const visiblePaths = grpcLineageSnapshot.paths.filter((path) => {
+    if (!search) return true;
+    return path.stages.some((stage) =>
+      `${stage.label} ${stage.detail || ""}`.toLowerCase().includes(search)
+    );
+  });
+
+  visiblePaths.forEach((path) => {
+    const wrapper = document.createElement("article");
+    wrapper.className =
+      "rounded-lg border border-gray-200 p-3 dark:border-gray-700";
+    wrapper.dataset.lineagePath = path.id;
+
+    const heading = document.createElement("div");
+    heading.className = "mb-2 flex flex-wrap items-center gap-2";
+    const method = document.createElement("strong");
+    method.className = "text-sm text-gray-900 dark:text-gray-100";
+    method.textContent = path.method_name;
+    const exposure = document.createElement("span");
+    exposure.className = path.has_mcp_exposure
+      ? "rounded-full bg-green-100 px-2 py-0.5 text-xs text-green-800"
+      : "rounded-full bg-yellow-100 px-2 py-0.5 text-xs text-yellow-800";
+    exposure.textContent = path.has_mcp_exposure
+      ? "MCP exposed"
+      : "MCP not exposed";
+    const binding = document.createElement("span");
+    binding.className = path.has_data_binding
+      ? "rounded-full bg-blue-100 px-2 py-0.5 text-xs text-blue-800"
+      : "rounded-full bg-gray-100 px-2 py-0.5 text-xs text-gray-700";
+    binding.textContent = path.has_data_binding
+      ? "Data bound"
+      : "Data unbound";
+    heading.append(method, exposure, binding);
+
+    const flow = document.createElement("div");
+    flow.className =
+      "flex items-stretch gap-2 overflow-x-auto pb-2 [scrollbar-width:thin]";
+    path.stages.forEach((stage, index) => {
+      if (index) {
+        const arrow = document.createElement("div");
+        arrow.className =
+          "flex shrink-0 items-center text-lg text-gray-400 dark:text-gray-500";
+        arrow.setAttribute("aria-hidden", "true");
+        arrow.textContent = "→";
+        flow.append(arrow);
+      }
+      flow.append(createLineageStage(stage));
+    });
+    wrapper.append(heading, flow);
+    container.append(wrapper);
+  });
+
+  if (!visiblePaths.length) {
+    const empty = document.createElement("p");
+    empty.className = "rounded-lg border border-dashed p-4 text-sm text-gray-500";
+    empty.textContent = search
+      ? "No lineage paths match this filter."
+      : "No visible gRPC lineage paths were found.";
+    container.append(empty);
+  }
+
+  const summary = grpcLineageSnapshot.summary;
+  const summaryParts = [
+    `${visiblePaths.length} shown / ${summary.path_count} paths`,
+    `${summary.service_count} services`,
+    `${summary.method_count} methods`,
+    `${summary.mcp_exposed_tool_count} MCP-exposed tools`,
+    `${summary.data_bound_tool_count} data-bound tools`,
+  ];
+  if (grpcLineageSnapshot.truncated) summaryParts.push("response truncated");
+  setText("grpc-lineage-summary", summaryParts.join(" · "));
+  setText(
+    "grpc-lineage-semantics",
+    grpcLineageSnapshot.relationship_semantics || ""
+  );
+};
+
+const loadGrpcLineage = async () => {
+  const container = byId("grpc-lineage-list");
+  if (!container) return;
+  setText("grpc-lineage-summary", "Loading lineage…");
+  container.replaceChildren();
+  try {
+    const params = new URLSearchParams();
+    const serviceId = byId("grpc-lineage-service")?.value;
+    if (serviceId) params.set("service_id", serviceId);
+    params.set(
+      "include_unbound",
+      byId("grpc-lineage-include-unbound")?.checked ? "true" : "false"
+    );
+    grpcLineageSnapshot = await requestJson(
+      `/admin/grpc/lineage?${params.toString()}`
+    );
+    renderGrpcLineage();
+  } catch (error) {
+    grpcLineageSnapshot = null;
+    setText("grpc-lineage-summary", `Lineage unavailable: ${error.message}`);
+  }
+};
+
 const setupGrpcOperations = () => {
+  if (byId("grpc-lineage-list")) {
+    byId("grpc-lineage-refresh")?.addEventListener("click", loadGrpcLineage);
+    byId("grpc-lineage-service")?.addEventListener("change", loadGrpcLineage);
+    byId("grpc-lineage-include-unbound")?.addEventListener(
+      "change",
+      loadGrpcLineage
+    );
+    byId("grpc-lineage-search")?.addEventListener("input", renderGrpcLineage);
+    loadGrpcLineage();
+  }
+  document.querySelectorAll(".grpc-lineage-open").forEach((control) => {
+    control.addEventListener("click", async () => {
+      const selector = byId("grpc-lineage-service");
+      if (selector) selector.value = control.dataset.serviceId || "";
+      await loadGrpcLineage();
+      byId("grpc-lineage-heading")?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    });
+  });
   document.querySelectorAll(".grpc-schema-upload").forEach((form) => {
     form.addEventListener("submit", async (event) => {
       event.preventDefault();
       const submit = form.querySelector('button[type="submit"]');
       const original = submit.textContent;
+      const activateCheckbox = form.querySelector('input[name="activate"]');
+      // A bare unchecked checkbox sends nothing, and FastAPI's Form(default=True)
+      // would treat the candidate as an activation. Send activate=false explicitly.
+      const activate = activateCheckbox?.checked ?? true;
       submit.disabled = true;
       submit.textContent = "Importing…";
       try {
+        const fd = new FormData(form);
+        if (!activate) fd.set("activate", "false");
         const artifact = await requestJson(
           `/admin/grpc/${form.dataset.serviceId}/schemas/import`,
           {
             method: "POST",
-            body: new FormData(form),
+            body: fd,
           }
         );
         submit.textContent = `Imported v${artifact.version}`;
-        window.setTimeout(() => window.location.reload(), 500);
+        if (artifact && !artifact.is_active && artifact.id) {
+          window.setTimeout(() => {
+            const previewBox = form.parentElement.querySelector(".grpc-sync-preview");
+            if (previewBox) {
+              previewBox.dataset.candidateId = artifact.id;
+              const toggle = previewBox.querySelector(".grpc-sync-preview-toggle");
+              if (toggle) toggle.classList.remove("hidden");
+              showGrpcSyncPreview(previewBox);
+            }
+          }, 200);
+        } else {
+          window.setTimeout(() => window.location.reload(), 500);
+        }
       } catch (error) {
         submit.textContent = error.message;
         window.setTimeout(() => {
@@ -650,6 +901,27 @@ const setupGrpcOperations = () => {
         }, 3000);
       }
     });
+  });
+  document.querySelectorAll(".grpc-sync-preview").forEach((box) => {
+    const toggle = box.querySelector(".grpc-sync-preview-toggle");
+    const close = box.querySelector(".grpc-sync-preview-close");
+    const panel = box.querySelector(".grpc-sync-preview-panel");
+    if (toggle) {
+      toggle.addEventListener("click", () => {
+        if (panel) {
+          if (panel.classList.contains("hidden")) {
+            showGrpcSyncPreview(box);
+          } else {
+            panel.classList.add("hidden");
+          }
+        }
+      });
+    }
+    if (close) {
+      close.addEventListener("click", () => {
+        if (panel) panel.classList.add("hidden");
+      });
+    }
   });
   document.querySelectorAll(".grpc-health-check").forEach((control) => {
     control.addEventListener("click", async () => {

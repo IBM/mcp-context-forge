@@ -286,10 +286,12 @@ flowchart TD
 
 ## 🛡 SSRF and in-cluster testing tools
 
-???+ warning "SSRF defaults can block in-cluster tool registration"
+???+ note "Intranet release defaults allow in-cluster tool registration"
 
-    The Helm chart defaults to strict SSRF settings (`SSRF_ALLOW_PRIVATE_NETWORKS=false`,
-    `SSRF_ALLOWED_NETWORKS=[]`). This is a good production baseline.
+    This project's Helm chart defaults to `SSRF_PROTECTION_ENABLED=true`,
+    `SSRF_ALLOW_LOCALHOST=true`, `SSRF_ALLOW_PRIVATE_NETWORKS=true`, and
+    `SSRF_DNS_FAIL_CLOSED=true`. It also enables `MCPGATEWAY_GRPC_ENABLED=true`.
+    Cloud metadata and other hard-blocked destinations remain denied.
 
     If you enable testing registrations for fast-time / fast-test, the registration jobs use
     private Service URLs:
@@ -297,7 +299,9 @@ flowchart TD
     - `http://<release>-mcp-fast-time-server:80/http`
     - `http://<release>-fast-test-server:8880/mcp`
 
-    Under strict defaults, gateway creation can fail with `422` ("private network address blocked").
+    These in-cluster destinations work with the default intranet release profile. If a deployment
+    overrides the chart with strict SSRF settings, gateway creation can fail with `422`
+    ("private network address blocked").
 
     === "Preferred: allow only known internal CIDRs"
 
@@ -322,12 +326,16 @@ flowchart TD
               gatewayPath: /mcp
         ```
 
-    === "Local benchmark shortcut (broader)"
+    === "Default intranet profile"
 
         ```yaml
         mcpContextForge:
           config:
+            SSRF_PROTECTION_ENABLED: "true"
+            SSRF_ALLOW_LOCALHOST: "true"
             SSRF_ALLOW_PRIVATE_NETWORKS: "true"
+            SSRF_DNS_FAIL_CLOSED: "true"
+            MCPGATEWAY_GRPC_ENABLED: "true"
         ```
 
     === "Troubleshooting failed registration job"

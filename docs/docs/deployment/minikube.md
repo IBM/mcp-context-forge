@@ -185,7 +185,8 @@ If you enable Helm testing registrations (`testing.fastTime.register.enabled=tru
 - `http://<release>-mcp-fast-time-server:80/http`
 - `http://<release>-fast-test-server:8880/mcp`
 
-Strict SSRF defaults block private destinations, which can cause registration jobs to fail with `422`.
+The default intranet release profile permits these private destinations. If you harden the chart by
+disabling private-network access, registration jobs can fail with `422` unless the cluster CIDR is allowed.
 
 Use one of the following:
 
@@ -193,15 +194,22 @@ Use one of the following:
 # Preferred: explicit cluster CIDR allowlist
 mcpContextForge:
   config:
+    SSRF_PROTECTION_ENABLED: "true"
+    SSRF_ALLOW_LOCALHOST: "false"
     SSRF_ALLOW_PRIVATE_NETWORKS: "false"
     SSRF_ALLOWED_NETWORKS: '["10.96.0.0/12"]' # example Service CIDR, adjust for your minikube setup
+    SSRF_DNS_FAIL_CLOSED: "true"
 ```
 
 ```yaml
-# Local-only shortcut for benchmark/testing
+# Default intranet release profile
 mcpContextForge:
   config:
+    SSRF_PROTECTION_ENABLED: "true"
+    SSRF_ALLOW_LOCALHOST: "true"
     SSRF_ALLOW_PRIVATE_NETWORKS: "true"
+    SSRF_DNS_FAIL_CLOSED: "true"
+    MCPGATEWAY_GRPC_ENABLED: "true"
 ```
 
 **Note:** Minikube automatically configures the `kubectl` context upon cluster creation. If not, set it manually:

@@ -89,6 +89,10 @@ _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     ("DELETE", re.compile(r"^/tools/[^/]+(?:$|/)"), Permissions.TOOLS_DELETE),
     ("GET", re.compile(r"^/servers/[^/]+/tools(?:$|/)"), Permissions.TOOLS_READ),
     ("POST", re.compile(r"^/servers/[^/]+/tools/[^/]+/call(?:$|/)"), Permissions.TOOLS_EXECUTE),
+    # Process-local asynchronous tool invocations. Status/results use the same
+    # permission as submission and add strict owner matching in the service.
+    ("GET", re.compile(r"^/jobs(?:$|/)"), Permissions.TOOLS_EXECUTE),
+    ("POST", re.compile(r"^/jobs(?:$|/)"), Permissions.TOOLS_EXECUTE),
     # Governed SQL REST surface executes generated tools through ToolService.
     ("GET", re.compile(r"^/api/v1/data(?:$|/)"), Permissions.TOOLS_EXECUTE),
     ("POST", re.compile(r"^/api/v1/data(?:$|/)"), Permissions.TOOLS_EXECUTE),
@@ -249,22 +253,22 @@ _ADMIN_PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     # System configuration/admin operations
     (
         "GET",
-        re.compile(r"^/admin/(?:config|cache|mcp-pool|roots|metrics|logs|export|import|mcp-registry|system|support-bundle|maintenance|observability|performance|llm)(?:$|/)"),
+        re.compile(r"^/admin/(?:api-metrics|config|cache|mcp-pool|roots|metrics|logs|export|import|mcp-registry|system|support-bundle|maintenance|observability|performance|llm)(?:$|/)"),
         Permissions.ADMIN_SYSTEM_CONFIG,
     ),
     (
         "POST",
-        re.compile(r"^/admin/(?:config|cache|mcp-pool|roots|metrics|logs|export|import|mcp-registry|system|support-bundle|maintenance|observability|performance|llm)(?:$|/)"),
+        re.compile(r"^/admin/(?:api-metrics|config|cache|mcp-pool|roots|metrics|logs|export|import|mcp-registry|system|support-bundle|maintenance|observability|performance|llm)(?:$|/)"),
         Permissions.ADMIN_SYSTEM_CONFIG,
     ),
     (
         "PUT",
-        re.compile(r"^/admin/(?:config|cache|mcp-pool|roots|metrics|logs|export|import|mcp-registry|system|support-bundle|maintenance|observability|performance|llm)(?:$|/)"),
+        re.compile(r"^/admin/(?:api-metrics|config|cache|mcp-pool|roots|metrics|logs|export|import|mcp-registry|system|support-bundle|maintenance|observability|performance|llm)(?:$|/)"),
         Permissions.ADMIN_SYSTEM_CONFIG,
     ),
     (
         "DELETE",
-        re.compile(r"^/admin/(?:config|cache|mcp-pool|roots|metrics|logs|export|import|mcp-registry|system|support-bundle|maintenance|observability|performance|llm)(?:$|/)"),
+        re.compile(r"^/admin/(?:api-metrics|config|cache|mcp-pool|roots|metrics|logs|export|import|mcp-registry|system|support-bundle|maintenance|observability|performance|llm)(?:$|/)"),
         Permissions.ADMIN_SYSTEM_CONFIG,
     ),
 ]
@@ -731,7 +735,10 @@ class TokenScopingMiddleware:
                 return path_server_id == server_id
 
         # If no server ID found in path, allow general endpoints
-        general_endpoints = ["/health", "/metrics", "/openapi.json", "/docs", "/redoc", "/rpc", "/mcp", "/sse"]
+        # Async job handlers enforce the same server scope against the target
+        # tool and owner-visible job records because the server ID is carried in
+        # the signed token rather than in the /jobs URL.
+        general_endpoints = ["/health", "/metrics", "/openapi.json", "/docs", "/redoc", "/rpc", "/mcp", "/sse", "/jobs"]
 
         # Check exact root path separately
         if request_path == "/":

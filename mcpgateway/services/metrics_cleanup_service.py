@@ -31,15 +31,20 @@ from sqlalchemy.orm import Session
 from mcpgateway.config import settings
 from mcpgateway.db import (
     A2AAgentMetric,
+    A2AAgentMetricsDaily,
     A2AAgentMetricsHourly,
     fresh_db_session,
     PromptMetric,
+    PromptMetricsDaily,
     PromptMetricsHourly,
     ResourceMetric,
+    ResourceMetricsDaily,
     ResourceMetricsHourly,
     ServerMetric,
+    ServerMetricsDaily,
     ServerMetricsHourly,
     ToolMetric,
+    ToolMetricsDaily,
     ToolMetricsHourly,
 )
 from mcpgateway.services.metrics_rollup_service import get_metrics_rollup_service_if_initialized
@@ -149,6 +154,15 @@ class MetricsCleanupService:
         ("a2a_agent_metrics", A2AAgentMetric, A2AAgentMetricsHourly, "a2a_agent_id"),
     ]
 
+    # Daily rollup tables (aggregated from hourly rollups for long-term queries)
+    DAILY_METRIC_TABLES = [
+        ("tool_metrics_daily", ToolMetricsDaily, "day_start"),
+        ("resource_metrics_daily", ResourceMetricsDaily, "day_start"),
+        ("prompt_metrics_daily", PromptMetricsDaily, "day_start"),
+        ("server_metrics_daily", ServerMetricsDaily, "day_start"),
+        ("a2a_agent_metrics_daily", A2AAgentMetricsDaily, "day_start"),
+    ]
+
     def __init__(
         self,
         retention_days: Optional[int] = None,
@@ -176,6 +190,9 @@ class MetricsCleanupService:
 
         # Rollup retention
         self.rollup_retention_days = getattr(settings, "metrics_rollup_retention_days", 365)
+
+        # Daily rollup retention
+        self.daily_rollup_retention_days = getattr(settings, "metrics_daily_rollup_retention_days", 3650)
 
         # Background task
         self._cleanup_task: Optional[asyncio.Task] = None
@@ -314,6 +331,22 @@ class MetricsCleanupService:
                     timestamp_column="hour_start",
                 )
                 results[hourly_table_name] = result
+                total_deleted += result.deleted_count
+
+            # Clean up daily rollup tables if enabled
+            if retention_days is not None and retention_days == 0:
+                daily_cutoff = datetime.now(timezone.utc)  # Delete all daily rollups too
+            else:
+                daily_cutoff = datetime.now(timezone.utc) - timedelta(days=self.daily_rollup_retention_days)
+            for table_name, daily_model_class, timestamp_column in self.DAILY_METRIC_TABLES:
+                result = await asyncio.to_thread(
+                    self._cleanup_table,
+                    daily_model_class,
+                    table_name,
+                    daily_cutoff,
+                    timestamp_column=timestamp_column,
+                )
+                results[table_name] = result
                 total_deleted += result.deleted_count
 
         duration = time.monotonic() - start_time
@@ -456,6 +489,7 @@ class MetricsCleanupService:
             "enabled": self.enabled,
             "retention_days": self.retention_days,
             "rollup_retention_days": self.rollup_retention_days,
+            "daily_rollup_retention_days": self.daily_rollup_retention_days,
             "batch_size": self.batch_size,
             "batch_sleep_ms": self.batch_sleep_ms,
             "cleanup_interval_hours": self.cleanup_interval_hours,
@@ -480,6 +514,9 @@ class MetricsCleanupService:
                     sizes[table_name] = db.execute(select(func.count()).select_from(model_class)).scalar() or 0
                     hourly_name = f"{table_name}_hourly"
                     sizes[hourly_name] = db.execute(select(func.count()).select_from(hourly_class)).scalar() or 0
+                for table_name, daily_class, _ in self.DAILY_METRIC_TABLES:
+                    # pylint: disable=not-callable
+                    sizes[table_name] = db.execute(select(func.count()).select_from(daily_class)).scalar() or 0
             return sizes
 
         return await asyncio.to_thread(_get_sizes)
