@@ -89,7 +89,7 @@ from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.token_backends.vault_backend import VaultAuthError, VaultConnectionError
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
 from mcpgateway.services.performance_tracker import get_performance_tracker
-from mcpgateway.services.reverse_proxy_protocol import DownstreamAuth, JsonRpcErrorResponse, JsonRpcRequest
+from mcpgateway.services.reverse_proxy_protocol import DownstreamAuth, is_proxied_transport, JsonRpcErrorResponse, JsonRpcRequest
 from mcpgateway.services.reverse_proxy_relay import RelayUnavailableError
 from mcpgateway.services.reverse_proxy_sessions import ConnectionClosedError, ConnectionNotFoundError, get_reverse_proxy_session_manager, StableGatewayId
 from mcpgateway.services.structured_logger import get_structured_logger
@@ -101,7 +101,7 @@ from mcpgateway.utils.admin_check import is_admin_bypass_granted, is_user_admin
 from mcpgateway.utils.correlation_id import get_correlation_id
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.display_name import generate_display_name
-from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access, extract_gateway_id_from_headers, GatewayAuthValueError, normalize_downstream_auth_headers
+from mcpgateway.utils.gateway_access import build_downstream_auth, build_gateway_auth_headers, check_gateway_access, extract_gateway_id_from_headers, GatewayAuthValueError
 from mcpgateway.utils.header_filtering import filter_sensitive_headers
 from mcpgateway.utils.identity_propagation import build_identity_headers, build_identity_meta
 from mcpgateway.utils.jq_guard import assert_safe_jq_filter
@@ -4388,7 +4388,7 @@ class ToolService(BaseService):
                 raise ToolNotFoundError(f"Tool not found: {name}")
 
         gateway_transport = gateway_payload.get("transport") if gateway_payload else None
-        if gateway_transport == "PROXIED":
+        if is_proxied_transport(gateway_transport):
             # PROXIED gateways dispatch over the reverse-proxy session, never a direct
             # upstream connection; the tool request_type is only a schema placeholder.
             return {"eligible": False, "fallbackReason": "reverse-proxy-transport"}
@@ -6739,7 +6739,7 @@ class ToolService(BaseService):
 
                     with create_child_span("tool.gateway_call", {"tool.name": name, "tool.id": tool_id, "tool.integration_type": "MCP"}):
                         tool_call_result = ToolResult(content=[TextContent(text="", type="text")])
-                        if gateway_transport == "PROXIED":
+                        if is_proxied_transport(gateway_transport):
                             if gateway_id_str is None:
                                 # Fail-closed: a PROXIED payload without its stable ID is corrupt; never dispatch.
                                 raise ToolInvocationError("PROXIED gateway payload is missing its stable ID")
@@ -6750,10 +6750,9 @@ class ToolService(BaseService):
                             # same decrypt step the SSE/streamable-HTTP branches use, and rejects unsupported modes
                             # and malformed material with code-only errors instead of silently omitting. Never logged.
                             try:
-                                stored_auth_headers = normalize_downstream_auth_headers(gateway_auth_type, gateway_auth_value)
+                                downstream_auth = build_downstream_auth(gateway_auth_type, gateway_auth_value)
                             except GatewayAuthValueError as auth_err:
                                 raise ToolInvocationError(f"Gateway credentials cannot be forwarded downstream: {auth_err}") from auth_err
-                            downstream_auth = DownstreamAuth(headers=stored_auth_headers, auth_type=gateway_auth_type) if stored_auth_headers else None
                             tool_call_result = await self._invoke_reverse_proxied_tool(gateway_id_str, tool_name_original, arguments, meta_data, effective_timeout, downstream_auth)
                         elif transport == "sse":
                             tool_call_result = await connect_to_sse_server(gateway_url, headers=headers)

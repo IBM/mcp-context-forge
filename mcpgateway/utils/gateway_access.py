@@ -10,7 +10,7 @@ in direct_proxy mode, ensuring consistent RBAC enforcement across the codebase.
 """
 
 # Standard
-from typing import Any, Dict, List, Mapping, Optional
+from typing import Any, Dict, List, Mapping, Optional, TYPE_CHECKING
 
 # Third-Party
 from sqlalchemy.orm import Session
@@ -19,6 +19,10 @@ from sqlalchemy.orm import Session
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.utils.admin_check import is_user_admin
 from mcpgateway.utils.services_auth import decode_auth
+
+if TYPE_CHECKING:
+    # First-Party
+    from mcpgateway.services.reverse_proxy_protocol import DownstreamAuth
 
 # Header name used by clients to target a specific gateway for direct_proxy mode.
 # Defined once here to avoid string literal repetition across the codebase.
@@ -219,3 +223,34 @@ def normalize_downstream_auth_headers(auth_type: Optional[str], auth_value: Opti
     if auth_type in ("bearer", "basic"):
         return _bearer_basic_headers(auth_type, strict)
     return strict
+
+
+def build_downstream_auth(auth_type: Optional[str], auth_value: Optional[Any]) -> Optional["DownstreamAuth"]:
+    """Build the typed downstream-auth envelope for PROXIED dispatch.
+
+    Wraps ``normalize_downstream_auth_headers``: returns ``None`` when no forwardable
+    material is stored (the wire envelope then omits ``authentication``/``authType``
+    entirely), otherwise a ``DownstreamAuth`` carrying the normalized headers and the
+    auth mode. The material is never logged.
+
+    Args:
+        auth_type: Stored gateway auth type ("bearer", "basic", "authheaders", ...).
+        auth_value: Stored auth material — encrypted string or already-decoded mapping.
+
+    Returns:
+        A ``DownstreamAuth`` for the dispatch envelope, or ``None`` when nothing is stored.
+
+    Raises:
+        GatewayAuthValueError: If the mode is not forwardable downstream or the stored
+            material is malformed. The message names only the mode and a fixed
+            reason — never material.
+    """
+    # Lazy import: services/__init__ eagerly imports the tool/resource/prompt services,
+    # which import this module — a top-level import here would circular-import.
+    # First-Party
+    from mcpgateway.services.reverse_proxy_protocol import DownstreamAuth  # pylint: disable=import-outside-toplevel
+
+    headers = normalize_downstream_auth_headers(auth_type, auth_value)
+    if not headers:
+        return None
+    return DownstreamAuth(headers=headers, auth_type=auth_type)
