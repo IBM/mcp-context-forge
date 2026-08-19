@@ -58,7 +58,7 @@ from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_service
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
-from mcpgateway.services.reverse_proxy_protocol import DownstreamAuth, JsonRpcErrorResponse, JsonRpcRequest
+from mcpgateway.services.reverse_proxy_protocol import DownstreamAuth, is_proxied_transport, JsonRpcErrorResponse, JsonRpcRequest
 from mcpgateway.services.reverse_proxy_relay import RelayUnavailableError
 from mcpgateway.services.reverse_proxy_sessions import ConnectionClosedError, ConnectionNotFoundError, get_reverse_proxy_session_manager, StableGatewayId
 from mcpgateway.services.structured_logger import get_structured_logger
@@ -68,7 +68,7 @@ from mcpgateway.services.upstream_session_registry import get_upstream_session_r
 from mcpgateway.utils.admin_check import is_admin_bypass_granted, is_user_admin
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.correlation_id import get_correlation_id
-from mcpgateway.utils.gateway_access import build_gateway_auth_headers, GatewayAuthValueError, normalize_downstream_auth_headers
+from mcpgateway.utils.gateway_access import build_downstream_auth, build_gateway_auth_headers, GatewayAuthValueError
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import unified_paginate
 from mcpgateway.utils.services_auth import decode_auth
@@ -423,7 +423,7 @@ class PromptService(BaseService):
         prompt_arguments = arguments or None
         # CWE-400: Validate meta_data limits before forwarding to upstream
         _validate_meta_data(meta_data)
-        if transport == "proxied":
+        if is_proxied_transport(transport):
             # PROXIED gateways persist no reachable URL: dispatch over the reverse-proxy
             # WebSocket session instead. The helper raises typed PromptError mappings
             # (fail-closed), so this branch stays ahead of the SSE/streamable try/except
@@ -432,10 +432,9 @@ class PromptService(BaseService):
             # rather than silently omitted) ride the request envelope as ``authentication``/
             # ``authType``; the material is never logged.
             try:
-                stored_auth_headers = normalize_downstream_auth_headers(getattr(gateway, "auth_type", None), getattr(gateway, "auth_value", None))
+                downstream_auth = build_downstream_auth(getattr(gateway, "auth_type", None), getattr(gateway, "auth_value", None))
             except GatewayAuthValueError as auth_err:
                 raise PromptError(f"Gateway credentials cannot be forwarded downstream: {auth_err}") from auth_err
-            downstream_auth = DownstreamAuth(headers=stored_auth_headers, auth_type=getattr(gateway, "auth_type", None)) if stored_auth_headers else None
             return await self._get_reverse_proxied_prompt(gateway_id, remote_name, prompt_arguments, meta_data, prompt, downstream_auth)
 
         try:

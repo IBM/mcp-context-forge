@@ -124,6 +124,7 @@ from mcpgateway.services.http_client_service import get_default_verify, get_http
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.mcp_apps import merge_mcp_protocol_meta, optional_extension_metadata, validate_extension_metadata, validate_ui_resource
 from mcpgateway.services.oauth_manager import OAuthManager
+from mcpgateway.services.reverse_proxy_protocol import is_internal_proxied_gateway, is_proxied_transport
 from mcpgateway.services.reverse_proxy_sessions import ReverseProxyEviction, ReverseProxySessionManager
 from mcpgateway.services.server_service import server_service
 from mcpgateway.services.session_affinity import register_gateway_capabilities_for_notifications
@@ -645,16 +646,6 @@ class ReverseProxyGatewayRegistration:
     description: str | None
     owner_email: str
     scope: ReverseProxyGatewayScope
-
-
-def _is_internal_proxied_gateway(gateway: Any) -> bool:
-    """Identify server-minted reverse-proxy catalog rows by transport AND provenance.
-
-    Both halves are server-owned: ``transport == "PROXIED"`` plus
-    ``created_via == "reverse_proxy"``. Client-supplied update fields alone (e.g. a
-    transport string on an update payload) must never confer PROXIED authority.
-    """
-    return str(getattr(gateway, "transport", "") or "").upper() == "PROXIED" and getattr(gateway, "created_via", None) == "reverse_proxy"
 
 
 class GatewayService(BaseService):  # pylint: disable=too-many-instance-attributes
@@ -1710,8 +1701,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         if existing is not None:
             identity_matches = (
-                existing.transport == "PROXIED"
-                and existing.created_via == "reverse_proxy"
+                is_internal_proxied_gateway(existing)
                 and existing.url == internal_url
                 and existing.slug == slug_name
                 and existing.name == registration.name
@@ -1802,7 +1792,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             continue
                         with fresh_db_session() as db:
                             gateway = db.get(DbGateway, str(eviction.stable_id))
-                            if gateway is not None and _is_internal_proxied_gateway(gateway):
+                            if gateway is not None and is_internal_proxied_gateway(gateway):
                                 gateway.reachable = False
                                 gateway.last_seen = seen_at
                                 db.commit()
@@ -2958,7 +2948,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             # header-forwardable auth modes (bearer/basic/authheaders) may be configured.
             # query-param/OAuth/one-time modes need a probeable URL or network flow the row
             # deliberately lacks, so they are rejected here rather than persisted inertly.
-            proxied_internal = _is_internal_proxied_gateway(gateway)
+            proxied_internal = is_internal_proxied_gateway(gateway)
             update_transport = getattr(gateway_update, "transport", None)
             if proxied_internal:
                 immutable_identity_fields = {"name", "owner_email", "team_id", "visibility"}
@@ -2967,7 +2957,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     raise GatewayError("Cannot change server-owned identity fields of a reverse-proxy (PROXIED) gateway")
                 if gateway_update.url is not None:
                     raise GatewayError("Cannot change the URL of a reverse-proxy (PROXIED) gateway")
-                if update_transport is not None and str(update_transport).upper() != "PROXIED":
+                if update_transport is not None and not is_proxied_transport(update_transport):
                     raise GatewayError("Cannot change the transport of a reverse-proxy (PROXIED) gateway")
                 if getattr(gateway_update, "one_time_auth", False):
                     raise GatewayError("one-time auth is not supported for reverse-proxy (PROXIED) gateways")
@@ -2975,7 +2965,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     raise GatewayError("OAuth configuration is not supported for reverse-proxy (PROXIED) gateways")
                 if gateway_update.auth_type is not None and gateway_update.auth_type not in ("", "bearer", "basic", "authheaders"):
                     raise GatewayError(f"auth mode '{gateway_update.auth_type}' is not supported for reverse-proxy (PROXIED) gateways")
-            elif update_transport is not None and str(update_transport).upper() == "PROXIED":
+            elif update_transport is not None and is_proxied_transport(update_transport):
                 raise GatewayError("PROXIED transport is reserved for reverse-proxy-registered gateways")
 
             if gateway.enabled or include_inactive:
@@ -4903,7 +4893,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 batch = gateways[i : i + chunk_size]
 
                 # Each task is a health check for a gateway in the batch, excluding those with auth_type == "one_time_auth"
-                tasks = [limited_check(gw) for gw in batch if gw.auth_type != "one_time_auth" and not _is_internal_proxied_gateway(gw)]
+                tasks = [limited_check(gw) for gw in batch if gw.auth_type != "one_time_auth" and not is_internal_proxied_gateway(gw)]
 
                 # Execute all health checks concurrently
                 await asyncio.gather(*tasks, return_exceptions=True)
@@ -4959,7 +4949,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         """
         # PROXIED is an internal WebSocket-derived transport. An authoritative row
         # is excluded by the batch scheduler; a forged/direct call fails closed.
-        if str(gateway.transport or "").upper() == "PROXIED":
+        if is_proxied_transport(gateway.transport):
             await self._handle_gateway_failure(gateway)
             return
 
