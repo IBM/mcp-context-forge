@@ -3669,6 +3669,28 @@ class TestRealtimeEndpoints:
         assert response.status_code == 404
         assert response.json()["detail"] == "Server not found"
 
+    @pytest.mark.parametrize("path_prefix", SERVER_CRUD_PREFIXES)
+    def test_server_message_endpoint_checks_nonexistent_server_before_auth(self, app_with_temp_db, path_prefix):
+        """Missing servers retain the legacy 404 response before authentication."""
+        # First-Party
+        from mcpgateway.middleware.rbac import get_current_user_with_permissions
+
+        def reject_unauthenticated_request():
+            """Simulate the authentication dependency's unauthenticated response."""
+            raise HTTPException(status_code=401, detail="Not authenticated")
+
+        app_with_temp_db.dependency_overrides[get_current_user_with_permissions] = reject_unauthenticated_request
+        try:
+            client = TestClient(app_with_temp_db, raise_server_exceptions=False)
+            message = {"type": "test", "data": "hello"}
+            with patch("mcpgateway.services.server_service.ServerService.entity_exists", new=AsyncMock(return_value=False)):
+                response = client.post(f"{path_prefix}/nonexistent-id/message?session_id=test-session", json=message)
+        finally:
+            app_with_temp_db.dependency_overrides.pop(get_current_user_with_permissions, None)
+
+        assert response.status_code == 404
+        assert response.json()["detail"] == "Server not found"
+
     def test_server_message_endpoint_returns_503_on_db_error(self, test_client, auth_headers):
         """Server message endpoint returns 503 when database validation fails (fail-closed)."""
         message = {"type": "test", "data": "hello"}
