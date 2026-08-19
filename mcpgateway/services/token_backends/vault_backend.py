@@ -516,8 +516,7 @@ class VaultTokenBackend(AbstractTokenBackend):
             # rather than silently falling back to the shared gateway credential during
             # a Vault outage — preserves per-user credential isolation (CWE-284).
             logger.warning(
-                "Vault unavailable in get_user_auth_headers for gateway %s, user %s: %s"
-                " — failing closed to protect per-user credential isolation",
+                "Vault unavailable in get_user_auth_headers for gateway %s, user %s: %s — failing closed to protect per-user credential isolation",
                 SecurityValidator.sanitize_log_message(gateway_id),
                 SecurityValidator.sanitize_log_message(app_user_email),
                 str(e),

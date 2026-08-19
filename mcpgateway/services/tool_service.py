@@ -4551,10 +4551,7 @@ class ToolService(BaseService):
                     SecurityValidator.sanitize_log_message(gateway_name),
                     SecurityValidator.sanitize_log_message(str(vault_err)),
                 )
-                raise ToolInvocationError(
-                    f"Credential storage unavailable for gateway '{gateway_name}'. "
-                    "Tool invocation refused to protect per-user credential isolation."
-                ) from vault_err
+                raise ToolInvocationError(f"Credential storage unavailable for gateway '{gateway_name}'. Tool invocation refused to protect per-user credential isolation.") from vault_err
             headers = vault_headers or (decode_auth(gateway_auth_value) if gateway_auth_value else {})
 
         if request_headers:
@@ -6012,10 +6009,7 @@ class ToolService(BaseService):
                                 SecurityValidator.sanitize_log_message(gateway_name),
                                 SecurityValidator.sanitize_log_message(str(vault_err)),
                             )
-                            raise ToolInvocationError(
-                                f"Credential storage unavailable for gateway '{gateway_name}'. "
-                                "Tool invocation refused to protect per-user credential isolation."
-                            ) from vault_err
+                            raise ToolInvocationError(f"Credential storage unavailable for gateway '{gateway_name}'. Tool invocation refused to protect per-user credential isolation.") from vault_err
                         headers = vault_headers or (decode_auth(gateway_auth_value) if gateway_auth_value else {})
 
                     # Use cached passthrough headers (no DB query needed)

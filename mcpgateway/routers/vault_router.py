@@ -67,12 +67,7 @@ def _resolve_oauth_gateway(
 
     # Filter to OAuth-enabled gateways — ORDER BY id for deterministic selection
     # across concurrent calls, workers, and replicas (issue #4 fix).
-    gateways_result = db.execute(
-        select(Gateway)
-        .where(Gateway.id.in_(gateway_ids))
-        .where(Gateway.auth_type == "oauth")
-        .order_by(Gateway.id)
-    )
+    gateways_result = db.execute(select(Gateway).where(Gateway.id.in_(gateway_ids)).where(Gateway.auth_type == "oauth").order_by(Gateway.id))
     gateways = list(gateways_result.scalars().all())
 
     if not gateways:
@@ -209,11 +204,7 @@ async def vault_authorize(
         if not oauth_config_with_callback.get("client_id"):
             raise HTTPException(
                 status_code=400,
-                detail=(
-                    "OAuth configuration missing client_id. "
-                    "For DCR-configured gateways use /oauth/authorize/{gateway_id} directly, "
-                    "or configure client_id/client_secret on the gateway manually."
-                ),
+                detail=("OAuth configuration missing client_id. For DCR-configured gateways use /oauth/authorize/{gateway_id} directly, or configure client_id/client_secret on the gateway manually."),
             )
 
         # B2e: pass popup=True so the /oauth/callback handler routes this flow
