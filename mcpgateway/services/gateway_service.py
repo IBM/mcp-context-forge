@@ -2284,14 +2284,19 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 }
                 token_storage = TokenStorageService(db, user_context=user_context)
                 access_token = await token_storage.get_user_token(gateway.id, app_user_email)
-                token_source = f"team-scoped (teams: {teams})"
+                token_source = f"team-scoped (teams: {SecurityValidator.sanitize_log_message(str(teams))})"
 
                 if not access_token:
                     raise GatewayConnectionError(
                         f"No OAuth token found for user {app_user_email} in team-scoped path (teams: {teams}). Please authorize this gateway via API with the appropriate team context."
                     )
 
-            logger.info("Retrieved OAuth token for user=%s, gateway=%s from %s", app_user_email, gateway.name, token_source)
+            logger.info(
+                "Retrieved OAuth token for user=%s, gateway=%s from %s",
+                SecurityValidator.sanitize_log_message(app_user_email),
+                SecurityValidator.sanitize_log_message(gateway.name),
+                SecurityValidator.sanitize_log_message(token_source),
+            )
 
             # Validate JWT claims (audience, scopes, issuer) before forwarding token.
             # Mirrors the validation in _resolve_auth_code_refresh_headers so the two
@@ -2305,7 +2310,11 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 learned_aud=learned_aud,
             )
             for warning in token_validation.warnings:
-                logger.warning("OAuth token validation for gateway %s: %s", gateway.name, warning)
+                logger.warning(
+                    "OAuth token validation for gateway %s: %s",
+                    SecurityValidator.sanitize_log_message(gateway.name),
+                    SecurityValidator.sanitize_log_message(warning),
+                )
 
             blocking = token_validation.blocking_errors
             if blocking:
@@ -2315,11 +2324,11 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             authentication = {"Authorization": f"Bearer {access_token}"}
             token_validation_warnings = token_validation.warnings
 
-            # Debug: check if token survived decryption
+            # Debug: check if token survived decryption (Fernet ciphertext prefix)
             if access_token.startswith("Z0FBQUFBQm"):  # Encrypted tokens start with this prefix
-                logger.error("OAuth token decryption may have failed before gateway initialization")
+                logger.debug("OAuth token may be encrypted (decryption may have failed) for gateway %s", SecurityValidator.sanitize_log_message(gateway.name))
             else:
-                logger.info("Using decrypted OAuth token for gateway %s", gateway.name)
+                logger.debug("OAuth token appears decrypted for gateway %s", SecurityValidator.sanitize_log_message(gateway.name))
 
             # Connect to MCP server. No cross-path fallback — issue #5598 explicitly
             # prohibits dual-backend fallback mode. If the token is rejected the caller

@@ -416,7 +416,12 @@ class VaultTokenBackend(AbstractTokenBackend):
             if self.cache_enabled and cache_key in VaultTokenBackend._token_cache:
                 cached = VaultTokenBackend._token_cache[cache_key]
                 if datetime.now(timezone.utc) < cached["cache_expires"]:
-                    logger.debug("Cache hit for token: team=%s, server_id=%s, email=%s", team_id, server_id, app_user_email)
+                    logger.debug(
+                        "Cache hit for token: team=%s, server_id=%s, email=%s",
+                        SecurityValidator.sanitize_log_message(team_id),
+                        SecurityValidator.sanitize_log_message(server_id),
+                        SecurityValidator.sanitize_log_message(app_user_email),
+                    )
                     VaultTokenBackend._token_cache.move_to_end(cache_key)
                     return cached["token"]
                 # Expired cache entry — remove it proactively
