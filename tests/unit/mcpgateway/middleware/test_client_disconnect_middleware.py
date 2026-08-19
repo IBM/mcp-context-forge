@@ -139,6 +139,8 @@ async def test_lifespan_passes_through():
         "/mcp/",
         "/servers/abc/sse",
         "/servers/abc/mcp",
+        "/v1/virtual-servers/abc/sse",
+        "/v1/virtual-servers/abc/mcp",
         "/_internal/mcp/transport",
         "/_internal/mcp/transport/",
     ],
@@ -194,6 +196,41 @@ async def test_regular_server_paths_not_skipped():
         receive = await _receive_messages([{"type": "http.request", "body": b"", "more_body": False}])
         await middleware(scope, receive, send)
         assert len(messages) == 2, f"Expected middleware to process {path}, not skip it"
+
+
+@pytest.mark.parametrize(
+    ("path", "root_path", "expect_passthrough"),
+    [
+        ("/dev/mcp-gateway/servers/abc/mcp", "/dev/mcp-gateway", True),
+        ("/dev/mcp-gateway/v1/virtual-servers/abc/mcp", "/dev/mcp-gateway", True),
+        ("/dev/mcp-gateway/v1/virtual-servers/abc/tools", "/dev/mcp-gateway", False),
+        ("/developer/v1/virtual-servers/abc/mcp", "/dev", False),
+    ],
+)
+@pytest.mark.asyncio
+async def test_app_root_path_streaming_classification(path, root_path, expect_passthrough, monkeypatch):
+    """Root-prefixed streams bypass wrapping without broadening REST matches."""
+    # First-Party
+    from mcpgateway.config import settings
+
+    monkeypatch.setattr(settings, "app_root_path", root_path)
+    original_receive = await _receive_messages([{"type": "http.request", "body": b"", "more_body": False}])
+    messages: list[dict] = []
+
+    async def original_send(message):  # type: ignore[no-untyped-def]
+        messages.append(message)
+
+    async def tracking_app(scope, receive, send):  # type: ignore[no-untyped-def]
+        assert (receive is original_receive) is expect_passthrough
+        assert (send is original_send) is expect_passthrough
+        await send({"type": "http.response.start", "status": 200, "headers": []})
+        await send({"type": "http.response.body", "body": b"ok"})
+
+    middleware = ClientDisconnectMiddleware(tracking_app)
+    scope = {"type": "http", "path": path}
+    await middleware(scope, original_receive, original_send)
+
+    assert len(messages) == 2
 
 
 @pytest.mark.asyncio

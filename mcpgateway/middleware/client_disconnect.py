@@ -29,9 +29,28 @@ from contextlib import suppress
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 # First-Party
+from mcpgateway.config import settings
 from mcpgateway.services.logging_service import LoggingService
 
 logger = LoggingService().get_logger(__name__)
+
+
+def _normalize_scope_path(path: str, root_path: str) -> str:
+    """Strip a configured reverse-proxy root path from an ASGI request path.
+
+    Args:
+        path: Request path observed by the outer middleware.
+        root_path: ASGI or application root path prefix.
+
+    Returns:
+        The application-relative path used for endpoint classification.
+    """
+    normalized_root = root_path.rstrip("/")
+    if normalized_root and normalized_root != "/" and path.startswith(normalized_root):
+        remainder = path[len(normalized_root) :]
+        if not remainder or remainder.startswith("/"):
+            return remainder or "/"
+    return path
 
 
 def _is_server_streaming_path(path: str) -> bool:
@@ -91,7 +110,9 @@ class ClientDisconnectMiddleware:
 
         # Skip paths that handle disconnect internally
         path: str = scope.get("path", "")
-        if any(path == prefix or path.startswith(prefix + "/") for prefix in _SELF_MANAGED_PREFIXES) or _is_server_streaming_path(path):
+        root_path: str = scope.get("root_path") or settings.app_root_path or ""
+        application_path = _normalize_scope_path(path, root_path)
+        if any(application_path == prefix or application_path.startswith(prefix + "/") for prefix in _SELF_MANAGED_PREFIXES) or _is_server_streaming_path(application_path):
             await self.app(scope, receive, send)
             return
 
