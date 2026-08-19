@@ -246,7 +246,7 @@ async def vault_authorize(
     except Exception as e:
         logger.error(
             "Vault OAuth authorize failed: %s, server_id=%s, user=%s",
-            str(e),
+            SecurityValidator.sanitize_log_message(str(e)),
             SecurityValidator.sanitize_log_message(server_id),
             SecurityValidator.sanitize_log_message(current_user.get("email", "unknown")) if current_user else "unknown",
         )

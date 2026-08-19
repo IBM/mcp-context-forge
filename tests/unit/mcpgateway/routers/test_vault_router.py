@@ -48,7 +48,7 @@ def _make_gateway(
     gw.visibility = visibility
     gw.team_id = team_id
     gw.owner_email = owner_email
-    gw.oauth_config = oauth_config or {"grant_type": "authorization_code"}
+    gw.oauth_config = oauth_config or {"grant_type": "authorization_code", "client_id": "test-client-id"}
     gw.auth_type = "oauth"
     return gw
 

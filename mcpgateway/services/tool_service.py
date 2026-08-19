@@ -4192,8 +4192,8 @@ class ToolService(BaseService):
             if user_headers:
                 logger.info(
                     "Using per-user Vault auth headers for gateway '%s' (user=%s)",
-                    gateway_name,
-                    app_user_email,
+                    SecurityValidator.sanitize_log_message(gateway_name),
+                    SecurityValidator.sanitize_log_message(app_user_email),
                 )
                 return user_headers
         except (VaultConnectionError, VaultAuthError):
@@ -4546,8 +4546,13 @@ class ToolService(BaseService):
             except (VaultConnectionError, VaultAuthError) as vault_err:
                 # Vault is down or auth failed — surface a 503-style error rather than
                 # falling back to shared credentials (CWE-284 credential isolation).
+                logger.warning(
+                    "Vault unavailable for gateway '%s': %s — failing closed",
+                    SecurityValidator.sanitize_log_message(gateway_name),
+                    SecurityValidator.sanitize_log_message(str(vault_err)),
+                )
                 raise ToolInvocationError(
-                    f"Vault unavailable for gateway '{gateway_name}': {vault_err}. "
+                    f"Credential storage unavailable for gateway '{gateway_name}'. "
                     "Tool invocation refused to protect per-user credential isolation."
                 ) from vault_err
             headers = vault_headers or (decode_auth(gateway_auth_value) if gateway_auth_value else {})
@@ -6002,8 +6007,13 @@ class ToolService(BaseService):
                         except (VaultConnectionError, VaultAuthError) as vault_err:
                             # Vault is down or auth failed — surface a clear error rather than
                             # falling back to shared credentials (CWE-284 credential isolation).
+                            logger.warning(
+                                "Vault unavailable for gateway '%s': %s — failing closed",
+                                SecurityValidator.sanitize_log_message(gateway_name),
+                                SecurityValidator.sanitize_log_message(str(vault_err)),
+                            )
                             raise ToolInvocationError(
-                                f"Vault unavailable for gateway '{gateway_name}': {vault_err}. "
+                                f"Credential storage unavailable for gateway '{gateway_name}'. "
                                 "Tool invocation refused to protect per-user credential isolation."
                             ) from vault_err
                         headers = vault_headers or (decode_auth(gateway_auth_value) if gateway_auth_value else {})
