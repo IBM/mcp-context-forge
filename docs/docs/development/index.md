@@ -14,6 +14,7 @@ Welcome! This guide is for developers contributing to ContextForge. Whether you'
 | [Database Performance](db-performance.md)                                         | N+1 query detection, query logging, and database optimization                  |
 | [Doctest Coverage](doctest-coverage.md)                                           | Comprehensive doctest coverage implementation and guidelines                    |
 | [DEVELOPING.md](https://github.com/IBM/mcp-context-forge/blob/main/DEVELOPING.md) | Coding standards, commit conventions, and review workflow                      |
+| [Reverse Proxy Service](reverse-proxy.md) | Developer guide for the reverse-proxy service and its live end-to-end harness |
 
 ---
 

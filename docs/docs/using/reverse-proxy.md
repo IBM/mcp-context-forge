@@ -388,6 +388,16 @@ class MonitoredReverseProxy(ReverseProxyClient):
         await super().connect()
 ```
 
+## Developer Resources
+
+Working on the gateway-side service or the wire protocol? The [Reverse Proxy developer guide](../development/reverse-proxy.md) covers the internals, the unit test surface, and the live end-to-end harness. The harness runs the real client against a containerized multi-worker gateway:
+
+```bash
+RP_E2E_RUN_ID=my-run tests/live_gateway/reverse_proxy/run.sh
+```
+
+It is manually invoked and not part of `make test` or CI; see the developer guide for prerequisites and overrides.
+
 ## Related Documentation
 
 - [ContextForge Documentation](../index.md)
