@@ -3609,6 +3609,16 @@ Disallow: /
 
     validation_allowed_url_schemes: List[str] = ["http://", "https://", "ws://", "wss://"]
 
+    # If True, startup fails when an active gateway/tool/agent record's URL uses
+    # a scheme outside validation_allowed_url_schemes -- e.g. a leftover http://
+    # record after tightening the allowlist to https-only. Registration-time
+    # validation alone does not catch this: it only checks new records, so an
+    # existing record keeps being used by health checks, tool invocation, and
+    # federation regardless of the current allowlist. Default False (warn-only)
+    # so upgrading to a stricter allowlist never breaks an existing deployment
+    # outright.
+    strict_scheme_enforcement: bool = False
+
     # Character validation patterns
     validation_name_pattern: str = r"^[a-zA-Z0-9_.\- ]+$"  # Allow spaces for names (literal space, not \s to reject control chars)
     validation_identifier_pattern: str = r"^[a-zA-Z0-9_\-\.]+$"  # No spaces for IDs
