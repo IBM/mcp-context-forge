@@ -36,6 +36,7 @@ import socket
 import time
 from typing import Any, Dict, Optional
 import uuid
+import weakref
 
 # Third-Party
 import httpx
@@ -48,7 +49,6 @@ from mcpgateway.services.upstream_session_registry import (  # re-exported as th
     MessageHandlerFactory,
 )
 from mcpgateway.utils.internal_http import (
-    internal_loopback_base_url,
     post_rpc_in_process,
 )
 
@@ -68,6 +68,50 @@ WORKER_ID = f"{socket.gethostname()}:{os.getpid()}"
 
 
 logger = logging.getLogger(__name__)
+
+
+def _attach_envelope_trace_context(headers: Optional[Dict[str, str]]) -> Any:
+    """Attach the W3C trace context carried by a forwarded envelope, if any.
+
+    Listener tasks have no request context of their own; attaching the
+    envelope's context lets owner-side spans nest in the caller's trace.
+
+    Args:
+        headers: Envelope headers, possibly containing traceparent/tracestate.
+
+    Returns:
+        The context token to pass to ``_detach_envelope_trace_context``, or None.
+    """
+    try:
+        # Third-Party
+        from opentelemetry import context as otel_context  # pylint: disable=import-outside-toplevel
+        from opentelemetry.propagate import extract as otel_extract  # pylint: disable=import-outside-toplevel
+    except ImportError:
+        return None
+    carrier = {str(k).lower(): str(v) for k, v in (headers or {}).items() if k and v}
+    if "traceparent" not in carrier:
+        return None
+    try:
+        return otel_context.attach(otel_extract(carrier=carrier))
+    except Exception:  # pylint: disable=broad-exception-caught
+        return None
+
+
+def _detach_envelope_trace_context(token: Any) -> None:
+    """Detach a token returned by ``_attach_envelope_trace_context``.
+
+    Args:
+        token: The context token, or None (no-op).
+    """
+    if token is None:
+        return
+    try:
+        # Third-Party
+        from opentelemetry import context as otel_context  # pylint: disable=import-outside-toplevel
+
+        otel_context.detach(token)
+    except Exception:  # pylint: disable=broad-exception-caught
+        pass
 
 
 class SessionAffinityNotInitializedError(RuntimeError):
@@ -136,6 +180,14 @@ class SessionAffinity:
         # Background tasks owned by this instance
         self._rpc_listener_task: Optional[asyncio.Task[None]] = None
         self._heartbeat_task: Optional[asyncio.Task[None]] = None
+        # Bounded-concurrent forwarded-request dispatch (listener spawns, never awaits inline)
+        self._forward_tasks: set[asyncio.Task[None]] = set()
+        self._forward_semaphore: Optional[asyncio.Semaphore] = None
+        # Per-session in-memory FIFO for forwarded executions: same-session forwards
+        # serialize on these locks; different sessions run concurrently. The
+        # WeakValueDictionary is the garbage collector: entries evaporate once the
+        # last dispatch task holding the lock object finishes (no manual refcounting).
+        self._session_locks: "weakref.WeakValueDictionary[str, asyncio.Lock]" = weakref.WeakValueDictionary()
 
         # Affinity metrics
         self._session_affinity_local_hits = 0
@@ -660,6 +712,9 @@ class SessionAffinity:
         "there is no worker-local affinity state to blow away on reload."
         """
         logger.info("Session-affinity drain requested; no worker-local state to clear")
+        # Cancel any in-flight forwarded-request dispatches spawned by the listener.
+        for task in self._forward_tasks:
+            task.cancel()
 
     async def register_session_owner(self, mcp_session_id: str) -> None:
         """Claim this worker as the owner of a downstream MCP session, or refresh the existing lease.
@@ -855,6 +910,11 @@ class SessionAffinity:
                 try:
                     # First-Party
                     from mcpgateway.auth_context import FORWARD_SIG_FIELD, sign_redis_forward_envelope  # pylint: disable=import-outside-toplevel
+                    from mcpgateway.observability import inject_trace_context_headers  # pylint: disable=import-outside-toplevel
+
+                    # Propagate the active W3C trace context across the Redis hop so the
+                    # owner-side dispatch continues this trace instead of rooting a new one.
+                    request_data = {**request_data, "headers": inject_trace_context_headers(request_data.get("headers") or {})}
 
                     # Prepare request with response channel and the edge auth context.
                     forward_data = {
@@ -914,6 +974,9 @@ class SessionAffinity:
 
             rpc_channel = f"mcpgw:pool_rpc:{WORKER_ID}"
             http_channel = f"mcpgw:pool_http:{WORKER_ID}"
+            # Bounded concurrency for forwarded-request dispatch (created here,
+            # inside the running loop, rather than __init__).
+            self._forward_semaphore = asyncio.Semaphore(settings.mcpgateway_affinity_forward_concurrency)
             async with redis.pubsub() as pubsub:
                 await pubsub.subscribe(rpc_channel, http_channel)
                 logger.info("RPC/HTTP listener started for worker %s on channels: %s, %s", WORKER_ID, rpc_channel, http_channel)
@@ -928,14 +991,16 @@ class SessionAffinity:
                                 response_channel = request.get("response_channel")
 
                                 if response_channel:
-                                    if forward_type == "rpc_forward":
-                                        # Execute forwarded RPC request for SSE transport
-                                        response = await self._execute_forwarded_request(request)
-                                        await redis.publish(response_channel, orjson.dumps(response))
-                                        logger.debug("Processed forwarded RPC request, response sent to %s", response_channel)
-                                    elif forward_type == "http_forward":
-                                        # Execute forwarded HTTP request for Streamable HTTP transport
-                                        await self._execute_forwarded_http_request(request, redis)
+                                    if forward_type in ("rpc_forward", "http_forward"):
+                                        # Per-session FIFO, cross-session concurrency: claim the
+                                        # session's in-memory lock synchronously (arrival order),
+                                        # then dispatch on a task so the mailbox never stalls
+                                        # behind an execution. Global concurrency is bounded
+                                        # inside the task, AFTER session ordering.
+                                        session_lock = self._claim_session_lock(request.get("mcp_session_id") or "")
+                                        task = asyncio.create_task(self._dispatch_forwarded(redis, forward_type, request, response_channel, session_lock))
+                                        self._forward_tasks.add(task)
+                                        task.add_done_callback(self._on_forward_task_done)
                                     else:
                                         logger.warning("Unknown forward type: %s", forward_type)
                         except Exception as e:
@@ -946,6 +1011,97 @@ class SessionAffinity:
 
         except Exception as e:
             logger.warning("RPC/HTTP listener failed: %s", e)
+
+    def _claim_session_lock(self, session_id: str) -> Optional[asyncio.Lock]:
+        """Fetch (creating if needed) a session's in-memory execution lock.
+
+        Must be called synchronously from the listener so same-session claims
+        are ordered by arrival. Returns None for session-less envelopes (no
+        ordering requirement). Entries are garbage-collected by the
+        WeakValueDictionary once no dispatch task references the lock.
+
+        Args:
+            session_id: The downstream MCP session id (empty/None = no ordering).
+
+        Returns:
+            The session's lock, or None.
+        """
+        if not session_id:
+            return None
+        lock = self._session_locks.get(session_id)
+        if lock is None:
+            lock = asyncio.Lock()
+            self._session_locks[session_id] = lock
+        return lock
+
+    async def _execute_bounded(self, redis: Any, forward_type: str, request: Dict[str, Any], response_channel: str) -> None:
+        """Execute one forward under the global concurrency bound.
+
+        Args:
+            redis: Active Redis client from the listener connection.
+            forward_type: ``rpc_forward`` (SSE) or ``http_forward`` (Streamable HTTP).
+            request: The forwarded envelope.
+            response_channel: Per-request reply channel for the rpc_forward result.
+        """
+        assert self._forward_semaphore is not None  # set in start_rpc_listener
+        async with self._forward_semaphore:
+            if forward_type == "rpc_forward":
+                response = await self._execute_forwarded_request(request)
+                await redis.publish(response_channel, orjson.dumps(response))
+                logger.debug("Processed forwarded RPC request, response sent to %s", response_channel)
+            else:
+                await self._execute_forwarded_http_request(request, redis)
+
+    async def _dispatch_forwarded(self, redis: Any, forward_type: str, request: Dict[str, Any], response_channel: str, session_lock: Optional[asyncio.Lock]) -> None:
+        """Run one forwarded request: per-session FIFO first, then the global bound.
+
+        The session-lock wait is bounded by ``mcpgateway_affinity_session_lock_timeout``
+        so a stuck predecessor cannot deadlock the session; on timeout the forward
+        executes without the ordering guarantee (logged). The lock object is
+        garbage-collected once this task drops its reference.
+
+        Args:
+            redis: Active Redis client from the listener connection.
+            forward_type: ``rpc_forward`` (SSE) or ``http_forward`` (Streamable HTTP).
+            request: The forwarded envelope.
+            response_channel: Per-request reply channel for the rpc_forward result.
+            session_lock: The session's ordering lock (claimed by the listener), or None.
+        """
+        try:
+            if session_lock is not None:
+                acquired = False
+                try:
+                    async with asyncio.timeout(settings.mcpgateway_affinity_session_lock_timeout):
+                        await session_lock.acquire()
+                        acquired = True
+                except TimeoutError:
+                    logger.warning(
+                        "Session-lock wait exceeded %ds for session %s...; executing without per-session ordering",
+                        settings.mcpgateway_affinity_session_lock_timeout,
+                        (request.get("mcp_session_id") or "unknown")[:8],
+                    )
+                try:
+                    await self._execute_bounded(redis, forward_type, request, response_channel)
+                finally:
+                    if acquired:
+                        session_lock.release()
+            else:
+                await self._execute_bounded(redis, forward_type, request, response_channel)
+        except Exception as e:  # pylint: disable=broad-exception-caught
+            logger.warning("Forwarded %s execution failed: %s", forward_type, e)
+
+    def _on_forward_task_done(self, task: "asyncio.Task[None]") -> None:
+        """Drop completed forward tasks and surface unexpected failures.
+
+        Args:
+            task: The completed dispatch task.
+        """
+        self._forward_tasks.discard(task)
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc:
+            logger.warning("Forwarded request task failed: %s", exc)
 
     async def _execute_forwarded_request(self, request: Dict[str, Any]) -> Dict[str, Any]:
         """Execute a forwarded RPC request locally via internal HTTP call.
@@ -1001,20 +1157,28 @@ class SessionAffinity:
 
             # Dispatch IN-PROCESS to the trusted internal endpoint so it resolves the bound
             # upstream session from this worker's registry instead of scattering over the
-            # shared socket. The verified edge identity rides in auth_context.
-            response = await post_rpc_in_process(
-                content=orjson.dumps(
-                    {
-                        "jsonrpc": "2.0",
-                        "method": method,
-                        "params": params,
-                        "id": req_id,
-                    }
-                ),
-                auth_context=auth_context,
-                headers=internal_headers,
-                timeout=settings.mcpgateway_pool_rpc_forward_timeout,
-            )
+            # shared socket. The verified edge identity rides in auth_context. Attach the
+            # envelope's trace context so the dispatch nests in the caller's trace.
+            from mcpgateway.observability import create_span  # pylint: disable=import-outside-toplevel
+
+            trace_token = _attach_envelope_trace_context(headers)
+            try:
+                with create_span("mcp.affinity.execute_forwarded", {"mcp.session_id": session_short, "mcp.affinity.forward_type": "rpc", "mcp.method": str(method)}):
+                    response = await post_rpc_in_process(
+                        content=orjson.dumps(
+                            {
+                                "jsonrpc": "2.0",
+                                "method": method,
+                                "params": params,
+                                "id": req_id,
+                            }
+                        ),
+                        auth_context=auth_context,
+                        headers=internal_headers,
+                        timeout=settings.mcpgateway_pool_rpc_forward_timeout,
+                    )
+            finally:
+                _detach_envelope_trace_context(trace_token)
 
             # Gate on HTTP status first: non-2xx responses are errors
             # even if the body parses as JSON.
@@ -1158,23 +1322,19 @@ class SessionAffinity:
             # First-Party - lazy imports avoid a circular dependency with main/transport.
             # The forwarded envelope was already verified above, before any field was decoded.
             # First-Party
-            from mcpgateway.auth_context import _expected_internal_mcp_runtime_auth_header  # pylint: disable=import-outside-toplevel,protected-access
-            from mcpgateway.main import app  # pylint: disable=import-outside-toplevel,cyclic-import
             from mcpgateway.utils.passthrough_headers import safe_extract_and_filter_for_loopback  # pylint: disable=import-outside-toplevel
             from mcpgateway.utils.verify_credentials import _resolve_auth_header_name  # pylint: disable=import-outside-toplevel,protected-access
 
-            # Trust headers for the internal /_internal/mcp/rpc endpoint:
-            # - x-contextforge-mcp-runtime: "affinity" caller marker
-            # - x-contextforge-mcp-runtime-auth: shared-secret HMAC
-            # - x-contextforge-auth-context: the encoded edge auth context, so the
-            #   endpoint reconstructs the same user without re-authenticating.
+            # Trust headers (runtime marker, shared-secret HMAC, auth context) are
+            # attached by post_rpc_in_process. Carry the W3C trace context from the
+            # envelope explicitly: the passthrough allowlist rightly strips it.
             rpc_headers = {
                 "content-type": "application/json",
                 "x-mcp-session-id": mcp_session_id or "",
-                "x-contextforge-mcp-runtime": "affinity",
-                "x-contextforge-mcp-runtime-auth": _expected_internal_mcp_runtime_auth_header(),
-                "x-contextforge-auth-context": auth_context_header,
             }
+            for _trace_header in ("traceparent", "tracestate"):
+                if headers.get(_trace_header):
+                    rpc_headers[_trace_header] = headers[_trace_header]
             # Preserve the bearer under the configured auth header (AUTH_HEADER_NAME),
             # not a hardcoded "authorization": the CSRF bearer short-circuit keys on
             # the configured header, so a custom header would otherwise be dropped.
@@ -1186,17 +1346,21 @@ class SessionAffinity:
             # Preserve passthrough headers destined for upstream MCP servers (#3640).
             rpc_headers.update(safe_extract_and_filter_for_loopback(headers))
 
-            # Dispatch IN-PROCESS to the trusted internal endpoint. The explicit
-            # client=("127.0.0.1", 0) tells ASGITransport to set scope["client"]
-            # to a loopback address so the trust check accepts the request.
-            transport = httpx.ASGITransport(app=app, client=("127.0.0.1", 0))
-            async with httpx.AsyncClient(transport=transport, base_url=internal_loopback_base_url()) as client:
-                response = await client.post(
-                    "/_internal/mcp/rpc",
-                    content=body,
-                    headers=rpc_headers,
-                    timeout=settings.mcpgateway_pool_rpc_forward_timeout,
-                )
+            # Dispatch IN-PROCESS to the trusted internal endpoint via the shared helper.
+            # Attach the envelope's trace context so the dispatch nests in the caller's trace.
+            from mcpgateway.observability import create_span  # pylint: disable=import-outside-toplevel
+
+            trace_token = _attach_envelope_trace_context(headers)
+            try:
+                with create_span("mcp.affinity.execute_forwarded", {"mcp.session_id": session_short, "mcp.affinity.forward_type": "http", "mcp.method": str(method)}):
+                    response = await post_rpc_in_process(
+                        content=body,
+                        headers=rpc_headers,
+                        timeout=settings.mcpgateway_pool_rpc_forward_timeout,
+                        auth_context=auth_context_header,
+                    )
+            finally:
+                _detach_envelope_trace_context(trace_token)
 
             logger.debug("[HTTP_AFFINITY] Worker %s | Session %s... | Executed in-process via /_internal/mcp/rpc: %s", WORKER_ID, session_short, response.status_code)
 

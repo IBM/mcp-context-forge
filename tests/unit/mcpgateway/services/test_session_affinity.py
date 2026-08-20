@@ -1232,16 +1232,14 @@ async def test_public_only_forward_signs_and_consumer_accepts():
     client = _FakeHttpxClient(response=_FakeHttpResponse(200, text_body="ok"))
     with (
         patch("mcpgateway.services.session_affinity.settings") as ms2,
-        patch("mcpgateway.services.session_affinity.httpx.AsyncClient", return_value=client),
-        patch("mcpgateway.services.session_affinity.internal_loopback_base_url", return_value="http://localhost:4444"),
-        patch("mcpgateway.auth_context._expected_internal_mcp_runtime_auth_header", return_value="HMAC"),
+        patch("mcpgateway.services.session_affinity.post_rpc_in_process", new=client.as_post_rpc),
     ):
         ms2.mcpgateway_pool_rpc_forward_timeout = 5.0
         await affinity._execute_forwarded_http_request(forward_data, consumer_fake)  # pylint: disable=protected-access
 
     # Accepted and dispatched to the trusted-internal endpoint, NOT an integrity 403.
     assert client.last_post_kwargs is not None
-    assert client.last_post_kwargs["url"] == "/_internal/mcp/rpc"
+    assert client.last_post_kwargs["auth_context"] == encoded  # trusted dispatch carries the edge context
     assert orjson.loads(consumer_fake.published[0][1])["status"] != 403
 
 
@@ -1630,6 +1628,84 @@ async def test_execute_forwarded_request_success_returns_result():
 
 
 @pytest.mark.asyncio
+async def test_execute_forwarded_request_carries_trace_context_headers():
+    """traceparent/tracestate from the envelope ride the internal dispatch past the passthrough allowlist."""
+    # First-Party
+    from mcpgateway.services.session_affinity import SessionAffinity
+
+    affinity = SessionAffinity()
+    client = _FakeHttpxClient(response=_FakeHttpResponse(200, json_body={"jsonrpc": "2.0", "result": {}, "id": 1}))
+    trace_headers = {
+        "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+        "tracestate": "congo=t61rcWkgMzE",
+    }
+
+    with (
+        patch("mcpgateway.services.session_affinity.settings") as mock_settings,
+        patch("mcpgateway.services.session_affinity.post_rpc_in_process", new=client.as_post_rpc),
+    ):
+        mock_settings.mcpgateway_pool_rpc_forward_timeout = 5.0
+        result = await affinity._execute_forwarded_request(  # pylint: disable=protected-access
+            _sign_forward({"method": "tools/list", "params": {}, "headers": trace_headers, "req_id": 1, "mcp_session_id": "sess-trace"})
+        )
+
+    assert result == {"result": {}}
+    assert client.last_post_kwargs["headers"]["traceparent"] == trace_headers["traceparent"]  # type: ignore[index]
+    assert client.last_post_kwargs["headers"]["tracestate"] == trace_headers["tracestate"]  # type: ignore[index]
+
+
+@pytest.mark.asyncio
+async def test_execute_forwarded_http_request_carries_trace_context_headers():
+    """traceparent/tracestate from an http_forward envelope are carried explicitly past the passthrough allowlist."""
+    # Third-Party
+    import orjson
+
+    # First-Party
+    from mcpgateway.services.session_affinity import SessionAffinity
+
+    affinity = SessionAffinity()
+    body = orjson.dumps({"jsonrpc": "2.0", "method": "tools/list", "id": 1})
+    client = _FakeHttpxClient(response=_FakeHttpResponse(200, text_body='{"jsonrpc":"2.0","result":{},"id":1}'))
+    trace_headers = {
+        "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+        "tracestate": "congo=t61rcWkgMzE",
+    }
+
+    class _Redis:
+        def __init__(self):
+            self.published: list[tuple[str, bytes]] = []
+
+        async def publish(self, channel, payload):
+            self.published.append((channel, payload))
+            return 1
+
+    redis = _Redis()
+    envelope = _sign_forward(
+        {
+            "type": "http_forward",
+            "response_channel": "resp-trace",
+            "method": "POST",
+            "path": "/mcp",
+            "headers": trace_headers,
+            "body": body.hex(),
+            "mcp_session_id": "sess-trace",
+            "req_id": 1,
+        }
+    )
+
+    with (
+        patch("mcpgateway.services.session_affinity.settings") as mock_settings,
+        patch("mcpgateway.services.session_affinity.post_rpc_in_process", new=client.as_post_rpc),
+    ):
+        mock_settings.mcpgateway_pool_rpc_forward_timeout = 5.0
+        await affinity._execute_forwarded_http_request(envelope, redis)  # pylint: disable=protected-access
+
+    assert client.last_post_kwargs["headers"]["traceparent"] == trace_headers["traceparent"]  # type: ignore[index]
+    assert client.last_post_kwargs["headers"]["tracestate"] == trace_headers["tracestate"]  # type: ignore[index]
+    assert redis.published and redis.published[0][0] == "resp-trace"
+
+
+@pytest.mark.asyncio
 async def test_execute_forwarded_request_rejects_forged_signature():
     """An rpc forward with an invalid envelope signature is rejected, never dispatched."""
     # First-Party
@@ -1793,20 +1869,15 @@ async def test_execute_forwarded_http_request_publishes_response_via_redis():
 
     with (
         patch("mcpgateway.services.session_affinity.settings") as mock_settings,
-        patch("mcpgateway.services.session_affinity.httpx.AsyncClient", return_value=client),
-        patch("mcpgateway.services.session_affinity.internal_loopback_base_url", return_value="http://localhost:4444"),
-        patch("mcpgateway.auth_context._expected_internal_mcp_runtime_auth_header", return_value="HMAC-SHA256"),
+        patch("mcpgateway.services.session_affinity.post_rpc_in_process", new=client.as_post_rpc),
     ):
         mock_settings.mcpgateway_pool_rpc_forward_timeout = 5.0
         await affinity._execute_forwarded_http_request(request, fake)  # pylint: disable=protected-access
 
-    # Dispatched to the trusted-internal endpoint, NOT the public /rpc.
+    # Dispatched via the trusted-internal helper (which attaches the trust headers), NOT the public /rpc.
     assert client.last_post_kwargs is not None
-    assert client.last_post_kwargs["url"] == "/_internal/mcp/rpc"
+    assert client.last_post_kwargs["auth_context"] == "encoded-ctx"
     headers = client.last_post_kwargs["headers"]
-    assert headers["x-contextforge-mcp-runtime"] == "affinity"
-    assert headers["x-contextforge-mcp-runtime-auth"] == "HMAC-SHA256"
-    assert headers["x-contextforge-auth-context"] == "encoded-ctx"
     assert headers["x-mcp-session-id"] == "sess-123456789"
     # server_id from the path is injected into JSON-RPC params before dispatch.
     sent_body = orjson.loads(client.last_post_kwargs["content"])
@@ -1848,9 +1919,7 @@ async def test_execute_forwarded_http_request_publishes_500_error_on_exception()
 
     with (
         patch("mcpgateway.services.session_affinity.settings") as mock_settings,
-        patch("mcpgateway.services.session_affinity.httpx.AsyncClient", return_value=client),
-        patch("mcpgateway.services.session_affinity.internal_loopback_base_url", return_value="http://localhost:4444"),
-        patch("mcpgateway.auth_context._expected_internal_mcp_runtime_auth_header", return_value="HMAC"),
+        patch("mcpgateway.services.session_affinity.post_rpc_in_process", new=client.as_post_rpc),
     ):
         mock_settings.mcpgateway_pool_rpc_forward_timeout = 5.0
         await affinity._execute_forwarded_http_request(request, fake)  # pylint: disable=protected-access
@@ -2012,8 +2081,14 @@ async def test_start_rpc_listener_dispatches_rpc_forward_and_http_forward_messag
         patch("mcpgateway.utils.redis_client.get_redis_client", AsyncMock(return_value=redis)),
     ):
         mock_settings.mcpgateway_session_affinity_enabled = True
+        mock_settings.mcpgateway_affinity_forward_concurrency = 8
+        mock_settings.mcpgateway_affinity_session_lock_timeout = 5
         # Bound the test in case of any hang.
         await asyncio.wait_for(affinity.start_rpc_listener(), timeout=3.0)
+
+    # Dispatches run as concurrent tasks now — let them finish before asserting.
+    if affinity._forward_tasks:  # pylint: disable=protected-access
+        await asyncio.wait_for(asyncio.gather(*affinity._forward_tasks, return_exceptions=True), timeout=3.0)
 
     assert set(dispatched) == {"rpc", "http"}
     # The RPC response was published back on the caller's channel.
@@ -2065,6 +2140,7 @@ async def test_start_rpc_listener_tolerates_unknown_forward_type(caplog):
         caplog.at_level("WARNING", logger="mcpgateway.services.session_affinity"),
     ):
         mock_settings.mcpgateway_session_affinity_enabled = True
+        mock_settings.mcpgateway_affinity_forward_concurrency = 8
         await asyncio.wait_for(affinity.start_rpc_listener(), timeout=3.0)
 
     assert any("Unknown forward type" in rec.getMessage() for rec in caplog.records if rec.levelname == "WARNING")
@@ -2108,9 +2184,115 @@ async def test_start_rpc_listener_swallows_exception_in_message_loop(caplog):
         caplog.at_level("WARNING", logger="mcpgateway.services.session_affinity"),
     ):
         mock_settings.mcpgateway_session_affinity_enabled = True
+        mock_settings.mcpgateway_affinity_forward_concurrency = 8
         await asyncio.wait_for(affinity.start_rpc_listener(), timeout=3.0)
 
     assert any("Error processing forwarded request" in rec.getMessage() for rec in caplog.records if rec.levelname == "WARNING")
+
+
+# ---------------------------------------------------------------------------
+# Per-session forward ordering (listener dispatch locks)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_dispatch_forwarded_serializes_same_session_and_parallelizes_sessions():
+    """Same-session forwards never overlap; different sessions may run concurrently."""
+    # Third-Party
+    import asyncio
+
+    # First-Party
+    from mcpgateway.services.session_affinity import SessionAffinity
+
+    affinity = SessionAffinity()
+    affinity._forward_semaphore = asyncio.Semaphore(8)  # pylint: disable=protected-access
+
+    current: dict[str, int] = {}
+    max_overlap: dict[str, int] = {}
+    completed: list[str] = []
+
+    class _RedisSink:
+        async def publish(self, *_a, **_k):
+            return 1
+
+    async def _fake_http(request, _redis):
+        sid = request.get("mcp_session_id")
+        current[sid] = current.get(sid, 0) + 1
+        max_overlap[sid] = max(max_overlap.get(sid, 0), current[sid])
+        await asyncio.sleep(0.02)
+        current[sid] -= 1
+        completed.append(sid)
+
+    affinity._execute_forwarded_http_request = _fake_http  # type: ignore[method-assign]
+
+    sessions = ("sess-a", "sess-b", "sess-a", "sess-a", "sess-b")
+    tasks = []
+    for i, sid in enumerate(sessions):
+        lock = affinity._claim_session_lock(sid)  # pylint: disable=protected-access
+        task = asyncio.create_task(
+            affinity._dispatch_forwarded(_RedisSink(), "http_forward", {"mcp_session_id": sid}, f"resp-{i}", lock)  # pylint: disable=protected-access
+        )
+        tasks.append(task)
+    await asyncio.gather(*tasks)
+
+    assert len(completed) == 5
+    assert max_overlap["sess-a"] == 1, "same-session forwards overlapped"
+    assert max_overlap["sess-b"] == 1, "same-session forwards overlapped"
+
+
+@pytest.mark.asyncio
+async def test_dispatch_forwarded_session_lock_timeout_executes_without_ordering(caplog):
+    """A stuck predecessor must not deadlock the session: after the lock timeout the forward runs unlocked."""
+    # Third-Party
+    import asyncio
+
+    # First-Party
+    from mcpgateway.services.session_affinity import SessionAffinity
+
+    affinity = SessionAffinity()
+    affinity._forward_semaphore = asyncio.Semaphore(8)  # pylint: disable=protected-access
+
+    ran: list[str] = []
+
+    class _RedisSink:
+        async def publish(self, *_a, **_k):
+            return 1
+
+    async def _fake_http(request, _redis):
+        ran.append(request.get("mcp_session_id"))
+
+    affinity._execute_forwarded_http_request = _fake_http  # type: ignore[method-assign]
+
+    lock = affinity._claim_session_lock("sess-stuck")  # pylint: disable=protected-access
+    await lock.acquire()  # simulate a stuck predecessor holding the session lock
+
+    with (
+        patch("mcpgateway.services.session_affinity.settings") as mock_settings,
+        caplog.at_level("WARNING", logger="mcpgateway.services.session_affinity"),
+    ):
+        mock_settings.mcpgateway_affinity_session_lock_timeout = 0.1
+        await affinity._dispatch_forwarded(_RedisSink(), "http_forward", {"mcp_session_id": "sess-stuck"}, "resp-x", lock)  # pylint: disable=protected-access
+
+    lock.release()
+    assert ran == ["sess-stuck"]
+    assert any("executing without per-session ordering" in rec.getMessage() for rec in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_session_locks_garbage_collected_when_unreferenced():
+    """WeakValueDictionary evicts a session lock once no dispatch task references it."""
+    # Standard
+    import gc
+
+    # First-Party
+    from mcpgateway.services.session_affinity import SessionAffinity
+
+    affinity = SessionAffinity()
+    lock = affinity._claim_session_lock("sess-gc")  # pylint: disable=protected-access
+    assert "sess-gc" in affinity._session_locks  # pylint: disable=protected-access
+    del lock
+    gc.collect()
+    assert "sess-gc" not in affinity._session_locks  # pylint: disable=protected-access
 
 
 # ---------------------------------------------------------------------------
@@ -2467,9 +2649,7 @@ async def test_execute_forwarded_http_request_preserves_authorization_for_csrf_b
 
     with (
         patch("mcpgateway.services.session_affinity.settings") as mock_settings,
-        patch("mcpgateway.services.session_affinity.httpx.AsyncClient", return_value=client),
-        patch("mcpgateway.services.session_affinity.internal_loopback_base_url", return_value="http://localhost:4444"),
-        patch("mcpgateway.auth_context._expected_internal_mcp_runtime_auth_header", return_value="HMAC"),
+        patch("mcpgateway.services.session_affinity.post_rpc_in_process", new=client.as_post_rpc),
     ):
         mock_settings.mcpgateway_pool_rpc_forward_timeout = 5.0
         await affinity._execute_forwarded_http_request(request, fake)  # pylint: disable=protected-access
@@ -2514,9 +2694,7 @@ async def test_execute_forwarded_http_request_rejects_unsigned_context():
 
     with (
         patch("mcpgateway.services.session_affinity.settings") as mock_settings,
-        patch("mcpgateway.services.session_affinity.httpx.AsyncClient", return_value=client),
-        patch("mcpgateway.services.session_affinity.internal_loopback_base_url", return_value="http://localhost:4444"),
-        patch("mcpgateway.auth_context._expected_internal_mcp_runtime_auth_header", return_value="HMAC-SHA256"),
+        patch("mcpgateway.services.session_affinity.post_rpc_in_process", new=client.as_post_rpc),
     ):
         mock_settings.mcpgateway_pool_rpc_forward_timeout = 5.0
         await affinity._execute_forwarded_http_request(request, fake)  # pylint: disable=protected-access
@@ -2564,9 +2742,7 @@ async def test_execute_forwarded_http_request_rejects_forged_signature():
 
     with (
         patch("mcpgateway.services.session_affinity.settings") as mock_settings,
-        patch("mcpgateway.services.session_affinity.httpx.AsyncClient", return_value=client),
-        patch("mcpgateway.services.session_affinity.internal_loopback_base_url", return_value="http://localhost:4444"),
-        patch("mcpgateway.auth_context._expected_internal_mcp_runtime_auth_header", return_value="HMAC"),
+        patch("mcpgateway.services.session_affinity.post_rpc_in_process", new=client.as_post_rpc),
     ):
         mock_settings.mcpgateway_pool_rpc_forward_timeout = 5.0
         await affinity._execute_forwarded_http_request(request, fake)  # pylint: disable=protected-access
@@ -2611,9 +2787,7 @@ async def test_execute_forwarded_http_request_rejects_signature_bound_to_other_s
 
     with (
         patch("mcpgateway.services.session_affinity.settings") as mock_settings,
-        patch("mcpgateway.services.session_affinity.httpx.AsyncClient", return_value=client),
-        patch("mcpgateway.services.session_affinity.internal_loopback_base_url", return_value="http://localhost:4444"),
-        patch("mcpgateway.auth_context._expected_internal_mcp_runtime_auth_header", return_value="HMAC"),
+        patch("mcpgateway.services.session_affinity.post_rpc_in_process", new=client.as_post_rpc),
     ):
         mock_settings.mcpgateway_pool_rpc_forward_timeout = 5.0
         await affinity._execute_forwarded_http_request(request, fake)  # pylint: disable=protected-access
@@ -2657,9 +2831,7 @@ async def test_execute_forwarded_http_request_preserves_custom_auth_header():
 
     with (
         patch("mcpgateway.services.session_affinity.settings") as mock_settings,
-        patch("mcpgateway.services.session_affinity.httpx.AsyncClient", return_value=client),
-        patch("mcpgateway.services.session_affinity.internal_loopback_base_url", return_value="http://localhost:4444"),
-        patch("mcpgateway.auth_context._expected_internal_mcp_runtime_auth_header", return_value="HMAC"),
+        patch("mcpgateway.services.session_affinity.post_rpc_in_process", new=client.as_post_rpc),
     ):
         mock_settings.mcpgateway_pool_rpc_forward_timeout = 5.0
         mock_settings.auth_header_name = "X-MCP-Gateway-Auth"
@@ -2697,8 +2869,7 @@ async def test_execute_forwarded_http_request_acks_non_post_lifecycle_requests()
 
     with (
         patch("mcpgateway.services.session_affinity.settings") as mock_settings,
-        patch("mcpgateway.services.session_affinity.httpx.AsyncClient", return_value=client),
-        patch("mcpgateway.services.session_affinity.internal_loopback_base_url", return_value="http://localhost:4444"),
+        patch("mcpgateway.services.session_affinity.post_rpc_in_process", new=client.as_post_rpc),
     ):
         mock_settings.mcpgateway_pool_rpc_forward_timeout = 5.0
         await affinity._execute_forwarded_http_request(request, fake)  # pylint: disable=protected-access
@@ -2738,8 +2909,7 @@ async def test_execute_forwarded_http_request_acks_notification_method_without_d
 
     with (
         patch("mcpgateway.services.session_affinity.settings") as mock_settings,
-        patch("mcpgateway.services.session_affinity.httpx.AsyncClient", return_value=client),
-        patch("mcpgateway.services.session_affinity.internal_loopback_base_url", return_value="http://localhost:4444"),
+        patch("mcpgateway.services.session_affinity.post_rpc_in_process", new=client.as_post_rpc),
     ):
         mock_settings.mcpgateway_pool_rpc_forward_timeout = 5.0
         await affinity._execute_forwarded_http_request(request, fake)  # pylint: disable=protected-access
@@ -2789,9 +2959,7 @@ async def test_execute_forwarded_http_request_initialises_params_when_missing_fo
 
     with (
         patch("mcpgateway.services.session_affinity.settings") as mock_settings,
-        patch("mcpgateway.services.session_affinity.httpx.AsyncClient", return_value=client),
-        patch("mcpgateway.services.session_affinity.internal_loopback_base_url", return_value="http://localhost:4444"),
-        patch("mcpgateway.auth_context._expected_internal_mcp_runtime_auth_header", return_value="HMAC"),
+        patch("mcpgateway.services.session_affinity.post_rpc_in_process", new=client.as_post_rpc),
     ):
         mock_settings.mcpgateway_pool_rpc_forward_timeout = 5.0
         await affinity._execute_forwarded_http_request(request, fake)  # pylint: disable=protected-access
@@ -2804,18 +2972,19 @@ async def test_execute_forwarded_http_request_initialises_params_when_missing_fo
 
 @pytest.mark.asyncio
 async def test_execute_forwarded_http_request_dispatches_in_process_via_asgi_transport():
-    """The forward is dispatched IN-PROCESS via ``httpx.ASGITransport(app=app)``, not over the loopback socket.
+    """The forward is dispatched IN-PROCESS via ``post_rpc_in_process``, not over the loopback socket.
+
 
     This is the load-bearing change behind the #4557 fix. A real
     ``httpx.AsyncClient`` to ``http://127.0.0.1:4444/_internal/mcp/rpc`` would
     hit the shared gunicorn socket and let the kernel route it to an arbitrary
-    worker that didn't hold the upstream session. Dispatching in-process via
-    ASGITransport keeps the re-entered ``/_internal/mcp/rpc`` handler in *this*
-    worker, so the bound ``UpstreamSessionRegistry`` entry actually serves the
-    request.
+    worker that didn't hold the upstream session. The shared helper dispatches
+    in-process via ``httpx.ASGITransport`` (asserted directly in
+    ``tests/unit/mcpgateway/utils/test_internal_http.py``), keeping the
+    re-entered ``/_internal/mcp/rpc`` handler in *this* worker, so the bound
+    ``UpstreamSessionRegistry`` entry actually serves the request.
     """
     # Third-Party
-    import httpx
     import orjson
 
     # First-Party
@@ -2823,11 +2992,7 @@ async def test_execute_forwarded_http_request_dispatches_in_process_via_asgi_tra
 
     affinity = SessionAffinity()
     fake = _FakeRedis()
-    captured_transport: list[Any] = []
-
-    def _capture_async_client(*args: Any, **kwargs: Any) -> _FakeHttpxClient:
-        captured_transport.append(kwargs.get("transport"))
-        return _FakeHttpxClient(response=_FakeHttpResponse(200, text_body="ok"))
+    client = _FakeHttpxClient(response=_FakeHttpResponse(200, text_body="ok"))
 
     jsonrpc_body = orjson.dumps({"jsonrpc": "2.0", "method": "tools/list", "params": {}, "id": 1})
     request = {
@@ -2844,18 +3009,15 @@ async def test_execute_forwarded_http_request_dispatches_in_process_via_asgi_tra
 
     with (
         patch("mcpgateway.services.session_affinity.settings") as mock_settings,
-        patch("mcpgateway.services.session_affinity.httpx.AsyncClient", side_effect=_capture_async_client),
-        patch("mcpgateway.services.session_affinity.internal_loopback_base_url", return_value="http://localhost:4444"),
-        patch("mcpgateway.auth_context._expected_internal_mcp_runtime_auth_header", return_value="HMAC"),
+        patch("mcpgateway.services.session_affinity.post_rpc_in_process", new=client.as_post_rpc),
     ):
         mock_settings.mcpgateway_pool_rpc_forward_timeout = 5.0
         await affinity._execute_forwarded_http_request(request, fake)  # pylint: disable=protected-access
 
-    # AsyncClient was constructed with an ASGITransport — the in-process dispatch path.
-    assert captured_transport, "httpx.AsyncClient was never called"
-    assert isinstance(captured_transport[0], httpx.ASGITransport), (
-        f"expected ASGITransport for in-process dispatch, got {type(captured_transport[0]).__name__}"
-    )
+    # The in-process helper was invoked with the edge auth context (its ASGI
+    # transport usage is asserted in test_internal_http.py).
+    assert client.last_post_kwargs is not None, "post_rpc_in_process was never called"
+    assert client.last_post_kwargs["auth_context"] == "ctx-asgi"
 
 
 @pytest.mark.asyncio

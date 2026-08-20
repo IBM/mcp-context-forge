@@ -558,7 +558,7 @@ services:
       # ═══════════════════════════════════════════════════════════════════════════
       # Gunicorn Configuration
       # ═══════════════════════════════════════════════════════════════════════════
-      - GUNICORN_WORKERS=${GUNICORN_WORKERS:-24}                    # Worker processes (match CPU cores)
+      - GUNICORN_WORKERS=${GUNICORN_WORKERS:-17}                    # Worker processes (match CPU cores)
       - GUNICORN_TIMEOUT=${GUNICORN_TIMEOUT:-120}                   # Worker timeout in seconds
       - GUNICORN_GRACEFUL_TIMEOUT=${GUNICORN_GRACEFUL_TIMEOUT:-60}           # Grace period for worker shutdown
       - GUNICORN_KEEP_ALIVE=${GUNICORN_KEEP_ALIVE:-30}                 # Keep-alive timeout (matches SSE keepalive)
@@ -689,6 +689,12 @@ services:
       - OTEL_EXPORTER_OTLP_PROTOCOL=${OTEL_EXPORTER_OTLP_PROTOCOL:-grpc}
       - OTEL_SERVICE_NAME=${OTEL_SERVICE_NAME:-mcp-gateway}
       - OTEL_RESOURCE_ATTRIBUTES=${OTEL_RESOURCE_ATTRIBUTES:-deployment.environment=docker,service.namespace=mcp}
+      # Auto-instrumentation: outbound httpx client spans (incl. internal affinity hop)
+      - OTEL_HTTPX_INSTRUMENTATION_ENABLED=${OTEL_HTTPX_INSTRUMENTATION_ENABLED:-true}
+      # SQL query spans (high volume under load; enabled here for the observability stack)
+      - OTEL_SQLALCHEMY_INSTRUMENTATION_ENABLED=${OTEL_SQLALCHEMY_INSTRUMENTATION_ENABLED:-true}
+      # Redis command spans (owner lookups, envelope publishes; pub/sub listeners not instrumented)
+      - OTEL_REDIS_INSTRUMENTATION_ENABLED=${OTEL_REDIS_INSTRUMENTATION_ENABLED:-true}
 
     # TCP kernel tuning for high-concurrency MCP tool invocations
     # Each tool call creates a new connection → many TIME_WAIT sockets
