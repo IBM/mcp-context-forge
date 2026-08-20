@@ -1351,3 +1351,169 @@ class TestRateLimitMiddlewareTiers:
 
         assert result is False
         assert hasattr(middleware, "_violation_expiry")
+
+
+class TestRateLimitMiddlewareASGICall:
+    """Pure-ASGI ``__call__`` entry point coverage (passthrough, block, and header injection)."""
+
+    @pytest.fixture
+    def asgi_middleware(self):
+        """Create middleware instance wrapping a real async ASGI app callable."""
+        with patch("mcpgateway.middleware.rate_limit_middleware.settings") as mock_settings:
+            mock_settings.rate_limiting_enabled = True
+            mock_settings.rate_limiting_redis_enabled = False
+            mock_settings.trust_proxy_auth = True
+            mock_settings.rate_limit_critical_rpm = 10
+            mock_settings.rate_limit_critical_burst = 0
+            mock_settings.rate_limit_high_rpm = 30
+            mock_settings.rate_limit_high_burst = 0
+            mock_settings.rate_limit_medium_rpm = 100
+            mock_settings.rate_limit_medium_burst = 20
+            mock_settings.rate_limit_low_rpm = 500
+            mock_settings.rate_limit_low_burst = 100
+            mock_settings.rate_limit_lockout_enabled = True
+            mock_settings.rate_limit_lockout_threshold = 5
+            mock_settings.rate_limit_lockout_duration_minutes = 15
+
+            from mcpgateway.middleware.rate_limit_middleware import RateLimitMiddleware
+
+            async def app(scope, receive, send):
+                await send({"type": "http.response.start", "status": 200, "headers": []})
+                await send({"type": "http.response.body", "body": b"ok"})
+
+            yield RateLimitMiddleware(app)
+
+    @pytest.mark.asyncio
+    async def test_call_ignores_non_http_scope(self, asgi_middleware):
+        """Lifespan/websocket scopes pass straight through untouched."""
+        called = []
+
+        async def app(scope, receive, send):
+            called.append(scope["type"])
+
+        asgi_middleware.app = app
+
+        async def noop(*_args):
+            return None
+
+        await asgi_middleware({"type": "lifespan"}, noop, noop)
+        assert called == ["lifespan"]
+
+    @pytest.mark.asyncio
+    async def test_call_passes_through_when_disabled(self, asgi_middleware):
+        """enabled=False: downstream app runs untouched."""
+        asgi_middleware.enabled = False
+        scope = {"type": "http", "method": "GET", "path": "/health", "headers": [], "state": {}}
+
+        async def receive():
+            return {"type": "http.request", "body": b""}
+
+        sent = []
+
+        async def send(message):
+            sent.append(message)
+
+        await asgi_middleware(scope, receive, send)
+
+        assert sent[0]["status"] == 200
+
+    @pytest.mark.asyncio
+    async def test_call_passes_through_for_trusted_internal_request(self, asgi_middleware):
+        """A trusted-internal hop is not rate-limited; the edge request already was."""
+        from mcpgateway.auth_context import _expected_internal_mcp_runtime_auth_header
+
+        asgi_middleware.get_endpoint_tier = MagicMock(side_effect=AssertionError("trusted internal must not be rate-limited"))
+
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/_internal/mcp/rpc",
+            "raw_path": b"/_internal/mcp/rpc",
+            "query_string": b"",
+            "headers": [
+                (b"x-contextforge-mcp-runtime", b"rust"),
+                (b"x-contextforge-mcp-runtime-auth", _expected_internal_mcp_runtime_auth_header().encode()),
+                (b"x-contextforge-auth-context", b"ctx"),
+            ],
+            "client": ("127.0.0.1", 12345),
+            "state": {},
+        }
+
+        async def receive():
+            return {"type": "http.request", "body": b""}
+
+        sent = []
+
+        async def send(message):
+            sent.append(message)
+
+        await asgi_middleware(scope, receive, send)
+
+        assert sent[0]["status"] == 200
+
+    @pytest.mark.asyncio
+    async def test_call_sends_429_directly_when_blocked(self, asgi_middleware):
+        """When over limit, the 429 response is sent directly and downstream never runs."""
+        downstream_called = False
+
+        async def app(scope, receive, send):
+            nonlocal downstream_called
+            downstream_called = True
+
+        asgi_middleware.app = app
+
+        now = time.time()
+        key = "ratelimit:ip:192.168.1.100:LOW"
+        asgi_middleware._memory_store[key] = [now - i * 0.1 for i in range(550)]
+
+        scope = {
+            "type": "http",
+            "method": "GET",
+            "path": "/health",
+            "headers": [],
+            "client": ("192.168.1.100", 12345),
+            "state": {},
+        }
+
+        async def receive():
+            return {"type": "http.request", "body": b""}
+
+        sent = []
+
+        async def send(message):
+            sent.append(message)
+
+        await asgi_middleware(scope, receive, send)
+
+        assert downstream_called is False
+        assert sent[0]["status"] == 429
+        headers = {k.lower(): v for k, v in sent[0]["headers"]}
+        assert headers[b"x-ratelimit-limit"] == b"500"
+        assert headers[b"x-ratelimit-remaining"] == b"0"
+
+    @pytest.mark.asyncio
+    async def test_call_attaches_rate_limit_headers_on_success(self, asgi_middleware):
+        """Under the limit: downstream app runs and X-RateLimit-* headers are injected."""
+        scope = {
+            "type": "http",
+            "method": "GET",
+            "path": "/health",
+            "headers": [],
+            "client": ("192.168.1.200", 12345),
+            "state": {},
+        }
+
+        async def receive():
+            return {"type": "http.request", "body": b""}
+
+        sent = []
+
+        async def send(message):
+            sent.append(message)
+
+        await asgi_middleware(scope, receive, send)
+
+        assert sent[0]["status"] == 200
+        headers = {k.lower(): v for k, v in sent[0]["headers"]}
+        assert b"x-ratelimit-limit" in headers
+        assert b"x-ratelimit-remaining" in headers

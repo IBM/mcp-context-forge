@@ -289,6 +289,21 @@ def test_main_registers_otel_request_middleware_when_tracing_is_enabled():
         importlib.reload(reloaded)
 
 
+def test_main_skips_request_logging_middleware_when_log_boundary_disabled():
+    """Import-time app setup should not register RequestLoggingMiddleware when LOG_BOUNDARY_ENABLED=false."""
+    # First-Party
+    import mcpgateway.main as main_module
+
+    with patch.object(main_module.settings, "log_boundary_enabled", False):
+        reloaded = importlib.reload(main_module)
+
+    try:
+        middleware_classes = [middleware.cls for middleware in reloaded.app.user_middleware]
+        assert reloaded.RequestLoggingMiddleware not in middleware_classes
+    finally:
+        importlib.reload(reloaded)
+
+
 def test_get_csp_nonce_from_request_with_none():
     """Test get_csp_nonce_from_request returns empty string when request is None."""
     # First-Party

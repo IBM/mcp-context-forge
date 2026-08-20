@@ -330,3 +330,24 @@ async def test_root_path_is_stripped_from_path_for_csp_skip_check():
         assert response.status_code == 200
     finally:
         mock.stop()
+
+
+class TestPrepareMalformedHeaders:
+    """Direct unit coverage for the malformed-header defensive branch in _prepare."""
+
+    def test_skips_malformed_header_tuples(self):
+        """A header entry that isn't a valid (bytes, bytes) 2-tuple is skipped, not raised."""
+        middleware = SecurityHeadersMiddleware(app=None)
+        scope = {
+            "type": "http",
+            "path": "/",
+            "scheme": "https",
+            "headers": [
+                ("only-one-elem",),  # malformed: not a 2-tuple
+                (b"x-custom", b"value"),
+            ],
+        }
+
+        ctx = middleware._prepare(scope)
+
+        assert ctx["headers"] == {"x-custom": "value"}

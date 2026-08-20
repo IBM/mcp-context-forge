@@ -1194,3 +1194,22 @@ class TestPluginsCanOverrideAuthHeaders:
         # The endpoint should see the PLUGIN's Authorization header value
         assert data["scheme"] == "Bearer"
         assert data["credentials"] == "plugin-injected-token"
+
+
+class TestScopeHeadersToDict:
+    """Direct unit coverage for the malformed-header defensive branch."""
+
+    def test_skips_malformed_header_tuples(self):
+        """A header entry that isn't a valid (bytes, bytes) 2-tuple is skipped, not raised."""
+        from mcpgateway.middleware.http_auth_middleware import _scope_headers_to_dict
+
+        scope = {
+            "headers": [
+                ("only-one-elem",),  # malformed: not a 2-tuple
+                (b"x-custom", b"value"),
+            ]
+        }
+
+        result = _scope_headers_to_dict(scope)
+
+        assert result == {"x-custom": "value"}
