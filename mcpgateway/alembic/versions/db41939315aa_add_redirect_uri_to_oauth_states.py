@@ -6,7 +6,7 @@ SPDX-License-Identifier: Apache-2.0
 Add redirect_uri column to oauth_states.
 
 Revision ID: db41939315aa
-Revises: e4f5a6b7c8d9
+Revises: 9935d863930b
 Create Date: 2026-08-14 12:47:18.662212
 """
 
@@ -19,7 +19,7 @@ import sqlalchemy as sa
 
 # revision identifiers, used by Alembic.
 revision: str = "db41939315aa"  # pragma: allowlist secret
-down_revision: Union[str, Sequence[str], None] = "e4f5a6b7c8d9"  # pragma: allowlist secret
+down_revision: Union[str, Sequence[str], None] = "9935d863930b"  # pragma: allowlist secret
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
