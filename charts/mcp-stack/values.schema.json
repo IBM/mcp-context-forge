@@ -1576,6 +1576,20 @@
           },
           "description": "Ingress configuration"
         },
+        "tls": {
+          "type": "object",
+          "description": "Direct TLS configuration for the gateway pod (end-to-end HTTPS)",
+          "properties": {
+            "enabled":         { "type": "boolean", "default": false },
+            "secretName":      { "type": "string",  "default": "" },
+            "mountPath":       { "type": "string",  "default": "/app/certs/tls" },
+            "certFile":        { "type": "string",  "default": "/app/certs/tls/tls.crt" },
+            "keyFile":         { "type": "string",  "default": "/app/certs/tls/tls.key" },
+            "keyFilePassword": { "type": "string",  "default": "" },
+            "caCerts":         { "type": "string",  "default": "" },
+            "certReqs":        { "type": "integer", "default": 0, "enum": [0, 1, 2] }
+          }
+        },
         "metrics": {
           "type": "object",
           "properties": {
