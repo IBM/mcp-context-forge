@@ -1181,10 +1181,10 @@ services:
     image: ${WEB_UI_IMAGE:-ghcr.io/contextforge-org/contextforge-web-ui:latest}
     restart: unless-stopped
     ports:
-      - "${WEB_UI_PORT:-3000}:3000"
+      - "${WEB_UI_PORT:-3001}:${WEB_UI_PORT:-3001}"
     networks: [mcpnet]
     environment:
-      - PORT=${WEB_UI_PORT:-3000}
+      - PORT=${WEB_UI_PORT:-3001}
       - HOST=${WEB_UI_HOST:-0.0.0.0}
       # Gateway API base URL - points at this compose's gateway service (internal network address:port)
       - CONTEXTFORGE_URL=${WEB_UI_CONTEXTFORGE_URL:-http://gateway:4444}
