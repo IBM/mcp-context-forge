@@ -1152,7 +1152,7 @@ services:
 ###############################################################################
 #  CONTEXTFORGE WEB UI (enabled with --profile testing or --profile experimental)
 #  Usage: docker compose --profile experimental up -d
-#  Access: http://localhost:${WEB_UI_PORT:-3000}
+#  Access: http://localhost:${WEB_UI_PORT:-3001}
 ###############################################################################
 
   # ──────────────────────────────────────────────────────────────────────
