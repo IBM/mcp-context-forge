@@ -1329,6 +1329,7 @@ class Permissions:
     TOOLS_UPDATE = "tools.update"
     TOOLS_DELETE = "tools.delete"
     TOOLS_EXECUTE = "tools.execute"
+    TOOLS_PREVIEW = "tools.preview"
     TOOLS_MANAGE_PLUGINS = "tools.manage_plugins"
 
     # Plugin permissions
