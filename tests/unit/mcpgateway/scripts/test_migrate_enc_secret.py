@@ -194,8 +194,28 @@ def _make_sa_db(db_path: str | None = None):
                 CREATE TABLE IF NOT EXISTS gateways (
                     id TEXT PRIMARY KEY,
                     oauth_config TEXT,
-                    auth_value TEXT,
+                    auth_value JSON,
                     auth_query_params TEXT
+                )
+                """
+            )
+        )
+        conn.execute(
+            __import__("sqlalchemy").text(
+                """
+                CREATE TABLE IF NOT EXISTS servers (
+                    id TEXT PRIMARY KEY,
+                    oauth_config TEXT
+                )
+                """
+            )
+        )
+        conn.execute(
+            __import__("sqlalchemy").text(
+                """
+                CREATE TABLE IF NOT EXISTS a2a_push_notification_configs (
+                    id TEXT PRIMARY KEY,
+                    auth_token TEXT
                 )
                 """
             )
@@ -745,17 +765,24 @@ class TestRunMigrationServicesAuth:
             assert decode_auth(row[0], secret=NEW_KEY) == payload
 
     def test_migrates_gateways_auth_value(self, tmp_path):
-        """gateways.auth_value blob (bearer token) is re-encrypted."""
+        """gateways.auth_value blob (bearer token, JSON column) is re-encrypted.
+
+        The fixture uses a real JSON column type so SQLite stores the blob
+        JSON-quoted on disk ('"<blob>"') — the shape production always produces.
+        The test asserts both that the new key decrypts correctly AND that the
+        old key no longer works, confirming re-encryption actually occurred.
+        """
         _, SessionLocal, db_url = _make_sa_db(str(tmp_path / "sa.db"))
         payload = {"Authorization": "Bearer gateway-bearer-tok"}
         old_blob = encode_auth(payload, secret=OLD_KEY)
 
+        # Insert via json.dumps() to match what SQLAlchemy's JSON column does on write.
         with SessionLocal() as session:
             from sqlalchemy import text  # pylint: disable=import-outside-toplevel
 
             session.execute(
                 text("INSERT INTO gateways (id, auth_value) VALUES ('gw-bearer', :v)"),
-                {"v": old_blob},
+                {"v": json.dumps(old_blob)},
             )
             session.commit()
 
@@ -766,7 +793,93 @@ class TestRunMigrationServicesAuth:
             from sqlalchemy import text  # pylint: disable=import-outside-toplevel
 
             row = session.execute(text("SELECT auth_value FROM gateways WHERE id = 'gw-bearer'")).fetchone()
+            # raw_val is JSON-quoted; unwrap before decoding
+            raw = row[0]
+            inner = json.loads(raw) if isinstance(raw, str) and raw.startswith('"') else raw
+            assert decode_auth(inner, secret=NEW_KEY) == payload
+            # Old key must no longer work — confirms actual re-encryption
+            with pytest.raises(Exception):
+                decode_auth(inner, secret=OLD_KEY)
+
+    def test_migrates_gateways_auth_value_idempotent(self, tmp_path):
+        """Running migration twice on gateways.auth_value produces no errors."""
+        _, SessionLocal, db_url = _make_sa_db(str(tmp_path / "sa.db"))
+        payload = {"Authorization": "Bearer gateway-idem-tok"}
+        old_blob = encode_auth(payload, secret=OLD_KEY)
+
+        with SessionLocal() as session:
+            from sqlalchemy import text  # pylint: disable=import-outside-toplevel
+
+            session.execute(
+                text("INSERT INTO gateways (id, auth_value) VALUES ('gw-idem', :v)"),
+                {"v": json.dumps(old_blob)},
+            )
+            session.commit()
+
+        assert run_migration(db_url, OLD_KEY, NEW_KEY) == 0
+        assert run_migration(db_url, OLD_KEY, NEW_KEY) == 0
+
+        with SessionLocal() as session:
+            from sqlalchemy import text  # pylint: disable=import-outside-toplevel
+
+            row = session.execute(text("SELECT auth_value FROM gateways WHERE id = 'gw-idem'")).fetchone()
+            raw = row[0]
+            inner = json.loads(raw) if isinstance(raw, str) and raw.startswith('"') else raw
+            assert decode_auth(inner, secret=NEW_KEY) == payload
+
+    def test_migrates_servers_oauth_config(self, tmp_path):
+        """servers.oauth_config sensitive keys are re-encrypted (EncryptionService path)."""
+        _, SessionLocal, db_url = _make_sa_db(str(tmp_path / "sa.db"))
+        new_svc = get_encryption_service(NEW_KEY)
+        old_svc_local = get_encryption_service(OLD_KEY)
+        secret = "srv-oauth-client-secret"  # nosec B105  # pragma: allowlist secret
+        config = json.dumps({"client_id": "cid", "client_secret": old_svc_local.encrypt_secret(secret)})
+
+        with SessionLocal() as session:
+            from sqlalchemy import text  # pylint: disable=import-outside-toplevel
+
+            session.execute(text("INSERT INTO servers (id, oauth_config) VALUES ('srv1', :cfg)"), {"cfg": config})
+            session.commit()
+
+        rc = run_migration(db_url, OLD_KEY, NEW_KEY)
+        assert rc == 0
+
+        with SessionLocal() as session:
+            from sqlalchemy import text  # pylint: disable=import-outside-toplevel
+
+            row = session.execute(text("SELECT oauth_config FROM servers WHERE id = 'srv1'")).fetchone()
+            stored = json.loads(row[0])
+            assert new_svc.decrypt_secret(stored["client_secret"]) == secret
+            # Old key must no longer work
+            with pytest.raises(Exception):
+                old_svc_local.decrypt_secret(stored["client_secret"])
+
+    def test_migrates_a2a_push_notification_configs_auth_token(self, tmp_path):
+        """a2a_push_notification_configs.auth_token blob is re-encrypted."""
+        _, SessionLocal, db_url = _make_sa_db(str(tmp_path / "sa.db"))
+        payload = {"token": "webhook-bearer-secret"}  # nosec B105  # pragma: allowlist secret
+        old_blob = encode_auth(payload, secret=OLD_KEY)
+
+        with SessionLocal() as session:
+            from sqlalchemy import text  # pylint: disable=import-outside-toplevel
+
+            session.execute(
+                text("INSERT INTO a2a_push_notification_configs (id, auth_token) VALUES ('pn1', :v)"),
+                {"v": old_blob},
+            )
+            session.commit()
+
+        rc = run_migration(db_url, OLD_KEY, NEW_KEY)
+        assert rc == 0
+
+        with SessionLocal() as session:
+            from sqlalchemy import text  # pylint: disable=import-outside-toplevel
+
+            row = session.execute(text("SELECT auth_token FROM a2a_push_notification_configs WHERE id = 'pn1'")).fetchone()
             assert decode_auth(row[0], secret=NEW_KEY) == payload
+            # Old key must no longer work
+            with pytest.raises(Exception):
+                decode_auth(row[0], secret=OLD_KEY)
 
     def test_migrates_gateways_auth_query_params(self, tmp_path):
         """gateways.auth_query_params JSON dict values are re-encrypted."""
