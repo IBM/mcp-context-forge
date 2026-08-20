@@ -40,36 +40,40 @@ Affected columns (all encrypted under ``AUTH_ENCRYPTION_SECRET``):
 
 EncryptionService path (``v2:{...}`` format):
 
-+----------------------------+-------------------------------------+
-| Table                      | Column(s)                           |
-+============================+=====================================+
-| oauth_tokens               | access_token, refresh_token         |
-+----------------------------+-------------------------------------+
-| registered_oauth_clients   | client_secret_encrypted,            |
-|                            | registration_access_token_encrypted |
-+----------------------------+-------------------------------------+
-| sso_providers              | client_secret_encrypted             |
-+----------------------------+-------------------------------------+
-| gateways / a2a_server_auth | oauth_config (JSON, recursive)      |
-+----------------------------+-------------------------------------+
-| a2a_agent_auth             | oauth_config (JSON, recursive)      |
-+----------------------------+-------------------------------------+
++---------------------------+-------------------------------------+
+| Table                     | Column(s)                           |
++===========================+=====================================+
+| oauth_tokens              | access_token, refresh_token         |
++---------------------------+-------------------------------------+
+| registered_oauth_clients  | client_secret_encrypted,            |
+|                           | registration_access_token_encrypted |
++---------------------------+-------------------------------------+
+| sso_providers             | client_secret_encrypted             |
++---------------------------+-------------------------------------+
+| gateways                  | oauth_config (JSON, recursive)      |
++---------------------------+-------------------------------------+
+| servers                   | oauth_config (JSON, recursive)      |
++---------------------------+-------------------------------------+
+| a2a_agent_auth            | oauth_config (JSON, recursive)      |
++---------------------------+-------------------------------------+
 
 services_auth path (``base64url(nonce+ciphertext)`` format — AES-GCM):
 
-+----------------------------+-------------------------------------+
-| Table                      | Column(s)                           |
-+============================+=====================================+
-| gateways                   | auth_value, auth_query_params (JSON)|
-+----------------------------+-------------------------------------+
-| tools                      | auth_value                          |
-+----------------------------+-------------------------------------+
-| a2a_agents                 | auth_value, auth_query_params (JSON)|
-+----------------------------+-------------------------------------+
-| a2a_agent_auth             | auth_value, auth_query_params (JSON)|
-+----------------------------+-------------------------------------+
-| llm_providers              | api_key                             |
-+----------------------------+-------------------------------------+
++------------------------------+-------------------------------------+
+| Table                        | Column(s)                           |
++==============================+=====================================+
+| gateways                     | auth_value, auth_query_params (JSON)|
++------------------------------+-------------------------------------+
+| tools                        | auth_value                          |
++------------------------------+-------------------------------------+
+| a2a_agents                   | auth_value, auth_query_params (JSON)|
++------------------------------+-------------------------------------+
+| a2a_agent_auth               | auth_value, auth_query_params (JSON)|
++------------------------------+-------------------------------------+
+| a2a_push_notification_configs| auth_token                          |
++------------------------------+-------------------------------------+
+| llm_providers                | api_key                             |
++------------------------------+-------------------------------------+
 
 The script is **idempotent**: if a value is already encrypted under the new key
 (or is plaintext / NULL) it is skipped.  Running it twice is safe.
@@ -744,7 +748,7 @@ def run_migration(
     json_targets = [
         # (table, id_col, [json_columns])
         ("gateways", "id", ["oauth_config"]),
-        ("a2a_server_auth", "id", ["oauth_config"]),
+        ("servers", "id", ["oauth_config"]),
         ("a2a_agent_auth", "id", ["oauth_config"]),
     ]
 
@@ -755,6 +759,7 @@ def run_migration(
         ("tools", "id", ["auth_value"]),
         ("a2a_agents", "id", ["auth_value"]),
         ("a2a_agent_auth", "id", ["auth_value"]),
+        ("a2a_push_notification_configs", "id", ["auth_token"]),
         ("llm_providers", "id", ["api_key"]),
     ]
 
