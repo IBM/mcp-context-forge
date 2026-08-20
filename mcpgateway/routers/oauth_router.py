@@ -106,6 +106,31 @@ async def enforce_fetch_tools_csrf(request: Request) -> None:
         raise HTTPException(status_code=403, detail="CSRF validation failed")
 
 
+def _default_redirect_uri(request: Optional[Request] = None) -> str:
+    """Build the gateway's own global OAuth callback URL from the configured app domain.
+
+    Pure computation with no side effects, so it is cheap to call unconditionally. Used when
+    a gateway's stored ``oauth_config`` carries no ``redirect_uri`` (API-created or legacy
+    rows), so the authorization-code paths never hand an incomplete credentials dict to
+    :class:`~mcpgateway.services.oauth_manager.OAuthManager`. Callers that substitute this
+    value into OAuth credentials are responsible for logging that substitution -- the
+    authorize path logs at its call site (it must resolve the default before DCR registration
+    runs); the callback path instead passes this as ``default_redirect_uri`` into
+    ``OAuthManager.complete_authorization_code_flow``, whose single centralized guard
+    (``_apply_default_redirect_uri``) logs only when it actually applies it.
+
+    Args:
+        request: The current request, used to resolve a reverse-proxy ``root_path`` (falls
+            back to ``settings.app_root_path`` when omitted or when the scope carries none).
+
+    Returns:
+        Absolute callback URL, e.g. ``https://gateway.example.com/oauth/callback``.
+    """
+    root_path = resolve_root_path(request) if request is not None else str(settings.app_root_path).rstrip("/")
+    # str() of a pydantic HttpUrl appends a trailing slash; rstrip keeps the path single-slashed.
+    return f"{str(settings.app_domain).rstrip('/')}{root_path}/oauth/callback"
+
+
 def _is_well_formed_audience(value: Any) -> bool:
     """Return True if *value* is a usable audience claim shape.
 
@@ -521,6 +546,15 @@ async def initiate_oauth_flow(
             if origin:
                 oauth_config["resource"] = origin
 
+        # API-created and legacy configs may carry no redirect_uri; OAuthManager's PKCE
+        # paths index it directly, so default it here (before DCR, so registration and
+        # the authorization request agree on the callback). Resolved eagerly here --
+        # rather than deferred to OAuthManager's centralized guard like the callback path
+        # below -- because DCR registration (a few lines down) needs the concrete value too.
+        if not oauth_config.get("redirect_uri"):
+            oauth_config["redirect_uri"] = _default_redirect_uri(request)
+            logger.info("No redirect_uri configured on gateway OAuth config; defaulting to derived callback %s", oauth_config["redirect_uri"])
+
         # Phase 1.4: Auto-trigger DCR if credentials are missing
         # Check if gateway has issuer but no client_id (DCR scenario)
         issuer = oauth_config.get("issuer")
@@ -794,8 +828,19 @@ async def oauth_callback(
             if origin:
                 oauth_config_with_resource["resource"] = origin
 
+        # No inline guard here: complete_authorization_code_flow reuses the redirect_uri
+        # pinned in server-side state at authorize time (RFC 6749 §4.1.3) in preference to
+        # this, and applies this default_redirect_uri itself (logging only if actually used)
+        # when that pinned value is unavailable -- e.g. a state stored before pinning existed.
         result = await oauth_manager.complete_authorization_code_flow(
-            gateway_id, code, state, oauth_config_with_resource, ca_certificate=gateway.ca_certificate, client_cert=gateway.client_cert, client_key=gateway.client_key
+            gateway_id,
+            code,
+            state,
+            oauth_config_with_resource,
+            ca_certificate=gateway.ca_certificate,
+            client_cert=gateway.client_cert,
+            client_key=gateway.client_key,
+            default_redirect_uri=_default_redirect_uri(request),
         )
 
         # Token's aud/iss claims (best-effort, unverified) are persisted per-user by

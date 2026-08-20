@@ -884,7 +884,36 @@ class OAuthManager:
 
         raise OAuthError("Token exchange failed after all retry attempts")
 
-    async def initiate_authorization_code_flow(self, gateway_id: str, credentials: Dict[str, Any], app_user_email: str = None, popup: bool = False) -> Dict[str, str]:
+    @staticmethod
+    def _apply_default_redirect_uri(credentials: Dict[str, Any], default_redirect_uri: Optional[str] = None) -> Dict[str, Any]:
+        """Fill in ``redirect_uri`` when *credentials* carries none.
+
+        Single point of application -- rather than each caller (currently the two /oauth
+        router endpoints) guarding inline -- so any future caller of the authorization-code
+        flow methods is protected too, since ``_create_authorization_url_with_pkce`` and
+        ``_exchange_code_for_tokens`` both index ``credentials["redirect_uri"]`` directly.
+
+        Args:
+            credentials: OAuth configuration for the flow.
+            default_redirect_uri: Caller-computed default (e.g. request-scoped, root-path-aware)
+                to prefer when present. Falls back to a settings-only default when omitted, so
+                this is still self-protecting even for a caller that supplies none.
+
+        Returns:
+            *credentials* unchanged if it already carries a ``redirect_uri``; otherwise a
+            shallow copy with one filled in.
+        """
+        if credentials.get("redirect_uri"):
+            return credentials
+        settings = get_settings()
+        root_path = str(getattr(settings, "app_root_path", "") or "").rstrip("/")
+        resolved = default_redirect_uri or f"{str(settings.app_domain).rstrip('/')}{root_path}/oauth/callback"
+        logger.info("OAuth credentials carried no redirect_uri; defaulting to %s", resolved)
+        return {**credentials, "redirect_uri": resolved}
+
+    async def initiate_authorization_code_flow(
+        self, gateway_id: str, credentials: Dict[str, Any], app_user_email: str = None, popup: bool = False, default_redirect_uri: Optional[str] = None
+    ) -> Dict[str, str]:
         """Initiate Authorization Code flow with PKCE and return authorization URL.
 
         Args:
@@ -893,10 +922,14 @@ class OAuthManager:
             app_user_email: ContextForge user email to associate with tokens
             popup: When True, the state token is prefixed with ``popup.`` so the
                 callback endpoint knows to respond with postMessage instead of HTML.
+            default_redirect_uri: Fallback used by :meth:`_apply_default_redirect_uri` when
+                *credentials* carries no ``redirect_uri`` (defence-in-depth; today's router
+                caller already resolves one before DCR runs, so this is normally a no-op).
 
         Returns:
             Dict containing authorization_url and state
         """
+        credentials = self._apply_default_redirect_uri(credentials, default_redirect_uri)
 
         # Generate PKCE parameters (RFC 7636)
         pkce_params = self._generate_pkce_params()
@@ -911,6 +944,7 @@ class OAuthManager:
                 state,
                 code_verifier=pkce_params["code_verifier"],
                 app_user_email=app_user_email,
+                redirect_uri=credentials.get("redirect_uri"),
             )
 
         # Generate authorization URL with PKCE
@@ -921,7 +955,15 @@ class OAuthManager:
         return {"authorization_url": auth_url, "state": state, "gateway_id": gateway_id}
 
     async def complete_authorization_code_flow(
-        self, gateway_id: str, code: str, state: str, credentials: Dict[str, Any], ca_certificate: Optional[str] = None, client_cert: Optional[str] = None, client_key: Optional[str] = None
+        self,
+        gateway_id: str,
+        code: str,
+        state: str,
+        credentials: Dict[str, Any],
+        ca_certificate: Optional[str] = None,
+        client_cert: Optional[str] = None,
+        client_key: Optional[str] = None,
+        default_redirect_uri: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Complete Authorization Code flow with PKCE and store tokens.
 
@@ -933,6 +975,9 @@ class OAuthManager:
             ca_certificate: Optional custom CA certificate for SSL verification (PEM format)
             client_cert: Optional client certificate for mTLS (PEM format or file path)
             client_key: Optional client private key for mTLS (PEM format or file path)
+            default_redirect_uri: Fallback used by :meth:`_apply_default_redirect_uri` when
+                neither the state pinned at authorize time nor *credentials* itself carries a
+                ``redirect_uri`` (e.g. a state stored before pinning existed).
 
         Returns:
             Dict containing success status, user_id, and expiration info
@@ -947,6 +992,18 @@ class OAuthManager:
 
         code_verifier = state_data.get("code_verifier")
         app_user_email = state_data.get("app_user_email")
+
+        # Reuse the exact redirect_uri pinned at authorize time (RFC 6749 §4.1.3 requires
+        # the token-exchange redirect_uri to match the one sent in the authorization
+        # request) in preference to the caller-supplied credentials/default, which could
+        # have drifted if the gateway's oauth_config or app_domain changed mid-flow.
+        pinned_redirect_uri = state_data.get("redirect_uri")
+        if pinned_redirect_uri:
+            credentials = {**credentials, "redirect_uri": pinned_redirect_uri}
+        else:
+            # No pinned value (state stored before pinning existed, or token_storage
+            # unavailable) -- fall back to the centralized default.
+            credentials = self._apply_default_redirect_uri(credentials, default_redirect_uri)
 
         # Defence-in-depth: if app_user_email is absent from server-side
         # state (e.g. state stored by an older code path), attempt a
@@ -1164,6 +1221,7 @@ class OAuthManager:
         state: str,
         code_verifier: str = None,
         app_user_email: str = None,
+        redirect_uri: str = None,
     ) -> None:
         """Store authorization state for validation with TTL.
 
@@ -1172,6 +1230,10 @@ class OAuthManager:
             state: State parameter to store
             code_verifier: Optional PKCE code verifier (RFC 7636)
             app_user_email: Requesting user email for token association
+            redirect_uri: The redirect_uri sent in the authorization request, pinned here so
+                ``complete_authorization_code_flow`` can reuse the exact same value at token
+                exchange time (RFC 6749 §4.1.3) instead of recomputing it from live gateway
+                state, which could have changed between authorize and callback.
         """
         expires_at = datetime.now(timezone.utc) + timedelta(seconds=STATE_TTL_SECONDS)
         settings = get_settings()
@@ -1188,6 +1250,7 @@ class OAuthManager:
                         "gateway_id": gateway_id,
                         "code_verifier": code_verifier,
                         "app_user_email": app_user_email,
+                        "redirect_uri": redirect_uri,
                         "expires_at": expires_at.isoformat(),
                         "used": False,
                     }
@@ -1221,6 +1284,8 @@ class OAuthManager:
                     }
                     if hasattr(OAuthState, "app_user_email"):
                         oauth_state_kwargs["app_user_email"] = app_user_email
+                    if hasattr(OAuthState, "redirect_uri"):
+                        oauth_state_kwargs["redirect_uri"] = redirect_uri
 
                     oauth_state = OAuthState(**oauth_state_kwargs)
                     db.add(oauth_state)
@@ -1242,6 +1307,7 @@ class OAuthManager:
                 "gateway_id": gateway_id,
                 "code_verifier": code_verifier,
                 "app_user_email": app_user_email,
+                "redirect_uri": redirect_uri,
                 "expires_at": expires_at.isoformat(),
                 "used": False,
             }
@@ -1467,6 +1533,8 @@ class OAuthManager:
                     }
                     if hasattr(oauth_state, "app_user_email"):
                         state_data["app_user_email"] = getattr(oauth_state, "app_user_email", None)
+                    if hasattr(oauth_state, "redirect_uri"):
+                        state_data["redirect_uri"] = getattr(oauth_state, "redirect_uri", None)
 
                     # Mark as used and delete
                     db.delete(oauth_state)

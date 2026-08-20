@@ -502,7 +502,7 @@ class TestOAuthManager:
             state_with_sig = state_bytes + signature
             state = base64.urlsafe_b64encode(state_with_sig).decode()
 
-            credentials = {"client_id": "test_client"}
+            credentials = {"client_id": "test_client", "redirect_uri": "https://gateway.example.com/oauth/callback"}
 
             token_response = {"access_token": "access123", "refresh_token": "refresh123", "expires_in": 3600}
 

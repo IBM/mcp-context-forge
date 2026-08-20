@@ -1461,6 +1461,133 @@ async def test_complete_authorization_code_flow_scope_mixed_types(oauth_manager)
     assert call_kwargs["scopes"] == ["read", "write"]
 
 
+class TestRedirectUriPinning:
+    """The redirect_uri sent to the IdP at authorize time must be the exact value used at
+    token exchange (RFC 6749 §4.1.3) -- so it is pinned into server-side state at authorize
+    time and reused at callback, instead of each side independently recomputing/reading it
+    from possibly-changed live state.
+    """
+
+    @pytest.mark.asyncio
+    async def test_complete_flow_uses_redirect_uri_pinned_at_authorize(self, oauth_manager):
+        """complete_authorization_code_flow must override the caller-supplied credentials'
+        redirect_uri with the value pinned in state at authorize time, when present."""
+        mock_token_response = {"access_token": "test-token", "scope": "read", "expires_in": 3600}
+
+        mock_token_storage = AsyncMock()
+        mock_token_record = MagicMock()
+        mock_token_record.expires_at = None
+        mock_token_storage.store_tokens.return_value = mock_token_record
+        oauth_manager.token_storage = mock_token_storage
+
+        exchange_mock = AsyncMock(return_value=mock_token_response)
+
+        with (
+            patch.object(
+                oauth_manager,
+                "_validate_and_retrieve_state",
+                return_value={"code_verifier": "verifier", "app_user_email": "user@example.com", "redirect_uri": "https://pinned.example.com/oauth/callback"},
+            ),
+            patch.object(oauth_manager, "_exchange_code_for_tokens", exchange_mock),
+            patch.object(oauth_manager, "_extract_user_id", return_value="user-1"),
+            patch.object(oauth_manager, "_extract_aud_and_iss", return_value=(None, None)),
+        ):
+            result = await oauth_manager.complete_authorization_code_flow(
+                gateway_id="gw-123",
+                code="auth-code",
+                state="test-state",
+                # Router-computed value; must be superseded by the pinned one below since
+                # e.g. app_domain or the gateway's oauth_config could have changed since authorize.
+                credentials={"client_id": "cid", "token_url": "https://auth.example.com/token", "redirect_uri": "https://recomputed.example.com/oauth/callback"},
+            )
+
+        assert result["success"] is True
+        exchange_mock.assert_called_once()
+        credentials_used = exchange_mock.call_args[0][0]
+        assert credentials_used["redirect_uri"] == "https://pinned.example.com/oauth/callback"
+
+    @pytest.mark.asyncio
+    async def test_complete_flow_falls_back_when_state_has_no_pinned_redirect_uri(self, oauth_manager):
+        """States stored before pinning existed (no redirect_uri key) fall back to whatever
+        redirect_uri the caller passed in credentials."""
+        mock_token_response = {"access_token": "test-token", "scope": "read", "expires_in": 3600}
+
+        mock_token_storage = AsyncMock()
+        mock_token_record = MagicMock()
+        mock_token_record.expires_at = None
+        mock_token_storage.store_tokens.return_value = mock_token_record
+        oauth_manager.token_storage = mock_token_storage
+
+        exchange_mock = AsyncMock(return_value=mock_token_response)
+
+        with (
+            patch.object(oauth_manager, "_validate_and_retrieve_state", return_value={"code_verifier": "verifier", "app_user_email": "user@example.com"}),
+            patch.object(oauth_manager, "_exchange_code_for_tokens", exchange_mock),
+            patch.object(oauth_manager, "_extract_user_id", return_value="user-1"),
+            patch.object(oauth_manager, "_extract_aud_and_iss", return_value=(None, None)),
+        ):
+            result = await oauth_manager.complete_authorization_code_flow(
+                gateway_id="gw-123",
+                code="auth-code",
+                state="test-state",
+                credentials={"client_id": "cid", "token_url": "https://auth.example.com/token", "redirect_uri": "https://fallback.example.com/oauth/callback"},
+            )
+
+        assert result["success"] is True
+        credentials_used = exchange_mock.call_args[0][0]
+        assert credentials_used["redirect_uri"] == "https://fallback.example.com/oauth/callback"
+
+    @pytest.mark.asyncio
+    async def test_initiate_flow_pins_redirect_uri_into_state(self, oauth_manager):
+        """initiate_authorization_code_flow must store the credentials' redirect_uri
+        alongside the PKCE code_verifier so callback-time can reuse it."""
+        oauth_manager.token_storage = AsyncMock()
+        store_state_mock = AsyncMock()
+
+        with patch.object(oauth_manager, "_store_authorization_state", store_state_mock):
+            await oauth_manager.initiate_authorization_code_flow(
+                "test-gateway",
+                {"client_id": "test-client", "authorization_url": "https://auth.example.com/authorize", "redirect_uri": "https://app.example.com/callback"},
+                app_user_email="user@test.com",
+            )
+
+        store_state_mock.assert_called_once()
+        assert store_state_mock.call_args.kwargs["redirect_uri"] == "https://app.example.com/callback"
+
+
+class TestApplyDefaultRedirectUri:
+    """OAuthManager._apply_default_redirect_uri -- the single centralized guard that both
+    flow entry points call before indexing credentials["redirect_uri"] downstream, so any
+    future caller (not just the two /oauth router endpoints that populate it today) is
+    protected against an incomplete credentials dict.
+    """
+
+    def test_noop_when_already_present(self):
+        """An existing redirect_uri is returned untouched, ignoring any default."""
+        credentials = {"client_id": "cid", "redirect_uri": "https://existing.example.com/callback"}
+        result = OAuthManager._apply_default_redirect_uri(credentials, "https://should-not-be-used.example.com/callback")
+        assert result["redirect_uri"] == "https://existing.example.com/callback"
+        assert result is credentials
+
+    def test_uses_caller_supplied_default_when_missing(self):
+        """A caller-supplied default (e.g. the router's request-scoped, root-path-aware
+        value) is used when credentials carries none."""
+        credentials = {"client_id": "cid"}
+        result = OAuthManager._apply_default_redirect_uri(credentials, "https://caller-default.example.com/callback")
+        assert result["redirect_uri"] == "https://caller-default.example.com/callback"
+        # Original dict is untouched (shallow copy), so callers can't be surprised by aliasing.
+        assert "redirect_uri" not in credentials
+
+    def test_falls_back_to_settings_only_default_when_no_caller_default(self):
+        """With no caller-supplied default at all (e.g. a future call path that bypasses
+        both /oauth router endpoints), it still self-heals from settings instead of leaving
+        credentials incomplete."""
+        with patch("mcpgateway.services.oauth_manager.get_settings") as mock_settings:
+            mock_settings.return_value = MagicMock(app_domain="https://gateway.example.com", app_root_path="")
+            result = OAuthManager._apply_default_redirect_uri({"client_id": "cid"}, None)
+        assert result["redirect_uri"] == "https://gateway.example.com/oauth/callback"
+
+
 class TestIssuerPinningOnAudienceLearning:
     """Issuer pinning at learning time (restores the PR's advertised hardening).
 
