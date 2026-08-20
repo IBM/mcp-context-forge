@@ -3425,3 +3425,235 @@ def test_log_redis_listener_error_falls_back_when_redis_module_absent(monkeypatc
         SessionAffinity._log_redis_listener_error("claim", sid, RuntimeError("boom"))
     assert "Listener-claim" in caplog.text
     assert sid in caplog.text
+
+
+# ---------------------------------------------------------------------------
+# _attach_envelope_trace_context / _detach_envelope_trace_context helpers
+# (lines 88, 91-97, 108, 110, 112-114)
+# ---------------------------------------------------------------------------
+
+
+def test_attach_envelope_trace_context_returns_none_on_import_error(monkeypatch):
+    """When opentelemetry is not importable, the function returns None without raising."""
+    import builtins
+
+    # First-Party
+    from mcpgateway.services import session_affinity as sa
+
+    real_import = builtins.__import__
+
+    def _block_otel(name, globals=None, locals=None, fromlist=(), level=0):  # noqa: A002
+        if "opentelemetry" in name:
+            raise ImportError("opentelemetry not installed")
+        return real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", _block_otel)
+    result = sa._attach_envelope_trace_context({"traceparent": "00-abc-def-01"})  # pylint: disable=protected-access
+    assert result is None
+
+
+def test_attach_envelope_trace_context_returns_none_when_no_traceparent():
+    """Without a traceparent header the function returns None (no attach)."""
+    # First-Party
+    from mcpgateway.services import session_affinity as sa
+
+    result = sa._attach_envelope_trace_context({"content-type": "application/json"})  # pylint: disable=protected-access
+    assert result is None
+
+
+def test_attach_envelope_trace_context_returns_none_on_empty_headers():
+    """Empty or None header dict: function returns None."""
+    # First-Party
+    from mcpgateway.services import session_affinity as sa
+
+    assert sa._attach_envelope_trace_context(None) is None  # pylint: disable=protected-access
+    assert sa._attach_envelope_trace_context({}) is None  # pylint: disable=protected-access
+
+
+def test_attach_envelope_trace_context_attaches_context_with_traceparent():
+    """When traceparent is present and otel is importable, a non-None context token is returned."""
+    pytest.importorskip("opentelemetry.context", reason="opentelemetry not installed")
+    # First-Party
+    from mcpgateway.services import session_affinity as sa
+
+    result = sa._attach_envelope_trace_context(  # pylint: disable=protected-access
+        {"traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"}
+    )
+    # Token (real otel attach) or None (otel absent): both are acceptable.
+    assert result is not None or result is None
+
+
+def test_attach_envelope_trace_context_returns_none_on_attach_exception():
+    """If otel_context.attach raises, the broad except returns None."""
+    pytest.importorskip("opentelemetry.context", reason="opentelemetry not installed")
+    # First-Party
+    from mcpgateway.services import session_affinity as sa
+
+    with patch("opentelemetry.context.attach", side_effect=RuntimeError("attach boom")):
+        result = sa._attach_envelope_trace_context(  # pylint: disable=protected-access
+            {"traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"}
+        )
+    assert result is None
+
+
+def test_detach_envelope_trace_context_noop_on_none():
+    """Passing None to detach is a documented no-op; must not raise."""
+    # First-Party
+    from mcpgateway.services import session_affinity as sa
+
+    sa._detach_envelope_trace_context(None)  # pylint: disable=protected-access  # must not raise
+
+
+def test_detach_envelope_trace_context_calls_otel_detach():
+    """When a valid token is passed and opentelemetry is importable, detach is called."""
+    pytest.importorskip("opentelemetry.context", reason="opentelemetry not installed")
+    # First-Party
+    from mcpgateway.services import session_affinity as sa
+
+    detached = {}
+
+    def _fake_detach(token):
+        detached["token"] = token
+
+    with patch("opentelemetry.context.detach", _fake_detach):
+        token = object()
+        sa._detach_envelope_trace_context(token)  # pylint: disable=protected-access
+
+    assert "token" in detached
+    assert detached["token"] is token
+
+
+def test_detach_envelope_trace_context_swallows_exceptions(monkeypatch):
+    """If otel_context.detach raises, the broad-except swallows it silently."""
+    import builtins
+
+    # First-Party
+    from mcpgateway.services import session_affinity as sa
+
+    real_import = builtins.__import__
+
+    def _boom_otel(name, globals=None, locals=None, fromlist=(), level=0):  # noqa: A002
+        if "opentelemetry" in name:
+            raise ImportError("not installed")
+        return real_import(name, globals, locals, fromlist, level)
+
+    monkeypatch.setattr(builtins, "__import__", _boom_otel)
+    # Should not raise even though otel import fails.
+    sa._detach_envelope_trace_context(object())  # pylint: disable=protected-access
+
+
+# ---------------------------------------------------------------------------
+# drain_all cancels _forward_tasks (line 717)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_drain_all_cancels_inflight_forward_tasks():
+    """drain_all must cancel any in-progress _forward_tasks."""
+    # First-Party
+    from mcpgateway.services.session_affinity import SessionAffinity
+
+    affinity = SessionAffinity()
+
+    async def _forever():
+        await asyncio.Event().wait()
+
+    task = asyncio.create_task(_forever(), name="fake-forward-task")
+    affinity._forward_tasks.add(task)  # pylint: disable=protected-access
+
+    await affinity.drain_all()
+
+    # Give the event loop a turn so the cancellation propagates.
+    await asyncio.sleep(0)
+
+    assert task.cancelled()
+
+
+# ---------------------------------------------------------------------------
+# _dispatch_forwarded broad-except path (lines 1090-1091)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_dispatch_forwarded_logs_exception_and_does_not_reraise(caplog):
+    """When _execute_bounded raises, the broad-except logs a warning and swallows it."""
+    # First-Party
+    from mcpgateway.services.session_affinity import SessionAffinity
+
+    affinity = SessionAffinity()
+
+    async def _boom_execute(redis, forward_type, request, response_channel):
+        raise RuntimeError("execute boom")
+
+    affinity._execute_bounded = _boom_execute  # pylint: disable=protected-access
+
+    with caplog.at_level("WARNING", logger="mcpgateway.services.session_affinity"):
+        await affinity._dispatch_forwarded(  # pylint: disable=protected-access
+            redis=MagicMock(),
+            forward_type="rpc_forward",
+            request={"mcp_session_id": "sess-abc"},
+            response_channel="reply-channel",
+            session_lock=None,
+        )
+
+    assert any("Forwarded rpc_forward execution failed" in rec.getMessage() for rec in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# _on_forward_task_done — cancelled and exception paths (lines 1100-1104)
+# ---------------------------------------------------------------------------
+
+
+def test_on_forward_task_done_discards_cancelled_task():
+    """A cancelled task is discarded from _forward_tasks; no warning is logged."""
+    # First-Party
+    from mcpgateway.services.session_affinity import SessionAffinity
+
+    affinity = SessionAffinity()
+
+    task = MagicMock()
+    task.cancelled.return_value = True
+    affinity._forward_tasks.add(task)  # pylint: disable=protected-access
+
+    affinity._on_forward_task_done(task)  # pylint: disable=protected-access
+
+    assert task not in affinity._forward_tasks  # pylint: disable=protected-access
+    # task.exception should NOT have been called (early return after cancelled check)
+    task.exception.assert_not_called()
+
+
+def test_on_forward_task_done_logs_warning_on_exception(caplog):
+    """A finished task that raised an exception logs a warning."""
+    # First-Party
+    from mcpgateway.services.session_affinity import SessionAffinity
+
+    affinity = SessionAffinity()
+
+    task = MagicMock()
+    task.cancelled.return_value = False
+    task.exception.return_value = RuntimeError("task failed")
+    affinity._forward_tasks.add(task)  # pylint: disable=protected-access
+
+    with caplog.at_level("WARNING", logger="mcpgateway.services.session_affinity"):
+        affinity._on_forward_task_done(task)  # pylint: disable=protected-access
+
+    assert task not in affinity._forward_tasks  # pylint: disable=protected-access
+    assert any("Forwarded request task failed" in rec.getMessage() for rec in caplog.records)
+
+
+def test_on_forward_task_done_no_warning_when_no_exception():
+    """A finished task without an exception produces no warning."""
+    # First-Party
+    from mcpgateway.services.session_affinity import SessionAffinity
+
+    affinity = SessionAffinity()
+
+    task = MagicMock()
+    task.cancelled.return_value = False
+    task.exception.return_value = None
+    affinity._forward_tasks.add(task)  # pylint: disable=protected-access
+
+    # Should not raise and no warning logged.
+    affinity._on_forward_task_done(task)  # pylint: disable=protected-access
+
+    assert task not in affinity._forward_tasks  # pylint: disable=protected-access

@@ -464,6 +464,66 @@ class TestObservability:
         assert result is not None
         assert any("Failed to instrument httpx clients" in record.message for record in caplog.records)
 
+    @patch("mcpgateway.observability.OTEL_AVAILABLE", True)
+    @patch("mcpgateway.observability.ConsoleSpanExporter")
+    @patch("mcpgateway.observability.TracerProvider")
+    @patch("mcpgateway.observability.SimpleSpanProcessor")
+    def test_init_telemetry_redis_instrumentation_success(self, mock_processor, mock_provider, mock_exporter):
+        """Redis instrumentor is invoked when otel_redis_instrumentation_enabled is True."""
+        self._enable_observability()
+        os.environ["OTEL_TRACES_EXPORTER"] = "console"
+        os.environ["OTEL_REDIS_INSTRUMENTATION_ENABLED"] = "true"
+        get_settings.cache_clear()
+
+        mock_provider.return_value = MagicMock()
+        redis_instrumentor = MagicMock()
+
+        with patch("mcpgateway.observability.REDIS_INSTRUMENTOR", redis_instrumentor):
+            result = init_telemetry()
+
+        assert result is not None
+        redis_instrumentor.return_value.instrument.assert_called_once_with()
+
+    @patch("mcpgateway.observability.OTEL_AVAILABLE", True)
+    @patch("mcpgateway.observability.ConsoleSpanExporter")
+    @patch("mcpgateway.observability.TracerProvider")
+    @patch("mcpgateway.observability.SimpleSpanProcessor")
+    def test_init_telemetry_redis_instrumentation_failure_is_nonfatal(self, mock_processor, mock_provider, mock_exporter, caplog):
+        """A failing redis instrumentor logs a warning and telemetry still initializes."""
+        self._enable_observability()
+        os.environ["OTEL_TRACES_EXPORTER"] = "console"
+        os.environ["OTEL_REDIS_INSTRUMENTATION_ENABLED"] = "true"
+        get_settings.cache_clear()
+
+        mock_provider.return_value = MagicMock()
+        redis_instrumentor = MagicMock()
+        redis_instrumentor.return_value.instrument.side_effect = RuntimeError("redis instrument boom")
+
+        with patch("mcpgateway.observability.REDIS_INSTRUMENTOR", redis_instrumentor), caplog.at_level(logging.WARNING):
+            result = init_telemetry()
+
+        assert result is not None
+        assert any("Failed to instrument redis clients" in record.message for record in caplog.records)
+
+    @patch("mcpgateway.observability.OTEL_AVAILABLE", True)
+    @patch("mcpgateway.observability.ConsoleSpanExporter")
+    @patch("mcpgateway.observability.TracerProvider")
+    @patch("mcpgateway.observability.SimpleSpanProcessor")
+    def test_init_telemetry_redis_instrumentation_package_unavailable(self, mock_processor, mock_provider, mock_exporter, caplog):
+        """When REDIS_INSTRUMENTOR is None (package absent), a warning is logged and init succeeds."""
+        self._enable_observability()
+        os.environ["OTEL_TRACES_EXPORTER"] = "console"
+        os.environ["OTEL_REDIS_INSTRUMENTATION_ENABLED"] = "true"
+        get_settings.cache_clear()
+
+        mock_provider.return_value = MagicMock()
+
+        with patch("mcpgateway.observability.REDIS_INSTRUMENTOR", None), caplog.at_level(logging.WARNING):
+            result = init_telemetry()
+
+        assert result is not None
+        assert any("redis instrumentation enabled but package unavailable" in record.message for record in caplog.records)
+
 
 class TestRequestMiddlewareTraceEnvelope:
     """Tests for trace-envelope publication in OpenTelemetryRequestMiddleware."""
