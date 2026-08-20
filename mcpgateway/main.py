@@ -3212,21 +3212,10 @@ class MCPPathRewriteMiddleware:
         app_path = _normalize_scope_path(original_path, root_path)
         internal_app_path = replace_api_path_alias(app_path)
 
-        # streamable_http_auth() only extracts the server ID from "/servers/{id}/mcp";
-        # present the alias in that shape here, then restore it.
-        auth_path = original_path
-        internal_mcp_match = re.fullmatch(r"/servers/([^/]+)/mcp/?", internal_app_path)
-        if internal_app_path != app_path and internal_mcp_match:
-            auth_path = internal_app_path
-
-        if auth_path != original_path:
-            scope["path"] = auth_path
-            try:
-                auth_ok = await streamable_http_auth(scope, receive, send)
-            finally:
-                scope["path"] = original_path
-        else:
-            auth_ok = await streamable_http_auth(scope, receive, send)
+        # Authenticate against the app-relative internal path without changing
+        # the shared ASGI scope. The original scope remains available for
+        # headers, root_path, and response URL construction.
+        auth_ok = await streamable_http_auth(scope, receive, send, request_path=internal_app_path)
         if not auth_ok:
             return
 
