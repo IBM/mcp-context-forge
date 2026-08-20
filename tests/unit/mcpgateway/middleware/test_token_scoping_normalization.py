@@ -39,6 +39,8 @@ from mcpgateway.middleware.token_scoping import TokenScopingMiddleware, _normali
         # Complex paths
         ("/v1/servers/abc/tools", "/servers/abc/tools"),
         ("/v1/teams/123/members", "/teams/123/members"),
+        ("/v1/virtual-servers/abc/prompts", "/servers/abc/prompts"),
+        ("/v1/mcp-servers/abc/tools/refresh", "/gateways/abc/tools/refresh"),
     ],
 )
 def test_normalize_path_for_matching(input_path, expected):
