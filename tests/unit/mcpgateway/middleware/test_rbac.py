@@ -3138,3 +3138,157 @@ async def test_proxy_trust_missing_header_valid_cookie_rejects():
         with pytest.raises(HTTPException) as exc:
             await rbac.get_current_user_with_permissions(mock_request, credentials=None, jwt_token=None)
     assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
+
+
+# --- check_permission_inline: non-raising permission check for additive in-handler use ---
+
+
+def _mock_plugin_manager(granted: bool, reason: str = "test"):
+    """Build a plugin manager mock whose permission hook returns a decision.
+
+    Args:
+        granted: The decision the plugin hook reports.
+        reason: Reason string attached to the decision.
+
+    Returns:
+        MagicMock: Plugin manager exposing has_hooks_for and invoke_hook.
+    """
+    mock_result = MagicMock()
+    mock_result.modified_payload.granted = granted
+    mock_result.modified_payload.reason = reason
+    mock_result.metadata = {"plugin_name": "test-plugin"}
+
+    mock_pm = MagicMock()
+    mock_pm.has_hooks_for.return_value = True
+    mock_pm.invoke_hook = AsyncMock(return_value=(mock_result, None))
+    return mock_pm
+
+
+class TestCheckPermissionInline:
+    """check_permission_inline returns a bool instead of raising on denial."""
+
+    @pytest.mark.asyncio
+    async def test_rbac_grant_returns_true(self, monkeypatch):
+        """A granted RBAC check returns True."""
+        mock_perm_service = AsyncMock()
+        mock_perm_service.check_permission.return_value = True
+        monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+        granted = await rbac.check_permission_inline({"email": "user@test.com"}, "security:read", db=MagicMock())
+
+        assert granted is True
+        mock_perm_service.check_permission.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_rbac_deny_returns_false_without_raising(self, monkeypatch):
+        """A denied RBAC check returns False rather than raising HTTPException."""
+        mock_perm_service = AsyncMock()
+        mock_perm_service.check_permission.return_value = False
+        monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+        granted = await rbac.check_permission_inline({"email": "user@test.com"}, "security:read", db=MagicMock())
+
+        assert granted is False
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("user_context", [None, {}, {"not_email": "x"}, "not-a-dict"])
+    async def test_malformed_user_context_returns_false(self, user_context, monkeypatch):
+        """Missing or malformed user context is denied without raising."""
+        mock_perm_service = AsyncMock()
+        monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+        granted = await rbac.check_permission_inline(user_context, "security:read", db=MagicMock())
+
+        assert granted is False
+        mock_perm_service.check_permission.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_uses_fresh_db_session_when_no_db_supplied(self, monkeypatch):
+        """Without a db argument the helper opens a fresh session."""
+        mock_perm_service = AsyncMock()
+        mock_perm_service.check_permission.return_value = True
+        monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+        mock_db = MagicMock()
+        with patch("mcpgateway.middleware.rbac.fresh_db_session", _make_fresh_db(mock_db)):
+            granted = await rbac.check_permission_inline({"email": "user@test.com"}, "security:read")
+
+        assert granted is True
+        mock_perm_service.check_permission.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_plugin_deny_returns_false_without_consulting_rbac(self, monkeypatch):
+        """A plugin denial short-circuits before the RBAC check runs."""
+        mock_perm_service = AsyncMock()
+        mock_perm_service.check_permission.return_value = True
+        monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+        mock_pm = _mock_plugin_manager(granted=False)
+
+        with patch("mcpgateway.plugins.get_plugin_manager", return_value=mock_pm):
+            granted = await rbac.check_permission_inline({"email": "user@test.com"}, "security:read", db=MagicMock())
+
+        assert granted is False
+        mock_perm_service.check_permission.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_plugin_grant_with_override_returns_true_without_consulting_rbac(self, monkeypatch):
+        """A plugin grant wins outright when plugins may override RBAC."""
+        mock_perm_service = AsyncMock()
+        mock_perm_service.check_permission.return_value = False
+        monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+        monkeypatch.setattr(rbac.settings, "plugins_can_override_rbac", True)
+        mock_pm = _mock_plugin_manager(granted=True)
+
+        with patch("mcpgateway.plugins.get_plugin_manager", return_value=mock_pm):
+            granted = await rbac.check_permission_inline({"email": "user@test.com"}, "security:read", db=MagicMock())
+
+        assert granted is True
+        mock_perm_service.check_permission.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_plugin_grant_without_override_falls_through_to_rbac(self, monkeypatch):
+        """By default a plugin grant is audit-only and RBAC decides."""
+        mock_perm_service = AsyncMock()
+        mock_perm_service.check_permission.return_value = False
+        monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+        monkeypatch.setattr(rbac.settings, "plugins_can_override_rbac", False)
+        mock_pm = _mock_plugin_manager(granted=True)
+
+        with patch("mcpgateway.plugins.get_plugin_manager", return_value=mock_pm):
+            granted = await rbac.check_permission_inline({"email": "user@test.com"}, "security:read", db=MagicMock())
+
+        assert granted is False
+        mock_perm_service.check_permission.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_require_permission_still_403s_on_deny(self, monkeypatch):
+        """Delegation regression: the decorator keeps raising 403 when the helper denies."""
+
+        async def dummy_func(user=None):
+            return "should-not-reach"
+
+        mock_perm_service = AsyncMock()
+        mock_perm_service.check_permission.return_value = False
+        monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+        decorated = rbac.require_permission("tools.read")(dummy_func)
+        with pytest.raises(HTTPException) as exc:
+            await decorated(user={"email": "user@test.com", "db": MagicMock()})
+
+        assert exc.value.status_code == status.HTTP_403_FORBIDDEN
+
+    @pytest.mark.asyncio
+    async def test_require_permission_still_calls_func_on_grant(self, monkeypatch):
+        """Delegation regression: the decorator keeps invoking the handler when granted."""
+
+        async def dummy_func(user=None):
+            return "reached"
+
+        mock_perm_service = AsyncMock()
+        mock_perm_service.check_permission.return_value = True
+        monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+        decorated = rbac.require_permission("tools.read")(dummy_func)
+        result = await decorated(user={"email": "user@test.com", "db": MagicMock()})
+
+        assert result == "reached"

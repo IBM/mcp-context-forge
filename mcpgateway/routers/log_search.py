@@ -12,26 +12,29 @@ security events, audit trails, and performance metrics.
 # Standard
 from datetime import datetime, timedelta, timezone
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Literal, Optional, Tuple
 
 # Third-Party
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import and_, delete, desc, or_, select
 from sqlalchemy.orm import Session
 from sqlalchemy.sql import func as sa_func
 
 # First-Party
+from mcpgateway.auth_context import get_scoped_resource_access_context
 from mcpgateway.common.query_params import QueryAggregation, QueryIdentifierDottedComponent, QueryUserIdentifierNoDescription
 from mcpgateway.config import settings
 from mcpgateway.db import (
     AuditTrail,
     get_db,
     PerformanceMetric,
+    Permissions,
     SecurityEvent,
     StructuredLogEntry,
 )
-from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
+from mcpgateway.middleware.rbac import check_permission_inline, get_current_user_with_permissions, require_permission
+from mcpgateway.services.audit_trail_service import DataClassification
 from mcpgateway.services.log_aggregator import get_log_aggregator
 
 logger = logging.getLogger(__name__)
@@ -295,6 +298,130 @@ class AuditTrailResponse(BaseModel):
     data_classification: Optional[str]
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class ActivityItem(BaseModel):
+    """Unified feed entry derived from AuditTrail or SecurityEvent rows.
+
+    The server owns presentation: title, description, and status are rendered
+    here and MUST NOT be re-derived by clients (contract: #5129 / #5944).
+    """
+
+    id: str
+    timestamp: datetime
+    source: Literal["audit", "security"]
+    title: str
+    description: str
+    status: Literal["success", "error", "warning", "info"]
+    resource_type: str
+    resource_name: str
+    actor: str
+    correlation_id: str
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ActivityListResponse(BaseModel):
+    """Response envelope for GET /api/logs/activity."""
+
+    items: List[ActivityItem]
+
+
+_ACTION_VERBS = {"create": "created", "update": "updated", "delete": "deleted", "read": "accessed", "execute": "executed", "login": "logged in"}
+_RESOURCE_LABELS = {"mcp_server": "MCP server", "a2a_agent": "A2A agent"}
+_SEVERITY_STATUS = {"critical": "error", "high": "error", "medium": "warning", "low": "info"}
+
+
+def _as_utc(ts: datetime) -> datetime:
+    """Return a timezone-aware UTC datetime.
+
+    SQLite hands back naive datetimes; the feed merges rows from two tables and
+    the contract promises ISO 8601, so a missing offset is pinned to UTC here.
+
+    Args:
+        ts: Timestamp that may be naive or timezone-aware.
+
+    Returns:
+        datetime: The same instant, guaranteed timezone-aware.
+
+    Examples:
+        >>> from datetime import datetime, timezone
+        >>> _as_utc(datetime(2025, 1, 1)).tzinfo == timezone.utc
+        True
+    """
+    return ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
+
+
+def _audit_to_activity(row: AuditTrail) -> ActivityItem:
+    """Render an audit trail row as a feed entry.
+
+    Args:
+        row: Audit trail ORM row.
+
+    Returns:
+        ActivityItem: Feed entry with server-rendered title, description and status.
+    """
+    label = _RESOURCE_LABELS.get(row.resource_type) or row.resource_type.replace("_", " ").capitalize()
+    action_text = row.action.replace("_", " ")
+    verb = _ACTION_VERBS.get(row.action, action_text)
+    actor = row.user_email or row.user_id or ""
+    resource_name = row.resource_name or row.resource_id or ""
+    name_part = f" '{resource_name}'" if resource_name else ""
+    by_part = f" by {actor}" if actor else ""
+
+    if not row.success:
+        status = "error"
+    elif row.requires_review:
+        status = "warning"
+    elif row.action in ("read", "execute"):
+        status = "info"
+    else:
+        status = "success"
+
+    if status == "error":
+        title = f"{label} {action_text} failed"
+        description = f"{label}{name_part} {action_text} failed."
+        if row.error_message:
+            description += f" {row.error_message}"
+    else:
+        title = f"{label} {verb}"
+        description = f"{label}{name_part} was {verb}{by_part}."
+
+    return ActivityItem(
+        id=f"audit:{row.id}",
+        timestamp=_as_utc(row.timestamp),
+        source="audit",
+        title=title,
+        description=description,
+        status=status,
+        resource_type=row.resource_type,
+        resource_name=resource_name,
+        actor=actor,
+        correlation_id=row.correlation_id or "",
+    )
+
+
+def _security_to_activity(row: SecurityEvent) -> ActivityItem:
+    """Render a security event row as a feed entry.
+
+    Args:
+        row: Security event ORM row.
+
+    Returns:
+        ActivityItem: Feed entry with status derived from event severity.
+    """
+    return ActivityItem(
+        id=f"security:{row.id}",
+        timestamp=_as_utc(row.timestamp),
+        source="security",
+        title=row.event_type.replace("_", " ").capitalize(),
+        description=row.description,
+        status=_SEVERITY_STATUS.get((row.severity or "").lower(), "info"),
+        resource_type=row.category or "",
+        resource_name=row.user_email or "",
+        actor=row.user_email or "system",
+        correlation_id=row.correlation_id or "",
+    )
 
 
 class PerformanceMetricResponse(BaseModel):
@@ -701,6 +828,94 @@ async def get_audit_trails(
     except Exception as e:
         logger.error(f"Audit trails query failed: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Audit trails query failed")
+
+
+@router.get("/activity", response_model=ActivityListResponse)
+@require_permission("audit:read")
+async def get_activity_feed(
+    request: Request,
+    limit: int = Query(50, ge=1, le=100),
+    since: Optional[datetime] = Query(None),
+    user=Depends(get_current_user_with_permissions),
+    db: Session = Depends(get_db),
+) -> ActivityListResponse:
+    """Get the recent activity feed as a union of audit trails and security events.
+
+    Entry is gated by ``audit:read``. Security events are additive: they are included
+    only when the caller also holds ``security:read``, and their absence narrows the
+    feed rather than rejecting the request.
+
+    Args:
+        request: Incoming request, used to resolve token-scoped access context.
+        limit: Maximum number of merged items to return.
+        since: Only return items strictly newer than this timestamp.
+        user: Current authenticated user.
+        db: Database session.
+
+    Returns:
+        ActivityListResponse: Newest-first merged feed entries.
+
+    Raises:
+        HTTPException: On database or validation errors
+    """
+    try:
+        user_email, token_teams = get_scoped_resource_access_context(request, user)
+        is_admin_feed = token_teams is None
+
+        conditions = []
+        if since:
+            conditions.append(AuditTrail.timestamp > since)
+        if not is_admin_feed:
+            # Filtered in SQL so restricted-row counts are not observable to non-admins.
+            # The IS NULL arm is required: a bare != silently drops NULL-classified rows.
+            # Only `restricted` is filtered; `confidential` rows stay visible and already
+            # render as a warning via requires_review.
+            conditions.append(or_(AuditTrail.data_classification.is_(None), AuditTrail.data_classification != DataClassification.RESTRICTED.value))
+            # AuditTrail has no owner_email/visibility columns, so scoping is team-based
+            # rather than the usual get_scoped_resource_access_context
+            # public+team+own-private shape. A NULL team_id means "the writer passed no
+            # team" (e.g. tool_service bulk imports), not "public", so those rows are
+            # visible only to their actor. user_email None fails closed: SQL NULL
+            # comparison matches no row.
+            null_team_own = and_(AuditTrail.team_id.is_(None), AuditTrail.user_email == user_email)
+            if token_teams:
+                conditions.append(or_(null_team_own, AuditTrail.team_id.in_(token_teams)))
+            else:
+                conditions.append(null_team_own)
+
+        stmt = select(AuditTrail)
+        if conditions:
+            stmt = stmt.where(and_(*conditions))
+        audit_rows = db.execute(stmt.order_by(desc(AuditTrail.timestamp), desc(AuditTrail.id)).limit(limit)).scalars().all()
+
+        security_rows = []
+        # check_any_team mirrors what the decorator's team resolver picks for this route
+        # (no team kwarg on a read endpoint -> any-team aggregation).
+        if await check_permission_inline(user, Permissions.SECURITY_READ, check_any_team=True, db=db, request=request):
+            if is_admin_feed or user_email:
+                sec_conditions = []
+                if since:
+                    sec_conditions.append(SecurityEvent.timestamp > since)
+                if not is_admin_feed:
+                    # SecurityEvent has no team_id, so non-admins see only their own events.
+                    sec_conditions.append(SecurityEvent.user_email == user_email)
+                sstmt = select(SecurityEvent)
+                if sec_conditions:
+                    sstmt = sstmt.where(and_(*sec_conditions))
+                security_rows = db.execute(sstmt.order_by(desc(SecurityEvent.timestamp), desc(SecurityEvent.id)).limit(limit)).scalars().all()
+
+        # Each source over-fetches at most `limit`, so the merged top-`limit` is exact;
+        # the id tiebreak (also in each source's ORDER BY) keeps timestamp ties deterministic.
+        items = [_audit_to_activity(row) for row in audit_rows] + [_security_to_activity(row) for row in security_rows]
+        items.sort(key=lambda i: (i.timestamp, i.id), reverse=True)
+
+        return ActivityListResponse(items=items[:limit])
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Activity feed query failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Activity feed query failed")
 
 
 @router.get("/performance-metrics", response_model=List[PerformanceMetricResponse])
