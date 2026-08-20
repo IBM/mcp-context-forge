@@ -3069,6 +3069,9 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
+_SERVER_MCP_PATH_RE = re.compile(r"/servers/([^/]+)/mcp/?")
+
+
 class MCPPathRewriteMiddleware:
     """
     Middleware that rewrites paths ending with '/mcp' to '/mcp/', after performing authentication.
@@ -3242,7 +3245,7 @@ class MCPPathRewriteMiddleware:
                     # Validate that a non-empty server_id segment is present.
                     # Without this check, paths like /servers//mcp (empty ID)
                     # would be rewritten and silently fall through (#3891).
-                    _srv_match = re.fullmatch(r"/servers/([^/]+)/mcp/?", internal_app_path)
+                    _srv_match = _SERVER_MCP_PATH_RE.fullmatch(internal_app_path)
                 else:
                     # Not a recognised server-scoped path — do not rewrite.
                     await self.application(scope, receive, send)
