@@ -451,7 +451,7 @@ async def _enforce_gateway_access(
     raise HTTPException(status_code=403, detail="You don't have access to this gateway")
 
 
-@oauth_router.get("/authorize/{gateway_id}")
+@oauth_router.get("/authorize/{gateway_id}", response_model=None)
 async def initiate_oauth_flow(
     gateway_id: str,
     request: Request,
@@ -461,7 +461,7 @@ async def initiate_oauth_flow(
         default=False,
         description="Set by the React UI when opening OAuth in a popup window; encodes a popup. prefix in the state token so the callback responds with postMessage instead of a full HTML page",
     ),
-) -> RedirectResponse:  # noqa: ARG001
+) -> RedirectResponse | HTMLResponse:  # noqa: ARG001
     """Initiates the OAuth 2.0 Authorization Code flow for a specified gateway.
 
     This endpoint retrieves the OAuth configuration for the given gateway, validates that
@@ -593,9 +593,36 @@ async def initiate_oauth_flow(
 
                 except DcrError as dcr_err:
                     logger.error(f"DCR failed for gateway {SecurityValidator.sanitize_log_message(gateway_id)}: {dcr_err}")
-                    raise HTTPException(
-                        status_code=500,
-                        detail="Dynamic Client Registration failed. Please configure client_id and client_secret manually or check your OAuth server supports RFC 7591.",
+                    root_path = resolve_root_path(request) if request else ""
+                    safe_root_path = escape(str(root_path), quote=True)
+                    safe_err = escape(str(dcr_err))
+                    return HTMLResponse(
+                        content=f"""<!DOCTYPE html>
+<html>
+<head><title>OAuth Setup Required</title></head>
+<body>
+    <h1>🔐 Manual OAuth Credentials Required</h1>
+    <p>
+        Dynamic Client Registration (DCR) could not be completed for this gateway.
+        This provider does not support automatic client registration (RFC 7591).
+    </p>
+    <p><strong>Details:</strong> {safe_err}</p>
+    <h2>Next Steps</h2>
+    <ol>
+        <li>Register an OAuth application manually with your provider's developer portal
+            (for example, <a href="https://developer.atlassian.com/console/myapps/" target="_blank" rel="noopener noreferrer">Atlassian App Console</a>).</li>
+        <li>Copy the <strong>Client ID</strong> and <strong>Client Secret</strong> provided by your OAuth provider.</li>
+        <li>
+            <a href="{safe_root_path}/admin#gateways">Return to the Admin Panel</a>,
+            open the gateway edit form, and enter the credentials in the
+            <em>Client ID</em> and <em>Client Secret</em> fields.
+        </li>
+        <li>Click <strong>🔐 Authorize</strong> again once the credentials are saved.</li>
+    </ol>
+    <p><a href="{safe_root_path}/admin#gateways">← Return to Admin Panel</a></p>
+</body>
+</html>""",
+                        status_code=400,
                     )
                 except Exception as dcr_ex:
                     logger.error(f"Unexpected error during DCR for gateway {SecurityValidator.sanitize_log_message(gateway_id)}: {dcr_ex}")

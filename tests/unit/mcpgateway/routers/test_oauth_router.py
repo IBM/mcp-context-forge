@@ -577,6 +577,58 @@ class TestOAuthRouter:
         assert "Failed to register OAuth client" in str(exc_info.value.detail)
 
     @pytest.mark.asyncio
+    async def test_initiate_oauth_flow_dcr_no_registration_endpoint_returns_html(self, mock_db, mock_request, mock_current_user):
+        """Test DCR path returns a helpful HTML page (not raw JSON) when AS lacks registration_endpoint.
+
+        This covers the Atlassian scenario: issuer is set, DCR is enabled, but the AS
+        does not expose a registration_endpoint in its OIDC metadata, so DcrError is
+        raised.  The endpoint must redirect the user to an HTML guidance page instead
+        of surfacing a raw 500 JSON error.
+        """
+        mock_gateway = Mock(spec=Gateway)
+        mock_gateway.id = "gateway123"
+        mock_gateway.name = "Test Gateway"
+        mock_gateway.url = "https://mcp.atlassian.net"
+        mock_gateway.visibility = "public"
+        mock_gateway.team_id = None
+        mock_gateway.oauth_config = {
+            "grant_type": "authorization_code",
+            "issuer": "https://auth.atlassian.com",
+            "redirect_uri": "https://gateway.example.com/oauth/callback",
+        }
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+
+        with (
+            patch("mcpgateway.routers.oauth_router.settings") as mock_settings,
+            patch("mcpgateway.routers.oauth_router.DcrService") as mock_dcr_class,
+        ):
+            mock_settings.dcr_enabled = True
+            mock_settings.dcr_auto_register_on_missing_credentials = True
+            mock_settings.dcr_default_scopes = ["openid"]
+            mock_settings.auth_encryption_secret = "secret"  # pragma: allowlist secret
+
+            from mcpgateway.services.dcr_service import DcrError
+
+            mock_dcr = Mock()
+            mock_dcr.get_or_register_client = AsyncMock(
+                side_effect=DcrError("AS https://auth.atlassian.com does not support Dynamic Client Registration (no registration_endpoint)")
+            )
+            mock_dcr_class.return_value = mock_dcr
+
+            from mcpgateway.routers.oauth_router import initiate_oauth_flow
+
+            result = await initiate_oauth_flow("gateway123", mock_request, mock_current_user, mock_db)
+
+        # Must be an HTML response, not a raised HTTPException
+        assert result.status_code == 400
+        body = result.body.decode()
+        assert "Manual OAuth Credentials Required" in body
+        assert "registration_endpoint" in body
+        assert "Next Steps" in body
+        assert "admin#gateways" in body
+
+
+    @pytest.mark.asyncio
     async def test_initiate_oauth_flow_oauth_manager_error(self, mock_db, mock_request, mock_gateway, mock_current_user):
         """Test OAuth flow initiation when OAuth manager throws error."""
         # Setup
@@ -2011,7 +2063,7 @@ class TestOAuthRouterAdditionalCoverage:
 
     @pytest.mark.asyncio
     async def test_initiate_oauth_flow_dcr_error(self, mock_db, mock_request, mock_current_user):
-        """Test DCR error handling path."""
+        """Test DCR error handling path returns HTML guidance page (not raw JSON)."""
         mock_gateway = Mock(spec=Gateway)
         mock_gateway.id = "gateway123"
         mock_gateway.name = "Gateway"
@@ -2038,10 +2090,10 @@ class TestOAuthRouterAdditionalCoverage:
                 mock_settings.dcr_enabled = True
                 mock_settings.dcr_auto_register_on_missing_credentials = True
 
-                with pytest.raises(HTTPException) as exc_info:
-                    await initiate_oauth_flow("gateway123", mock_request, mock_current_user, mock_db)
+                result = await initiate_oauth_flow("gateway123", mock_request, mock_current_user, mock_db)
 
-        assert exc_info.value.status_code == 500
+        assert result.status_code == 400
+        assert "Manual OAuth Credentials Required" in result.body.decode()
 
     @pytest.mark.asyncio
     async def test_get_oauth_status_team_access_denied(self, mock_db, mock_request):
