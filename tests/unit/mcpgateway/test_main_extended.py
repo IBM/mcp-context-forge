@@ -3312,9 +3312,39 @@ class TestMCPPathRewriteMiddleware:
 
         app_mock.assert_not_called()
 
+    @pytest.mark.parametrize(
+        ("path", "root_path", "expected_request_path"),
+        [
+            ("/v1/virtual-servers/server-123/mcp", "", "/servers/server-123/mcp"),
+            ("/gateway/servers/server-123/mcp", "/gateway", "/servers/server-123/mcp"),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_auth_uses_internal_path_without_changing_scope(self, path, root_path, expected_request_path):
+        """Authentication receives the internal path while the ASGI scope stays unchanged."""
+        app_mock = AsyncMock()
+        middleware = MCPPathRewriteMiddleware(app_mock)
+        scope = {"type": "http", "path": path, "root_path": root_path, "headers": []}
+        receive = AsyncMock()
+        send = AsyncMock()
+        observed: dict[str, str] = {}
+
+        async def check_auth_path(auth_scope, _receive, _send, *, request_path=None):
+            observed["scope_path"] = auth_scope["path"]
+            observed["request_path"] = request_path
+            return False
+
+        with patch("mcpgateway.main.streamable_http_auth", side_effect=check_auth_path):
+            await middleware._call_streamable_http(scope, receive, send)
+
+        assert observed == {"scope_path": path, "request_path": expected_request_path}
+        assert scope["path"] == path
+        assert "modified_path" not in scope
+        app_mock.assert_not_called()
+
     @pytest.mark.asyncio
     async def test_exact_mcp_auth_failure_blocks_rewrite(self):
-        """Exact /mcp auth failures return before normalization mutates the scope."""
+        """Exact /mcp auth failures return before rewrite state is added."""
         app_mock = AsyncMock()
         middleware = MCPPathRewriteMiddleware(app_mock)
         scope = {"type": "http", "path": "/mcp", "headers": []}
