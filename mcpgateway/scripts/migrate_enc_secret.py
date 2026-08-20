@@ -60,13 +60,13 @@ services_auth path (``base64url(nonce+ciphertext)`` format — AES-GCM):
 +----------------------------+-------------------------------------+
 | Table                      | Column(s)                           |
 +============================+=====================================+
+| gateways                   | auth_value, auth_query_params (JSON)|
++----------------------------+-------------------------------------+
 | tools                      | auth_value                          |
 +----------------------------+-------------------------------------+
 | a2a_agents                 | auth_value, auth_query_params (JSON)|
 +----------------------------+-------------------------------------+
 | a2a_agent_auth             | auth_value, auth_query_params (JSON)|
-+----------------------------+-------------------------------------+
-| gateways                   | auth_query_params (JSON)            |
 +----------------------------+-------------------------------------+
 | llm_providers              | api_key                             |
 +----------------------------+-------------------------------------+
@@ -751,6 +751,7 @@ def run_migration(
     # Tables with plain-text services_auth blobs (base64url AES-GCM nonce+ciphertext)
     sa_simple_targets = [
         # (table, id_col, [columns])
+        ("gateways", "id", ["auth_value"]),
         ("tools", "id", ["auth_value"]),
         ("a2a_agents", "id", ["auth_value"]),
         ("a2a_agent_auth", "id", ["auth_value"]),

@@ -194,6 +194,7 @@ def _make_sa_db(db_path: str | None = None):
                 CREATE TABLE IF NOT EXISTS gateways (
                     id TEXT PRIMARY KEY,
                     oauth_config TEXT,
+                    auth_value TEXT,
                     auth_query_params TEXT
                 )
                 """
@@ -741,6 +742,30 @@ class TestRunMigrationServicesAuth:
             from sqlalchemy import text  # pylint: disable=import-outside-toplevel
 
             row = session.execute(text("SELECT api_key FROM llm_providers WHERE id = 'lp1'")).fetchone()
+            assert decode_auth(row[0], secret=NEW_KEY) == payload
+
+    def test_migrates_gateways_auth_value(self, tmp_path):
+        """gateways.auth_value blob (bearer token) is re-encrypted."""
+        _, SessionLocal, db_url = _make_sa_db(str(tmp_path / "sa.db"))
+        payload = {"Authorization": "Bearer gateway-bearer-tok"}
+        old_blob = encode_auth(payload, secret=OLD_KEY)
+
+        with SessionLocal() as session:
+            from sqlalchemy import text  # pylint: disable=import-outside-toplevel
+
+            session.execute(
+                text("INSERT INTO gateways (id, auth_value) VALUES ('gw-bearer', :v)"),
+                {"v": old_blob},
+            )
+            session.commit()
+
+        rc = run_migration(db_url, OLD_KEY, NEW_KEY)
+        assert rc == 0
+
+        with SessionLocal() as session:
+            from sqlalchemy import text  # pylint: disable=import-outside-toplevel
+
+            row = session.execute(text("SELECT auth_value FROM gateways WHERE id = 'gw-bearer'")).fetchone()
             assert decode_auth(row[0], secret=NEW_KEY) == payload
 
     def test_migrates_gateways_auth_query_params(self, tmp_path):
