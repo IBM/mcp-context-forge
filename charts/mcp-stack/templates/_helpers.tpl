@@ -90,7 +90,9 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 httpGet:
   path: {{ $p.path }}
   port: {{ $p.port }}
-  {{- if $p.scheme }}scheme: {{ $p.scheme }}{{ end }}
+  {{- if $p.scheme }}
+  scheme: {{ $p.scheme }}
+  {{- end }}
 {{- else if eq $p.type "tcp" }}
 tcpSocket:
   port: {{ $p.port }}

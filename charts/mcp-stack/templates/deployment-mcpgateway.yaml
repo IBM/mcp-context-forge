@@ -199,6 +199,28 @@ spec:
               value: ""
               {{- end }}
 
+            # ---------- GATEWAY TLS (direct HTTPS on pod) ----------
+            {{- if .Values.mcpContextForge.tls.enabled }}
+            - name: SSL
+              value: "true"
+            - name: CERT_FILE
+              value: {{ .Values.mcpContextForge.tls.certFile | quote }}
+            - name: KEY_FILE
+              value: {{ .Values.mcpContextForge.tls.keyFile | quote }}
+            {{- if .Values.mcpContextForge.tls.keyFilePassword }}
+            - name: KEY_FILE_PASSWORD
+              value: {{ .Values.mcpContextForge.tls.keyFilePassword | quote }}
+            {{- end }}
+            {{- if .Values.mcpContextForge.tls.caCerts }}
+            - name: CA_CERTS
+              value: {{ .Values.mcpContextForge.tls.caCerts | quote }}
+            {{- end }}
+            {{- if .Values.mcpContextForge.tls.certReqs }}
+            - name: CERT_REQS
+              value: {{ .Values.mcpContextForge.tls.certReqs | quote }}
+            {{- end }}
+            {{- end }}
+
             # ---------- EXTRA ENV (user-defined) ----------
 
             # ---------- RATE LIMITER REDIS (Optional) ----------
@@ -303,14 +325,15 @@ spec:
           {{- end }}
           {{- end }}
 
+          {{- $probeScheme := ternary "HTTPS" "HTTP" .Values.mcpContextForge.tls.enabled -}}
           {{- with .Values.mcpContextForge.probes.readiness }}
           readinessProbe:
-{{- include "helpers.renderProbe" (dict "probe" . "root" $) | nindent 12 }}
+{{- include "helpers.renderProbe" (dict "probe" (merge (dict "scheme" $probeScheme) .) "root" $) | nindent 12 }}
           {{- end }}
 
           {{- with .Values.mcpContextForge.probes.liveness }}
           livenessProbe:
-{{- include "helpers.renderProbe" (dict "probe" . "root" $) | nindent 12 }}
+{{- include "helpers.renderProbe" (dict "probe" (merge (dict "scheme" $probeScheme) .) "root" $) | nindent 12 }}
           {{- end }}
 
           # Resource requests / limits
@@ -325,6 +348,11 @@ spec:
               mountPath: /app/{{ $pluginsConfigFile }}
               subPath: config.yaml
           {{- end }}
+          {{- if .Values.mcpContextForge.tls.enabled }}
+            - name: gateway-tls-certs
+              mountPath: {{ .Values.mcpContextForge.tls.mountPath | quote }}
+              readOnly: true
+          {{- end }}
       volumes:
         - name: tmp
           emptyDir: {}
@@ -335,4 +363,9 @@ spec:
             items:
               - key: config.yaml
                 path: config.yaml
+      {{- end }}
+      {{- if .Values.mcpContextForge.tls.enabled }}
+        - name: gateway-tls-certs
+          secret:
+            secretName: {{ required "mcpContextForge.tls.secretName is required when mcpContextForge.tls.enabled=true" .Values.mcpContextForge.tls.secretName }}
       {{- end }}

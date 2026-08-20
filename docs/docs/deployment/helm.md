@@ -663,6 +663,8 @@ flowchart TD
     | `pgadmin.enabled`                            | `false`     | Enable PgAdmin for DB UI                         |
     | `redisCommander.enabled`                     | `false`     | Enable Redis Commander for Redis UI              |
     | `rbac.create`                                | `true`      | Automatically create Role/RoleBinding            |
+    | `mcpContextForge.tls.enabled`                | `false`     | Enable direct HTTPS on the gateway pod           |
+    | `mcpContextForge.tls.secretName`             | `""`        | Name of the pre-created `kubernetes.io/tls` Secret |
 
     📝 For all possible options, see the full [`values.yaml`](https://github.com/IBM/mcp-context-forge/blob/main/charts/mcp-stack/values.yaml) file in the chart repository.
 
