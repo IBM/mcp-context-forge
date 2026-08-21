@@ -226,6 +226,43 @@ class Vault(Plugin):
 
         return system_key, auth_header
 
+    async def _load_a2a_agent_metadata(self, agent_id: str) -> dict | None:
+        """Load A2A agent metadata from database.
+
+        Args:
+            agent_id: A2A agent identifier.
+
+        Returns:
+            Agent metadata dict with tags, endpoint_url, etc., or None if not found.
+        """
+        try:
+            # First-Party
+            from mcpgateway.db import A2AAgent as DbA2AAgent, get_db  # pylint: disable=import-outside-toplevel
+            from sqlalchemy import select  # pylint: disable=import-outside-toplevel
+
+            gen = get_db()
+            db = next(gen)
+            try:
+                agent = db.execute(select(DbA2AAgent).where(DbA2AAgent.id == agent_id)).scalar_one_or_none()
+                if not agent:
+                    logger.warning("A2A agent %s not found in database", agent_id)
+                    return None
+
+                # Build a dict structure matching what PydanticA2AAgent would provide
+                return {
+                    "id": agent.id,
+                    "name": agent.name,
+                    "endpoint_url": agent.endpoint_url,
+                    "tags": agent.tags or [],
+                    "agent_type": agent.agent_type,
+                    "auth_type": agent.auth_type,
+                }
+            finally:
+                db.close()
+        except Exception as e:
+            logger.error("Failed to load A2A agent metadata for %s: %s", agent_id, e)
+            return None
+
     async def _resolve_system_from_oauth2_config(self, server_id: str | None) -> str | None:
         """Resolve the vault system key from a gateway's OAuth2 config (gateway-only).
 
@@ -370,8 +407,17 @@ class Vault(Plugin):
         if modified:
             logger.debug("Injected auth header for system: %s", system_key)
         elif not token_value:
-            # Even if we didn't modify headers (no token match), we still removed the vault header
-            logger.warning("Vault tokens provided but no match found for system '%s' - possible misconfiguration", system_key)
+            # No vault token found for the expected system. Since the target has a system tag
+            # indicating it expects vault token injection, strip any existing Authorization header
+            # to prevent wrong credentials from being forwarded.
+            if "authorization" in headers:
+                del headers["authorization"]
+                logger.warning(
+                    "Vault tokens provided but no match found for system '%s' - stripped Authorization header to prevent credential leakage (possible misconfiguration)",
+                    system_key,
+                )
+            else:
+                logger.warning("Vault tokens provided but no match found for system '%s' - possible misconfiguration", system_key)
 
         # Always return replacement headers since the vault header was stripped
         return HttpHeaderPayload(root=headers)
@@ -389,14 +435,34 @@ class Vault(Plugin):
         logger.debug("Processing tool pre-invoke for tool %s", payload.name)
         logger.debug("Gateway metadata for server %s", context.global_context.server_id)
 
+        # Try gateway metadata first (standard MCP tools)
         gateway_metadata = context.global_context.metadata.get("gateway")
         destination_url = get_attr(gateway_metadata, "url", None)
+        metadata_source = gateway_metadata
+
+        # Fallback: check if this is an A2A-backed tool
+        if not gateway_metadata:
+            tool_metadata = context.global_context.metadata.get("tool")
+            if tool_metadata:
+                # Check if tool has a2a_agent_id annotation (indicates A2A-backed tool)
+                annotations = get_attr(tool_metadata, "annotations", {})
+                a2a_agent_id = annotations.get("a2a_agent_id") if isinstance(annotations, dict) else None
+
+                if a2a_agent_id:
+                    logger.debug("Tool %s is backed by A2A agent %s, loading agent metadata", payload.name, a2a_agent_id)
+                    # Load A2A agent metadata from database
+                    agent_metadata = await self._load_a2a_agent_metadata(a2a_agent_id)
+                    if agent_metadata:
+                        metadata_source = agent_metadata
+                        destination_url = get_attr(agent_metadata, "endpoint_url", None)
+                        logger.debug("Loaded A2A agent metadata for tool %s", payload.name)
+
         destination_url = str(destination_url) if destination_url else None
 
         system_key: str | None = None
         auth_header: str | None = None
         if self._sconfig.system_handling == SystemHandling.TAG:
-            system_key, auth_header = self._resolve_system_and_auth_from_tags(gateway_metadata)
+            system_key, auth_header = self._resolve_system_and_auth_from_tags(metadata_source)
         elif self._sconfig.system_handling == SystemHandling.OAUTH2_CONFIG:
             system_key = await self._resolve_system_from_oauth2_config(context.global_context.server_id)
 

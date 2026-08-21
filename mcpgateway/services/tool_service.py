@@ -6700,7 +6700,8 @@ class ToolService(BaseService):
                         )
                         if not settings.enable_sensitive_header_passthrough:
                             headers = filter_sensitive_headers(headers)
-                    plugin_headers = filter_sensitive_headers(headers)
+                    # Pass headers to plugin - respect the sensitive header passthrough setting
+                    plugin_headers = filter_sensitive_headers(headers) if not settings.enable_sensitive_header_passthrough else headers
 
                     # Plugin hook: tool pre-invoke for A2A
                     plugin_manager = await self._get_plugin_manager(plugin_context_id)
@@ -6737,6 +6738,12 @@ class ToolService(BaseService):
                                     if not settings.enable_sensitive_header_passthrough:
                                         safe_headers = filter_sensitive_headers(safe_headers)
                                     headers.update(safe_headers)
+
+                    # Defense in depth: strip X-Vault-Tokens (case-insensitive) from outbound
+                    # headers. The Vault plugin removes this header when it processes the token,
+                    # but stripping unconditionally prevents leakage when the plugin is disabled,
+                    # errors in permissive mode, or the header is mistakenly in passthrough_allowed.
+                    headers = {hk: hv for hk, hv in headers.items() if hk.lower() != "x-vault-tokens"}
 
                     prepared = prepare_a2a_invocation(
                         agent_type=a2a_agent_type,
