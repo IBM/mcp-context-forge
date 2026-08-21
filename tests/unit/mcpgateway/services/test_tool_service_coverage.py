@@ -9829,8 +9829,16 @@ class TestInvokeToolMcpSseTimeoutAndErrors:
             mock_mbuf.return_value = MagicMock()
             mock_timeout_counter.labels.return_value.inc = MagicMock()
 
-            with pytest.raises(ToolTimeoutError, match="timed out"):
-                await tool_service.invoke_tool(db, "test_tool", {}, plugin_context_table=context_table)
+            # After the MCP protocol fix, timeouts return structured error responses
+            # instead of raising exceptions
+            result = await tool_service.invoke_tool(db, "test_tool", {}, plugin_context_table=context_table)
+
+            # Verify the result is a proper MCP error response
+            assert result is not None
+            assert result.is_error is True
+            assert hasattr(result, "content")
+            assert len(result.content) > 0
+            assert "timed out" in str(result.content[0])
 
         ctx.set_state.assert_called_with("cb_timeout_failure", True)
         plugin_manager.invoke_hook.assert_awaited()
@@ -9883,8 +9891,17 @@ class TestInvokeToolMcpSseTimeoutAndErrors:
             mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
             mock_mbuf.return_value = MagicMock()
 
-            with pytest.raises(ToolInvocationError, match="root"):
-                await tool_service.invoke_tool(db, "test_tool", {})
+            # After the MCP protocol fix, exceptions return structured error responses
+            # instead of raising ToolInvocationError
+            result = await tool_service.invoke_tool(db, "test_tool", {})
+
+            # Verify the result is a proper MCP error response
+            assert result is not None
+            assert result.is_error is True
+            assert hasattr(result, "content")
+            assert len(result.content) > 0
+            # The root cause "root" should be in the error message
+            assert "root" in str(result.content[0])
 
 
 # ---------------------------------------------------------------------------
@@ -10087,8 +10104,16 @@ class TestInvokeToolMcpStreamableHttpCoverage:
             mock_mbuf.return_value = MagicMock()
             mock_timeout_counter.labels.return_value.inc = MagicMock()
 
-            with pytest.raises(ToolTimeoutError, match="timed out"):
-                await tool_service.invoke_tool(db, "test_tool", {})
+            # After the MCP protocol fix, timeouts return structured error responses
+            # instead of raising exceptions
+            result = await tool_service.invoke_tool(db, "test_tool", {})
+
+            # Verify the result is a proper MCP error response
+            assert result is not None
+            assert result.is_error is True
+            assert hasattr(result, "content")
+            assert len(result.content) > 0
+            assert "timed out" in str(result.content[0])
 
         plugin_manager.invoke_hook.assert_awaited()
 
@@ -10140,8 +10165,17 @@ class TestInvokeToolMcpStreamableHttpCoverage:
             mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
             mock_mbuf.return_value = MagicMock()
 
-            with pytest.raises(ToolInvocationError, match="root"):
-                await tool_service.invoke_tool(db, "test_tool", {})
+            # After the MCP protocol fix, exceptions return structured error responses
+            # instead of raising ToolInvocationError
+            result = await tool_service.invoke_tool(db, "test_tool", {})
+
+            # Verify the result is a proper MCP error response
+            assert result is not None
+            assert result.is_error is True
+            assert hasattr(result, "content")
+            assert len(result.content) > 0
+            # The root cause "root" should be in the error message
+            assert "root" in str(result.content[0])
 
 
 class TestInvokeToolLookupLogic:
