@@ -1887,7 +1887,10 @@ async def call_tool(
                     return converted
 
                 unstructured = _rehydrate_content_items(result_data.get("content", []))
-                structured = result_data.get("structuredContent") or result_data.get("structured_content")
+                # Use explicit None check to preserve empty dicts (valid MCP responses)
+                structured = result_data.get("structuredContent")
+                if structured is None:
+                    structured = result_data.get("structured_content")
                 if not isinstance(structured, dict):
                     structured = None
                 is_error = bool(result_data.get("isError") or result_data.get("is_error"))
