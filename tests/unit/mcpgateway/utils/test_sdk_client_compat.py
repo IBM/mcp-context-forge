@@ -413,7 +413,7 @@ async def test_compat_shim_factory_path_receives_kwargs() -> None:
     from contextlib import asynccontextmanager
 
     # Third-Party
-    import httpx
+    import httpx2
 
     # First-Party
     from mcpgateway.utils import streamable_http_compat as compat
@@ -422,7 +422,7 @@ async def test_compat_shim_factory_path_receives_kwargs() -> None:
 
     def factory(**kwargs):
         captured.update(kwargs)
-        return httpx.AsyncClient()
+        return httpx2.AsyncClient()
 
     @asynccontextmanager
     async def fake_sdk_acm(url, http_client):
@@ -442,7 +442,7 @@ async def test_compat_shim_default_client_applies_kwargs() -> None:
     from contextlib import asynccontextmanager
 
     # Third-Party
-    import httpx
+    import httpx2
 
     # First-Party
     from mcpgateway.utils import streamable_http_compat as compat
@@ -450,10 +450,10 @@ async def test_compat_shim_default_client_applies_kwargs() -> None:
     @asynccontextmanager
     async def fake_sdk_acm(url, http_client):
         assert http_client.headers["A"] == "b"
-        assert isinstance(http_client.timeout, httpx.Timeout)
+        assert isinstance(http_client.timeout, httpx2.Timeout)
         yield ("r", "w")
 
-    auth = httpx.BasicAuth(username="u", password="p")  # pragma: allowlist secret
+    auth = httpx2.BasicAuth(username="u", password="p")  # pragma: allowlist secret
     with patch.object(compat, "_sdk_streamable_http_client", side_effect=fake_sdk_acm):
         async with compat.streamable_http_client("http://x.example/mcp", headers={"A": "b"}, timeout=5.0, auth=auth) as streams:
             assert streams == ("r", "w")
