@@ -18,6 +18,7 @@ import asyncio
 import base64
 import binascii
 from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import lru_cache
 import json  # NOTE: httpx uses stdlib json, not orjson, so response.json() raises json.JSONDecodeError
@@ -1073,6 +1074,33 @@ def _build_retry_policy_config(raw_cfg: Optional[Dict[str, Any]], tool_name: str
     effective_cfg["max_retries"] = min(effective_cfg["max_retries"], settings.max_tool_retries)
 
     return effective_cfg
+
+
+@dataclass
+class ResolvedTool:
+    """Result of resolving and authorizing a tool name for invocation.
+
+    Shared return type of ``ToolService._resolve_tool_for_invocation``, called by both
+    ``invoke_tool`` (live invocation) and ``preview_tool_invocation`` (dry-run, #5629) so
+    tool lookup, RBAC, and visibility rules can never drift between the two paths.
+
+    Attributes:
+        is_direct_proxy: True when resolved via the X-Context-Forge-Gateway-Id direct-proxy
+            header (no DB tool row involved).
+        tool: ORM Tool row when resolved via a DB/cache-miss lookup; None on a cache hit or
+            in direct-proxy mode.
+        gateway: ORM Gateway row eager-loaded alongside ``tool``; None when the tool has no
+            gateway, on a cache hit, or in direct-proxy mode.
+        tool_payload: Flattened tool fields, from a cache hit, a cache-miss ORM conversion,
+            or direct-proxy synthesis. Always populated.
+        gateway_payload: Flattened gateway fields, or None when the tool has no gateway.
+    """
+
+    is_direct_proxy: bool
+    tool: Optional[DbTool]
+    gateway: Optional[DbGateway]
+    tool_payload: Dict[str, Any]
+    gateway_payload: Optional[Dict[str, Any]]
 
 
 class ToolService(BaseService):
@@ -4819,77 +4847,46 @@ class ToolService(BaseService):
                 retry_attempt=retry_attempt + 1,
             )
 
-    async def invoke_tool(
+    async def _resolve_tool_for_invocation(
         self,
         db: Session,
         name: str,
-        arguments: Dict[str, Any],
-        request_headers: Optional[Dict[str, str]] = None,
-        app_user_email: Optional[str] = None,
-        user_email: Optional[str] = None,
-        token_teams: Optional[List[str]] = None,
-        server_id: Optional[str] = None,
-        plugin_context_table: Optional[PluginContextTable] = None,
-        plugin_global_context: Optional[GlobalContext] = None,
-        meta_data: Optional[Dict[str, Any]] = None,
-        skip_pre_invoke: bool = False,
-        require_app_visible: bool = False,
-        require_model_visible: bool = False,
-        retry_attempt: int = 0,
-    ) -> ToolResult:
-        """
-        Invoke a registered tool and record execution metrics.
+        request_headers: Optional[Dict[str, str]],
+        user_email: Optional[str],
+        token_teams: Optional[List[str]],
+        server_id: Optional[str],
+        require_app_visible: bool,
+        require_model_visible: bool,
+    ) -> ResolvedTool:
+        """Resolve a tool name to an authorized, invocable target.
+
+        Side-effect-free (beyond cache reads/writes and the read-only DB queries already
+        required to answer "is this tool invocable by this caller"): no network call, no
+        plugin hook, no dispatch. Extracted from ``invoke_tool`` (#5629) so the live
+        invocation path and the dry-run preview path (``preview_tool_invocation``) share
+        one resolution/RBAC implementation and cannot silently drift apart.
 
         Args:
             db: Database session.
-            name: Name of tool to invoke.
-            arguments: Tool arguments.
-            request_headers (Optional[Dict[str, str]], optional): Headers from the request to pass through.
-                Defaults to None.
-            app_user_email (Optional[str], optional): ContextForge user email for OAuth token retrieval.
-                Required for OAuth-protected gateways.
-            user_email (Optional[str], optional): User email for authorization checks.
-                None = unauthenticated request.
-            token_teams (Optional[List[str]], optional): Team IDs from JWT token for authorization.
-                None = unrestricted admin, [] = public-only, [...] = team-scoped.
-            server_id (Optional[str], optional): Virtual server ID for server scoping enforcement.
-                If provided, tool must be attached to this server.
-            plugin_context_table: Optional plugin context table from previous hooks for cross-hook state sharing.
-            plugin_global_context: Optional global context from middleware for consistency across hooks.
-            meta_data: Optional metadata dictionary for additional context (e.g., request ID).
-            skip_pre_invoke: When True, skip TOOL_PRE_INVOKE hooks (used by trusted Rust fallback path).
-            require_app_visible: When True, deny execution unless the resolved tool is MCP Apps app-visible.
-            require_model_visible: When True, deny execution unless the resolved tool is model-visible.
-            retry_attempt: Zero-based retry counter; 0 = original call.  Incremented by the retry
-                loop and compared against ``settings.max_tool_retries``.
+            name: Name of tool to resolve.
+            request_headers: Headers from the request (used for X-Context-Forge-Gateway-Id
+                direct-proxy detection).
+            user_email: User email for authorization checks. None = unauthenticated request.
+            token_teams: Team IDs from JWT token for authorization. None = unrestricted admin,
+                [] = public-only, [...] = team-scoped.
+            server_id: Virtual server ID for server scoping enforcement. If provided, tool
+                must be attached to this server.
+            require_app_visible: When True, deny resolution unless the tool is MCP Apps
+                app-visible.
+            require_model_visible: When True, deny resolution unless the tool is model-visible.
 
         Returns:
-            Tool invocation result.
+            ResolvedTool: The resolved, authorized tool (or direct-proxy target).
 
         Raises:
-            ToolNotFoundError: If tool not found or access denied.
-            ToolInvocationError: If invocation fails or A2A authentication decryption fails.
-            ToolTimeoutError: If tool invocation times out.
-            PluginViolationError: If plugin blocks tool invocation.
-            PluginError: If encounters issue with plugin.
-
-        Examples:
-            >>> # Note: This method requires extensive mocking of SQLAlchemy models,
-            >>> # database relationships, and caching infrastructure, which is not
-            >>> # suitable for doctests. See tests/unit/mcpgateway/services/test_tool_service.py
-            >>> pass  # doctest: +SKIP
+            ToolNotFoundError: If tool not found, inaccessible, or fails a visibility gate.
+            ToolInvocationError: If the tool name is ambiguous or the tool is deprecated.
         """
-        # pylint: disable=comparison-with-callable
-        logger.info("Invoking tool: %s with arguments: %s and headers: %s, server_id=%s", name, arguments.keys() if arguments else None, request_headers.keys() if request_headers else None, server_id)
-        # ═══════════════════════════════════════════════════════════════════════════
-        # PHASE 0: Set request_headers_var ContextVar so downstream_session_id_from_request_context() can access it
-        # This is needed for upstream session registry to work correctly
-        # ═══════════════════════════════════════════════════════════════════════════
-        # First-Party
-        from mcpgateway.transports.context import request_headers_var  # pylint: disable=import-outside-toplevel
-
-        if request_headers:
-            request_headers_var.set(request_headers)
         # ═══════════════════════════════════════════════════════════════════════════
         # PHASE 1: Check for X-Context-Forge-Gateway-Id header for direct_proxy mode (no DB lookup)
         # ═══════════════════════════════════════════════════════════════════════════
@@ -5064,6 +5061,91 @@ class ToolService(BaseService):
                 raise ToolNotFoundError(f"Tool not found: {name}")
         elif require_model_visible and not is_direct_proxy and not is_model_visible_tool(tool_payload):
             raise ToolNotFoundError(f"Tool not found: {name}")
+
+        return ResolvedTool(is_direct_proxy=is_direct_proxy, tool=tool, gateway=gateway, tool_payload=tool_payload, gateway_payload=gateway_payload)
+
+    async def invoke_tool(
+        self,
+        db: Session,
+        name: str,
+        arguments: Dict[str, Any],
+        request_headers: Optional[Dict[str, str]] = None,
+        app_user_email: Optional[str] = None,
+        user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
+        server_id: Optional[str] = None,
+        plugin_context_table: Optional[PluginContextTable] = None,
+        plugin_global_context: Optional[GlobalContext] = None,
+        meta_data: Optional[Dict[str, Any]] = None,
+        skip_pre_invoke: bool = False,
+        require_app_visible: bool = False,
+        require_model_visible: bool = False,
+        retry_attempt: int = 0,
+    ) -> ToolResult:
+        """
+        Invoke a registered tool and record execution metrics.
+
+        Args:
+            db: Database session.
+            name: Name of tool to invoke.
+            arguments: Tool arguments.
+            request_headers (Optional[Dict[str, str]], optional): Headers from the request to pass through.
+                Defaults to None.
+            app_user_email (Optional[str], optional): ContextForge user email for OAuth token retrieval.
+                Required for OAuth-protected gateways.
+            user_email (Optional[str], optional): User email for authorization checks.
+                None = unauthenticated request.
+            token_teams (Optional[List[str]], optional): Team IDs from JWT token for authorization.
+                None = unrestricted admin, [] = public-only, [...] = team-scoped.
+            server_id (Optional[str], optional): Virtual server ID for server scoping enforcement.
+                If provided, tool must be attached to this server.
+            plugin_context_table: Optional plugin context table from previous hooks for cross-hook state sharing.
+            plugin_global_context: Optional global context from middleware for consistency across hooks.
+            meta_data: Optional metadata dictionary for additional context (e.g., request ID).
+            skip_pre_invoke: When True, skip TOOL_PRE_INVOKE hooks (used by trusted Rust fallback path).
+            require_app_visible: When True, deny execution unless the resolved tool is MCP Apps app-visible.
+            require_model_visible: When True, deny execution unless the resolved tool is model-visible.
+            retry_attempt: Zero-based retry counter; 0 = original call.  Incremented by the retry
+                loop and compared against ``settings.max_tool_retries``.
+
+        Returns:
+            Tool invocation result.
+
+        Raises:
+            ToolNotFoundError: If tool not found or access denied.
+            ToolInvocationError: If invocation fails or A2A authentication decryption fails.
+            ToolTimeoutError: If tool invocation times out.
+            PluginViolationError: If plugin blocks tool invocation.
+            PluginError: If encounters issue with plugin.
+
+        Examples:
+            >>> # Note: This method requires extensive mocking of SQLAlchemy models,
+            >>> # database relationships, and caching infrastructure, which is not
+            >>> # suitable for doctests. See tests/unit/mcpgateway/services/test_tool_service.py
+            >>> pass  # doctest: +SKIP
+        """
+        # pylint: disable=comparison-with-callable
+        logger.info("Invoking tool: %s with arguments: %s and headers: %s, server_id=%s", name, arguments.keys() if arguments else None, request_headers.keys() if request_headers else None, server_id)
+        # ═══════════════════════════════════════════════════════════════════════════
+        # PHASE 0: Set request_headers_var ContextVar so downstream_session_id_from_request_context() can access it
+        # This is needed for upstream session registry to work correctly
+        # ═══════════════════════════════════════════════════════════════════════════
+        # First-Party
+        from mcpgateway.transports.context import request_headers_var  # pylint: disable=import-outside-toplevel
+
+        if request_headers:
+            request_headers_var.set(request_headers)
+        # ═══════════════════════════════════════════════════════════════════════════
+        # PHASE 1: Resolve tool name to an authorized, invocable target.
+        # Shared with preview_tool_invocation (#5629) via _resolve_tool_for_invocation
+        # so tool lookup, RBAC, and visibility rules cannot drift between the two paths.
+        # ═══════════════════════════════════════════════════════════════════════════
+        resolved = await self._resolve_tool_for_invocation(db, name, request_headers, user_email, token_teams, server_id, require_app_visible, require_model_visible)
+        is_direct_proxy = resolved.is_direct_proxy
+        tool = resolved.tool
+        gateway = resolved.gateway
+        tool_payload = resolved.tool_payload
+        gateway_payload = resolved.gateway_payload
 
         # Extract A2A-related data from annotations (will be used after db.close() if A2A tool)
         tool_annotations = tool_payload.get("annotations") or {}
