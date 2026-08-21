@@ -822,18 +822,18 @@ class TestGatewayService:
         assert used_headers["Authorization"] == "Bearer " + "A" * 48 + "B" * 20
 
     @pytest.mark.asyncio
-    async def test_initialize_gateway_rejects_stored_credential_with_non_ascii(self, gateway_service):
+    async def test_initialize_gateway_leaves_other_non_ascii_stored_credential_untouched(self, gateway_service):
         """A previously-stored credential containing genuine non-ASCII content (not a safely
-        strippable format character) is rejected with a clear GatewayCredentialError before
-        any connection is attempted."""
-        contaminated = encode_auth({"Authorization": "Bearer café-token"})
-        gateway_service.connect_to_sse_server = AsyncMock()
+        strippable format character) is passed through unchanged -- only invisible format
+        characters are stripped, matching the project's existing support for international
+        text in credentials/headers."""
+        contaminated = encode_auth({"Authorization": "Bearer café-token"})  # pragma: allowlist secret
+        gateway_service.connect_to_sse_server = AsyncMock(return_value=({}, [], [], [], []))
 
-        with pytest.raises(GatewayCredentialError) as exc_info:
-            await gateway_service._initialize_gateway("https://example.com/mcp", authentication=contaminated, transport="SSE", auth_type="bearer")
+        await gateway_service._initialize_gateway("https://example.com/mcp", authentication=contaminated, transport="SSE", auth_type="bearer")
 
-        gateway_service.connect_to_sse_server.assert_not_called()
-        assert "U+00E9" in str(exc_info.value)
+        used_headers = gateway_service.connect_to_sse_server.call_args.args[1]
+        assert used_headers["Authorization"] == "Bearer café-token"
 
     @pytest.mark.asyncio
     async def test_register_gateway_integrity_error(self, gateway_service, test_db):
@@ -6345,10 +6345,10 @@ class TestCheckSingleGatewayHealth:
         assert used_headers["Authorization"] == "Bearer " + "A" * 10 + "B" * 10
 
     @pytest.mark.asyncio
-    async def test_health_check_non_ascii_credential_marks_unhealthy(self, gateway_service, monkeypatch):
+    async def test_health_check_leaves_other_non_ascii_credential_untouched(self, gateway_service, monkeypatch):
         """A stored credential with genuine non-ASCII content (not a safely strippable
-        format character) fails the health check with a clear reason instead of a bare
-        UnicodeEncodeError, and marks the gateway unhealthy like any other failure."""
+        format character) is sent as-is -- only invisible format characters are stripped,
+        matching the project's existing support for international text in credentials."""
         gw = _make_gateway(
             id="gw-1",
             name="sse-gw",
@@ -6357,7 +6357,7 @@ class TestCheckSingleGatewayHealth:
             reachable=True,
             transport="sse",
             auth_type="bearer",
-            auth_value={"Authorization": "Bearer café-token"},
+            auth_value={"Authorization": "Bearer café-token"},  # pragma: allowlist secret
             auth_query_params=None,
             ca_certificate=None,
             ca_certificate_sig=None,
@@ -6366,11 +6366,21 @@ class TestCheckSingleGatewayHealth:
             refresh_interval_seconds=None,
         )
 
+        mock_response = AsyncMock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status = MagicMock()
+        mock_stream_response = AsyncMock()
+        mock_stream_response.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_stream_response.__aexit__ = AsyncMock(return_value=False)
+
         mock_client = MagicMock()
+        mock_client.stream = MagicMock(return_value=mock_stream_response)
+
         mock_ctx = AsyncMock()
         mock_ctx.__aenter__ = AsyncMock(return_value=mock_client)
         mock_ctx.__aexit__ = AsyncMock(return_value=False)
         monkeypatch.setattr("mcpgateway.services.gateway_service.get_isolated_http_client", lambda **kw: mock_ctx)
+        monkeypatch.setattr("mcpgateway.services.gateway_service.fresh_db_session", MagicMock())
         monkeypatch.setattr(
             "mcpgateway.services.gateway_service.settings",
             MagicMock(
@@ -6386,8 +6396,9 @@ class TestCheckSingleGatewayHealth:
 
         await gateway_service._check_single_gateway_health(gw)
 
-        gateway_service._handle_gateway_failure.assert_awaited_once()
-        mock_client.stream.assert_not_called()
+        gateway_service._handle_gateway_failure.assert_not_called()
+        used_headers = mock_client.stream.call_args.kwargs["headers"]
+        assert used_headers["Authorization"] == "Bearer café-token"
 
     @pytest.mark.asyncio
     async def test_health_check_oauth_client_credentials(self, gateway_service, monkeypatch):

@@ -647,7 +647,7 @@ def _encode_auth_headers_list(auth_headers: List[Any]) -> Optional[str]:
             value = ""
         if not isinstance(value, str):
             raise ValueError(f"Invalid header value type for '{key}': '{type(value).__name__}'. Header values must be strings.")
-        value = SecurityValidator.sanitize_credential_value(value, f"header value for '{key}'")
+        value = SecurityValidator.sanitize_credential_value(value)
 
         # Surrounding whitespace is a common copy/paste artifact and is trimmed. Embedded
         # whitespace is not: it produces an invalid HTTP header name that would otherwise be
@@ -724,7 +724,7 @@ def _assemble_tool_authheaders(values: Dict[str, Any]) -> Dict[str, Any]:
     header_key = values.get("auth_header_key", "")
     header_value = values.get("auth_header_value", "")
     if header_key and header_value:
-        header_value = SecurityValidator.sanitize_credential_value(header_value, "auth_header_value")
+        header_value = SecurityValidator.sanitize_credential_value(header_value)
         return {"auth_type": "authheaders", "auth_value": encode_auth({header_key: header_value})}
 
     return {"auth_type": "authheaders", "auth_value": None}
@@ -1144,13 +1144,13 @@ class ToolCreate(BaseModel):
         auth_type = values.get("auth_type")
         if auth_type and auth_type.lower() != "one_time_auth":
             if auth_type.lower() == "basic":
-                username = SecurityValidator.sanitize_credential_value(values.get("auth_username", ""), "auth_username")
-                password = SecurityValidator.sanitize_credential_value(values.get("auth_password", ""), "auth_password")
+                username = SecurityValidator.sanitize_credential_value(values.get("auth_username", ""))
+                password = SecurityValidator.sanitize_credential_value(values.get("auth_password", ""))
                 creds = base64.b64encode(f"{username}:{password}".encode("utf-8")).decode()
                 encoded_auth = encode_auth({"Authorization": f"Basic {creds}"})
                 values["auth"] = {"auth_type": "basic", "auth_value": encoded_auth}
             elif auth_type.lower() == "bearer":
-                token = SecurityValidator.sanitize_credential_value(values.get("auth_token", ""), "auth_token")
+                token = SecurityValidator.sanitize_credential_value(values.get("auth_token", ""))
                 encoded_auth = encode_auth({"Authorization": f"Bearer {token}"})
                 values["auth"] = {"auth_type": "bearer", "auth_value": encoded_auth}
             elif auth_type.lower() == "authheaders":
@@ -1605,13 +1605,13 @@ class ToolUpdate(BaseModelWithConfigDict):
         auth_type = values.get("auth_type")
         if auth_type and auth_type.lower() != "one_time_auth":
             if auth_type.lower() == "basic":
-                username = SecurityValidator.sanitize_credential_value(values.get("auth_username", ""), "auth_username")
-                password = SecurityValidator.sanitize_credential_value(values.get("auth_password", ""), "auth_password")
+                username = SecurityValidator.sanitize_credential_value(values.get("auth_username", ""))
+                password = SecurityValidator.sanitize_credential_value(values.get("auth_password", ""))
                 creds = base64.b64encode(f"{username}:{password}".encode("utf-8")).decode()
                 encoded_auth = encode_auth({"Authorization": f"Basic {creds}"})
                 values["auth"] = {"auth_type": "basic", "auth_value": encoded_auth}
             elif auth_type.lower() == "bearer":
-                token = SecurityValidator.sanitize_credential_value(values.get("auth_token", ""), "auth_token")
+                token = SecurityValidator.sanitize_credential_value(values.get("auth_token", ""))
                 encoded_auth = encode_auth({"Authorization": f"Bearer {token}"})
                 values["auth"] = {"auth_type": "bearer", "auth_value": encoded_auth}
             elif auth_type.lower() == "authheaders":
@@ -3385,8 +3385,8 @@ class GatewayCreate(BaseModelWithConfigDict):
             if not username or not password:
                 raise ValueError("For 'basic' auth, both 'auth_username' and 'auth_password' must be provided.")
 
-            username = SecurityValidator.sanitize_credential_value(username, "auth_username")
-            password = SecurityValidator.sanitize_credential_value(password, "auth_password")
+            username = SecurityValidator.sanitize_credential_value(username)
+            password = SecurityValidator.sanitize_credential_value(password)
             creds = base64.b64encode(f"{username}:{password}".encode("utf-8")).decode()
             return encode_auth({"Authorization": f"Basic {creds}"})
 
@@ -3397,7 +3397,7 @@ class GatewayCreate(BaseModelWithConfigDict):
             if not token:
                 raise ValueError("For 'bearer' auth, 'auth_token' must be provided.")
 
-            token = SecurityValidator.sanitize_credential_value(token, "auth_token")
+            token = SecurityValidator.sanitize_credential_value(token)
             return encode_auth({"Authorization": f"Bearer {token}"})
 
         if auth_type == "oauth":
@@ -3420,7 +3420,7 @@ class GatewayCreate(BaseModelWithConfigDict):
             if not header_key or not header_value:
                 raise ValueError("For 'authheaders' auth, either 'auth_headers' list or both 'auth_header_key' and 'auth_header_value' must be provided.")
 
-            header_value = SecurityValidator.sanitize_credential_value(header_value, "auth_header_value")
+            header_value = SecurityValidator.sanitize_credential_value(header_value)
             return encode_auth({header_key: header_value})
 
         if auth_type == "one_time_auth":
@@ -3732,8 +3732,8 @@ class GatewayUpdate(BaseModelWithConfigDict):
             if not username or not password:
                 raise ValueError("For 'basic' auth, both 'auth_username' and 'auth_password' must be provided.")
 
-            username = SecurityValidator.sanitize_credential_value(username, "auth_username")
-            password = SecurityValidator.sanitize_credential_value(password, "auth_password")
+            username = SecurityValidator.sanitize_credential_value(username)
+            password = SecurityValidator.sanitize_credential_value(password)
             creds = base64.b64encode(f"{username}:{password}".encode("utf-8")).decode()
             return encode_auth({"Authorization": f"Basic {creds}"})
 
@@ -3744,7 +3744,7 @@ class GatewayUpdate(BaseModelWithConfigDict):
             if not token:
                 raise ValueError("For 'bearer' auth, 'auth_token' must be provided.")
 
-            token = SecurityValidator.sanitize_credential_value(token, "auth_token")
+            token = SecurityValidator.sanitize_credential_value(token)
             return encode_auth({"Authorization": f"Bearer {token}"})
 
         if auth_type == "oauth":
@@ -3767,7 +3767,7 @@ class GatewayUpdate(BaseModelWithConfigDict):
             if not header_key or not header_value:
                 raise ValueError("For 'authheaders' auth, either 'auth_headers' list or both 'auth_header_key' and 'auth_header_value' must be provided.")
 
-            header_value = SecurityValidator.sanitize_credential_value(header_value, "auth_header_value")
+            header_value = SecurityValidator.sanitize_credential_value(header_value)
             return encode_auth({header_key: header_value})
 
         if auth_type == "one_time_auth":
@@ -5278,8 +5278,8 @@ class A2AAgentCreate(BaseModel):
             if not username or not password:
                 raise ValueError("For 'basic' auth, both 'auth_username' and 'auth_password' must be provided.")
 
-            username = SecurityValidator.sanitize_credential_value(username, "auth_username")
-            password = SecurityValidator.sanitize_credential_value(password, "auth_password")
+            username = SecurityValidator.sanitize_credential_value(username)
+            password = SecurityValidator.sanitize_credential_value(password)
             creds = base64.b64encode(f"{username}:{password}".encode("utf-8")).decode()
             return encode_auth({"Authorization": f"Basic {creds}"})
 
@@ -5290,7 +5290,7 @@ class A2AAgentCreate(BaseModel):
             if not token:
                 raise ValueError("For 'bearer' auth, 'auth_token' must be provided.")
 
-            token = SecurityValidator.sanitize_credential_value(token, "auth_token")
+            token = SecurityValidator.sanitize_credential_value(token)
             return encode_auth({"Authorization": f"Bearer {token}"})
 
         if auth_type == "oauth":
@@ -5313,7 +5313,7 @@ class A2AAgentCreate(BaseModel):
             if not header_key or not header_value:
                 raise ValueError("For 'authheaders' auth, either 'auth_headers' list or both 'auth_header_key' and 'auth_header_value' must be provided.")
 
-            header_value = SecurityValidator.sanitize_credential_value(header_value, "auth_header_value")
+            header_value = SecurityValidator.sanitize_credential_value(header_value)
             return encode_auth({header_key: header_value})
 
         if auth_type == "one_time_auth":
@@ -5621,8 +5621,8 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
             if not username or not password:
                 raise ValueError("For 'basic' auth, both 'auth_username' and 'auth_password' must be provided.")
 
-            username = SecurityValidator.sanitize_credential_value(username, "auth_username")
-            password = SecurityValidator.sanitize_credential_value(password, "auth_password")
+            username = SecurityValidator.sanitize_credential_value(username)
+            password = SecurityValidator.sanitize_credential_value(password)
             creds = base64.b64encode(f"{username}:{password}".encode("utf-8")).decode()
             return encode_auth({"Authorization": f"Basic {creds}"})
 
@@ -5633,7 +5633,7 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
             if not token:
                 raise ValueError("For 'bearer' auth, 'auth_token' must be provided.")
 
-            token = SecurityValidator.sanitize_credential_value(token, "auth_token")
+            token = SecurityValidator.sanitize_credential_value(token)
             return encode_auth({"Authorization": f"Bearer {token}"})
 
         if auth_type == "oauth":
@@ -5656,7 +5656,7 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
             if not header_key or not header_value:
                 raise ValueError("For 'authheaders' auth, either 'auth_headers' list or both 'auth_header_key' and 'auth_header_value' must be provided.")
 
-            header_value = SecurityValidator.sanitize_credential_value(header_value, "auth_header_value")
+            header_value = SecurityValidator.sanitize_credential_value(header_value)
             return encode_auth({header_key: header_value})
 
         if auth_type == "one_time_auth":

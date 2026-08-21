@@ -2369,52 +2369,45 @@ class SecurityValidator:
         return sanitized
 
     @classmethod
-    def sanitize_credential_value(cls, value: Optional[str], field_name: str) -> Optional[str]:
-        """Strip invisible Unicode formatting characters from a credential value and reject any other non-ASCII content.
+    def sanitize_credential_value(cls, value: Optional[str]) -> Optional[str]:
+        """Strip invisible Unicode formatting characters from a credential value.
 
-        HTTP header values must be ASCII; the underlying HTTP client raises a bare
-        ``UnicodeEncodeError`` otherwise, which surfaces as an opaque connection failure far from
-        the credential that caused it. Unicode "format" characters (category ``Cf`` -- e.g. zero-width
-        spaces, the word joiner, byte-order marks) are common copy/paste artifacts from rendered
-        documents and are never a meaningful part of a real credential, so they are stripped
-        silently. Any other non-ASCII character is rejected outright rather than silently altered,
-        since mutating the rest of a secret could turn it into a different-but-plausible value.
+        Unicode "format" characters (category ``Cf`` -- e.g. zero-width spaces, the word
+        joiner, byte-order marks) are common copy/paste artifacts from rendered documents
+        and are never a meaningful part of a real credential. Left in place, they reach
+        the HTTP client unchanged and can trigger a bare ``UnicodeEncodeError`` when the
+        credential is used to build an outbound request header -- which surfaces as an
+        opaque connection failure far from the credential that actually caused it.
+
+        Deliberately leaves every other character untouched, including non-ASCII text:
+        header values may legitimately contain international text (e.g. a custom header
+        carrying CJK content), so only characters that can never be a meaningful part of
+        a credential are removed.
+
+        Non-``str`` input (e.g. a Pydantic ``SecretStr`` some callers pass directly) is
+        returned unchanged: this function only sanitizes plain strings, matching how it
+        was handled before this validation existed.
 
         Args:
             value (Optional[str]): Credential value to sanitize (token, password, header value, etc).
-            field_name (str): Name of the field, used in the error message if validation fails.
 
         Returns:
-            Optional[str]: ``value`` with Unicode format characters removed, or ``value`` unchanged
-                if it was empty/``None``.
-
-        Raises:
-            ValueError: If a non-ASCII, non-format character remains after stripping.
+            Optional[str]: ``value`` with Unicode format characters removed, or ``value``
+                unchanged if it was empty, ``None``, or not a plain string.
 
         Examples:
-            >>> SecurityValidator.sanitize_credential_value('my-token-123', 'auth_token')
+            >>> SecurityValidator.sanitize_credential_value('my-token-123')
             'my-token-123'
-            >>> SecurityValidator.sanitize_credential_value(None, 'auth_token') is None
+            >>> SecurityValidator.sanitize_credential_value(None) is None
             True
-            >>> SecurityValidator.sanitize_credential_value('tok' + '\\u2060' + 'en', 'auth_token')
+            >>> SecurityValidator.sanitize_credential_value('tok' + '\\u2060' + 'en')
             'token'
-            >>> SecurityValidator.sanitize_credential_value('café', 'auth_token')
-            Traceback (most recent call last):
-                ...
-            ValueError: auth_token contains non-ASCII character U+00E9 (LATIN SMALL LETTER E WITH ACUTE) at position 3. HTTP header values must be ASCII -- re-copy this value from a plain-text source.
+            >>> SecurityValidator.sanitize_credential_value('value-with-特殊字符')
+            'value-with-特殊字符'
         """
-        if not value:
+        if not value or not isinstance(value, str):
             return value
-
-        cleaned = "".join(c for c in value if unicodedata.category(c) != "Cf")
-        if not cleaned.isascii():
-            bad_char = next(c for c in cleaned if not c.isascii())
-            raise ValueError(
-                f"{field_name} contains non-ASCII character U+{ord(bad_char):04X} "
-                f"({unicodedata.name(bad_char, 'UNKNOWN')}) at position {cleaned.index(bad_char)}. "
-                "HTTP header values must be ASCII -- re-copy this value from a plain-text source."
-            )
-        return cleaned
+        return "".join(c for c in value if unicodedata.category(c) != "Cf")
 
     @classmethod
     def sanitize_json_response(cls, data: Any) -> Any:

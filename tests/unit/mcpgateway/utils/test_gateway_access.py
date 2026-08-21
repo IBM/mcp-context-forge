@@ -175,15 +175,17 @@ class TestBuildGatewayAuthHeaders:
 
         assert headers == {"Authorization": "Bearer " + "A" * 10 + "B" * 10}
 
-    def test_bearer_auth_rejects_non_ascii_stored_token(self):
+    def test_bearer_auth_leaves_other_non_ascii_stored_token_untouched(self):
         """A stored credential with genuine non-ASCII content (not a safely strippable
-        format character) is rejected with a clear error naming the character."""
+        format character) is passed through unchanged -- only invisible format
+        characters are stripped."""
         gateway = MagicMock()
         gateway.auth_type = "bearer"
-        gateway.auth_value = {"Authorization": "Bearer café-token"}
+        gateway.auth_value = {"Authorization": "Bearer café-token"}  # pragma: allowlist secret
 
-        with pytest.raises(ValueError, match="U\\+00E9"):
-            build_gateway_auth_headers(gateway)
+        headers = build_gateway_auth_headers(gateway)
+
+        assert headers == {"Authorization": "Bearer café-token"}
 
 
 # First-Party
