@@ -11,6 +11,7 @@ easily registered with one-click from the admin UI.
 
 # Standard
 import asyncio
+from dataclasses import dataclass
 from datetime import datetime, timezone
 import logging
 from pathlib import Path
@@ -48,6 +49,18 @@ CATALOG_REGISTER_ALREADY_REGISTERED_MSG = "Server already registered"
 
 class CatalogRegistrationPermissionError(PermissionError):
     """Raised when a catalog registration is rejected due to scope/team policy."""
+
+
+@dataclass(frozen=True)
+class _CatalogGatewayMatch:
+    """Caller-visible gateway data needed to derive catalog registration state."""
+
+    gateway_id: str
+    enabled: bool
+    auth_type: Optional[str]
+    oauth_config: Optional[Dict[str, Any]]
+    owner_email: Optional[str]
+    created_via: Optional[str]
 
 
 class CatalogService:
@@ -221,8 +234,8 @@ class CatalogService:
         catalog_data = await self.load_catalog()
         servers = catalog_data.get("catalog_servers", [])
 
-        # Check which servers are already registered
-        registered_urls = set()
+        # Select one deterministic caller-visible gateway match per catalog URL.
+        selected_gateways_by_url: Dict[str, _CatalogGatewayMatch] = {}
         if servers:
             try:
                 # Ensure we're using the correct Gateway model
@@ -233,6 +246,7 @@ class CatalogService:
                 # Include auth_type and oauth_config to distinguish OAuth servers needing setup
                 # from OAuth servers that were manually disabled after configuration
                 stmt = select(
+                    DbGateway.id,
                     DbGateway.url,
                     DbGateway.enabled,
                     DbGateway.auth_type,
@@ -240,37 +254,40 @@ class CatalogService:
                     DbGateway.visibility,
                     DbGateway.team_id,
                     DbGateway.owner_email,
+                    DbGateway.created_via,
                 )
                 result = db.execute(stmt)
-                registered_urls = set()
-                oauth_disabled_urls = set()
                 for row in result:
-                    if len(row) == 4:
-                        url, enabled, auth_type, oauth_config = row
-                        visibility, team_id, owner_email = "public", None, None
-                    else:
-                        url, enabled, auth_type, oauth_config, visibility, team_id, owner_email = row
+                    gateway_id, url, enabled, auth_type, oauth_config, visibility, team_id, owner_email, created_via = row
                     if is_scoped_request and not self._can_view_registered_gateway(db, visibility, team_id, owner_email, user_email, token_teams):
                         continue
-                    registered_urls.add(url)
-                    # Only mark as requiring OAuth config if:
-                    # - disabled AND OAuth auth_type AND oauth_config is empty/None
-                    # This distinguishes unconfigured OAuth servers from manually disabled ones
-                    if not enabled and auth_type == "oauth" and not oauth_config:
-                        oauth_disabled_urls.add(url)
+
+                    candidate = _CatalogGatewayMatch(
+                        gateway_id=str(gateway_id),
+                        enabled=enabled,
+                        auth_type=auth_type,
+                        oauth_config=oauth_config,
+                        owner_email=owner_email,
+                        created_via=created_via,
+                    )
+                    selected = selected_gateways_by_url.get(url)
+                    if selected is None or self._catalog_gateway_match_priority(candidate, user_email) < self._catalog_gateway_match_priority(selected, user_email):
+                        selected_gateways_by_url[url] = candidate
             except Exception as e:
                 logger.warning("Failed to check registered servers: %s", e)
                 # Continue without marking registered servers
-                registered_urls = set()
-                oauth_disabled_urls = set()
+                selected_gateways_by_url = {}
 
         # Convert to CatalogServer objects and mark registered ones
         catalog_servers = []
         for server_data in servers:
             server = CatalogServer(**server_data)
-            server.is_registered = server.url in registered_urls
-            # Mark servers that are registered but disabled due to OAuth config needed
-            server.requires_oauth_config = server.url in oauth_disabled_urls
+            selected_gateway = selected_gateways_by_url.get(server.url)
+            if selected_gateway is not None:
+                server.is_registered = True
+                server.gateway_id = selected_gateway.gateway_id
+                # Only disabled OAuth gateways with no OAuth config still need setup.
+                server.requires_oauth_config = not selected_gateway.enabled and selected_gateway.auth_type == "oauth" and not selected_gateway.oauth_config
             # Set availability based on registration status (registered servers are assumed available)
             # Individual health checks can be done via the /status endpoint
             server.is_available = server.is_registered or server_data.get("is_available", True)
@@ -324,6 +341,31 @@ class CatalogService:
                 logger.debug("Failed to cache catalog response: %s", e)
 
         return response
+
+    @staticmethod
+    def _catalog_gateway_match_priority(match: _CatalogGatewayMatch, user_email: Optional[str]) -> tuple[int, str]:
+        """Return deterministic selection priority for one visible URL match.
+
+        Args:
+            match: Visible gateway candidate.
+            user_email: Authenticated caller email, when available.
+
+        Returns:
+            Priority bucket followed by stable gateway-ID ordering.
+        """
+        caller_owned = bool(user_email and match.owner_email == user_email)
+        catalog_created = match.created_via == "catalog"
+
+        if caller_owned and catalog_created:
+            priority = 0
+        elif caller_owned:
+            priority = 1
+        elif catalog_created:
+            priority = 2
+        else:
+            priority = 3
+
+        return priority, match.gateway_id
 
     @staticmethod
     def _can_view_registered_gateway(

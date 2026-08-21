@@ -17966,6 +17966,7 @@ async def list_catalog_servers(
     if not settings.mcpgateway_catalog_enabled:
         raise HTTPException(status_code=404, detail="Catalog feature is disabled")
 
+    user_email, token_teams = get_scoped_resource_access_context(_request, _user)
     catalog_request = CatalogListRequest(
         category=category,
         auth_type=auth_type,
@@ -17978,7 +17979,7 @@ async def list_catalog_servers(
         offset=offset,
     )
 
-    return await catalog_service.get_catalog_servers(catalog_request, db)
+    return await catalog_service.get_catalog_servers(catalog_request, db, user_email=user_email, token_teams=token_teams)
 
 
 @admin_router.post("/mcp-registry/{server_id}/register", response_model=CatalogServerRegisterResponse)
@@ -18193,6 +18194,7 @@ async def catalog_partial(
         raise HTTPException(status_code=404, detail="Catalog feature is disabled")
 
     root_path = _resolve_root_path(request)
+    user_email, token_teams = get_scoped_resource_access_context(request, _user)
 
     # Calculate pagination
     page_size = settings.mcpgateway_catalog_page_size
@@ -18200,11 +18202,11 @@ async def catalog_partial(
 
     catalog_request = CatalogListRequest(category=category, auth_type=auth_type, search=search, show_available_only=False, limit=page_size, offset=offset)
 
-    response = await catalog_service.get_catalog_servers(catalog_request, db)
+    response = await catalog_service.get_catalog_servers(catalog_request, db, user_email=user_email, token_teams=token_teams)
 
     # Get ALL servers (no filters, no pagination) for counting statistics
     all_servers_request = CatalogListRequest(show_available_only=False, limit=1000, offset=0)
-    all_servers_response = await catalog_service.get_catalog_servers(all_servers_request, db)
+    all_servers_response = await catalog_service.get_catalog_servers(all_servers_request, db, user_email=user_email, token_teams=token_teams)
 
     # Pass filter parameters to template for pagination links
     filter_params = {

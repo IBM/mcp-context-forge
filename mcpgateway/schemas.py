@@ -4204,6 +4204,20 @@ class GatewayRefreshResponse(BaseModelWithConfigDict):
     refreshed_at: datetime = Field(..., description="Timestamp when the refresh completed")
 
 
+class GatewayImpactServer(BaseModelWithConfigDict):
+    """Virtual server affected by a gateway deletion."""
+
+    id: str = Field(..., description="ID of the affected virtual server")
+    name: str = Field(..., description="Name of the affected virtual server")
+
+
+class GatewayImpactPreview(BaseModelWithConfigDict):
+    """Layer-1-scoped preview of virtual servers affected by gateway deletion."""
+
+    gateway_id: str = Field(..., description="ID of the gateway being evaluated")
+    servers: List[GatewayImpactServer] = Field(default_factory=list, description="Visible virtual servers associated through this gateway's tools, resources, or prompts")
+
+
 class FederatedTool(BaseModelWithConfigDict):
     """Schema for tools provided by federated gateways.
 
@@ -8284,6 +8298,7 @@ class CatalogServer(BaseModel):
     logo_url: Optional[str] = Field(None, description="URL to server logo/icon")
     documentation_url: Optional[str] = Field(None, description="URL to server documentation")
     is_registered: bool = Field(default=False, description="Whether server is already registered")
+    gateway_id: Optional[str] = Field(None, description="ID of the caller-visible gateway matched to this catalog server")
     is_available: bool = Field(default=True, description="Whether server is currently available")
     requires_oauth_config: bool = Field(default=False, description="Whether server is registered but needs OAuth configuration")
 
