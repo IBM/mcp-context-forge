@@ -4680,6 +4680,7 @@ class ServerUpdate(BaseModelWithConfigDict):
     associated_resources: Optional[List[str]] = Field(None, description="Comma-separated resource IDs")
     associated_prompts: Optional[List[str]] = Field(None, description="Comma-separated prompt IDs")
     associated_a2a_agents: Optional[List[str]] = Field(None, description="Comma-separated A2A agent IDs")
+    enabled: Optional[bool] = Field(None, description="Whether the server is enabled")
 
     @field_validator("name")
     @classmethod

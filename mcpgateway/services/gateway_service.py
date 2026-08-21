@@ -343,6 +343,7 @@ class GatewayNameConflictError(GatewayError):
         self.name = name
         self.enabled = enabled
         self.gateway_id = gateway_id
+        self.visibility = visibility
         if visibility == "team":
             vis_label = "Team-level"
         else:
