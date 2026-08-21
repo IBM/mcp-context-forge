@@ -28,10 +28,8 @@ _HEADERS = {"Authorization": "Bearer test-token"}
 
 
 @pytest.mark.asyncio
-async def test_default_transport_is_streamablehttp_and_mode_comes_from_settings() -> None:
-    """Given no transport/mode arguments, when the client is built, then the
-    streamable-http ACM is used and Client receives
-    ``settings.mcp_client_connect_mode``."""
+async def test_default_transport_uses_sdk_default_mode() -> None:
+    """The default streamable-http path constructs a Client without a mode override."""
     client_cls = MagicMock(name="Client")
     transport_acm = MagicMock(name="streamable_http_acm")
 
@@ -47,24 +45,9 @@ async def test_default_transport_is_streamablehttp_and_mode_comes_from_settings(
     assert "http_client" in shc.call_args.kwargs
     client_cls.assert_called_once()
     assert client_cls.call_args.args[0] is transport_acm
-    assert client_cls.call_args.kwargs["mode"] == settings.mcp_client_connect_mode
 
 
-@pytest.mark.asyncio
-async def test_explicit_mode_is_threaded_into_client() -> None:
-    """Given mode="legacy", when the client is built, then Client receives
-    mode="legacy" instead of the settings default."""
-    client_cls = MagicMock(name="Client")
 
-    with (
-        patch("mcpgateway.utils.mcp_proxy_client.streamable_http_client", return_value=MagicMock()),
-        patch("mcpgateway.utils.mcp_proxy_client.Client", client_cls),
-    ):
-        async with mcp_proxy_client(_URL, mode="legacy"):
-            pass
-
-    client_cls.assert_called_once()
-    assert client_cls.call_args.kwargs["mode"] == "legacy"
 
 
 @pytest.mark.asyncio
@@ -89,7 +72,7 @@ async def test_sse_transport_builds_client_from_sse_client() -> None:
     shc.assert_not_called()
     client_cls.assert_called_once()
     assert client_cls.call_args.args[0] is sse_acm
-    assert client_cls.call_args.kwargs["mode"] == settings.mcp_client_connect_mode
+
 
 
 @pytest.mark.asyncio

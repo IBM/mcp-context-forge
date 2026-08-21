@@ -41,7 +41,7 @@ from mcp.client.sse import sse_client
 import mcp_types
 
 # First-Party
-from mcpgateway.config import settings
+
 from mcpgateway.transports.context import request_headers_var
 from mcpgateway.utils.session_compat import RequestResponder
 from mcpgateway.utils.streamable_http_compat import streamable_http_client
@@ -486,11 +486,7 @@ async def _default_session_factory(req: SessionCreateRequest) -> tuple[ClientSes
     disconnect, timeout), the upstream transport is NOT torn down with it.
 
     The high-level ``mcp.client.Client`` owns the transport context and
-    performs the handshake inside ``__aenter__`` according to
-    ``settings.mcp_client_connect_mode``: ``"legacy"`` runs the pre-2026
-    ``initialize()`` handshake (byte-identical to the previous raw
-    ``ClientSession`` path); ``"auto"`` negotiates modern protocol revisions
-    (2026-07-28) via ``server/discover`` with an ``initialize()`` fallback.
+    performs the handshake inside ``__aenter__``.
     """
     if req.transport_type is TransportType.SSE:
         if req.httpx_client_factory is not None:
@@ -549,12 +545,12 @@ async def _default_session_factory(req: SessionCreateRequest) -> tuple[ClientSes
             # and passes the handler through unwrapped.
             client = Client(
                 transport_ctx,
-                mode=settings.mcp_client_connect_mode,
+
                 message_handler=message_handler,
                 cache=None,
             )
-            # __aenter__ enters the transport and performs the mode-driven
-            # handshake; no explicit session.initialize() here.
+            # __aenter__ enters the transport and performs the handshake; no
+            # explicit session.initialize() here.
             async with client:
                 if not ready.done():
                     ready.set_result((client.session, client))

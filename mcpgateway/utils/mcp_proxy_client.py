@@ -54,7 +54,7 @@ async def mcp_proxy_client(
     timeout: float = 30.0,
     httpx_client_factory: Callable[..., httpx2.AsyncClient] | None = None,
     transport: Literal["streamablehttp", "sse"] = "streamablehttp",
-    mode: str | None = None,
+
 ) -> "Client":  # type: ignore[misc]
     """Yield an MCP v2 ``Client`` connected via streamable-http transport.
 
@@ -73,8 +73,7 @@ async def mcp_proxy_client(
             ``(headers, timeout, auth)`` matching the compat wrapper.
         transport: Upstream transport — ``"streamablehttp"`` (default) or
             ``"sse"`` for legacy SSE-only servers.
-        mode: MCP connect mode passed to ``Client``.  ``None`` (default)
-            resolves to ``settings.mcp_client_connect_mode``.
+
 
     Yields:
         An ``mcp.Client`` instance with an established transport.
@@ -82,7 +81,7 @@ async def mcp_proxy_client(
     Raises:
         RuntimeError: If the transport initialization fails.
     """
-    resolved_mode = settings.mcp_client_connect_mode if mode is None else mode
+
 
     if transport == "sse":
         # sse_client owns its httpx client lifecycle internally.
@@ -90,7 +89,7 @@ async def mcp_proxy_client(
             sse_acm = sse_client(url, headers=headers, timeout=timeout, httpx_client_factory=httpx_client_factory)
         else:
             sse_acm = sse_client(url, headers=headers, timeout=timeout)
-        async with Client(sse_acm, mode=resolved_mode) as client:
+        async with Client(sse_acm) as client:
             yield client
         return
 
@@ -118,5 +117,5 @@ async def mcp_proxy_client(
         # SDK b1: Client takes the transport context manager directly.
         # It owns the transport lifecycle and performs auto-initialization.
         transport_acm = streamable_http_client(url, http_client=http_client)
-        async with Client(transport_acm, mode=resolved_mode) as client:
+        async with Client(transport_acm) as client:
             yield client

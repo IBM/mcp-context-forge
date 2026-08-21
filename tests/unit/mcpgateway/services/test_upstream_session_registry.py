@@ -27,7 +27,6 @@ import asyncio
 import pytest
 
 # First-Party
-from mcpgateway.config import settings
 from mcpgateway.services.upstream_session_registry import (
     get_upstream_session_registry,
     init_upstream_session_registry,
@@ -1623,32 +1622,6 @@ async def test_default_session_factory_cancelled_path_runs_on_ready_timeout(monk
     # Message must not be empty (bare asyncio.TimeoutError('') before fix)
     assert len(error_msg) > 50, f"Timeout error message should be descriptive, got: {error_msg}"
 
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("mode", ["auto", "legacy"])
-async def test_default_session_factory_constructs_client_with_configured_connect_mode(monkeypatch, mode):
-    """The factory must build the SDK Client with mode == settings.mcp_client_connect_mode.
-
-    "auto" enables MCP 2026-07-28 server/discover negotiation on pooled
-    upstream sessions; "legacy" is the rollback switch forcing the pre-2026
-    initialize handshake. Either way the configured value must reach the
-    Client constructor verbatim.
-    """
-    # First-Party
-    from mcpgateway.services import upstream_session_registry as usr
-
-    monkeypatch.setattr(settings, "mcp_client_connect_mode", mode)
-    monkeypatch.setattr(usr, "streamable_http_client", lambda **_kw: _FakeTransportCtx(streams=("r", "w")))
-    monkeypatch.setattr(usr, "Client", _FakeClient)
-
-    _session, lifecycle = await usr._default_session_factory(_make_request())  # pylint: disable=protected-access
-
-    client = _FakeClient.instances[-1]
-    assert client.mode == mode
-    assert client.cache is None
-
-    lifecycle.shutdown_event.set()
-    await lifecycle.owner_task
 
 
 @pytest.mark.asyncio
