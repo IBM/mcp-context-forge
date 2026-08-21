@@ -97,7 +97,7 @@ from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.encryption_service import get_encryption_service, protect_oauth_config_for_storage
 from mcpgateway.services.event_service import EventService
-from mcpgateway.services.http_client_service import get_default_verify, get_http_timeout, get_isolated_http_client
+from mcpgateway.services.http_client_service import get_default_verify, get_httpx2_timeout, get_isolated_http_client
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.mcp_apps import merge_mcp_protocol_meta, optional_extension_metadata, validate_extension_metadata, validate_ui_resource
 from mcpgateway.services.oauth_manager import OAuthManager
@@ -4644,7 +4644,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     verify=ssl_context if ssl_context else get_default_verify(),
                     follow_redirects=False,
                     headers=headers,
-                    timeout=timeout if timeout else get_http_timeout(),
+                    timeout=timeout if timeout else get_httpx2_timeout(),
                     auth=auth,
                     limits=httpx2.Limits(
                         max_connections=settings.httpx_max_connections,
@@ -6934,7 +6934,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 verify=ctx if ctx else get_default_verify(),
                 follow_redirects=False,
                 headers=headers,
-                timeout=timeout if timeout else get_http_timeout(),
+                timeout=timeout if timeout else get_httpx2_timeout(),
                 auth=auth,
                 limits=httpx2.Limits(
                     max_connections=settings.httpx_max_connections,
@@ -7102,7 +7102,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 verify=ctx if ctx else get_default_verify(),
                 follow_redirects=False,
                 headers=headers,
-                timeout=timeout if timeout else get_http_timeout(),
+                timeout=timeout if timeout else get_httpx2_timeout(),
                 auth=auth,
                 limits=httpx2.Limits(
                     max_connections=settings.httpx_max_connections,
