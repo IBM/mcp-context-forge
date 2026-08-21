@@ -1027,12 +1027,12 @@ def run_migration(
 
     # Tables with nested sentinel-envelope JSON columns (services_auth blobs wrapped in
     # {sentinel_key: "<blob>"} dicts).  Each entry adds a (table, id_col, [columns], sentinel_key).
-    _TOOL_HEADER_SENTINEL = "_mcpgateway_encrypted_header_value_v1"
-    _PROVIDER_CONFIG_SENTINEL = "_mcpgateway_encrypted_value_v1"
+    tool_header_sentinel = "_mcpgateway_encrypted_header_value_v1"
+    provider_config_sentinel = "_mcpgateway_encrypted_value_v1"
     sa_sentinel_targets = [
         # (table, id_col, [columns], sentinel_key)
-        ("tools", "id", ["headers"], _TOOL_HEADER_SENTINEL),
-        ("llm_providers", "id", ["config"], _PROVIDER_CONFIG_SENTINEL),
+        ("tools", "id", ["headers"], tool_header_sentinel),
+        ("llm_providers", "id", ["config"], provider_config_sentinel),
     ]
 
     session = session_factory()
