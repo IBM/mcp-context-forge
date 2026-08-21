@@ -37,6 +37,7 @@ from mcpgateway.common.models import Prompt as MCPPrompt
 from mcpgateway.common.models import Resource as MCPResource
 from mcpgateway.common.models import ResourceContent, TextContent
 from mcpgateway.common.models import Tool as MCPTool
+from mcpgateway.common.models import ToolAnnotations
 from mcpgateway.common.oauth import OAUTH_SENSITIVE_KEYS
 from mcpgateway.common.validators import SecurityValidator, validate_core_url
 from mcpgateway.config import settings
@@ -2069,6 +2070,80 @@ class ToolResult(BaseModelWithConfigDict):
     structured_content: Optional[Dict[str, Any]] = None
     is_error: bool = False
     error_message: Optional[str] = None
+
+
+class ToolPreviewRequest(BaseModelWithConfigDict):
+    """Schema for tool preview (dry-run) requests.
+
+    Companion to :class:`ToolInvocation`, minus the ``name`` field (the tool
+    name is a path parameter on the preview route, not part of the body).
+    See #5629.
+
+    Attributes:
+        arguments (Dict[str, Any]): Arguments to validate against the tool's input schema.
+                                   Not executed against the tool; see :class:`ToolPreviewResponse`.
+    """
+
+    arguments: Dict[str, Any] = Field(default_factory=dict, description="Arguments to validate against the tool's input schema")
+
+
+class ToolPreviewTarget(BaseModelWithConfigDict):
+    """Where a live invocation of the previewed tool would be dispatched.
+
+    Never carries the remote gateway's URL, transport, or credentials —
+    only the gateway's name, so a caller can tell "federated" from "local"
+    without gaining any information useful for reaching the gateway directly.
+
+    Attributes:
+        kind (Literal["local", "federated"]): "local" for a manually registered tool
+            (``gateway_id IS NULL``), "federated" for a tool proxied through a gateway.
+        gateway_name (Optional[str]): Name of the owning gateway when kind is "federated";
+            None for local tools.
+    """
+
+    kind: Literal["local", "federated"]
+    gateway_name: Optional[str] = Field(None, description="Name of the owning gateway (federated tools only); never the gateway URL or credentials")
+
+
+class ToolPreviewWarning(BaseModelWithConfigDict):
+    """A single non-fatal caveat surfaced by a tool preview.
+
+    Attributes:
+        code (str): Machine-readable warning code (e.g. "hook_not_previewed").
+        hook (Optional[str]): Name of the plugin hook the warning concerns, if any.
+        message (str): Human-readable explanation.
+    """
+
+    code: str = Field(..., description="Machine-readable warning code")
+    hook: Optional[str] = Field(None, description="Name of the plugin hook this warning concerns, if any")
+    message: str = Field(..., description="Human-readable explanation")
+
+
+class ToolPreviewResponse(BaseModelWithConfigDict):
+    """Schema for tool preview (dry-run) responses. Companion to :class:`ToolPreviewRequest`. See #5629.
+
+    Reports whether the given arguments would validate against the tool's input
+    schema and where a live invocation would be dispatched, without invoking the
+    tool: no REST/MCP/A2A/gRPC call is made, and no TOOL_POST_INVOKE hook runs.
+
+    Attributes:
+        validated (bool): True when ``arguments`` validate against the tool's input schema.
+        resolved_arguments (Dict[str, Any]): The input arguments, unchanged (pre-invoke hook
+            payload modifications are not applied back here).
+        target (ToolPreviewTarget): Where a live invocation would be dispatched.
+        annotations (ToolAnnotations): The tool's declared behavior hints (readOnlyHint, etc.).
+        pre_hooks_run (List[str]): Names of plugins whose TOOL_PRE_INVOKE hook actually ran
+            (only plugins tagged ``preview_safe``; see plugins/AGENTS.md).
+        warnings (List[ToolPreviewWarning]): Non-fatal caveats, e.g. invalid arguments or
+            hooks that were skipped rather than exercised.
+    """
+
+    validated: bool
+    resolved_arguments: Dict[str, Any]
+    target: ToolPreviewTarget
+    annotations: ToolAnnotations
+    pre_hooks_run: List[str] = Field(default_factory=list, description="Plugins whose TOOL_PRE_INVOKE hook actually ran during preview")
+    warnings: List[ToolPreviewWarning] = Field(default_factory=list, description="Non-fatal caveats about this preview")
 
 
 class ResourceCreate(BaseModel):
