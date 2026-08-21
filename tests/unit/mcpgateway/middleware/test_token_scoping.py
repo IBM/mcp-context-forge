@@ -1441,6 +1441,18 @@ class TestTokenScopingMiddleware:
         assert middleware._check_permission_restrictions("/tools/tool-123/toggle", "POST", [Permissions.TOOLS_CREATE]) is False, "POST /tools/{id}/toggle should NOT accept tools.create"
 
     @pytest.mark.asyncio
+    async def test_tools_preview_pattern_precedes_update_catch_all(self, middleware):
+        """POST /tools/preview/{name} must require tools.preview, not fall through to the
+        /tools/[^/]+/ catch-all (tools.update) that would otherwise match it (#5629)."""
+        assert middleware._check_permission_restrictions("/tools/preview/my-tool", "POST", [Permissions.TOOLS_PREVIEW]) is True
+        assert middleware._check_permission_restrictions("/tools/preview/my-tool", "POST", [Permissions.TOOLS_UPDATE]) is False
+        assert middleware._check_permission_restrictions("/v1/tools/preview/my-tool", "POST", [Permissions.TOOLS_PREVIEW]) is True
+
+        # Exact /tools/preview (no trailing name segment) still matches too
+        assert middleware._check_permission_restrictions("/tools/preview", "POST", [Permissions.TOOLS_PREVIEW]) is True
+        assert middleware._check_permission_restrictions("/tools/preview/", "POST", [Permissions.TOOLS_PREVIEW]) is True
+
+    @pytest.mark.asyncio
     async def test_resources_create_pattern_exact_match(self, middleware):
         """Test that resources.create is only required for exact POST /resources, not sub-paths."""
         # POST /resources requires resources.create
