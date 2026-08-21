@@ -161,3 +161,133 @@ If you need to roll back to the previous version:
 4. Restart.
 
 For Helm-based deployments, use `helm rollback <release>`.
+
+---
+
+## MCP Python SDK v2 Migration Checklist
+
+Source: [MCP Python SDK v1 → v2 migration guide](https://py.sdk.modelcontextprotocol.io/v2/migration/)
+
+This checklist is the scope boundary for the SDK upgrade. Changes not required by one of these guide items are out of scope.
+
+### Order
+
+- [ ] Update dependency pins and MCP CLI usage.
+- [ ] Apply type/import/field renames.
+- [ ] Migrate the high-level `MCPServer` surface.
+- [ ] Migrate low-level `Server` handlers and result types.
+- [ ] Migrate `Client`/`ClientSession` callers.
+- [ ] Migrate transports and authentication.
+- [ ] Update validation, wire-format assumptions, and tests.
+- [ ] Address applicable deprecations.
+- [ ] Verify 2026-era connection behavior where used.
+
+### Packaging, dependencies, and CLI
+
+- [ ] Raise dependency floors: `anyio`, `pydantic`, `sse-starlette`, `typing-extensions`, and Windows `pywin32`.
+- [ ] Add `opentelemetry-api` and exact-matched `mcp-types` only when the project depends on `mcp-types` directly.
+- [ ] Upgrade the `mcp` requirement to v2 and remove the v1 upper-bound pattern.
+- [ ] Replace SDK-provided `httpx`/`httpx-sse` usage with `httpx2`; update exception types, fixtures, logging, and instrumentation.
+- [ ] Remove the `ws` extra and WebSocket transport usage.
+- [ ] Confirm `mcp dev` and `mcp install` use the installed SDK version.
+
+### Types and wire format
+
+- [ ] Keep `mcp.types` as the SDK-backed import surface; use direct `mcp_types` imports only for a project that declares `mcp-types` without `mcp`.
+- [ ] Move `mcp.shared.version` imports to `mcp.types.version`.
+- [ ] Replace removed aliases/classes: `Content`, `ResourceReference`, `Cursor`, public type variables, `AnyFunction`, old `*Type` unions, and experimental task constants.
+- [ ] Replace camelCase Python fields with snake_case; use `model_dump(by_alias=True)` for wire JSON.
+- [ ] Audit code that relied on unknown MCP fields being preserved.
+- [ ] Treat resource URIs as `str`, not `AnyUrl`.
+- [ ] Replace `RootModel` union construction/validation with the supplied `TypeAdapter` instances; remove `.root` access.
+- [ ] Replace `RequestParams.Meta` with `RequestParamsMeta` and treat `ctx.meta` as a `TypedDict`.
+- [ ] Replace deprecated `SUPPORTED_PROTOCOL_VERSIONS` handshake checks with the appropriate v2 version constants.
+- [ ] Rename `McpError` to `MCPError`.
+- [ ] Accept nullable `JSONRPCError.id` values and validate JSON-RPC messages with v2 adapters.
+
+### High-level `MCPServer`
+
+- [ ] Rename `FastMCP` to `MCPServer`.
+- [ ] Preserve the documented unchanged `MCPServer` surface.
+- [ ] Account for the default server name changing to `mcp-server`.
+- [ ] Update positional constructor calls for `title`, `description`, and `version`.
+- [ ] Set an explicit server version where an empty unversioned version is not acceptable.
+- [ ] Remove `mount_path` arguments and settings.
+- [ ] Move transport-specific constructor arguments to `run()`/`*_app()` calls.
+- [ ] Stop relying on `MCP_*` environment variables or SDK `.env` loading.
+- [ ] Check the 4 MiB Streamable HTTP request-body limit.
+- [ ] Check lifespan ownership changes in `StreamableHTTPSessionManager`.
+- [ ] Remove `MCPServer.get_context()` usage; use injected context.
+- [ ] Account for synchronous handlers running on worker threads.
+- [ ] Handle `CallToolResult` and possible `InputRequiredResult` returns.
+- [ ] Pass context explicitly when directly calling server methods.
+- [ ] Ensure resolver-routed requests have the required client capability.
+- [ ] Update `MCPError` handler behavior and resource-not-found handling.
+- [ ] Remove rejected resource keywords and replace `FileResource.is_binary` with `encoding`.
+- [ ] Review RFC 6570 resource-template matching changes.
+- [ ] Rename Context logging `message` to `data` and remove `extra`.
+- [ ] Remove `Context.client_id` and the removed progress module/context manager.
+- [ ] Validate elicitation schemas and avoid `isinstance()` checks against `ElicitationResult`.
+- [ ] Register low-level handlers through supported public APIs.
+
+### Low-level `Server`
+
+- [ ] Preserve the documented unchanged low-level serving scaffolding.
+- [ ] Replace decorator registration with constructor `on_*` parameters or `add_*_handler()`.
+- [ ] Return fully constructed protocol result types; do not rely on automatic wrapping.
+- [ ] Reassess exception behavior: ordinary tool exceptions are JSON-RPC errors, not `CallToolResult(is_error=True)`.
+- [ ] Make post-name constructor parameters keyword-only and reduce the type parameter count.
+- [ ] Remove uses of `request_handlers`/`notification_handlers`, private `_handle_*`, `stateless`, and `request_context`.
+- [ ] Update `RequestContext` imports and `ServerSession` assumptions.
+- [ ] Rename `requestedSchema` to `requested_schema`.
+- [ ] Remove `RequestResponder`/`mcp.shared.session` compatibility assumptions; use typed callbacks or middleware.
+
+### Clients
+
+- [ ] Decide whether `Client(mode="auto")` or `mode="legacy"` is required for each connection.
+- [ ] Replace `get_server_capabilities()` with `server_capabilities`, `server_info`, `instructions`, and `protocol_version`.
+- [ ] Remove deprecated `cursor` list parameters and use `arguments` instead of `args`.
+- [ ] Change timeout values from `timedelta` to float seconds.
+- [ ] Update timeout error handling to `MCPError` code `REQUEST_TIMEOUT` (`-32001`).
+- [ ] Remove `BaseSession` and old dispatcher/customization assumptions.
+- [ ] Remove experimental Tasks client/server usage.
+
+### Transports
+
+- [ ] Replace `streamablehttp_client` with `streamable_http_client`.
+- [ ] Remove `get_session_id`; consume the returned two-tuple.
+- [ ] Configure headers, timeout, SSE read timeout, and auth on the `httpx2.AsyncClient`.
+- [ ] Stop reading `StreamableHTTPTransport.protocol_version`; use session/client negotiated state.
+- [ ] Update non-2xx handling to per-request `MCPError` behavior.
+- [ ] Remove deprecated Windows termination helpers and account for stdio shutdown/descriptor behavior.
+- [ ] Remove WebSocket client/server transport usage.
+
+### OAuth and server auth
+
+- [ ] Confirm unchanged auth surfaces remain unchanged.
+- [ ] Remove `RFC7523OAuthClientProvider` and `JWTParameters` usage.
+- [ ] Preserve empty OAuth metadata URL paths; do not add trailing slashes.
+- [ ] Return `AuthorizationCodeResult` from OAuth callbacks and validate `iss`.
+- [ ] Rename provider `scopes=` to `scope=`.
+- [ ] Account for `client_secret_post` including `client_id`.
+- [ ] Remove the unused OAuth provider `timeout` argument/context value.
+- [ ] Handle issuer mismatch rejection and the v2 OAuth scope/credential changes.
+- [ ] Set OAuth Dynamic Client Registration `application_type` where needed.
+- [ ] Treat `OAuthClientInformationFull` as separate from registration metadata.
+- [ ] Review stricter `/token` and `/revoke` client authentication.
+
+### Validation, testing, and deprecations
+
+- [ ] Validate server handler results against the negotiated protocol schema.
+- [ ] Validate inbound client traffic against the negotiated schema.
+- [ ] Expect unknown methods to return `-32601`.
+- [ ] Update raw-wire assertions for the always-present `_meta` envelope and OpenTelemetry propagation.
+- [ ] Replace `create_connected_server_and_client_session` with `Client(server)`.
+- [ ] Review resource-subscription, Roots, Sampling, Logging, and client-to-server progress deprecations.
+- [ ] For 2026-era connections, handle `NoBackChannelError`, request-scoped logging, subscription-only notifications, and `Mcp-Param-*` header validation.
+
+### Branch audit
+
+- [ ] Keep only dependency, import, type, client, transport, handler, test, and documentation changes attributable to the guide.
+- [ ] Exclude unrelated secret-baseline regeneration, token-exchange cache isolation, identity-test cleanup, and connect-mode configuration work.
+- [ ] Run applicable SDK migration tests and verify the staged diff contains no unrelated files or hunks.

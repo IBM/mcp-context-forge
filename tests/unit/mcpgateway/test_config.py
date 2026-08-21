@@ -2408,7 +2408,6 @@ def test_alembic_env_import_does_not_require_secrets():
                 os.environ[key] = val
         sys.modules.pop("mcpgateway.alembic.env", None)
 
-
 def test_csrf_secret_key_is_a_secret_and_falls_back_to_jwt_secret():
     """CSRF key must be SecretStr, and must still inherit the JWT secret when unset."""
     # Third-Party
@@ -2433,7 +2432,6 @@ def test_csrf_secret_key_is_a_secret_and_falls_back_to_jwt_secret():
         environment="development",
     )
     assert cfg2.csrf_secret_key.get_secret_value() == explicit
-
 
 def test_min_secret_length_below_floor_raises_validation_error():
     """Regression: MIN_SECRET_LENGTH=0 (or any value < 32) must raise ValidationError at

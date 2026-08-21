@@ -46,11 +46,10 @@ from cpex.framework import (
 )
 from cpex.framework.constants import GATEWAY_METADATA, TOOL_METADATA
 import httpx
+import httpx2
 import jsonschema
 from jsonschema import Draft4Validator, Draft6Validator, Draft7Validator, validators
-from mcp import ClientSession, types
-from mcp.client.sse import sse_client
-from mcp.client.streamable_http import streamablehttp_client
+import mcp_types as types
 import orjson
 from pydantic import BaseModel, ValidationError
 from sqlalchemy import and_, delete, desc, or_, select
@@ -104,6 +103,7 @@ from mcpgateway.utils.identity_propagation import build_identity_headers, build_
 from mcpgateway.utils.jq_guard import assert_safe_jq_filter
 from mcpgateway.utils.jq_runner import JqFilterBusy, JqFilterError, JqFilterTimeout, run_jq_filter
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
+from mcpgateway.utils.mcp_proxy_client import mcp_proxy_client
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import decode_cursor, encode_cursor, unified_paginate
 from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cached
@@ -3827,43 +3827,46 @@ class ToolService(BaseService):
                 },
             ):
                 traced_headers = inject_trace_context_headers(headers)
-                request_meta_data = _sync_meta_traceparent(meta_data, traced_headers)
-                async with streamablehttp_client(url=gateway_url, headers=traced_headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
-                    async with ClientSession(read_stream, write_stream) as session:
-                        with create_span("mcp.client.initialize", {"contextforge.transport": "streamablehttp", "contextforge.runtime": "python"}):
-                            await session.initialize()
+                async with mcp_proxy_client(
+                    url=gateway_url,
+                    headers=traced_headers,
+                    timeout=settings.mcpgateway_direct_proxy_timeout,
+                ) as client:
+                    with create_span("mcp.client.initialize", {"contextforge.transport": "streamablehttp", "contextforge.runtime": "python"}):
+                        pass  # Client auto-initializes on first RPC call
 
-                        with create_span(
-                            "mcp.client.request",
-                            {
-                                "mcp.tool.name": remote_name,
-                                "contextforge.gateway_id": str(gateway.id),
-                                "contextforge.runtime": "python",
-                            },
-                        ):
-                            # Call tool with meta if provided
-                            if request_meta_data:
-                                logger.debug("Forwarding _meta to remote gateway: %s", request_meta_data)
-                                tool_result = await session.call_tool(name=remote_name, arguments=arguments, meta=request_meta_data)
-                            else:
-                                tool_result = await session.call_tool(name=remote_name, arguments=arguments)
-                        with create_span(
-                            "mcp.client.response",
-                            {
-                                "mcp.tool.name": remote_name,
-                                "contextforge.gateway_id": str(gateway.id),
-                                "contextforge.runtime": "python",
-                                "upstream.response.success": not getattr(tool_result, "is_error", False) and not getattr(tool_result, "isError", False),
-                            },
-                        ):
-                            pass
+                    with create_span(
+                        "mcp.client.request",
+                        {
+                            "mcp.tool.name": remote_name,
+                            "contextforge.gateway_id": str(gateway.id),
+                            "contextforge.runtime": "python",
+                        },
+                    ):
+                        request_meta_data = _sync_meta_traceparent(meta_data, traced_headers)  # noqa: F841 -- used in call_tool below
+                        # Call tool with meta if provided
+                        if request_meta_data:
+                            logger.debug("Forwarding _meta to remote gateway: %s", request_meta_data)
+                            tool_result = await client.call_tool(name=remote_name, arguments=arguments, meta=request_meta_data)
+                        else:
+                            tool_result = await client.call_tool(name=remote_name, arguments=arguments)
+                    with create_span(
+                        "mcp.client.response",
+                        {
+                            "mcp.tool.name": remote_name,
+                            "contextforge.gateway_id": str(gateway.id),
+                            "contextforge.runtime": "python",
+                            "upstream.response.success": not getattr(tool_result, "is_error", False) and not getattr(tool_result, "isError", False),
+                        },
+                    ):
+                        pass
 
-                        logger.info(
-                            "[INVOKE TOOL] Using direct_proxy mode for gateway %s (from X-Context-Forge-Gateway-Id header). Meta Attached: %s",
-                            SecurityValidator.sanitize_log_message(gateway.id),
-                            meta_data is not None,
-                        )
-                        return tool_result
+                    logger.info(
+                        "[INVOKE TOOL] Using direct_proxy mode for gateway %s (from X-Context-Forge-Gateway-Id header). Meta Attached: %s",
+                        SecurityValidator.sanitize_log_message(gateway.id),
+                        meta_data is not None,
+                    )
+                    return tool_result
         except Exception as e:
             logger.exception("Direct proxy tool invocation failed for %s: %s", name, e)
             raise ToolInvocationError(f"Direct proxy tool invocation failed: {str(e)}")
@@ -6001,10 +6004,10 @@ class ToolService(BaseService):
 
                     def get_httpx_client_factory(
                         headers: dict[str, str] | None = None,
-                        timeout: httpx.Timeout | None = None,
-                        auth: httpx.Auth | None = None,
-                    ) -> httpx.AsyncClient:
-                        """Factory function to create httpx.AsyncClient with optional CA certificate.
+                        timeout: httpx2.Timeout | None = None,
+                        auth: httpx2.Auth | None = None,
+                    ) -> httpx2.AsyncClient:
+                        """Factory function to create httpx2.AsyncClient with optional CA certificate.
 
                         Args:
                             headers: Optional headers for the client
@@ -6012,7 +6015,7 @@ class ToolService(BaseService):
                             auth: Optional auth for the client
 
                         Returns:
-                            httpx.AsyncClient: Configured HTTPX async client
+                            httpx2.AsyncClient: Configured HTTPX async client
 
                         Raises:
                             Exception: If CA certificate signature is invalid
@@ -6029,7 +6032,7 @@ class ToolService(BaseService):
                             else:
                                 valid = True
                         # First-Party
-                        from mcpgateway.services.http_client_service import get_default_verify, get_http_timeout  # pylint: disable=import-outside-toplevel
+                        from mcpgateway.services.http_client_service import get_default_verify, get_httpx2_timeout  # pylint: disable=import-outside-toplevel
 
                         # For plain HTTP gateway URLs, skip SSL context entirely to avoid unnecessary SSL setup.
                         if gateway_url and gateway_url.lower().startswith("http://"):
@@ -6045,15 +6048,15 @@ class ToolService(BaseService):
 
                         # Use effective_timeout for read operations if not explicitly overridden by caller
                         # This ensures the underlying client waits at least as long as the tool configuration requires
-                        factory_timeout = timeout if timeout else get_http_timeout(read_timeout=effective_timeout)
+                        factory_timeout = timeout if timeout else get_httpx2_timeout(read_timeout=effective_timeout)
 
-                        return httpx.AsyncClient(
+                        return httpx2.AsyncClient(
                             verify=ctx if ctx else get_default_verify(),
                             follow_redirects=False,
                             headers=headers,
                             timeout=factory_timeout,
                             auth=auth,
-                            limits=httpx.Limits(
+                            limits=httpx2.Limits(
                                 max_connections=settings.httpx_max_connections,
                                 max_keepalive_connections=settings.httpx_max_keepalive_connections,
                                 keepalive_expiry=settings.httpx_keepalive_expiry,
@@ -6154,32 +6157,37 @@ class ToolService(BaseService):
                                     request_meta_data = _sync_meta_traceparent(meta_data, request_headers)
                                     if correlation_id and request_headers:
                                         request_headers["X-Correlation-ID"] = correlation_id
-                                    async with sse_client(url=server_url, headers=request_headers, httpx_client_factory=get_httpx_client_factory) as streams:
-                                        async with ClientSession(*streams) as session:
-                                            with create_span("mcp.client.initialize", {"contextforge.transport": "sse", "contextforge.runtime": "python"}):
-                                                await session.initialize()
-                                            with create_span(
-                                                "mcp.client.request",
-                                                {
-                                                    "mcp.tool.name": tool_name_original,
-                                                    "contextforge.tool.id": tool_id,
-                                                    "contextforge.gateway_id": tool_gateway_id,
-                                                    "contextforge.runtime": "python",
-                                                },
-                                            ):
-                                                with anyio.fail_after(effective_timeout):
-                                                    tool_call_result = await session.call_tool(tool_name_original, arguments, meta=request_meta_data)
-                                            with create_span(
-                                                "mcp.client.response",
-                                                {
-                                                    "mcp.tool.name": tool_name_original,
-                                                    "contextforge.tool.id": tool_id,
-                                                    "contextforge.gateway_id": tool_gateway_id,
-                                                    "contextforge.runtime": "python",
-                                                    "upstream.response.success": not getattr(tool_call_result, "is_error", False) and not getattr(tool_call_result, "isError", False),
-                                                },
-                                            ):
-                                                pass
+                                    async with mcp_proxy_client(
+                                        url=server_url,
+                                        headers=request_headers,
+                                        timeout=effective_timeout,
+                                        httpx_client_factory=get_httpx_client_factory,
+                                        transport="sse",
+                                    ) as client:
+                                        with create_span("mcp.client.initialize", {"contextforge.transport": "sse", "contextforge.runtime": "python"}):
+                                            pass  # Client auto-initializes on first RPC call
+                                        with create_span(
+                                            "mcp.client.request",
+                                            {
+                                                "mcp.tool.name": tool_name_original,
+                                                "contextforge.tool.id": tool_id,
+                                                "contextforge.gateway_id": tool_gateway_id,
+                                                "contextforge.runtime": "python",
+                                            },
+                                        ):
+                                            with anyio.fail_after(effective_timeout):
+                                                tool_call_result = await client.call_tool(tool_name_original, arguments, meta=request_meta_data)
+                                        with create_span(
+                                            "mcp.client.response",
+                                            {
+                                                "mcp.tool.name": tool_name_original,
+                                                "contextforge.tool.id": tool_id,
+                                                "contextforge.gateway_id": tool_gateway_id,
+                                                "contextforge.runtime": "python",
+                                                "upstream.response.success": not getattr(tool_call_result, "is_error", False) and not getattr(tool_call_result, "isError", False),
+                                            },
+                                        ):
+                                            pass
 
                             # Log successful MCP call
                             mcp_duration_ms = (time.time() - mcp_start_time) * 1000
@@ -6337,36 +6345,36 @@ class ToolService(BaseService):
                                     request_meta_data = _sync_meta_traceparent(meta_data, request_headers)
                                     if correlation_id and request_headers:
                                         request_headers["X-Correlation-ID"] = correlation_id
-                                    async with streamablehttp_client(url=server_url, headers=request_headers, httpx_client_factory=get_httpx_client_factory) as (
-                                        read_stream,
-                                        write_stream,
-                                        _get_session_id,
-                                    ):
-                                        async with ClientSession(read_stream, write_stream) as session:
-                                            with create_span("mcp.client.initialize", {"contextforge.transport": "streamablehttp", "contextforge.runtime": "python"}):
-                                                await session.initialize()
-                                            with create_span(
-                                                "mcp.client.request",
-                                                {
-                                                    "mcp.tool.name": tool_name_original,
-                                                    "contextforge.tool.id": tool_id,
-                                                    "contextforge.gateway_id": tool_gateway_id,
-                                                    "contextforge.runtime": "python",
-                                                },
-                                            ):
-                                                with anyio.fail_after(effective_timeout):
-                                                    tool_call_result = await session.call_tool(tool_name_original, arguments, meta=request_meta_data)
-                                            with create_span(
-                                                "mcp.client.response",
-                                                {
-                                                    "mcp.tool.name": tool_name_original,
-                                                    "contextforge.tool.id": tool_id,
-                                                    "contextforge.gateway_id": tool_gateway_id,
-                                                    "contextforge.runtime": "python",
-                                                    "upstream.response.success": not getattr(tool_call_result, "is_error", False) and not getattr(tool_call_result, "isError", False),
-                                                },
-                                            ):
-                                                pass
+                                    async with mcp_proxy_client(
+                                        url=server_url,
+                                        headers=request_headers,
+                                        timeout=effective_timeout,
+                                        httpx_client_factory=get_httpx_client_factory,
+                                    ) as client:
+                                        with create_span("mcp.client.initialize", {"contextforge.transport": "streamablehttp", "contextforge.runtime": "python"}):
+                                            pass  # Client auto-initializes on first RPC call
+                                        with create_span(
+                                            "mcp.client.request",
+                                            {
+                                                "mcp.tool.name": tool_name_original,
+                                                "contextforge.tool.id": tool_id,
+                                                "contextforge.gateway_id": tool_gateway_id,
+                                                "contextforge.runtime": "python",
+                                            },
+                                        ):
+                                            with anyio.fail_after(effective_timeout):
+                                                tool_call_result = await client.call_tool(tool_name_original, arguments, meta=request_meta_data)
+                                        with create_span(
+                                            "mcp.client.response",
+                                            {
+                                                "mcp.tool.name": tool_name_original,
+                                                "contextforge.tool.id": tool_id,
+                                                "contextforge.gateway_id": tool_gateway_id,
+                                                "contextforge.runtime": "python",
+                                                "upstream.response.success": not getattr(tool_call_result, "is_error", False) and not getattr(tool_call_result, "isError", False),
+                                            },
+                                        ):
+                                            pass
 
                             # Log successful MCP call
                             mcp_duration_ms = (time.time() - mcp_start_time) * 1000

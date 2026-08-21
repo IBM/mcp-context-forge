@@ -48,13 +48,11 @@ from fastapi import HTTPException
 from fastapi.security.utils import get_authorization_scheme_param
 import httpx
 import jwt
-from mcp import ClientSession, types
-from mcp.client.streamable_http import streamablehttp_client
 from mcp.server.lowlevel import Server
-from mcp.server.lowlevel.helper_types import ReadResourceContents
 from mcp.server.streamable_http import EventCallback, EventId, EventMessage, EventStore, StreamId
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
-from mcp.types import JSONRPCMessage, PaginatedRequestParams, ReadResourceRequest, ReadResourceRequestParams
+import mcp_types as types
+from mcp_types import JSONRPCMessage
 import orjson
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
@@ -93,7 +91,7 @@ from mcpgateway.services.metrics import (
 from mcpgateway.services.oauth_manager import OAuthEnforcementUnavailableError, OAuthRequiredError
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.prompt_service import PromptService
-from mcpgateway.services.resource_service import ResourceError, ResourceNotFoundError, ResourceService
+from mcpgateway.services.resource_service import ResourceService
 from mcpgateway.services.tool_service import ToolService
 from mcpgateway.transports.context import UserContext
 from mcpgateway.transports.redis_event_store import RedisEventStore
@@ -101,6 +99,7 @@ from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_ga
 from mcpgateway.utils.identity_propagation import build_identity_headers
 from mcpgateway.utils.internal_http import post_rpc_in_process
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
+from mcpgateway.utils.mcp_proxy_client import mcp_proxy_client
 from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cached
 from mcpgateway.utils.trace_context import set_trace_context_from_teams, set_trace_session_id
@@ -157,13 +156,13 @@ def _normalize_mcp_prompt_arguments(arguments: Any) -> Optional[List[types.Promp
     """Convert internal prompt-argument objects to MCP prompt arguments.
 
     The prompt service returns internal schema models, while the MCP transport
-    must emit ``mcp.types.PromptArgument`` instances. Pydantic does not treat
+            must emit ``mcp_types.PromptArgument`` instances. Pydantic does not treat
     different model classes as interchangeable, so raw pass-through raises
     validation errors during prompt listing.
 
     Args:
         arguments: Prompt arguments from internal services. Items may already be
-            ``mcp.types.PromptArgument`` instances, dicts, or other Pydantic
+            ``mcp_types.PromptArgument`` instances, dicts, or other Pydantic
             models with matching attributes.
 
     Returns:
@@ -228,28 +227,30 @@ def _to_mcp_resource(resource: Any) -> types.Resource:
     return types.Resource.model_validate({key: value for key, value in payload.items() if value is not None})
 
 
-def _blob_payload_to_bytes(blob: Any) -> bytes:
-    """Return raw bytes for an MCP blob payload."""
+def _blob_payload_to_str(blob: Any) -> str:
+    """Return a base64 string for an MCP blob payload."""
     if isinstance(blob, bytes):
-        return blob
+        return base64.b64encode(blob).decode("utf-8")
     if isinstance(blob, str):
-        try:
-            return base64.b64decode(blob, validate=True)
-        except ValueError:
-            return blob.encode("utf-8")
-    return bytes(blob)
+        # Already base64-encoded upstream; pass through unchanged.
+        return blob
+    return base64.b64encode(bytes(blob)).decode("utf-8")
 
 
-def _to_read_resource_contents(content: Any, *, fallback_uri: str) -> List[ReadResourceContents]:
-    """Convert service/proxy resource content into SDK read-resource helper contents."""
+def _to_mcp_resource_contents(content: Any, *, fallback_uri: str) -> List[Any]:
+    """Convert service/proxy resource content into MCP v2 resource contents.
+
+    Preserves the MCP Apps projection (mimeType + ``_meta``) via
+    ``serialize_resource_content_for_mcp``.
+    """
     payload = serialize_resource_content_for_mcp(content, fallback_uri=fallback_uri)
     mime_type = payload.get("mimeType")
     meta = payload.get("_meta")
     if payload.get("text") is not None:
-        return [ReadResourceContents(content=payload["text"], mime_type=mime_type, meta=meta)]
+        return [types.TextResourceContents(uri=fallback_uri, text=payload["text"], mime_type=mime_type, meta=meta)]
     if payload.get("blob") is not None:
-        return [ReadResourceContents(content=_blob_payload_to_bytes(payload["blob"]), mime_type=mime_type, meta=meta)]
-    return [ReadResourceContents(content="", mime_type=mime_type, meta=meta)]
+        return [types.BlobResourceContents(uri=fallback_uri, blob=_blob_payload_to_str(payload["blob"]), mime_type=mime_type, meta=meta)]
+    return [types.TextResourceContents(uri=fallback_uri, text="", mime_type=mime_type, meta=meta)]
 
 
 def _to_mcp_prompt(prompt: Any) -> types.Prompt:
@@ -310,20 +311,48 @@ completion_service: CompletionService = CompletionService()
 class ContextForgeMCPServer(Server[Any]):
     """MCP server with ContextForge extension capability advertising."""
 
-    def get_capabilities(self, notification_options: Any, experimental_capabilities: dict[str, dict[str, Any]]) -> types.ServerCapabilities:
+    def get_capabilities(
+        self,
+        notification_options: Any = None,
+        experimental_capabilities: Optional[Dict[str, Dict[str, Any]]] = None,
+        extensions: Optional[Dict[str, Dict[str, Any]]] = None,
+        *,
+        protocol_version: Optional[str] = None,
+    ) -> types.ServerCapabilities:
         """Return SDK capabilities plus enabled ContextForge MCP extensions."""
-        capabilities = super().get_capabilities(notification_options, experimental_capabilities)
+        capabilities = super().get_capabilities(notification_options, experimental_capabilities, extensions, protocol_version=protocol_version)
         user_context = user_context_var.get()
-        extensions = build_mcp_apps_capabilities(authorized=bool(user_context))
-        if extensions:
+        extra_extensions = build_mcp_apps_capabilities(authorized=bool(user_context))
+        if extra_extensions:
             current_extensions = getattr(capabilities, "extensions", None)
             merged_extensions = dict(current_extensions) if isinstance(current_extensions, dict) else {}
-            merged_extensions.update(extensions)
+            merged_extensions.update(extra_extensions)
             capabilities.extensions = merged_extensions
         return capabilities
 
 
 mcp_app: Server[Any] = ContextForgeMCPServer("mcp-streamable-http")
+
+# ============================================================================
+# MCP v1 → v2 migration notes
+# ============================================================================
+# The v1 decorator-based handler registration (``@mcp_app.list_tools()`` et
+# al.) was removed in mcp 2.x. Handlers below keep their v1 shapes and are
+# bridged by the ``_adapt_*`` wrappers + ``mcp_app.add_request_handler(...)``
+# block at module bottom (see "mcp v1 → v2 handler adapters").
+#
+# Two known gaps remain from the migration:
+#   1. ``mcpgateway/services/notification_service.py``'s hold-then-respond
+#      multiplexer relies on ``responder.respond()``, which no longer exists
+#      in v2 (``RequestResponder`` is a typing-only stub). Responses to
+#      server-initiated requests are currently dropped with a warning; the
+#      mechanism needs a redesign around v2's return-based callback contract.
+#   2. MCP Apps extension support (``capabilities.extensions`` advertising via
+#      ``ContextForgeMCPServer`` and ``_meta`` projection via
+#      ``apply_tool_meta``/``apply_resource_meta``) has been restored on the
+#      v2 API; direct-proxy resource reads route through
+#      ``_to_mcp_resource_contents`` for mimeType + ``_meta`` preservation.
+# ============================================================================
 
 server_id_var: contextvars.ContextVar[str] = contextvars.ContextVar("server_id", default="default_server_id")
 # First-Party
@@ -398,8 +427,8 @@ class EventEntry:
 
     Examples:
         >>> # Create an event entry
-        >>> from mcp.types import JSONRPCMessage
-        >>> message = JSONRPCMessage(jsonrpc="2.0", method="test", id=1)
+        >>> from mcp_types import JSONRPCMessage, jsonrpc_message_adapter
+        >>> message = jsonrpc_message_adapter.validate_python({"jsonrpc": "2.0", "method": "test", "id": 1})
         >>> entry = EventEntry(event_id="test-123", stream_id="stream-456", message=message, seq_num=0)
         >>> entry.event_id
         'test-123'
@@ -541,9 +570,9 @@ class InMemoryEventStore(EventStore):
         Examples:
             >>> # Test storing an event
             >>> import asyncio
-            >>> from mcp.types import JSONRPCMessage
+            >>> from mcp_types import JSONRPCMessage, jsonrpc_message_adapter
             >>> store = InMemoryEventStore(max_events_per_stream=5)
-            >>> message = JSONRPCMessage(jsonrpc="2.0", method="test", id=1)
+            >>> message = jsonrpc_message_adapter.validate_python({"jsonrpc": "2.0", "method": "test", "id": 1})
             >>> event_id = asyncio.run(store.store_event("stream-1", message))
             >>> isinstance(event_id, str)
             True
@@ -559,7 +588,7 @@ class InMemoryEventStore(EventStore):
             True
 
             >>> # Test storing multiple events in same stream
-            >>> message2 = JSONRPCMessage(jsonrpc="2.0", method="test2", id=2)
+            >>> message2 = jsonrpc_message_adapter.validate_python({"jsonrpc": "2.0", "method": "test2", "id": 2})
             >>> event_id2 = asyncio.run(store.store_event("stream-1", message2))
             >>> len(store.streams["stream-1"])
             2
@@ -568,9 +597,9 @@ class InMemoryEventStore(EventStore):
 
             >>> # Test ring buffer overflow
             >>> store2 = InMemoryEventStore(max_events_per_stream=2)
-            >>> msg1 = JSONRPCMessage(jsonrpc="2.0", method="m1", id=1)
-            >>> msg2 = JSONRPCMessage(jsonrpc="2.0", method="m2", id=2)
-            >>> msg3 = JSONRPCMessage(jsonrpc="2.0", method="m3", id=3)
+            >>> msg1 = jsonrpc_message_adapter.validate_python({"jsonrpc": "2.0", "method": "m1", "id": 1})
+            >>> msg2 = jsonrpc_message_adapter.validate_python({"jsonrpc": "2.0", "method": "m2", "id": 2})
+            >>> msg3 = jsonrpc_message_adapter.validate_python({"jsonrpc": "2.0", "method": "m3", "id": 3})
             >>> id1 = asyncio.run(store2.store_event("stream-2", msg1))
             >>> id2 = asyncio.run(store2.store_event("stream-2", msg2))
             >>> # Now buffer is full, adding third will remove first
@@ -633,11 +662,11 @@ class InMemoryEventStore(EventStore):
         Examples:
             >>> # Test replaying events
             >>> import asyncio
-            >>> from mcp.types import JSONRPCMessage
+            >>> from mcp_types import JSONRPCMessage, jsonrpc_message_adapter
             >>> store = InMemoryEventStore()
-            >>> message1 = JSONRPCMessage(jsonrpc="2.0", method="test1", id=1)
-            >>> message2 = JSONRPCMessage(jsonrpc="2.0", method="test2", id=2)
-            >>> message3 = JSONRPCMessage(jsonrpc="2.0", method="test3", id=3)
+            >>> message1 = jsonrpc_message_adapter.validate_python({"jsonrpc": "2.0", "method": "test1", "id": 1})
+            >>> message2 = jsonrpc_message_adapter.validate_python({"jsonrpc": "2.0", "method": "test2", "id": 2})
+            >>> message3 = jsonrpc_message_adapter.validate_python({"jsonrpc": "2.0", "method": "test3", "id": 3})
             >>>
             >>> # Store events
             >>> event_id1 = asyncio.run(store.store_event("stream-1", message1))
@@ -1364,22 +1393,6 @@ async def _validate_streamable_session_access(
     return False, HTTP_403_FORBIDDEN, "Session owner metadata unavailable"
 
 
-def _build_paginated_params(meta: Optional[Any]) -> Optional[PaginatedRequestParams]:
-    """Build a ``PaginatedRequestParams`` carrying ``_meta`` when provided.
-
-    Args:
-        meta: Request metadata (_meta) from the original MCP request, or ``None``.
-
-    Returns:
-        A ``PaginatedRequestParams`` instance with ``_meta`` set, or ``None`` when *meta* is falsy.
-    """
-    if not meta:
-        return None
-    # CWE-532: log only key names, never values which may carry PII/tokens
-    logger.debug("Forwarding _meta to remote gateway (keys: %s)", sorted(meta.keys()) if isinstance(meta, dict) else type(meta).__name__)
-    return PaginatedRequestParams(_meta=meta)
-
-
 async def _send_streamable_http_json_response(send: Send, *, status_code: int, payload: dict[str, Any]) -> None:
     """Send a JSON response for Streamable HTTP request handling paths.
 
@@ -1451,18 +1464,13 @@ async def _close_streamable_http_session(
     return HTTP_200_OK, {"jsonrpc": "2.0", "result": {}}
 
 
-async def _proxy_list_tools_to_gateway(
-    gateway: Any,
-    request_headers: dict,
-    _user_context: dict,
-    meta: Optional[Any] = None,
-) -> List[types.Tool]:  # pylint: disable=unused-argument
+async def _proxy_list_tools_to_gateway(gateway: Any, request_headers: dict, user_context: dict, meta: Optional[Any] = None) -> List[types.Tool]:  # pylint: disable=unused-argument
     """Proxy tools/list request directly to remote MCP gateway using MCP SDK.
 
     Args:
         gateway: Gateway ORM instance
         request_headers: Request headers from client
-        _user_context: User context (not used - _meta comes from MCP SDK)
+        user_context: User context (not used - _meta comes from MCP SDK)
         meta: Request metadata (_meta) from the original request
 
     Returns:
@@ -1493,14 +1501,19 @@ async def _proxy_list_tools_to_gateway(
         if identity:
             headers.update(build_identity_headers(identity, gateway))
 
-        # Use MCP SDK to connect and list tools
-        async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
-            async with ClientSession(read_stream, write_stream) as session:
-                await session.initialize()
-
-                # List tools with _meta forwarded
-                result = await session.list_tools(params=_build_paginated_params(meta))
-                return filter_model_visible_tools(result.tools)
+        # Use MCP v2 Client to connect and list tools
+        async with mcp_proxy_client(
+            url=gateway.url,
+            headers=headers,
+            timeout=settings.mcpgateway_direct_proxy_timeout,
+        ) as client:
+            # List tools with _meta forwarded
+            if meta:
+                logger.debug("Forwarding _meta to remote gateway (keys: %s)", sorted(meta.keys()) if isinstance(meta, dict) else type(meta).__name__)
+                tools_result = await client.list_tools(meta=meta)
+            else:
+                tools_result = await client.list_tools()
+            return filter_model_visible_tools(tools_result.tools)
 
     except Exception as e:
         logger.exception("Error proxying tools/list to gateway %s: %s", gateway.id, e)
@@ -1549,16 +1562,22 @@ async def _proxy_list_resources_to_gateway(gateway: Any, request_headers: dict, 
             # CWE-532: log only key names, never values which may carry PII/tokens
             logger.debug("Forwarding _meta to remote gateway (keys: %s)", sorted(meta.keys()) if isinstance(meta, dict) else type(meta).__name__)
 
-        # Use MCP SDK to connect and list resources
-        async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
-            async with ClientSession(read_stream, write_stream) as session:
-                await session.initialize()
+        # Use MCP v2 Client to connect and list resources
+        async with mcp_proxy_client(
+            url=gateway.url,
+            headers=headers,
+            timeout=settings.mcpgateway_direct_proxy_timeout,
+        ) as client:
+            # List resources with _meta forwarded (auto-initializes on first call)
+            if meta:
+                logger.debug("Forwarding _meta to remote gateway (keys: %s)", sorted(meta.keys()) if isinstance(meta, dict) else type(meta).__name__)
+                resources_result = await client.list_resources(meta=meta)
+            else:
+                resources_result = await client.list_resources()
 
-                # List resources with _meta forwarded
-                result = await session.list_resources(params=_build_paginated_params(meta))
-
-                logger.info("Received %s resources from gateway %s", len(result.resources), gateway.id)
-                return result.resources
+            resource_list = resources_result.resources
+            logger.info("Received %s resources from gateway %s", len(resource_list), gateway.id)
+            return resource_list
 
     except Exception as e:
         logger.exception("Error proxying resources/list to gateway %s: %s", gateway.id, e)
@@ -1615,31 +1634,21 @@ async def _proxy_read_resource_to_gateway(gateway: Any, resource_uri: str, user_
             # CWE-532: log only key names, never values which may carry PII/tokens
             logger.debug("Forwarding _meta to remote gateway (keys: %s)", sorted(meta.keys()) if isinstance(meta, dict) else type(meta).__name__)
 
-        # Use MCP SDK to connect and read resource
-        async with streamablehttp_client(url=gateway.url, headers=headers, timeout=settings.mcpgateway_direct_proxy_timeout) as (read_stream, write_stream, _get_session_id):
-            async with ClientSession(read_stream, write_stream) as session:
-                await session.initialize()
+        # Use MCP v2 Client to connect and read resource (auto-initializes on first call)
+        async with mcp_proxy_client(
+            url=gateway.url,
+            headers=headers,
+            timeout=settings.mcpgateway_direct_proxy_timeout,
+        ) as client:
+            # read_resource with _meta forwarded (auto-initializes on first call)
+            if meta:
+                logger.debug("Forwarding _meta to remote gateway (keys: %s)", sorted(meta.keys()) if isinstance(meta, dict) else type(meta).__name__)
+                content_result = await client.read_resource(resource_uri, meta=meta)
+            else:
+                content_result = await client.read_resource(resource_uri)
 
-                # Prepare request params with _meta if provided
-                if meta:
-                    # Create params and inject _meta
-                    # by_alias=True ensures the alias "_meta" key is written so
-                    # model_validate resolves it correctly (fixes CWE-20 silent drop)
-                    request_params = ReadResourceRequestParams(uri=resource_uri)
-                    request_params_dict = request_params.model_dump(by_alias=True)
-                    request_params_dict["_meta"] = meta
-
-                    # Send request with _meta
-                    result = await session.send_request(
-                        types.ClientRequest(ReadResourceRequest(params=ReadResourceRequestParams.model_validate(request_params_dict))),
-                        types.ReadResourceResult,
-                    )
-                else:
-                    # No _meta, use simple read_resource
-                    result = await session.read_resource(uri=resource_uri)
-
-                logger.info("Received %s content items from gateway %s for resource %s", len(result.contents), gateway.id, resource_uri)
-                return result.contents
+            logger.info("Received %s content items from gateway %s for resource %s", len(content_result.contents), gateway.id, resource_uri)
+            return content_result.contents
 
     except Exception as e:
         logger.exception("Error proxying resources/read to gateway %s for resource %s: %s", gateway.id, resource_uri, e)
@@ -1682,7 +1691,10 @@ def _truthy_is_error(result: Any) -> bool:
     return getattr(result, "is_error", False) is True or getattr(result, "isError", False) is True
 
 
-@mcp_app.call_tool(validate_input=False)
+# Note: @mcp_app.call_tool() decorator removed in mcp v2 — handler is registered
+# via mcp_app.add_request_handler() at module bottom. The v1 `validate_input=False`
+# argument is also gone: v2 removed the SDK's built-in jsonschema input validation,
+# so the gateway's existing tool_service.py schema validation is the only path.
 async def call_tool(
     name: str, arguments: dict
 ) -> Union[
@@ -1726,12 +1738,15 @@ async def call_tool(
         <class 'dict'>
     """
     server_id, request_headers, user_context = await _get_request_context_or_default()
+
     meta_data = None
     # Extract _meta from request context if available
     try:
         ctx = mcp_app.request_context
         if ctx and ctx.meta is not None:
-            meta_data = ctx.meta.model_dump()
+            # MCP 2.0 RequestParamsMeta is a TypedDict (no model_dump); tolerate
+            # legacy model-shaped meta for tests that inject a Pydantic object.
+            meta_data = dict(ctx.meta) if isinstance(ctx.meta, dict) else ctx.meta.model_dump()
     except LookupError:
         # request_context might not be active in some edge cases (e.g. tests)
         logger.debug("No active request context found")
@@ -1778,7 +1793,7 @@ async def call_tool(
                     # SECURITY: Check gateway access before allowing direct proxy
                     if not await check_gateway_access(check_db, gateway, user_email, token_teams):
                         logger.warning("Access denied to gateway %s in direct_proxy mode for user %s", gateway_id_from_header, user_email)
-                        return types.CallToolResult(content=[types.TextContent(type="text", text=f"Tool not found: {name}")], isError=True)
+                        return types.CallToolResult(content=[types.TextContent(type="text", text=f"Tool not found: {name}")], is_error=True)
 
                     logger.info("Using direct_proxy mode for tool '%s' via gateway %s", name, gateway_id_from_header)
 
@@ -1796,7 +1811,7 @@ async def call_tool(
                     )
         except Exception as e:
             logger.error("Direct proxy mode failed for gateway %s: %s", gateway_id_from_header, e)
-            return types.CallToolResult(content=[types.TextContent(type="text", text="Direct proxy tool invocation failed")], isError=True)
+            return types.CallToolResult(content=[types.TextContent(type="text", text="Direct proxy tool invocation failed")], is_error=True)
 
     # Normal mode: use standard tool invocation with normalization
     # Use the already-recovered user_context (works for both ContextVar and stateful session paths)
@@ -1901,8 +1916,8 @@ async def call_tool(
                     # returned".
                     return types.CallToolResult(
                         content=unstructured,
-                        structuredContent=structured,
-                        isError=True,
+                        structured_content=structured,
+                        is_error=True,
                     )
                 # Success path: return the list/tuple shape so the MCP SDK's
                 # server-side validator runs and enforces the tool's
@@ -1935,7 +1950,7 @@ async def call_tool(
 
             # Normalize unstructured content to MCP SDK types, preserving metadata (annotations, _meta, size)
             # Helper to convert gateway Annotations to dict for MCP SDK compatibility
-            # (mcpgateway.common.models.Annotations != mcp.types.Annotations)
+            # (mcpgateway.common.models.Annotations != mcp_types.Annotations)
             def _convert_annotations(ann: Any) -> dict[str, Any] | None:
                 """Convert gateway Annotations to dict for MCP SDK compatibility.
 
@@ -1986,7 +2001,7 @@ async def call_tool(
                         types.ImageContent(
                             type="image",
                             data=content.data,
-                            mimeType=content.mime_type,
+                            mime_type=content.mime_type,
                             annotations=_convert_annotations(getattr(content, "annotations", None)),
                             _meta=_convert_meta(getattr(content, "meta", None)),
                         )
@@ -1996,7 +2011,7 @@ async def call_tool(
                         types.AudioContent(
                             type="audio",
                             data=content.data,
-                            mimeType=content.mime_type,
+                            mime_type=content.mime_type,
                             annotations=_convert_annotations(getattr(content, "annotations", None)),
                             _meta=_convert_meta(getattr(content, "meta", None)),
                         )
@@ -2008,7 +2023,7 @@ async def call_tool(
                             uri=content.uri,
                             name=content.name,
                             description=getattr(content, "description", None),
-                            mimeType=getattr(content, "mime_type", None),
+                            mime_type=getattr(content, "mime_type", None),
                             size=getattr(content, "size", None),
                             _meta=_convert_meta(getattr(content, "meta", None)),
                         )
@@ -2056,8 +2071,8 @@ async def call_tool(
                 # returned".
                 return types.CallToolResult(
                     content=unstructured,
-                    structuredContent=structured,
-                    isError=True,
+                    structured_content=structured,
+                    is_error=True,
                 )
 
             # Success path: return the list/tuple shape so the MCP SDK's
@@ -2281,7 +2296,6 @@ async def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return user_ctx
 
 
-@mcp_app.list_tools()
 async def list_tools() -> List[types.Tool]:
     """
     Lists all tools available to the MCP Server.
@@ -2304,7 +2318,7 @@ async def list_tools() -> List[types.Tool]:
         >>> list(sig.parameters.keys())
         []
         >>> sig.return_annotation
-        typing.List[mcp.types.Tool]
+        typing.List[mcp_types._types.Tool]
     """
     server_id, request_headers, user_context = await _get_request_context_or_default()
 
@@ -2387,7 +2401,6 @@ async def list_tools() -> List[types.Tool]:
             return []
 
 
-@mcp_app.list_prompts()
 async def list_prompts() -> List[types.Prompt]:
     """
     Lists all prompts available to the MCP Server.
@@ -2405,7 +2418,7 @@ async def list_prompts() -> List[types.Prompt]:
         >>> list(sig.parameters.keys())
         []
         >>> sig.return_annotation
-        typing.List[mcp.types.Prompt]
+        typing.List[mcp_types._types.Prompt]
     """
     server_id, _, user_context = await _get_request_context_or_default()
 
@@ -2447,7 +2460,6 @@ async def list_prompts() -> List[types.Prompt]:
             return []
 
 
-@mcp_app.get_prompt()
 async def get_prompt(prompt_id: str, arguments: dict[str, str] | None = None) -> types.GetPromptResult:
     """
     Retrieves a prompt by ID, optionally substituting arguments.
@@ -2500,7 +2512,9 @@ async def get_prompt(prompt_id: str, arguments: dict[str, str] | None = None) ->
     try:
         ctx = mcp_app.request_context
         if ctx and ctx.meta is not None:
-            meta_data = ctx.meta.model_dump()
+            # MCP 2.0 RequestParamsMeta is a TypedDict (no model_dump); tolerate
+            # legacy model-shaped meta for tests that inject a Pydantic object.
+            meta_data = dict(ctx.meta) if isinstance(ctx.meta, dict) else ctx.meta.model_dump()
     except LookupError:
         # request_context might not be active in some edge cases (e.g. tests)
         logger.debug("No active request context found")
@@ -2530,7 +2544,6 @@ async def get_prompt(prompt_id: str, arguments: dict[str, str] | None = None) ->
         return []
 
 
-@mcp_app.list_resources()
 async def list_resources() -> List[types.Resource]:
     """
     Lists all resources available to the MCP Server.
@@ -2548,7 +2561,7 @@ async def list_resources() -> List[types.Resource]:
         >>> list(sig.parameters.keys())
         []
         >>> sig.return_annotation
-        typing.List[mcp.types.Resource]
+        typing.List[mcp_types._types.Resource]
     """
     server_id, request_headers, user_context = await _get_request_context_or_default()
 
@@ -2625,8 +2638,7 @@ async def list_resources() -> List[types.Resource]:
             return []
 
 
-@mcp_app.read_resource()
-async def read_resource(resource_uri: str) -> Union[str, bytes, Iterable[ReadResourceContents]]:
+async def read_resource(resource_uri: str) -> Union[str, bytes, List[Any]]:
     """
     Reads the content of a resource specified by its URI.
 
@@ -2634,7 +2646,9 @@ async def read_resource(resource_uri: str) -> Union[str, bytes, Iterable[ReadRes
         resource_uri (str): The URI of the resource to read.
 
     Returns:
-        Union[str, bytes, Iterable[ReadResourceContents]]: The resource content.
+        Union[str, bytes, List[Any]]: The resource content — bare text/bytes,
+        or a list of MCP resource-contents models (with mimeType and MCP Apps
+        ``_meta`` projection) for rich results.
         Returns empty string on failure or if no content is found.
 
     Raises:
@@ -2648,7 +2662,7 @@ async def read_resource(resource_uri: str) -> Union[str, bytes, Iterable[ReadRes
         >>> list(sig.parameters.keys())
         ['resource_uri']
         >>> sig.return_annotation
-        typing.Union[str, bytes, typing.Iterable[mcp.server.lowlevel.helper_types.ReadResourceContents]]
+        typing.Union[str, bytes, typing.List[typing.Any]]
     """
     server_id, request_headers, user_context = await _get_request_context_or_default()
 
@@ -2677,7 +2691,9 @@ async def read_resource(resource_uri: str) -> Union[str, bytes, Iterable[ReadRes
     try:
         ctx = mcp_app.request_context
         if ctx and ctx.meta is not None:
-            meta_data = ctx.meta.model_dump()
+            # MCP 2.0 RequestParamsMeta is a TypedDict (no model_dump); tolerate
+            # legacy model-shaped meta for tests that inject a Pydantic object.
+            meta_data = dict(ctx.meta) if isinstance(ctx.meta, dict) else ctx.meta.model_dump()
     except LookupError:
         # request_context might not be active in some edge cases (e.g. tests)
         logger.debug("No active request context found")
@@ -2713,7 +2729,7 @@ async def read_resource(resource_uri: str) -> Union[str, bytes, Iterable[ReadRes
                     contents = await _proxy_read_resource_to_gateway(gateway, str(resource_uri), user_context, meta_data)
                     if contents:
                         # Return first content (text or blob)
-                        return _to_read_resource_contents(contents[0], fallback_uri=str(resource_uri))
+                        return _to_mcp_resource_contents(contents[0], fallback_uri=str(resource_uri))
                     return ""
                 if gateway:
                     logger.debug("Gateway %s found but not in direct_proxy mode (mode: %s), using cache mode", gateway_id, gateway.gateway_mode)
@@ -2729,33 +2745,27 @@ async def read_resource(resource_uri: str) -> Union[str, bytes, Iterable[ReadRes
                     server_id=server_id,
                     token_teams=token_teams,
                     meta_data=meta_data,
-                    request_headers=request_headers,
                 )
-            except (ResourceError, ResourceNotFoundError):
-                raise
             except Exception as e:
                 logger.exception("Error reading resource '%s': %s", resource_uri, e)
                 return ""
 
             # Return blob content if available (binary resources)
             if result and getattr(result, "blob", None):
-                return _to_read_resource_contents(result, fallback_uri=str(resource_uri))
+                return _to_mcp_resource_contents(result, fallback_uri=str(resource_uri))
 
             # Return text content if available (text resources)
             if result and getattr(result, "text", None):
-                return _to_read_resource_contents(result, fallback_uri=str(resource_uri))
+                return _to_mcp_resource_contents(result, fallback_uri=str(resource_uri))
 
             # No content found
             logger.warning("No content returned by resource: %s", resource_uri)
             return ""
-    except (ResourceError, ResourceNotFoundError):
-        raise
     except Exception as e:
         logger.exception("Error reading resource '%s': %s", resource_uri, e)
         return ""
 
 
-@mcp_app.list_resource_templates()
 async def list_resource_templates() -> List[Dict[str, Any]]:
     """
     Lists all resource templates available to the MCP Server.
@@ -2815,13 +2825,16 @@ async def list_resource_templates() -> List[Dict[str, Any]]:
         return []
 
 
-@mcp_app.set_logging_level()
-async def set_logging_level(level: types.LoggingLevel) -> types.EmptyResult:
+async def set_logging_level(_ctx: Any, params: "types.SetLevelRequestParams") -> types.EmptyResult:
     """
     Sets the logging level for the MCP Server.
 
     Args:
-        level (types.LoggingLevel): The desired logging level (debug, info, notice, warning, error, critical, alert, emergency).
+        _ctx: ServerRequestContext supplied by the mcp 2.x runner. Unused here —
+            the gateway's request context is resolved via
+            ``_get_request_context_or_default()`` from ContextVars / ASGI scope.
+        params (types.SetLevelRequestParams): Wraps the desired logging level
+            (debug, info, notice, warning, error, critical, alert, emergency).
 
     Returns:
         types.EmptyResult: An empty result indicating success.
@@ -2830,11 +2843,12 @@ async def set_logging_level(level: types.LoggingLevel) -> types.EmptyResult:
         >>> import inspect
         >>> sig = inspect.signature(set_logging_level)
         >>> list(sig.parameters.keys())
-        ['level']
+        ['_ctx', 'params']
 
     Raises:
         PermissionError: If the user does not have permission to set the logging level.
     """
+    level = params.level
     server_id, _, user_context = await _get_request_context_or_default()
 
     # Enforce per-server OAuth requirement in permissive mode (defense-in-depth).
@@ -2881,7 +2895,6 @@ async def set_logging_level(level: types.LoggingLevel) -> types.EmptyResult:
         return types.EmptyResult()
 
 
-@mcp_app.completion()
 async def complete(
     ref: Union[types.PromptReference, types.ResourceTemplateReference],
     argument: types.CompleteRequest,
@@ -2949,38 +2962,202 @@ async def complete(
             # ✅ Normalize the result for MCP
             if isinstance(result, dict):
                 completion_data = result.get("completion", result)
-                return types.Completion(**completion_data)
+                return types.CompleteResult(completion=types.Completion(**completion_data))
 
             if hasattr(result, "completion"):
                 completion_obj = result.completion
 
                 # If completion itself is a dict
                 if isinstance(completion_obj, dict):
-                    return types.Completion(**completion_obj)
+                    return types.CompleteResult(completion=types.Completion(**completion_obj))
 
                 # If completion is another CompleteResult (nested)
                 if hasattr(completion_obj, "completion"):
                     inner_completion = completion_obj.completion.model_dump() if hasattr(completion_obj.completion, "model_dump") else completion_obj.completion
-                    return types.Completion(**inner_completion)
+                    return types.CompleteResult(completion=types.Completion(**inner_completion))
 
                 # If completion is already a Completion model
                 if isinstance(completion_obj, types.Completion):
-                    return completion_obj
+                    return types.CompleteResult(completion=completion_obj)
 
                 # If it's another Pydantic model (e.g., mcpgateway.models.Completion)
                 if hasattr(completion_obj, "model_dump"):
-                    return types.Completion(**completion_obj.model_dump())
+                    return types.CompleteResult(completion=types.Completion(**completion_obj.model_dump()))
 
             # If result itself is already a types.Completion
             if isinstance(result, types.Completion):
-                return result
+                return types.CompleteResult(completion=result)
 
             # Fallback: return empty completion
-            return types.Completion(values=[], total=0, hasMore=False)
+            return types.CompleteResult(completion=types.Completion(values=[], total=0, hasMore=False))
 
     except Exception as e:
         logger.exception("Error handling completion: %s", e)
-        return types.Completion(values=[], total=0, hasMore=False)
+        return types.CompleteResult(completion=types.Completion(values=[], total=0, hasMore=False))
+
+
+# ============================================================================
+# mcp v1 → v2 handler adapters (thin compatibility layer)
+# ============================================================================
+# The handler functions above are kept in their v1 shape: bare returns
+# (``List[Tool]``, ``Union[str, bytes]``, etc.) and internal ``mcp_app
+# .request_context`` access. The adapters below wrap each into the v2
+# ``(ctx, params)`` shape required by ``Server.add_request_handler``:
+#
+#   1. The v2 ``ctx`` is stashed on a ContextVar before the v1 handler runs,
+#      and a property shim on the ``Server`` class makes ``mcp_app
+#      .request_context`` keep returning the live ctx so existing handler
+#      bodies (and helpers like ``_get_request_context_or_default``) work
+#      unchanged.
+#   2. v1 return values are wrapped in the matching v2 result types
+#      (``ListToolsResult``, ``CallToolResult``, ``ReadResourceResult``,
+#      ...).
+#
+# This is intentionally less invasive than rewriting each handler body.
+# Future work: inline the v2 ``(ctx, params)`` signatures into the handlers
+# themselves and delete these adapters + the property shim.
+# ============================================================================
+
+_v2_request_ctx: "contextvars.ContextVar[Any]" = contextvars.ContextVar(
+    "_mcpgateway_v2_request_ctx",
+    default=None,
+)
+
+
+def _get_v2_ctx() -> Any:
+    """Return the ServerRequestContext set by the active adapter (or None)."""
+    return _v2_request_ctx.get()
+
+
+# Inject ``request_context`` property on the v2 Server class so v1 handler
+# bodies' ``mcp_app.request_context`` access continues to work. v2 ``Server``
+# does not define this property natively.
+if not hasattr(type(mcp_app), "request_context"):
+    type(mcp_app).request_context = property(lambda _self: _get_v2_ctx())  # type: ignore[attr-defined]
+
+
+async def _adapt_list_tools(ctx: Any, _params: Any = None) -> "types.ListToolsResult":
+    """v2 (ctx, params) -> v1 list_tools() -> ListToolsResult."""
+    token = _v2_request_ctx.set(ctx)
+    try:
+        tools = await list_tools()
+        return types.ListToolsResult(tools=tools)
+    finally:
+        _v2_request_ctx.reset(token)
+
+
+async def _adapt_call_tool(ctx: Any, params: Any) -> "types.CallToolResult":
+    """v2 (ctx, params) -> v1 call_tool(name, arguments) -> CallToolResult.
+
+    v1 call_tool may return ``CallToolResult`` directly, a ``(content, structured)``
+    tuple, or a bare content list — handle each shape.
+    """
+    token = _v2_request_ctx.set(ctx)
+    try:
+        result = await call_tool(params.name, params.arguments or {})
+        if isinstance(result, types.CallToolResult):
+            return result
+        if isinstance(result, tuple) and len(result) == 2:
+            content, structured = result
+            return types.CallToolResult(content=list(content), structured_content=structured)
+        if isinstance(result, list):
+            return types.CallToolResult(content=result)
+        return types.CallToolResult(content=[result] if result is not None else [])
+    finally:
+        _v2_request_ctx.reset(token)
+
+
+async def _adapt_list_prompts(ctx: Any, _params: Any = None) -> "types.ListPromptsResult":
+    """v2 (ctx, params) -> v1 list_prompts() -> ListPromptsResult."""
+    token = _v2_request_ctx.set(ctx)
+    try:
+        prompts = await list_prompts()
+        return types.ListPromptsResult(prompts=prompts)
+    finally:
+        _v2_request_ctx.reset(token)
+
+
+async def _adapt_get_prompt(ctx: Any, params: Any) -> "types.GetPromptResult":
+    """v2 (ctx, params) -> v1 get_prompt(prompt_id, arguments) -> GetPromptResult."""
+    token = _v2_request_ctx.set(ctx)
+    try:
+        return await get_prompt(params.name, params.arguments)
+    finally:
+        _v2_request_ctx.reset(token)
+
+
+async def _adapt_list_resources(ctx: Any, _params: Any = None) -> "types.ListResourcesResult":
+    """v2 (ctx, params) -> v1 list_resources() -> ListResourcesResult."""
+    token = _v2_request_ctx.set(ctx)
+    try:
+        resources = await list_resources()
+        return types.ListResourcesResult(resources=resources)
+    finally:
+        _v2_request_ctx.reset(token)
+
+
+async def _adapt_read_resource(ctx: Any, params: Any) -> "types.ReadResourceResult":
+    """v2 (ctx, params) -> v1 read_resource(uri) -> ReadResourceResult.
+
+    v1 returns ``Union[str, bytes, List[contents]]``; a contents list (from
+    ``_to_mcp_resource_contents``) passes through unchanged, while bare
+    str/bytes are wrapped into TextResourceContents or BlobResourceContents.
+    """
+    token = _v2_request_ctx.set(ctx)
+    try:
+        uri = str(params.uri)
+        result = await read_resource(uri)
+        if isinstance(result, list):
+            return types.ReadResourceResult(contents=result)
+        if isinstance(result, bytes):
+            return types.ReadResourceResult(
+                contents=[
+                    types.BlobResourceContents(
+                        uri=uri,
+                        blob=base64.b64encode(result).decode("utf-8"),
+                    )
+                ]
+            )
+        return types.ReadResourceResult(contents=[types.TextResourceContents(uri=uri, text=str(result))])
+    finally:
+        _v2_request_ctx.reset(token)
+
+
+async def _adapt_list_resource_templates(ctx: Any, _params: Any = None) -> "types.ListResourceTemplatesResult":
+    """v2 (ctx, params) -> v1 list_resource_templates() -> ListResourceTemplatesResult.
+
+    v1 returns ``List[Dict[str, Any]]``; coerce to ``ResourceTemplate`` models.
+    """
+    token = _v2_request_ctx.set(ctx)
+    try:
+        raw_templates = await list_resource_templates()
+        templates = [types.ResourceTemplate.model_validate(t) if isinstance(t, dict) else t for t in raw_templates]
+        return types.ListResourceTemplatesResult(resourceTemplates=templates)
+    finally:
+        _v2_request_ctx.reset(token)
+
+
+async def _adapt_complete(ctx: Any, params: Any) -> "types.CompleteResult":
+    """v2 (ctx, params) -> v1 complete(ref, argument, context) -> CompleteResult."""
+    token = _v2_request_ctx.set(ctx)
+    try:
+        completion_context = getattr(params, "context", None)
+        return await complete(params.ref, params.argument, completion_context)
+    finally:
+        _v2_request_ctx.reset(token)
+
+
+# Register all handlers via the v2 add_request_handler API. set_logging_level
+# was already migrated to (_ctx, params) form so it registers directly.
+mcp_app.add_request_handler("tools/list", types.PaginatedRequestParams, _adapt_list_tools)
+mcp_app.add_request_handler("tools/call", types.CallToolRequestParams, _adapt_call_tool)
+mcp_app.add_request_handler("prompts/list", types.PaginatedRequestParams, _adapt_list_prompts)
+mcp_app.add_request_handler("prompts/get", types.GetPromptRequestParams, _adapt_get_prompt)
+mcp_app.add_request_handler("resources/list", types.PaginatedRequestParams, _adapt_list_resources)
+mcp_app.add_request_handler("resources/read", types.ReadResourceRequestParams, _adapt_read_resource)
+mcp_app.add_request_handler("resources/templates/list", types.PaginatedRequestParams, _adapt_list_resource_templates)
+mcp_app.add_request_handler("completion/complete", types.CompleteRequestParams, _adapt_complete)
+mcp_app.add_request_handler("logging/setLevel", types.SetLevelRequestParams, set_logging_level)
 
 
 # ----------------------------- POST response interception (ADR-052) ----------------------------
@@ -4504,8 +4681,10 @@ class SessionManagerWrapper:
 
         server_id_var.set(validated)
 
-        # For session affinity: wrap send to capture session ID from response headers
-        # This allows us to register ownership for new sessions created by the SDK
+        # For session ownership: wrap send to capture session ID from response headers
+        # This allows us to register ownership for new sessions created by the SDK.
+        # Capture is gated on stateful sessions (not multi-worker affinity): the
+        # logical-owner claim below must fire on single-node deployments too.
         captured_session_id: Optional[str] = None
 
         async def send_with_capture(message: Dict[str, Any]) -> None:

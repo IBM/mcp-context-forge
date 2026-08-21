@@ -34,14 +34,16 @@ from typing import Any, AsyncIterator, Awaitable, Callable, Mapping, Optional, P
 # Third-Party
 import anyio
 import httpx
-from mcp import ClientSession, McpError
+import httpx2
+from mcp import Client, ClientSession, MCPError
 from mcp.client.sse import sse_client
-from mcp.client.streamable_http import streamablehttp_client
-from mcp.shared.session import RequestResponder
-import mcp.types as mcp_types
+import mcp_types
 
 # First-Party
+
 from mcpgateway.transports.context import request_headers_var
+from mcpgateway.utils.session_compat import RequestResponder
+from mcpgateway.utils.streamable_http_compat import streamable_http_client
 from mcpgateway.utils.url_auth import sanitize_url_for_logging
 
 logger = logging.getLogger(__name__)
@@ -65,8 +67,8 @@ class TransportType(str, Enum):
 
 
 HttpxClientFactory = Callable[
-    [Optional[dict[str, str]], Optional[httpx.Timeout], Optional[httpx.Auth]],
-    httpx.AsyncClient,
+    [Optional[dict[str, str]], Optional[httpx2.Timeout], Optional[httpx2.Auth]],
+    httpx2.AsyncClient,
 ]
 
 # Type alias for the per-session message handler that the SDK ClientSession
@@ -100,19 +102,19 @@ class MessageHandlerFactory(Protocol):
 
 # Factory for constructing an upstream MCP session.
 #
-# Return shape is ``(ClientSession, _unused)``. The second slot is
-# vestigial — the owner task attaches ``_cf_owner_task`` and
-# ``_cf_shutdown_event`` onto the ClientSession object itself, so
-# ``_create_session()`` ignores the second return value. The shape is
-# kept stable here because fake factories in the test suite and any
-# downstream overrides mirror it. Issue #4344 tracks replacing the
-# attribute-smuggling with a typed handle and collapsing the tuple.
+# Return shape is ``(ClientSession, SessionLifecycle)``: the live session
+# (post-handshake, safe for callers to drive) plus a typed lifecycle handle
+# carrying the owner task, the shutdown event, and the high-level
+# ``mcp.client.Client``. The handle replaced the old convention of smuggling
+# ``_cf_owner_task`` / ``_cf_shutdown_event`` attributes onto the session
+# object (issue #4344). Fake factories in the test suite and any downstream
+# overrides must mirror this contract.
 #
 # Defaults to the real MCP transports; tests inject a fake so no network is
 # touched.
 SessionFactory = Callable[
     ["SessionCreateRequest"],
-    Awaitable[tuple[ClientSession, Any]],
+    Awaitable[tuple[ClientSession, "SessionLifecycle"]],
 ]
 
 
@@ -205,13 +207,17 @@ _sdk_drift_warning_emitted = False  # pylint: disable=invalid-name
 
 
 def _mcp_transport_is_broken(session: ClientSession) -> bool:
-    """Peek at a ``ClientSession``'s internal anyio streams to detect a dead transport.
+    """Peek at a ``ClientSession``'s internal state to detect a dead transport.
 
-    Returns True only when we can positively confirm the transport is gone
-    (closed write stream, or receive channels fully drained). Returns False on
-    any ambiguity — including when SDK internals have shifted shape — so that
-    callers degrade to owner-task liveness rather than evicting a session
-    that might still be usable.
+    Client-built sessions (via ``mcp.client.Client``) carry a ``_dispatcher``
+    whose ``_closed`` / ``_running`` flags are the definitive dead signals.
+    Raw-constructed sessions (read/write streams passed directly) keep the legacy
+    ``_write_stream._closed`` / ``._state.open_receive_channels`` probe.
+
+    Returns True only when we can positively confirm the transport is gone.
+    Returns False on any ambiguity — including when SDK internals have shifted
+    shape — so that callers degrade to owner-task liveness rather than evicting
+    a session that might still be usable.
 
     Validated MCP SDK range lives in
     ``_MCP_SDK_TRANSPORT_PROBE_COMPATIBLE_VERSIONS``; bump that marker after
@@ -219,6 +225,19 @@ def _mcp_transport_is_broken(session: ClientSession) -> bool:
     """
     global _sdk_drift_warning_emitted  # pylint: disable=global-statement
     try:
+        # Dispatcher path — present on Client-built sessions (mcp.client.Client).
+        # _closed is set by send_raw_request on error; _running flips False at teardown.
+        dispatcher = getattr(session, "_dispatcher", None)
+        if dispatcher is not None:
+            if getattr(dispatcher, "_closed", False) is True:
+                return True
+            if getattr(dispatcher, "_running", True) is False:
+                # Was running, now stopped (teardown in progress/complete) → broken
+                return True
+            # Dispatcher present and healthy — never consult _write_stream
+            return False
+
+        # Legacy raw-session path: read/write streams passed directly, no _dispatcher.
         write_stream = getattr(session, "_write_stream", None)
         if write_stream is None:
             return False
@@ -316,11 +335,12 @@ def _categorize_upstream_error(exc: BaseException, auth_query_params: Optional[d
     # Categorize common failure modes to help users identify the root cause.
     # Order matters: more specific checks first (e.g., httpx.ConnectTimeout before TimeoutError).
 
-    # Check httpx-specific exception types first (these are the types actually raised by transports)
-    if isinstance(root_cause, httpx.TimeoutException):
+    # Check httpx-specific exception types first (these are the types actually raised by transports).
+    # MCP 2.x clients raise httpx2 exceptions; legacy paths may still raise httpx v0 ones.
+    if isinstance(root_cause, (httpx.TimeoutException, httpx2.TimeoutException)):
         # httpx.TimeoutException is the base for ConnectTimeout, ReadTimeout, WriteTimeout, PoolTimeout
         error_category = "timeout"
-    elif isinstance(root_cause, httpx.ConnectError):
+    elif isinstance(root_cause, (httpx.ConnectError, httpx2.ConnectError)):
         # httpx.ConnectError wraps connection failures. Real refused connections
         # produce httpx.ConnectError("All connection attempts failed") with
         # ConnectionRefusedError deeper in __context__/__cause__. Check chain first.
@@ -332,7 +352,7 @@ def _categorize_upstream_error(exc: BaseException, auth_query_params: Optional[d
             error_category = "connection_refused"
         else:
             error_category = "connection_error"
-    elif isinstance(root_cause, httpx.HTTPStatusError):
+    elif isinstance(root_cause, (httpx.HTTPStatusError, httpx2.HTTPStatusError)):
         status_code = getattr(root_cause.response, "status_code", None)
         if status_code is not None:
             if status_code == 401:
@@ -347,7 +367,7 @@ def _categorize_upstream_error(exc: BaseException, auth_query_params: Optional[d
                 error_category = "http_error"
         else:
             error_category = "http_error"
-    elif isinstance(root_cause, McpError):
+    elif isinstance(root_cause, MCPError):
         # MCP protocol-level errors (failed session.initialize(), etc.)
         error_category = "mcp_protocol_error"
     elif isinstance(root_cause, ssl.SSLError):
@@ -384,6 +404,23 @@ def _categorize_upstream_error(exc: BaseException, auth_query_params: Optional[d
     return error_category, exception_type, sanitized_message, exception_count
 
 
+@dataclass(frozen=True)
+class SessionLifecycle:
+    """Typed lifecycle handle for a factory-built upstream session.
+
+    Returned in the second slot of the ``SessionFactory`` tuple. Replaces the
+    previous convention of smuggling ``_cf_owner_task`` / ``_cf_shutdown_event``
+    attributes onto the ClientSession object (issue #4344). ``client`` is the
+    high-level ``mcp.client.Client`` that owns the transport and performed the
+    handshake; it is retained so callers can reach modern-negotiation state
+    (e.g. ``client.protocol_version``) without re-deriving it.
+    """
+
+    owner_task: asyncio.Task
+    shutdown_event: asyncio.Event
+    client: Any
+
+
 @dataclass
 class UpstreamSession:
     """A single upstream MCP session bound to one downstream session.
@@ -404,6 +441,7 @@ class UpstreamSession:
     url: str
     transport_type: TransportType
     session: ClientSession
+    client: Any | None = None
     created_at: float = field(default_factory=time.time)
     last_used: float = field(default_factory=time.time)
     use_count: int = 0
@@ -438,13 +476,16 @@ class UpstreamSession:
         return _mcp_transport_is_broken(self.session)
 
 
-async def _default_session_factory(req: SessionCreateRequest) -> tuple[ClientSession, Any]:
-    """Owner-task wrapper that builds the real transport + ClientSession.
+async def _default_session_factory(req: SessionCreateRequest) -> tuple[ClientSession, SessionLifecycle]:
+    """Owner-task wrapper that builds the real transport + SDK Client.
 
     Runs inside a dedicated asyncio.Task so the transport's anyio cancel scope
     is bound to that task, not to whichever request handler happens to be
     making the acquire() call. If the request task is cancelled (client
     disconnect, timeout), the upstream transport is NOT torn down with it.
+
+    The high-level ``mcp.client.Client`` owns the transport context and
+    performs the handshake inside ``__aenter__``.
     """
     if req.transport_type is TransportType.SSE:
         if req.httpx_client_factory is not None:
@@ -462,14 +503,14 @@ async def _default_session_factory(req: SessionCreateRequest) -> tuple[ClientSes
             )
     else:
         if req.httpx_client_factory is not None:
-            transport_ctx = streamablehttp_client(
+            transport_ctx = streamable_http_client(
                 url=req.url,
                 headers=req.headers,
                 httpx_client_factory=req.httpx_client_factory,
                 timeout=req.timeout_seconds,
             )
         else:
-            transport_ctx = streamablehttp_client(
+            transport_ctx = streamable_http_client(
                 url=req.url,
                 headers=req.headers,
                 timeout=req.timeout_seconds,
@@ -477,34 +518,44 @@ async def _default_session_factory(req: SessionCreateRequest) -> tuple[ClientSes
 
     shutdown_event = asyncio.Event()
     loop = asyncio.get_running_loop()
-    ready: asyncio.Future[tuple[ClientSession, Any]] = loop.create_future()
+    ready: asyncio.Future[tuple[ClientSession, Client]] = loop.create_future()
 
     async def owner() -> None:
-        """Own the transport + ClientSession lifecycle; unblock on shutdown_event."""
+        """Own the transport + Client lifecycle; unblock on shutdown_event."""
         try:
-            async with transport_ctx as streams:
-                read_stream, write_stream = streams[0], streams[1]
-                message_handler = None
-                if req.message_handler_factory is not None:
-                    try:
-                        message_handler = req.message_handler_factory(
-                            req.url,
-                            req.gateway_id,
-                            downstream_session_id=req.downstream_session_id,
-                        )
-                    except Exception as exc:  # noqa: BLE001 — handler failure is not fatal
-                        logger.warning(
-                            "Failed to build message handler for %s: %s",
-                            sanitize_url_for_logging(req.url),
-                            exc,
-                        )
-                async with ClientSession(read_stream, write_stream, message_handler=message_handler) as session:
-                    await session.initialize()
-                    if not ready.done():
-                        ready.set_result((session, transport_ctx))
-                    # Block until the registry signals shutdown; do NOT rely on
-                    # task cancellation from a request handler (see class docs).
-                    await shutdown_event.wait()
+            message_handler = None
+            if req.message_handler_factory is not None:
+                try:
+                    message_handler = req.message_handler_factory(
+                        req.url,
+                        req.gateway_id,
+                        downstream_session_id=req.downstream_session_id,
+                    )
+                except Exception as exc:  # noqa: BLE001 — handler failure is not fatal
+                    logger.warning(
+                        "Failed to build message handler for %s: %s",
+                        sanitize_url_for_logging(req.url),
+                        exc,
+                    )
+            # cache=None is load-bearing: the SDK default (a CacheConfig
+            # instance) builds a ClientResponseCache that WRAPS message_handler
+            # in an evicting layer, which would change ADR-052
+            # notification/RequestResponder behaviour. None disables the cache
+            # and passes the handler through unwrapped.
+            client = Client(
+                transport_ctx,
+
+                message_handler=message_handler,
+                cache=None,
+            )
+            # __aenter__ enters the transport and performs the handshake; no
+            # explicit session.initialize() here.
+            async with client:
+                if not ready.done():
+                    ready.set_result((client.session, client))
+                # Block until the registry signals shutdown; do NOT rely on
+                # task cancellation from a request handler (see class docs).
+                await shutdown_event.wait()
         except Exception as exc:  # noqa: BLE001 — see below
             # Broad catch on purpose: the upstream-setup path runs many
             # third-party coroutines (httpx, anyio, MCP SDK) whose exception
@@ -614,7 +665,7 @@ async def _default_session_factory(req: SessionCreateRequest) -> tuple[ClientSes
 
     success = False
     try:
-        session, transport_ctx_ref = await asyncio.wait_for(ready, timeout=req.timeout_seconds)
+        session, client = await asyncio.wait_for(ready, timeout=req.timeout_seconds)
         success = True
     except asyncio.TimeoutError as timeout_exc:
         # asyncio.wait_for timeout path: the owner task hangs (TCP accepted but
@@ -688,13 +739,7 @@ async def _default_session_factory(req: SessionCreateRequest) -> tuple[ClientSes
                         exc,
                     )
 
-    # Smuggle the owner task + shutdown event onto the ClientSession object so
-    # _create_session() (which only gets back `(session, transport_ctx)` from
-    # the factory) can recover them without a wider factory return contract.
-    # Tests that replace the factory must mirror this convention.
-    setattr(session, "_cf_owner_task", task)  # type: ignore[attr-defined]
-    setattr(session, "_cf_shutdown_event", shutdown_event)  # type: ignore[attr-defined]
-    return session, transport_ctx_ref
+    return session, SessionLifecycle(owner_task=task, shutdown_event=shutdown_event, client=client)
 
 
 class UpstreamSessionRegistry:
@@ -946,26 +991,25 @@ class UpstreamSessionRegistry:
             message_handler_factory=self._message_handler_factory,
             timeout_seconds=self._session_create_timeout_seconds,
         )
-        session, _transport_ctx = await self._session_factory(req)
-        owner_task = getattr(session, "_cf_owner_task", None)
-        shutdown_event = getattr(session, "_cf_shutdown_event", None)
+        session, lifecycle = await self._session_factory(req)
         return UpstreamSession(
             downstream_session_id=downstream_session_id,
             gateway_id=gateway_id,
             url=url,
             transport_type=transport_type,
             session=session,
-            _owner_task=owner_task,
-            _shutdown_event=shutdown_event,
+            client=lifecycle.client,
+            _owner_task=lifecycle.owner_task,
+            _shutdown_event=lifecycle.shutdown_event,
         )
 
     async def _probe_health(self, upstream: UpstreamSession) -> bool:
         """Run the health check chain against an idle session. Returns False if all probes fail.
 
         Exception policy: we ADVANCE on ``TimeoutError`` and on
-        ``McpError(METHOD_NOT_FOUND)`` (the server chose not to implement
+        ``MCPError(METHOD_NOT_FOUND)`` (the server chose not to implement
         this probe), and we FAIL FAST on everything else transport- or
-        protocol-level (``OSError`` / anyio stream errors / other ``McpError``s)
+        protocol-level (``OSError`` / anyio stream errors / other ``MCPError``s)
         — recreating a session on "permission denied" or "request too large"
         would loop against the same failure. Genuinely unexpected exceptions
         (``AttributeError`` from SDK drift, etc.) propagate so they surface in
@@ -986,7 +1030,7 @@ class UpstreamSessionRegistry:
                         elif method == "list_resources":
                             await upstream.session.list_resources()
                     return True
-                except McpError as exc:
+                except MCPError as exc:
                     if exc.error.code == _METHOD_NOT_FOUND:
                         continue  # Server doesn't support this probe; try the next one.
                     self._metrics.health_check_failures += 1
