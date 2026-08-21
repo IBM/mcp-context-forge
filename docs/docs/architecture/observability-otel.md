@@ -656,7 +656,7 @@ the same baggage values are emitted as `tenant.id` and `user.id`.
 
 ### Overview
 
-When the upstream session registry is used (when a downstream `Mcp-Session-Id` header is present and tracing is inactive), ContextForge automatically categorizes upstream connection failures into 13 distinct error categories. This enhancement replaces generic "unhandled errors in a TaskGroup" messages with specific, actionable diagnostics that enable operators to quickly identify root causes.
+When the upstream session registry is used (when a downstream `Mcp-Session-Id` header is present and tracing is inactive), ContextForge automatically categorizes upstream connection failures into 14 distinct error categories. This enhancement replaces generic "unhandled errors in a TaskGroup" messages with specific, actionable diagnostics that enable operators to quickly identify root causes.
 
 ### Error Categories
 
@@ -757,7 +757,7 @@ This ensures operators see actionable error information without needing to parse
 
 ### Fallback Behavior
 
-When the upstream session registry is **not used** (no `Mcp-Session-Id` header, or tracing is active, or registry initialization failed), the per-call session path in `tool_service.py` performs its own ExceptionGroup unwrapping and error sanitization. Both paths provide consistent error diagnostics and credential redaction.
+When the upstream session registry is **not used** (no `Mcp-Session-Id` header, or tracing is active, or registry initialization failed), the per-call session path in `tool_service.py` performs its own ExceptionGroup unwrapping and error sanitization. Both paths preserve the root-cause message and redact credentials, but only the registry path currently adds the semantic error category described above.
 
 ### Observability Best Practices
 
