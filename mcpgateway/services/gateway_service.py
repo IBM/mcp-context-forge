@@ -59,10 +59,8 @@ import uuid
 # Third-Party
 from filelock import FileLock, Timeout
 import httpx
-from mcp import ClientSession
+from mcp import ClientSession, MCPError
 from mcp.client.sse import sse_client
-from mcp.client.streamable_http import streamablehttp_client
-from mcp.shared.exceptions import McpError
 import httpx2
 from pydantic import ValidationError
 from sqlalchemy import and_, delete, desc, or_, select, update
@@ -127,6 +125,7 @@ from mcpgateway.utils.admin_check import is_admin_bypass_granted
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.display_name import generate_display_name
 from mcpgateway.utils.mcp_proxy_client import mcp_proxy_client
+from mcpgateway.utils.streamable_http_compat import streamable_http_client
 from mcpgateway.utils.pagination import unified_paginate
 from mcpgateway.utils.passthrough_headers import get_passthrough_headers
 from mcpgateway.utils.redis_client import get_redis_client
@@ -7238,7 +7237,7 @@ _HANDSHAKE_PROTOCOL_COPY = (
 _HANDSHAKE_INVALID_COPY = "The server's response is not valid MCP. The URL may point at a service that does not speak MCP."
 
 
-class _SniPinningTransport(httpx.AsyncHTTPTransport):
+class _SniPinningTransport(httpx2.AsyncHTTPTransport):
     """Dial a DNS-pinned address while keeping the request's hostname authority and TLS identity.
 
     The MCP SDK compares the origin it connected to against the origin the
@@ -7254,30 +7253,30 @@ class _SniPinningTransport(httpx.AsyncHTTPTransport):
         Args:
             sni_hostname: Validated hostname whose certificate must match.
             pinned_host: Address resolved at validation time, dialled instead of re-resolving.
-            **kwargs: Forwarded to ``httpx.AsyncHTTPTransport``.
+            **kwargs: Forwarded to ``httpx2.AsyncHTTPTransport``.
         """
         super().__init__(**kwargs)
         self._sni_hostname = sni_hostname
         self._pinned_host = pinned_host
 
-    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+    async def handle_async_request(self, request: httpx2.Request) -> httpx2.Response:
         """Send the request to the pinned address with TLS pinned to the validated hostname.
 
         Args:
             request: Outbound request addressed to the validated hostname.
 
         Returns:
-            httpx.Response: The upstream response.
+            httpx2.Response: The upstream response.
 
         Raises:
-            httpx.UnsupportedProtocol: If the request targets any other host.
+            httpx2.UnsupportedProtocol: If the request targets any other host.
         """
         # Compare the IDNA-encoded form: httpx decodes punycode back to Unicode on `url.host`,
         # while the validated hostname arrives punycode-encoded from the request schema.
         if request.url.raw_host.decode("ascii") != self._sni_hostname:
-            raise httpx.UnsupportedProtocol(f"Gateway test refused a request to unvalidated host {request.url.host}", request=request)
+            raise httpx2.UnsupportedProtocol(f"Gateway test refused a request to unvalidated host {request.url.host}", request=request)
         request.extensions.setdefault("sni_hostname", self._sni_hostname)
-        # httpx derived the Host header from the hostname URL at construction time; rewriting the
+        # httpx2 derived the Host header from the hostname URL at construction time; rewriting the
         # URL afterwards keeps that header while sending the bytes to the pinned address.
         request.url = request.url.copy_with(host=self._pinned_host)
         return await super().handle_async_request(request)
@@ -7476,7 +7475,7 @@ def _classify_handshake_error(root_cause: BaseException) -> tuple[str, str]:
         return "auth", _HANDSHAKE_AUTH_COPY
     if isinstance(root_cause, (httpx.RequestError, OSError)):
         return "transport", _HANDSHAKE_TRANSPORT_COPY
-    if isinstance(root_cause, McpError) or (isinstance(root_cause, RuntimeError) and "protocol" in str(root_cause).lower()):
+    if isinstance(root_cause, MCPError) or (isinstance(root_cause, RuntimeError) and "protocol" in str(root_cause).lower()):
         return "protocol", _HANDSHAKE_PROTOCOL_COPY
     return "invalid_response", _HANDSHAKE_INVALID_COPY
 
@@ -7818,9 +7817,9 @@ async def test_gateway_handshake(
 
     def get_httpx_client_factory(
         headers: Optional[Dict[str, str]] = None,
-        timeout: Optional[httpx.Timeout] = None,
-        auth: Optional[httpx.Auth] = None,
-    ) -> httpx.AsyncClient:
+        timeout: Optional[httpx2.Timeout] = None,
+        auth: Optional[httpx2.Auth] = None,
+    ) -> httpx2.AsyncClient:
         """Build the SDK's httpx client so it dials the pinned address with the gateway's TLS settings.
 
         Args:
@@ -7829,20 +7828,20 @@ async def test_gateway_handshake(
             auth: Optional auth for the client
 
         Returns:
-            httpx.AsyncClient: Configured HTTPX async client
+            httpx2.AsyncClient: Configured HTTPX2 async client
         """
         # An explicit transport is what makes address pinning possible; it also opts this client
-        # out of httpx's environment-proxy discovery, unlike the stateless discover probe.
-        return httpx.AsyncClient(
+        # out of httpx2's environment-proxy discovery, unlike the stateless discover probe.
+        return httpx2.AsyncClient(
             follow_redirects=False,
             headers=headers,
-            timeout=timeout if timeout else get_http_timeout(),
+            timeout=timeout if timeout else get_httpx2_timeout(),
             auth=auth,
             transport=_SniPinningTransport(
                 sni_hostname=validated_hostname,
                 pinned_host=target["resolved_ip"],
                 verify=handshake_verify,
-                limits=httpx.Limits(
+                limits=httpx2.Limits(
                     max_connections=settings.httpx_max_connections,
                     max_keepalive_connections=settings.httpx_max_keepalive_connections,
                     keepalive_expiry=settings.httpx_keepalive_expiry,
@@ -7964,7 +7963,7 @@ async def test_gateway_handshake(
                     try:
                         list_result = await list_call()
                         component_counts[attr] = len(getattr(list_result, attr))
-                        if getattr(list_result, "nextCursor", None):
+                        if getattr(list_result, "next_cursor", None):
                             counts_partial = True
                     except Exception as list_exc:
                         logger.debug("MCP handshake list_%s failed for %s: %s", attr, sanitize_url_for_logging(validated_base_url), list_exc)
@@ -7973,9 +7972,9 @@ async def test_gateway_handshake(
                     success=True,
                     latency_ms=_latency_ms(),
                     negotiation_path="initialize",
-                    protocol_version=str(init.protocolVersion),
-                    server_name=init.serverInfo.name,
-                    server_version=init.serverInfo.version,
+                    protocol_version=str(init.protocol_version),
+                    server_name=init.server_info.name,
+                    server_version=init.server_info.version,
                     capabilities=capabilities,
                     component_counts=component_counts or None,
                     counts_partial=counts_partial,
@@ -7994,11 +7993,7 @@ async def test_gateway_handshake(
                         async with ClientSession(read_stream, write_stream) as session:
                             return await _probe_session(session)
                 else:
-                    async with streamablehttp_client(url=hostname_url, headers=headers, timeout=settings.health_check_timeout, httpx_client_factory=get_httpx_client_factory) as (
-                        read_stream,
-                        write_stream,
-                        _get_session_id,
-                    ):
+                    async with streamable_http_client(url=hostname_url, headers=headers, timeout=settings.health_check_timeout, httpx_client_factory=get_httpx_client_factory) as (read_stream, write_stream):
                         async with ClientSession(read_stream, write_stream) as session:
                             return await _probe_session(session)
             except TimeoutError:

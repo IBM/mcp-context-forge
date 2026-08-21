@@ -35,8 +35,7 @@ from typing import Any, AsyncIterator, Awaitable, Callable, Mapping, Optional, P
 import anyio
 import httpx
 import httpx2
-from mcp import Client, ClientSession
-from mcp import MCPError as McpError
+from mcp import Client, ClientSession, MCPError
 from mcp.client.sse import sse_client
 import mcp_types
 
@@ -368,7 +367,7 @@ def _categorize_upstream_error(exc: BaseException, auth_query_params: Optional[d
                 error_category = "http_error"
         else:
             error_category = "http_error"
-    elif isinstance(root_cause, McpError):
+    elif isinstance(root_cause, MCPError):
         # MCP protocol-level errors (failed session.initialize(), etc.)
         error_category = "mcp_protocol_error"
     elif isinstance(root_cause, ssl.SSLError):
@@ -1008,9 +1007,9 @@ class UpstreamSessionRegistry:
         """Run the health check chain against an idle session. Returns False if all probes fail.
 
         Exception policy: we ADVANCE on ``TimeoutError`` and on
-        ``McpError(METHOD_NOT_FOUND)`` (the server chose not to implement
+        ``MCPError(METHOD_NOT_FOUND)`` (the server chose not to implement
         this probe), and we FAIL FAST on everything else transport- or
-        protocol-level (``OSError`` / anyio stream errors / other ``McpError``s)
+        protocol-level (``OSError`` / anyio stream errors / other ``MCPError``s)
         — recreating a session on "permission denied" or "request too large"
         would loop against the same failure. Genuinely unexpected exceptions
         (``AttributeError`` from SDK drift, etc.) propagate so they surface in
@@ -1031,7 +1030,7 @@ class UpstreamSessionRegistry:
                         elif method == "list_resources":
                             await upstream.session.list_resources()
                     return True
-                except McpError as exc:
+                except MCPError as exc:
                     if exc.error.code == _METHOD_NOT_FOUND:
                         continue  # Server doesn't support this probe; try the next one.
                     self._metrics.health_check_failures += 1

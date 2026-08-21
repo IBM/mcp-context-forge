@@ -43,7 +43,7 @@ import uuid
 import httpx
 import httpx2
 import pytest
-from mcp import ClientSession, MCPError as McpError
+from mcp import ClientSession, MCPError
 from mcp.client.streamable_http import create_mcp_http_client, streamable_http_client
 
 pw = pytest.importorskip("playwright", reason="playwright is not installed – pip install playwright")
@@ -484,7 +484,7 @@ def _mcp_tools_list_after_publisher_sync(access_token: str, server_url: str = BA
     while True:
         try:
             return _mcp_tools_list(access_token, server_url=server_url)
-        except (httpx.HTTPError, McpError, RuntimeError, TimeoutError):
+        except (httpx.HTTPError, MCPError, RuntimeError, TimeoutError):
             if time.monotonic() >= deadline:
                 raise
             time.sleep(_PER_SERVER_ACCESS_RETRY_DELAY_SECONDS)
@@ -696,7 +696,7 @@ class TestMcpToolCallByRole:
             result = _mcp_tool_call(outsider_user["access_token"], "mcp-rbac-streamable-http-gw-get-system-time", {"timezone": "UTC"})
             assert result.is_error, f"Outsider should be denied tools.execute, got: {result}"
         except Exception:
-            pass  # McpError or connection error — both valid denials
+            pass  # MCPError or connection error — both valid denials
         print("    -> Outsider denied tools.execute (expected)")
 
     def test_outsider_calls_nonexistent_tool_error(self, outsider_user: dict) -> None:
@@ -704,7 +704,7 @@ class TestMcpToolCallByRole:
             result = _mcp_tool_call(outsider_user["access_token"], "nonexistent-tool-xyz-rbac")
             assert result.is_error, f"Nonexistent tool should return error, got: {result}"
         except Exception:
-            pass  # McpError — expected for outsider with no permissions
+            pass  # MCPError — expected for outsider with no permissions
         print("    -> Outsider nonexistent tool: error (expected)")
 
     def test_viewer_can_execute_on_default_endpoint(self, test_users: dict) -> None:

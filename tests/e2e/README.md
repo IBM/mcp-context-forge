@@ -73,4 +73,4 @@ pytest
 ```
 
 No subprocess, no settle delays, no stdin-close plumbing. Sessions are
-established by the `streamablehttp_client` / `ClientSession` async context managers.
+established by the ``streamable_http_client`` / ``ClientSession`` async context managers.
