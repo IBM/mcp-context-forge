@@ -354,6 +354,13 @@ class TestTokenScopingMiddleware:
         assert result is False, "GET /catalog should be denied when token lacks servers.read"
 
     @pytest.mark.asyncio
+    async def test_gateway_impact_preview_requires_gateways_read(self, middleware):
+        """Gateway impact preview follows the gateway read scope for both API mounts."""
+        for path in ("/gateways/gateway-1/impact-preview", "/v1/gateways/gateway-1/impact-preview"):
+            assert middleware._check_permission_restrictions(path, "GET", [Permissions.GATEWAYS_READ]) is True
+            assert middleware._check_permission_restrictions(path, "GET", [Permissions.GATEWAYS_UPDATE]) is False
+
+    @pytest.mark.asyncio
     async def test_catalog_register_endpoint_requires_servers_create(self, middleware):
         """POST /catalog/{id}/register is gated on servers.create, with /v1 normalization.
 
