@@ -31,6 +31,9 @@ ContextForge uses dual-format logging:
 }
 ```
 
+!!! note "Health Check Log Suppression"
+    Access logs for `/health` and `/ready` endpoints are automatically suppressed to reduce noise from Kubernetes health probes and readiness checks. This filtering happens at the logging layer and cannot be disabled. Other endpoints are logged normally.
+
 ### Text Format (Console Output)
 ```
 2025-01-09 17:30:15,123 - mcpgateway.gateway_service - INFO - Registered gateway: peer-gateway-1
