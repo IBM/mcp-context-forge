@@ -16,6 +16,7 @@ This suite provides complete test coverage for:
 
 # Standard
 from datetime import datetime, timezone
+import base64
 import logging
 import mimetypes
 import time
@@ -7688,6 +7689,7 @@ from pydantic import Field as _Field
 
 # First-Party
 from mcpgateway.common.models import BlobResourceContents as _BlobBase
+from mcpgateway.common.models import ResourceContent as _FinalContent
 from mcpgateway.common.models import TextResourceContents as _TextBase
 
 
@@ -7842,7 +7844,9 @@ class TestReadResourceDirectProxy:
                 token_teams=["team-1"],
             )
 
-        assert isinstance(content, _TextBase)
+        # direct_proxy now returns the FINAL content shape (ResourceContent) so the
+        # cache-mode pointer-resolution machinery is never re-run on proxied content.
+        assert isinstance(content, _FinalContent)
         assert content.text == "hello from remote"
         assert content.uri == "http://example.com/dp-resource"
         session_mock.read_resource.assert_awaited_once_with(uri="http://example.com/dp-resource")
@@ -7855,9 +7859,11 @@ class TestReadResourceDirectProxy:
 
         db = self._make_mock_db(mock_direct_proxy_resource)
 
-        # Remote session returns blob content (no .text attribute)
+        # Remote session returns blob content (no .text attribute).
+        # MCP transports carry blobs as base64 strings; the service must decode
+        # to raw bytes so the ingress doesn't double-encode on the way out.
         first_content = MagicMock(spec=[])  # empty spec to control hasattr
-        first_content.blob = "base64encodeddata"
+        first_content.blob = base64.b64encode(b"raw blob payload").decode()
         first_content.mime_type = "application/octet-stream"
         result_mock = MagicMock()
         result_mock.contents = [first_content]
@@ -7886,8 +7892,9 @@ class TestReadResourceDirectProxy:
                 token_teams=["team-1"],
             )
 
-        assert isinstance(content, _BlobBase)
-        assert content.blob == "base64encodeddata"
+        # direct_proxy now returns the FINAL content shape (ResourceContent) — see text test above.
+        assert isinstance(content, _FinalContent)
+        assert content.blob == b"raw blob payload"  # decoded to raw bytes, not the base64 string
         assert content.uri == "http://example.com/dp-resource"
 
     @pytest.mark.asyncio
@@ -7927,7 +7934,9 @@ class TestReadResourceDirectProxy:
                 token_teams=["team-1"],
             )
 
-        assert isinstance(content, _TextBase)
+        # direct_proxy now returns the FINAL content shape (ResourceContent) so the
+        # cache-mode pointer-resolution machinery is never re-run on proxied content.
+        assert isinstance(content, _FinalContent)
         assert content.text == ""
         assert content.uri == "http://example.com/dp-resource"
 
@@ -7967,7 +7976,9 @@ class TestReadResourceDirectProxy:
                 token_teams=["team-1"],
             )
 
-        assert isinstance(content, _TextBase)
+        # direct_proxy now returns the FINAL content shape (ResourceContent) so the
+        # cache-mode pointer-resolution machinery is never re-run on proxied content.
+        assert isinstance(content, _FinalContent)
         assert content.text == ""
         assert content.uri == "http://example.com/dp-resource"
 
