@@ -98,6 +98,19 @@ class TestTokenRevocation:
 
         assert result is True
 
+    def test_revoke_token_fail_if_already_revoked(self, blocklist_service, test_db):
+        """Single-use semantics: an already-revoked jti returns False with fail_if_already_revoked."""
+        jti = str(uuid.uuid4())
+
+        # First revocation wins
+        assert blocklist_service.revoke_token(jti=jti, revoked_by="test@example.com", reason="token_refresh", fail_if_already_revoked=True) is True
+
+        # Second attempt loses the compare-and-set
+        assert blocklist_service.revoke_token(jti=jti, revoked_by="test@example.com", reason="token_refresh", fail_if_already_revoked=True) is False
+
+        # Default behavior stays idempotent
+        assert blocklist_service.revoke_token(jti=jti, revoked_by="test@example.com", reason="logout") is True
+
     def test_revoke_token_duplicate_without_db_session(self, test_db):
         """Test revoking an already revoked token without db session."""
         # Create service without db to test fresh_db_session path
