@@ -40,6 +40,7 @@ transports, middleware, and tests all consume them.
     Token claim normalization (canonical per AGENTS.md)
         normalize_token_teams(payload) -> list[str] | None
         resolve_session_teams(...) -> list[str] | None
+        derive_token_team_id(teams, token_use) -> str | None
 
 Private-but-cross-module surface
 --------------------------------
@@ -113,6 +114,7 @@ __all__ = [
     "get_user_team_roles",
     "normalize_token_teams",
     "resolve_session_teams",
+    "derive_token_team_id",
 ]
 
 # Module-level logger
@@ -298,6 +300,94 @@ def _get_team_name_by_id_sync(team_id: Optional[str]) -> Optional[str]:
             )
         )
         return result.scalar_one_or_none()
+
+
+def _is_personal_team_sync(team_id: Optional[str]) -> bool:
+    """Return whether a team ID refers to an active personal team.
+
+    Args:
+        team_id: Team identifier to classify.
+
+    Returns:
+        ``True`` when the team exists, is active, and is a personal team.
+    """
+    if not team_id:
+        return False
+
+    with fresh_db_session() as db:
+        # Third-Party
+        from sqlalchemy import select  # pylint: disable=import-outside-toplevel
+
+        # First-Party
+        from mcpgateway.db import EmailTeam  # pylint: disable=import-outside-toplevel
+
+        result = db.execute(
+            select(EmailTeam.is_personal).where(
+                EmailTeam.id == team_id,
+                EmailTeam.is_active.is_(True),
+            )
+        )
+        return bool(result.scalar_one_or_none())
+
+
+async def derive_token_team_id(normalized_teams: Optional[List[Any]], token_use: Optional[str]) -> Optional[str]:
+    """Derive the RBAC team context (``request.state.team_id``) for a token.
+
+    A non-``None`` result makes the RBAC layer evaluate permissions with an
+    explicit ``team_id``, which pulls in that team's team-scoped roles. A
+    ``None`` result makes it fall back to ``check_any_team``, which aggregates
+    across the caller's teams while **excluding** personal teams.
+
+    Policy (single source of truth; call this instead of inlining the rule):
+
+    - Session tokens never derive a team context here — session scope is
+      resolved from the database by :func:`resolve_session_teams`.
+    - Only a *single-team* API/legacy token derives a team context. Admin
+      bypass (``None``) and multi-team tokens both yield ``None``.
+    - Personal teams are excluded. They are auto-created for every user and
+      auto-granted ``settings.default_team_owner_role`` (``team_admin`` by
+      default), which carries create/update/delete across every resource
+      type. Honouring them here would silently turn any personal-team-scoped
+      API token into a full-mutate credential — the same reason
+      ``PermissionService._get_user_roles`` already excludes personal teams on
+      its ``check_any_team`` path. Layer 1 visibility is unaffected: the
+      ``token_teams`` claim still scopes what the token can see.
+    - If the personal-team classification lookup itself fails (DB
+      unavailable), this degrades to the pre-existing behaviour — keep
+      ``team_id`` — rather than changing it. The classification is an
+      RBAC-context refinement, not an authn/authz gate: it must not turn a
+      DB hiccup into a scope change, matching how sibling helpers in this
+      module (e.g. :func:`resolve_trace_team_name`) already treat lookup
+      failures as best-effort.
+
+    Args:
+        normalized_teams: Teams from :func:`normalize_token_teams` /
+            :func:`resolve_session_teams` — ``None`` for admin bypass,
+            ``[]`` for public-only, otherwise a list of team IDs.
+        token_use: The ``token_use`` JWT claim (``"session"``, ``"api"``, or
+            ``None`` for legacy tokens).
+
+    Returns:
+        The team ID to use as RBAC context, or ``None`` to fall back to
+        ``check_any_team``.
+    """
+    if normalized_teams is None or token_use == "session":  # nosec B105 - Not a password; token_use is a JWT claim type
+        return None
+    if len(normalized_teams) != 1:
+        return None
+
+    entry = normalized_teams[0]
+    team_id = entry if isinstance(entry, str) else entry.get("id")
+    if not team_id:
+        return None
+
+    try:
+        if await asyncio.to_thread(_is_personal_team_sync, team_id):
+            return None
+    except Exception as exc:
+        logger.debug("Failed to classify team_id=%s as personal; keeping team_id: %s", team_id, exc)
+
+    return team_id
 
 
 def _extract_claim_team_name(payload: Dict[str, Any], team_id: Optional[str]) -> Optional[str]:
@@ -1640,13 +1730,8 @@ async def get_current_user(
 
                         request.state.token_teams = teams
 
-                        # Set team_id: only for single-team API tokens
-                        if teams is None:
-                            request.state.team_id = None
-                        elif len(teams) == 1 and token_use != "session":  # nosec B105
-                            request.state.team_id = teams[0] if isinstance(teams[0], str) else teams[0].get("id")
-                        else:
-                            request.state.team_id = None
+                        # Set team_id: only for single-team, non-personal API tokens
+                        request.state.team_id = await derive_token_team_id(teams, token_use)
 
                         request.state.trace_team_name = await resolve_trace_team_name(payload, teams)
 
@@ -1713,13 +1798,8 @@ async def get_current_user(
                     # API token or legacy: use embedded teams
                     teams = normalize_token_teams(payload)
 
-                # Set team_id: only for single-team API tokens
-                if teams is None:
-                    team_id = None
-                elif len(teams) == 1 and token_use != "session":  # nosec B105
-                    team_id = teams[0] if isinstance(teams[0], str) else teams[0].get("id")
-                else:
-                    team_id = None
+                # Set team_id: only for single-team, non-personal API tokens
+                team_id = await derive_token_team_id(teams, token_use)
 
                 if request:
                     request.state.token_teams = teams
@@ -1904,13 +1984,8 @@ async def get_current_user(
             # API token or legacy: use embedded teams
             normalized_teams = normalize_token_teams(payload)
 
-        # Set team_id: only for single-team API tokens
-        if normalized_teams is None:
-            team_id = None
-        elif len(normalized_teams) == 1 and token_use != "session":  # nosec B105
-            team_id = normalized_teams[0] if isinstance(normalized_teams[0], str) else normalized_teams[0].get("id")
-        else:
-            team_id = None
+        # Set team_id: only for single-team, non-personal API tokens
+        team_id = await derive_token_team_id(normalized_teams, token_use)
 
         if request:
             request.state.token_teams = normalized_teams
