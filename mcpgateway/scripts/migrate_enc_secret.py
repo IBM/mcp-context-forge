@@ -50,7 +50,7 @@ EncryptionService path (``v2:{...}`` format):
 +---------------------------+-------------------------------------+
 | sso_providers             | client_secret_encrypted             |
 +---------------------------+-------------------------------------+
-| gateways                  | oauth_config (JSON, recursive)      |
+| gateways                  | client_key, oauth_config (JSON)     |
 +---------------------------+-------------------------------------+
 | servers                   | oauth_config (JSON, recursive)      |
 +---------------------------+-------------------------------------+
@@ -984,6 +984,7 @@ def run_migration(
         ("oauth_tokens", "id", ["access_token", "refresh_token"]),
         ("registered_oauth_clients", "id", ["client_secret_encrypted", "registration_access_token_encrypted"]),
         ("sso_providers", "id", ["client_secret_encrypted"]),
+        ("gateways", "id", ["client_key"]),
     ]
 
     # Tables whose oauth_config JSON contains recursively-encrypted sensitive keys — EncryptionService path
