@@ -4889,6 +4889,50 @@ class GatewayTestResponse(BaseModelWithConfigDict):
     body: Optional[Union[str, Dict[str, Any]]] = Field(None, description="Response body, can be a string or JSON object")
 
 
+class GatewayHandshakeRequest(BaseModelWithConfigDict):
+    """Request to run an MCP handshake test against a server URL."""
+
+    base_url: AnyHttpUrl = Field(..., description="Base URL of the MCP server to test")
+    path: Optional[str] = Field(None, description="Optional path appended to the base URL")
+    headers: Optional[Dict[str, str]] = Field(None, description="Optional headers (e.g. Authorization) sent with the handshake")
+
+    @field_validator("path")
+    @classmethod
+    def validate_path(cls, value: Optional[str]) -> Optional[str]:
+        """Reject control characters, which httpx refuses when it builds the request URL.
+
+        Args:
+            value: Candidate path.
+
+        Returns:
+            The path unchanged.
+
+        Raises:
+            ValueError: If the path contains a control character.
+        """
+        if value and any(character < " " or character == "\x7f" for character in value):
+            raise ValueError("Path must not contain control characters")
+        return value
+
+
+class GatewayHandshakeResponse(BaseModelWithConfigDict):
+    """Result of an MCP handshake test."""
+
+    success: bool
+    latency_ms: int
+    negotiation_path: Optional[Literal["server_discover", "initialize"]] = Field(None, description="Which handshake path produced the result")
+    protocol_version: Optional[str] = None
+    server_name: Optional[str] = None
+    server_version: Optional[str] = None
+    capabilities: Optional[Dict[str, Any]] = None
+    component_counts: Optional[Dict[str, int]] = Field(None, description="Counts for tools/resources/prompts; a key is absent when the capability is not advertised")
+    counts_partial: bool = Field(False, description="True when any list result had a nextCursor (counts are first-page lower bounds)")
+    credential_source: Literal["stored", "form", "none"] = "none"
+    failure_class: Optional[Literal["transport", "protocol", "auth", "invalid_response"]] = None
+    error: Optional[str] = None
+    raw_preview: Optional[str] = Field(None, description="Size-capped JSON preview of the final handshake payload")
+
+
 class TaggedEntity(BaseModelWithConfigDict):
     """A simplified representation of an entity that has a tag."""
 

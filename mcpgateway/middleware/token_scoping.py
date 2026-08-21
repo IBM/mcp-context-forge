@@ -138,6 +138,7 @@ _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     ("DELETE", re.compile(r"^/oauth/registered-clients/[^/]+(?:$|/)"), Permissions.ADMIN_OAUTH_CLIENTS_DELETE),
     # MCP Servers REST API (v1 prefix stripped by middleware before matching)
     ("POST", re.compile(r"^/mcp-servers/test(?:$|/)"), Permissions.GATEWAYS_READ),
+    ("POST", re.compile(r"^/mcp-servers/test-handshake(?:$|/)"), Permissions.GATEWAYS_READ),
     # MCP registry catalog (v1 prefix stripped by middleware before matching)
     ("GET", re.compile(r"^/catalog(?:$|/)"), Permissions.SERVERS_READ),
     ("POST", re.compile(r"^/catalog/[^/]+/register(?:$|/)"), Permissions.SERVERS_CREATE),

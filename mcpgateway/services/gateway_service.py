@@ -45,13 +45,14 @@ import asyncio
 import binascii
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+import json
 import logging
 import mimetypes
 import os
 import ssl
 import tempfile
 import time
-from typing import Any, AsyncGenerator, Awaitable, Callable, cast, Dict, List, Optional, Set, TYPE_CHECKING, Union
+from typing import Any, AsyncGenerator, Awaitable, Callable, cast, Dict, List, Literal, Optional, Set, TYPE_CHECKING, Union
 from urllib.parse import urlparse, urlunparse
 import uuid
 
@@ -61,6 +62,7 @@ import httpx
 from mcp import ClientSession
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamablehttp_client
+from mcp.shared.exceptions import McpError
 from pydantic import ValidationError
 from sqlalchemy import and_, delete, desc, or_, select, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
@@ -78,6 +80,7 @@ except ImportError:
     logging.info("Redis is not utilized in this environment.")
 
 # First-Party
+from mcpgateway import __version__
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam as DbEmailTeam
@@ -92,7 +95,19 @@ from mcpgateway.db import ResourceMetric, ResourceSubscription, server_prompt_as
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric
 from mcpgateway.observability import create_span, set_span_attribute, set_span_error
-from mcpgateway.schemas import GATEWAY_SUPPORTED_TRANSPORTS, GatewayCreate, GatewayRead, GatewayTestRequest, GatewayTestResponse, GatewayUpdate, PromptCreate, ResourceCreate, ToolCreate
+from mcpgateway.schemas import (
+    GATEWAY_SUPPORTED_TRANSPORTS,
+    GatewayCreate,
+    GatewayHandshakeRequest,
+    GatewayHandshakeResponse,
+    GatewayRead,
+    GatewayTestRequest,
+    GatewayTestResponse,
+    GatewayUpdate,
+    PromptCreate,
+    ResourceCreate,
+    ToolCreate,
+)
 
 # logging.getLogger("httpx").setLevel(logging.WARNING)  # Disables httpx logs for regular health checks
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
@@ -7215,6 +7230,259 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         raise GatewayConnectionError(f"Failed to initialize gateway at {sanitized_url}: Connection could not be established")
 
 
+MCP_STATELESS_PROTOCOL_VERSION = "2026-07-28"  # Hand-written: the pinned MCP SDK predates this spec version.
+
+_HANDSHAKE_TRANSPORT_COPY = "Could not reach the MCP server. Verify the URL and that the server is running and reachable from this host."
+_HANDSHAKE_AUTH_COPY = "The MCP server rejected the credentials. Check the stored credentials for this server or supply an Authorization header."
+_HANDSHAKE_PROTOCOL_COPY = (
+    "The server responded but MCP negotiation failed. Confirm the URL points at an MCP endpoint (for example /mcp or /sse) and supports an MCP protocol this gateway understands."
+)
+_HANDSHAKE_INVALID_COPY = "The server's response is not valid MCP. The URL may point at a service that does not speak MCP."
+
+
+class _SniPinningTransport(httpx.AsyncHTTPTransport):
+    """Dial a DNS-pinned address while keeping the request's hostname authority and TLS identity.
+
+    The MCP SDK compares the origin it connected to against the origin the
+    server advertises (``mcp.client.sse`` raises on a mismatch), so pinning has
+    to happen below the SDK: requests keep the validated hostname in their URL
+    and ``Host`` header, while every connection goes to the address resolved at
+    validation time and TLS is verified against that hostname.
+    """
+
+    def __init__(self, sni_hostname: str, pinned_host: str, **kwargs: Any) -> None:
+        """Record the validated hostname and the address to dial in its place.
+
+        Args:
+            sni_hostname: Validated hostname whose certificate must match.
+            pinned_host: Address resolved at validation time, dialled instead of re-resolving.
+            **kwargs: Forwarded to ``httpx.AsyncHTTPTransport``.
+        """
+        super().__init__(**kwargs)
+        self._sni_hostname = sni_hostname
+        self._pinned_host = pinned_host
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        """Send the request to the pinned address with TLS pinned to the validated hostname.
+
+        Args:
+            request: Outbound request addressed to the validated hostname.
+
+        Returns:
+            httpx.Response: The upstream response.
+
+        Raises:
+            httpx.UnsupportedProtocol: If the request targets any other host.
+        """
+        # Compare the IDNA-encoded form: httpx decodes punycode back to Unicode on `url.host`,
+        # while the validated hostname arrives punycode-encoded from the request schema.
+        if request.url.raw_host.decode("ascii") != self._sni_hostname:
+            raise httpx.UnsupportedProtocol(f"Gateway test refused a request to unvalidated host {request.url.host}", request=request)
+        request.extensions.setdefault("sni_hostname", self._sni_hostname)
+        # httpx derived the Host header from the hostname URL at construction time; rewriting the
+        # URL afterwards keeps that header while sending the bytes to the pinned address.
+        request.url = request.url.copy_with(host=self._pinned_host)
+        return await super().handle_async_request(request)
+
+
+def _gateway_test_visibility_filters(db: Session, user: Any) -> List[Any]:
+    """Build Layer-1 visibility conditions for gateway-test queries.
+
+    Mirrors :meth:`GatewayService._check_gateway_access`: public rows are always
+    visible; admin bypass (per ``is_admin_bypass_granted``) adds team rows plus
+    the caller's own private rows but never another user's; a team-scoped token
+    adds only its own teams; and a public-only token (``token_teams == []``) or
+    a caller without an email sees public rows alone. A non-admin caller whose
+    context carries no token scope is deliberately not expanded to its database
+    teams here, keeping these test endpoints fail-closed.
+
+    Args:
+        db: Database session, used to resolve admin status.
+        user: Authenticated user context dict.
+
+    Returns:
+        Conditions to OR together; never empty.
+    """
+    # First-Party
+    from mcpgateway.auth_context import extract_token_team_ids, get_user_email  # pylint: disable=import-outside-toplevel
+
+    token_teams = extract_token_team_ids(user)
+    # get_user_email returns the literal "unknown" for an identity-less context; treat that as no
+    # identity rather than letting it own-match gateways persisted with the same sentinel.
+    resolved_email = get_user_email(user)
+    scoped_user_email = None if resolved_email == "unknown" else resolved_email
+    visibility_filters: List[Any] = [DbGateway.visibility == "public"]
+
+    if is_admin_bypass_granted(db, scoped_user_email, token_teams):
+        visibility_filters.append(DbGateway.visibility == "team")
+        if scoped_user_email:
+            visibility_filters.append(and_(DbGateway.visibility == "private", DbGateway.owner_email == scoped_user_email))
+        return visibility_filters
+
+    if not scoped_user_email or token_teams == []:
+        return visibility_filters
+
+    if token_teams:
+        visibility_filters.append(and_(DbGateway.visibility == "team", DbGateway.team_id.in_(token_teams)))
+    visibility_filters.append(and_(DbGateway.visibility == "private", DbGateway.owner_email == scoped_user_email))
+    return visibility_filters
+
+
+def _gateway_test_endpoint_url(base_url: str, path_suffix: str) -> str:
+    """Append a gateway-test request path to a base URL without disturbing its query string.
+
+    Args:
+        base_url: Validated base URL, which may carry a query or fragment.
+        path_suffix: Request path, with or without a leading slash.
+
+    Returns:
+        The base URL with ``path_suffix`` appended to its path component.
+    """
+    parsed = urlparse(base_url)
+    joined_path = (parsed.path.rstrip("/") + "/" + path_suffix.lstrip("/")).rstrip("/")
+    return urlunparse(parsed._replace(path=joined_path))
+
+
+def _gateway_url_match_variants(validated_base_url: str) -> List[str]:
+    """Return the spellings of a validated base URL that a registered gateway may be stored under.
+
+    ``AnyHttpUrl`` normalizes a root URL to a trailing slash, while ``GatewayCreate.url``
+    stores whatever was registered, so matching one spelling exactly would miss the other.
+    Only the root path is ambiguous: a non-root path is matched exactly, so ``/mcp`` never
+    resolves the credentials of a separately registered ``/mcp/``.
+
+    Args:
+        validated_base_url: Validated base URL of the test target.
+
+    Returns:
+        The candidate spellings to match against ``DbGateway.url``.
+    """
+    parsed = urlparse(validated_base_url)
+    if parsed.path not in ("", "/"):
+        return [validated_base_url]
+    return [urlunparse(parsed._replace(path="")), urlunparse(parsed._replace(path="/"))]
+
+
+async def _validate_gateway_test_target(
+    base_url: str,
+    team_id: Optional[str],
+    user: Any,
+    db: Session,
+) -> Optional[Dict[str, str]]:
+    """Validate a gateway-test URL against the allowlist and DNS-pin the resolved address.
+
+    Shared prelude for the raw connectivity test and the MCP handshake test.
+
+    Args:
+        base_url: The URL to validate.
+        team_id: Optional team ID used to scope the registered-gateway allowlist.
+        user: Authenticated user context dict.
+        db: Database session.
+
+    Returns:
+        Dict with ``validated_base_url``, ``validated_hostname``, ``pinned_base_url``,
+        ``resolved_ip`` and ``original_authority``, or ``None`` when the URL is rejected.
+    """
+    # First-Party
+    from mcpgateway.auth_context import get_user_email  # pylint: disable=import-outside-toplevel
+
+    # Build allowlist for gateway test endpoint
+    allowed_hosts_set: set[str] = set()
+
+    if settings.gateway_test_allow_registered_only:
+        # Mode 1: Only allow testing registered gateway URLs
+        # Query all enabled gateways to build allowlist from their base URLs
+        try:
+            query = select(DbGateway.url).where(DbGateway.enabled, or_(*_gateway_test_visibility_filters(db, user)))
+            if team_id:
+                query = query.where(DbGateway.team_id == team_id)
+            registered_urls = db.execute(query).scalars().all()
+
+            # Extract hostnames from registered gateway URLs
+            for url in registered_urls:
+                try:
+                    parsed = urlparse(url)
+                    if parsed.hostname:
+                        # Normalize: lowercase and strip trailing dots
+                        hostname = parsed.hostname.lower().rstrip(".")
+                        allowed_hosts_set.add(hostname)
+                except (ValueError, AttributeError) as e:
+                    # Log parse failures to help debug "URL not in allowlist" mysteries
+                    logger.debug("Failed to parse registered gateway URL '%s': %s", url, e)
+                    continue
+        except SQLAlchemyError as e:
+            logger.warning("Failed to build allowlist from registered gateways: %s", e)
+    else:
+        # Mode 2: Use configured host patterns from settings
+        allowed_hosts_set = set(settings.gateway_test_allowed_hosts)
+
+    allowed_hosts = list(allowed_hosts_set)
+
+    # Validate URL with allowlist enforcement and pin a safe resolved IP to close
+    # the DNS rebinding gap between validation-time and connection-time resolution.
+    try:
+        validated_gateway_target = await SecurityValidator.validate_gateway_test_url(base_url, allowed_hosts, "Gateway test URL")
+    except ValueError as e:
+        # Log the actual error for security monitoring, but return generic message
+        safe_url = sanitize_url_for_logging(base_url)
+        logger.warning(
+            "Gateway test URL validation failed for %s by user %s: %s",
+            safe_url,
+            get_user_email(user),
+            str(e),
+        )
+        return None
+
+    validated_base_url = validated_gateway_target["validated_url"]
+    validated_hostname = validated_gateway_target["hostname"]
+    pinned_resolved_ip = validated_gateway_target["resolved_ip"]
+
+    parsed_validated_base_url = urlparse(validated_base_url)
+    pinned_ip_is_ipv6 = ":" in pinned_resolved_ip
+    if parsed_validated_base_url.port is not None:
+        pinned_netloc = f"[{pinned_resolved_ip}]:{parsed_validated_base_url.port}" if pinned_ip_is_ipv6 else f"{pinned_resolved_ip}:{parsed_validated_base_url.port}"
+        original_authority = f"{validated_hostname}:{parsed_validated_base_url.port}"
+    else:
+        pinned_netloc = f"[{pinned_resolved_ip}]" if pinned_ip_is_ipv6 else pinned_resolved_ip
+        original_authority = validated_hostname
+
+    pinned_base_url = urlunparse(parsed_validated_base_url._replace(netloc=pinned_netloc))
+    safe_validated_url = sanitize_url_for_logging(validated_base_url)
+    logger.info(
+        "Gateway test pinned outbound address for user %s: url=%s hostname=%s pinned_ip=%s",
+        get_user_email(user),
+        safe_validated_url,
+        validated_hostname,
+        pinned_resolved_ip,
+    )
+
+    return {
+        "validated_base_url": validated_base_url,
+        "validated_hostname": validated_hostname,
+        "pinned_base_url": pinned_base_url,
+        "resolved_ip": pinned_resolved_ip,
+        "original_authority": original_authority,
+    }
+
+
+def _classify_handshake_error(root_cause: BaseException) -> tuple[str, str]:
+    """Classify a handshake failure into a failure class and actionable copy.
+
+    Args:
+        root_cause: The unwrapped exception that aborted the handshake.
+
+    Returns:
+        Tuple of (failure_class, actionable error copy).
+    """
+    if isinstance(root_cause, httpx.HTTPStatusError) and root_cause.response.status_code in (401, 403):
+        return "auth", _HANDSHAKE_AUTH_COPY
+    if isinstance(root_cause, (httpx.RequestError, OSError)):
+        return "transport", _HANDSHAKE_TRANSPORT_COPY
+    if isinstance(root_cause, McpError) or (isinstance(root_cause, RuntimeError) and "protocol" in str(root_cause).lower()):
+        return "protocol", _HANDSHAKE_PROTOCOL_COPY
+    return "invalid_response", _HANDSHAKE_INVALID_COPY
+
+
 async def test_gateway_connectivity(
     request: GatewayTestRequest,
     team_id: Optional[str],
@@ -7246,91 +7514,30 @@ async def test_gateway_connectivity(
 
     start_time: float = time.monotonic()
 
-    # Build allowlist for gateway test endpoint
-    allowed_hosts_set: set[str] = set()
-
-    if settings.gateway_test_allow_registered_only:
-        # Mode 1: Only allow testing registered gateway URLs
-        # Query all enabled gateways to build allowlist from their base URLs
-        try:
-            query = select(DbGateway.url).where(DbGateway.enabled)
-            if team_id:
-                query = query.where(DbGateway.team_id == team_id)
-            registered_urls = db.execute(query).scalars().all()
-
-            # Extract hostnames from registered gateway URLs
-            for url in registered_urls:
-                try:
-                    parsed = urlparse(url)
-                    if parsed.hostname:
-                        # Normalize: lowercase and strip trailing dots
-                        hostname = parsed.hostname.lower().rstrip(".")
-                        allowed_hosts_set.add(hostname)
-                except (ValueError, AttributeError) as e:
-                    # Log parse failures to help debug "URL not in allowlist" mysteries
-                    logger.debug("Failed to parse registered gateway URL '%s': %s", url, e)
-                    continue
-        except SQLAlchemyError as e:
-            logger.warning("Failed to build allowlist from registered gateways: %s", e)
-    else:
-        # Mode 2: Use configured host patterns from settings
-        allowed_hosts_set = set(settings.gateway_test_allowed_hosts)
-
-    allowed_hosts = list(allowed_hosts_set)
-
-    # Validate URL with allowlist enforcement and pin a safe resolved IP to close
-    # the DNS rebinding gap between validation-time and connection-time resolution.
-    try:
-        validated_gateway_target = await SecurityValidator.validate_gateway_test_url(str(request.base_url), allowed_hosts, "Gateway test URL")
-    except ValueError as e:
-        # Log the actual error for security monitoring, but return generic message
-        safe_url = sanitize_url_for_logging(str(request.base_url))
-        logger.warning(
-            "Gateway test URL validation failed for %s by user %s: %s",
-            safe_url,
-            get_user_email(user),
-            str(e),
-        )
+    target = await _validate_gateway_test_target(str(request.base_url), team_id, user, db)
+    if target is None:
         latency_ms = int((time.monotonic() - start_time) * 1000)
         # Generic error message - don't expose allowlist or validation details
         return GatewayTestResponse(
             status_code=400, latency_ms=latency_ms, body={"error": "The MCP server URL is not allowed for testing. Confirm the URL is correct and the host is permitted by your test policy."}
         )
 
-    validated_base_url = validated_gateway_target["validated_url"]
-    validated_hostname = validated_gateway_target["hostname"]
-    pinned_resolved_ip = validated_gateway_target["resolved_ip"]
-
-    parsed_validated_base_url = urlparse(validated_base_url)
-    pinned_ip_is_ipv6 = ":" in pinned_resolved_ip
-    if parsed_validated_base_url.port is not None:
-        pinned_netloc = f"[{pinned_resolved_ip}]:{parsed_validated_base_url.port}" if pinned_ip_is_ipv6 else f"{pinned_resolved_ip}:{parsed_validated_base_url.port}"
-        original_authority = f"{validated_hostname}:{parsed_validated_base_url.port}"
-    else:
-        pinned_netloc = f"[{pinned_resolved_ip}]" if pinned_ip_is_ipv6 else pinned_resolved_ip
-        original_authority = validated_hostname
-
-    pinned_base_url = urlunparse(parsed_validated_base_url._replace(netloc=pinned_netloc))
-    full_url = pinned_base_url.rstrip("/") + "/" + request.path.lstrip("/")
-    full_url = full_url.rstrip("/")
+    validated_base_url = target["validated_base_url"]
+    validated_hostname = target["validated_hostname"]
+    full_url = _gateway_test_endpoint_url(target["pinned_base_url"], request.path)
     safe_validated_url = sanitize_url_for_logging(validated_base_url)
-    logger.info(
-        "Gateway test pinned outbound address for user %s: url=%s hostname=%s pinned_ip=%s",
-        get_user_email(user),
-        safe_validated_url,
-        validated_hostname,
-        pinned_resolved_ip,
-    )
 
-    headers = dict(request.headers or {})
-    headers["Host"] = original_authority
+    # SECURITY: the authority comes from the validated URL. Dropping any caller-supplied Host
+    # first also prevents a differently-cased key from being sent as a second Host header.
+    headers = {key: value for key, value in (request.headers or {}).items() if key.lower() != "host"}
+    headers["Host"] = target["original_authority"]
 
     # Attempt to find a registered gateway matching this URL and team.
     # Query the raw DB object directly so we get the unmasked auth_value
     # (get_first_gateway_by_url returns a masked GatewayRead where
     # auth_value="*****", which cannot be decoded).
     try:
-        query = select(DbGateway).where(DbGateway.url == validated_base_url, DbGateway.enabled)
+        query = select(DbGateway).where(DbGateway.url.in_(_gateway_url_match_variants(validated_base_url)), DbGateway.enabled, or_(*_gateway_test_visibility_filters(db, user)))
         if team_id:
             query = query.where(DbGateway.team_id == team_id)
         gateway = db.execute(query).scalars().first()
@@ -7477,6 +7684,338 @@ async def test_gateway_connectivity(
         return GatewayTestResponse(
             status_code=502, latency_ms=latency_ms, body={"error": "The MCP server request failed. Verify the MCP server is running and reachable from this host.", "details": str(e)}
         )
+
+
+async def test_gateway_handshake(
+    request: GatewayHandshakeRequest,
+    team_id: Optional[str],
+    user: Any,
+    db: Session,
+) -> GatewayHandshakeResponse:
+    """Test whether a URL speaks MCP by attempting a protocol handshake.
+
+    Tries the stateless ``server/discover`` method (MCP 2026-07-28+) first and
+    falls back to a stateful SDK ``initialize`` round-trip for earlier specs.
+    Purely a probe: performs no DB writes and never touches gateway health
+    state (no ``_mark_gateway_reachable`` / ``_handle_gateway_failure`` /
+    ``_refresh_gateway_tools_resources_prompts`` calls).
+
+    Args:
+        request (GatewayHandshakeRequest): The request object containing the server URL and optional headers.
+        team_id (Optional[str]): Optional team ID for team-specific gateways.
+        user (Any): Authenticated user context dict.
+        db (Session): Database session.
+
+    Returns:
+        GatewayHandshakeResponse: The handshake outcome, including negotiation path,
+            server identity, capabilities, component counts, and failure classification.
+
+    Examples:
+        >>> import asyncio
+        >>> callable(test_gateway_handshake)
+        True
+    """
+    # First-Party
+    from mcpgateway.auth_context import get_user_email  # pylint: disable=import-outside-toplevel
+
+    start_time: float = time.monotonic()
+
+    def _latency_ms() -> int:
+        """Elapsed milliseconds since the handshake attempt started."""
+        return int((time.monotonic() - start_time) * 1000)
+
+    def _failure(failure_class: Literal["transport", "protocol", "auth", "invalid_response"], error: str) -> GatewayHandshakeResponse:
+        """Build a failed handshake response preserving the resolved credential source."""
+        return GatewayHandshakeResponse(success=False, latency_ms=_latency_ms(), credential_source=credential_source, failure_class=failure_class, error=error)
+
+    target = await _validate_gateway_test_target(str(request.base_url), team_id, user, db)
+    if target is None:
+        latency_ms = int((time.monotonic() - start_time) * 1000)
+        # Generic error message - don't expose allowlist or validation details
+        return GatewayHandshakeResponse(
+            success=False,
+            latency_ms=latency_ms,
+            failure_class="transport",
+            error="The MCP server URL is not allowed for testing. Confirm the URL is correct and the host is permitted by your test policy.",
+        )
+
+    validated_base_url = target["validated_base_url"]
+    validated_hostname = target["validated_hostname"]
+    path_suffix = (request.path or "").lstrip("/")
+    hostname_url = _gateway_test_endpoint_url(validated_base_url, path_suffix)
+    full_url = _gateway_test_endpoint_url(target["pinned_base_url"], path_suffix)
+
+    try:
+        query = select(DbGateway).where(DbGateway.url.in_(_gateway_url_match_variants(validated_base_url)), DbGateway.enabled, or_(*_gateway_test_visibility_filters(db, user)))
+        if team_id:
+            query = query.where(DbGateway.team_id == team_id)
+        gateway = db.execute(query).scalars().first()
+    except Exception:
+        gateway = None
+
+    credential_source: Literal["stored", "form", "none"] = "none"
+    headers: Dict[str, str] = {}
+    user_email = get_user_email(user)
+    # SECURITY: the authority is derived from the validated URL, never chosen by the caller.
+    # A caller-supplied Host would aim the stored credentials at another virtual host on the
+    # pinned address, and a differently-cased key would be sent as a second Host header.
+    form_headers = {key: value for key, value in (request.headers or {}).items() if key.lower() != "host"}
+    # A form-supplied Authorization header replaces stored credentials, so don't fail the
+    # handshake on an unobtainable stored OAuth token the caller is not going to use.
+    form_supplies_authorization = any(key.lower() == "authorization" for key in form_headers)
+    if gateway and gateway.auth_type == "oauth" and gateway.oauth_config and not form_supplies_authorization:
+        grant_type = gateway.oauth_config.get("grant_type", "client_credentials")
+        try:
+            if grant_type == "authorization_code":
+                # First-Party
+                from mcpgateway.services.token_storage_service import TokenStorageService  # pylint: disable=import-outside-toplevel
+
+                token_storage = TokenStorageService(db)
+                access_token: Optional[str] = await token_storage.get_user_token(gateway.id, user_email) if user_email else None
+                if not access_token:
+                    return GatewayHandshakeResponse(
+                        success=False,
+                        latency_ms=_latency_ms(),
+                        failure_class="auth",
+                        error=f"Please authorize {gateway.name} first. Visit /oauth/authorize/{gateway.id} to complete OAuth flow.",
+                    )
+                headers["Authorization"] = f"Bearer {access_token}"
+            else:
+                oauth_manager = OAuthManager(request_timeout=int(os.getenv("OAUTH_REQUEST_TIMEOUT", "30")), max_retries=int(os.getenv("OAUTH_MAX_RETRIES", "3")))
+                access_token = await oauth_manager.get_access_token(gateway.oauth_config, ca_certificate=gateway.ca_certificate, client_cert=gateway.client_cert, client_key=gateway.client_key)
+                headers["Authorization"] = f"Bearer {access_token}"
+            credential_source = "stored"
+        except Exception as e:
+            logger.error("Failed to obtain OAuth access token for gateway %s: %s", gateway.name, sanitize_exception_message(str(e)))
+            return GatewayHandshakeResponse(
+                success=False,
+                latency_ms=_latency_ms(),
+                failure_class="auth",
+                error=f"Token retrieval failed for MCP server '{gateway.name}': {sanitize_exception_message(str(e))}. Check the OAuth client credentials and token URL.",
+            )
+    elif gateway and gateway.auth_type in ("basic", "bearer", "authheaders") and gateway.auth_value:
+        if isinstance(gateway.auth_value, dict):
+            headers.update(gateway.auth_value)
+        elif isinstance(gateway.auth_value, str):
+            headers.update(decode_auth(gateway.auth_value))
+        credential_source = "stored"
+
+    if form_headers:
+        # `headers` holds only stored credential headers at this point (protocol headers are
+        # layered on later), so its keys are exactly the stored credential key set.
+        stored_credential_keys = {key.lower() for key in headers} if credential_source == "stored" else set()
+        form_header_keys = {key.lower() for key in form_headers}
+        overridden_stored_keys = form_header_keys & stored_credential_keys
+        if overridden_stored_keys:
+            # Drop the stored variant so a differently-cased form header really replaces it
+            # instead of both being sent to the target.
+            headers = {key: value for key, value in headers.items() if key.lower() not in overridden_stored_keys}
+        headers.update(form_headers)
+        if "authorization" in form_header_keys or overridden_stored_keys:
+            credential_source = "form"
+
+    handshake_verify: Any = get_default_verify()
+    if gateway and gateway.ca_certificate and not validated_base_url.lower().startswith("http://"):
+        handshake_verify = get_cached_ssl_context(gateway.ca_certificate, client_cert=gateway.client_cert, client_key=gateway.client_key)
+
+    def get_httpx_client_factory(
+        headers: Optional[Dict[str, str]] = None,
+        timeout: Optional[httpx.Timeout] = None,
+        auth: Optional[httpx.Auth] = None,
+    ) -> httpx.AsyncClient:
+        """Build the SDK's httpx client so it dials the pinned address with the gateway's TLS settings.
+
+        Args:
+            headers: Optional headers for the client
+            timeout: Optional timeout for the client
+            auth: Optional auth for the client
+
+        Returns:
+            httpx.AsyncClient: Configured HTTPX async client
+        """
+        # An explicit transport is what makes address pinning possible; it also opts this client
+        # out of httpx's environment-proxy discovery, unlike the stateless discover probe.
+        return httpx.AsyncClient(
+            follow_redirects=False,
+            headers=headers,
+            timeout=timeout if timeout else get_http_timeout(),
+            auth=auth,
+            transport=_SniPinningTransport(
+                sni_hostname=validated_hostname,
+                pinned_host=target["resolved_ip"],
+                verify=handshake_verify,
+                limits=httpx.Limits(
+                    max_connections=settings.httpx_max_connections,
+                    max_keepalive_connections=settings.httpx_max_keepalive_connections,
+                    keepalive_expiry=settings.httpx_keepalive_expiry,
+                ),
+            ),
+        )
+
+    try:
+        async with asyncio.timeout(settings.health_check_timeout):
+            discover_headers = {
+                **headers,
+                "Host": target["original_authority"],
+                "MCP-Protocol-Version": MCP_STATELESS_PROTOCOL_VERSION,
+                "Mcp-Method": "server/discover",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            }
+            # Per-request metadata required by the stateless mode: the server reads the requested
+            # protocol version from `_meta`, not just from the HTTP header.
+            request_meta = {
+                "io.modelcontextprotocol/protocolVersion": MCP_STATELESS_PROTOCOL_VERSION,
+                "io.modelcontextprotocol/clientInfo": {"name": "contextforge", "version": __version__},
+                "io.modelcontextprotocol/clientCapabilities": {},
+            }
+            discover_payload = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "server/discover",
+                "params": {"_meta": request_meta},
+            }
+            discover_result: Optional[Dict[str, Any]] = None
+            async with ResilientHttpClient(client_args={"timeout": settings.federation_timeout, "verify": handshake_verify}) as client:
+                try:
+                    response: httpx.Response = await client.request(method="POST", url=full_url, headers=discover_headers, json=discover_payload, extensions={"sni_hostname": validated_hostname})
+                except httpx.RequestError as e:
+                    logger.warning("MCP handshake discover failed for %s: %s", sanitize_url_for_logging(validated_base_url), sanitize_exception_message(str(e)))
+                    return _failure("transport", f"{_HANDSHAKE_TRANSPORT_COPY}: {sanitize_exception_message(str(e))}")
+
+                if response.status_code in (401, 403):
+                    return _failure("auth", _HANDSHAKE_AUTH_COPY)
+
+                if 200 <= response.status_code < 300:
+                    try:
+                        body = response.json()
+                        result_payload = body.get("result") if isinstance(body, dict) else None
+                        # A bare `{"result": {}}`, or another method's result, is not evidence that
+                        # the server implements discovery: fall through to the initialize probe.
+                        if isinstance(result_payload, dict) and (isinstance(result_payload.get("capabilities"), dict) or isinstance(result_payload.get("supportedVersions"), list)):
+                            discover_result = result_payload
+                    except ValueError:
+                        discover_result = None
+
+                if discover_result is not None:
+                    capabilities = discover_result.get("capabilities") if isinstance(discover_result.get("capabilities"), dict) else None
+                    result_meta = discover_result.get("_meta") if isinstance(discover_result.get("_meta"), dict) else {}
+                    server_info = result_meta.get("io.modelcontextprotocol/serverInfo")
+                    if not isinstance(server_info, dict):
+                        # Servers predating the namespaced metadata put serverInfo at the top level.
+                        server_info = discover_result.get("serverInfo") if isinstance(discover_result.get("serverInfo"), dict) else {}
+                    component_counts: Dict[str, int] = {}
+                    counts_partial = False
+                    if capabilities:
+                        list_methods = {"tools": "tools/list", "resources": "resources/list", "prompts": "prompts/list"}
+                        for cap_key, method in list_methods.items():
+                            if cap_key not in capabilities:
+                                continue
+                            try:
+                                list_headers = {**discover_headers, "Mcp-Method": method}
+                                list_response: httpx.Response = await client.request(
+                                    method="POST",
+                                    url=full_url,
+                                    headers=list_headers,
+                                    json={"jsonrpc": "2.0", "id": 2, "method": method, "params": {"_meta": request_meta}},
+                                    extensions={"sni_hostname": validated_hostname},
+                                )
+                                list_body = list_response.json()
+                                list_result = list_body.get("result") if isinstance(list_body, dict) else None
+                                if isinstance(list_result, dict) and isinstance(list_result.get(cap_key), list):
+                                    component_counts[cap_key] = len(list_result[cap_key])
+                                    if list_result.get("nextCursor"):
+                                        counts_partial = True
+                            except Exception as list_exc:
+                                logger.debug("MCP handshake %s failed for %s: %s", method, sanitize_url_for_logging(validated_base_url), list_exc)
+
+                    return GatewayHandshakeResponse(
+                        success=True,
+                        latency_ms=_latency_ms(),
+                        negotiation_path="server_discover",
+                        protocol_version=MCP_STATELESS_PROTOCOL_VERSION,
+                        server_name=server_info.get("name"),
+                        server_version=server_info.get("version"),
+                        capabilities=capabilities,
+                        component_counts=component_counts or None,
+                        counts_partial=counts_partial,
+                        credential_source=credential_source,
+                        raw_preview=json.dumps(discover_result, default=str)[:4096],
+                    )
+
+            async def _probe_session(session: ClientSession) -> GatewayHandshakeResponse:
+                """Run initialize plus first-page component listings on an open session.
+
+                Args:
+                    session: The connected MCP client session.
+
+                Returns:
+                    GatewayHandshakeResponse: The successful initialize-path result.
+                """
+                init = await session.initialize()
+                capabilities = init.capabilities.model_dump(by_alias=True, exclude_none=True)
+                component_counts: Dict[str, int] = {}
+                counts_partial = False
+                for capability, list_call, attr in (
+                    (init.capabilities.tools, session.list_tools, "tools"),
+                    (init.capabilities.resources, session.list_resources, "resources"),
+                    (init.capabilities.prompts, session.list_prompts, "prompts"),
+                ):
+                    if capability is None:
+                        continue
+                    try:
+                        list_result = await list_call()
+                        component_counts[attr] = len(getattr(list_result, attr))
+                        if getattr(list_result, "nextCursor", None):
+                            counts_partial = True
+                    except Exception as list_exc:
+                        logger.debug("MCP handshake list_%s failed for %s: %s", attr, sanitize_url_for_logging(validated_base_url), list_exc)
+
+                return GatewayHandshakeResponse(
+                    success=True,
+                    latency_ms=_latency_ms(),
+                    negotiation_path="initialize",
+                    protocol_version=str(init.protocolVersion),
+                    server_name=init.serverInfo.name,
+                    server_version=init.serverInfo.version,
+                    capabilities=capabilities,
+                    component_counts=component_counts or None,
+                    counts_partial=counts_partial,
+                    credential_source=credential_source,
+                    raw_preview=json.dumps(init.model_dump(by_alias=True, exclude_none=True), default=str)[:4096],
+                )
+
+            try:
+                # SECURITY: the SDK keeps the validated hostname (it rejects a server-advertised
+                # endpoint whose origin differs from the one it connected to), while
+                # _SniPinningTransport sends every request to the IP pinned at validation time
+                # with TLS verified against that hostname, closing the same DNS rebinding window
+                # as server/discover, on the follow-up requests too.
+                if gateway and str(gateway.transport).lower() == "sse":
+                    async with sse_client(url=hostname_url, headers=headers, httpx_client_factory=get_httpx_client_factory) as (read_stream, write_stream):
+                        async with ClientSession(read_stream, write_stream) as session:
+                            return await _probe_session(session)
+                else:
+                    async with streamablehttp_client(url=hostname_url, headers=headers, timeout=settings.health_check_timeout, httpx_client_factory=get_httpx_client_factory) as (
+                        read_stream,
+                        write_stream,
+                        _get_session_id,
+                    ):
+                        async with ClientSession(read_stream, write_stream) as session:
+                            return await _probe_session(session)
+            except TimeoutError:
+                raise
+            except Exception as e:
+                root_cause: BaseException = e
+                while isinstance(root_cause, BaseExceptionGroup) and root_cause.exceptions:  # pylint: disable=no-member
+                    root_cause = root_cause.exceptions[0]  # pylint: disable=no-member
+                failure_class, copy = _classify_handshake_error(root_cause)
+                if failure_class == "transport":
+                    copy = f"{copy}: {sanitize_exception_message(str(root_cause))}"
+                logger.warning("MCP handshake initialize failed for %s: %s", sanitize_url_for_logging(validated_base_url), sanitize_exception_message(str(root_cause)))
+                return _failure(failure_class, copy)
+    except TimeoutError:
+        return _failure("transport", _HANDSHAKE_TRANSPORT_COPY)
 
 
 # Lazy singleton - created on first access, not at module import time.
