@@ -81,7 +81,7 @@ def _update_role_permissions(conn, role_name: str, scope: str, permissions: list
         add: When True, add permissions; when False, remove permissions.
     """
     row = conn.execute(
-        text("SELECT id, permissions FROM roles WHERE name = :name AND scope = :scope LIMIT 1"),
+        text("SELECT id, permissions FROM roles WHERE name = :name AND scope = :scope AND is_active = true LIMIT 1"),
         {"name": role_name, "scope": scope},
     ).fetchone()
 
