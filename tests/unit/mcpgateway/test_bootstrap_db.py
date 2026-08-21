@@ -20,6 +20,7 @@ import pytest
 from mcpgateway.bootstrap_db import (
     alembic_at_head,
     advisory_lock,
+    audit_url_schemes,
     bootstrap_admin_user,
     bootstrap_default_roles,
     bootstrap_resource_assignments,
@@ -27,6 +28,7 @@ from mcpgateway.bootstrap_db import (
     normalize_team_visibility,
 )
 from mcpgateway.common.validators import SecurityValidator
+from mcpgateway.db import A2AAgent, Gateway, Tool
 
 
 @pytest.fixture
@@ -1657,6 +1659,121 @@ class TestBootstrapResourceAssignments:
                                                 mock_logger.info.assert_any_call("Successfully assigned 1 orphaned resources to admin team")
 
 
+class TestAuditUrlSchemes:
+    """Test audit_url_schemes: the startup check for #6264 (Gap 2).
+
+    SecurityValidator.ALLOWED_URL_SCHEMES is enforced only at registration
+    time, so an existing enabled gateway/tool/a2a_agent record can carry a
+    scheme the current allowlist no longer permits. These tests guard that
+    the startup audit actually surfaces that gap instead of staying silent.
+    """
+
+    @staticmethod
+    def _record(name, id_, url):
+        record = Mock()
+        record.name = name
+        record.id = id_
+        record.url = url
+        record.endpoint_url = url
+        return record
+
+    @staticmethod
+    def _session_returning(records_by_model):
+        """Build a mock Session whose .query(Model).filter(...).all() returns
+        records_by_model.get(Model, []) for whichever model is queried."""
+        session = MagicMock()
+        session.__enter__ = Mock(return_value=session)
+        session.__exit__ = Mock(return_value=None)
+
+        def query_side_effect(model):
+            query = Mock()
+            query.filter.return_value = query
+            query.all.return_value = records_by_model.get(model, [])
+            return query
+
+        session.query.side_effect = query_side_effect
+        return session
+
+    def test_no_active_records_no_warning(self, mock_settings, mock_conn):
+        """Nothing enabled -> nothing to warn about."""
+        session = self._session_returning({})
+        mock_settings.strict_scheme_enforcement = False
+
+        with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+            with patch("mcpgateway.bootstrap_db.Session", return_value=session):
+                with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                    audit_url_schemes(mock_conn)
+
+                    mock_logger.warning.assert_not_called()
+
+    def test_all_schemes_allowed_no_warning(self, mock_settings, mock_conn):
+        """Records whose scheme is still in the (default) allowlist are not flagged."""
+        gateway = self._record("good-gateway", "gw-1", "https://good.example.com")
+        session = self._session_returning({Gateway: [gateway]})
+        mock_settings.strict_scheme_enforcement = False
+
+        with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+            with patch("mcpgateway.bootstrap_db.Session", return_value=session):
+                with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                    audit_url_schemes(mock_conn)
+
+                    mock_logger.warning.assert_not_called()
+
+    def test_disallowed_scheme_logs_warning_by_default(self, mock_settings, mock_conn):
+        """An active record outside the allowlist is warned about, and startup does not fail
+        (strict_scheme_enforcement default False keeps upgrades to a stricter allowlist
+        non-breaking)."""
+        offender = self._record("legacy-gateway", "gw-legacy", "http://legacy.example.com")
+        session = self._session_returning({Gateway: [offender]})
+        mock_settings.strict_scheme_enforcement = False
+
+        with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+            with patch("mcpgateway.bootstrap_db.SecurityValidator") as mock_validator:
+                mock_validator.has_allowed_scheme.return_value = False
+                mock_validator.ALLOWED_URL_SCHEMES = ["https://", "wss://"]
+                with patch("mcpgateway.bootstrap_db.Session", return_value=session):
+                    with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                        audit_url_schemes(mock_conn)  # must not raise
+
+                        mock_logger.warning.assert_called_once()
+                        warning_text = mock_logger.warning.call_args[0][0]
+                        assert "legacy-gateway" in warning_text
+                        assert "http://legacy.example.com" in warning_text
+
+    def test_disallowed_scheme_raises_under_strict_enforcement(self, mock_settings, mock_conn):
+        """STRICT_SCHEME_ENFORCEMENT=true fails startup instead of warning."""
+        offender = self._record("legacy-tool", "tool-legacy", "http://legacy.example.com")
+        session = self._session_returning({Tool: [offender]})
+        mock_settings.strict_scheme_enforcement = True
+
+        with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+            with patch("mcpgateway.bootstrap_db.SecurityValidator") as mock_validator:
+                mock_validator.has_allowed_scheme.return_value = False
+                mock_validator.ALLOWED_URL_SCHEMES = ["https://", "wss://"]
+                with patch("mcpgateway.bootstrap_db.Session", return_value=session):
+                    with pytest.raises(RuntimeError, match="legacy-tool"):
+                        audit_url_schemes(mock_conn)
+
+    def test_checks_all_three_record_types(self, mock_settings, mock_conn):
+        """Gateway, Tool, and A2AAgent are all covered, keyed by their own URL attribute."""
+        gw = self._record("gw", "gw-1", "http://gw.example.com")
+        tool = self._record("tool", "tool-1", "http://tool.example.com")
+        agent = self._record("agent", "agent-1", "http://agent.example.com")
+        session = self._session_returning({Gateway: [gw], Tool: [tool], A2AAgent: [agent]})
+        mock_settings.strict_scheme_enforcement = False
+
+        with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+            with patch("mcpgateway.bootstrap_db.SecurityValidator") as mock_validator:
+                mock_validator.has_allowed_scheme.return_value = False
+                mock_validator.ALLOWED_URL_SCHEMES = ["https://"]
+                with patch("mcpgateway.bootstrap_db.Session", return_value=session):
+                    with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                        audit_url_schemes(mock_conn)
+
+                        warning_text = mock_logger.warning.call_args[0][0]
+                        assert "gw" in warning_text and "tool" in warning_text and "agent" in warning_text
+
+
 class TestMain:
     """Test main function."""
 
@@ -1687,12 +1804,13 @@ class TestMain:
                             with patch("mcpgateway.bootstrap_db.bootstrap_admin_user", new=AsyncMock()):
                                 with patch("mcpgateway.bootstrap_db.bootstrap_default_roles", new=AsyncMock()):
                                     with patch("mcpgateway.bootstrap_db.bootstrap_resource_assignments", new=AsyncMock()):
-                                        with patch("mcpgateway.bootstrap_db.settings", mock_settings):
-                                            with patch("mcpgateway.bootstrap_db.advisory_lock"):
-                                                with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
-                                                    await main()
+                                        with patch("mcpgateway.bootstrap_db.audit_url_schemes"):
+                                            with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+                                                with patch("mcpgateway.bootstrap_db.advisory_lock"):
+                                                    with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                                                        await main()
 
-                                                    mock_logger.info.assert_any_call("Normalized 5 team record(s) to supported visibility values")
+                                                        mock_logger.info.assert_any_call("Normalized 5 team record(s) to supported visibility values")
 
     @pytest.mark.asyncio
     async def test_main_complete_flow(self, mock_settings):
@@ -1722,18 +1840,19 @@ class TestMain:
                                 with patch("mcpgateway.bootstrap_db.bootstrap_admin_user", new=AsyncMock()) as mock_admin:
                                     with patch("mcpgateway.bootstrap_db.bootstrap_default_roles", new=AsyncMock()) as mock_roles:
                                         with patch("mcpgateway.bootstrap_db.bootstrap_resource_assignments", new=AsyncMock()) as mock_resources:
-                                            with patch("mcpgateway.bootstrap_db.settings", mock_settings):
-                                                with patch("mcpgateway.bootstrap_db.advisory_lock"):
-                                                    with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
-                                                        await main()
+                                            with patch("mcpgateway.bootstrap_db.audit_url_schemes"):
+                                                with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+                                                    with patch("mcpgateway.bootstrap_db.advisory_lock"):
+                                                        with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                                                            await main()
 
-                                                        # Schema at head — upgrade must NOT be called
-                                                        mock_command.upgrade.assert_not_called()
-                                                        # All bootstrap functions were called
-                                                        mock_admin.assert_called_once()
-                                                        mock_roles.assert_called_once()
-                                                        mock_resources.assert_called_once()
-                                                        mock_logger.info.assert_any_call("Database ready")
+                                                            # Schema at head — upgrade must NOT be called
+                                                            mock_command.upgrade.assert_not_called()
+                                                            # All bootstrap functions were called
+                                                            mock_admin.assert_called_once()
+                                                            mock_roles.assert_called_once()
+                                                            mock_resources.assert_called_once()
+                                                            mock_logger.info.assert_any_call("Database ready")
 
     @pytest.mark.asyncio
     async def test_main_skip_migration_fresh_db(self, mock_settings):
@@ -1916,6 +2035,7 @@ class TestMainAdditionalBranches:
             patch("mcpgateway.bootstrap_db.bootstrap_admin_user", new=AsyncMock()),
             patch("mcpgateway.bootstrap_db.bootstrap_default_roles", new=AsyncMock()),
             patch("mcpgateway.bootstrap_db.bootstrap_resource_assignments", new=AsyncMock()),
+            patch("mcpgateway.bootstrap_db.audit_url_schemes"),
             patch("mcpgateway.bootstrap_db.settings", mock_settings),
             patch("mcpgateway.bootstrap_db.logger") as mock_logger,
         ):
@@ -1957,6 +2077,7 @@ class TestMainAdditionalBranches:
             patch("mcpgateway.bootstrap_db.bootstrap_admin_user", new=AsyncMock()) as mock_admin,
             patch("mcpgateway.bootstrap_db.bootstrap_default_roles", new=AsyncMock()) as mock_roles,
             patch("mcpgateway.bootstrap_db.bootstrap_resource_assignments", new=AsyncMock()) as mock_resources,
+            patch("mcpgateway.bootstrap_db.audit_url_schemes"),
             patch("mcpgateway.bootstrap_db.settings", mock_settings),
             patch("mcpgateway.bootstrap_db.logger") as mock_logger,
         ):
@@ -1985,6 +2106,7 @@ class TestMainAdditionalBranches:
             patch("mcpgateway.bootstrap_db.bootstrap_admin_user", new=AsyncMock()),
             patch("mcpgateway.bootstrap_db.bootstrap_default_roles", new=AsyncMock()),
             patch("mcpgateway.bootstrap_db.bootstrap_resource_assignments", new=AsyncMock()),
+            patch("mcpgateway.bootstrap_db.audit_url_schemes"),
             patch("mcpgateway.bootstrap_db.settings", mock_settings),
             patch("mcpgateway.bootstrap_db.logger") as mock_logger,
         ):
