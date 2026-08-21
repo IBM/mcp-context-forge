@@ -34,7 +34,7 @@ from typing import Any, AsyncGenerator, Dict, List, Optional, Union
 import uuid
 
 # Third-Party
-import httpx
+import httpx2
 from mcp import ClientSession
 import mcp_types as types
 from mcp_types import ReadResourceRequest, ReadResourceRequestParams
@@ -1872,10 +1872,10 @@ class ResourceService(BaseService):
 
                     def _get_httpx_client_factory(
                         headers: dict[str, str] | None = None,
-                        timeout: httpx.Timeout | None = None,
-                        auth: httpx.Auth | None = None,
-                    ) -> httpx.AsyncClient:
-                        """Factory function to create httpx.AsyncClient with optional CA certificate.
+                        timeout: httpx2.Timeout | None = None,
+                        auth: httpx2.Auth | None = None,
+                    ) -> httpx2.AsyncClient:
+                        """Factory function to create httpx2.AsyncClient with optional CA certificate.
 
                         Args:
                             headers: Optional headers for the client
@@ -1883,18 +1883,18 @@ class ResourceService(BaseService):
                             auth: Optional auth for the client
 
                         Returns:
-                            httpx.AsyncClient: Configured HTTPX async client
+                            httpx2.AsyncClient: Configured HTTPX async client
                         """
                         # First-Party
-                        from mcpgateway.services.http_client_service import get_default_verify, get_http_timeout  # pylint: disable=import-outside-toplevel
+                        from mcpgateway.services.http_client_service import get_default_verify, get_httpx2_timeout  # pylint: disable=import-outside-toplevel
 
-                        return httpx.AsyncClient(
+                        return httpx2.AsyncClient(
                             verify=ssl_context if ssl_context else get_default_verify(),  # pylint: disable=cell-var-from-loop
                             follow_redirects=False,
                             headers=headers,
-                            timeout=timeout if timeout else get_http_timeout(),
+                            timeout=timeout if timeout else get_httpx2_timeout(),
                             auth=auth,
-                            limits=httpx.Limits(
+                            limits=httpx2.Limits(
                                 max_connections=settings.httpx_max_connections,
                                 max_keepalive_connections=settings.httpx_max_keepalive_connections,
                                 keepalive_expiry=settings.httpx_keepalive_expiry,

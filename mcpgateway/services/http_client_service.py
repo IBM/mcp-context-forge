@@ -50,6 +50,7 @@ from typing import AsyncIterator, Optional
 
 # Third-Party
 import httpx
+import httpx2
 
 logger = logging.getLogger(__name__)
 
@@ -256,6 +257,39 @@ def get_http_timeout(
     from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
 
     return httpx.Timeout(
+        connect=connect_timeout if connect_timeout is not None else settings.httpx_connect_timeout,
+        read=read_timeout if read_timeout is not None else settings.httpx_read_timeout,
+        write=write_timeout if write_timeout is not None else settings.httpx_write_timeout,
+        pool=pool_timeout if pool_timeout is not None else settings.httpx_pool_timeout,
+    )
+
+
+def get_httpx2_timeout(
+    read_timeout: Optional[float] = None,
+    connect_timeout: Optional[float] = None,
+    write_timeout: Optional[float] = None,
+    pool_timeout: Optional[float] = None,
+) -> httpx2.Timeout:
+    """
+    Get configured HTTPX2 Timeout for use with MCP 2.x SDK clients.
+
+    Mirrors :func:`get_http_timeout` but returns the ``httpx2.Timeout`` type
+    required by the MCP 2.x SDK transports — ``httpx2.AsyncClient`` rejects the
+    v0 ``httpx.Timeout`` object.
+
+    Args:
+        read_timeout: Override for read timeout (seconds).
+        connect_timeout: Override for connect timeout (seconds).
+        write_timeout: Override for write timeout (seconds).
+        pool_timeout: Override for pool timeout (seconds).
+
+    Returns:
+        httpx2.Timeout: Configured timeout from settings with optional overrides.
+    """
+    # First-Party
+    from mcpgateway.config import settings  # pylint: disable=import-outside-toplevel
+
+    return httpx2.Timeout(
         connect=connect_timeout if connect_timeout is not None else settings.httpx_connect_timeout,
         read=read_timeout if read_timeout is not None else settings.httpx_read_timeout,
         write=write_timeout if write_timeout is not None else settings.httpx_write_timeout,
