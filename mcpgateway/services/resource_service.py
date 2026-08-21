@@ -3980,7 +3980,6 @@ class ResourceService(BaseService):
         Raises:
             ResourceNotFoundError: If no matching template is found.
             ResourceError: For other template resolution errors.
-            NotImplementedError: If a binary template resource is encountered.
         """
         # Find matching template # DRT BREAKPOINT
         template = None
@@ -4012,14 +4011,19 @@ class ResourceService(BaseService):
             raise ResourceNotFoundError(f"No template matches URI: {uri}")
 
         try:
-            # Extract parameters
+            # Extract parameters and expand the concrete URI.
+            # The expanded URI is returned as placeholder text so read_resource()
+            # can proxy the concrete read to the template's owning upstream via
+            # invoke_resource() for any MIME type (not only text/*). See #5883.
             params = self._extract_template_params(uri, template.uri_template)
-            # Generate content
-            if template.mime_type and template.mime_type.startswith("text/"):
-                content = template.uri_template.format(**params)
-                return ResourceContent(type="resource", id=str(template.id) or None, uri=template.uri_template or None, mime_type=template.mime_type or None, text=content)
-            # # Handle binary template
-            raise NotImplementedError("Binary resource templates not yet supported")
+            concrete_uri = template.uri_template.format(**params)
+            return ResourceContent(
+                type="resource",
+                id=str(template.id) or None,
+                uri=template.uri_template or None,
+                mime_type=template.mime_type or None,
+                text=concrete_uri,
+            )
 
         except ResourceNotFoundError:
             raise
