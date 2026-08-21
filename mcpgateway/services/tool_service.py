@@ -610,8 +610,13 @@ def _safe_text_repr(obj: Any, fallback_type: str) -> str:
     return f"<{fallback_type} object (unrepresentable)>"
 
 
-def _handle_json_parse_error(response, error, is_error_response: bool = False) -> dict:
-    """Handle JSON parsing failures with graceful fallback to raw text.
+def _handle_json_parse_error(response, error, is_error_response: bool = False) -> list:
+    """Handle JSON parsing failures with graceful fallback to error TextContent.
+
+    When JSON parsing fails (e.g., due to truncation or malformed response),
+    this returns a list of TextContent objects that signal an error condition.
+    The caller checks for this pattern and sets is_error=True, preventing
+    invalid/truncated JSON from being sent through output schema validation.
 
     Args:
         response: The HTTP response object with .text attribute
@@ -619,22 +624,33 @@ def _handle_json_parse_error(response, error, is_error_response: bool = False) -
         is_error_response: If True, logs as "error response", else "response"
 
     Returns:
-        Dictionary with response_text key containing the raw response text
-        (truncated to REST_RESPONSE_TEXT_MAX_LENGTH if longer to avoid exposing sensitive data),
-        or error details if response body is empty/None
+        List of TextContent objects containing error message and truncated response.
+        This format signals to the caller that an error occurred and should be
+        treated as is_error=True, bypassing output schema validation.
     """
     msg = "error response" if is_error_response else "response"
     if not response.text:
         logger.warning("Failed to parse JSON %s: %s. Response body was empty.", msg, error)
-        return {"error": "Empty response body"}
+        return [TextContent(type="text", text="Empty response body")]
 
     max_length = settings.rest_response_text_max_length
     text = response.text[:max_length] if len(response.text) > max_length else response.text
+
+    # Build error message
     if len(response.text) > max_length:
         logger.warning("Failed to parse JSON %s: %s. Response truncated from %s to %s characters.", msg, error, len(response.text), max_length)
+        error_message = (
+            f"JSON parse error: {error}\n\n"
+            f"Response was {len(response.text)} characters but truncated to {max_length} characters "
+            f"(REST_RESPONSE_TEXT_MAX_LENGTH limit). Increase this limit if tools return large JSON responses.\n\n"
+            f"Truncated response:\n{text}"
+        )
     else:
         logger.warning("Failed to parse JSON %s: %s", msg, error)
-    return {"response_text": text}
+        error_message = f"JSON parse error: {error}\n\nResponse:\n{text}"
+
+    # Return as list of TextContent to signal error condition to caller
+    return [TextContent(type="text", text=error_message)]
 
 
 @lru_cache(maxsize=128)
@@ -5705,16 +5721,21 @@ class ToolService(BaseService):
                             # Non-2xx response — parse body (may be HTML, plain text, XML, etc.)
                             try:
                                 result = response.json()
+                                # JSON parsed successfully - format as error message
+                                if "error" in result:
+                                    error_val = result["error"]
+                                else:
+                                    error_val = f"HTTP {response.status_code}: {orjson.dumps(result).decode()}"
+                                content = [TextContent(type="text", text=error_val if isinstance(error_val, str) else orjson.dumps(error_val).decode())]
                             except (json.JSONDecodeError, orjson.JSONDecodeError, UnicodeDecodeError, AttributeError) as e:
-                                result = _handle_json_parse_error(response, e, is_error_response=True)
-                            if "error" in result:
-                                error_val = result["error"]
-                            elif "response_text" in result:
-                                error_val = f"HTTP {response.status_code}: {result['response_text']}"
-                            else:
-                                error_val = f"HTTP {response.status_code}"
+                                # JSON parse failed - get error TextContent from handler
+                                error_content = _handle_json_parse_error(response, e, is_error_response=True)
+                                # Prepend HTTP status code to error message
+                                first_text = error_content[0].text if error_content else ""
+                                content = [TextContent(type="text", text=f"HTTP {response.status_code}: {first_text}")]
+
                             tool_result = ToolResult(
-                                content=[TextContent(type="text", text=error_val if isinstance(error_val, str) else orjson.dumps(error_val).decode())],
+                                content=content,
                                 is_error=True,
                                 structured_content={"status_code": response.status_code},
                             )
@@ -5730,11 +5751,15 @@ class ToolService(BaseService):
                             # Non-standard 2xx codes (203, 205, 207, etc.) treated as errors
                             try:
                                 result = response.json()
+                                # JSON parsed successfully - extract error message
+                                error_val = result.get("error", "Tool error encountered")
+                                content = [TextContent(type="text", text=error_val if isinstance(error_val, str) else orjson.dumps(error_val).decode())]
                             except (json.JSONDecodeError, orjson.JSONDecodeError, UnicodeDecodeError, AttributeError) as e:
-                                result = _handle_json_parse_error(response, e, is_error_response=True)
-                            error_val = result["error"] if "error" in result else "Tool error encountered"
+                                # JSON parse failed - get error TextContent from handler
+                                content = _handle_json_parse_error(response, e, is_error_response=True)
+
                             tool_result = ToolResult(
-                                content=[TextContent(type="text", text=error_val if isinstance(error_val, str) else orjson.dumps(error_val).decode())],
+                                content=content,
                                 is_error=True,
                             )
                             # Don't mark as successful for error responses - success remains False
