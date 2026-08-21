@@ -327,9 +327,173 @@ class ActivityListResponse(BaseModel):
     items: List[ActivityItem]
 
 
-_ACTION_VERBS = {"create": "created", "update": "updated", "delete": "deleted", "read": "accessed", "execute": "executed", "login": "logged in"}
-_RESOURCE_LABELS = {"mcp_server": "MCP server", "a2a_agent": "A2A agent"}
+_ACTION_VERBS = {
+    "create": "created",
+    "update": "updated",
+    "delete": "deleted",
+    "read": "accessed",
+    "execute": "executed",
+    "login": "logged in",
+    "view": "viewed",
+    "invoke": "invoked",
+    "browse": "browsed",
+    "activate": "enabled",
+    "deactivate": "disabled",
+}
+# Irregulars: gateways are registered/deregistered, not created/deleted, in product language.
+# The set_*_state entries are a fallback only -- _state_transition() renders these actions
+# whenever new_values carries recognisable state; this text is used solely when it doesn't
+# (missing/malformed new_values), so a state-change row never falls through to the naive
+# token scan and reproduces "Tool set tool state".
+_ACTION_OVERRIDES = {
+    "create_gateway": "registered",
+    "delete_gateway": "deregistered",
+    "set_gateway_state": "state updated",
+    "set_tool_state": "state updated",
+    "set_prompt_state": "state updated",
+    "set_resource_state": "state updated",
+}
+# Transition verbs that are already fully conjugated past tense ("went offline") -- unlike
+# "created"/"updated"/participle verbs, these must not be prefixed with "was" in prose.
+_NO_WAS_VERBS = frozenset({"went offline", "came online"})
+_FAILURE_INFINITIVES = {
+    "create": "create",
+    "update": "update",
+    "delete": "delete",
+    "read": "read",
+    "execute": "execute",
+    "login": "log in",
+    "view": "view",
+    "invoke": "invoke",
+    "browse": "browse",
+    "activate": "enable",
+    "deactivate": "disable",
+}
+_FAILURE_OVERRIDES = {"create_gateway": "register", "delete_gateway": "deregister"}
+_ACTION_MODIFIERS = {"bulk": "bulk "}
+_READ_VERBS = frozenset({"read", "view", "browse", "execute", "invoke"})
+_RESOURCE_LABELS = {
+    # Values are the mid-sentence form (lowercase, except acronyms like MCP/A2A that
+    # never lowercase); _sentence_case() upper-cases the first letter where a rendered
+    # string needs to start with the label.
+    "gateway": "MCP server",
+    "server": "virtual server",
+    "tool": "tool",
+    "resource": "resource",
+    "prompt": "prompt",
+    "plugin": "plugin",
+    "mcp_server": "MCP server",  # inert forward-compat; no current writer emits this resource_type
+    "a2a_agent": "A2A agent",  # inert: a2a_service writes this to StructuredLog, not AuditTrail
+}
 _SEVERITY_STATUS = {"critical": "error", "high": "error", "medium": "warning", "low": "info"}
+
+
+def _sentence_case(label: str) -> str:
+    """Capitalize a resource label for sentence-initial use without breaking acronyms.
+
+    Args:
+        label: Resource label in its natural mid-sentence form (e.g. ``"tool"``, ``"MCP server"``).
+
+    Returns:
+        str: The label with its first letter capitalized, unless it already starts
+        uppercase (acronyms like ``"MCP"`` / ``"A2A"`` must never be lowercased).
+
+    Examples:
+        >>> _sentence_case("tool")
+        'Tool'
+        >>> _sentence_case("MCP server")
+        'MCP server'
+        >>> _sentence_case("A2A agent")
+        'A2A agent'
+    """
+    return label if label[:1].isupper() else label[0].upper() + label[1:]
+
+
+_STATE_ACTIONS = frozenset({"set_gateway_state", "set_tool_state", "set_prompt_state", "set_resource_state"})
+
+
+def _resolve_verb(action: str, table: Dict[str, str], overrides: Dict[str, str]) -> Tuple[str, Optional[str]]:
+    """Resolve an audit action into a rendered verb and its head verb.
+
+    Composite actions (``create_gateway``, ``bulk_create_tools``) are scanned token by
+    token so a trailing resource noun never leaks into the rendered text -- repeating
+    the resource is the exact "Gateway set gateway state" bug this resolver exists to
+    avoid. Anything after the first recognised verb token is discarded on purpose.
+
+    Args:
+        action: Raw audit action value (e.g. ``create_gateway``, ``BULK_CREATE_TOOLS``).
+        table: Verb lookup to consult (present tense or infinitive, depending on caller).
+        overrides: Exact-match irregulars consulted before the generic token scan.
+
+    Returns:
+        Tuple of (rendered verb text, head verb key or None if unmapped).
+
+    Examples:
+        >>> _resolve_verb("create_gateway", _ACTION_VERBS, _ACTION_OVERRIDES)
+        ('registered', 'create')
+        >>> _resolve_verb("bulk_create_tools", _ACTION_VERBS, _ACTION_OVERRIDES)
+        ('bulk created', 'create')
+        >>> _resolve_verb("view_prompt_details", _ACTION_VERBS, _ACTION_OVERRIDES)
+        ('viewed', 'view')
+        >>> _resolve_verb("something_unmapped", _ACTION_VERBS, _ACTION_OVERRIDES)
+        ('something unmapped', None)
+    """
+    key = action.lower()
+    if key in overrides:
+        return overrides[key], key.split("_")[0]
+    if key in table:
+        return table[key], key
+    prefix = ""
+    for token in key.split("_"):
+        if token in _ACTION_MODIFIERS:
+            prefix += _ACTION_MODIFIERS[token]
+            continue
+        if token in table:
+            return prefix + table[token], token
+        break
+    return action.replace("_", " "), None
+
+
+def _state_transition(row: AuditTrail) -> Optional[Tuple[str, str]]:
+    """Render a ``set_*_state`` audit row from its recorded new values.
+
+    ``set_gateway_state`` and ``set_tool_state`` carry both ``enabled`` and
+    ``reachable``; ``set_prompt_state`` and ``set_resource_state`` carry only
+    ``enabled``. Presence of ``reachable`` (rather than the action name) decides
+    whether a row can render as an online/offline transition.
+
+    Args:
+        row: Audit trail ORM row whose ``action`` is a state-change action.
+
+    Returns:
+        Tuple of (verb, status), or None if the action isn't a state change or
+        ``new_values`` carries no recognisable state.
+
+    Examples:
+        >>> from types import SimpleNamespace
+        >>> _state_transition(SimpleNamespace(action="set_gateway_state", new_values={"enabled": True, "reachable": False}))
+        ('went offline', 'warning')
+        >>> _state_transition(SimpleNamespace(action="set_gateway_state", new_values={"enabled": True, "reachable": True}))
+        ('came online', 'success')
+        >>> _state_transition(SimpleNamespace(action="set_prompt_state", new_values={"enabled": False}))
+        ('disabled', 'success')
+        >>> _state_transition(SimpleNamespace(action="set_gateway_state", new_values=None)) is None
+        True
+        >>> _state_transition(SimpleNamespace(action="update_gateway", new_values={"enabled": True})) is None
+        True
+    """
+    if row.action not in _STATE_ACTIONS:
+        return None
+    new_values = row.new_values if isinstance(row.new_values, dict) else {}
+    if new_values.get("enabled") is False:
+        return "disabled", "success"
+    if new_values.get("reachable") is False:
+        return "went offline", "warning"
+    if new_values.get("reachable") is True:
+        return "came online", "success"
+    if new_values.get("enabled") is True:
+        return "enabled", "success"
+    return None
 
 
 def _as_utc(ts: datetime) -> datetime:
@@ -362,30 +526,54 @@ def _audit_to_activity(row: AuditTrail) -> ActivityItem:
         ActivityItem: Feed entry with server-rendered title, description and status.
     """
     label = _RESOURCE_LABELS.get(row.resource_type) or row.resource_type.replace("_", " ").capitalize()
-    action_text = row.action.replace("_", " ")
-    verb = _ACTION_VERBS.get(row.action, action_text)
     actor = row.user_email or row.user_id or ""
     resource_name = row.resource_name or row.resource_id or ""
     name_part = f" '{resource_name}'" if resource_name else ""
-    by_part = f" by {actor}" if actor else ""
+    # System-generated rows (e.g. the health-check reachability transition) have no
+    # human actor; "went offline by system" reads worse than omitting the clause.
+    by_part = f" by {actor}" if actor and actor != "system" else ""
+
+    transition = _state_transition(row)
+    verb, head_verb = _resolve_verb(row.action, _ACTION_VERBS, _ACTION_OVERRIDES)
+    if transition is not None:
+        verb, _transition_status = transition
 
     if not row.success:
         status = "error"
     elif row.requires_review:
         status = "warning"
-    elif row.action in ("read", "execute"):
+    elif transition is not None:
+        status = transition[1]
+    elif head_verb in _READ_VERBS:
         status = "info"
     else:
         status = "success"
 
+    context = row.context if isinstance(row.context, dict) else {}
+    writer_description = context.get("description") if isinstance(context.get("description"), str) else None
+
     if status == "error":
-        title = f"{label} {action_text} failed"
-        description = f"{label}{name_part} {action_text} failed."
+        infinitive, failure_head = _resolve_verb(row.action, _FAILURE_INFINITIVES, _FAILURE_OVERRIDES)
+        if row.action in _STATE_ACTIONS:
+            title = f"Failed to update {label} state"
+            description = f"{_sentence_case(label)}{name_part} state update failed."
+        elif failure_head is not None:
+            title = f"Failed to {infinitive} {label}"
+            description = f"{_sentence_case(label)}{name_part} failed to {infinitive}."
+        else:
+            action_text = row.action.replace("_", " ")
+            title = f"{_sentence_case(label)} {action_text} failed"
+            description = f"{_sentence_case(label)}{name_part} {action_text} failed."
         if row.error_message:
             description += f" {row.error_message}"
     else:
-        title = f"{label} {verb}"
-        description = f"{label}{name_part} was {verb}{by_part}."
+        title = f"{_sentence_case(label)} {verb}"
+        if writer_description:
+            description = writer_description
+        elif verb in _NO_WAS_VERBS:
+            description = f"{_sentence_case(label)}{name_part} {verb}{by_part}."
+        else:
+            description = f"{_sentence_case(label)}{name_part} was {verb}{by_part}."
 
     return ActivityItem(
         id=f"audit:{row.id}",
