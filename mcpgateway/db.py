@@ -6337,6 +6337,7 @@ class LLMProviderType:
     MISTRAL = "mistral"
     GROQ = "groq"
     TOGETHER = "together"
+    MINIMAX = "minimax"
 
     @classmethod
     def get_all_types(cls) -> List[str]:
@@ -6358,6 +6359,7 @@ class LLMProviderType:
             cls.MISTRAL,
             cls.GROQ,
             cls.TOGETHER,
+            cls.MINIMAX,
         ]
 
     @classmethod
@@ -6458,6 +6460,14 @@ class LLMProviderType:
                 "supports_model_list": False,
                 "requires_api_key": True,
                 "description": "IBM watsonx.ai",
+            },
+            cls.MINIMAX: {
+                "api_base": "https://api.minimax.io/v1",
+                "default_model": "MiniMax-M2.7",
+                "supports_model_list": True,
+                "models_endpoint": "/models",
+                "requires_api_key": True,
+                "description": "MiniMax AI models (MiniMax-M2.7, etc.)",
             },
         }
 
