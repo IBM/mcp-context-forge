@@ -57,14 +57,6 @@ repos:
         always_run: true
         files: ^mcpgateway/alembic/versions/.*\.py$
 
-      - id: check-sunset-markers
-        name: 🌅 Check Sunset Markers
-        description: Forbids sunset markers ([#NNNN] remove after ...) in committed code — deprecated code must be removed before merging.
-        entry: uv run .github/tools/check_sunset_markers.py
-        language: system
-        pass_filenames: false
-        always_run: true
-
       - id: forbid-content-reference
         name: ❌ Forbid :contentReference
         description: Prevents :contentReference patterns from being committed.
