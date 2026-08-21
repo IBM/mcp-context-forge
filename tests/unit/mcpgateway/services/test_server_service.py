@@ -3579,6 +3579,37 @@ class TestConvertServerToReadAssociatedToolIds:
 
         assert result.associated_tool_ids == ["42"]
 
+    def test_associated_gateways_derived_from_active_entities(self, server_service):
+        """associated_gateways contains distinct gateway IDs across active entity types."""
+        # Standard
+        from types import SimpleNamespace
+
+        tools = [
+            SimpleNamespace(id="t1", name="Tool A", gateway_id="gw-b", enabled=True),
+            SimpleNamespace(id="t2", name="Tool B", gateway_id="gw-a", enabled=True),
+            SimpleNamespace(id="t3", name="Tool C", gateway_id="gw-disabled", enabled=False),
+        ]
+        resources = [SimpleNamespace(id="r1", gateway_id="gw-b", enabled=True)]
+        prompts = [SimpleNamespace(id="p1", gateway_id=None, enabled=True)]
+        server = self._make_server(tools=tools, resources=resources, prompts=prompts)
+
+        result = server_service.convert_server_to_read(server, include_metrics=False)
+
+        assert result.associated_gateways == ["gw-a", "gw-b", "null"]
+        assert result.model_dump(by_alias=True)["associatedGateways"] == ["gw-a", "gw-b", "null"]
+
+    def test_associated_gateways_includes_local_sentinel_for_a2a_agents(self, server_service):
+        """A server with an active A2A agent selects the shared local-entity entry."""
+        # Standard
+        from types import SimpleNamespace
+
+        server = self._make_server()
+        server.a2a_agents = [SimpleNamespace(id="agent-1", enabled=True)]
+
+        result = server_service.convert_server_to_read(server, include_metrics=False)
+
+        assert result.associated_gateways == ["null"]
+
     @pytest.mark.asyncio
     async def test_get_server_filters_deactivated_entities(self, server_service, test_db):
         """Test that get_server filters out deactivated tools, prompts, and resources."""

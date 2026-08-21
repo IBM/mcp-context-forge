@@ -4764,7 +4764,7 @@ class ServerRead(BaseModelWithConfigDict):
 
     Includes all server fields plus:
     - Database ID
-    - Associated tool, resource, and prompt IDs
+    - Associated tool, resource, prompt, and gateway IDs
     - Creation/update timestamps
     - Active status
     - Metrics: Aggregated metrics for the server invocations.
@@ -4783,6 +4783,7 @@ class ServerRead(BaseModelWithConfigDict):
     associated_resources: List[str] = []
     associated_prompts: List[str] = []
     associated_a2a_agents: List[str] = []
+    associated_gateways: List[str] = []
     metrics: Optional[ServerMetrics] = Field(None, description="Server metrics (may be None in list operations)")
     tags: List[Dict[str, str]] = Field(default_factory=list, description="Tags for categorizing the server")
 

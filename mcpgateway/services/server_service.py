@@ -457,6 +457,18 @@ class ServerService(BaseService):
         server_dict["associated_prompts"] = [prompt.id for prompt in server.prompts if getattr(prompt, "enabled", True)] if server.prompts else []
         server_dict["associated_a2a_agents"] = [agent.id for agent in server.a2a_agents if getattr(agent, "enabled", True)] if server.a2a_agents else []
 
+        # Gateway selection is a UI filter rather than a persisted server relationship.
+        # Reconstruct it from the active entities that currently compose the server.
+        associated_gateway_ids: set[str] = set()
+        for entities in (server.tools, server.resources, server.prompts):
+            for entity in entities or []:
+                if getattr(entity, "enabled", True):
+                    gateway_id = getattr(entity, "gateway_id", None)
+                    associated_gateway_ids.add(str(gateway_id) if gateway_id is not None else "null")
+        if any(getattr(agent, "enabled", True) for agent in server.a2a_agents or []):
+            associated_gateway_ids.add("null")
+        server_dict["associated_gateways"] = sorted(associated_gateway_ids)
+
         # Team name is loaded via server.team property from email_team relationship
         server_dict["team"] = getattr(server, "team", None)
 

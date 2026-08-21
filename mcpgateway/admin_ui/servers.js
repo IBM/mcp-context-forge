@@ -865,6 +865,15 @@ export const editServer = async function (serverId) {
     // Store server data for modal population
     window.Admin.currentEditingServer = server;
 
+    // Gateway selection is derived from the server's associated entities. Keep
+    // it on the stable HTMX container so swaps can restore the checked state.
+    const editGatewaysContainer = safeGetElement("associatedEditGateways");
+    if (editGatewaysContainer) {
+      editGatewaysContainer.dataset.selectedGatewayIds = JSON.stringify(
+        (server.associatedGateways || []).map(String)
+      );
+    }
+
     // Set associated tools data attribute on the container for reference by initToolSelect
     const editToolsContainer = safeGetElement("edit-server-tools");
     if (editToolsContainer && server.associatedTools) {

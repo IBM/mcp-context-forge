@@ -58,6 +58,50 @@ describe("events.js - Module Import", () => {
   test("events module can be imported without errors", async () => {
     await expect(import("../../../mcpgateway/admin_ui/events.js")).resolves.toBeDefined();
   });
+
+  test("reinitializes the edit gateway selector after an HTMX swap", async () => {
+    const { initGatewaySelect } = await import(
+      "../../../mcpgateway/admin_ui/gateways.js"
+    );
+    const target = document.createElement("div");
+    target.id = "associatedEditGateways";
+
+    document.dispatchEvent(
+      new CustomEvent("htmx:afterSwap", { detail: { target } })
+    );
+
+    expect(initGatewaySelect).toHaveBeenCalledWith(
+      "associatedEditGateways",
+      "selectedEditGatewayPills",
+      "selectedEditGatewayWarning",
+      12,
+      "selectAllEditGatewayBtn",
+      "clearAllEditGatewayBtn",
+      "searchEditGateways"
+    );
+  });
+
+  test("reinitializes the create gateway selector after an HTMX swap", async () => {
+    const { initGatewaySelect } = await import(
+      "../../../mcpgateway/admin_ui/gateways.js"
+    );
+    const target = document.createElement("div");
+    target.id = "associatedGateways";
+
+    document.dispatchEvent(
+      new CustomEvent("htmx:afterSwap", { detail: { target } })
+    );
+
+    expect(initGatewaySelect).toHaveBeenCalledWith(
+      "associatedGateways",
+      "selectedGatewayPills",
+      "selectedGatewayWarning",
+      12,
+      "selectAllGatewayBtn",
+      "clearAllGatewayBtn",
+      "searchGateways"
+    );
+  });
 });
 
 describe("events.js - DOMContentLoaded initialization", () => {
