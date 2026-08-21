@@ -11,7 +11,6 @@ from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
-
 USER1_ID = "11111111-1111-1111-1111-111111111111"
 USER2_ID = "22222222-2222-2222-2222-222222222222"
 USER3_ID = "33333333-3333-3333-3333-333333333333"
@@ -214,6 +213,10 @@ async def test_full_payload_generation_with_mock_db():
     tool1.id = "t1"
     tool1.name = "gw1-public_tool"
     tool1.original_name = "public_tool"
+    tool1.input_schema = {
+        "type": "object",
+        "properties": {"region": {"type": "string", "x-mcp-header": "Region"}},
+    }
     tool1.owner_email = "user1@example.com"
     tool1.team_id = "team1"
     tool1.visibility = "public"
@@ -223,6 +226,7 @@ async def test_full_payload_generation_with_mock_db():
     tool2.id = "t2"
     tool2.name = "gw1-private_tool"
     tool2.original_name = "private_tool"
+    tool2.input_schema = {"type": "object", "properties": {"text": {"type": "string"}}}
     tool2.owner_email = "user1@example.com"
     tool2.team_id = "team1"
     tool2.visibility = "private"
@@ -232,6 +236,7 @@ async def test_full_payload_generation_with_mock_db():
     tool3.id = "t3"
     tool3.name = "gw1-team2_tool"
     tool3.original_name = "team2_tool"
+    tool3.input_schema = {"type": "object", "properties": {"count": {"type": "integer"}}}
     tool3.owner_email = "user2@example.com"
     tool3.team_id = "team2"
     tool3.visibility = "team"
@@ -289,6 +294,10 @@ async def test_full_payload_generation_with_mock_db():
             "remove_headers": ["Cookie"],
             "capabilities": {"resources": {"subscribe": True}},
             "allowed_tool_names": ["public_tool", "private_tool"],
+            "tool_schemas": {
+                "public_tool": tool1.input_schema,
+                "private_tool": tool2.input_schema,
+            },
             "allowed_resource_names": ["Resource 1"],
             "allowed_resource_uris": ["resource://one"],
             "allowed_prompt_names": ["Prompt 1"],
@@ -302,6 +311,11 @@ async def test_full_payload_generation_with_mock_db():
         assert "add_headers" in selected_keys, "Gateway SELECT must include add_headers"
         assert "remove_headers" in selected_keys, "Gateway SELECT must include remove_headers"
 
+        tool_execute_call = mock_db.execute.call_args_list[6]
+        tool_stmt = tool_execute_call[0][0]
+        selected_tool_keys = {col.key for col in tool_stmt.selected_columns}
+        assert "input_schema" in selected_tool_keys, "Tool SELECT must include input_schema"
+
         # Verify user2 sees public server but not private server from user1
         user2_config = payload[USER2_ID]
         assert "s1" in user2_config["virtual_hosts"]  # public
@@ -310,6 +324,10 @@ async def test_full_payload_generation_with_mock_db():
         assert "s2" not in user2_config["virtual_hosts"]
         user2_backend = user2_config["virtual_hosts"]["s1"]["backends"]["g1"]
         assert user2_backend["allowed_tool_names"] == ["public_tool", "team2_tool"]
+        assert user2_backend["tool_schemas"] == {
+            "public_tool": tool1.input_schema,
+            "team2_tool": tool3.input_schema,
+        }
 
         # Verify active users with no team membership still get public-only config.
         user3_config = payload[USER3_ID]
@@ -317,6 +335,7 @@ async def test_full_payload_generation_with_mock_db():
         assert "s2" not in user3_config["virtual_hosts"]
         user3_backend = user3_config["virtual_hosts"]["s1"]["backends"]["g1"]
         assert user3_backend["allowed_tool_names"] == ["public_tool"]
+        assert user3_backend["tool_schemas"] == {"public_tool": tool1.input_schema}
 
 
 # ============================================================================
