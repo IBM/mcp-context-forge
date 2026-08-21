@@ -2703,6 +2703,104 @@ class TestUpdateToolAdditional:
                 await tool_service.update_tool(db, "tool-1", tool_update)
 
     @pytest.mark.asyncio
+    async def test_update_tool_custom_name_conflict_on_edit(self, tool_service, mock_tool):
+        """update_tool should raise ToolNameConflictError when only custom_name changes."""
+        db = MagicMock()
+        mock_tool.version = 1
+        mock_tool.name = "old-name"
+        mock_tool.custom_name = "old-name"
+        mock_tool.visibility = "public"
+        mock_tool.team_id = None
+        mock_tool.owner_email = "user@example.com"
+
+        existing_conflict = MagicMock()
+        existing_conflict.custom_name = "demo"
+        existing_conflict.enabled = True
+        existing_conflict.id = 99
+        existing_conflict.visibility = "public"
+
+        tool_update = MagicMock()
+        tool_update.name = "old-name"
+        tool_update.custom_name = "demo"
+        tool_update.visibility = None
+
+        with patch("mcpgateway.services.tool_service.get_for_update") as mock_gfu:
+            mock_gfu.side_effect = [mock_tool, existing_conflict]
+            with pytest.raises(ToolNameConflictError):
+                await tool_service.update_tool(db, "tool-1", tool_update)
+
+    @pytest.mark.asyncio
+    async def test_update_tool_custom_name_only_success(self, tool_service, mock_tool):
+        """Renaming custom_name to a non-conflicting value succeeds."""
+        db = MagicMock()
+        mock_tool.version = 1
+        mock_tool.name = "old-name"
+        mock_tool.custom_name = "old-name"
+        mock_tool.visibility = "public"
+        mock_tool.team_id = None
+        mock_tool.owner_email = "user@example.com"
+
+        tool_update = _make_tool_update(name="old-name", custom_name="brand-new-name")
+
+        with (
+            patch("mcpgateway.services.tool_service.get_for_update", side_effect=[mock_tool, None]),
+            patch.object(tool_service, "_notify_tool_updated", AsyncMock()),
+            patch.object(tool_service, "convert_tool_to_read", return_value={"id": "tool-1"}),
+        ):
+            result = await tool_service.update_tool(db, "tool-1", tool_update)
+
+        assert result is not None
+        assert mock_tool.custom_name == "brand-new-name"
+
+    @pytest.mark.asyncio
+    async def test_update_tool_custom_name_conflict_team_visibility(self, tool_service, mock_tool):
+        """custom_name conflict check uses team scope when tool visibility is team."""
+        db = MagicMock()
+        mock_tool.version = 1
+        mock_tool.name = "old-name"
+        mock_tool.custom_name = "old-name"
+        mock_tool.visibility = "team"
+        mock_tool.team_id = "team-42"
+        mock_tool.owner_email = None
+
+        existing_conflict = MagicMock()
+        existing_conflict.custom_name = "taken"
+        existing_conflict.enabled = True
+        existing_conflict.id = 99
+        existing_conflict.visibility = "team"
+
+        tool_update = _make_tool_update(name="old-name", custom_name="taken")
+
+        with patch("mcpgateway.services.tool_service.get_for_update") as mock_gfu:
+            mock_gfu.side_effect = [mock_tool, existing_conflict]
+            with pytest.raises(ToolNameConflictError):
+                await tool_service.update_tool(db, "tool-1", tool_update)
+
+    @pytest.mark.asyncio
+    async def test_update_tool_custom_name_conflict_private_visibility(self, tool_service, mock_tool):
+        """custom_name conflict check uses private scope when tool visibility is private."""
+        db = MagicMock()
+        mock_tool.version = 1
+        mock_tool.name = "old-name"
+        mock_tool.custom_name = "old-name"
+        mock_tool.visibility = "private"
+        mock_tool.team_id = None
+        mock_tool.owner_email = "user@example.com"
+
+        existing_conflict = MagicMock()
+        existing_conflict.custom_name = "taken"
+        existing_conflict.enabled = True
+        existing_conflict.id = 99
+        existing_conflict.visibility = "private"
+
+        tool_update = _make_tool_update(name="old-name", custom_name="taken")
+
+        with patch("mcpgateway.services.tool_service.get_for_update") as mock_gfu:
+            mock_gfu.side_effect = [mock_tool, existing_conflict]
+            with pytest.raises(ToolNameConflictError):
+                await tool_service.update_tool(db, "tool-1", tool_update)
+
+    @pytest.mark.asyncio
     async def test_update_tool_not_found_during_update(self, tool_service):
         """update_tool should raise ToolNotFoundError for unknown tool_id."""
         db = MagicMock()
