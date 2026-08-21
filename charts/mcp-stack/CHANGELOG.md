@@ -63,6 +63,14 @@ Aligned `values.yaml` with `config.py` secure defaults and tightened for product
 
 ---
 
+## [1.0.8] - 2026-08-12
+
+### Added
+
+- **PgBouncer configuration guide** ([#3590](https://github.com/IBM/mcp-context-forge/issues/3590)) - Documented enablement, pool modes, connection limits, and gateway database routing.
+
+---
+
 ## [1.0.0-RC2] - 2026-02-28
 
 ### Added
