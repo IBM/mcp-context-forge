@@ -2987,6 +2987,9 @@
                 servers.
               </p>
             </div>
+            {% with select_id='add-server-team-id', default_team_id=selected_team_id %}
+            {% include 'server_team_field.html' %}
+            {% endwith %}
             <!-- Visibility options -->
             <div class="mt-4">
               <label
@@ -11126,6 +11129,10 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
                         filter servers.
                       </p>
                     </div>
+
+                    {% with select_id='edit-server-team-id', default_team_id=none %}
+                    {% include 'server_team_field.html' %}
+                    {% endwith %}
 
                     <!-- Visibility options -->
                     <div id="edit-server-visibility" class="mt-4">
