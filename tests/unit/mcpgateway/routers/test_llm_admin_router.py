@@ -237,6 +237,10 @@ async def test_get_provider_defaults():
     mock_db = MagicMock()
     result = await llm_admin_router.get_provider_defaults(mock_db, current_user_ctx={"email": "user@example.com", "db": mock_db})
     assert isinstance(result, dict)
+    # OrcaRouter is registered as a named provider with gateway defaults.
+    assert result["orcarouter"]["api_base"] == "https://api.orcarouter.ai/v1"
+    assert result["orcarouter"]["default_model"] == "orcarouter/auto"
+    assert result["orcarouter"]["requires_api_key"] is True
 
 
 @pytest.mark.asyncio

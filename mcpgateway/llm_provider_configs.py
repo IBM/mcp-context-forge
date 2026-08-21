@@ -504,6 +504,18 @@ PROVIDER_CONFIGS: Dict[str, ProviderConfigDefinition] = {
         api_base_default="https://api.together.xyz/v1",
         config_fields=[],
     ),
+    "orcarouter": ProviderConfigDefinition(
+        provider_type="orcarouter",
+        display_name="OrcaRouter",
+        description="OrcaRouter gateway (150+ models, one endpoint)",
+        requires_api_key=True,
+        api_key_label="OrcaRouter API Key",
+        api_key_help="Get your API key from https://www.orcarouter.ai",
+        requires_api_base=True,
+        api_base_default="https://api.orcarouter.ai/v1",
+        api_base_help="Default: https://api.orcarouter.ai/v1",
+        config_fields=[],
+    ),
 }
 
 

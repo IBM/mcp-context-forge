@@ -6337,6 +6337,7 @@ class LLMProviderType:
     MISTRAL = "mistral"
     GROQ = "groq"
     TOGETHER = "together"
+    ORCAROUTER = "orcarouter"
 
     @classmethod
     def get_all_types(cls) -> List[str]:
@@ -6358,6 +6359,7 @@ class LLMProviderType:
             cls.MISTRAL,
             cls.GROQ,
             cls.TOGETHER,
+            cls.ORCAROUTER,
         ]
 
     @classmethod
@@ -6437,6 +6439,14 @@ class LLMProviderType:
                 "models_endpoint": "/models",
                 "requires_api_key": True,
                 "description": "Together AI inference",
+            },
+            cls.ORCAROUTER: {
+                "api_base": "https://api.orcarouter.ai/v1",
+                "default_model": "orcarouter/auto",
+                "supports_model_list": True,
+                "models_endpoint": "/models",
+                "requires_api_key": True,
+                "description": "OrcaRouter gateway (150+ models, one endpoint)",
             },
             cls.BEDROCK: {
                 "api_base": "",
