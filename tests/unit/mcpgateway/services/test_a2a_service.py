@@ -7,7 +7,9 @@ Tests for A2A Agent Service functionality.
 """
 
 # Standard
+import asyncio
 from datetime import datetime, timezone
+import gc
 import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -2829,6 +2831,43 @@ class TestA2AInvalidationBestEffort:
         loop.create_task.side_effect = Exception("boom")
         with patch("asyncio.get_running_loop", return_value=loop):
             await service.delete_agent(mock_db, sample_db_agent.id)
+
+    async def test_schedule_invalidation_does_not_leak_coroutine_when_create_task_fails(self, recwarn):
+        """A create_task failure must not leave an un-awaited coroutine behind."""
+        # First-Party
+        from mcpgateway.services.a2a_service import _schedule_a2a_invalidation  # noqa: PLC0415
+
+        loop = MagicMock()
+        loop.create_task.side_effect = Exception("boom")
+        with patch("asyncio.get_running_loop", return_value=loop):
+            _schedule_a2a_invalidation("test-agent")
+
+        coro = loop.create_task.call_args[0][0]
+        gc.collect()
+        assert not [w for w in recwarn.list if issubclass(w.category, RuntimeWarning) and "was never awaited" in str(w.message)]
+        assert getattr(coro, "cr_running", False) is False
+
+    async def test_schedule_invalidation_keeps_a_strong_reference_until_done(self):
+        """The scheduled task must be retained so the GC cannot drop it mid-flight."""
+        # First-Party
+        from mcpgateway.services.a2a_service import _BACKGROUND_TASKS, _schedule_a2a_invalidation  # noqa: PLC0415
+
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def _blocking_publish(*_args, **_kwargs):
+            started.set()
+            await release.wait()
+
+        with patch("mcpgateway.services.a2a_service._publish_a2a_invalidation", _blocking_publish):
+            _schedule_a2a_invalidation("test-agent")
+            await started.wait()
+            assert len(_BACKGROUND_TASKS) == 1
+            task = next(iter(_BACKGROUND_TASKS))
+            release.set()
+            await task
+
+        assert task not in _BACKGROUND_TASKS
 
 
 class TestA2ATaskWireAndUpsert:
