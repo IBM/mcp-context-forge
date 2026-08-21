@@ -2210,13 +2210,14 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             db.rollback()
             raise other.exceptions[0]
 
-    async def fetch_tools_after_oauth(self, db: Session, gateway_id: str, app_user_email: str) -> Dict[str, Any]:
+    async def fetch_tools_after_oauth(self, db: Session, gateway_id: str, app_user_email: str, teams: list[str] | None = None) -> Dict[str, Any]:
         """Fetch tools from MCP server after OAuth completion for Authorization Code flow.
 
         Args:
             db: Database session
             gateway_id: ID of the gateway to fetch tools for
             app_user_email: ContextForge user email for token retrieval
+            teams: Token teams from request.state (None = Admin UI/shared path, list = API/team-scoped)
 
         Returns:
             Dict containing capabilities, tools, resources, and prompts
@@ -2247,35 +2248,99 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             if grant_type != "authorization_code":
                 raise ValueError(f"Gateway {gateway_id} is not using Authorization Code flow")
 
-            # Resolve the caller's stored OAuth token into an Authorization header, sharing
-            # the same lookup-and-validate sequence used by manual gateway refresh so the two
-            # call sites can't drift on token-claim validation.
-            oauth_result = await self._resolve_auth_code_refresh_headers(
-                gateway_id=gateway.id,
-                gateway_name=gateway.name,
-                gateway_url=gateway.url,
-                oauth_config=gateway.oauth_config,
-                user_email=app_user_email,
-                db=db,
-            )
-            authentication = oauth_result.headers
-            token_validation_warnings = oauth_result.warnings
+            # Get OAuth tokens for this gateway using team-aware path selection.
+            # SECURITY: Use teams parameter from request.state.token_teams to determine storage path:
+            # - teams=None (Admin UI/no teams claim in JWT) → vault/oauth/shared/...
+            # - teams=[...] (API with JWT teams)           → vault/oauth/{team_id}/...
+            # No fallback between paths — each flow checks ONLY its designated path.
+            # First-Party
+            from mcpgateway.services.token_storage_service import TokenStorageService  # pylint: disable=import-outside-toplevel
+            from mcpgateway.services.token_validation_service import validate_oauth_token_claims  # pylint: disable=import-outside-toplevel
+            from mcpgateway.db import EmailUser  # pylint: disable=import-outside-toplevel
 
-            # Debug: Check if token was decrypted
-            access_token = authentication.get("Authorization", "").removeprefix("Bearer ")
-            if access_token.startswith("Z0FBQUFBQm"):  # Encrypted tokens start with this
-                logger.error("OAuth token decryption may have failed before gateway initialization")
+            # Look up is_admin flag (safe DB query — not for scoping, only for user_context)
+            user = db.execute(select(EmailUser).where(EmailUser.email == app_user_email)).scalar_one_or_none()
+            is_admin = user.is_admin if user else False
+
+            if teams is None:
+                # Admin UI flow: check ONLY shared path
+                user_context = {
+                    "email": app_user_email,
+                    "teams": None,  # Shared path
+                    "is_admin": is_admin,
+                }
+                token_storage = TokenStorageService(db, user_context=user_context)
+                access_token = await token_storage.get_user_token(gateway.id, app_user_email)
+                token_source = "shared path (Admin UI)"  # nosec B105 - log label, not a password
+
+                if not access_token:
+                    raise GatewayConnectionError(f"No OAuth token found for user {app_user_email} in shared path. Please authorize this gateway via the Admin UI.")
             else:
-                logger.info("Using decrypted OAuth token for gateway %s", gateway.name)
+                # API flow: check ONLY team-scoped path
+                user_context = {
+                    "email": app_user_email,
+                    "teams": teams,
+                    "is_admin": is_admin,
+                }
+                token_storage = TokenStorageService(db, user_context=user_context)
+                access_token = await token_storage.get_user_token(gateway.id, app_user_email)
+                token_source = f"team-scoped (teams: {SecurityValidator.sanitize_log_message(str(teams))})"
 
-            # Use the existing connection logic with validation context for diagnostics
+                if not access_token:
+                    raise GatewayConnectionError(
+                        f"No OAuth token found for user {app_user_email} in team-scoped path (teams: {teams}). Please authorize this gateway via API with the appropriate team context."
+                    )
+
+            logger.info(
+                "Retrieved OAuth token for user=%s, gateway=%s from %s",
+                SecurityValidator.sanitize_log_message(app_user_email),
+                SecurityValidator.sanitize_log_message(gateway.name),
+                SecurityValidator.sanitize_log_message(token_source),
+            )
+
+            # Validate JWT claims (audience, scopes, issuer) before forwarding token.
+            # Mirrors the validation in _resolve_auth_code_refresh_headers so the two
+            # call sites cannot drift on claim-validation behaviour.
+            learned_aud, _learned_iss = await token_storage.get_user_learned_audience(gateway.id, app_user_email)
+            token_validation = validate_oauth_token_claims(
+                access_token=access_token,
+                oauth_config=gateway.oauth_config,
+                gateway_url=gateway.url,
+                gateway_name=gateway.name,
+                learned_aud=learned_aud,
+            )
+            for warning in token_validation.warnings:
+                logger.warning(
+                    "OAuth token validation for gateway %s: %s",
+                    SecurityValidator.sanitize_log_message(gateway.name),
+                    SecurityValidator.sanitize_log_message(warning),
+                )
+
+            blocking = token_validation.blocking_errors
+            if blocking:
+                detail = "; ".join(blocking)
+                raise GatewayConnectionError(f"Refusing to forward OAuth token for gateway '{gateway.name}': {detail}. Fix oauth_config (resource/scopes/issuer) or the IdP token request.")
+
+            authentication = {"Authorization": f"Bearer {access_token}"}
+            token_validation_warnings = token_validation.warnings
+
+            # Debug: check if token survived decryption (Fernet ciphertext prefix)
+            if access_token.startswith("Z0FBQUFBQm"):  # Encrypted tokens start with this prefix
+                logger.debug("OAuth token may be encrypted (decryption may have failed) for gateway %s", SecurityValidator.sanitize_log_message(gateway.name))
+            else:
+                logger.debug("OAuth token appears decrypted for gateway %s", SecurityValidator.sanitize_log_message(gateway.name))
+
+            # Connect to MCP server. No cross-path fallback — issue #5598 explicitly
+            # prohibits dual-backend fallback mode. If the token is rejected the caller
+            # must re-authorize; silently substituting a different credential path
+            # creates an unpredictable security surface and inconsistent behaviour vs
+            # the tool_service.py and resource_service.py invocation paths.
             if gateway.transport.upper() == "SSE":
                 capabilities, tools, resources, prompts, _ = await self._connect_to_sse_server_without_validation(gateway.url, authentication, validation_warnings=token_validation_warnings)
             elif gateway.transport.upper() == "STREAMABLEHTTP":
                 try:
                     capabilities, tools, resources, prompts, _ = await self.connect_to_streamablehttp_server(gateway.url, authentication)
                 except Exception as streamable_err:
-                    # Surface diagnostic context for likely auth rejections (401/403)
                     error_str = str(streamable_err).lower()
                     if token_validation_warnings and ("401" in error_str or "403" in error_str or "unauthorized" in error_str or "forbidden" in error_str):
                         diagnostics = "; ".join(token_validation_warnings)
@@ -2335,8 +2400,21 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             raise GatewayConnectionError(f"Failed to fetch tools after OAuth: {str(gce)}")
         except Exception as e:
             db.rollback()
-            logger.error("Failed to fetch tools after OAuth for gateway %s: %s", SecurityValidator.sanitize_log_message(gateway_id), e)
-            raise GatewayConnectionError(f"Failed to fetch tools after OAuth: {str(e)}")
+            # Extract actual error from TaskGroup or ExceptionGroup if present
+            actual_error = e
+            if hasattr(e, "exceptions") and e.exceptions:  # pylint: disable=no-member
+                actual_error = e.exceptions[0]  # pylint: disable=no-member
+            elif hasattr(e, "__cause__") and e.__cause__:
+                actual_error = e.__cause__
+
+            logger.error(
+                "Failed to fetch tools after OAuth for gateway %s: %s (type: %s)",
+                SecurityValidator.sanitize_log_message(gateway_id),
+                str(actual_error),
+                type(actual_error).__name__,
+                exc_info=True,  # Include full traceback
+            )
+            raise GatewayConnectionError(f"Failed to fetch tools after OAuth: {str(actual_error)}")
 
     async def list_gateways(
         self,
@@ -4690,22 +4768,33 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             # are treated as "gateway reachable" (handled below in exception logic).
                             try:
                                 # First-Party
-                                from mcpgateway.services.token_storage_service import TokenStorageService  # pylint: disable=import-outside-toplevel
+                                from mcpgateway.services.token_storage_service import TokenStorageService, build_token_user_context  # pylint: disable=import-outside-toplevel
 
-                                # Use fresh session for OAuth token lookup
-                                with fresh_db_session() as token_db:
-                                    token_storage = TokenStorageService(token_db)
-
-                                    # Get user-specific OAuth token (if available)
-                                    if user_email:
+                                # Get user-specific OAuth token only if user_email is provided
+                                if user_email:
+                                    # SECURITY: Health checks run in background without a request-scoped
+                                    # token. Use None (shared path) as the team scope — this is the
+                                    # correct fallback for background processes per AGENTS.md Layer 1
+                                    # invariant. Do NOT query EmailTeamMember here.
+                                    #
+                                    # Known limitation: team-scoped Vault tokens stored under a team
+                                    # path (e.g. engineering/…) will not be found by this lookup
+                                    # because background health checks have no JWT to derive the team
+                                    # from. The health check gracefully degrades to an unauthenticated
+                                    # probe in that case — no credential is leaked and no hard failure
+                                    # occurs. Full fix (jwt_teams_claim threading) is deferred.
+                                    with fresh_db_session() as token_db:
+                                        user_context = build_token_user_context(token_db, user_email, None)
+                                        token_storage = TokenStorageService(token_db, user_context=user_context)
                                         access_token = await token_storage.get_user_token(gateway_id, user_email)
-                                        if access_token:
-                                            headers["Authorization"] = f"Bearer {access_token}"
-                                            logger.debug("Using stored OAuth token for health check of gateway %s", gateway_name)
-                                        else:
-                                            logger.debug("No OAuth token available for user %s on gateway %s, proceeding with unauthenticated health check", user_email, gateway_name)
+
+                                    if access_token:
+                                        headers["Authorization"] = f"Bearer {access_token}"
+                                        logger.debug("Using stored OAuth token for health check of gateway %s", gateway_name)
                                     else:
-                                        logger.debug("No user email provided for authorization_code gateway %s, proceeding with unauthenticated health check", gateway_name)
+                                        logger.debug("No stored OAuth token for user %s on gateway %s, proceeding with unauthenticated health check", user_email, gateway_name)
+                                else:
+                                    logger.debug("No user_email provided for authorization_code gateway %s, proceeding with unauthenticated health check", gateway_name)
                             except Exception as e:
                                 logger.warning("Failed to obtain stored OAuth token for gateway %s, proceeding with unauthenticated health check: %s", gateway_name, e)
                         elif grant_type == "token-exchange":
@@ -6103,6 +6192,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         oauth_config: Dict[str, Any],
         user_email: Optional[str],
         db: Optional[Session] = None,
+        user_context: Optional[Dict[str, Any]] = None,
     ) -> AuthCodeRefreshHeaders:
         """Build the Authorization header for refreshing an authorization_code OAuth gateway.
 
@@ -6117,6 +6207,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             user_email: Authenticated caller's email; required to locate the stored token.
             db: Optional caller-owned session to reuse for the token lookup. When omitted, a
                 short-lived ``fresh_db_session()`` is opened and closed here instead.
+            user_context: Optional user context dict (email, teams, is_admin) for Vault path
+                selection. When omitted, TokenStorageService defaults to the shared path which
+                is correct for the database backend but wrong for team-scoped Vault users.
 
         Returns:
             The resolved ``Authorization`` bearer header plus any advisory (non-blocking)
@@ -6135,7 +6228,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         async def _lookup(session: Session) -> tuple:
             """Fetch the stored OAuth token and learned audience for this user/gateway pair."""
-            token_storage = TokenStorageService(session)
+            token_storage = TokenStorageService(session, user_context=user_context)
             token = await token_storage.get_user_token(gateway_id, user_email)
             if not token:
                 raise GatewayConnectionError(
@@ -6176,6 +6269,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         gateway: Optional[DbGateway] = None,
         include_resources: bool = True,
         include_prompts: bool = True,
+        user_context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, int]:
         """Refresh tools, resources, and prompts for a gateway from the background health
         check, a manual API-triggered refresh, or the notification service.
@@ -6199,6 +6293,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             gateway: Optional DbGateway object to avoid redundant DB lookup
             include_resources: Whether to include resources in the refresh
             include_prompts: Whether to include prompts in the refresh
+            user_context: Optional user context dict (email, teams, is_admin) forwarded to
+                token storage for Vault path selection on authorization_code gateways.
 
         Returns:
             Dict with counts: {tools_added, tools_removed, resources_added,
@@ -6364,6 +6460,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     gateway_url=gateway_base_url,
                     oauth_config=gateway_oauth_config,
                     user_email=user_email,
+                    user_context=user_context,
                 )
                 pre_auth_headers = {**(pre_auth_headers or {}), **oauth_result.headers}
 
@@ -6552,6 +6649,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         include_prompts: bool = True,
         user_email: Optional[str] = None,
         request_headers: Optional[Dict[str, str]] = None,
+        user_context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Manually trigger a refresh of tools/resources/prompts for a gateway.
 
@@ -6565,6 +6663,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             include_prompts: Whether to include prompts in the refresh
             user_email: Email of the user triggering the refresh
             request_headers: Optional request headers for passthrough authentication
+            user_context: Optional user context dict (email, teams, is_admin) forwarded to
+                token storage for Vault path selection on authorization_code gateways.
 
         Returns:
             Dict with counts: {tools_added, tools_updated, tools_removed,
@@ -6657,6 +6757,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 gateway=gateway,
                 include_resources=include_resources,
                 include_prompts=include_prompts,
+                user_context=user_context,
             )
             # Note: last_refresh_at is updated inside _refresh_gateway_tools_resources_prompts on success
 
@@ -7553,9 +7654,17 @@ async def test_gateway_connectivity(
                 # For Authorization Code flow, try to get stored tokens
                 try:
                     # First-Party
-                    from mcpgateway.services.token_storage_service import TokenStorageService  # pylint: disable=import-outside-toplevel
+                    from mcpgateway.services.token_storage_service import TokenStorageService, build_token_user_context  # pylint: disable=import-outside-toplevel
 
-                    token_storage = TokenStorageService(db)
+                    # SECURITY: Use token_teams from the authenticated user dict — this is
+                    # already resolved by auth middleware and must not be widened by
+                    # re-querying EmailTeamMember (Layer 1 token-scoping invariant).
+                    user_token_teams = user.get("token_teams") if isinstance(user, dict) else None
+                    # jwt_teams_claim is forwarded as a Vault path hint for admin bypass
+                    # (token_teams=None) so store and lookup resolve to the same path.
+                    jwt_teams_hint = user.get("jwt_teams_claim") if isinstance(user, dict) else None
+                    user_context = build_token_user_context(db, user_email, user_token_teams, jwt_teams_hint)
+                    token_storage = TokenStorageService(db, user_context=user_context)
 
                     # Get user-specific OAuth token
                     if not user_email:
@@ -7578,7 +7687,7 @@ async def test_gateway_connectivity(
                             status_code=401, latency_ms=latency_ms, body={"error": f"Authorize '{gateway.name}' before testing. Open /oauth/authorize/{gateway.id} to complete the OAuth flow."}
                         )
                 except Exception as e:
-                    logger.error(f"Failed to obtain stored OAuth token for gateway {gateway.name}: {e}")
+                    logger.error("Failed to obtain stored OAuth token for gateway %s: %s", gateway.name, e)
                     latency_ms = int((time.monotonic() - start_time) * 1000)
                     return GatewayTestResponse(
                         status_code=500,
@@ -7594,7 +7703,7 @@ async def test_gateway_connectivity(
                     )
                     headers["Authorization"] = f"Bearer {access_token}"
                 except Exception as e:
-                    logger.error(f"Failed to obtain OAuth access token for gateway {gateway.name}: {e}")
+                    logger.error("Failed to obtain OAuth access token for gateway %s: %s", gateway.name, e)
                     latency_ms = int((time.monotonic() - start_time) * 1000)
                     return GatewayTestResponse(
                         status_code=502,
