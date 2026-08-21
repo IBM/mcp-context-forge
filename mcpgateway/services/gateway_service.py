@@ -5556,6 +5556,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         target_owner_email: str,
         actor_email: str,
         target_team_id: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
     ) -> GatewayRead:
         """Transfer gateway ownership to another user.
 
@@ -5565,13 +5566,14 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             target_owner_email: Email of the new owner
             actor_email: Email of the user performing the transfer
             target_team_id: Optional new team ID for the gateway
+            token_teams: Normalized caller team scope; None means unrestricted admin scope
 
         Returns:
             GatewayRead with updated ownership
 
         Raises:
             GatewayNotFoundError: Gateway does not exist
-            ValueError: Target user invalid or team membership check fails
+            ValueError: Target user invalid, team membership check fails, or gateway is outside scope
         """
         # Validate target user exists and is active
         target_user = db.execute(select(DbEmailUser).where(DbEmailUser.email == target_owner_email, DbEmailUser.is_active == True)).scalar_one_or_none()  # noqa: E712  # pylint: disable=singleton-comparison
@@ -5581,6 +5583,12 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         gateway = get_for_update(db, DbGateway, gateway_id)
         if not gateway:
             raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
+        if token_teams is not None:
+            current_team_id = gateway.team_id
+            if not current_team_id or current_team_id not in token_teams:
+                raise ValueError("Gateway is outside the caller's token team scope")
+            if target_team_id and target_team_id not in token_teams:
+                raise ValueError("Target team is outside the caller's token team scope")
 
         previous_owner = gateway.owner_email
         previous_team = gateway.team_id

@@ -834,6 +834,12 @@ class TestTokenScopingMiddleware:
         assert middleware._check_permission_restrictions("/v1/chat/completions", "POST", [Permissions.LLM_INVOKE]) is True
         assert middleware._check_permission_restrictions("/v1/chat/completions", "POST", [Permissions.LLM_READ]) is False
 
+    def test_transfer_ownership_requires_gateway_update_permission(self, middleware):
+        """Ownership transfer must be covered by the gateway update token scope."""
+        path = "/admin/gateways/gw-1/transfer-ownership"
+        assert middleware._check_permission_restrictions(path, "POST", [Permissions.GATEWAYS_UPDATE]) is True
+        assert middleware._check_permission_restrictions(path, "POST", [Permissions.GATEWAYS_READ]) is False
+
     def test_permission_restrictions_llm_proxy_custom_prefix(self, middleware, monkeypatch):
         """LLM proxy path mapping should follow settings.llm_api_prefix."""
         monkeypatch.setattr("mcpgateway.middleware.token_scoping.settings.llm_api_prefix", "/gateway-llm")

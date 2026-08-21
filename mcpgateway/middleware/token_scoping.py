@@ -213,6 +213,7 @@ _ADMIN_PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     ("POST", re.compile(r"^/admin/gateways/?$"), Permissions.GATEWAYS_CREATE),
     ("POST", re.compile(r"^/admin/gateways/[^/]+/delete(?:$|/)"), Permissions.GATEWAYS_DELETE),
     ("POST", re.compile(r"^/admin/gateways/[^/]+/(?:edit|state)(?:$|/)"), Permissions.GATEWAYS_UPDATE),
+    ("POST", re.compile(r"^/admin/gateways/[^/]+/transfer-ownership(?:$|/)"), Permissions.GATEWAYS_UPDATE),
     ("GET", re.compile(r"^/admin/gateways(?:$|/)"), Permissions.GATEWAYS_READ),
     # Server management
     ("POST", re.compile(r"^/admin/servers/?$"), Permissions.SERVERS_CREATE),

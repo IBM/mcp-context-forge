@@ -249,3 +249,26 @@ async def test_transfer_private_gateway_to_team_coerces_visibility(service, mock
     assert tool.visibility == "team"
     assert resource.visibility == "team"
     assert prompt.visibility == "team"
+
+
+@pytest.mark.asyncio
+async def test_transfer_scoped_token_cannot_mutate_gateway_outside_scope(service, mock_db):
+    """Scoped administrators cannot transfer gateways outside their token teams."""
+    gateway = MagicMock()
+    gateway.visibility = "public"
+    gateway.team_id = "foreign-team"
+    gateway.owner_email = "old@example.com"
+
+    mock_db.execute.return_value = _scalar_result(MagicMock())  # target user found
+
+    with patch("mcpgateway.services.gateway_service.get_for_update", return_value=gateway):
+        with pytest.raises(ValueError, match="outside.*scope"):
+            await service.transfer_gateway_ownership(
+                mock_db,
+                "gw-1",
+                "target@example.com",
+                "actor@example.com",
+                token_teams=["allowed-team"],
+            )
+
+    mock_db.commit.assert_not_called()
