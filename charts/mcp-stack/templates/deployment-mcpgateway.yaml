@@ -325,15 +325,22 @@ spec:
           {{- end }}
           {{- end }}
 
-          {{- $probeScheme := ternary "HTTPS" "HTTP" .Values.mcpContextForge.tls.enabled -}}
           {{- with .Values.mcpContextForge.probes.readiness }}
           readinessProbe:
-{{- include "helpers.renderProbe" (dict "probe" (merge (dict "scheme" $probeScheme) .) "root" $) | nindent 12 }}
+{{- if $.Values.mcpContextForge.tls.enabled }}
+{{- include "helpers.renderProbe" (dict "probe" (merge (dict "scheme" "HTTPS") .) "root" $) | nindent 12 }}
+{{- else }}
+{{- include "helpers.renderProbe" (dict "probe" . "root" $) | nindent 12 }}
+{{- end }}
           {{- end }}
 
           {{- with .Values.mcpContextForge.probes.liveness }}
           livenessProbe:
-{{- include "helpers.renderProbe" (dict "probe" (merge (dict "scheme" $probeScheme) .) "root" $) | nindent 12 }}
+{{- if $.Values.mcpContextForge.tls.enabled }}
+{{- include "helpers.renderProbe" (dict "probe" (merge (dict "scheme" "HTTPS") .) "root" $) | nindent 12 }}
+{{- else }}
+{{- include "helpers.renderProbe" (dict "probe" . "root" $) | nindent 12 }}
+{{- end }}
           {{- end }}
 
           # Resource requests / limits
