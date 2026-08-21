@@ -934,7 +934,7 @@ class TestOAuthManagerTeamIdExtraction:
 
         stored_team_id = None
 
-        async def _capture_store(gw_id, state, code_verifier, app_user_email, team_id):
+        async def _capture_store(gw_id, state, code_verifier=None, app_user_email=None, redirect_uri=None, team_id=None):
             nonlocal stored_team_id
             stored_team_id = team_id
 
