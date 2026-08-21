@@ -62,6 +62,7 @@ from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.common.models import Gateway as PydanticGateway
 from mcpgateway.common.models import TextContent
 from mcpgateway.common.models import Tool as PydanticTool
+from mcpgateway.common.models import ToolAnnotations
 from mcpgateway.common.models import ToolResult
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
@@ -74,7 +75,7 @@ from mcpgateway.db import ToolMetric, ToolMetricsHourly
 from mcpgateway.observability import create_child_span, create_span, inject_trace_context_headers, otel_context_active, set_span_attribute, set_span_error
 from mcpgateway.plugins.control_telemetry import ControlTelemetryAccumulator, record_control_telemetry
 from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
-from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolMetrics, ToolRead, ToolUpdate, TopPerformer
+from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolMetrics, ToolPreviewResponse, ToolPreviewTarget, ToolPreviewWarning, ToolRead, ToolUpdate, TopPerformer
 from mcpgateway.services.a2a_protocol import prepare_a2a_invocation
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.base_service import BaseService
@@ -6945,6 +6946,154 @@ class ToolService(BaseService):
                 # Track performance with threshold checking
                 with perf_tracker.track_operation("tool_invocation", name):
                     pass  # Duration already captured above
+
+    def _get_hook_refs(self, plugin_manager: Any, hook_type: str) -> List[Any]:
+        """Return the registered hook refs for ``hook_type``, or ``[]`` on any failure.
+
+        Reaches into ``PluginManager._registry`` (private, no public enumeration API
+        exists in cpex as of this writing). Wrapped so a future cpex internal-shape
+        change degrades to "no hooks known" rather than crashing the preview endpoint.
+
+        Args:
+            plugin_manager: The resolved plugin manager, or None.
+            hook_type: The hook type to look up (e.g. ``ToolHookType.TOOL_PRE_INVOKE``).
+
+        Returns:
+            List[Any]: Hook refs (cpex ``HookRef``) registered for ``hook_type``.
+        """
+        if plugin_manager is None:
+            return []
+        try:
+            return list(plugin_manager._registry.get_hook_refs_for_hook(hook_type))  # pylint: disable=protected-access
+        except Exception:  # pylint: disable=broad-except  # noqa: S110 - see docstring: degrade to no-hooks-known
+            logger.debug("Unable to enumerate hooks for %s; treating as none", hook_type, exc_info=True)
+            return []
+
+    @staticmethod
+    def _is_preview_safe(hook_ref: Any) -> bool:
+        """True when a hook ref's plugin is tagged ``preview_safe`` (#5629).
+
+        No plugin ships with this tag today, so callers filtering by this predicate get
+        an empty result in practice until a plugin author opts in — that is expected,
+        not a bug; see plugins/AGENTS.md.
+
+        Args:
+            hook_ref: A cpex ``HookRef`` as returned by :meth:`_get_hook_refs`.
+
+        Returns:
+            bool: True if the hook's plugin config declares the ``preview_safe`` tag.
+        """
+        return "preview_safe" in (hook_ref.plugin_ref.tags or [])
+
+    async def preview_tool_invocation(
+        self,
+        db: Session,
+        name: str,
+        arguments: Dict[str, Any],
+        user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
+        server_id: Optional[str] = None,
+    ) -> ToolPreviewResponse:
+        """Validate and resolve a tool invocation without executing it (#5629).
+
+        Dry-run counterpart to :meth:`invoke_tool`, sharing its resolution/RBAC path via
+        :meth:`_resolve_tool_for_invocation` so the two can never disagree about whether a
+        tool exists or is accessible. Never dispatches: no REST/MCP/A2A/gRPC call is made
+        (federated tools resolve to ``target.kind == "federated"`` with no wire call to the
+        remote gateway, regardless of the tool's annotations), and TOOL_POST_INVOKE never runs.
+
+        Only plugins tagged ``preview_safe`` have their TOOL_PRE_INVOKE hook actually run;
+        every other registered hook is reported in ``warnings`` instead (see
+        :meth:`_is_preview_safe` and plugins/AGENTS.md).
+
+        Args:
+            db: Database session.
+            name: Name of tool to preview.
+            arguments: Candidate arguments to validate against the tool's input schema.
+            user_email: User email for authorization checks. None = unauthenticated request.
+            token_teams: Team IDs from JWT token for authorization. None = unrestricted admin,
+                [] = public-only, [...] = team-scoped.
+            server_id: Virtual server ID for server scoping enforcement, if previewing through
+                a virtual server context.
+
+        Returns:
+            ToolPreviewResponse: The dry-run envelope described in #5629.
+
+        Raises:
+            ToolNotFoundError: If tool not found or access denied (same as invoke_tool).
+        """
+        resolved = await self._resolve_tool_for_invocation(db, name, None, user_email, token_teams, server_id, False, False)
+        tool_payload = resolved.tool_payload
+        warnings: List[ToolPreviewWarning] = []
+
+        # Input-schema validation: reuse the same validator invoke_tool already uses for
+        # *output* schemas (_validate_with_cached_schema, tool_service.py). No behavior
+        # change to invoke_tool itself — arguments are never validated against the input
+        # schema on the live path either; see #5629 planning notes.
+        validated = True
+        input_schema = tool_payload.get("input_schema")
+        if input_schema:
+            try:
+                _validate_with_cached_schema(arguments, input_schema)
+            except (jsonschema.exceptions.ValidationError, jsonschema.exceptions.SchemaError) as exc:
+                validated = False
+                warnings.append(ToolPreviewWarning(code="invalid_arguments", message=str(exc)))
+
+        # Federation policy (#5629): local dry-run only, regardless of annotations.
+        # Never surface the gateway's URL, transport, or credentials -- name only.
+        gateway_id = tool_payload.get("gateway_id")
+        if gateway_id:
+            gateway_name = (resolved.gateway_payload or {}).get("name")
+            target = ToolPreviewTarget(kind="federated", gateway_name=gateway_name)
+        else:
+            target = ToolPreviewTarget(kind="local")
+
+        annotations = ToolAnnotations.model_validate(tool_payload.get("annotations") or {})
+
+        # Plugin pre-invoke hooks: only preview_safe-tagged plugins actually run;
+        # every other registered hook is reported as a warning instead of exercised.
+        pre_hooks_run: List[str] = []
+        _tool_team_id = tool_payload.get("team_id")
+        plugin_context_id = server_id or (str(_tool_team_id) if _tool_team_id else None)
+        plugin_manager = await self._get_plugin_manager(plugin_context_id)
+        if plugin_manager and plugin_manager.has_hooks_for(ToolHookType.TOOL_PRE_INVOKE):
+            all_refs = self._get_hook_refs(plugin_manager, ToolHookType.TOOL_PRE_INVOKE)
+            preview_safe_refs = [ref for ref in all_refs if self._is_preview_safe(ref)]
+            skipped_refs = [ref for ref in all_refs if not self._is_preview_safe(ref)]
+
+            global_context = GlobalContext(request_id=get_correlation_id() or uuid.uuid4().hex, tenant_id=_extract_tenant_id_from_payload(_tool_team_id), user=user_email)
+            payload = ToolPreInvokePayload(name=name, args=arguments)
+            for ref in preview_safe_refs:
+                try:
+                    await plugin_manager.invoke_hook_for_plugin(
+                        name=ref.plugin_ref.name, hook_type=ToolHookType.TOOL_PRE_INVOKE, payload=payload, context=global_context, violations_as_exceptions=False
+                    )
+                    pre_hooks_run.append(ref.plugin_ref.name)
+                except PluginViolationError as exc:
+                    warnings.append(ToolPreviewWarning(code="preview_hook_violation", hook=ref.plugin_ref.name, message=str(exc)))
+                except PluginError as exc:
+                    warnings.append(ToolPreviewWarning(code="preview_hook_error", hook=ref.plugin_ref.name, message=str(exc)))
+
+            for ref in skipped_refs:
+                warnings.append(
+                    ToolPreviewWarning(
+                        code="hook_not_previewed",
+                        hook=ref.plugin_ref.name,
+                        message=f"Plugin '{ref.plugin_ref.name}' is not tagged preview_safe; live invocation will run this hook but preview did not.",
+                    )
+                )
+
+        db.commit()
+        db.close()
+
+        return ToolPreviewResponse(
+            validated=validated,
+            resolved_arguments=arguments,
+            target=target,
+            annotations=annotations,
+            pre_hooks_run=pre_hooks_run,
+            warnings=warnings,
+        )
 
     @staticmethod
     def _form_value_to_str(v: Any) -> str:
