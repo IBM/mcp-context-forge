@@ -1541,7 +1541,7 @@ services:
   #   FAST_TIME_IMAGE=mcpgateway/fast-time-server:local docker compose up fast_time_server
   ###############################################################################
   fast_time_server:
-    image: ${FAST_TIME_IMAGE:-ghcr.io/ibm/cfex-mcp-fast-time-server@sha256:2f095509d535a0769449f3b9417858f5c233dc74b1e09de335b48b7591d995a1}
+    image: ${FAST_TIME_IMAGE:-ghcr.io/ibm/cfex-mcp-fast-time-server@sha256:110e1826f5d763e5afadba770b731dac93e0819c1bbadb68671b0124260603cf}
     restart: unless-stopped
     networks: [mcpnet]
     ports:
@@ -1931,7 +1931,7 @@ services:
   # Usage: docker compose --profile testing up -d
   ###############################################################################
   fast_test_server:
-    image: ${FAST_TIME_IMAGE:-ghcr.io/ibm/cfex-mcp-fast-time-server@sha256:2f095509d535a0769449f3b9417858f5c233dc74b1e09de335b48b7591d995a1}
+    image: ${FAST_TIME_IMAGE:-ghcr.io/ibm/cfex-mcp-fast-time-server@sha256:110e1826f5d763e5afadba770b731dac93e0819c1bbadb68671b0124260603cf}
     restart: unless-stopped
     networks: [mcpnet]
     ports:

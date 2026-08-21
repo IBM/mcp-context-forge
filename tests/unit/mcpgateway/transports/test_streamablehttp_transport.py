@@ -4737,8 +4737,8 @@ async def test_complete_dict_result(monkeypatch):
         argument.model_dump.return_value = {"name": "arg", "value": "v"}
 
         result = await complete(ref, argument)
-        assert isinstance(result, mcp_types.Completion)
-        assert result.values == ["val1", "val2"]
+        assert isinstance(result, mcp_types.CompleteResult)
+        assert result.completion.values == ["val1", "val2"]
 
 
 @pytest.mark.asyncio
@@ -4771,8 +4771,8 @@ async def test_complete_defaults_non_admin_without_teams_to_public_only_scope(mo
         argument.model_dump.return_value = {"name": "arg", "value": "v"}
 
         result = await complete(ref, argument)
-        assert isinstance(result, mcp_types.Completion)
-        assert result.values == ["public"]
+        assert isinstance(result, mcp_types.CompleteResult)
+        assert result.completion.values == ["public"]
         assert mock_cs.handle_completion.await_args.kwargs["user_email"] == "viewer@example.com"
         assert mock_cs.handle_completion.await_args.kwargs["token_teams"] == []
 
@@ -4807,8 +4807,8 @@ async def test_complete_preserves_admin_bypass_for_null_teams_context(monkeypatc
         argument.model_dump.return_value = {"name": "arg", "value": "v"}
 
         result = await complete(ref, argument)
-        assert isinstance(result, mcp_types.Completion)
-        assert result.values == ["all"]
+        assert isinstance(result, mcp_types.CompleteResult)
+        assert result.completion.values == ["all"]
         assert mock_cs.handle_completion.await_args.kwargs["user_email"] == "admin@example.com"
         assert mock_cs.handle_completion.await_args.kwargs["token_teams"] is None
 
@@ -4843,8 +4843,8 @@ async def test_complete_preserves_explicit_team_scope(monkeypatch):
         argument.model_dump.return_value = {"name": "arg", "value": "v"}
 
         result = await complete(ref, argument)
-        assert isinstance(result, mcp_types.Completion)
-        assert result.values == ["team"]
+        assert isinstance(result, mcp_types.CompleteResult)
+        assert result.completion.values == ["team"]
         assert mock_cs.handle_completion.await_args.kwargs["user_email"] == "member@example.com"
         assert mock_cs.handle_completion.await_args.kwargs["token_teams"] == ["team-1"]
 
@@ -4881,7 +4881,7 @@ async def test_complete_nested_completion(monkeypatch):
         argument.model_dump.return_value = {"name": "arg", "value": "v"}
 
         result = await complete(ref, argument)
-        assert isinstance(result, mcp_types.Completion)
+        assert isinstance(result, mcp_types.CompleteResult)
 
 
 @pytest.mark.asyncio
@@ -4912,8 +4912,8 @@ async def test_complete_completion_is_dict(monkeypatch):
         argument.model_dump.return_value = {"name": "arg", "value": "v"}
 
         result = await complete(ref, argument)
-        assert isinstance(result, mcp_types.Completion)
-        assert result.values == ["dict_val"]
+        assert isinstance(result, mcp_types.CompleteResult)
+        assert result.completion.values == ["dict_val"]
 
 
 @pytest.mark.asyncio
@@ -4943,8 +4943,8 @@ async def test_complete_already_completion_type(monkeypatch):
         argument.model_dump.return_value = {"name": "arg", "value": "v"}
 
         result = await complete(ref, argument)
-        assert isinstance(result, mcp_types.Completion)
-        assert result.values == ["direct"]
+        assert isinstance(result, mcp_types.CompleteResult)
+        assert result.completion.values == ["direct"]
 
 
 @pytest.mark.asyncio
@@ -4978,8 +4978,8 @@ async def test_complete_completion_obj_is_completion_type(monkeypatch):
         argument.model_dump.return_value = {"name": "arg", "value": "v"}
 
         result = await complete(ref, argument)
-        assert isinstance(result, mcp_types.Completion)
-        assert result.values == ["comp_val"]
+        assert isinstance(result, mcp_types.CompleteResult)
+        assert result.completion.values == ["comp_val"]
 
 
 @pytest.mark.asyncio
@@ -5018,8 +5018,8 @@ async def test_complete_pydantic_model_completion(monkeypatch):
         argument.model_dump.return_value = {"name": "arg", "value": "v"}
 
         result = await complete(ref, argument)
-        assert isinstance(result, mcp_types.Completion)
-        assert result.values == ["pydantic_val"]
+        assert isinstance(result, mcp_types.CompleteResult)
+        assert result.completion.values == ["pydantic_val"]
 
 
 @pytest.mark.asyncio
@@ -5050,9 +5050,9 @@ async def test_complete_completion_obj_without_model_dump_falls_back(monkeypatch
         argument.model_dump.return_value = {"name": "arg", "value": "v"}
 
         result = await complete(ref, argument)
-        assert isinstance(result, mcp_types.Completion)
-        assert result.values == []
-        assert result.total == 0
+        assert isinstance(result, mcp_types.CompleteResult)
+        assert result.completion.values == []
+        assert result.completion.total == 0
 
 
 @pytest.mark.asyncio
@@ -5083,9 +5083,9 @@ async def test_complete_fallback_empty(monkeypatch):
         argument.model_dump.return_value = {"name": "arg", "value": "v"}
 
         result = await complete(ref, argument)
-        assert isinstance(result, mcp_types.Completion)
-        assert result.values == []
-        assert result.total == 0
+        assert isinstance(result, mcp_types.CompleteResult)
+        assert result.completion.values == []
+        assert result.completion.total == 0
 
 
 @pytest.mark.asyncio
@@ -5109,9 +5109,9 @@ async def test_complete_exception(monkeypatch):
     argument.model_dump.return_value = {"name": "arg", "value": "v"}
 
     result = await complete(ref, argument)
-    assert isinstance(result, mcp_types.Completion)
-    assert result.values == []
-    assert result.total == 0
+    assert isinstance(result, mcp_types.CompleteResult)
+    assert result.completion.values == []
+    assert result.completion.total == 0
 
 
 # ---------------------------------------------------------------------------
@@ -10247,7 +10247,6 @@ async def test_send_with_capture_claims_owner_for_new_session(monkeypatch):
 
 
 @pytest.mark.asyncio
-@pytest.mark.skip(reason="session ownership flow changed in MCP v2 migration — _claim_streamable_session_owner still async but call site may have shifted")
 async def test_send_with_capture_claims_owner_when_affinity_disabled(monkeypatch):
     """Stateful session ownership must be captured even without multi-worker affinity."""
 

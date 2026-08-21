@@ -34,6 +34,7 @@ from typing import Any, AsyncIterator, Awaitable, Callable, Mapping, Optional, P
 # Third-Party
 import anyio
 import httpx
+import httpx2
 from mcp import Client, ClientSession
 from mcp import MCPError as McpError
 from mcp.client.sse import sse_client
@@ -67,8 +68,8 @@ class TransportType(str, Enum):
 
 
 HttpxClientFactory = Callable[
-    [Optional[dict[str, str]], Optional[httpx.Timeout], Optional[httpx.Auth]],
-    httpx.AsyncClient,
+    [Optional[dict[str, str]], Optional[httpx2.Timeout], Optional[httpx2.Auth]],
+    httpx2.AsyncClient,
 ]
 
 # Type alias for the per-session message handler that the SDK ClientSession
@@ -335,11 +336,12 @@ def _categorize_upstream_error(exc: BaseException, auth_query_params: Optional[d
     # Categorize common failure modes to help users identify the root cause.
     # Order matters: more specific checks first (e.g., httpx.ConnectTimeout before TimeoutError).
 
-    # Check httpx-specific exception types first (these are the types actually raised by transports)
-    if isinstance(root_cause, httpx.TimeoutException):
+    # Check httpx-specific exception types first (these are the types actually raised by transports).
+    # MCP 2.x clients raise httpx2 exceptions; legacy paths may still raise httpx v0 ones.
+    if isinstance(root_cause, (httpx.TimeoutException, httpx2.TimeoutException)):
         # httpx.TimeoutException is the base for ConnectTimeout, ReadTimeout, WriteTimeout, PoolTimeout
         error_category = "timeout"
-    elif isinstance(root_cause, httpx.ConnectError):
+    elif isinstance(root_cause, (httpx.ConnectError, httpx2.ConnectError)):
         # httpx.ConnectError wraps connection failures. Real refused connections
         # produce httpx.ConnectError("All connection attempts failed") with
         # ConnectionRefusedError deeper in __context__/__cause__. Check chain first.
@@ -351,7 +353,7 @@ def _categorize_upstream_error(exc: BaseException, auth_query_params: Optional[d
             error_category = "connection_refused"
         else:
             error_category = "connection_error"
-    elif isinstance(root_cause, httpx.HTTPStatusError):
+    elif isinstance(root_cause, (httpx.HTTPStatusError, httpx2.HTTPStatusError)):
         status_code = getattr(root_cause.response, "status_code", None)
         if status_code is not None:
             if status_code == 401:

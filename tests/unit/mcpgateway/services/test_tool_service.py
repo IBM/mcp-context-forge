@@ -3750,7 +3750,6 @@ class TestToolService:
         where real tool output belonged.
         """
         # Standard
-        from contextlib import asynccontextmanager
         from types import SimpleNamespace
 
         monkeypatch.setenv("JWT_SECRET_KEY", "mcp-sink-canary-must-not-appear")
@@ -3808,23 +3807,17 @@ class TestToolService:
         call_result.meta = None
 
         session_mock = AsyncMock()
-        session_mock.initialize = AsyncMock()
         session_mock.call_tool = AsyncMock(return_value=call_result)
-
-        client_session_cm = AsyncMock()
-        client_session_cm.__aenter__.return_value = session_mock
-        client_session_cm.__aexit__.return_value = AsyncMock()
-
-        @asynccontextmanager
-        async def mock_streamable_client(*_args, **_kwargs):
-            yield ("read", "write", None)
+        # mcp_proxy_client auto-initializes internally; the mock is used directly
+        # as the async context manager yielding the client.
+        session_mock.__aenter__ = AsyncMock(return_value=session_mock)
+        session_mock.__aexit__ = AsyncMock(return_value=None)
 
         mock_metrics_buffer = Mock()
         mock_metrics_buffer.record_tool_metric = Mock()
         with (
             patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer),
-            patch("mcpgateway.services.tool_service.streamablehttp_client", mock_streamable_client),
-            patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", return_value=session_mock),
             patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer xyz"}),
         ):
             result = await tool_service.invoke_tool(test_db, "dummy_tool", {"param": "value"}, request_headers=None)

@@ -6133,7 +6133,7 @@ class ToolService(BaseService):
                             else:
                                 valid = True
                         # First-Party
-                        from mcpgateway.services.http_client_service import get_default_verify, get_http_timeout  # pylint: disable=import-outside-toplevel
+                        from mcpgateway.services.http_client_service import get_default_verify, get_httpx2_timeout  # pylint: disable=import-outside-toplevel
 
                         # For plain HTTP gateway URLs, skip SSL context entirely to avoid unnecessary SSL setup.
                         if gateway_url and gateway_url.lower().startswith("http://"):
@@ -6149,7 +6149,7 @@ class ToolService(BaseService):
 
                         # Use effective_timeout for read operations if not explicitly overridden by caller
                         # This ensures the underlying client waits at least as long as the tool configuration requires
-                        factory_timeout = timeout if timeout else get_http_timeout(read_timeout=effective_timeout)
+                        factory_timeout = timeout if timeout else get_httpx2_timeout(read_timeout=effective_timeout)
 
                         return httpx2.AsyncClient(
                             verify=ctx if ctx else get_default_verify(),

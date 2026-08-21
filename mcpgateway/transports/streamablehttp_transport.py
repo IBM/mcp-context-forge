@@ -1744,7 +1744,9 @@ async def call_tool(
     try:
         ctx = mcp_app.request_context
         if ctx and ctx.meta is not None:
-            meta_data = ctx.meta.model_dump()
+            # MCP 2.0 RequestParamsMeta is a TypedDict (no model_dump); tolerate
+            # legacy model-shaped meta for tests that inject a Pydantic object.
+            meta_data = dict(ctx.meta) if isinstance(ctx.meta, dict) else ctx.meta.model_dump()
     except LookupError:
         # request_context might not be active in some edge cases (e.g. tests)
         logger.debug("No active request context found")
@@ -2510,7 +2512,9 @@ async def get_prompt(prompt_id: str, arguments: dict[str, str] | None = None) ->
     try:
         ctx = mcp_app.request_context
         if ctx and ctx.meta is not None:
-            meta_data = ctx.meta.model_dump()
+            # MCP 2.0 RequestParamsMeta is a TypedDict (no model_dump); tolerate
+            # legacy model-shaped meta for tests that inject a Pydantic object.
+            meta_data = dict(ctx.meta) if isinstance(ctx.meta, dict) else ctx.meta.model_dump()
     except LookupError:
         # request_context might not be active in some edge cases (e.g. tests)
         logger.debug("No active request context found")
@@ -2687,7 +2691,9 @@ async def read_resource(resource_uri: str) -> Union[str, bytes, List[Any]]:
     try:
         ctx = mcp_app.request_context
         if ctx and ctx.meta is not None:
-            meta_data = ctx.meta.model_dump()
+            # MCP 2.0 RequestParamsMeta is a TypedDict (no model_dump); tolerate
+            # legacy model-shaped meta for tests that inject a Pydantic object.
+            meta_data = dict(ctx.meta) if isinstance(ctx.meta, dict) else ctx.meta.model_dump()
     except LookupError:
         # request_context might not be active in some edge cases (e.g. tests)
         logger.debug("No active request context found")
@@ -2956,38 +2962,38 @@ async def complete(
             # ✅ Normalize the result for MCP
             if isinstance(result, dict):
                 completion_data = result.get("completion", result)
-                return types.Completion(**completion_data)
+                return types.CompleteResult(completion=types.Completion(**completion_data))
 
             if hasattr(result, "completion"):
                 completion_obj = result.completion
 
                 # If completion itself is a dict
                 if isinstance(completion_obj, dict):
-                    return types.Completion(**completion_obj)
+                    return types.CompleteResult(completion=types.Completion(**completion_obj))
 
                 # If completion is another CompleteResult (nested)
                 if hasattr(completion_obj, "completion"):
                     inner_completion = completion_obj.completion.model_dump() if hasattr(completion_obj.completion, "model_dump") else completion_obj.completion
-                    return types.Completion(**inner_completion)
+                    return types.CompleteResult(completion=types.Completion(**inner_completion))
 
                 # If completion is already a Completion model
                 if isinstance(completion_obj, types.Completion):
-                    return completion_obj
+                    return types.CompleteResult(completion=completion_obj)
 
                 # If it's another Pydantic model (e.g., mcpgateway.models.Completion)
                 if hasattr(completion_obj, "model_dump"):
-                    return types.Completion(**completion_obj.model_dump())
+                    return types.CompleteResult(completion=types.Completion(**completion_obj.model_dump()))
 
             # If result itself is already a types.Completion
             if isinstance(result, types.Completion):
-                return result
+                return types.CompleteResult(completion=result)
 
             # Fallback: return empty completion
-            return types.Completion(values=[], total=0, hasMore=False)
+            return types.CompleteResult(completion=types.Completion(values=[], total=0, hasMore=False))
 
     except Exception as e:
         logger.exception("Error handling completion: %s", e)
-        return types.Completion(values=[], total=0, hasMore=False)
+        return types.CompleteResult(completion=types.Completion(values=[], total=0, hasMore=False))
 
 
 # ============================================================================
@@ -4675,8 +4681,10 @@ class SessionManagerWrapper:
 
         server_id_var.set(validated)
 
-        # For session affinity: wrap send to capture session ID from response headers
-        # This allows us to register ownership for new sessions created by the SDK
+        # For session ownership: wrap send to capture session ID from response headers
+        # This allows us to register ownership for new sessions created by the SDK.
+        # Capture is gated on stateful sessions (not multi-worker affinity): the
+        # logical-owner claim below must fire on single-node deployments too.
         captured_session_id: Optional[str] = None
 
         async def send_with_capture(message: Dict[str, Any]) -> None:
@@ -4686,7 +4694,7 @@ class SessionManagerWrapper:
                 message: ASGI message dict.
             """
             nonlocal captured_session_id
-            if message["type"] == "http.response.start" and settings.mcpgateway_session_affinity_enabled:
+            if message["type"] == "http.response.start" and settings.use_stateful_sessions:
                 # Look for mcp-session-id in response headers
                 response_headers = message.get("headers", [])
                 for header_name, header_value in response_headers:
