@@ -18,6 +18,8 @@ Requirements:
         MCP_CLI_BASE_URL       Gateway URL (default: http://localhost:8080)
         JWT_SECRET_KEY         JWT signing secret
         PLATFORM_ADMIN_EMAIL   Admin email (default: admin@example.com)
+        MCPGATEWAY_MCP_APPS_ENABLED
+                               Set true in both gateway and test process to run MCP Apps cases
 
 Usage:
     make test-mcp-protocol-e2e
@@ -29,31 +31,31 @@ from __future__ import annotations
 
 # Standard
 import asyncio
+from datetime import timedelta
 import json
 import os
 import subprocess
 import sys
-from datetime import timedelta
 from typing import Any
 import uuid
 
 # Third-Party
 import httpx
-import pytest
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 from mcp.shared.exceptions import McpError
 from mcp.types import InitializeResult
+import pytest
 
 # Local
 from ..helpers.mcp_test_helpers import (
     ADMIN_EMAIL,
     BASE_URL,
-    JWT_SECRET,
-    TOKEN_EXPIRY,
     build_initialize,
+    JWT_SECRET,
     skip_no_gateway,
     skip_no_rust_mcp_gateway,
+    TOKEN_EXPIRY,
 )
 
 pytestmark = [pytest.mark.e2e, skip_no_gateway]
@@ -89,6 +91,11 @@ def mcp_url() -> str:
 # fails fast (~5s) instead of hanging on MCP SDK defaults. Override via
 # MCP_E2E_CLIENT_TIMEOUT for slow CI.
 _CLIENT_TIMEOUT = float(os.getenv("MCP_E2E_CLIENT_TIMEOUT", "5.0"))
+_MCP_APPS_E2E_ENABLED = os.getenv("MCPGATEWAY_MCP_APPS_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
+skip_no_mcp_apps = pytest.mark.skipif(
+    not _MCP_APPS_E2E_ENABLED,
+    reason="MCP Apps E2E requires a gateway started with MCPGATEWAY_MCP_APPS_ENABLED=true",
+)
 
 
 class GatewayClientSession(ClientSession):
@@ -433,12 +440,9 @@ class TestRawJsonRpc:
             assert "error" in payload.lower() or bad.status_code >= 400, f"expected error for invalid method, got {bad.status_code}: {payload}"
             print(f"    -> invalid method -> status={bad.status_code}")
 
+    @skip_no_mcp_apps
     def test_mcp_apps_capability_advertised_when_enabled(self, jwt_token: str) -> None:
-        """initialize response includes the MCP Apps capability when the feature is on.
-
-        Self-skips when ``MCPGATEWAY_MCP_APPS_ENABLED=false`` on the target gateway
-        so this test is a no-op on stacks that haven't opted in.
-        """
+        """Assert an explicitly enabled gateway advertises the MCP Apps capability."""
         headers = {
             "authorization": f"Bearer {jwt_token}",
             "accept": "application/json, text/event-stream",
@@ -451,24 +455,22 @@ class TestRawJsonRpc:
         body = resp.json()
         caps = body.get("result", {}).get("capabilities", {})
         extensions = caps.get("extensions", {})
-        if "io.modelcontextprotocol/ui" not in extensions:
-            pytest.skip("MCP Apps not enabled on this gateway (MCPGATEWAY_MCP_APPS_ENABLED=false)")
+        assert "io.modelcontextprotocol/ui" in extensions, f"MCP Apps capability missing from explicitly enabled gateway: {extensions}"
         ui_cap = extensions["io.modelcontextprotocol/ui"]
-        assert ui_cap.get("version"), f"MCP Apps capability missing version: {ui_cap}"
-        assert "bridge" in ui_cap, f"MCP Apps capability missing bridge key: {ui_cap}"
-        assert "resources" in ui_cap, f"MCP Apps capability missing resources key: {ui_cap}"
-        bridge_methods = ui_cap["bridge"].get("methods", [])
+        assert ui_cap.get("version") == "2026-01-26", f"unexpected MCP Apps capability version: {ui_cap}"
+        assert ui_cap.get("resources") == {"schemes": ["ui://"]}, f"unexpected MCP Apps resource capability: {ui_cap}"
+        bridge_methods = ui_cap.get("bridge", {}).get("methods", [])
         assert "tools/call" in bridge_methods, f"bridge.methods missing tools/call: {bridge_methods}"
         assert "ping" in bridge_methods, f"bridge.methods missing ping: {bridge_methods}"
         print(f"    -> MCP Apps capability: version={ui_cap['version']} bridge_methods={bridge_methods}")
 
+    @skip_no_mcp_apps
     def test_appbridge_session_lifecycle(self, jwt_token: str) -> None:
         """AppBridge session create + ping round-trip against a live gateway.
 
         Registers a minimal ``ui://`` resource and virtual server, creates an
-        AppBridge session, and pings through it.  All fixtures are cleaned up
-        regardless of outcome.  Self-skips when MCP Apps are disabled on the
-        target gateway.
+        AppBridge session, and pings through it. All persistent fixtures are
+        cleaned up regardless of outcome.
         """
         mcp_headers = {
             "authorization": f"Bearer {jwt_token}",
@@ -482,8 +484,7 @@ class TestRawJsonRpc:
             assert init_resp.status_code == 200, init_resp.text
             body = init_resp.json()
             caps = body.get("result", {}).get("capabilities", {})
-            if "io.modelcontextprotocol/ui" not in caps.get("extensions", {}):
-                pytest.skip("MCP Apps not enabled on this gateway (MCPGATEWAY_MCP_APPS_ENABLED=false)")
+            assert "io.modelcontextprotocol/ui" in caps.get("extensions", {}), f"MCP Apps capability missing from explicitly enabled gateway: {caps}"
             mcp_session_id = init_resp.headers.get("mcp-session-id")
             assert mcp_session_id, "initialize did not return an mcp-session-id header"
 
@@ -493,38 +494,48 @@ class TestRawJsonRpc:
                 "mcp-session-id": mcp_session_id,
             }
 
-            # Step 2: register a throwaway virtual server.
             uid = uuid.uuid4().hex[:8]
-            server_resp = http.post(
-                f"{BASE_URL}/servers",
-                headers=rest_headers,
-                json={"server": {"name": f"mcp-apps-e2e-{uid}", "description": "MCP Apps E2E test server"}},
-            )
-            assert server_resp.status_code in (200, 201), f"Failed to create server: {server_resp.text}"
-            server_id = server_resp.json()["id"]
-
             resource_id = None
+            server_id = None
             try:
-                # Step 3: register a minimal ui:// resource bound to that server.
+                # Step 2: register a minimal ui:// resource.
                 resource_resp = http.post(
                     f"{BASE_URL}/resources",
                     headers=rest_headers,
                     json={
-                        "name": f"mcp-apps-res-{uid}",
-                        "uri": f"ui://mcp-apps-e2e-{uid}/index",
-                        "mime_type": "text/html;profile=mcp-app",
-                        "content": "<html><body>hello</body></html>",
-                        "associated_servers": [server_id],
-                        "extensionMetadata": {
-                            "io.modelcontextprotocol/ui": {
-                                "csp": {"connectDomains": ["https://example.com"]},
-                                "sandbox": ["allow-scripts"],
-                            }
+                        "resource": {
+                            "name": f"mcp-apps-res-{uid}",
+                            "uri": f"ui://mcp-apps-e2e-{uid}/index",
+                            "mimeType": "text/html;profile=mcp-app",
+                            "content": "<div>hello</div>",
+                            "extensionMetadata": {
+                                "io.modelcontextprotocol/ui": {
+                                    "csp": {"connectDomains": ["https://example.com"]},
+                                    "sandbox": ["allow-scripts"],
+                                }
+                            },
                         },
+                        "visibility": "public",
                     },
                 )
                 assert resource_resp.status_code in (200, 201), f"Failed to create ui:// resource: {resource_resp.text}"
                 resource_id = resource_resp.json()["id"]
+
+                # Step 3: register a throwaway virtual server bound to the resource.
+                server_resp = http.post(
+                    f"{BASE_URL}/servers",
+                    headers=rest_headers,
+                    json={
+                        "server": {
+                            "name": f"mcp-apps-e2e-{uid}",
+                            "description": "MCP Apps E2E test server",
+                            "associated_resources": [resource_id],
+                        },
+                        "visibility": "public",
+                    },
+                )
+                assert server_resp.status_code in (200, 201), f"Failed to create server: {server_resp.text}"
+                server_id = server_resp.json()["id"]
 
                 # Step 4: create an AppBridge session for that resource.
                 session_resp = http.post(
@@ -556,9 +567,10 @@ class TestRawJsonRpc:
 
             finally:
                 # Best-effort cleanup so the gateway isn't left with test artifacts.
+                if server_id:
+                    http.delete(f"{BASE_URL}/servers/{server_id}", headers=rest_headers)
                 if resource_id:
                     http.delete(f"{BASE_URL}/resources/{resource_id}", headers=rest_headers)
-                http.delete(f"{BASE_URL}/servers/{server_id}", headers=rest_headers)
 
 
 @skip_no_rust_mcp_gateway
