@@ -914,6 +914,105 @@ server {
 }
 ```
 
+---
+
+## Kubernetes / Helm
+
+This section covers end-to-end TLS for the **Helm chart** (`charts/mcp-stack`).
+The chart exposes two independent TLS layers:
+
+| Layer | Values key | What it secures |
+|---|---|---|
+| Ingress / nginx frontend | `mcpContextForge.ingress.tls.enabled` | Client → cluster edge |
+| Gateway pod (direct HTTPS) | `mcpContextForge.tls.enabled` | nginx → gateway pod |
+
+Enable both for a fully encrypted path; enable only the ingress layer (default) for standard deployments where nginx terminates TLS.
+
+### Prerequisites
+
+- A Kubernetes cluster with an ingress controller (nginx recommended)
+- A `kubernetes.io/tls` Secret containing your certificate and private key, created **before** the Helm release:
+
+```bash
+# From a PEM cert/key pair
+kubectl create secret tls my-release-gateway-tls \
+  --cert=tls.crt \
+  --key=tls.key \
+  --namespace=<your-namespace>
+
+# Or via cert-manager (annotate the Ingress and cert-manager creates the Secret automatically)
+```
+
+### Ingress TLS only (default topology)
+
+Nginx terminates TLS at the cluster edge; the gateway pod runs plain HTTP internally.
+No extra values are required beyond the ingress block:
+
+```yaml
+mcpContextForge:
+  ingress:
+    enabled: true
+    host: api.example.com
+    tls:
+      enabled: true
+      secretName: "my-ingress-tls-secret"   # kubernetes.io/tls Secret for nginx
+```
+
+### End-to-end TLS (nginx → HTTPS → gateway pod)
+
+Add `mcpContextForge.tls` to your values override file to also terminate TLS inside the gateway pod:
+
+```yaml
+mcpContextForge:
+  ingress:
+    enabled: true
+    host: api.example.com
+    tls:
+      enabled: true
+      secretName: "my-ingress-tls-secret"
+
+  tls:
+    enabled: true
+    secretName: "my-release-gateway-tls"   # pre-created kubernetes.io/tls Secret
+    mountPath: /app/certs/tls
+    certFile:  /app/certs/tls/tls.crt
+    keyFile:   /app/certs/tls/tls.key
+
+    # Optional: mTLS client-certificate verification
+    # caCerts:  /app/certs/tls/ca.crt       # add ca.crt to the Secret
+    # certReqs: 2                            # 0=none 1=optional 2=required
+```
+
+Apply with:
+
+```bash
+helm upgrade --install my-release charts/mcp-stack \
+  -f my-values.yaml \
+  --namespace <your-namespace>
+```
+
+### Probe scheme
+
+When `mcpContextForge.tls.enabled=true` the chart automatically switches the readiness and liveness probe scheme from `HTTP` to `HTTPS`. No manual probe override is needed.
+
+### mTLS (client-certificate authentication)
+
+To require clients to present a certificate signed by your CA:
+
+1. Add `ca.crt` to the same Secret alongside `tls.crt` / `tls.key`
+2. Set `caCerts` to the path inside the container and `certReqs: 2`:
+
+```yaml
+mcpContextForge:
+  tls:
+    enabled: true
+    secretName: "my-release-gateway-tls"
+    caCerts:  /app/certs/tls/ca.crt
+    certReqs: 2
+```
+
+---
+
 ## Additional Resources
 
 - [OpenSSL Documentation](https://www.openssl.org/docs/)
