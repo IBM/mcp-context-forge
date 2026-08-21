@@ -2113,6 +2113,11 @@ class EmailAuthService:
             self.db.query(PendingUserApproval).filter(PendingUserApproval.approved_by == email).update({PendingUserApproval.approved_by: None}, synchronize_session=False)
             self.db.query(SSOAuthSession).filter(SSOAuthSession.user_email == email).update({SSOAuthSession.user_email: None}, synchronize_session=False)
 
+            # Team-membership history rows reference this user's member rows (and the user
+            # itself) via FKs that alembic created without ON DELETE CASCADE, so they must
+            # be removed before the member rows and the user row are deleted.
+            self.db.execute(delete(EmailTeamMemberHistory).where(EmailTeamMemberHistory.user_email == email))
+
             # Remove user from all team memberships BEFORE deleting teams
             # This prevents FK constraint issues when teams are deleted
             team_members_stmt = delete(EmailTeamMember).where(EmailTeamMember.user_email == email)

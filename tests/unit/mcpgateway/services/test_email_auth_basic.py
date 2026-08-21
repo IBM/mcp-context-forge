@@ -2691,7 +2691,7 @@ class TestEmailAuthServiceUserDeletion:
         mock_teams_result = MagicMock()
         mock_teams_result.scalars.return_value.all.return_value = []
 
-        mock_db.execute.side_effect = [mock_user_result, mock_teams_result, MagicMock(), MagicMock()]
+        mock_db.execute.side_effect = [mock_user_result, mock_teams_result, MagicMock(), MagicMock(), MagicMock()]
 
         query_mocks = {}
 
@@ -2738,6 +2738,52 @@ class TestEmailAuthServiceUserDeletion:
         query_mocks[(SSOAuthSession,)].update.assert_called_once_with({SSOAuthSession.user_email: None}, synchronize_session=False)
 
     @pytest.mark.asyncio
+    async def test_delete_user_deletes_team_member_history(self, service, mock_db, mock_user):
+        """Test user deletion removes the user's team-membership history rows (issue #6066)."""
+        # Third-Party
+        from sqlalchemy.sql.dml import Delete
+
+        mock_user_result = MagicMock()
+        mock_user_result.scalar_one_or_none.return_value = mock_user
+
+        mock_teams_result = MagicMock()
+        mock_teams_result.scalars.return_value.all.return_value = []
+
+        mock_db.execute.side_effect = [mock_user_result, mock_teams_result, MagicMock(), MagicMock(), MagicMock()]
+
+        def _build_query():
+            q = MagicMock()
+            q.filter.return_value = q
+            q.order_by.return_value = q
+            q.update.return_value = 0
+            q.delete.return_value = 0
+            q.first.return_value = None
+            return q
+
+        mock_db.query.side_effect = lambda *entities: _build_query()
+
+        mock_role_svc = MagicMock()
+        mock_role_svc.delete_all_user_roles = AsyncMock(return_value=0)
+
+        def _close_task(coro):
+            coro.close()
+            return None
+
+        with patch.object(type(service), "role_service", new_callable=lambda: property(lambda self: mock_role_svc)):
+            with patch("asyncio.create_task", side_effect=_close_task):
+                result = await service.delete_user("test@example.com")
+
+        assert result is True
+
+        history_deletes = [
+            call.args[0]
+            for call in mock_db.execute.call_args_list
+            if call.args and isinstance(call.args[0], Delete) and call.args[0].table.name == EmailTeamMemberHistory.__tablename__
+        ]
+        assert history_deletes, "delete_user must delete the user's email_team_member_history rows"
+        assert any("user_email" in str(stmt.whereclause) for stmt in history_deletes)
+
+    @pytest.mark.asyncio
     async def test_delete_user_not_found(self, service, mock_db):
         """Test deleting non-existent user."""
         mock_result = MagicMock()
@@ -2771,7 +2817,7 @@ class TestEmailAuthServiceUserDeletion:
         # Fifth execute: team members (empty)
         mock_empty_result = MagicMock()
 
-        mock_db.execute.side_effect = [mock_user_result, mock_teams_result, mock_members_result, mock_empty_result, mock_empty_result]
+        mock_db.execute.side_effect = [mock_user_result, mock_teams_result, mock_members_result, mock_empty_result, mock_empty_result, mock_empty_result]
 
         mock_role_svc = MagicMock()
         mock_role_svc.delete_all_user_roles = AsyncMock(return_value=0)
@@ -2825,6 +2871,7 @@ class TestEmailAuthServiceUserDeletion:
             mock_single_member,  # Just the user as member
             mock_delete_history,  # Delete team member history records
             mock_delete_team_members_for_team,  # Delete team members (for the team)
+            MagicMock(),  # Delete this user's team member history records
             mock_delete_team_members_all,  # Delete team members (remove user from all teams)
             mock_delete_auth_events,  # Delete auth events
         ]
@@ -2926,6 +2973,7 @@ class TestEmailAuthServiceUserDeletion:
             mock_single_member,
             mock_empty,  # delete history
             mock_empty,  # delete team members
+            mock_empty,  # delete this user's history
             mock_empty,  # delete user memberships
             mock_empty,  # delete auth events
         ]
