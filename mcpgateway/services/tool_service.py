@@ -4476,6 +4476,10 @@ class ToolService(BaseService):
                     raise ToolInvocationError(f"OAuth authentication failed for gateway: {str(e)}")
         else:
             headers = decode_auth(gateway_auth_value) if gateway_auth_value else {}
+            # Strip invisible Unicode format characters left over in a credential stored
+            # before this validation existed, so tool invocation self-heals without
+            # requiring a manual re-save.
+            headers = {k: SecurityValidator.sanitize_credential_value(v) for k, v in headers.items()}
 
         if request_headers:
             # B3: when the gateway uses token-exchange, the exchanged Authorization header
@@ -5914,6 +5918,10 @@ class ToolService(BaseService):
                                 raise ToolInvocationError(f"OAuth authentication failed for gateway: {str(e)}")
                     else:
                         headers = decode_auth(gateway_auth_value) if gateway_auth_value else {}
+                        # Strip invisible Unicode format characters left over in a credential
+                        # stored before this validation existed, so tool invocation self-heals
+                        # without requiring a manual re-save.
+                        headers = {k: SecurityValidator.sanitize_credential_value(v) for k, v in headers.items()}
 
                     # Use cached passthrough headers (no DB query needed)
                     if request_headers:
