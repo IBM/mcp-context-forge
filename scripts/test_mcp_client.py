@@ -8,15 +8,16 @@ import sys
 
 
 async def main():
-    # Import MCP client
+    # Import MCP v2 client and transport.
+    import httpx2
+    from mcp import Client
     from mcp.client.streamable_http import streamable_http_client
-    from mcp.client.session import ClientSession
-
     # Generate JWT token
     token_result = subprocess.run(
         [sys.executable, "-m", "mcpgateway.utils.create_jwt_token", "--username", "admin@example.com", "--exp", "0", "--secret", "my-test-key-but-now-longer-than-32-bytes"],
         capture_output=True,
         text=True,
+        check=False,
     )
     token = token_result.stdout.strip()
 
@@ -40,78 +41,70 @@ async def main():
         print("=" * 70)
 
         try:
-            # Create headers with auth
             headers = {"Authorization": f"Bearer {token}"}
 
-            async with streamable_http_client(url, headers=headers) as (read_stream, write_stream, _):
-                async with ClientSession(read_stream, write_stream) as session:
-                    # Initialize the session
+            async with httpx2.AsyncClient(headers=headers, timeout=30.0) as http_client:
+                async with Client(streamable_http_client(url, http_client=http_client)) as client:
+                    # Client performs the v2 handshake during __aenter__.
                     print("\n1. INITIALIZE")
                     print("-" * 40)
-                    init_result = await session.initialize()
-                    print(f"   Protocol version: {init_result.protocolVersion}")
-                    print(f"   Server name:      {init_result.serverInfo.name}")
-                    print(f"   Server version:   {init_result.serverInfo.version}")
-                    caps = init_result.capabilities
+                    print(f"   Protocol version: {client.protocol_version}")
+                    print(f"   Server name:      {client.server_info.name}")
+                    print(f"   Server version:   {client.server_info.version}")
+                    caps = client.server_capabilities
                     print(f"   Capabilities:     tools={caps.tools is not None}, " f"resources={caps.resources is not None}, " f"prompts={caps.prompts is not None}")
 
-                    # List tools
                     print("\n2. TOOLS/LIST")
                     print("-" * 40)
-                    tools_result = await session.list_tools()
+                    tools_result = await client.list_tools()
                     tools = tools_result.tools
                     print(f"   Total tools: {len(tools)}")
                     if tools:
-                        print(f"\n   First 3 tools:")
+                        print("\n   First 3 tools:")
                         for i, tool in enumerate(tools[:3]):
                             print(f"     [{i+1}] {tool.name}")
                             print(f"         Description: {tool.description[:60]}...")
-                        print(f"\n   Last 3 tools:")
+                        print("\n   Last 3 tools:")
                         for i, tool in enumerate(tools[-3:]):
                             print(f"     [{len(tools)-2+i}] {tool.name}")
 
-                    # List resources
                     print("\n3. RESOURCES/LIST")
                     print("-" * 40)
-                    resources_result = await session.list_resources()
+                    resources_result = await client.list_resources()
                     resources = resources_result.resources
                     print(f"   Total resources: {len(resources)}")
                     if resources:
-                        print(f"   First 3 resources:")
+                        print("   First 3 resources:")
                         for i, res in enumerate(resources[:3]):
                             print(f"     [{i+1}] {res.name} ({res.uri})")
 
-                    # List prompts
                     print("\n4. PROMPTS/LIST")
                     print("-" * 40)
-                    prompts_result = await session.list_prompts()
+                    prompts_result = await client.list_prompts()
                     prompts = prompts_result.prompts
                     print(f"   Total prompts: {len(prompts)}")
                     if prompts:
-                        print(f"   First 3 prompts:")
+                        print("   First 3 prompts:")
                         for i, prompt in enumerate(prompts[:3]):
                             print(f"     [{i+1}] {prompt.name}")
 
-                    # Call a tool
                     print("\n5. TOOLS/CALL")
                     print("-" * 40)
                     if tools:
                         tool_to_call = tools[0]
                         print(f"   Calling tool: {tool_to_call.name}")
-                        print(f"   Input schema: {tool_to_call.inputSchema}")
+                        print(f"   Input schema: {tool_to_call.input_schema}")
 
-                        # Build arguments based on schema
                         args = {}
-                        if tool_to_call.inputSchema and "properties" in tool_to_call.inputSchema:
-                            for prop_name, prop_info in tool_to_call.inputSchema["properties"].items():
-                                # Use a default test value
+                        if tool_to_call.input_schema and "properties" in tool_to_call.input_schema:
+                            for prop_name in tool_to_call.input_schema["properties"]:
                                 args[prop_name] = "test_value"
 
                         print(f"   Arguments: {args}")
 
                         try:
-                            call_result = await session.call_tool(tool_to_call.name, args)
-                            print(f"   Result:")
+                            call_result = await client.call_tool(tool_to_call.name, args)
+                            print("   Result:")
                             for content in call_result.content:
                                 if hasattr(content, "text"):
                                     text = content.text

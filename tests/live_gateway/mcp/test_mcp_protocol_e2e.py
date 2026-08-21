@@ -39,7 +39,7 @@ from typing import Any
 import httpx
 import httpx2
 import pytest
-from mcp import ClientSession, MCPError as McpError
+from mcp import ClientSession, MCPError
 from mcp.client.streamable_http import create_mcp_http_client, streamable_http_client
 
 # Local
@@ -242,11 +242,11 @@ class TestDiscovery:
         resources = (await client.list_resources()).resources
         if not resources:
             pytest.skip("No resources registered on gateway — nothing to read")
-        last_error: McpError | None = None
+        last_error: MCPError | None = None
         for target in resources:
             try:
                 contents = (await client.read_resource(target.uri)).contents
-            except McpError as exc:
+            except MCPError as exc:
                 # URI is ambiguous across servers — try the next one
                 last_error = exc
                 continue
@@ -383,8 +383,8 @@ class TestToolCalls:
         """Calling a nonexistent tool surfaces an error, via either path."""
         try:
             result = await client.call_tool("nonexistent-tool-xyz", {})
-        except McpError as exc:
-            print(f"    -> McpError (expected): {exc}")
+        except MCPError as exc:
+            print(f"    -> MCPError (expected): {exc}")
             return
         assert result.is_error is True, f"expected error for non-existent tool: {result}"
         print(f"    -> isError=True (expected): {result.content[0].text[:100] if result.content else ''}")

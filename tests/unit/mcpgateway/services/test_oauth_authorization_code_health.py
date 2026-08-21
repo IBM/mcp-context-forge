@@ -37,7 +37,7 @@ class TestAuthorizationCodeStreamableHTTP:
     """Test that 401/403 from a streamablehttp-transport authorization_code gateway
     is treated as 'reachable, unauthorized' (Issue #5237, streamablehttp path).
 
-    The MCP SDK's streamablehttp_client spawns its HTTP POST inside an anyio
+    The MCP SDK's streamable_http_client spawns its HTTP POST inside an anyio
     TaskGroup. Exceptions from the task surface at the ``async with`` boundary
     wrapped in a BaseExceptionGroup. The fix unwraps one level so the inner
     httpx.HTTPStatusError is inspected for 401/403.

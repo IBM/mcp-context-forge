@@ -10934,7 +10934,6 @@ class TestProxyFunctions:
         mock_session.list_tools.assert_called_once()
 
     @pytest.mark.asyncio
-    @pytest.mark.skip(reason="streamablehttp_client replaced by mcp_proxy_client in MCP v2 migration")
     async def test_proxy_list_tools_filters_protocol_app_only_tools(self, monkeypatch):
         """Direct-proxy tools/list should hide upstream app-only MCP Apps helpers."""
         monkeypatch.setattr("mcpgateway.services.mcp_apps.settings.mcpgateway_mcp_apps_enabled", True)
@@ -10957,14 +10956,9 @@ class TestProxyFunctions:
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=None)
 
-        @asynccontextmanager
-        async def mock_client(*args, **kwargs):
-            yield (None, None, lambda: "session-id")
-
-        with patch("mcpgateway.transports.streamablehttp_transport.streamablehttp_client", mock_client):
-            with patch("mcpgateway.transports.streamablehttp_transport.ClientSession", return_value=mock_session):
-                with patch("mcpgateway.transports.streamablehttp_transport.build_gateway_auth_headers", return_value={}):
-                    result = await tr._proxy_list_tools_to_gateway(mock_gateway, {}, {}, None)
+        with patch("mcpgateway.transports.streamablehttp_transport.mcp_proxy_client", return_value=mock_session):
+            with patch("mcpgateway.transports.streamablehttp_transport.build_gateway_auth_headers", return_value={}):
+                result = await tr._proxy_list_tools_to_gateway(mock_gateway, {}, {}, None)
 
         assert [tool.name for tool in result] == ["open_widget"]
 

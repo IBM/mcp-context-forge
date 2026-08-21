@@ -1623,7 +1623,6 @@ async def test_default_session_factory_cancelled_path_runs_on_ready_timeout(monk
     assert len(error_msg) > 50, f"Timeout error message should be descriptive, got: {error_msg}"
 
 
-
 @pytest.mark.asyncio
 async def test_default_session_factory_owner_parks_inside_client_context_and_closes_transport_once(monkeypatch):
     """The owner task parks inside ``async with Client(...)`` and unwinds the transport exactly once on shutdown."""
@@ -1780,9 +1779,9 @@ async def test_evict_key_returns_false_when_key_already_gone(registry):
 
 @pytest.mark.asyncio
 async def test_probe_health_mcp_error_other_than_method_not_found_fails_fast(factory_and_records):
-    """An McpError with a code other than METHOD_NOT_FOUND must bail out (don't keep probing).
+    """An MCPError with a code other than METHOD_NOT_FOUND must bail out (don't keep probing).
 
-    Covers upstream_session_registry.py:689-690 — `return False` on non-method-not-found McpError.
+    Covers upstream_session_registry.py:689-690 — `return False` on non-method-not-found MCPError.
     """
     factory, _ = factory_and_records
     reg = UpstreamSessionRegistry(session_factory=factory, idle_validation_seconds=1.0)
