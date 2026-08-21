@@ -168,7 +168,7 @@ class ToolsTelemetryExporterPlugin(Plugin):
             "tool.name": context_attributes["tool"]["name"],
             "tool.target_tool_name": context_attributes["tool"]["target_tool_name"],
             "tool.description": context_attributes["tool"]["description"],
-            "tool.invocation.args": orjson.dumps(payload.args, default=str).decode(),
+            "tool.invocation.args": orjson.dumps(dict(payload.args) if payload.args else {}, default=str).decode(),
             "headers": self._serialize_headers(payload),
         }
 
