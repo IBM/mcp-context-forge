@@ -21,6 +21,7 @@ Examples:
 
 # Standard
 import asyncio
+import base64
 import binascii
 from datetime import datetime, timezone
 from functools import lru_cache
@@ -2340,6 +2341,7 @@ class ResourceService(BaseService):
         error_message = None
         resource_db = None
         server_scoped = False
+        direct_proxy_content_resolved = False
         resource_db_gateway = None  # Only set when eager-loaded via Q2's joinedload
         # CWE-400: Validate meta_data limits before any further processing
         _validate_meta_data(meta_data)
@@ -2508,10 +2510,7 @@ class ResourceService(BaseService):
 
                         logger.info("Using direct_proxy mode for resource '%s' via gateway %s", uri, resource_db.gateway.id)
 
-                        try:  # First-Party
-                            # First-Party
-                            from mcpgateway.common.models import BlobResourceContents, TextResourceContents  # pylint: disable=import-outside-toplevel
-
+                        try:
                             gateway = resource_db.gateway
 
                             # Prepare headers with gateway auth
@@ -2526,26 +2525,32 @@ class ResourceService(BaseService):
                                 url=gateway.url,
                                 headers=headers,
                                 timeout=settings.mcpgateway_direct_proxy_timeout,
+                                transport="sse" if (gateway.transport or "").upper() == "SSE" else "streamablehttp",
                             ) as client:
                                 result = await _read_resource_with_meta(client.session, uri, meta_data)
 
-                                # Convert MCP result to MCP-compliant content models
-                                # result.contents is a list of TextResourceContents or BlobResourceContents
+                                # Build the FINAL content shape (ResourceContent) directly: the
+                                # proxied read already returned the resolved content, so the
+                                # pointer-resolution machinery below must not run again on it.
                                 if result.contents:
                                     first_content = result.contents[0]
                                     # mcp 2.x exposes snake_case attributes (`.mime_type`); v1 used camelCase.
-                                    # Read attribute via getattr so the code is resilient to either shape
-                                    # during the v1->v2 transition window.
+                                    # Read via getattr so the code tolerates either shape during the transition.
                                     _mime = getattr(first_content, "mime_type", None) or getattr(first_content, "mimeType", None)
                                     if hasattr(first_content, "text"):
-                                        content = TextResourceContents(uri=uri, mime_type=_mime or "text/plain", text=first_content.text)
+                                        content = ResourceContent(type="resource", id=str(resource_db.id), uri=uri, mime_type=_mime or "text/plain", text=first_content.text)
                                     elif hasattr(first_content, "blob"):
-                                        content = BlobResourceContents(uri=uri, mime_type=_mime or "application/octet-stream", blob=first_content.blob)
+                                        # MCP transports carry blobs as base64 strings; ResourceContent.blob
+                                        # holds RAW bytes (the ingress re-encodes on the way out). Decode here
+                                        # or binary resources get double-encoded on the wire.
+                                        _raw = base64.b64decode(first_content.blob) if isinstance(first_content.blob, str) else first_content.blob
+                                        content = ResourceContent(type="resource", id=str(resource_db.id), uri=uri, mime_type=_mime or "application/octet-stream", blob=_raw)
                                     else:
-                                        content = TextResourceContents(uri=uri, text="")
+                                        content = ResourceContent(type="resource", id=str(resource_db.id), uri=uri, mime_type=_mime or "text/plain", text="")
                                 else:
-                                    content = TextResourceContents(uri=uri, text="")
+                                    content = ResourceContent(type="resource", id=str(resource_db.id), uri=uri, mime_type="text/plain", text="")
 
+                                direct_proxy_content_resolved = True
                                 success = True
                                 logger.info(
                                     "[READ RESOURCE] Using direct_proxy mode for gateway %s (from X-Context-Forge-Gateway-Id header). Meta Attached: %s",
@@ -2703,7 +2708,9 @@ class ResourceService(BaseService):
                         )
                         raise ResourceError(f"Resource template '{template_uri}' did not resolve URI '{requested_uri}'")
 
-                if isinstance(content, (ResourceContent, ResourceContents, TextContent)):
+                if direct_proxy_content_resolved:
+                    pass  # direct_proxy already produced final content — skip the pointer-resolution machinery
+                elif isinstance(content, (ResourceContent, ResourceContents, TextContent)):
                     # Metrics are recorded in read_resource finally block for all resources
                     resource_response = await self.invoke_resource(
                         db,
