@@ -8,6 +8,7 @@ Tests the Vault KV v2 token storage backend.
 """
 
 # Standard
+import asyncio
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -492,6 +493,83 @@ class TestVaultTokenBackendGetUserToken:
             )
 
             assert token is None
+
+    @pytest.mark.asyncio
+    async def test_get_user_token_returns_none_on_header_only_record(self):
+        """get_user_token returns None (not KeyError) when Vault record has no 'token' field.
+
+        Repro for reviewer-reported live defect: ICA writes header-only records
+        ({"headers": {...}}) at the same Vault path as OAuth tokens.  The old
+        bare data["token"] access raised KeyError; the fix uses .get("token").
+        """
+        mock_db = MagicMock()
+        mock_settings = MagicMock()
+        mock_settings.vault_addr = "http://127.0.0.1:8200"
+        mock_settings.vault_token = SecretStr("hvs.test-token")  # pragma: allowlist secret
+        mock_settings.vault_namespace = ""
+        mock_settings.vault_kv_mount = "secret"
+        mock_settings.vault_kv_path_prefix = "contextforge/oauth"
+        mock_settings.vault_tls_verify = True
+        mock_settings.vault_token_cache_enabled = False
+        mock_settings.vault_token_cache_ttl = 300
+        mock_settings.vault_token_cache_max_size = 10000
+        mock_settings.auth_encryption_secret = None
+
+        backend = VaultTokenBackend(mock_db, mock_settings)
+        mock_gateway = MagicMock()
+        mock_gateway.url = "https://mcp.example.com"
+        mock_db.get.return_value = mock_gateway
+
+        # ICA-written header-only record — no 'token' key present
+        header_only_response = {
+            "data": {
+                "data": {
+                    "headers": {"X-Api-Key": "abc123"},  # pragma: allowlist secret
+                }
+            }
+        }
+        with patch.object(backend, "_vault_request", new_callable=AsyncMock) as mock_vault:
+            mock_vault.return_value = header_only_response
+            token = await backend.get_user_token(
+                gateway_id="gw-123",
+                team_id="team1",
+                app_user_email="user@example.com",
+                threshold_seconds=300,
+            )
+        assert token is None
+
+    @pytest.mark.asyncio
+    async def test_get_user_token_returns_none_on_empty_token_dict(self):
+        """get_user_token returns None when 'token' field is present but empty or has no access_token."""
+        mock_db = MagicMock()
+        mock_settings = MagicMock()
+        mock_settings.vault_addr = "http://127.0.0.1:8200"
+        mock_settings.vault_token = SecretStr("hvs.test-token")  # pragma: allowlist secret
+        mock_settings.vault_namespace = ""
+        mock_settings.vault_kv_mount = "secret"
+        mock_settings.vault_kv_path_prefix = "contextforge/oauth"
+        mock_settings.vault_tls_verify = True
+        mock_settings.vault_token_cache_enabled = False
+        mock_settings.vault_token_cache_ttl = 300
+        mock_settings.vault_token_cache_max_size = 10000
+        mock_settings.auth_encryption_secret = None
+
+        backend = VaultTokenBackend(mock_db, mock_settings)
+        mock_gateway = MagicMock()
+        mock_gateway.url = "https://mcp.example.com"
+        mock_db.get.return_value = mock_gateway
+
+        for malformed_token in [{}, {"refresh_token": "rt-only"}]:
+            vault_response = {"data": {"data": {"token": malformed_token}}}
+            with patch.object(backend, "_vault_request", new_callable=AsyncMock) as mock_vault:
+                mock_vault.return_value = vault_response
+                token = await backend.get_user_token(
+                    gateway_id="gw-123",
+                    team_id="team1",
+                    app_user_email="user@example.com",
+                    threshold_seconds=300,
+                )
+            assert token is None, f"Expected None for malformed token shape: {malformed_token}"
 
 
 class TestVaultTokenBackendRevoke:
@@ -2347,3 +2425,107 @@ async def test_r7_do_refresh_decryption_setup_exception_preserves_token():
             "gw-1", "team-1", "alice@example.com", "rt", {"token": {"scopes": []}}
         )
     assert result is None
+
+
+# ---------------------------------------------------------------------------
+# Round-9 coverage: _get_refresh_lock eviction (B2 fix)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_refresh_locks_evicts_idle_entry_at_capacity():
+    """_get_refresh_lock evicts the oldest idle (unlocked) entry when at capacity.
+
+    Verifies the B2 fix: _refresh_locks is bounded at cache_max_size and only
+    idle (not currently held) locks are evicted so in-flight refreshes are safe.
+    """
+    from mcpgateway.services.token_backends.vault_backend import VaultTokenBackend
+
+    mock_db = MagicMock()
+    mock_settings = MagicMock()
+    mock_settings.vault_addr = "http://127.0.0.1:8200"
+    mock_settings.vault_token = SecretStr("hvs.test-token")  # pragma: allowlist secret
+    mock_settings.vault_namespace = ""
+    mock_settings.vault_kv_mount = "secret"
+    mock_settings.vault_kv_path_prefix = "contextforge/oauth"
+    mock_settings.vault_tls_verify = True
+    mock_settings.vault_token_cache_enabled = False
+    mock_settings.vault_token_cache_ttl = 300
+    mock_settings.vault_token_cache_max_size = 3  # small cap for the test
+
+    backend = VaultTokenBackend(mock_db, mock_settings)
+
+    # Reset class-level state so other tests don't interfere
+    VaultTokenBackend._refresh_locks = {}
+    VaultTokenBackend._refresh_locks_mutex = None
+
+    # Fill _refresh_locks to capacity with idle (unlocked) asyncio.Lock entries
+    for i in range(3):
+        VaultTokenBackend._refresh_locks[("gw-old", f"team-{i}", "old@example.com")] = asyncio.Lock()
+
+    assert len(VaultTokenBackend._refresh_locks) == 3
+
+    # Request a new key — should evict the oldest idle entry
+    await backend._get_refresh_lock("gw-new", "team-new", "new@example.com")
+
+    assert len(VaultTokenBackend._refresh_locks) == 3  # still at cap
+    assert ("gw-new", "team-new", "new@example.com") in VaultTokenBackend._refresh_locks
+
+    # Clean up
+    VaultTokenBackend._refresh_locks = {}
+    VaultTokenBackend._refresh_locks_mutex = None
+
+
+@pytest.mark.asyncio
+async def test_refresh_locks_allows_growth_when_all_entries_held():
+    """_get_refresh_lock does NOT evict held locks — allows temporary growth instead.
+
+    Verifies the safety invariant: evicting a held lock would allow a concurrent
+    caller for the same key to get a fresh lock and run a duplicate IdP refresh,
+    defeating serialisation and triggering invalid_grant on rotating-refresh-token IdPs.
+    """
+    from mcpgateway.services.token_backends.vault_backend import VaultTokenBackend
+
+    mock_db = MagicMock()
+    mock_settings = MagicMock()
+    mock_settings.vault_addr = "http://127.0.0.1:8200"
+    mock_settings.vault_token = SecretStr("hvs.test-token")  # pragma: allowlist secret
+    mock_settings.vault_namespace = ""
+    mock_settings.vault_kv_mount = "secret"
+    mock_settings.vault_kv_path_prefix = "contextforge/oauth"
+    mock_settings.vault_tls_verify = True
+    mock_settings.vault_token_cache_enabled = False
+    mock_settings.vault_token_cache_ttl = 300
+    mock_settings.vault_token_cache_max_size = 2  # small cap for the test
+
+    backend = VaultTokenBackend(mock_db, mock_settings)
+
+    # Reset class-level state
+    VaultTokenBackend._refresh_locks = {}
+    VaultTokenBackend._refresh_locks_mutex = None
+
+    # Fill _refresh_locks to capacity with LOCKED asyncio.Lock entries
+    # Simulate held locks by acquiring them inside a task that keeps them held
+    held_locks = []
+    for i in range(2):
+        lock = asyncio.Lock()
+        await lock.acquire()  # lock is now held
+        held_locks.append(lock)
+        VaultTokenBackend._refresh_locks[("gw-held", f"team-{i}", "held@example.com")] = lock
+
+    assert len(VaultTokenBackend._refresh_locks) == 2
+
+    # Request a new key — all existing entries are held, so dict must grow by 1
+    await backend._get_refresh_lock("gw-new", "team-new", "new@example.com")
+
+    assert len(VaultTokenBackend._refresh_locks) == 3  # grew — no held lock was evicted
+    assert ("gw-new", "team-new", "new@example.com") in VaultTokenBackend._refresh_locks
+
+    # Verify the original held locks were NOT touched
+    for lock in held_locks:
+        assert lock.locked()
+        lock.release()  # clean up
+
+    # Clean up class-level state
+    VaultTokenBackend._refresh_locks = {}
+    VaultTokenBackend._refresh_locks_mutex = None
