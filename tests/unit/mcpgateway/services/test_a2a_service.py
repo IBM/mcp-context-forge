@@ -7,6 +7,7 @@ Tests for A2A Agent Service functionality.
 """
 
 # Standard
+import asyncio
 from datetime import datetime, timezone
 import json
 from types import SimpleNamespace
@@ -2756,8 +2757,6 @@ class TestInvokeAgentEdgeCases:
             await service.invoke_agent(mock_db, "ag", {})
 
 
-
-
 class TestA2AInvalidationBestEffort:
     @pytest.fixture
     def service(self):
@@ -4476,6 +4475,108 @@ class TestPublishA2AInvalidation:
             await _publish_a2a_invalidation("agent_created", agent_id="a2")
 
 
+class TestScheduleA2AInvalidation:
+    """Unit tests for supervised A2A invalidation scheduling."""
+
+    async def test_retains_task_until_completion(self, monkeypatch):
+        """A scheduled invalidation has a strong reference until it finishes."""
+        # First-Party
+        from mcpgateway.services import a2a_service  # noqa: PLC0415
+
+        release = asyncio.Event()
+
+        async def publish(*_args, **_kwargs):
+            await release.wait()
+
+        monkeypatch.setattr(a2a_service, "_publish_a2a_invalidation", publish)
+
+        a2a_service._schedule_a2a_invalidation("agent", name="held-agent")
+
+        assert len(a2a_service._a2a_invalidation_tasks) == 1
+        task = next(iter(a2a_service._a2a_invalidation_tasks))
+
+        release.set()
+        await task
+        await asyncio.sleep(0)
+
+        assert not a2a_service._a2a_invalidation_tasks
+
+    async def test_removes_cancelled_task_without_warning(self, monkeypatch):
+        """Cancellation releases the task reference without logging a failure."""
+        # First-Party
+        from mcpgateway.services import a2a_service  # noqa: PLC0415
+
+        async def publish(*_args, **_kwargs):
+            await asyncio.Event().wait()
+
+        warning = MagicMock()
+        monkeypatch.setattr(a2a_service, "_publish_a2a_invalidation", publish)
+        monkeypatch.setattr(a2a_service.logger, "warning", warning)
+
+        a2a_service._schedule_a2a_invalidation("agent", name="cancelled-agent")
+        task = next(iter(a2a_service._a2a_invalidation_tasks))
+        task.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        await asyncio.sleep(0)
+
+        warning.assert_not_called()
+        assert not a2a_service._a2a_invalidation_tasks
+
+    async def test_closes_coroutine_when_task_creation_fails(self, monkeypatch):
+        """A create_task failure closes the already-created coroutine."""
+        # First-Party
+        from mcpgateway.services import a2a_service  # noqa: PLC0415
+
+        created_coroutines = []
+
+        async def publish():
+            return None
+
+        def make_publish_coroutine(*_args, **_kwargs):
+            coroutine = publish()
+            created_coroutines.append(coroutine)
+            return coroutine
+
+        loop = MagicMock()
+        loop.create_task.side_effect = RuntimeError("loop is closing")
+        monkeypatch.setattr(a2a_service, "_publish_a2a_invalidation", make_publish_coroutine)
+        monkeypatch.setattr(a2a_service.asyncio, "get_running_loop", MagicMock(return_value=loop))
+
+        a2a_service._schedule_a2a_invalidation("agent", name="closing-agent")
+
+        assert len(created_coroutines) == 1
+        assert created_coroutines[0].cr_frame is None
+        assert not a2a_service._a2a_invalidation_tasks
+
+    async def test_logs_background_task_exception(self, monkeypatch):
+        """An exception escaping the background coroutine is retrieved and logged."""
+        # First-Party
+        from mcpgateway.services import a2a_service  # noqa: PLC0415
+
+        error = RuntimeError("unexpected publisher failure")
+
+        async def publish(*_args, **_kwargs):
+            raise error
+
+        warning = MagicMock()
+        monkeypatch.setattr(a2a_service, "_publish_a2a_invalidation", publish)
+        monkeypatch.setattr(a2a_service.logger, "warning", warning)
+
+        a2a_service._schedule_a2a_invalidation("agent", name="broken-agent")
+        task = next(iter(a2a_service._a2a_invalidation_tasks))
+        await asyncio.wait({task})
+        await asyncio.sleep(0)
+
+        warning.assert_called_once_with(
+            "A2A cache invalidation task failed: %s",
+            error,
+            exc_info=error,
+        )
+        assert not a2a_service._a2a_invalidation_tasks
+
+
 class TestShadowModeComparison:
     """Unit tests for the observe-only shadow mode block inside invoke_agent.
 
@@ -5232,7 +5333,6 @@ class TestCrossGatewayRoutingCoverage:
         )
 
         assert captured_headers.get("X-Contextforge-UAID-Hop") == "2", f"local-agent outbound must stamp hop+1; headers={captured_headers!r}"
-
 
     async def test_federation_chain_increments_hop_and_rejects_at_max(self, service, mock_db, monkeypatch):
         """Three-hop chain locks in the stamp-N+1 vs reject-at-max
