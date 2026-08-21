@@ -16,6 +16,7 @@ from typing import Dict, List, Optional
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.utils.admin_check import is_user_admin
 from mcpgateway.utils.services_auth import decode_auth
@@ -162,4 +163,7 @@ def build_gateway_auth_headers(gateway: DbGateway) -> Dict[str, str]:
             if auth_header:  # Only add header if not empty
                 headers["Authorization"] = auth_header
 
-    return headers
+    # Strip invisible Unicode format characters left over in a credential stored before
+    # this validation existed; reject anything else non-ASCII with a clear message rather
+    # than letting httpx raise a bare UnicodeEncodeError that reads like a network failure.
+    return {k: SecurityValidator.sanitize_credential_value(v, f"stored credential for header '{k}'") for k, v in headers.items()}

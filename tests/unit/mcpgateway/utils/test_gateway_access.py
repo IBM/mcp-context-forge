@@ -163,6 +163,28 @@ class TestBuildGatewayAuthHeaders:
 
         assert headers == {}
 
+    def test_bearer_auth_strips_invisible_char_in_stored_token(self):
+        """A stored credential contaminated with an invisible Unicode format character
+        (e.g. from a bad copy/paste before validation existed) is cleaned before use,
+        instead of reaching httpx and raising a bare UnicodeEncodeError."""
+        gateway = MagicMock()
+        gateway.auth_type = "bearer"
+        gateway.auth_value = {"Authorization": "Bearer " + "A" * 10 + "⁠" + "B" * 10}
+
+        headers = build_gateway_auth_headers(gateway)
+
+        assert headers == {"Authorization": "Bearer " + "A" * 10 + "B" * 10}
+
+    def test_bearer_auth_rejects_non_ascii_stored_token(self):
+        """A stored credential with genuine non-ASCII content (not a safely strippable
+        format character) is rejected with a clear error naming the character."""
+        gateway = MagicMock()
+        gateway.auth_type = "bearer"
+        gateway.auth_value = {"Authorization": "Bearer café-token"}
+
+        with pytest.raises(ValueError, match="U\\+00E9"):
+            build_gateway_auth_headers(gateway)
+
 
 # First-Party
 from mcpgateway.utils.gateway_access import check_gateway_access

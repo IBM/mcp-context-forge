@@ -4476,6 +4476,11 @@ class ToolService(BaseService):
                     raise ToolInvocationError(f"OAuth authentication failed for gateway: {str(e)}")
         else:
             headers = decode_auth(gateway_auth_value) if gateway_auth_value else {}
+            try:
+                headers = {k: SecurityValidator.sanitize_credential_value(v, f"stored credential for header '{k}'") for k, v in headers.items()}
+            except ValueError as credential_error:
+                logger.error("Invalid stored credential for gateway %s: %s", gateway_name, credential_error)
+                raise ToolInvocationError(f"Invalid stored credential for gateway '{gateway_name}': {credential_error}")
 
         if request_headers:
             # B3: when the gateway uses token-exchange, the exchanged Authorization header
@@ -5914,6 +5919,11 @@ class ToolService(BaseService):
                                 raise ToolInvocationError(f"OAuth authentication failed for gateway: {str(e)}")
                     else:
                         headers = decode_auth(gateway_auth_value) if gateway_auth_value else {}
+                        try:
+                            headers = {k: SecurityValidator.sanitize_credential_value(v, f"stored credential for header '{k}'") for k, v in headers.items()}
+                        except ValueError as credential_error:
+                            logger.error("Invalid stored credential for gateway %s: %s", gateway_name, credential_error)
+                            raise ToolInvocationError(f"Invalid stored credential for gateway '{gateway_name}': {credential_error}")
 
                     # Use cached passthrough headers (no DB query needed)
                     if request_headers:
