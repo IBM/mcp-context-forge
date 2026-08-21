@@ -982,8 +982,8 @@ mcpContextForge:
     # - Bootstrap additional system roles -
     MCPGATEWAY_BOOTSTRAP_ROLES_IN_DB_ENABLED: "false" # Enable Bootstrap additional system roles feature
     MCPGATEWAY_BOOTSTRAP_ROLES_IN_DB_FILE: "additional_roles_in_db.json" # Create and populate this file as given in the .env.example to add additional roles
-
-
+    # ─ File Watcher: opt-in file system watcher for automatic config hot-reload (leave disabled in most production deployments) ─
+    FILE_WATCHER_ENABLED: "false"
   ####################################################################
   # envFrom is managed by the chart (gateway secret + configmap).
   # Use extraEnvFrom to add additional sources.

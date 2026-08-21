@@ -1928,6 +1928,18 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         except Exception as e:
             logger.error(f"Error shutting down plugin manager: {str(e)}")
 
+        # Stop FileWatcherService singleton (only if enabled)
+        if settings.file_watcher_enabled:
+            try:
+                # First-Party
+                from mcpgateway.services.file_watcher_service import get_file_watcher_service  # pylint: disable=import-outside-toplevel
+
+                file_watcher_service = await get_file_watcher_service()
+                await file_watcher_service.stop_all()
+                logger.info("FileWatcherService stopped")
+            except Exception as e:
+                logger.debug(f"Error stopping FileWatcherService: {e}")
+
         # Stop cache invalidation subscriber
         try:
             # First-Party
