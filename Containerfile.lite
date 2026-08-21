@@ -1,13 +1,15 @@
 # syntax=docker/dockerfile:1.12
 
 ###############################################################################
-# ContextForge - OCI-compliant multi-stage container build
+# ContextForge (lite) - OCI-compliant multi-stage container build
 #
 # Purpose: Minimal runtime image using ubi10-minimal, supporting multiplatform
 # builds (amd64, arm64, s390x, ppc64le) with optional Rust native extensions.
 #
-# This is the only production Containerfile (previously separate lite/scratch
-# variants were consolidated here).
+# Distinction from Containerfile (standard):
+#   - This is the RECOMMENDED production build (lighter, faster, ubi10-minimal).
+#   - Containerfile (standard) is a simpler single-stage variant without Rust.
+#   - Containerfile.scratch is an ultra-slim scratch-based image.
 #
 # Key design points:
 #   - Builder stage has full DNF + devel headers for wheel compilation
@@ -25,7 +27,7 @@ ARG PYTHON_VERSION=3.12
 ARG ENABLE_RUST=false
 ARG ENABLE_RUST_MCP_RMCP=false
 # Enable profiling tools (memray, py-spy) - off by default for smaller images
-# To enable: docker build --build-arg ENABLE_PROFILING=true -f Containerfile .
+# To enable: docker build --build-arg ENABLE_PROFILING=true -f Containerfile.lite .
 # Usage after enabling:
 #   memray: docker exec -it <container> memray attach <PID> -o /tmp/profile.bin
 #   py-spy: sudo py-spy top --pid $(docker inspect --format '{{.State.Pid}}' <container>)
@@ -39,15 +41,15 @@ ARG ENABLE_PROFILING=false
 # Public registry defaults (registry.access.redhat.com) are for standard builds only.
 #
 # Example (Dreadnought):
-#   docker build -f Containerfile \
+#   docker build -f Containerfile.lite \
 #     --build-arg ENABLE_FIPS=true \
 #     --build-arg UBI_BASE=<internal-registry>/ubi9/ubi:latest \
 #     --build-arg NODEJS_IMAGE=<internal-registry>/ubi9/nodejs-20:latest \
 #     --build-arg UBI_MINIMAL=<internal-registry>/ubi9/ubi-minimal:latest \
 #     .
-ARG UBI_BASE=registry.access.redhat.com/ubi10:10.2-1786928703
-ARG NODEJS_IMAGE=registry.access.redhat.com/ubi10/nodejs-24:10.2-1786927268
-ARG UBI_MINIMAL=registry.access.redhat.com/ubi10/ubi-minimal:10.2-1786928543
+ARG UBI_BASE=registry.access.redhat.com/ubi10:1781510254
+ARG NODEJS_IMAGE=registry.access.redhat.com/ubi10/nodejs-24:1781700998
+ARG UBI_MINIMAL=registry.access.redhat.com/ubi10/ubi-minimal:1781509581
 # Wheel closure stage — used only for s390x and ppc64le where PyPI manylinux
 # binary wheels are unavailable (tiktoken/psycopg/cryptography require native
 # compilation, and psycopg-binary has no s390x wheel at all).
@@ -62,8 +64,8 @@ RUN mkdir -p /wheels
 
 ###############################################################################
 # Rust builder stage - builds Rust MCP runtime and local native extensions
-# To build WITH Rust: docker build --build-arg ENABLE_RUST=true -f Containerfile .
-# To build WITHOUT Rust (default): docker build -f Containerfile .
+# To build WITH Rust: docker build --build-arg ENABLE_RUST=true -f Containerfile.lite .
+# To build WITHOUT Rust (default): docker build -f Containerfile.lite .
 ###############################################################################
 FROM ${UBI_BASE} AS rust-builder
 ARG PYTHON_VERSION=3.12
@@ -81,6 +83,11 @@ RUN if [ "$ENABLE_RUST" != "true" ]; then \
         printf 'echo "Rust MCP runtime not built into this image. Rebuild with --build-arg ENABLE_RUST=true." >&2\n' >> /build/target/release/contextforge-mcp-runtime; \
         printf 'exit 1\n' >> /build/target/release/contextforge-mcp-runtime; \
         chmod +x /build/target/release/contextforge-mcp-runtime; \
+        printf '#!/usr/bin/env sh\n' > /build/target/release/contextforge-a2a-runtime; \
+        printf 'echo "Rust A2A runtime not built into this image. Rebuild with --build-arg ENABLE_RUST=true." >&2\n' >> /build/target/release/contextforge-a2a-runtime; \
+        printf 'exit 1\n' >> /build/target/release/contextforge-a2a-runtime; \
+        chmod +x /build/target/release/contextforge-a2a-runtime; \
+        exit 0; \
     fi
 
 # Install system deps + Rust toolchain in a single layer (only if ENABLE_RUST=true)
@@ -109,6 +116,9 @@ WORKDIR /build
 # Copy workspace and crates (only if ENABLE_RUST=true)
 COPY Cargo.toml Cargo.lock /build/
 COPY crates/ /build/crates/
+COPY mcp-servers/rust/benchmark-server/ /build/mcp-servers/rust/benchmark-server/
+COPY mcp-servers/rust/slow-time-server/ /build/mcp-servers/rust/slow-time-server/
+COPY a2a-agents/rust/a2a-echo-agent/ /build/a2a-agents/rust/a2a-echo-agent/
 
 # Build local native extensions from maturin crates under crates/
 # hadolint ignore=DL3013
@@ -144,7 +154,7 @@ RUN if [ "$ENABLE_RUST" = "true" ]; then \
         echo "⏭️  Skipping local native extension build"; \
     fi
 
-# Build MCP runtime binary
+# Build MCP + A2A runtime binaries (MCP + A2A in the same RUN share /build/target)
 RUN if [ "$ENABLE_RUST" = "true" ]; then \
         if [ "$ENABLE_RUST_MCP_RMCP" = "true" ]; then \
             cargo build --release -p contextforge_mcp_runtime --features rmcp-upstream-client; \
@@ -152,16 +162,16 @@ RUN if [ "$ENABLE_RUST" = "true" ]; then \
             cargo build --release -p contextforge_mcp_runtime; \
         fi && \
         cp /build/target/release/contextforge_mcp_runtime /build/target/release/contextforge-mcp-runtime && \
-        echo "✅ Rust MCP runtime built successfully"; \
+        cargo build --release -p contextforge_a2a_runtime && \
+        echo "✅ Rust MCP + A2A runtimes built successfully"; \
     else \
-        echo "⏭️  Skipping Rust MCP runtime build"; \
+        echo "⏭️  Skipping Rust MCP + A2A runtime builds"; \
     fi
 
 ###############################################################################
 # Node.js builder stage - builds Tailwind CSS
 ###############################################################################
-# Use official Red Hat UBI10 Node.js 24 image - published for amd64, arm64,
-# s390x and ppc64le, so this stage builds natively on every target platform.
+# Use official Red Hat UBI10 Node.js 24 image
 FROM ${NODEJS_IMAGE} AS node-builder
 
 USER root
@@ -288,9 +298,9 @@ RUN set -euo pipefail \
     && /app/.venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel uv \
     && if [ -n "$(ls -A /tmp/wheels/*.whl 2>/dev/null)" ]; then \
         echo "📦 Hermetic install from prebuilt wheel closure"; \
-        /app/.venv/bin/uv pip install --no-index --find-links=/tmp/wheels ".[redis,observability,plugins,llmchat]" "psycopg[c]>=3.3.3"; \
+        /app/.venv/bin/uv pip install --no-index --find-links=/tmp/wheels ".[redis,observability,granian,plugins,llmchat]" "psycopg[c]>=3.3.3"; \
     else \
-        /app/.venv/bin/uv pip install ".[redis,postgres,observability,plugins,llmchat]"; \
+        /app/.venv/bin/uv pip install ".[redis,postgres,observability,granian,plugins,llmchat]"; \
     fi \
     && echo "✅ Plugins installed from PyPI via [plugins] extra" \
     && if [ "$ENABLE_RUST" = "true" ] && ls "/tmp/local-native-extension-wheels/"*.whl 1> /dev/null 2>&1; then \
@@ -322,7 +332,7 @@ RUN set -euo pipefail \
 # dependency layer above.
 # ----------------------------------------------------------------------------
 COPY --from=rust-builder /build/target/release/contextforge-mcp-runtime /app/bin/contextforge-mcp-runtime
-
+COPY --from=rust-builder /build/target/release/contextforge-a2a-runtime /app/bin/contextforge-a2a-runtime
 COPY --from=frontend-builder /opt/app-root/src/mcpgateway/static/ /app/mcpgateway/static/
 
 # Copy pre-built Tailwind CSS from node-builder
@@ -333,13 +343,22 @@ COPY --from=node-builder /build/mcpgateway/static/css/tailwind.min.css /app/mcpg
 COPY run.sh /app/
 
 # ----------------------------------------------------------------------------
+# Download CDN assets for airgapped deployment (writes into /app/mcpgateway/static/vendor/).
+# Placed here so app code changes below don't invalidate this network-bound step.
+# --chmod=0755 lets us skip a follow-up chmod layer.
+# ----------------------------------------------------------------------------
+COPY --chmod=0755 scripts/download-cdn-assets.sh /tmp/download-cdn-assets.sh
+RUN /tmp/download-cdn-assets.sh \
+    && rm /tmp/download-cdn-assets.sh
+
+# ----------------------------------------------------------------------------
 # Application files, ordered from least- to most-frequently-changing so that
 # the more volatile COPYs at the bottom don't invalidate the stable ones above.
 #   - Run/entrypoint scripts (rarely change)           [--chmod=0755 keeps +x]
 #   - gunicorn config + mcp catalog (rare/occasional)
 #   - mcpgateway/ + plugins/ (change most often)
 # ----------------------------------------------------------------------------
-COPY --chmod=0755 run-gunicorn.sh docker-entrypoint.sh run.sh /app/
+COPY --chmod=0755 run-gunicorn.sh run-granian.sh docker-entrypoint.sh run.sh /app/
 COPY gunicorn.config.py mcp-catalog.yml /app/
 COPY mcpgateway/ /app/mcpgateway/
 COPY plugins/ /app/plugins/
@@ -373,7 +392,7 @@ LABEL maintainer="Mihai Criveti" \
     org.opencontainers.image.title="mcp/mcpgateway" \
     org.opencontainers.image.description="ContextForge: An enterprise-ready Model Context Protocol Gateway" \
     org.opencontainers.image.licenses="Apache-2.0" \
-    org.opencontainers.image.version="1.0.8"
+    org.opencontainers.image.version="1.0.4"
 
 # ----------------------------------------------------------------------------
 # Install minimal runtime dependencies
@@ -502,5 +521,12 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
 # ----------------------------------------------------------------------------
 # Entrypoint
 # ----------------------------------------------------------------------------
-# HTTP server: Gunicorn with Uvicorn workers
+# HTTP server selection via HTTP_SERVER environment variable:
+#   - gunicorn : Python-based with Uvicorn workers (default)
+#   - granian  : Rust-based HTTP server (alternative)
+#
+# Examples:
+#   docker run -e HTTP_SERVER=gunicorn mcpgateway  # Default
+#   docker run -e HTTP_SERVER=granian mcpgateway   # Alternative
+ENV HTTP_SERVER=gunicorn
 CMD ["./docker-entrypoint.sh"]
