@@ -301,7 +301,7 @@ class DataplanePublisherService:
                         "remove_headers": gateway_config["remove_headers"],
                         "capabilities": gateway_config["capabilities"],
                         "allowed_tool_names": backend_items["tools"],
-                        "tool_schemas": backend_items.get("tool_schemas", {}),
+                        "tool_schemas": backend_items["tool_schemas"],
                         "allowed_resource_names": allowed_resource_names,
                         "allowed_resource_uris": allowed_resource_uris,
                         "allowed_prompt_names": allowed_prompt_names,
@@ -401,7 +401,12 @@ class DataplanePublisherService:
     ) -> dict[str, Any]:
         """Build already-filtered dataplane data for one user."""
         tool_by_id: dict[str, ToolMetadata] = {
-            tool.id: {"name": tool.original_name, "input_schema": tool.input_schema} for tool in tool_rows if self._filter_for_user(tool, user_email, team_ids, is_admin=is_admin)
+            tool.id: {
+                "name": tool.original_name,
+                "input_schema": tool.input_schema if isinstance(tool.input_schema, dict) else {},
+            }
+            for tool in tool_rows
+            if self._filter_for_user(tool, user_email, team_ids, is_admin=is_admin)
         }
 
         return {
