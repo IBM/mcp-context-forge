@@ -226,7 +226,7 @@ async def test_full_payload_generation_with_mock_db():
     tool2.id = "t2"
     tool2.name = "gw1-private_tool"
     tool2.original_name = "private_tool"
-    tool2.input_schema = None
+    tool2.input_schema = {}
     tool2.owner_email = "user1@example.com"
     tool2.team_id = "team1"
     tool2.visibility = "private"
@@ -336,6 +336,18 @@ async def test_full_payload_generation_with_mock_db():
         user3_backend = user3_config["virtual_hosts"]["s1"]["backends"]["g1"]
         assert user3_backend["allowed_tool_names"] == ["public_tool"]
         assert user3_backend["tool_schemas"] == {"public_tool": tool1.input_schema}
+
+
+def test_build_user_data_rejects_non_object_tool_schema():
+    """Dataplane snapshots fail closed when an enabled tool schema is malformed."""
+    from unittest.mock import Mock
+
+    from mcpgateway.services.dataplane_publisher import DataplanePublisherService
+
+    tool = Mock(id="bad-tool", original_name="bad", input_schema=None, visibility="public")
+
+    with pytest.raises(ValueError, match="Tool bad-tool has a non-object input schema"):
+        DataplanePublisherService()._build_user_data("user@example.com", set(), False, [], [], [], [], [tool], {})
 
 
 # ============================================================================
