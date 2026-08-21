@@ -158,7 +158,8 @@ def _make_sa_db(db_path: str | None = None):
                 CREATE TABLE IF NOT EXISTS tools (
                     id TEXT PRIMARY KEY,
                     auth_type TEXT,
-                    auth_value TEXT
+                    auth_value TEXT,
+                    headers TEXT
                 )
                 """
             )
@@ -170,7 +171,8 @@ def _make_sa_db(db_path: str | None = None):
                     id TEXT PRIMARY KEY,
                     auth_type TEXT,
                     auth_value TEXT,
-                    auth_query_params TEXT
+                    auth_query_params TEXT,
+                    oauth_config TEXT
                 )
                 """
             )
@@ -225,7 +227,8 @@ def _make_sa_db(db_path: str | None = None):
                 """
                 CREATE TABLE IF NOT EXISTS llm_providers (
                     id TEXT PRIMARY KEY,
-                    api_key TEXT
+                    api_key TEXT,
+                    config TEXT
                 )
                 """
             )
@@ -972,6 +975,91 @@ class TestRunMigrationServicesAuth:
             row = session.execute(text("SELECT auth_value FROM tools WHERE id = 't3'")).fetchone()
             # Still encrypted under old key
             assert decode_auth(row[0], secret=OLD_KEY) == payload
+
+    def test_migrates_a2a_agents_oauth_config(self, tmp_path):
+        """a2a_agents.oauth_config sensitive keys are re-encrypted (EncryptionService path)."""
+        _, SessionLocal, db_url = _make_sa_db(str(tmp_path / "sa.db"))
+        old_svc_local = get_encryption_service(OLD_KEY)
+        new_svc = get_encryption_service(NEW_KEY)
+        secret = "a2a-agent-oauth-secret"  # nosec B105  # pragma: allowlist secret
+        config = json.dumps({"client_id": "cid", "client_secret": old_svc_local.encrypt_secret(secret)})
+
+        with SessionLocal() as session:
+            from sqlalchemy import text  # pylint: disable=import-outside-toplevel
+
+            session.execute(text("INSERT INTO a2a_agents (id, auth_type, oauth_config) VALUES ('ag1', 'oauth', :cfg)"), {"cfg": config})
+            session.commit()
+
+        rc = run_migration(db_url, OLD_KEY, NEW_KEY)
+        assert rc == 0
+
+        with SessionLocal() as session:
+            from sqlalchemy import text  # pylint: disable=import-outside-toplevel
+
+            row = session.execute(text("SELECT oauth_config FROM a2a_agents WHERE id = 'ag1'")).fetchone()
+            stored = json.loads(row[0])
+            assert new_svc.decrypt_secret(stored["client_secret"]) == secret
+            with pytest.raises(Exception):
+                old_svc_local.decrypt_secret(stored["client_secret"])
+
+    def test_migrates_tools_headers(self, tmp_path):
+        """tools.headers sentinel-envelope blobs are re-encrypted."""
+        _, SessionLocal, db_url = _make_sa_db(str(tmp_path / "sa.db"))
+        payload = {"data": "Authorization: Bearer secret-hdr"}
+        old_blob = encode_auth(payload, secret=OLD_KEY)
+        sentinel = "_mcpgateway_encrypted_header_value_v1"
+        headers = json.dumps({"Authorization": {sentinel: old_blob}, "Content-Type": "application/json"})
+
+        with SessionLocal() as session:
+            from sqlalchemy import text  # pylint: disable=import-outside-toplevel
+
+            session.execute(text("INSERT INTO tools (id, auth_type, headers) VALUES ('th1', 'bearer', :h)"), {"h": headers})
+            session.commit()
+
+        rc = run_migration(db_url, OLD_KEY, NEW_KEY)
+        assert rc == 0
+
+        with SessionLocal() as session:
+            from sqlalchemy import text  # pylint: disable=import-outside-toplevel
+
+            row = session.execute(text("SELECT headers FROM tools WHERE id = 'th1'")).fetchone()
+            stored = json.loads(row[0])
+            # Sentinel envelope re-encrypted under new key
+            new_blob = stored["Authorization"][sentinel]
+            assert decode_auth(new_blob, secret=NEW_KEY) == payload
+            with pytest.raises(Exception):
+                decode_auth(new_blob, secret=OLD_KEY)
+            # Non-sensitive header left untouched
+            assert stored["Content-Type"] == "application/json"
+
+    def test_migrates_llm_providers_config(self, tmp_path):
+        """llm_providers.config sentinel-envelope blobs are re-encrypted."""
+        _, SessionLocal, db_url = _make_sa_db(str(tmp_path / "sa.db"))
+        payload = {"data": "sk-supersecret-api-key"}  # pragma: allowlist secret
+        old_blob = encode_auth(payload, secret=OLD_KEY)
+        sentinel = "_mcpgateway_encrypted_value_v1"
+        config = json.dumps({"model": "gpt-4", "api_key": {sentinel: old_blob}})
+
+        with SessionLocal() as session:
+            from sqlalchemy import text  # pylint: disable=import-outside-toplevel
+
+            session.execute(text("INSERT INTO llm_providers (id, config) VALUES ('lp3', :cfg)"), {"cfg": config})
+            session.commit()
+
+        rc = run_migration(db_url, OLD_KEY, NEW_KEY)
+        assert rc == 0
+
+        with SessionLocal() as session:
+            from sqlalchemy import text  # pylint: disable=import-outside-toplevel
+
+            row = session.execute(text("SELECT config FROM llm_providers WHERE id = 'lp3'")).fetchone()
+            stored = json.loads(row[0])
+            new_blob = stored["api_key"][sentinel]
+            assert decode_auth(new_blob, secret=NEW_KEY) == payload
+            with pytest.raises(Exception):
+                decode_auth(new_blob, secret=OLD_KEY)
+            # Non-sensitive key untouched
+            assert stored["model"] == "gpt-4"
 
     def test_null_services_auth_columns_skipped(self, tmp_path):
         """NULL auth_value / api_key is skipped without error."""
