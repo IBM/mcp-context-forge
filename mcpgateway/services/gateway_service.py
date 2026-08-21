@@ -85,6 +85,7 @@ from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam as DbEmailTeam
 from mcpgateway.db import EmailTeamMember as DbEmailTeamMember
+from mcpgateway.db import EmailUser as DbEmailUser
 from mcpgateway.db import fresh_db_session
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import get_for_update
@@ -5547,6 +5548,130 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         await self._publish_event(event)
+
+    async def transfer_gateway_ownership(
+        self,
+        db: Session,
+        gateway_id: str,
+        target_owner_email: str,
+        actor_email: str,
+        target_team_id: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
+    ) -> GatewayRead:
+        """Transfer gateway ownership to another user.
+
+        Args:
+            db: Database session
+            gateway_id: Gateway to transfer
+            target_owner_email: Email of the new owner
+            actor_email: Email of the user performing the transfer
+            target_team_id: Optional new team ID for the gateway
+            token_teams: Normalized caller team scope; None means unrestricted admin scope
+
+        Returns:
+            GatewayRead with updated ownership
+
+        Raises:
+            GatewayNotFoundError: Gateway does not exist
+            ValueError: Target user invalid, team membership check fails, or gateway is outside scope
+        """
+        # Validate target user exists and is active
+        target_user = db.execute(select(DbEmailUser).where(DbEmailUser.email == target_owner_email, DbEmailUser.is_active == True)).scalar_one_or_none()  # noqa: E712  # pylint: disable=singleton-comparison
+        if not target_user:
+            raise ValueError(f"Target user not found or inactive: {target_owner_email}")
+
+        gateway = get_for_update(db, DbGateway, gateway_id)
+        if not gateway:
+            raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
+        if token_teams is not None:
+            current_team_id = gateway.team_id
+            if not current_team_id or current_team_id not in token_teams:
+                raise ValueError("Gateway is outside the caller's token team scope")
+            if target_team_id and target_team_id not in token_teams:
+                raise ValueError("Target team is outside the caller's token team scope")
+
+        previous_owner = gateway.owner_email
+        previous_team = gateway.team_id
+
+        # For team-visibility gateways, validate team membership
+        effective_team_id = target_team_id or gateway.team_id
+        if gateway.visibility == "team" and effective_team_id:
+            member = db.execute(
+                select(DbEmailTeamMember).where(
+                    DbEmailTeamMember.team_id == effective_team_id,
+                    DbEmailTeamMember.user_email == target_owner_email,
+                    DbEmailTeamMember.is_active == True,  # noqa: E712  # pylint: disable=singleton-comparison
+                )
+            ).scalar_one_or_none()
+            if not member:
+                raise ValueError(f"Target user {target_owner_email} is not an active member of team {effective_team_id}")
+
+        if target_team_id:
+            # Validate target owner is active member of the explicit target team
+            member = db.execute(
+                select(DbEmailTeamMember).where(
+                    DbEmailTeamMember.team_id == target_team_id,
+                    DbEmailTeamMember.user_email == target_owner_email,
+                    DbEmailTeamMember.is_active == True,  # noqa: E712  # pylint: disable=singleton-comparison
+                )
+            ).scalar_one_or_none()
+            if not member:
+                raise ValueError(f"Target user {target_owner_email} is not an active member of target team {target_team_id}")
+
+        # Update gateway ownership
+        gateway.owner_email = target_owner_email
+        if target_team_id:
+            gateway.team_id = target_team_id
+            # Private gateways assigned to a team must become team-visible so members can access them
+            if gateway.visibility == "private":
+                gateway.visibility = "team"
+
+        # Update linked tools
+        tools = db.execute(select(DbTool).where(DbTool.gateway_id == gateway_id)).scalars().all()
+        for tool in tools:
+            tool.owner_email = target_owner_email
+            if target_team_id:
+                tool.team_id = target_team_id
+                if tool.visibility == "private":
+                    tool.visibility = "team"
+
+        # Update linked resources
+        resources = db.execute(select(DbResource).where(DbResource.gateway_id == gateway_id)).scalars().all()
+        for resource in resources:
+            resource.owner_email = target_owner_email
+            if target_team_id:
+                resource.team_id = target_team_id
+                if resource.visibility == "private":
+                    resource.visibility = "team"
+
+        # Update linked prompts
+        prompts = db.execute(select(DbPrompt).where(DbPrompt.gateway_id == gateway_id)).scalars().all()
+        for prompt in prompts:
+            prompt.owner_email = target_owner_email
+            if target_team_id:
+                prompt.team_id = target_team_id
+                if prompt.visibility == "private":
+                    prompt.visibility = "team"
+
+        db.commit()
+        db.refresh(gateway)
+
+        # Audit log (uses its own session — never pass db)
+        audit = get_audit_trail_service()
+        audit.log_action(
+            action="gateway.transfer_ownership",
+            user_id=actor_email,
+            resource_type="gateway",
+            resource_id=gateway_id,
+            details={
+                "previous_owner": previous_owner,
+                "new_owner": target_owner_email,
+                "previous_team": previous_team,
+                "new_team": target_team_id or gateway.team_id,
+            },
+        )
+
+        return self.convert_gateway_to_read(gateway)
 
     def convert_gateway_to_read(self, gateway: DbGateway) -> GatewayRead:
         """Convert a DbGateway instance to a GatewayRead Pydantic model.
