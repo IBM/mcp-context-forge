@@ -26703,6 +26703,32 @@ class TestTransferGatewayOwnership:
         assert result is expected
 
     @pytest.mark.asyncio
+    async def test_transfer_gateway_ownership_passes_token_team_scope(self, monkeypatch, allow_permission, mock_db):
+        """Transfer route forwards the normalized token-team scope to the service."""
+        expected = MagicMock(spec=GatewayRead)
+        transfer_service = AsyncMock(return_value=expected)
+        monkeypatch.setattr("mcpgateway.admin.gateway_service.transfer_gateway_ownership", transfer_service)
+        monkeypatch.setattr("mcpgateway.admin.get_user_email", MagicMock(return_value="admin@x.com"))
+
+        result = await transfer_gateway_ownership(
+            gateway_id="gw-1",
+            transfer=GatewayOwnershipTransferRequest(target_owner_email="new@x.com", target_team_id="team-1"),
+            db=mock_db,
+            _user={"email": "admin@x.com", "is_admin": True, "token_teams": ["team-1"]},
+        )
+
+        assert result is expected
+        transfer_service.assert_awaited_once_with(
+            db=mock_db,
+            gateway_id="gw-1",
+            target_owner_email="new@x.com",
+            actor_email="admin@x.com",
+            target_team_id="team-1",
+            token_teams=["team-1"],
+        )
+
+
+    @pytest.mark.asyncio
     async def test_transfer_gateway_ownership_not_found(self, monkeypatch, allow_permission, mock_db):
         monkeypatch.setattr(
             "mcpgateway.admin.gateway_service.transfer_gateway_ownership",
@@ -26789,6 +26815,43 @@ class TestCatalogPermissionErrorBranches:
         request.headers = {}
         with pytest.raises(HTTPException) as exc_info:
             await register_catalog_server("srv-1", request, db=mock_db, _user={"email": "admin@test.com"})
+        assert exc_info.value.status_code == 403
+
+
+    @pytest.mark.asyncio
+    async def test_admin_register_catalog_requires_gateways_create(self, monkeypatch, allow_permission, mock_db):
+        """Catalog registration must require gateway creation permission too."""
+        monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_catalog_enabled", True, raising=False)
+        allow_permission.check_permission = AsyncMock(side_effect=[True, False])
+        monkeypatch.setattr(
+            "mcpgateway.admin.catalog_service.register_catalog_server",
+            AsyncMock(return_value=MagicMock()),
+        )
+
+        request = MagicMock(spec=Request)
+        request.headers = {}
+        with pytest.raises(HTTPException) as exc_info:
+            await register_catalog_server("srv-1", request, db=mock_db, _user={"email": "admin@test.com"})
+
+        assert exc_info.value.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_admin_bulk_register_catalog_requires_gateways_create(self, monkeypatch, allow_permission, mock_db):
+        """Bulk catalog registration must require gateway creation permission too."""
+        monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_catalog_enabled", True, raising=False)
+        allow_permission.check_permission = AsyncMock(side_effect=[True, False])
+
+        from mcpgateway.schemas import CatalogBulkRegisterRequest
+
+        request = MagicMock(spec=Request)
+        with pytest.raises(HTTPException) as exc_info:
+            await bulk_register_catalog_servers(
+                request,
+                CatalogBulkRegisterRequest(server_ids=["srv-1"]),
+                db=mock_db,
+                _user={"email": "admin@test.com"},
+            )
+
         assert exc_info.value.status_code == 403
 
     @pytest.mark.asyncio

@@ -13139,6 +13139,7 @@ async def transfer_gateway_ownership(
         Updated GatewayRead with new ownership.
     """
     actor_email = get_user_email(_user)
+    token_teams = extract_token_team_ids(_user)
     try:
         result = await gateway_service.transfer_gateway_ownership(
             db=db,
@@ -13146,6 +13147,7 @@ async def transfer_gateway_ownership(
             target_owner_email=transfer.target_owner_email,
             actor_email=actor_email,
             target_team_id=transfer.target_team_id,
+            token_teams=token_teams,
         )
         return result
     except GatewayNotFoundError as e:
@@ -17981,6 +17983,7 @@ async def list_catalog_servers(
 
 @admin_router.post("/mcp-registry/{server_id}/register", response_model=CatalogServerRegisterResponse)
 @require_permission("servers.create", allow_admin_bypass=False)
+@require_permission("gateways.create", allow_admin_bypass=False)
 async def register_catalog_server(
     server_id: str,
     http_request: Request,
@@ -18120,6 +18123,7 @@ async def check_catalog_server_status(
 
 @admin_router.post("/mcp-registry/bulk-register", response_model=CatalogBulkRegisterResponse)
 @require_permission("servers.create", allow_admin_bypass=False)
+@require_permission("gateways.create", allow_admin_bypass=False)
 async def bulk_register_catalog_servers(
     http_request: Request,
     request: CatalogBulkRegisterRequest,
