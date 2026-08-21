@@ -494,6 +494,7 @@ class TestSessionRefreshAndValidate:
         issued = jwt_lib.encode({"jti": "new-jti", "exp": now + expires_in}, self.SECRET, algorithm="HS256")
         blocklist = MagicMock()
         blocklist.is_token_revoked.return_value = False
+        blocklist.revoke_token.return_value = True
         return {
             "verify": patch("mcpgateway.routers.auth.verify_jwt_token_cached", new_callable=AsyncMock, return_value=payload),
             "blocklist": patch("mcpgateway.routers.auth.get_token_blocklist_service", return_value=blocklist),
@@ -536,6 +537,11 @@ class TestSessionRefreshAndValidate:
         assert "db" not in audit_kwargs
         # session_start carried into the new token
         assert "session_start" in mocks["create_token"].call_args.kwargs["extra_claims"]
+        # Predecessor token revoked single-use (compare-and-set) before minting
+        revoke_kwargs = mocks["blocklist"].return_value.revoke_token.call_args.kwargs
+        assert revoke_kwargs["jti"] == "old-jti"
+        assert revoke_kwargs["reason"] == "token_refresh"
+        assert revoke_kwargs["fail_if_already_revoked"] is True
 
     @pytest.mark.asyncio
     async def test_refresh_success_cookie_sets_auth_cookie(self, mock_user):
@@ -685,6 +691,44 @@ class TestSessionRefreshAndValidate:
 
         assert exc_info.value.status_code == 401
         assert "maximum lifetime" in exc_info.value.detail
+
+    @pytest.mark.asyncio
+    async def test_refresh_fails_closed_when_rotation_not_persisted(self, mock_user):
+        """If the predecessor token cannot be revoked (already rotated or store failure): 401."""
+        # First-Party
+        from mcpgateway.routers.auth import refresh_session
+
+        token, payload = self._make_token()
+        request = self._make_request(token)
+        patches = self._patch_stack(payload)
+
+        blocklist = MagicMock()
+        blocklist.is_token_revoked.return_value = False
+        blocklist.revoke_token.return_value = False  # CAS lost or persistence failure
+        with patches["verify"], patch("mcpgateway.routers.auth.get_token_blocklist_service", return_value=blocklist):
+            with pytest.raises(HTTPException) as exc_info:
+                await refresh_session(request, mock_user)
+
+        assert exc_info.value.status_code == 401
+        assert "rotated" in exc_info.value.detail
+
+    @pytest.mark.asyncio
+    async def test_refresh_refuses_token_without_jti(self, mock_user):
+        """A session token without a jti cannot be rotated: 401."""
+        # First-Party
+        from mcpgateway.routers.auth import refresh_session
+
+        token, payload = self._make_token(jti=None)
+        request = self._make_request(token)
+
+        with ExitStack() as stack:
+            for name in ("verify", "blocklist"):
+                stack.enter_context(self._patch_stack(payload)[name])
+            with pytest.raises(HTTPException) as exc_info:
+                await refresh_session(request, mock_user)
+
+        assert exc_info.value.status_code == 401
+        assert "jti" in exc_info.value.detail
 
     # ------------------------------------------------------------------
     # GET /auth/validate
@@ -897,6 +941,7 @@ class TestCookieOnlySessionSmoke:
         stack.enter_context(patch("mcpgateway.utils.verify_credentials.verify_jwt_token", new_callable=AsyncMock, return_value=payload))
         blocklist = MagicMock()
         blocklist.is_token_revoked.return_value = False
+        blocklist.revoke_token.return_value = True
         blocklist.get_last_activity.return_value = None
         stack.enter_context(patch("mcpgateway.routers.auth.get_token_blocklist_service", return_value=blocklist))
         stack.enter_context(patch("mcpgateway.services.token_blocklist_service.get_token_blocklist_service", return_value=blocklist))

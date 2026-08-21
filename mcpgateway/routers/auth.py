@@ -547,8 +547,9 @@ async def refresh_session(request: Request, current_user: EmailUser = Depends(ge
         SessionRefreshResponse: New access token, expiry, and rotated CSRF token
 
     Raises:
-        HTTPException: 401 if the session token is missing, malformed, or past
-            the absolute lifetime cap; 403 for non-session tokens
+        HTTPException: 401 if the session token is missing, malformed, past the
+            absolute lifetime cap, or cannot be rotated (already refreshed or
+            revocation not persisted); 403 for non-session tokens
     """
     raw_token, from_cookie = _extract_raw_token(request)
     if not raw_token:
@@ -574,6 +575,31 @@ async def refresh_session(request: Request, current_user: EmailUser = Depends(ge
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=f"Session exceeded maximum lifetime ({settings.session_max_lifetime} minutes). Please log in again.")
 
     old_jti = payload.get("jti")
+    if not old_jti:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session token does not support rotation (missing jti)")
+
+    # Single-use rotation: revoke the predecessor before minting so the old token
+    # cannot be replayed to mint further tokens. fail_if_already_revoked makes the
+    # revocation compare-and-set — concurrent refreshes race and exactly one wins.
+    # Fail closed when revocation cannot be persisted.
+    old_exp_ts = payload.get("exp")
+    blocklist_service = get_token_blocklist_service()
+    rotated = await asyncio.to_thread(
+        blocklist_service.revoke_token,
+        jti=old_jti,
+        revoked_by=current_user.email,
+        reason="token_refresh",
+        token_expiry=datetime.fromtimestamp(old_exp_ts, tz=timezone.utc) if old_exp_ts else None,
+        fail_if_already_revoked=True,
+    )
+    if not rotated:
+        logger.warning(
+            "Session refresh refused: predecessor token could not be revoked for %s",
+            SecurityValidator.sanitize_log_message(current_user.email),
+            extra={"security_event": "session_rotation_failed", "security_severity": "medium", "user_email": current_user.email, "jti": old_jti},
+        )
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session token already rotated or revocation failed. Please log in again.")
+
     new_jti = str(uuid.uuid4())
     # Preserve the old token's scope narrowing; teams are resolved server-side from the DB
     access_token, expires_in = await create_access_token(current_user, token_scopes=payload.get("scopes"), jti=new_jti, extra_claims={"session_start": session_start})
