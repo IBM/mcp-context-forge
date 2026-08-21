@@ -11,12 +11,21 @@ self-calls to local endpoints like /rpc.
 
 # Standard
 import os
+import ssl
+from typing import Optional, Union
 
 # Third-Party
 import httpx
 
 # First-Party
 from mcpgateway.config import settings
+
+# Cached loopback client context, keyed by the (cert, key) pair it was built from.
+# Building an SSLContext reads and parses PEM files, so it must not happen per
+# request. The cache is keyed rather than a bare global so that a changed
+# configuration is picked up instead of silently serving a stale context.
+_loopback_ssl_context: Optional[ssl.SSLContext] = None
+_loopback_ssl_context_key: Optional[tuple] = None
 
 
 def _is_ssl_enabled() -> bool:
@@ -26,6 +35,34 @@ def _is_ssl_enabled() -> bool:
         bool: ``True`` when ``SSL=true`` is set in the environment.
     """
     return os.getenv("SSL", "false") == "true"
+
+
+def _loopback_client_cert() -> Optional[tuple]:
+    """Return the configured loopback client certificate pair, if any.
+
+    Read from the environment rather than :mod:`mcpgateway.config` for
+    consistency with :func:`_is_ssl_enabled`: both describe how the *launcher*
+    (``run-gunicorn.sh``) started this process, not application configuration.
+
+    Returns:
+        Optional[tuple]: ``(cert_path, key_path)`` when both are set, else ``None``.
+    """
+    cert = os.getenv("LOOPBACK_CLIENT_CERT", "")
+    key = os.getenv("LOOPBACK_CLIENT_KEY", "")
+    if cert and key:
+        return (cert, key)
+    return None
+
+
+def reset_loopback_ssl_context() -> None:
+    """Clear the cached loopback SSL context.
+
+    Call from test fixtures that mutate ``LOOPBACK_CLIENT_CERT`` /
+    ``LOOPBACK_CLIENT_KEY`` so a later call rebuilds the context.
+    """
+    global _loopback_ssl_context, _loopback_ssl_context_key  # pylint: disable=global-statement
+    _loopback_ssl_context = None
+    _loopback_ssl_context_key = None
 
 
 def internal_loopback_base_url() -> str:
@@ -40,16 +77,54 @@ def internal_loopback_base_url() -> str:
     return f"{scheme}://127.0.0.1:{settings.port}"
 
 
-def internal_loopback_verify() -> bool:
-    """Return TLS verification policy for loopback self-calls.
+def internal_loopback_verify() -> Union[bool, ssl.SSLContext]:
+    """Return the TLS verification policy for loopback self-calls.
 
-    Loopback HTTPS frequently uses a self-signed local cert, so verification
-    is disabled for HTTPS loopback self-calls and enabled otherwise.
+    Loopback HTTPS frequently uses a self-signed local cert, so server-certificate
+    verification is disabled for HTTPS loopback self-calls and enabled otherwise.
+
+    When the gateway itself requires client certificates (inbound mTLS, i.e.
+    ``CERT_REQS=1`` or ``2`` in ``run-gunicorn.sh``), a bare ``verify=False`` is
+    not enough: that only skips *validating* the server, it does not *present* a
+    client certificate, so the handshake is rejected before any HTTP is exchanged.
+    Configuring ``LOOPBACK_CLIENT_CERT`` / ``LOOPBACK_CLIENT_KEY`` returns an
+    ``ssl.SSLContext`` carrying that certificate instead. ``httpx`` accepts an
+    ``SSLContext`` wherever it accepts ``verify``, so call sites are unchanged.
+
+    The context deliberately keeps the existing trust posture - ``CERT_NONE`` and
+    ``check_hostname=False`` - so enabling a loopback client certificate never
+    silently imposes a new server-certificate or SAN requirement on operators who
+    bring their own certificates.
 
     Returns:
-        bool: ``False`` when the loopback URL is HTTPS, ``True`` otherwise.
+        Union[bool, ssl.SSLContext]: ``True`` when the loopback URL is plain HTTP;
+        an ``ssl.SSLContext`` when a loopback client certificate is configured for
+        an HTTPS loopback; ``False`` otherwise.
     """
-    return not _is_ssl_enabled()
+    global _loopback_ssl_context, _loopback_ssl_context_key  # pylint: disable=global-statement
+
+    if not _is_ssl_enabled():
+        return True
+
+    cert_pair = _loopback_client_cert()
+    if cert_pair is None:
+        return False
+
+    if _loopback_ssl_context is not None and _loopback_ssl_context_key == cert_pair:
+        return _loopback_ssl_context
+
+    cert_path, key_path = cert_pair
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    # Order matters: check_hostname must be disabled before verify_mode is set to
+    # CERT_NONE, otherwise Python raises "Cannot set verify_mode to CERT_NONE when
+    # check_hostname is enabled."
+    context.check_hostname = False
+    context.verify_mode = ssl.CERT_NONE
+    context.load_cert_chain(cert_path, key_path)
+
+    _loopback_ssl_context = context
+    _loopback_ssl_context_key = cert_pair
+    return context
 
 
 async def post_rpc_in_process(*, content: bytes, headers: dict, timeout: float, auth_context: str) -> httpx.Response:

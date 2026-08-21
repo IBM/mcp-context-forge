@@ -464,6 +464,16 @@ services:
       # For passphrase-protected keys: run `make certs-passphrase` and use:
       # - KEY_FILE=/app/certs/key-encrypted.pem
       # - KEY_FILE_PASSWORD=${KEY_FILE_PASSWORD}
+      ## Uncomment to require client certificates as well (inbound mTLS).
+      ## Run `make certs-client` first. Requires SSL=true above.
+      ## NOTE: the gateway healthcheck below must also be switched to the
+      ## client-certificate variant, or the container is marked unhealthy.
+      # - CA_CERTS=/app/certs/client/ca-cert.pem
+      # - CERT_REQS=2
+      ## Client certificate for the gateway's own loopback /rpc self-calls.
+      ## Required when CERT_REQS is non-zero, or SSE and WebSocket break.
+      # - LOOPBACK_CLIENT_CERT=/app/certs/client/client-cert.pem
+      # - LOOPBACK_CLIENT_KEY=/app/certs/client/client-key.pem
       # Uncomment to enable plugins
       - PLUGINS_ENABLED=true
       - PLUGINS_CONFIG_FILE=${PLUGINS_CONFIG_FILE:-plugins/config.yaml}
@@ -741,6 +751,11 @@ services:
       # test: ["CMD", "curl", "-f", "https://localhost:4444/health"]
       # HTTPS healthcheck with SSL validation skipped (self-signed certs)
       # test: ["CMD", "curl", "-fk", "https://localhost:4444/health"]
+      ## Uncomment for HTTPS + inbound mTLS (CERT_REQS=1 or 2). None of the
+      ## variants above present a client certificate, so they all fail once the
+      ## gateway requires one - and an unhealthy gateway blocks every service
+      ## that depends_on it with condition: service_healthy.
+      # test: ["CMD", "curl", "-fk", "--cert", "/app/certs/client/client-cert.pem", "--key", "/app/certs/client/client-key.pem", "https://localhost:4444/health"]
       interval: 30s
       timeout: 10s
       retries: 5
