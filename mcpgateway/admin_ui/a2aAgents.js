@@ -8,6 +8,7 @@ import {
   handleFetchError,
   isInactiveChecked,
   makeCopyIdButton,
+  populateTeamSelect,
   safeGetElement,
   safeSetValue,
   showErrorMessage,
@@ -384,15 +385,8 @@ export const editA2AAgent = async function (agentId) {
       tagsField.value = rawTags.join(", ");
     }
 
-    const teamId = new URL(window.location.href).searchParams.get("team_id");
-
-    if (teamId) {
-      const hiddenInput = document.createElement("input");
-      hiddenInput.type = "hidden";
-      hiddenInput.name = "team_id";
-      hiddenInput.value = teamId;
-      editForm.appendChild(hiddenInput);
-    }
+    // Populate team dropdown with user's teams, pre-select the entity's current team
+    populateTeamSelect("edit-a2a-team-id", agent.teamId || "");
 
     // ✅ Prefill visibility radios (consistent with server)
     const visibility = agent.visibility ? agent.visibility.toLowerCase() : null;
@@ -415,6 +409,7 @@ export const editA2AAgent = async function (agentId) {
     if (visibility) {
       // When public visibility is disabled and we're in a team-scoped view,
       // coerce legacy-public records to team.
+      const _urlTeamId = new URL(window.location.href).searchParams.get("team_id");
       const effectiveVisibility =
         window.ALLOW_PUBLIC_VISIBILITY === false &&
         visibility === "public" &&

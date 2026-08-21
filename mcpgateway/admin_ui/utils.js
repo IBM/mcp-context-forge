@@ -883,3 +883,44 @@ export const bindMcpAppMimeHelper = function (
 
   updateHelperVisibility();
 };
+
+/**
+ * Populate a team <select> element with the user's teams and select
+ * the given team ID (if any).
+ *
+ * @param {string} selectId  - DOM id of the <select> element
+ * @param {string|null} selectedTeamId - team ID to pre-select (from the entity being edited, or from the URL for create forms)
+ */
+export const populateTeamSelect = function (selectId, selectedTeamId) {
+  const select = document.getElementById(selectId);
+  if (!select) return;
+
+  const teams =
+    (Array.isArray(window.USER_TEAMS_DATA) && window.USER_TEAMS_DATA.length > 0)
+      ? window.USER_TEAMS_DATA
+      : Array.isArray(window.USER_TEAMS)
+        ? window.USER_TEAMS
+        : [];
+
+  select.innerHTML = "";
+
+  // Default empty option
+  const defaultOpt = document.createElement("option");
+  defaultOpt.value = "";
+  defaultOpt.textContent = teams.length > 0 ? "— Select a team —" : "No teams available";
+  defaultOpt.selected = true;
+  select.appendChild(defaultOpt);
+
+  for (let i = 0; i < teams.length; i++) {
+    const t = teams[i];
+    if (!t || !t.id) continue;
+    const opt = document.createElement("option");
+    opt.value = t.id;
+    opt.textContent = t.name || ("Team " + t.id);
+    if (selectedTeamId && String(t.id) === String(selectedTeamId)) {
+      opt.selected = true;
+      defaultOpt.selected = false;
+    }
+    select.appendChild(opt);
+  }
+};
