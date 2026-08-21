@@ -128,13 +128,15 @@ def get_user_agent(request: Request) -> str:
     return request.headers.get("User-Agent", "unknown")
 
 
-async def create_access_token(user: EmailUser, token_scopes: Optional[dict] = None, jti: Optional[str] = None) -> tuple[str, int]:
+async def create_access_token(user: EmailUser, token_scopes: Optional[dict] = None, jti: Optional[str] = None, extra_claims: Optional[dict] = None) -> tuple[str, int]:
     """Create JWT access token for user with enhanced scoping.
 
     Args:
         user: EmailUser instance
         token_scopes: Optional token scoping information
         jti: Optional JWT ID for revocation tracking
+        extra_claims: Optional additional claims merged into the payload; cannot
+            override the reserved claims set by this function (sub, exp, jti, ...)
 
     Returns:
         Tuple of (token_string, expires_in_seconds)
@@ -146,6 +148,7 @@ async def create_access_token(user: EmailUser, token_scopes: Optional[dict] = No
     issued_at = int(now.timestamp())
     # Create JWT payload — session token (teams resolved server-side at request time)
     payload = {
+        **(extra_claims or {}),
         # Standard JWT claims
         "sub": str(user.id),
         "iss": settings.jwt_issuer,

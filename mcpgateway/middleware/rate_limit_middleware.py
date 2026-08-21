@@ -111,6 +111,11 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 "limit": settings.rate_limit_critical_rpm,
                 "burst": settings.rate_limit_critical_burst,
             },
+            "SESSION_REFRESH": {
+                "pattern": r"^(/v1)?/auth/refresh$",
+                "limit": settings.session_refresh_rate_limit,
+                "burst": settings.session_refresh_rate_limit,
+            },
             "HIGH": {
                 "pattern": r"^/(tokens|oauth|rbac)(/|$)",
                 "limit": settings.rate_limit_high_rpm,
