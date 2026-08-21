@@ -140,7 +140,7 @@ async def test_real_http_error_no_credential_leak_in_logs(caplog):
         return web.Response(status=401, text="Unauthorized")
 
     app = web.Application()
-    # streamablehttp_client uses POST, so handle both GET and POST
+    # streamable_http_client uses POST, so handle both GET and POST
     app.router.add_get("/mcp", unauthorized_handler)
     app.router.add_post("/mcp", unauthorized_handler)
 

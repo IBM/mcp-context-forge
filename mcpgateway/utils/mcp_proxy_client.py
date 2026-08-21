@@ -42,9 +42,8 @@ logger = logging.getLogger(__name__)
 __all__ = ["mcp_proxy_client"]
 
 # Third-Party
-# Re-export for use by transport code that still references streamable_http_client
-# from the SDK directly when needed.
-from mcp.client.streamable_http import streamable_http_client  # noqa: E402  # SDK-only re-export for this module.
+# Use the SDK v2 transport with the project-configured httpx2 client.
+from mcp.client.streamable_http import streamable_http_client  # noqa: E402  # SDK-only import for this module.
 
 
 @contextlib.asynccontextmanager
@@ -82,7 +81,6 @@ async def mcp_proxy_client(
         RuntimeError: If the transport initialization fails.
     """
 
-
     if transport == "sse":
         # sse_client owns its httpx client lifecycle internally.
         if httpx_client_factory is not None:
@@ -114,8 +112,7 @@ async def mcp_proxy_client(
         )
 
     async with http_client:
-        # SDK b1: Client takes the transport context manager directly.
-        # It owns the transport lifecycle and performs auto-initialization.
+        # MCP v2 Client owns the transport lifecycle and auto-initializes.
         transport_acm = streamable_http_client(url, http_client=http_client)
         async with Client(transport_acm) as client:
             yield client
