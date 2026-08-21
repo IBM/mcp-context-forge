@@ -295,7 +295,6 @@ For detailed guidance on resource limits and process management, see `docs/docs/
 | mcpContextForge.config.MCPGATEWAY_DIRECT_PROXY_TIMEOUT | string | `"30"` |  |
 | mcpContextForge.config.MCPGATEWAY_CATALOG_ENABLED | string | `"true"` |  |
 | mcpContextForge.config.MCPGATEWAY_CATALOG_FILE | string | `"mcp-catalog.yml"` |  |
-| mcpContextForge.config.MCPGATEWAY_CATALOG_AUTO_HEALTH_CHECK | string | `"true"` |  |
 | mcpContextForge.config.MCPGATEWAY_CATALOG_CACHE_TTL | string | `"3600"` |  |
 | mcpContextForge.config.MCPGATEWAY_CATALOG_PAGE_SIZE | string | `"100"` |  |
 | mcpContextForge.config.MCPGATEWAY_UI_TOOL_TEST_TIMEOUT | string | `"60000"` |  |
@@ -375,7 +374,6 @@ For detailed guidance on resource limits and process management, see `docs/docs/
 | mcpContextForge.config.PERFORMANCE_THRESHOLD_HTTP_REQUEST_MS | string | `"500.0"` |  |
 | mcpContextForge.config.PERFORMANCE_THRESHOLD_RESOURCE_READ_MS | string | `"1000.0"` |  |
 | mcpContextForge.config.PERFORMANCE_THRESHOLD_TOOL_INVOCATION_MS | string | `"2000.0"` |  |
-| mcpContextForge.config.PERFORMANCE_TRACKING_ENABLED | string | `"true"` |  |
 | mcpContextForge.config.PERMISSION_AUDIT_ENABLED | string | `"false"` |  |
 | mcpContextForge.config.PLUGINS_CLIENT_MTLS_CA_BUNDLE | string | `""` |  |
 | mcpContextForge.config.PLUGINS_CLIENT_MTLS_CERTFILE | string | `""` |  |
@@ -706,9 +704,6 @@ For detailed guidance on resource limits and process management, see `docs/docs/
 | mcpContextForge.config.MCPGATEWAY_GRPC_ENABLED | string | `"false"` |  |
 | mcpContextForge.config.MCPGATEWAY_GRPC_TIMEOUT | string | `"30"` |  |
 | mcpContextForge.config.MCPGATEWAY_GRPC_MAX_MESSAGE_SIZE | string | `"4194304"` |  |
-| mcpContextForge.config.MCPGATEWAY_GRPC_REFLECTION_ENABLED | string | `"true"` |  |
-| mcpContextForge.config.MCPGATEWAY_GRPC_TLS_ENABLED | string | `"false"` |  |
-| mcpContextForge.config.PERFORMANCE_TRACKING_ENABLED | string | `"true"` |  |
 | mcpContextForge.config.PERFORMANCE_THRESHOLD_DATABASE_QUERY_MS | string | `"100.0"` |  |
 | mcpContextForge.config.PERFORMANCE_THRESHOLD_RESOURCE_READ_MS | string | `"1000.0"` |  |
 | mcpContextForge.config.PERFORMANCE_THRESHOLD_TOOL_INVOCATION_MS | string | `"2000.0"` |  |
@@ -815,7 +810,6 @@ For detailed guidance on resource limits and process management, see `docs/docs/
 | mcpContextForge.secret.DCR_METADATA_CACHE_TTL | string | `"3600"` |  |
 | mcpContextForge.secret.DCR_CLIENT_NAME_TEMPLATE | string | `"ContextForge ({gateway_name})"` |  |
 | mcpContextForge.secret.DCR_REQUEST_REFRESH_TOKEN_WHEN_UNSUPPORTED | string | `"false"` |  |
-| mcpContextForge.secret.OAUTH_DISCOVERY_ENABLED | string | `"true"` |  |
 | mcpContextForge.secret.OAUTH_PREFERRED_CODE_CHALLENGE_METHOD | string | `"S256"` |  |
 | mcpContextForge.secret.JWT_AUDIENCE_VERIFICATION | string | `"true"` |  |
 | mcpContextForge.secret.JWT_ISSUER_VERIFICATION | string | `"true"` |  |
