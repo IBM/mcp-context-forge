@@ -226,7 +226,7 @@ async def test_full_payload_generation_with_mock_db():
     tool2.id = "t2"
     tool2.name = "gw1-private_tool"
     tool2.original_name = "private_tool"
-    tool2.input_schema = {"type": "object", "properties": {"text": {"type": "string"}}}
+    tool2.input_schema = None
     tool2.owner_email = "user1@example.com"
     tool2.team_id = "team1"
     tool2.visibility = "private"
@@ -296,7 +296,7 @@ async def test_full_payload_generation_with_mock_db():
             "allowed_tool_names": ["public_tool", "private_tool"],
             "tool_schemas": {
                 "public_tool": tool1.input_schema,
-                "private_tool": tool2.input_schema,
+                "private_tool": {},
             },
             "allowed_resource_names": ["Resource 1"],
             "allowed_resource_uris": ["resource://one"],
@@ -413,7 +413,7 @@ def test_create_payload_filters_empty_backends():
                 {
                     "id": "server1",
                     "backend_items": {
-                        "gateway1": {"tools": [], "resources": [], "prompts": []},
+                        "gateway1": {"tools": [], "tool_schemas": {}, "resources": [], "prompts": []},
                     },
                 }
             ],
@@ -442,7 +442,12 @@ def test_create_payload_excludes_non_streamable_gateways(transport: str):
                 {
                     "id": "server1",
                     "backend_items": {
-                        "gateway_non_streamable": {"tools": ["tool1"], "resources": [], "prompts": []},
+                        "gateway_non_streamable": {
+                            "tools": ["tool1"],
+                            "tool_schemas": {},
+                            "resources": [],
+                            "prompts": [],
+                        },
                     },
                 }
             ],
@@ -469,7 +474,7 @@ def test_create_payload_normalizes_null_passthrough_headers():
                 {
                     "id": "server1",
                     "backend_items": {
-                        "gateway1": {"tools": ["tool1"], "resources": [], "prompts": []},
+                        "gateway1": {"tools": ["tool1"], "tool_schemas": {}, "resources": [], "prompts": []},
                     },
                 }
             ],
@@ -499,7 +504,12 @@ def test_create_payload_handles_missing_references():
                 {
                     "id": "server1",
                     "backend_items": {
-                        "missing_gateway": {"tools": ["tool1"], "resources": ["missing_res"], "prompts": ["missing_prompt"]},
+                        "missing_gateway": {
+                            "tools": ["tool1"],
+                            "tool_schemas": {},
+                            "resources": ["missing_res"],
+                            "prompts": ["missing_prompt"],
+                        },
                     },
                 }
             ],
