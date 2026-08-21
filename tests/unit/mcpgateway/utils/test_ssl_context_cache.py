@@ -9,6 +9,7 @@ Unit tests for mcpgateway.utils.ssl_context_cache.
 # Standard
 import hashlib
 from datetime import datetime, timedelta
+import ssl
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -366,3 +367,41 @@ def test_is_expired_returns_false_when_no_timestamp(monkeypatch):
     monkeypatch.setattr(ssl_context_cache, "_SSL_CONTEXT_CACHE_TTL", 60)
     result = ssl_context_cache._is_expired("nonexistent-key")
     assert result is False
+
+
+def test_ssl_cert_file_loaded_into_context(monkeypatch, tmp_path) -> None:
+    """SSL_CERT_FILE bundle is loaded on top of the default context (lines 212-214)."""
+    pem_path = tmp_path / "extra-ca.pem"
+    pem_path.write_text("-----BEGIN CERTIFICATE-----\nFAKEENV\n-----END CERTIFICATE-----")
+    monkeypatch.setenv("SSL_CERT_FILE", str(pem_path))
+
+    with patch("mcpgateway.utils.ssl_context_cache.ssl.create_default_context") as mock_create:
+        ctx = Mock()
+        mock_create.return_value = ctx
+
+        result = ssl_context_cache.get_cached_ssl_context("ENV-CA-VALID")
+
+    assert result is ctx
+    ctx.load_verify_locations.assert_any_call(cafile=str(pem_path))
+
+
+def test_ssl_cert_file_missing_logs_warning(monkeypatch, caplog) -> None:
+    """A set-but-nonexistent SSL_CERT_FILE logs a warning instead of failing silently (lines 209-210)."""
+    monkeypatch.setenv("SSL_CERT_FILE", "/nonexistent/path/ca.pem")
+
+    result = ssl_context_cache.get_cached_ssl_context(None)
+
+    assert isinstance(result, ssl.SSLContext)
+    assert any("SSL_CERT_FILE" in record.message and "does not exist" in record.message for record in caplog.records)
+
+
+def test_ssl_cert_file_invalid_content_logs_warning(monkeypatch, tmp_path, caplog) -> None:
+    """An unreadable SSL_CERT_FILE bundle logs a warning and context creation continues (lines 215-216)."""
+    pem_path = tmp_path / "garbage.pem"
+    pem_path.write_text("this is not a certificate")
+    monkeypatch.setenv("SSL_CERT_FILE", str(pem_path))
+
+    result = ssl_context_cache.get_cached_ssl_context(None)
+
+    assert isinstance(result, ssl.SSLContext)
+    assert any("Failed to load SSL_CERT_FILE" in record.message for record in caplog.records)

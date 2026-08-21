@@ -1250,6 +1250,7 @@ class TestOAuthManager:
     async def test_exchange_code_for_tokens_with_ca_certificate(self):
         """Test _exchange_code_for_tokens with CA certificate (lines 1271-1277)."""
         manager = OAuthManager()
+        manager.settings.skip_ssl_verify = False  # Ensure SSL verification is enabled
         credentials = {
             "client_id": "test_client",
             "client_secret": "test_secret",
@@ -1445,6 +1446,7 @@ class TestOAuthManager:
     async def test_client_credentials_flow_with_ca_certificate(self):
         """Test client credentials flow with custom CA certificate."""
         manager = OAuthManager()
+        manager.settings.skip_ssl_verify = False  # Ensure SSL verification is enabled
         credentials = {
             "grant_type": "client_credentials",
             "client_id": "test_client",
@@ -1461,13 +1463,54 @@ class TestOAuthManager:
                 mock_get_ssl.assert_called_once_with(ca_cert, client_cert=None, client_key=None)
 
     @pytest.mark.asyncio
+    async def test_client_credentials_flow_value_error_not_retried(self):
+        """ValueError from _post_token_request is re-raised immediately without retries (config errors are not transient)."""
+        manager = OAuthManager(max_retries=3)
+        credentials = {
+            "client_secret": "test_secret",
+            "client_id": "test_client",
+            "token_url": "https://oauth.example.com/token",
+        }
+        with patch.object(manager, "_post_token_request", new=AsyncMock(side_effect=ValueError("mTLS requires both client_cert and client_key; got only one"))) as mock_post:
+            with pytest.raises(ValueError, match="mTLS requires both"):
+                await manager._client_credentials_flow(credentials, client_cert="cert", client_key="key")  # pragma: allowlist secret
+            assert mock_post.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_post_token_request_mtls_cert_without_key_raises(self):
+        """_post_token_request raises ValueError when only client_cert is provided (mTLS requires both)."""
+        manager = OAuthManager()
+        with pytest.raises(ValueError, match="mTLS requires both client_cert and client_key"):
+            await manager._post_token_request("https://oauth.example.com/token", data={}, client_cert="cert-only")
+
+    @pytest.mark.asyncio
+    async def test_post_token_request_mtls_key_without_cert_raises(self):
+        """_post_token_request raises ValueError when only client_key is provided (mTLS requires both)."""
+        manager = OAuthManager()
+        with pytest.raises(ValueError, match="mTLS requires both client_cert and client_key"):
+            await manager._post_token_request("https://oauth.example.com/token", data={}, client_key="key-only")  # pragma: allowlist secret
+
+    @pytest.mark.asyncio
+    async def test_post_token_request_skip_ssl_verify_disables_verification_with_ca_cert(self, monkeypatch):
+        """SKIP_SSL_VERIFY disables verification even when a custom CA certificate is provided."""
+        manager = OAuthManager()
+        monkeypatch.setattr(manager.settings, "skip_ssl_verify", True)
+        _, _, mock_client, ca_cert, _, _ = self._make_ca_cert_mocks()
+
+        with patch("mcpgateway.services.oauth_manager.httpx.AsyncClient", return_value=mock_client) as mock_client_cls:
+            result = await manager._post_token_request("https://oauth.example.com/token", data={}, ca_certificate=ca_cert)
+            assert result.status_code == 200
+            assert mock_client_cls.call_args.kwargs["verify"] is False
+
+    @pytest.mark.asyncio
     async def test_password_flow_with_ca_certificate(self):
         """Test password flow with custom CA certificate."""
         manager = OAuthManager()
+        manager.settings.skip_ssl_verify = False  # Ensure SSL verification is enabled
         credentials = {
             "grant_type": "password",
             "client_id": "test_client",
-            "client_secret": "test_secret",
+            "client_secret": "test_secret",  # pragma: allowlist secret
             "token_url": "https://oauth.example.com/token",
             "username": "user@example.com",
             "password": "secret",
@@ -1519,6 +1562,7 @@ class TestOAuthManager:
     async def test_refresh_token_with_ca_certificate(self):
         """Test refresh token with custom CA certificate."""
         manager = OAuthManager()
+        manager.settings.skip_ssl_verify = False  # Ensure SSL verification is enabled
         credentials = {
             "client_id": "test_client",
             "client_secret": "test_secret",  # pragma: allowlist secret
