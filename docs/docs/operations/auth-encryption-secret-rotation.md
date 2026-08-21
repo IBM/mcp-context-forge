@@ -59,18 +59,25 @@ The rotation script touches exactly these columns — everything else is untouch
 | `registered_oauth_clients` | `client_secret_encrypted`, `registration_access_token_encrypted` | Direct AES ciphertext |
 | `sso_providers` | `client_secret_encrypted` | Direct AES ciphertext |
 | `gateways` | `oauth_config` | JSON — sensitive keys re-encrypted recursively |
-| `a2a_server_auth` | `oauth_config` | JSON — sensitive keys re-encrypted recursively |
+| `servers` | `oauth_config` | JSON — sensitive keys re-encrypted recursively |
 | `a2a_agent_auth` | `oauth_config` | JSON — sensitive keys re-encrypted recursively |
 
 **services_auth path** (`base64url(nonce+ciphertext)` format — tool/agent/LLM credentials):
 
 | Table | Column(s) | Type |
 |-------|-----------|------|
+| `gateways` | `auth_value` | AES-GCM blob (JSON-quoted scalar — see note below) |
 | `tools` | `auth_value` | AES-GCM blob |
 | `a2a_agents` | `auth_value`, `auth_query_params` | AES-GCM blob / JSON dict of blobs |
 | `a2a_agent_auth` | `auth_value`, `auth_query_params` | AES-GCM blob / JSON dict of blobs |
+| `a2a_push_notification_configs` | `auth_token` | AES-GCM blob |
 | `gateways` | `auth_query_params` | JSON dict of AES-GCM blobs |
 | `llm_providers` | `api_key` | AES-GCM blob |
+
+> **Note — `gateways.auth_value` storage format:** this column is `mapped_column(JSON)` in `db.py`, so
+> SQLAlchemy stores the blob JSON-quoted on disk (e.g. `'"<base64url>"'`). The rotation script handles
+> this transparently via a dedicated helper that strips the outer JSON quotes on read and re-applies them
+> on write. No special handling is needed from operators.
 
 Tables that don't exist (optional features not deployed) are silently skipped. NULL
 values and plaintext values are also skipped. The script is **idempotent** — running
@@ -231,6 +238,11 @@ ROTATION SUMMARY:
 | `0` | All rows rotated (or nothing to rotate). Proceed to Step 6. |
 | `1` | One or more rows failed. Transaction rolled back. Check stderr before retrying. |
 
+> ⚠️ **Do not discard the old key or the database backup until Step 7 is complete.**
+> Exit code `0` confirms the script completed without errors, but it does not verify
+> that the gateway actually starts and serves traffic. Keep the old key and backup
+> available until you have confirmed the gateway is healthy in Step 7.
+
 ---
 
 ### Step 6 — Start the ContextForge gateway
@@ -240,10 +252,25 @@ encrypted under the new key. Start the gateway using whichever method your
 deployment uses. See the [Appendix](#appendix--deployment-specific-rotation-commands)
 for deployment-specific commands.
 
-**Confirm everything is running as expected:** verify there is no
-`SecurityConfigurationError` in the startup logs, then confirm SSO / OAuth flows,
-tool auth, and agent credentials all work correctly before discarding the database
-backup.
+---
+
+### Step 7 — Verify the rotation is complete
+
+Before discarding the old key or the database backup, confirm the gateway is
+serving traffic correctly:
+
+1. Check startup logs — no `SecurityConfigurationError` should appear.
+2. Hit the gateway list endpoint and confirm HTTP 200:
+   ```bash
+   curl -s -o /dev/null -w "%{http_code}" \
+       -H "Authorization: Bearer <token>" \
+       https://<your-gateway>/admin/gateways/partial?page=1
+   ```
+3. Spot-check that MCP Servers appear in the Admin UI.
+4. Confirm SSO / OAuth flows, tool auth, and agent credentials work correctly.
+
+Only after these checks pass is it safe to discard the old `AUTH_ENCRYPTION_SECRET`
+and the database backup.
 
 ---
 

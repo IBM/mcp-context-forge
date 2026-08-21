@@ -40,36 +40,58 @@ Affected columns (all encrypted under ``AUTH_ENCRYPTION_SECRET``):
 
 EncryptionService path (``v2:{...}`` format):
 
-+----------------------------+-------------------------------------+
-| Table                      | Column(s)                           |
-+============================+=====================================+
-| oauth_tokens               | access_token, refresh_token         |
-+----------------------------+-------------------------------------+
-| registered_oauth_clients   | client_secret_encrypted,            |
-|                            | registration_access_token_encrypted |
-+----------------------------+-------------------------------------+
-| sso_providers              | client_secret_encrypted             |
-+----------------------------+-------------------------------------+
-| gateways / a2a_server_auth | oauth_config (JSON, recursive)      |
-+----------------------------+-------------------------------------+
-| a2a_agent_auth             | oauth_config (JSON, recursive)      |
-+----------------------------+-------------------------------------+
++---------------------------+-------------------------------------+
+| Table                     | Column(s)                           |
++===========================+=====================================+
+| oauth_tokens              | access_token, refresh_token         |
++---------------------------+-------------------------------------+
+| registered_oauth_clients  | client_secret_encrypted,            |
+|                           | registration_access_token_encrypted |
++---------------------------+-------------------------------------+
+| sso_providers             | client_secret_encrypted             |
++---------------------------+-------------------------------------+
+| gateways                  | client_key, oauth_config (JSON)     |
++---------------------------+-------------------------------------+
+| servers                   | oauth_config (JSON, recursive)      |
++---------------------------+-------------------------------------+
+| a2a_agents                | oauth_config (JSON, recursive)      |
++---------------------------+-------------------------------------+
+| a2a_agent_auth            | oauth_config (JSON, recursive)      |
++---------------------------+-------------------------------------+
 
 services_auth path (``base64url(nonce+ciphertext)`` format — AES-GCM):
 
-+----------------------------+-------------------------------------+
-| Table                      | Column(s)                           |
-+============================+=====================================+
-| tools                      | auth_value                          |
-+----------------------------+-------------------------------------+
-| a2a_agents                 | auth_value, auth_query_params (JSON)|
-+----------------------------+-------------------------------------+
-| a2a_agent_auth             | auth_value, auth_query_params (JSON)|
-+----------------------------+-------------------------------------+
-| gateways                   | auth_query_params (JSON)            |
-+----------------------------+-------------------------------------+
-| llm_providers              | api_key                             |
-+----------------------------+-------------------------------------+
++------------------------------+--------------------------------------------------+
+| Table                        | Column(s)                                        |
++==============================+==================================================+
+| gateways                     | auth_value (JSON scalar), auth_query_params      |
++------------------------------+--------------------------------------------------+
+| tools                        | auth_value, headers (nested envelope JSON)       |
++------------------------------+--------------------------------------------------+
+| a2a_agents                   | auth_value, auth_query_params (JSON dict)        |
++------------------------------+--------------------------------------------------+
+| a2a_agent_auth               | auth_value, auth_query_params (JSON dict)        |
++------------------------------+--------------------------------------------------+
+| a2a_push_notification_configs| auth_token                                       |
++------------------------------+--------------------------------------------------+
+| llm_providers                | api_key, config (nested envelope JSON)           |
++------------------------------+--------------------------------------------------+
+
+Note: ``gateways.auth_value`` is ``mapped_column(JSON)`` — the blob is stored
+JSON-quoted on disk.  It is handled by a dedicated helper
+(``_migrate_services_auth_json_scalar_columns``) that strips the outer JSON
+quotes on read and re-applies them on write.  All other ``sa_simple_targets``
+entries are ``mapped_column(Text)`` and are handled by the plain helper.
+
+Note: ``tools.headers`` and ``llm_providers.config`` store encrypted values
+as nested sentinel-keyed envelopes within a JSON dict:
+
+- ``tools.headers``: ``{"header_name": {"_mcpgateway_encrypted_header_value_v1": "<blob>"}}``
+- ``llm_providers.config``: ``{"key": {"_mcpgateway_encrypted_value_v1": "<blob>"}}``
+
+These are handled by ``_migrate_services_auth_sentinel_json_columns``, which
+recursively traverses the JSON structure, detects the sentinel dict, and
+re-encrypts only the inner blob string.
 
 The script is **idempotent**: if a value is already encrypted under the new key
 (or is plaintext / NULL) it is skipped.  Running it twice is safe.
@@ -314,6 +336,96 @@ def _migrate_services_auth_simple_columns(
     return counts
 
 
+def _migrate_services_auth_json_scalar_columns(
+    session: Session,
+    table: str,
+    id_col: str,
+    columns: list[str],
+    old_secret: str,
+    new_secret: str,
+    dry_run: bool,
+) -> _Counter:
+    """Re-encrypt services_auth blobs stored as JSON-quoted scalars.
+
+    Some columns (e.g. ``gateways.auth_value``) are declared
+    ``mapped_column(JSON)`` in ``db.py``.  SQLAlchemy serialises the Python
+    string value through ``json.dumps()`` on write, so the on-disk
+    representation is a JSON-quoted string: ``'"<base64url-blob>"'``.
+    A raw ``SELECT`` via ``text()`` returns those outer quotes, which contain
+    ``"`` characters that are not in the base64url alphabet, causing
+    ``_is_services_auth_blob()`` to classify the value as plaintext and skip it
+    — a silent fail-open that leaves the blob under the old key.
+
+    This helper strips the outer JSON quotes on read, re-encrypts the inner
+    blob, and writes ``json.dumps(new_blob)`` back so the column round-trips
+    correctly under both SQLite and PostgreSQL.
+
+    Args:
+        session: Active SQLAlchemy session (no autocommit).
+        table: Database table name.
+        id_col: Primary key column name for the UPDATE statement.
+        columns: List of JSON-scalar column names to re-encrypt.
+        old_secret: The old ``AUTH_ENCRYPTION_SECRET`` passphrase.
+        new_secret: The new ``AUTH_ENCRYPTION_SECRET`` passphrase.
+        dry_run: When True, no writes are performed.
+
+    Returns:
+        dict: Counters with keys ``found``, ``migrated``, ``skipped``, ``errors``.
+    """
+    counts: _Counter = {"found": 0, "migrated": 0, "skipped": 0, "errors": 0}
+
+    col_list = ", ".join(columns)
+    rows = session.execute(text(f"SELECT {id_col}, {col_list} FROM {table}")).fetchall()  # nosec B608
+    counts["found"] = len(rows)
+
+    for row in rows:
+        row_id = row[0]
+        updates: dict[str, str] = {}
+        row_had_error = False
+
+        for i, col in enumerate(columns):
+            raw_val = row[i + 1]
+
+            if raw_val is None:
+                counts["skipped"] += 1
+                continue
+
+            # Unwrap JSON-quoted scalar: raw_val is either the Python str already
+            # (PostgreSQL/psycopg deserialises on read) or a JSON string literal
+            # (SQLite raw text). Normalise to bare str in both cases.
+            if isinstance(raw_val, str):
+                try:
+                    inner = json.loads(raw_val)
+                except (json.JSONDecodeError, ValueError):
+                    inner = raw_val  # already a bare string (PostgreSQL path)
+            else:
+                inner = raw_val
+
+            if not isinstance(inner, str):
+                counts["skipped"] += 1
+                continue
+
+            new_val, status = _reencrypt_services_auth_value(inner, old_secret, new_secret)
+            if status == "migrated":
+                # Re-wrap as JSON scalar so the write round-trips correctly
+                # through the JSON column on both SQLite and PostgreSQL.
+                updates[col] = json.dumps(new_val)
+                counts["migrated"] += 1
+            elif status.startswith("error:"):
+                counts["errors"] += 1
+                row_had_error = True
+                logger.error("  %s.%s id=%r: %s", table, col, row_id, status)
+            else:
+                counts["skipped"] += 1
+
+        if updates and not dry_run and not row_had_error:
+            set_clause = ", ".join(f"{c} = :{c}" for c in updates)
+            params = {**updates, "_id": row_id}
+            session.execute(text(f"UPDATE {table} SET {set_clause} WHERE {id_col} = :_id"), params)  # nosec B608
+
+    return counts
+
+
 def _migrate_services_auth_json_columns(
     session: Session,
     table: str,
@@ -392,6 +504,140 @@ def _migrate_services_auth_json_columns(
 
             if col_migrated > 0 and col_errors == 0:
                 updates[col] = json.dumps(new_dict)
+
+        if updates and not dry_run:
+            set_clause = ", ".join(f"{c} = :{c}" for c in updates)
+            params = {**updates, "_id": row_id}
+            session.execute(text(f"UPDATE {table} SET {set_clause} WHERE {id_col} = :_id"), params)  # nosec B608
+
+    return counts
+
+
+def _reencrypt_sentinel_json(
+    node: Any,
+    sentinel_key: str,
+    old_secret: str,
+    new_secret: str,
+) -> tuple[Any, int, int, int]:
+    """Recursively re-encrypt services_auth blobs stored in sentinel-keyed envelopes.
+
+    Some JSON columns store encrypted values as a dict with a fixed sentinel key:
+
+    - ``tools.headers``:
+      ``{"header_name": {"_mcpgateway_encrypted_header_value_v1": "<blob>"}}``
+    - ``llm_providers.config``:
+      ``{"key": {"_mcpgateway_encrypted_value_v1": "<blob>"}}``
+
+    When a dict node whose **only** key matches *sentinel_key* is encountered,
+    its string value is treated as a services_auth blob and re-encrypted.
+    All other nodes (dicts, lists, scalars) are traversed recursively.
+
+    Args:
+        node: Parsed JSON value (dict, list, or scalar).
+        sentinel_key: The marker key that identifies an encrypted envelope.
+        old_secret: The old ``AUTH_ENCRYPTION_SECRET`` passphrase.
+        new_secret: The new ``AUTH_ENCRYPTION_SECRET`` passphrase.
+
+    Returns:
+        tuple: ``(new_node, migrated, skipped, errors)`` counts.
+    """
+    if isinstance(node, dict):
+        # Detect sentinel envelope: exactly one key matching sentinel_key with a str value.
+        if list(node.keys()) == [sentinel_key] and isinstance(node.get(sentinel_key), str):
+            blob = node[sentinel_key]
+            new_blob, status = _reencrypt_services_auth_value(blob, old_secret, new_secret)
+            if status == "migrated":
+                return {sentinel_key: new_blob}, 1, 0, 0
+            if status.startswith("error:"):
+                return node, 0, 0, 1
+            return node, 0, 1, 0  # skipped_null / skipped_plaintext / skipped_already_new
+
+        # Regular dict — recurse into values.
+        result: dict = {}
+        migrated = skipped = errors = 0
+        for k, v in node.items():
+            new_v, m, s, e = _reencrypt_sentinel_json(v, sentinel_key, old_secret, new_secret)
+            result[k] = new_v
+            migrated += m
+            skipped += s
+            errors += e
+        return result, migrated, skipped, errors
+
+    if isinstance(node, list):
+        result_list: list = []
+        migrated = skipped = errors = 0
+        for item in node:
+            new_item, m, s, e = _reencrypt_sentinel_json(item, sentinel_key, old_secret, new_secret)
+            result_list.append(new_item)
+            migrated += m
+            skipped += s
+            errors += e
+        return result_list, migrated, skipped, errors
+
+    return node, 0, 0, 0
+
+
+def _migrate_services_auth_sentinel_json_columns(
+    session: Session,
+    table: str,
+    id_col: str,
+    columns: list[str],
+    sentinel_key: str,
+    old_secret: str,
+    new_secret: str,
+    dry_run: bool,
+) -> _Counter:
+    """Re-encrypt services_auth blobs nested inside sentinel-envelope JSON columns.
+
+    Handles ``tools.headers`` and ``llm_providers.config`` where the encrypted
+    value is wrapped as ``{sentinel_key: "<blob>"}``.  Traverses the full JSON
+    structure recursively and re-encrypts every matching envelope.
+
+    Args:
+        session: Active SQLAlchemy session (no autocommit).
+        table: Database table name.
+        id_col: Primary key column name.
+        columns: List of JSON column names to process.
+        sentinel_key: The envelope marker key (e.g. ``_mcpgateway_encrypted_header_value_v1``).
+        old_secret: The old ``AUTH_ENCRYPTION_SECRET`` passphrase.
+        new_secret: The new ``AUTH_ENCRYPTION_SECRET`` passphrase.
+        dry_run: When True, no writes are performed.
+
+    Returns:
+        dict: Counters with keys ``found``, ``migrated``, ``skipped``, ``errors``.
+    """
+    counts: _Counter = {"found": 0, "migrated": 0, "skipped": 0, "errors": 0}
+
+    col_list = ", ".join(columns)
+    rows = session.execute(text(f"SELECT {id_col}, {col_list} FROM {table}")).fetchall()  # nosec B608
+    counts["found"] = len(rows)
+
+    for row in rows:
+        row_id = row[0]
+        updates: dict = {}
+
+        for i, col in enumerate(columns):
+            raw_val = row[i + 1]
+            if raw_val is None:
+                counts["skipped"] += 1
+                continue
+
+            if isinstance(raw_val, str):
+                try:
+                    node = json.loads(raw_val)
+                except (json.JSONDecodeError, ValueError):
+                    counts["skipped"] += 1
+                    continue
+            else:
+                node = raw_val
+
+            new_node, m, s, e = _reencrypt_sentinel_json(node, sentinel_key, old_secret, new_secret)
+            counts["migrated"] += m
+            counts["skipped"] += s
+            counts["errors"] += e
+
+            if m > 0 and e == 0:
+                updates[col] = json.dumps(new_node)
 
         if updates and not dry_run:
             set_clause = ", ".join(f"{c} = :{c}" for c in updates)
@@ -738,23 +984,38 @@ def run_migration(
         ("oauth_tokens", "id", ["access_token", "refresh_token"]),
         ("registered_oauth_clients", "id", ["client_secret_encrypted", "registration_access_token_encrypted"]),
         ("sso_providers", "id", ["client_secret_encrypted"]),
+        ("gateways", "id", ["client_key"]),
     ]
 
     # Tables whose oauth_config JSON contains recursively-encrypted sensitive keys — EncryptionService path
     json_targets = [
         # (table, id_col, [json_columns])
         ("gateways", "id", ["oauth_config"]),
-        ("a2a_server_auth", "id", ["oauth_config"]),
+        ("servers", "id", ["oauth_config"]),
+        ("a2a_agents", "id", ["oauth_config"]),
         ("a2a_agent_auth", "id", ["oauth_config"]),
     ]
 
     # Tables with plain-text services_auth blobs (base64url AES-GCM nonce+ciphertext)
     sa_simple_targets = [
         # (table, id_col, [columns])
+        # NOTE: all entries here must be mapped_column(Text), not JSON.
+        # JSON-typed columns that hold a services_auth blob scalar belong in
+        # sa_json_scalar_targets below so the JSON codec round-trip is applied.
         ("tools", "id", ["auth_value"]),
         ("a2a_agents", "id", ["auth_value"]),
         ("a2a_agent_auth", "id", ["auth_value"]),
+        ("a2a_push_notification_configs", "id", ["auth_token"]),
         ("llm_providers", "id", ["api_key"]),
+    ]
+
+    # Tables where a services_auth blob is stored as a JSON-quoted scalar
+    # (mapped_column(JSON) holding a plain str at runtime).
+    # The helper json.loads() on read and json.dumps() on write to preserve
+    # the JSON encoding that SQLAlchemy expects for the column type.
+    sa_json_scalar_targets = [
+        # (table, id_col, [columns])
+        ("gateways", "id", ["auth_value"]),
     ]
 
     # Tables with JSON dicts whose values are services_auth blobs (auth_query_params)
@@ -763,6 +1024,16 @@ def run_migration(
         ("gateways", "id", ["auth_query_params"]),
         ("a2a_agents", "id", ["auth_query_params"]),
         ("a2a_agent_auth", "id", ["auth_query_params"]),
+    ]
+
+    # Tables with nested sentinel-envelope JSON columns (services_auth blobs wrapped in
+    # {sentinel_key: "<blob>"} dicts).  Each entry adds a (table, id_col, [columns], sentinel_key).
+    tool_header_sentinel = "_mcpgateway_encrypted_header_value_v1"
+    provider_config_sentinel = "_mcpgateway_encrypted_value_v1"
+    sa_sentinel_targets = [
+        # (table, id_col, [columns], sentinel_key)
+        ("tools", "id", ["headers"], tool_header_sentinel),
+        ("llm_providers", "id", ["config"], provider_config_sentinel),
     ]
 
     session = session_factory()
@@ -825,6 +1096,20 @@ def run_migration(
             _accumulate(total, counts)
             logger.info("    → found=%d  migrated=%d  skipped=%d  errors=%d", counts["found"], counts["migrated"], counts["skipped"], counts["errors"])
 
+        for table, id_col, columns in sa_json_scalar_targets:
+            if table not in existing_tables:
+                logger.info("  %s: table not found — skipping", table)
+                continue
+            existing_cols = {c["name"] for c in inspector.get_columns(table)}
+            cols = [c for c in columns if c in existing_cols]
+            if not cols:
+                continue
+
+            logger.info("  Migrating %s (services_auth JSON scalar) [%s] ...", table, ", ".join(cols))
+            counts = _migrate_services_auth_json_scalar_columns(session, table, id_col, cols, old_key, new_key, dry_run)
+            _accumulate(total, counts)
+            logger.info("    → found=%d  migrated=%d  skipped=%d  errors=%d", counts["found"], counts["migrated"], counts["skipped"], counts["errors"])
+
         for table, id_col, columns in sa_json_targets:
             if table not in existing_tables:
                 logger.info("  %s: table not found — skipping", table)
@@ -836,6 +1121,20 @@ def run_migration(
 
             logger.info("  Migrating %s auth_query_params (services_auth) [%s] ...", table, ", ".join(cols))
             counts = _migrate_services_auth_json_columns(session, table, id_col, cols, old_key, new_key, dry_run)
+            _accumulate(total, counts)
+            logger.info("    → found=%d  migrated=%d  skipped=%d  errors=%d", counts["found"], counts["migrated"], counts["skipped"], counts["errors"])
+
+        for table, id_col, columns, sentinel_key in sa_sentinel_targets:
+            if table not in existing_tables:
+                logger.info("  %s: table not found — skipping", table)
+                continue
+            existing_cols = {c["name"] for c in inspector.get_columns(table)}
+            cols = [c for c in columns if c in existing_cols]
+            if not cols:
+                continue
+
+            logger.info("  Migrating %s sentinel-envelope (services_auth) [%s] ...", table, ", ".join(cols))
+            counts = _migrate_services_auth_sentinel_json_columns(session, table, id_col, cols, sentinel_key, old_key, new_key, dry_run)
             _accumulate(total, counts)
             logger.info("    → found=%d  migrated=%d  skipped=%d  errors=%d", counts["found"], counts["migrated"], counts["skipped"], counts["errors"])
 
