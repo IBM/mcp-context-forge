@@ -37,6 +37,7 @@ def build_token_user_context(
     db: Session,
     user_email: str,
     token_teams: Optional[List[str]],
+    jwt_teams_claim: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
     """Build a user_context dict for TokenStorageService without querying DB for teams.
 
@@ -54,9 +55,16 @@ def build_token_user_context(
         db: SQLAlchemy session (used only for the is_admin flag lookup).
         user_email: ContextForge user email address.
         token_teams: JWT-scoped team list from ``request.state.token_teams``.
-            - ``None``  → Admin UI session (no teams claim) → shared Vault path
-            - ``[]``    → Public-only token                 → shared Vault path
-            - ``[...]`` → Team-scoped API token             → team Vault path
+            - ``None``  → Admin UI session (admin bypass) → shared Vault path
+                          *unless* jwt_teams_claim provides a path hint (see below)
+            - ``[]``    → Public-only token               → shared Vault path (always)
+            - ``[...]`` → Team-scoped API token           → team Vault path
+        jwt_teams_claim: Raw JWT ``teams`` claim from ``request.state.jwt_teams_claim``.
+            Used ONLY as a Vault-path hint when ``token_teams`` is ``None`` (admin
+            bypass from ``resolve_session_teams``).  Mirrors the same fallback logic
+            in ``oauth_router._build_user_context`` (lines 128-133) so that the store
+            path and the lookup path resolve to the same Vault segment for admins.
+            NEVER used for access-control decisions.  Default ``None``.
 
     Returns:
         Dict with keys ``email``, ``teams``, ``is_admin``.
@@ -71,6 +79,9 @@ def build_token_user_context(
         >>> ctx2 = build_token_user_context(db, 'alice@example.com', None)
         >>> ctx2['teams'] is None
         True
+        >>> ctx3 = build_token_user_context(db, 'alice@example.com', None, ['engineering'])
+        >>> ctx3['teams']
+        ['engineering']
     """
     # First-Party - deferred to avoid circular imports at module load time
     from mcpgateway.db import EmailUser  # pylint: disable=import-outside-toplevel
@@ -81,16 +92,22 @@ def build_token_user_context(
     if user_row:
         is_admin = user_row.is_admin
 
-    # Collapse both None (missing teams claim — Admin UI) and [] (explicit public-only
-    # token) to None so the Vault backend routes both to the "shared" path segment.
-    # These two cases have different meanings in the AGENTS.md token-scoping table
-    # (None = Admin bypass, [] = public-only), but the Vault-path concern is only
-    # *which bucket to store tokens in*: both Admin UI sessions and public-only tokens
-    # lack a meaningful team scope, so sharing one Vault path is intentional for
-    # Phase 1. If Phase 2 requires separate "shared-admin" vs. "shared-public" paths,
-    # change this line to: ``effective_teams = token_teams if token_teams is not None else None``
-    # and add the two distinct path segments in VaultTokenBackend._construct_vault_path().
-    effective_teams: Optional[List[str]] = token_teams if token_teams else None
+    # Determine the effective team for Vault path routing.
+    #
+    # token_teams == [...] : team-scoped token  → use it directly (most common path)
+    # token_teams is None  : admin bypass       → fall back to jwt_teams_claim hint so
+    #                        an admin who stored under "engineering/" can read from the
+    #                        same path.  Mirrors oauth_router._build_user_context:128-133.
+    #                        jwt_teams_claim is a path hint ONLY, never used for authz.
+    # token_teams == []    : public-only/revoked → shared path (always, no hint applies)
+    if token_teams:
+        effective_teams: Optional[List[str]] = token_teams
+    elif token_teams is None and jwt_teams_claim:
+        filtered = [t for t in jwt_teams_claim if t and isinstance(t, str)]
+        effective_teams = filtered or None
+    else:
+        # token_teams == [] (public-only/revoked) → shared Vault path; correct.
+        effective_teams = None
 
     return {
         "email": user_email,

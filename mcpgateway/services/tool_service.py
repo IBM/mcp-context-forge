@@ -4161,6 +4161,7 @@ class ToolService(BaseService):
         token_teams: Optional[List[str]],
         gateway_id_str: str,
         gateway_name: str,
+        jwt_teams_claim: Optional[List[str]] = None,
     ) -> Optional[Dict[str, Any]]:
         """Return per-user Vault auth headers for non-OAuth gateways, or None.
 
@@ -4176,6 +4177,7 @@ class ToolService(BaseService):
             token_teams: JWT-scoped team list from the caller token.
             gateway_id_str: Gateway UUID string.
             gateway_name: Gateway display name (for log messages only).
+            jwt_teams_claim: Raw JWT teams claim for Vault path hint on admin bypass.
 
         Returns:
             Dict of ``{header: value}`` pairs if found, otherwise ``None``.
@@ -4186,7 +4188,7 @@ class ToolService(BaseService):
             from mcpgateway.services.token_storage_service import TokenStorageService, build_token_user_context  # pylint: disable=import-outside-toplevel
 
             with fresh_db_session() as token_db:
-                token_storage_context = build_token_user_context(token_db, app_user_email, token_teams)
+                token_storage_context = build_token_user_context(token_db, app_user_email, token_teams, jwt_teams_claim)
                 token_storage = TokenStorageService(token_db, user_context=token_storage_context)
                 user_headers = await token_storage.get_user_auth_headers(gateway_id_str, app_user_email)
             if user_headers:
@@ -4219,6 +4221,7 @@ class ToolService(BaseService):
         app_user_email: Optional[str] = None,
         user_email: Optional[str] = None,
         token_teams: Optional[List[str]] = None,
+        jwt_teams_claim: Optional[List[str]] = None,
         server_id: Optional[str] = None,
         plugin_global_context: Optional[GlobalContext] = None,
         plugin_context_table: Optional[PluginContextTable] = None,
@@ -4243,6 +4246,7 @@ class ToolService(BaseService):
             app_user_email: OAuth application user email, when present.
             user_email: Effective requester email after auth normalization.
             token_teams: Normalized team scope from the caller token.
+            jwt_teams_claim: Raw JWT teams claim forwarded as Vault path hint for admin bypass.
             server_id: Optional virtual server identifier restricting tool access.
             plugin_global_context: Optional global context from middleware for hook continuity.
             plugin_context_table: Optional context table from prior hooks for state sharing.
@@ -4504,7 +4508,7 @@ class ToolService(BaseService):
                     with fresh_db_session() as token_db:
                         # build_token_user_context uses token_teams as-is (JWT sole authority)
                         # and only queries DB for the non-scoped is_admin flag.
-                        token_storage_context = build_token_user_context(token_db, app_user_email, token_teams)
+                        token_storage_context = build_token_user_context(token_db, app_user_email, token_teams, jwt_teams_claim)
                         token_storage = TokenStorageService(token_db, user_context=token_storage_context)
                         access_token = await token_storage.get_user_token(gateway_id_str, app_user_email)
 
@@ -4542,7 +4546,7 @@ class ToolService(BaseService):
             # writes the per-user credential as a plain {header: value} dict under a `headers` field
             # at the same per-user Vault path used for OAuth tokens.
             try:
-                vault_headers = await self._resolve_vault_auth_headers(app_user_email, token_teams, gateway_id_str, gateway_name)
+                vault_headers = await self._resolve_vault_auth_headers(app_user_email, token_teams, gateway_id_str, gateway_name, jwt_teams_claim)
             except (VaultConnectionError, VaultAuthError) as vault_err:
                 # Vault is down or auth failed — surface a 503-style error rather than
                 # falling back to shared credentials (CWE-284 credential isolation).
@@ -4859,6 +4863,7 @@ class ToolService(BaseService):
         app_user_email: Optional[str],
         user_email: Optional[str],
         token_teams: Optional[List[str]],
+        jwt_teams_claim: Optional[List[str]],
         server_id: Optional[str],
         context_table: Any,
         global_context: Any,
@@ -4884,6 +4889,7 @@ class ToolService(BaseService):
             app_user_email: ContextForge user email for OAuth.
             user_email: User email for authorization.
             token_teams: Team IDs from JWT token.
+            jwt_teams_claim: Raw JWT teams claim forwarded for Vault path hint.
             server_id: Virtual server ID for scoping.
             context_table: Plugin local context table.
             global_context: Plugin global context.
@@ -4914,6 +4920,7 @@ class ToolService(BaseService):
                 app_user_email=app_user_email,
                 user_email=user_email,
                 token_teams=token_teams,
+                jwt_teams_claim=jwt_teams_claim,
                 server_id=server_id,
                 plugin_context_table=context_table,
                 plugin_global_context=global_context,
@@ -5150,6 +5157,7 @@ class ToolService(BaseService):
         app_user_email: Optional[str] = None,
         user_email: Optional[str] = None,
         token_teams: Optional[List[str]] = None,
+        jwt_teams_claim: Optional[List[str]] = None,
         server_id: Optional[str] = None,
         plugin_context_table: Optional[PluginContextTable] = None,
         plugin_global_context: Optional[GlobalContext] = None,
@@ -5174,6 +5182,9 @@ class ToolService(BaseService):
                 None = unauthenticated request.
             token_teams (Optional[List[str]], optional): Team IDs from JWT token for authorization.
                 None = unrestricted admin, [] = public-only, [...] = team-scoped.
+            jwt_teams_claim (Optional[List[str]], optional): Raw JWT ``teams`` claim forwarded
+                from ``request.state.jwt_teams_claim``.  Used ONLY as a Vault path hint for
+                admin bypass (token_teams=None) — never for access-control decisions.  Default None.
             server_id (Optional[str], optional): Virtual server ID for server scoping enforcement.
                 If provided, tool must be attached to this server.
             plugin_context_table: Optional plugin context table from previous hooks for cross-hook state sharing.
@@ -5955,7 +5966,7 @@ class ToolService(BaseService):
 
                                     # build_token_user_context uses token_teams as-is (JWT sole authority)
                                     # and only queries DB for the non-scoped is_admin flag.
-                                    token_storage_context = build_token_user_context(token_db, app_user_email, token_teams)
+                                    token_storage_context = build_token_user_context(token_db, app_user_email, token_teams, jwt_teams_claim)
                                     token_storage = TokenStorageService(token_db, user_context=token_storage_context)
                                     access_token = await token_storage.get_user_token(gateway_id_str, app_user_email)
 
@@ -6000,7 +6011,7 @@ class ToolService(BaseService):
                     else:
                         # Non-OAuth: per-user Vault creds FIRST, then gateway-wide static auth.
                         try:
-                            vault_headers = await self._resolve_vault_auth_headers(app_user_email, token_teams, gateway_id_str, gateway_name)
+                            vault_headers = await self._resolve_vault_auth_headers(app_user_email, token_teams, gateway_id_str, gateway_name, jwt_teams_claim)
                         except (VaultConnectionError, VaultAuthError) as vault_err:
                             # Vault is down or auth failed — surface a clear error rather than
                             # falling back to shared credentials (CWE-284 credential isolation).
@@ -6822,6 +6833,7 @@ class ToolService(BaseService):
                             app_user_email,
                             user_email,
                             token_teams,
+                            jwt_teams_claim,
                             server_id,
                             context_table,
                             global_context,
@@ -6879,6 +6891,7 @@ class ToolService(BaseService):
                         app_user_email,
                         user_email,
                         token_teams,
+                        jwt_teams_claim,
                         server_id,
                         context_table,
                         global_context,
@@ -6946,6 +6959,7 @@ class ToolService(BaseService):
                         app_user_email,
                         user_email,
                         token_teams,
+                        jwt_teams_claim,
                         server_id,
                         context_table,
                         global_context,

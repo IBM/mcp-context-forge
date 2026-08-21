@@ -265,8 +265,17 @@ class VaultTokenBackend(AbstractTokenBackend):
                 if e.response.status_code == 403:
                     logger.critical("Vault auth failure - VAULT_TOKEN invalid or expired")
                     raise VaultAuthError("VAULT_TOKEN invalid or expired") from e
-                # Re-raise other HTTP errors (4xx)
-                raise
+                # Wrap all terminal HTTP errors (non-403 4xx, or exhausted 5xx) as
+                # VaultConnectionError so every caller gets one of the two declared
+                # exception types — no raw httpx.HTTPStatusError escapes to callers
+                # that only catch (VaultConnectionError, VaultAuthError).
+                logger.error(
+                    "Vault returned HTTP %d for %s %s",
+                    e.response.status_code,
+                    method,
+                    SecurityValidator.sanitize_log_message(path),
+                )
+                raise VaultConnectionError(f"Vault returned HTTP {e.response.status_code}") from e
 
         # Should never reach here due to raise in loop, but make mypy happy
         raise VaultConnectionError("Unexpected error in Vault request retry logic")
@@ -347,8 +356,32 @@ class VaultTokenBackend(AbstractTokenBackend):
             }
         }
 
-        # Write to Vault
-        await self._vault_request("POST", path, payload)
+        # Write to Vault — treat a None return (404 from _vault_request) as a
+        # misconfigured mount: raise so the caller gets a hard failure rather than
+        # a silent no-op that logs "Stored OAuth tokens in Vault" but writes nothing.
+        # Also wraps unexpected exceptions to keep the declared exception contract.
+        try:
+            write_result = await self._vault_request("POST", path, payload)
+        except (VaultConnectionError, VaultAuthError):
+            raise  # already the right type; propagate directly
+        except Exception as e:
+            logger.error(
+                "Vault write failed for gateway %s, user %s: %s",
+                SecurityValidator.sanitize_log_message(gateway_id),
+                SecurityValidator.sanitize_log_message(app_user_email),
+                SecurityValidator.sanitize_log_message(str(e)),
+            )
+            raise VaultConnectionError("Token write to Vault failed") from e
+
+        if write_result is None:
+            # _vault_request returns None on 404 — the KV mount path is wrong.
+            # Do NOT log success or return a TokenRecord; surface the misconfiguration.
+            logger.error(
+                "Vault write returned 404 for gateway %s (path=%s) — check VAULT_KV_MOUNT and VAULT_PATH_PREFIX configuration",
+                SecurityValidator.sanitize_log_message(gateway_id),
+                SecurityValidator.sanitize_log_message(path),
+            )
+            raise VaultConnectionError("Vault mount not found (404) — check VAULT_KV_MOUNT configuration")
 
         # Mark the cache entry as immediately expired rather than deleting it.
         # Deleting only clears this worker's copy; other workers in a multi-pod
