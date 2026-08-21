@@ -58,6 +58,7 @@ import re
 import shlex
 import socket
 from typing import Any, Dict, Iterable, List, Optional, Pattern
+import unicodedata
 from urllib.parse import unquote, urlparse
 import uuid
 
@@ -2375,6 +2376,54 @@ class SecurityValidator:
         # Remove control characters except newlines and tabs (uses precompiled regex)
         sanitized = _CONTROL_CHARS_RE.sub("", text)
         return sanitized
+
+    @classmethod
+    def sanitize_credential_value(cls, value: Optional[str], field_name: str) -> Optional[str]:
+        """Strip invisible Unicode formatting characters from a credential value and reject any other non-ASCII content.
+
+        HTTP header values must be ASCII; the underlying HTTP client raises a bare
+        ``UnicodeEncodeError`` otherwise, which surfaces as an opaque connection failure far from
+        the credential that caused it. Unicode "format" characters (category ``Cf`` -- e.g. zero-width
+        spaces, the word joiner, byte-order marks) are common copy/paste artifacts from rendered
+        documents and are never a meaningful part of a real credential, so they are stripped
+        silently. Any other non-ASCII character is rejected outright rather than silently altered,
+        since mutating the rest of a secret could turn it into a different-but-plausible value.
+
+        Args:
+            value (Optional[str]): Credential value to sanitize (token, password, header value, etc).
+            field_name (str): Name of the field, used in the error message if validation fails.
+
+        Returns:
+            Optional[str]: ``value`` with Unicode format characters removed, or ``value`` unchanged
+                if it was empty/``None``.
+
+        Raises:
+            ValueError: If a non-ASCII, non-format character remains after stripping.
+
+        Examples:
+            >>> SecurityValidator.sanitize_credential_value('my-token-123', 'auth_token')
+            'my-token-123'
+            >>> SecurityValidator.sanitize_credential_value(None, 'auth_token') is None
+            True
+            >>> SecurityValidator.sanitize_credential_value('tok' + '\\u2060' + 'en', 'auth_token')
+            'token'
+            >>> SecurityValidator.sanitize_credential_value('café', 'auth_token')
+            Traceback (most recent call last):
+                ...
+            ValueError: auth_token contains non-ASCII character U+00E9 (LATIN SMALL LETTER E WITH ACUTE) at position 3. HTTP header values must be ASCII -- re-copy this value from a plain-text source.
+        """
+        if not value:
+            return value
+
+        cleaned = "".join(c for c in value if unicodedata.category(c) != "Cf")
+        if not cleaned.isascii():
+            bad_char = next(c for c in cleaned if not c.isascii())
+            raise ValueError(
+                f"{field_name} contains non-ASCII character U+{ord(bad_char):04X} "
+                f"({unicodedata.name(bad_char, 'UNKNOWN')}) at position {cleaned.index(bad_char)}. "
+                "HTTP header values must be ASCII -- re-copy this value from a plain-text source."
+            )
+        return cleaned
 
     @classmethod
     def sanitize_json_response(cls, data: Any) -> Any:

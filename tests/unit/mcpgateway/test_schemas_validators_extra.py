@@ -1567,3 +1567,41 @@ class TestToolNameLengthValidation:
         with pytest.raises(ValidationError) as exc_info:
             ToolCreate(name=name, inputSchema={})
         assert "Tool name exceeds MCP spec limit of 128 characters (got 129)" in str(exc_info.value)
+
+
+class TestSanitizeCredentialValue:
+    """Tests for SecurityValidator.sanitize_credential_value (invisible-Unicode credential guard)."""
+
+    def test_clean_ascii_value_passes_through_unchanged(self):
+        assert SecurityValidator.sanitize_credential_value("my-token-123", "auth_token") == "my-token-123"
+
+    def test_none_value_passes_through_unchanged(self):
+        assert SecurityValidator.sanitize_credential_value(None, "auth_token") is None
+
+    def test_empty_string_passes_through_unchanged(self):
+        assert SecurityValidator.sanitize_credential_value("", "auth_token") == ""
+
+    def test_strips_word_joiner(self):
+        contaminated = "A" * 48 + "⁠" + "B" * 20
+        assert SecurityValidator.sanitize_credential_value(contaminated, "auth_token") == "A" * 48 + "B" * 20
+
+    def test_strips_zero_width_space(self):
+        contaminated = "tok​en"
+        assert SecurityValidator.sanitize_credential_value(contaminated, "auth_token") == "token"
+
+    def test_strips_byte_order_mark(self):
+        contaminated = "﻿token"
+        assert SecurityValidator.sanitize_credential_value(contaminated, "auth_token") == "token"
+
+    def test_rejects_remaining_non_ascii_with_position_and_codepoint(self):
+        with pytest.raises(ValueError) as exc_info:
+            SecurityValidator.sanitize_credential_value("café", "auth_token")
+        message = str(exc_info.value)
+        assert "auth_token" in message
+        assert "U+00E9" in message
+        assert "position 3" in message
+
+    def test_field_name_appears_in_error_message(self):
+        with pytest.raises(ValueError) as exc_info:
+            SecurityValidator.sanitize_credential_value("é", "auth_header_value")
+        assert "auth_header_value" in str(exc_info.value)

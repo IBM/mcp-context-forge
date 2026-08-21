@@ -455,6 +455,26 @@ class GatewayConnectionError(GatewayError):
     """
 
 
+class GatewayCredentialError(GatewayError):
+    """Raised when a stored/decrypted gateway credential is malformed (e.g. contains an
+    invisible Unicode character that cannot be encoded into an HTTP header).
+
+    Kept distinct from GatewayConnectionError so callers can tell "the credential is
+    invalid" apart from "the gateway is unreachable" -- the two were previously
+    conflated, which sent troubleshooting toward the network stack for a problem that
+    was actually a malformed stored value.
+
+    Examples:
+        >>> error = GatewayCredentialError("Credential invalid")
+        >>> str(error)
+        'Credential invalid'
+        >>> isinstance(error, GatewayError)
+        True
+        >>> isinstance(error, GatewayConnectionError)
+        False
+    """
+
+
 class OAuthToolValidationError(GatewayConnectionError):
     """Raised when tool validation fails during OAuth-driven fetch."""
 
@@ -4897,6 +4917,13 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         else:
                             headers = {}
 
+                    if headers:
+                        # Strip invisible Unicode format characters left over in a credential
+                        # stored before this validation existed; reject anything else non-ASCII
+                        # with a clear message rather than letting httpx raise a bare
+                        # UnicodeEncodeError that reads like a network failure.
+                        headers = {k: SecurityValidator.sanitize_credential_value(v, f"stored credential for header '{k}'") for k, v in headers.items()}
+
                     # Perform the GET and raise on 4xx/5xx
                     if (gateway_transport).lower() == "sse":
                         timeout = httpx.Timeout(settings.health_check_timeout)
@@ -5286,6 +5313,12 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             validation_errors: list[str] = []
             if auth_type in ("basic", "bearer", "authheaders") and isinstance(authentication, str):
                 authentication = decode_auth(authentication)
+            if authentication:
+                try:
+                    authentication = {k: SecurityValidator.sanitize_credential_value(v, f"stored credential for header '{k}'") for k, v in authentication.items()}
+                except ValueError as credential_error:
+                    sanitized_url = sanitize_url_for_logging(url, auth_query_params)
+                    raise GatewayCredentialError(f"Failed to initialize gateway at {sanitized_url}: {credential_error}") from credential_error
             if transport.lower() == "sse":
                 capabilities, tools, resources, prompts, validation_errors = await self.connect_to_sse_server(
                     url, authentication, ca_certificate, include_prompts, include_resources, auth_query_params, client_cert=client_cert, client_key=client_key
@@ -5307,14 +5340,22 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     root_cause = root_cause.exceptions[0]
             sanitized_url = sanitize_url_for_logging(url, auth_query_params)
 
-            # If the root cause is already a GatewayConnectionError, re-raise it
-            # with its original chain intact instead of double-wrapping.
-            if isinstance(root_cause, GatewayConnectionError):
+            # If the root cause is already a deliberately-raised GatewayError (e.g. the
+            # GatewayCredentialError above, or a GatewayConnectionError from a nested call),
+            # re-raise it with its original chain intact instead of double-wrapping.
+            if isinstance(root_cause, GatewayError):
                 raise root_cause
 
             raw_error = str(root_cause) or type(root_cause).__name__
             sanitized_error = sanitize_exception_message(raw_error, auth_query_params)
             logger.error("Gateway initialization failed for %s: %s", sanitized_url, sanitized_error, exc_info=True)
+
+            # A header value that reaches the HTTP client encoding step is either an
+            # OAuth-derived value or something else this method didn't sanitize up front.
+            # Report it distinctly so it isn't mistaken for a network/connectivity failure.
+            if isinstance(root_cause, (UnicodeEncodeError, UnicodeDecodeError)):
+                raise GatewayCredentialError(f"Failed to initialize gateway at {sanitized_url}: invalid credential -- {sanitized_error}") from root_cause
+
             raise GatewayConnectionError(f"Failed to initialize gateway at {sanitized_url}: {sanitized_error}") from root_cause
 
     def _get_gateways(self, include_inactive: bool = True) -> list[DbGateway]:
