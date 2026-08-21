@@ -4367,6 +4367,158 @@ async def test_resolve_trace_team_name_uses_preresolved_name_before_claims(monke
     assert resolved == "Batched Team"
 
 
+class TestIsPersonalTeamSync:
+    """Tests for the _is_personal_team_sync classification helper."""
+
+    def test_no_team_id_returns_false_without_db_call(self):
+        """A falsy team_id short-circuits to False without touching the DB."""
+        # First-Party
+        from mcpgateway.auth import _is_personal_team_sync
+
+        with patch("mcpgateway.auth.fresh_db_session") as mock_fresh_session:
+            assert _is_personal_team_sync(None) is False
+            assert _is_personal_team_sync("") is False
+            mock_fresh_session.assert_not_called()
+
+    def test_returns_true_for_personal_team(self):
+        """An active personal team row classifies as personal."""
+        # First-Party
+        from mcpgateway.auth import _is_personal_team_sync
+
+        mock_db = MagicMock()
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = True
+        mock_db.execute.return_value = mock_result
+
+        with patch("mcpgateway.auth.fresh_db_session") as mock_fresh_session:
+            mock_fresh_session.return_value.__enter__.return_value = mock_db
+            mock_fresh_session.return_value.__exit__.return_value = None
+
+            assert _is_personal_team_sync("team-personal") is True
+
+    def test_returns_false_for_non_personal_team(self):
+        """A shared (non-personal) team row classifies as not personal."""
+        # First-Party
+        from mcpgateway.auth import _is_personal_team_sync
+
+        mock_db = MagicMock()
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = False
+        mock_db.execute.return_value = mock_result
+
+        with patch("mcpgateway.auth.fresh_db_session") as mock_fresh_session:
+            mock_fresh_session.return_value.__enter__.return_value = mock_db
+            mock_fresh_session.return_value.__exit__.return_value = None
+
+            assert _is_personal_team_sync("team-shared") is False
+
+    def test_returns_false_when_team_not_found(self):
+        """A team_id with no matching active row classifies as not personal."""
+        # First-Party
+        from mcpgateway.auth import _is_personal_team_sync
+
+        mock_db = MagicMock()
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = None
+        mock_db.execute.return_value = mock_result
+
+        with patch("mcpgateway.auth.fresh_db_session") as mock_fresh_session:
+            mock_fresh_session.return_value.__enter__.return_value = mock_db
+            mock_fresh_session.return_value.__exit__.return_value = None
+
+            assert _is_personal_team_sync("team-unknown") is False
+
+
+class TestDeriveTokenTeamId:
+    """Tests for derive_token_team_id — the RBAC team-context policy point (issue #5993)."""
+
+    @pytest.mark.asyncio
+    async def test_admin_bypass_returns_none(self):
+        """teams=None (admin bypass) never derives a team context."""
+        # First-Party
+        from mcpgateway.auth import derive_token_team_id
+
+        assert await derive_token_team_id(None, "api") is None
+
+    @pytest.mark.asyncio
+    async def test_session_token_returns_none(self):
+        """Session tokens never derive a team context here — DB resolution owns that."""
+        # First-Party
+        from mcpgateway.auth import derive_token_team_id
+
+        assert await derive_token_team_id(["team-1"], "session") is None
+
+    @pytest.mark.asyncio
+    async def test_multi_team_returns_none(self):
+        """Multi-team tokens never derive a single team context."""
+        # First-Party
+        from mcpgateway.auth import derive_token_team_id
+
+        assert await derive_token_team_id(["team-1", "team-2"], "api") is None
+
+    @pytest.mark.asyncio
+    async def test_dict_entry_without_id_returns_none(self):
+        """A malformed team claim entry (dict with no id) yields no team context."""
+        # First-Party
+        from mcpgateway.auth import derive_token_team_id
+
+        assert await derive_token_team_id([{"name": "no-id-team"}], "api") is None
+
+    @pytest.mark.asyncio
+    async def test_excludes_personal_team(self, monkeypatch):
+        """A single-team token scoped to a personal team falls back to check_any_team (None).
+
+        Regression guard for the fix in issue #5993: honouring a personal team
+        here would silently grant the token's RBAC context team_admin, since
+        personal teams auto-grant that role to their creator.
+        """
+        # First-Party
+        from mcpgateway.auth import derive_token_team_id
+
+        monkeypatch.setattr("mcpgateway.auth._is_personal_team_sync", lambda team_id: True)
+
+        assert await derive_token_team_id(["team-personal"], "api") is None
+
+    @pytest.mark.asyncio
+    async def test_keeps_non_personal_single_team(self, monkeypatch):
+        """A single-team token scoped to a non-personal team keeps that team as context."""
+        # First-Party
+        from mcpgateway.auth import derive_token_team_id
+
+        monkeypatch.setattr("mcpgateway.auth._is_personal_team_sync", lambda team_id: False)
+
+        assert await derive_token_team_id(["team-shared"], "api") == "team-shared"
+
+    @pytest.mark.asyncio
+    async def test_dict_team_entry_extracts_id(self, monkeypatch):
+        """A dict-shaped team claim entry (legacy format) extracts its id."""
+        # First-Party
+        from mcpgateway.auth import derive_token_team_id
+
+        monkeypatch.setattr("mcpgateway.auth._is_personal_team_sync", lambda team_id: False)
+
+        assert await derive_token_team_id([{"id": "team-shared"}], "api") == "team-shared"
+
+    @pytest.mark.asyncio
+    async def test_classification_error_fails_open_and_keeps_team_id(self, monkeypatch):
+        """A classification failure (DB unavailable) keeps team_id rather than clearing it.
+
+        This is a deliberate fail-open: the classification is an RBAC-context
+        refinement, not an authn/authz gate, so a DB hiccup must not silently
+        change token scope. Matches how sibling helpers in this module (e.g.
+        resolve_trace_team_name) already treat lookup failures as best-effort.
+        """
+        # First-Party
+        from mcpgateway.auth import derive_token_team_id
+
+        def _raise(team_id):
+            raise RuntimeError("db unavailable")
+
+        monkeypatch.setattr("mcpgateway.auth._is_personal_team_sync", _raise)
+
+        assert await derive_token_team_id(["team-shared"], "api") == "team-shared"
+
+
 # =============================================================================
 # P0/P1 Tests — tenant_id propagation from auth layer to GlobalContext
 # =============================================================================
