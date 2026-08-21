@@ -16263,6 +16263,7 @@ async def test_get_plugin_details_exception(monkeypatch, mock_request, mock_db, 
 async def test_catalog_partial(monkeypatch, mock_request, mock_db):
     monkeypatch.setattr(settings, "mcpgateway_catalog_enabled", True)
     monkeypatch.setattr(settings, "mcpgateway_catalog_page_size", 2)
+    monkeypatch.setattr("mcpgateway.admin.get_scoped_resource_access_context", MagicMock(return_value=("u@example.com", ["team-a"])))
 
     server_page = SimpleNamespace(category="Dev", auth_type="api_key", provider="X", is_registered=True)
     server_all = SimpleNamespace(category="Ops", auth_type="oauth", provider="Y", is_registered=False)
@@ -16275,6 +16276,9 @@ async def test_catalog_partial(monkeypatch, mock_request, mock_db):
 
     response = await catalog_partial(mock_request, category="Dev", auth_type="api_key", search=None, page=1, db=mock_db, _user={"email": "u@example.com", "db": mock_db})
     assert isinstance(response, HTMLResponse)
+    assert mock_get_catalog.await_count == 2
+    for catalog_call in mock_get_catalog.await_args_list:
+        assert catalog_call.kwargs == {"user_email": "u@example.com", "token_teams": ["team-a"]}
     template_call = mock_request.app.state.templates.TemplateResponse.call_args
     stats = template_call[0][2]["stats"]
     assert stats["total_servers"] == 2
@@ -20648,12 +20652,15 @@ class TestCatalogEndpoints:
     @pytest.mark.asyncio
     async def test_list_catalog_servers_success(self, monkeypatch, mock_db):
         monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_catalog_enabled", True, raising=False)
+        monkeypatch.setattr("mcpgateway.admin.get_scoped_resource_access_context", MagicMock(return_value=("admin@test.com", None)))
         mock_result = MagicMock()
-        monkeypatch.setattr("mcpgateway.admin.catalog_service.get_catalog_servers", AsyncMock(return_value=mock_result))
+        mock_get_catalog = AsyncMock(return_value=mock_result)
+        monkeypatch.setattr("mcpgateway.admin.catalog_service.get_catalog_servers", mock_get_catalog)
 
         request = MagicMock(spec=Request)
         result = await list_catalog_servers(request, tags=[], db=mock_db, _user={"email": "admin@test.com"})
         assert result == mock_result
+        assert mock_get_catalog.await_args.kwargs == {"user_email": "admin@test.com", "token_teams": None}
 
     @pytest.mark.asyncio
     async def test_register_catalog_server_disabled(self, monkeypatch, mock_db):

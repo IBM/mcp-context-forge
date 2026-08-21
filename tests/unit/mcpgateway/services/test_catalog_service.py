@@ -17,6 +17,7 @@ import pytest
 from mcpgateway.schemas import (
     CatalogBulkRegisterRequest,
     CatalogListRequest,
+    CatalogServer,
     CatalogServerRegisterRequest,
 )
 from mcpgateway.services.catalog_service import CatalogService
@@ -25,6 +26,13 @@ from mcpgateway.services.catalog_service import CatalogService
 @pytest.fixture
 def service():
     return CatalogService()
+
+
+def test_catalog_server_gateway_id_defaults_to_none():
+    """Unregistered catalog entries do not expose a gateway identifier."""
+    server = CatalogServer(id="catalog-1", name="Server", category="Dev", url="https://example.com/mcp", auth_type="Open", provider="Example", description="Example server")
+
+    assert server.gateway_id is None
 
 
 @pytest.mark.asyncio
@@ -73,12 +81,12 @@ async def test_get_catalog_servers_filters(service):
     }
     with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)):
         db = MagicMock()
-        # Return tuples of (url, enabled, auth_type, oauth_config) - enabled=True means active
-        db.execute.return_value = [("http://a", True, None, None)]
+        db.execute.return_value = [("gw-a", "http://a", True, None, None, "public", None, None, "catalog")]
         req = CatalogListRequest(category="cat", auth_type="Open", provider="prov", search="srv", tags=["t1"], show_registered_only=True, show_available_only=True, offset=0, limit=10)
         result = await service.get_catalog_servers(req, db)
         assert result.total >= 1
         assert all(s.category == "cat" for s in result.servers)
+        assert result.servers[0].gateway_id == "gw-a"
 
 
 @pytest.mark.asyncio
@@ -92,12 +100,13 @@ async def test_get_catalog_servers_requires_oauth_config_unconfigured(service):
     with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)), patch.object(service, "_get_registry_cache", return_value=None):
         db = MagicMock()
         # Disabled OAuth server with no oauth_config - needs configuration
-        db.execute.return_value = [("http://oauth.example.com", False, "oauth", None)]
+        db.execute.return_value = [("gw-oauth", "http://oauth.example.com", False, "oauth", None, "public", None, None, "catalog")]
         req = CatalogListRequest(offset=0, limit=10)
         result = await service.get_catalog_servers(req, db)
         assert result.total == 1
         server = result.servers[0]
         assert server.is_registered is True
+        assert server.gateway_id == "gw-oauth"
         assert server.requires_oauth_config is True
 
 
@@ -121,12 +130,13 @@ async def test_get_catalog_servers_requires_oauth_config_configured(service):
     with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)), patch.object(service, "_get_registry_cache", return_value=None):
         db = MagicMock()
         # Disabled OAuth server WITH oauth_config - manually disabled, not needing setup
-        db.execute.return_value = [("http://oauth-configured.example.com", False, "oauth", {"client_id": "abc", "client_secret": "xyz"})]
+        db.execute.return_value = [("gw-configured", "http://oauth-configured.example.com", False, "oauth", {"client_id": "abc", "client_secret": "xyz"}, "public", None, None, "catalog")]
         req = CatalogListRequest(offset=0, limit=10)
         result = await service.get_catalog_servers(req, db)
         assert result.total == 1
         server = result.servers[0]
         assert server.is_registered is True
+        assert server.gateway_id == "gw-configured"
         assert server.requires_oauth_config is False
 
 
@@ -150,12 +160,13 @@ async def test_get_catalog_servers_requires_oauth_config_enabled(service):
     with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)), patch.object(service, "_get_registry_cache", return_value=None):
         db = MagicMock()
         # Enabled OAuth server - fully configured and active
-        db.execute.return_value = [("http://oauth-enabled.example.com", True, "oauth", {"client_id": "abc"})]
+        db.execute.return_value = [("gw-enabled", "http://oauth-enabled.example.com", True, "oauth", {"client_id": "abc"}, "public", None, None, "catalog")]
         req = CatalogListRequest(offset=0, limit=10)
         result = await service.get_catalog_servers(req, db)
         assert result.total == 1
         server = result.servers[0]
         assert server.is_registered is True
+        assert server.gateway_id == "gw-enabled"
         assert server.requires_oauth_config is False
 
 
@@ -574,6 +585,7 @@ async def test_get_catalog_servers_db_exception(service):
         result = await service.get_catalog_servers(req, db)
         assert result.total == 1
         assert result.servers[0].is_registered is False
+        assert result.servers[0].gateway_id is None
 
 
 @pytest.mark.asyncio
@@ -581,8 +593,20 @@ async def test_get_catalog_servers_cache_hit(service):
     """Test cache hit path."""
     mock_cache = AsyncMock()
     cached_response = {
-        "servers": [],
-        "total": 0,
+        "servers": [
+            {
+                "id": "catalog-1",
+                "name": "Cached Server",
+                "category": "Dev",
+                "url": "https://example.com/mcp",
+                "auth_type": "Open",
+                "provider": "Example",
+                "description": "Cached catalog server",
+                "is_registered": True,
+                "gateway_id": "gw-cached",
+            }
+        ],
+        "total": 1,
         "categories": [],
         "auth_types": [],
         "providers": [],
@@ -593,7 +617,8 @@ async def test_get_catalog_servers_cache_hit(service):
     with patch.object(service, "_get_registry_cache", return_value=mock_cache):
         req = CatalogListRequest(offset=0, limit=10)
         result = await service.get_catalog_servers(req, MagicMock())
-        assert result.total == 0
+        assert result.total == 1
+        assert result.servers[0].gateway_id == "gw-cached"
         mock_cache.get.assert_called_once()
 
 
@@ -611,7 +636,7 @@ async def test_get_catalog_servers_cache_store_exception(service):
     mock_cache.set = AsyncMock(side_effect=Exception("Redis error"))
     with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)), patch.object(service, "_get_registry_cache", return_value=mock_cache):
         db = MagicMock()
-        db.execute.return_value = [("http://a", True, None, None)]
+        db.execute.return_value = [("gw-a", "http://a", True, None, None, "public", None, None, "catalog")]
         req = CatalogListRequest(offset=0, limit=10)
         result = await service.get_catalog_servers(req, db)
         assert result.total == 1
@@ -630,9 +655,9 @@ async def test_get_catalog_servers_scoped_registration_state(service):
     with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)), patch.object(service, "_get_registry_cache", return_value=None):
         db = MagicMock()
         db.execute.return_value = [
-            ("http://visible", True, None, None, "team", "team-a", "teammate@example.com"),
-            ("http://wrong-team", True, None, None, "team", "team-b", "teammate@example.com"),
-            ("http://private-other", True, None, None, "private", None, "other@example.com"),
+            ("gw-visible", "http://visible", True, None, None, "team", "team-a", "teammate@example.com", "catalog"),
+            ("gw-wrong-team", "http://wrong-team", False, "oauth", None, "team", "team-b", "teammate@example.com", "catalog"),
+            ("gw-private-other", "http://private-other", True, None, None, "private", None, "other@example.com", "catalog"),
         ]
         req = CatalogListRequest(offset=0, limit=10)
 
@@ -640,8 +665,12 @@ async def test_get_catalog_servers_scoped_registration_state(service):
 
         by_id = {server.id: server for server in result.servers}
         assert by_id["visible"].is_registered is True
+        assert by_id["visible"].gateway_id == "gw-visible"
         assert by_id["wrong-team"].is_registered is False
+        assert by_id["wrong-team"].gateway_id is None
+        assert by_id["wrong-team"].requires_oauth_config is False
         assert by_id["private-other"].is_registered is False
+        assert by_id["private-other"].gateway_id is None
 
 
 @pytest.mark.asyncio
@@ -658,7 +687,7 @@ async def test_get_catalog_servers_scoped_request_bypasses_shared_cache(service)
     mock_cache.set = AsyncMock()
     with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)), patch.object(service, "_get_registry_cache", return_value=mock_cache):
         db = MagicMock()
-        db.execute.return_value = [("http://a", True, None, None, "public", None, None)]
+        db.execute.return_value = [("gw-a", "http://a", True, None, None, "public", None, None, "catalog")]
         req = CatalogListRequest(offset=0, limit=10)
 
         result = await service.get_catalog_servers(req, db, user_email="user@example.com", token_teams=[])
@@ -666,6 +695,61 @@ async def test_get_catalog_servers_scoped_request_bypasses_shared_cache(service)
         assert result.total == 1
         mock_cache.get.assert_not_called()
         mock_cache.set.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("rows", "expected_gateway_id", "expected_requires_oauth_config"),
+    [
+        (
+            [
+                ("gw-catalog-other", "http://a", True, None, None, "public", None, "other@example.com", "catalog"),
+                ("gw-owned-manual", "http://a", True, None, None, "public", None, "user@example.com", "api"),
+                ("gw-owned-catalog", "http://a", False, "oauth", None, "public", None, "user@example.com", "catalog"),
+            ],
+            "gw-owned-catalog",
+            True,
+        ),
+        (
+            [
+                ("gw-catalog-other", "http://a", True, None, None, "public", None, "other@example.com", "catalog"),
+                ("gw-owned-manual", "http://a", True, None, None, "public", None, "user@example.com", "api"),
+            ],
+            "gw-owned-manual",
+            False,
+        ),
+        (
+            [
+                ("gw-manual-other", "http://a", True, None, None, "public", None, "other@example.com", "api"),
+                ("gw-catalog-other", "http://a", True, None, None, "public", None, "other@example.com", "catalog"),
+            ],
+            "gw-catalog-other",
+            False,
+        ),
+        (
+            [
+                ("gw-b", "http://a", True, None, None, "public", None, "other@example.com", "api"),
+                ("gw-a", "http://a", True, None, None, "public", None, "other@example.com", "api"),
+            ],
+            "gw-a",
+            False,
+        ),
+    ],
+    ids=["owned-catalog", "owned", "catalog", "stable-id"],
+)
+@pytest.mark.asyncio
+async def test_get_catalog_servers_selects_duplicate_url_match_deterministically(service, rows, expected_gateway_id, expected_requires_oauth_config):
+    """Duplicate URL matches follow ownership, provenance, then stable-ID precedence."""
+    fake_catalog = {"catalog_servers": [{"id": "catalog-1", "name": "Server", "url": "http://a", "category": "Dev", "auth_type": "Open", "provider": "Example", "tags": [], "description": "Server"}]}
+    with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)), patch.object(service, "_get_registry_cache", return_value=None):
+        db = MagicMock()
+        db.execute.return_value = rows
+
+        result = await service.get_catalog_servers(CatalogListRequest(), db, user_email="user@example.com", token_teams=[])
+
+    server = result.servers[0]
+    assert server.is_registered is True
+    assert server.gateway_id == expected_gateway_id
+    assert server.requires_oauth_config is expected_requires_oauth_config
 
 
 def test_can_view_registered_gateway_admin_bypass(monkeypatch):
