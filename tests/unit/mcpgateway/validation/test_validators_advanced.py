@@ -1124,6 +1124,15 @@ class TestValidateUrlSecurity:
     def test_ipv6_blocked(self):
         with pytest.raises(ValueError, match="IPv6"):
             SecurityValidator.validate_url("https://[::1]/path")
+    def test_brackets_in_query_params_allowed(self):
+        """Brackets in query parameters should be allowed (common API pattern)."""
+        # URL-encoded brackets in query params (Laravel, Spring, OData, JSON:API style)
+        assert SecurityValidator.validate_url("https://api.example.com/ingredients?filter%5Bname%5D=value", "URL")
+        assert SecurityValidator.validate_url("https://api.example.com/items?sort%5B0%5D=name&sort%5B1%5D=created_at", "URL")
+        assert SecurityValidator.validate_url("https://api.example.com/data?include%5B%5D=relation", "URL")
+        # Literal brackets in query params (if not URL-encoded by client)
+        assert SecurityValidator.validate_url("https://api.example.com/items?filter[status]=active", "URL")
+
 
     def test_crlf_injection(self):
         with pytest.raises(ValueError, match="control characters"):
