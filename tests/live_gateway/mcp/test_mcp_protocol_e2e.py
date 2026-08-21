@@ -402,14 +402,11 @@ class TestToolCalls:
 
         Without this guard, a stale fast_test_server image or an incomplete
         federation sync would cause the actual ``tools/call`` tests to
-        fail with a misleading assertion. Fails fast with an actionable
-        message.
+        fail with a misleading assertion. Fails fast with the actual cause.
         """
         tools = (await client.list_tools()).tools
         match = next((t for t in tools if t.name == tool_name), None)
-        assert match is not None, (
-            f"Tool {tool_name!r} is not registered in the gateway. " f"Rebuild the fast_test_server image and restart docker-compose so " f"register_fast_test picks up the new schema fixtures."
-        )
+        assert match is not None, f"Tool {tool_name!r} is not registered in the gateway."
         schema = match.outputSchema
         assert schema, (
             f"Tool {tool_name!r} has no outputSchema declared in the gateway: {match}. " "Check that the upstream tool declares an output_schema and that the gateway sync completed successfully."
