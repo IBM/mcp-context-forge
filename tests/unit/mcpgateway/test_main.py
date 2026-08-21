@@ -2667,6 +2667,7 @@ class TestRPCEndpoints:
             app_user_email="test_user@example.com",  # Updated: now uses email from JWT/RBAC
             user_email="test_user@example.com",
             token_teams=[],
+            jwt_teams_claim=None,
             server_id=None,
             plugin_context_table=None,
             plugin_global_context=ANY,
