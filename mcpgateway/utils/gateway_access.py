@@ -164,6 +164,6 @@ def build_gateway_auth_headers(gateway: DbGateway) -> Dict[str, str]:
                 headers["Authorization"] = auth_header
 
     # Strip invisible Unicode format characters left over in a credential stored before
-    # this validation existed; reject anything else non-ASCII with a clear message rather
-    # than letting httpx raise a bare UnicodeEncodeError that reads like a network failure.
-    return {k: SecurityValidator.sanitize_credential_value(v, f"stored credential for header '{k}'") for k, v in headers.items()}
+    # this validation existed, so a gateway configured before this change self-heals
+    # without requiring a manual re-save.
+    return {k: SecurityValidator.sanitize_credential_value(v) for k, v in headers.items()}

@@ -903,19 +903,18 @@ def test_gateway_create_bearer_token_strips_invisible_char():
     assert decoded["Authorization"] == "Bearer " + "A" * 48 + "B" * 20
 
 
-def test_gateway_create_bearer_token_rejects_other_non_ascii():
-    with pytest.raises(ValidationError, match="U\\+00E9"):
-        GatewayCreate(name="gw", url="https://example.com", auth_type="bearer", auth_token="café-token")
+def test_gateway_create_bearer_token_leaves_other_non_ascii_untouched():
+    """Non-format non-ASCII content (e.g. accented Latin) is legitimate and must not be
+    altered or rejected -- only invisible format characters are stripped."""
+    gateway = GatewayCreate(name="gw", url="https://example.com", auth_type="bearer", auth_token="café-token")  # pragma: allowlist secret
+    decoded = decode_auth(gateway.auth_value)
+    assert decoded["Authorization"] == "Bearer café-token"
 
 
-def test_gateway_create_basic_auth_password_rejects_non_ascii():
-    with pytest.raises(ValidationError, match="auth_password"):
-        GatewayCreate(name="gw", url="https://example.com", auth_type="basic", auth_username="user", auth_password="café")
-
-
-def test_gateway_create_basic_auth_username_rejects_non_ascii():
-    with pytest.raises(ValidationError, match="auth_username"):
-        GatewayCreate(name="gw", url="https://example.com", auth_type="basic", auth_username="café", auth_password="pass")
+def test_gateway_create_basic_auth_leaves_other_non_ascii_untouched():
+    gateway = GatewayCreate(name="gw", url="https://example.com", auth_type="basic", auth_username="café", auth_password="café")  # pragma: allowlist secret
+    decoded = decode_auth(gateway.auth_value)
+    assert decoded["Authorization"].startswith("Basic ")
 
 
 def test_gateway_create_authheaders_legacy_value_strips_invisible_char():
@@ -941,19 +940,24 @@ def test_gateway_create_authheaders_list_value_strips_invisible_char():
     assert decoded["X-Api-Key"] == "secretkey"
 
 
-def test_gateway_create_authheaders_list_value_rejects_other_non_ascii():
-    with pytest.raises(ValidationError, match="U\\+00E9"):
-        GatewayCreate(
-            name="gw",
-            url="https://example.com",
-            auth_type="authheaders",
-            auth_headers=[{"key": "X-Api-Key", "value": "café"}],
-        )
+def test_gateway_create_authheaders_list_value_leaves_other_non_ascii_untouched():
+    """A custom header value carrying international text (e.g. CJK) is legitimate and
+    must be preserved unchanged -- matches the project's existing multi-language support
+    for header values (only header keys are ASCII-restricted)."""
+    gateway = GatewayCreate(
+        name="gw",
+        url="https://example.com",
+        auth_type="authheaders",
+        auth_headers=[{"key": "X-Api-Key", "value": "café"}],
+    )
+    decoded = decode_auth(gateway.auth_value)
+    assert decoded["X-Api-Key"] == "café"
 
 
-def test_gateway_update_bearer_token_rejects_non_ascii():
-    with pytest.raises(ValidationError, match="U\\+00E9"):
-        GatewayUpdate(auth_type="bearer", auth_token="café-token")
+def test_gateway_update_bearer_token_leaves_other_non_ascii_untouched():
+    gateway = GatewayUpdate(auth_type="bearer", auth_token="café-token")  # pragma: allowlist secret
+    decoded = decode_auth(gateway.auth_value)
+    assert decoded["Authorization"] == "Bearer café-token"
 
 
 def test_tool_create_bearer_token_strips_invisible_char():
@@ -968,18 +972,20 @@ def test_tool_create_bearer_token_strips_invisible_char():
     assert decoded["Authorization"] == "Bearer " + "A" * 48 + "B" * 20
 
 
-def test_tool_create_authheaders_legacy_value_rejects_non_ascii():
-    with pytest.raises(ValueError, match="U\\+00E9"):
-        ToolCreate(
-            name="my_tool",
-            url="https://api.example.com/endpoint",
-            request_type="POST",
-            auth_type="authheaders",
-            auth_header_key="X-Api-Key",
-            auth_header_value="café",
-        )
+def test_tool_create_authheaders_legacy_value_leaves_other_non_ascii_untouched():
+    tool = ToolCreate(
+        name="my_tool",
+        url="https://api.example.com/endpoint",
+        request_type="POST",
+        auth_type="authheaders",
+        auth_header_key="X-Api-Key",
+        auth_header_value="café",
+    )
+    decoded = decode_auth(tool.auth.auth_value)
+    assert decoded["X-Api-Key"] == "café"
 
 
-def test_tool_update_bearer_token_rejects_non_ascii():
-    with pytest.raises(ValueError, match="U\\+00E9"):
-        ToolUpdate(auth_type="bearer", auth_token="café-token")
+def test_tool_update_bearer_token_leaves_other_non_ascii_untouched():
+    tool = ToolUpdate(auth_type="bearer", auth_token="café-token")  # pragma: allowlist secret
+    decoded = decode_auth(tool.auth.auth_value)
+    assert decoded["Authorization"] == "Bearer café-token"

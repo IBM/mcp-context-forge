@@ -4919,10 +4919,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
                     if headers:
                         # Strip invisible Unicode format characters left over in a credential
-                        # stored before this validation existed; reject anything else non-ASCII
-                        # with a clear message rather than letting httpx raise a bare
-                        # UnicodeEncodeError that reads like a network failure.
-                        headers = {k: SecurityValidator.sanitize_credential_value(v, f"stored credential for header '{k}'") for k, v in headers.items()}
+                        # stored before this validation existed, so this gateway's health
+                        # checks self-heal without requiring a manual re-save.
+                        headers = {k: SecurityValidator.sanitize_credential_value(v) for k, v in headers.items()}
 
                     # Perform the GET and raise on 4xx/5xx
                     if (gateway_transport).lower() == "sse":
@@ -5314,11 +5313,11 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             if auth_type in ("basic", "bearer", "authheaders") and isinstance(authentication, str):
                 authentication = decode_auth(authentication)
             if authentication:
-                try:
-                    authentication = {k: SecurityValidator.sanitize_credential_value(v, f"stored credential for header '{k}'") for k, v in authentication.items()}
-                except ValueError as credential_error:
-                    sanitized_url = sanitize_url_for_logging(url, auth_query_params)
-                    raise GatewayCredentialError(f"Failed to initialize gateway at {sanitized_url}: {credential_error}") from credential_error
+                # Strip invisible Unicode format characters left over in a credential stored
+                # before this validation existed. If a genuinely non-ASCII character remains,
+                # it reaches the HTTP client below and is reported distinctly as
+                # GatewayCredentialError rather than a connectivity failure (see except clause).
+                authentication = {k: SecurityValidator.sanitize_credential_value(v) for k, v in authentication.items()}
             if transport.lower() == "sse":
                 capabilities, tools, resources, prompts, validation_errors = await self.connect_to_sse_server(
                     url, authentication, ca_certificate, include_prompts, include_resources, auth_query_params, client_cert=client_cert, client_key=client_key

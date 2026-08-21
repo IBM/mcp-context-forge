@@ -1573,35 +1573,39 @@ class TestSanitizeCredentialValue:
     """Tests for SecurityValidator.sanitize_credential_value (invisible-Unicode credential guard)."""
 
     def test_clean_ascii_value_passes_through_unchanged(self):
-        assert SecurityValidator.sanitize_credential_value("my-token-123", "auth_token") == "my-token-123"
+        assert SecurityValidator.sanitize_credential_value("my-token-123") == "my-token-123"
 
     def test_none_value_passes_through_unchanged(self):
-        assert SecurityValidator.sanitize_credential_value(None, "auth_token") is None
+        assert SecurityValidator.sanitize_credential_value(None) is None
 
     def test_empty_string_passes_through_unchanged(self):
-        assert SecurityValidator.sanitize_credential_value("", "auth_token") == ""
+        assert SecurityValidator.sanitize_credential_value("") == ""
 
     def test_strips_word_joiner(self):
         contaminated = "A" * 48 + "⁠" + "B" * 20
-        assert SecurityValidator.sanitize_credential_value(contaminated, "auth_token") == "A" * 48 + "B" * 20
+        assert SecurityValidator.sanitize_credential_value(contaminated) == "A" * 48 + "B" * 20
 
     def test_strips_zero_width_space(self):
         contaminated = "tok​en"
-        assert SecurityValidator.sanitize_credential_value(contaminated, "auth_token") == "token"
+        assert SecurityValidator.sanitize_credential_value(contaminated) == "token"
 
     def test_strips_byte_order_mark(self):
         contaminated = "﻿token"
-        assert SecurityValidator.sanitize_credential_value(contaminated, "auth_token") == "token"
+        assert SecurityValidator.sanitize_credential_value(contaminated) == "token"
 
-    def test_rejects_remaining_non_ascii_with_position_and_codepoint(self):
-        with pytest.raises(ValueError) as exc_info:
-            SecurityValidator.sanitize_credential_value("café", "auth_token")
-        message = str(exc_info.value)
-        assert "auth_token" in message
-        assert "U+00E9" in message
-        assert "position 3" in message
+    def test_leaves_other_non_ascii_content_untouched(self):
+        """Non-format non-ASCII characters (accented Latin, CJK, etc.) are legitimate
+        credential/header content -- e.g. an internationalized custom header value --
+        and must not be altered or rejected, only invisible format characters are."""
+        assert SecurityValidator.sanitize_credential_value("café") == "café"
+        assert SecurityValidator.sanitize_credential_value("value-with-特殊字符") == "value-with-特殊字符"
 
-    def test_field_name_appears_in_error_message(self):
-        with pytest.raises(ValueError) as exc_info:
-            SecurityValidator.sanitize_credential_value("é", "auth_header_value")
-        assert "auth_header_value" in str(exc_info.value)
+    def test_strips_format_char_while_leaving_other_non_ascii_content(self):
+        contaminated = "café" + "⁠" + "-token"
+        assert SecurityValidator.sanitize_credential_value(contaminated) == "café-token"
+
+    def test_non_str_input_passes_through_unchanged(self):
+        """Some callers pass a Pydantic SecretStr directly for auth_password; this must
+        not crash iterating over a non-str object -- only plain strings are sanitized."""
+        secret = SecretStr("password")  # pragma: allowlist secret
+        assert SecurityValidator.sanitize_credential_value(secret) is secret
