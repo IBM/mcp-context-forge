@@ -515,6 +515,90 @@ async def test_generate_response_ping(registry: SessionRegistry):
 
 
 @pytest.mark.asyncio
+async def test_generate_response_propagates_jsonrpc_error(registry: SessionRegistry, stub_db, stub_services):
+    """A JSON-RPC *error* from the internal /rpc hop reaches the SSE client verbatim.
+
+    Regression test: the relay used to do ``.get("result", {})`` on the /rpc
+    response, so plugin violations / RBAC denials surfaced as an empty
+    ``result: {}`` with no diagnostic at all.
+    """
+    tr = FakeSSETransport("rpc_error")
+    await registry.add_session("rpc_error", tr)
+
+    error_obj = {
+        "code": -32003,
+        "message": "Access denied",
+        "data": {"method": "tools/call"},
+    }
+    mock_response = Mock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {"jsonrpc": "2.0", "error": error_obj, "id": 55}
+
+    mock_client = AsyncMock()
+    mock_client.post.return_value = mock_response
+
+    class MockAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return mock_client
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            return None
+
+    msg = {"method": "tools/call", "id": 55, "params": {"name": "demo", "arguments": {}}}
+    with patch("mcpgateway.cache.session_registry.ResilientHttpClient", MockAsyncClient):
+        await registry.generate_response(
+            message=msg,
+            transport=tr,
+            server_id=None,
+            user={"auth_token": "tok", "email": "user@test.com"},
+        )
+
+    assert tr.sent[-1] == {"jsonrpc": "2.0", "error": error_obj, "id": 55}
+
+
+@pytest.mark.asyncio
+async def test_generate_response_maps_non_jsonrpc_body_to_error(registry: SessionRegistry, stub_db, stub_services):
+    """A non-JSON-RPC body (e.g. ``{"detail": ...}`` from a 401 on /rpc) becomes a JSON-RPC error."""
+    tr = FakeSSETransport("rpc_401")
+    await registry.add_session("rpc_401", tr)
+
+    mock_response = Mock()
+    mock_response.status_code = 401
+    mock_response.json.return_value = {"detail": "Invalid authentication credentials"}
+
+    mock_client = AsyncMock()
+    mock_client.post.return_value = mock_response
+
+    class MockAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return mock_client
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            return None
+
+    msg = {"method": "tools/call", "id": 56, "params": {"name": "demo", "arguments": {}}}
+    with patch("mcpgateway.cache.session_registry.ResilientHttpClient", MockAsyncClient):
+        await registry.generate_response(
+            message=msg,
+            transport=tr,
+            server_id=None,
+            user={"auth_token": "tok", "email": "user@test.com"},
+        )
+
+    sent = tr.sent[-1]
+    assert sent["id"] == 56
+    assert "result" not in sent
+    assert sent["error"]["code"] == -32000
+    assert sent["error"]["message"] == "Invalid authentication credentials"
+
+
+@pytest.mark.asyncio
 async def test_generate_response_tools_list(registry: SessionRegistry, stub_db, stub_services):
     """*tools/list* responds with the stubbed ToolService payload."""
     tr = FakeSSETransport("tools")
