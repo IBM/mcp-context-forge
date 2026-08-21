@@ -1961,11 +1961,15 @@ class ResourceService(BaseService):
                                         # default to None (shared path) which is the safe fallback for
                                         # contexts without an explicit team scope.
                                         identity_token_teams: Optional[List[str]] = None
+                                        identity_jwt_claim: Optional[List[str]] = None
                                         if isinstance(user_identity, dict):
                                             identity_token_teams = user_identity.get("token_teams")
+                                            # jwt_teams_claim forwarded as Vault path hint for
+                                            # admin bypass so store and lookup use the same path.
+                                            identity_jwt_claim = user_identity.get("jwt_teams_claim")
 
                                         with fresh_db_session() as token_db:
-                                            user_context = build_token_user_context(token_db, oauth_user_email, identity_token_teams)
+                                            user_context = build_token_user_context(token_db, oauth_user_email, identity_token_teams, identity_jwt_claim)
                                             token_storage = TokenStorageService(token_db, user_context=user_context)
                                             access_token = await token_storage.get_user_token(gateway_id, oauth_user_email)
 

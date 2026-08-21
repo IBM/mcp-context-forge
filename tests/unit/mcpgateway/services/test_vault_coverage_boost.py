@@ -336,8 +336,17 @@ class TestVaultRequestRetryExhausted:
 
     @pytest.mark.asyncio
     async def test_4xx_non_403_reraises(self):
-        """Non-403 4xx errors are re-raised without retry (line 252)."""
+        """Non-403 4xx errors are wrapped as VaultConnectionError (not re-raised raw).
+
+        Previously this test asserted httpx.HTTPStatusError escaped, which was the bug
+        described in the Round-8 review (CWE-284): callers that catch only
+        (VaultConnectionError, VaultAuthError) would miss the raw exception and silently
+        fall back to the shared gateway credential.  The fix wraps all terminal HTTP
+        errors (non-403 4xx and exhausted 5xx) as VaultConnectionError.
+        """
         import httpx
+
+        from mcpgateway.services.token_backends.vault_backend import VaultConnectionError
 
         backend = _make_vault_backend()
 
@@ -351,7 +360,7 @@ class TestVaultRequestRetryExhausted:
         mock_client.get = AsyncMock(side_effect=exc)
 
         with patch("mcpgateway.services.token_backends.vault_backend.httpx.AsyncClient", return_value=mock_client):
-            with pytest.raises(httpx.HTTPStatusError):
+            with pytest.raises(VaultConnectionError, match="HTTP 400"):
                 await backend._vault_request("GET", "secret/data/test")
 
     @pytest.mark.asyncio

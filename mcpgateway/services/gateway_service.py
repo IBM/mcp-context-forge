@@ -7660,7 +7660,10 @@ async def test_gateway_connectivity(
                     # already resolved by auth middleware and must not be widened by
                     # re-querying EmailTeamMember (Layer 1 token-scoping invariant).
                     user_token_teams = user.get("token_teams") if isinstance(user, dict) else None
-                    user_context = build_token_user_context(db, user_email, user_token_teams)
+                    # jwt_teams_claim is forwarded as a Vault path hint for admin bypass
+                    # (token_teams=None) so store and lookup resolve to the same path.
+                    jwt_teams_hint = user.get("jwt_teams_claim") if isinstance(user, dict) else None
+                    user_context = build_token_user_context(db, user_email, user_token_teams, jwt_teams_hint)
                     token_storage = TokenStorageService(db, user_context=user_context)
 
                     # Get user-specific OAuth token
