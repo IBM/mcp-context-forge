@@ -14,6 +14,10 @@ metadata:
   labels:
     {{- include "mcp-stack.labels" . | nindent 4 }}
     app: {{ include "mcp-stack.fullname" . }}-pgbouncer
+  {{- with merge (default dict .Values.pgbouncer.annotations) (default dict .Values.annotations) }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 spec:
   replicas: 1
   selector:
@@ -23,6 +27,13 @@ spec:
     metadata:
       labels:
         app: {{ include "mcp-stack.fullname" . }}-pgbouncer
+        {{- with merge (default dict .Values.pgbouncer.podLabels) (default dict .Values.podLabels) }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with merge (default dict .Values.pgbouncer.podAnnotations) (default dict .Values.podAnnotations) }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
     spec:
       {{- if .Values.global.imagePullSecrets }}
       imagePullSecrets:
@@ -34,6 +45,14 @@ spec:
       serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
       {{- end }}
       automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
+      {{- with (coalesce .Values.pgbouncer.nodeSelector .Values.nodeSelector) }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with (coalesce .Values.pgbouncer.tolerations .Values.tolerations) }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       securityContext:
         seccompProfile:
           type: RuntimeDefault
