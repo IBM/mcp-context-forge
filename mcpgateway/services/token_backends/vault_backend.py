@@ -475,8 +475,31 @@ class VaultTokenBackend(AbstractTokenBackend):
                 return None
 
             data = result["data"]["data"]
-            access_token = data["token"]["access_token"]
-            refresh_token = data["token"].get("refresh_token")
+            token_data = data.get("token")
+            if not token_data or not isinstance(token_data, dict):
+                # Record exists but has no OAuth token shape (e.g. ICA-written
+                # header-only record with only a "headers" field).  Return None
+                # so the caller falls through to the "please authorize" path
+                # rather than raising a raw KeyError that surfaces as a
+                # confusing ToolInvocationError("... 'token'").
+                logger.debug(
+                    "Vault record for gateway %s, team=%s, user=%s has no 'token' field — not an OAuth record",
+                    SecurityValidator.sanitize_log_message(gateway_id),
+                    SecurityValidator.sanitize_log_message(team_id),
+                    SecurityValidator.sanitize_log_message(app_user_email),
+                )
+                return None
+            access_token = token_data.get("access_token")
+            if not access_token:
+                # Malformed record: has a 'token' dict but no 'access_token' inside.
+                logger.debug(
+                    "Vault record for gateway %s, team=%s, user=%s has 'token' but no 'access_token'",
+                    SecurityValidator.sanitize_log_message(gateway_id),
+                    SecurityValidator.sanitize_log_message(team_id),
+                    SecurityValidator.sanitize_log_message(app_user_email),
+                )
+                return None
+            refresh_token = token_data.get("refresh_token")
             expires_at_str = data.get("expires_at")
 
             # Check expiry and refresh if needed
@@ -886,6 +909,20 @@ class VaultTokenBackend(AbstractTokenBackend):
         key = (gateway_id, team_id, app_user_email)
         async with VaultTokenBackend._refresh_locks_mutex:  # pylint: disable=not-async-context-manager
             if key not in VaultTokenBackend._refresh_locks:
+                if len(VaultTokenBackend._refresh_locks) >= self.cache_max_size:
+                    # Evict the oldest IDLE (unlocked) entry to bound dict size,
+                    # mirroring the LRU cap already on _token_cache.
+                    # NEVER evict a held lock: a concurrent _get_refresh_lock call
+                    # for the same key would receive a fresh lock object and run a
+                    # duplicate IdP refresh while the original holder still owns the
+                    # old object — defeating serialisation and triggering invalid_grant
+                    # on rotating-refresh-token IdPs.
+                    for oldest_key, oldest_lock in VaultTokenBackend._refresh_locks.items():
+                        if not oldest_lock.locked():
+                            del VaultTokenBackend._refresh_locks[oldest_key]
+                            break
+                    # If every entry is currently held, allow temporary growth —
+                    # correctness takes priority over a strict size bound during bursts.
                 VaultTokenBackend._refresh_locks[key] = asyncio.Lock()
             return VaultTokenBackend._refresh_locks[key]
 
