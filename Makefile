@@ -434,7 +434,9 @@ setup:                          ## 🚀 First-time setup: copy .env.example → 
 # help: certs-mcp-plugin     - Generate plugin server certificate (requires PLUGIN_NAME=name)
 # help: certs-mcp-all        - Generate complete MCP mTLS infrastructure (reads plugins from config.yaml)
 # help: certs-mcp-check      - Check expiry dates of MCP certificates
+# help: certs-client         - Generate a client CA and test client cert for inbound mTLS
 # help: serve-ssl            - Run Gunicorn behind HTTPS on :4444 (uses ./certs)
+# help: serve-ssl-mtls       - Run Gunicorn with HTTPS + inbound mTLS (requires CA_CERTS=...)
 # help: dev                  - Run fast-reload dev server (uvicorn)
 # help: dev-echo             - Run dev server with SQL query logging (N+1 debugging)
 # help: dev-remote           - Run dev server with remote debugging (debugpy on port 5678)
@@ -443,8 +445,8 @@ setup:                          ## 🚀 First-time setup: copy .env.example → 
 # help: stop-serve           - Stop gunicorn production server (port 4444)
 # help: run                  - Execute helper script ./run.sh
 
-.PHONY: serve serve-ssl dev dev-remote stop stop-dev stop-serve run \
-        certs certs-jwt certs-jwt-ecdsa certs-all certs-mcp-ca certs-mcp-gateway certs-mcp-plugin certs-mcp-all certs-mcp-check \
+.PHONY: serve serve-ssl serve-ssl-mtls dev dev-remote stop stop-dev stop-serve run \
+        certs certs-client certs-jwt certs-jwt-ecdsa certs-all certs-mcp-ca certs-mcp-gateway certs-mcp-plugin certs-mcp-all certs-mcp-check \
         js-build
 
 ## --- JS build ----------------------------------------------------------------
@@ -461,6 +463,22 @@ serve: install js-build                  ## Run production server with Gunicorn 
 
 serve-ssl: js-build certs        ## Run Gunicorn with TLS enabled
 	SSL=true CERT_FILE=certs/cert.pem KEY_FILE=certs/key.pem ./run-gunicorn.sh
+
+# CERT_REQS defaults to 2 (required) but is expanded with $(or ...) rather than
+# shell-style ${CERT_REQS:-2}: Make expands ${...} first and would silently
+# resolve the latter to the empty string, which run-gunicorn.sh then defaults to
+# 0 - i.e. mTLS quietly disabled while the target claims to enforce it.
+serve-ssl-mtls: js-build certs   ## Run Gunicorn with TLS and inbound client certificate auth
+	@if [ -z "$(CA_CERTS)" ]; then \
+		echo "❌  CA_CERTS is required. Example:"; \
+		echo "   make certs-client && make serve-ssl-mtls CA_CERTS=certs/client/ca-cert.pem"; \
+		exit 1; \
+	fi
+	SSL=true CERT_FILE=certs/cert.pem KEY_FILE=certs/key.pem \
+	CA_CERTS=$(CA_CERTS) CERT_REQS=$(or $(CERT_REQS),2) \
+	LOOPBACK_CLIENT_CERT=$(or $(LOOPBACK_CLIENT_CERT),certs/client/client-cert.pem) \
+	LOOPBACK_CLIENT_KEY=$(or $(LOOPBACK_CLIENT_KEY),certs/client/client-key.pem) \
+	./run-gunicorn.sh
 
 dev:
 	@echo "🚀 Starting development server with CSS watch..."
@@ -547,6 +565,35 @@ certs:                           ## Generate ./certs/cert.pem & ./certs/key.pem 
 	@sudo chgrp 0 certs/key.pem certs/cert.pem || \
 		(echo "⚠️  Warning: Could not set group to 0 (container may not be able to read key)" && \
 		 echo "   Run manually: sudo chgrp 0 certs/key.pem certs/cert.pem")
+
+.PHONY: certs-client
+certs-client:                    ## Generate client CA + test client cert for inbound mTLS (idempotent)
+	@if [ -f certs/client/ca-cert.pem ] && [ -f certs/client/client-cert.pem ]; then \
+		echo "🔏  Existing client certificates found in ./certs/client - skipping generation."; \
+		echo "    Delete ./certs/client to regenerate (this invalidates any running server's trust chain)."; \
+	else \
+		echo "🔏  Generating client CA and test client certificate (1 year)..."; \
+		mkdir -p certs/client; \
+		openssl req -x509 -newkey rsa:4096 -sha256 -days 365 -nodes \
+			-keyout certs/client/ca-key.pem -out certs/client/ca-cert.pem \
+			-subj "/CN=ContextForge Client CA"; \
+		openssl req -newkey rsa:4096 -nodes \
+			-keyout certs/client/client-key.pem -out certs/client/client-csr.pem \
+			-subj "/CN=test-client"; \
+		openssl x509 -req -in certs/client/client-csr.pem \
+			-CA certs/client/ca-cert.pem -CAkey certs/client/ca-key.pem \
+			-CAcreateserial -out certs/client/client-cert.pem -days 365 -sha256; \
+		rm -f certs/client/client-csr.pem; \
+		echo "✅  Client CA and client certificate written to ./certs/client/"; \
+	fi
+	@echo "🔐  Setting file permissions..."
+	@chmod 644 certs/client/ca-cert.pem certs/client/client-cert.pem
+	@chmod 640 certs/client/ca-key.pem certs/client/client-key.pem
+	@echo ""
+	@echo "⚠️   These are TEST credentials. certs/client/ca-key.pem is a real CA key -"
+	@echo "    use your own PKI in production."
+	@echo "💡  Start the gateway with inbound mTLS:"
+	@echo "    make serve-ssl-mtls CA_CERTS=certs/client/ca-cert.pem"
 
 .PHONY: certs-passphrase
 certs-passphrase:                ## Generate self-signed cert with passphrase-protected key
