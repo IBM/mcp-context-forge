@@ -566,6 +566,63 @@ async def test_call_tool_with_structured_content(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_call_tool_preserves_structured_only_result(monkeypatch):
+    """A spec-valid structured-only result must not be discarded as empty.
+
+    MCP makes unstructured ``content`` a SHOULD—not a MUST—when
+    ``structuredContent`` is present. The early empty-content guard therefore
+    has to consider both representations.
+    """
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service
+
+    mock_db = MagicMock()
+    mock_result = MagicMock()
+    mock_result.content = []
+    mock_structured = {"id": "widget-42", "name": "Reproduction Widget", "price": 9.99}
+    mock_result.structured_content = mock_structured
+    mock_result.model_dump = lambda by_alias=True: {"content": [], "structuredContent": mock_structured}
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(tool_service, "invoke_tool", AsyncMock(return_value=mock_result))
+
+    result = await call_tool("widget", {})
+
+    assert isinstance(result, tuple)
+    unstructured, structured = result
+    assert unstructured == []
+    assert structured == mock_structured
+
+
+@pytest.mark.asyncio
+async def test_call_tool_returns_empty_when_neither_representation_exists(monkeypatch):
+    """The early return remains for results with neither content representation."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import call_tool, tool_service
+
+    mock_db = MagicMock()
+    mock_result = MagicMock()
+    mock_result.content = []
+    mock_result.structured_content = None
+    mock_result.model_dump = lambda by_alias=True: {"content": [], "structuredContent": None}
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(tool_service, "invoke_tool", AsyncMock(return_value=mock_result))
+
+    result = await call_tool("empty", {})
+
+    assert result == []
+
+
+@pytest.mark.asyncio
 async def test_call_tool_preserves_is_error_for_egress(monkeypatch):
     """Egress regression guard for ContextForge #4202 — local (non-pooled) branch.
 
@@ -9580,10 +9637,6 @@ async def test_local_affinity_post_routes_to_rpc(monkeypatch):
 
     await wrapper.shutdown()
     assert messages[0]["status"] == 200
-
-
-
-
 @pytest.mark.asyncio
 async def test_http_affinity_forwarded_path_dispatches_via_post_rpc_in_process(monkeypatch):
     """``[HTTP_AFFINITY_FORWARDED]`` re-entry also goes through ``post_rpc_in_process`` (PR #4987).
