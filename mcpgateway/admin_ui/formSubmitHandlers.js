@@ -9,7 +9,7 @@ import {
   validateUrl,
 } from "./security";
 import { getEditSelections } from "./servers";
-import { isInactiveChecked, safeGetElement, showErrorMessage, showSkippedToolsWarning } from "./utils";
+import { getCookie, isInactiveChecked, safeGetElement, showErrorMessage, showSkippedToolsWarning } from "./utils";
 
 // ===================================================================
 // ENHANCED FORM HANDLERS with Input Validation
@@ -1270,10 +1270,12 @@ export const handleGrpcServiceFormSubmit = async function (e) {
       payload.team_id = teamId;
     }
 
+    const csrfToken = getCookie("mcpgateway_csrf_token");
     const response = await fetch(`${window.ROOT_PATH}/admin/grpc`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
+        ...(csrfToken ? { "X-CSRF-Token": csrfToken } : {}),
       },
       body: JSON.stringify(payload),
       credentials: "include", // pragma: allowlist secret
