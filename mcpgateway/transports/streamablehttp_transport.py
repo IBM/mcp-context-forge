@@ -1929,7 +1929,7 @@ async def call_tool(
                 meta_data=meta_data,
                 require_model_visible=True,
             )
-            if not result or not result.content:
+            if not result or (not result.content and not getattr(result, "structured_content", None)):
                 logger.warning("No content returned by tool: %s", name)
                 return []
 
