@@ -10323,6 +10323,27 @@ async def _execute_rpc_initialize(
     return result
 
 
+def _resolve_tool_execution_auth_context(request: Request, user) -> tuple[Optional[str], Optional[List[str]], bool]:
+    """Resolve the visibility context for tool execution.
+
+    Admin bypass keeps the caller's email so the service can owner-match that
+    admin's own private tools. It must not expose another user's private tool.
+
+    Args:
+        request: Incoming JSON-RPC request.
+        user: Authenticated user payload.
+
+    Returns:
+        ``(user_email, token_teams, is_admin)`` for service-layer visibility.
+    """
+    user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
+    if is_admin and token_teams is None:
+        return user_email, None, True
+    if token_teams is None:
+        return user_email, [], False
+    return user_email, token_teams, is_admin
+
+
 async def _execute_rpc_tools_call(
     request: Request,
     db: Session,
@@ -10359,15 +10380,11 @@ async def _execute_rpc_tools_call(
     if not name:
         raise JSONRPCError(-32602, "Missing tool name in parameters", params)
 
-    # Layer-1 exception: run ownership is captured below from the raw context,
-    # before admin-bypass normalization is applied.
-    auth_user_email, auth_token_teams, auth_is_admin = get_rpc_filter_context(request, user)
+    # Layer-1 exception: run ownership is derived with the raw context; admin
+    # bypass preserves email for owner matching without exposing others' tools.
+    auth_user_email, auth_token_teams, auth_is_admin = _resolve_tool_execution_auth_context(request, user)
     run_owner_email = auth_user_email
     run_owner_team_ids = [] if auth_token_teams is None else list(auth_token_teams)
-    if auth_is_admin and auth_token_teams is None:
-        auth_user_email = None
-    elif auth_token_teams is None:
-        auth_token_teams = []
 
     oauth_user_email = get_user_email(user)
     plugin_context_table = getattr(request.state, "plugin_context_table", None)
@@ -10946,13 +10963,9 @@ async def handle_internal_mcp_tools_call_resolve(request: Request):
         if (get_internal_mcp_auth_context(request) or {}).get("is_authenticated", True) is True:
             await _ensure_rpc_permission(user, db, "tools.execute", "tools/call", request=request)
 
-        # Layer-1 exception: tool-execution authorization, not resource visibility.
-        # Centralizing here would widen admin execution scope to their own private tools.
-        auth_user_email, auth_token_teams, auth_is_admin = get_rpc_filter_context(request, user)
-        if auth_is_admin and auth_token_teams is None:
-            auth_user_email = None
-        elif auth_token_teams is None:
-            auth_token_teams = []
+        # Layer-1 exception: tool-execution authorization preserves the admin's
+        # email for owner matching while retaining the admin-bypass team scope.
+        auth_user_email, auth_token_teams, auth_is_admin = _resolve_tool_execution_auth_context(request, user)
 
         arguments = params.get("arguments") if isinstance(params.get("arguments"), dict) else {}
         plugin_context_table = getattr(request.state, "plugin_context_table", None)
@@ -11714,12 +11727,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             # Get authorization context (same as tools/call)
             # Layer-1 exception: tool-execution authorization, not resource visibility.
             # Kept in sync with _execute_rpc_tools_call.
-            auth_user_email, auth_token_teams, auth_is_admin = get_rpc_filter_context(request, user)
-            if auth_is_admin and auth_token_teams is None:
-                auth_user_email = None
-                # auth_token_teams stays None (unrestricted)
-            elif auth_token_teams is None:
-                auth_token_teams = []  # Non-admin without teams = public-only
+            auth_user_email, auth_token_teams, auth_is_admin = _resolve_tool_execution_auth_context(request, user)
 
             # Get user email for OAuth token selection
             oauth_user_email = get_user_email(user)
