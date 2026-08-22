@@ -4359,12 +4359,13 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             user_email=None,
         )
 
-    async def _handle_gateway_failure(self, gateway: DbGateway) -> None:
+    async def _handle_gateway_failure(self, gateway: DbGateway, error: Optional[BaseException] = None) -> None:
         """Tracks and handles gateway failures during health checks.
         If the failure count exceeds the threshold, the gateway is deactivated.
 
         Args:
             gateway: The gateway object that failed its health check.
+            error: The health-check failure. It is sanitized before persistence.
 
         Returns:
             None
@@ -4405,8 +4406,12 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         if count >= GW_FAILURE_THRESHOLD:
             logger.error("Gateway %s failed %s times. Deactivating...", SecurityValidator.sanitize_log_message(gateway.name), GW_FAILURE_THRESHOLD)
+            raw_error = (str(error) or type(error).__name__) if error is not None else "Unknown health-check failure"
+            sanitized_error = sanitize_exception_message(raw_error, getattr(gateway, "auth_query_params", None))
             with cast(Any, SessionLocal)() as db:
                 await self.set_gateway_state(db, gateway.id, activate=True, reachable=False, only_update_reachable=True)
+                db.execute(update(DbGateway).where(DbGateway.id == gateway.id).values(last_error=sanitized_error))
+                db.commit()
                 self._gateway_failure_counts[gateway.id] = 0  # Reset after deactivation
 
     async def check_health_of_gateways(self, gateways: List[DbGateway], user_email: Optional[str] = None) -> bool:
@@ -4497,7 +4502,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 except asyncio.TimeoutError:
                     logger.warning("Gateway %s health check timed out after %ss", getattr(gateway, "name", "unknown"), settings.gateway_health_check_timeout)
                     # Treat timeout as a failed health check
-                    await self._handle_gateway_failure(gateway)
+                    await self._handle_gateway_failure(gateway, error=asyncio.TimeoutError(f"health check timed out after {settings.gateway_health_check_timeout}s"))
 
         # Create trace span for health check batch
         with create_span("gateway.health_check_batch", {"gateway.count": len(gateways), "check.type": "health"}) as batch_span:
@@ -4549,6 +4554,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 db_gateway = update_db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
                 if db_gateway:
                     db_gateway.last_seen = datetime.now(timezone.utc)
+                    db_gateway.last_error = None
                     update_db.commit()
         except Exception as update_error:
             logger.warning("Failed to update last_seen for gateway %s: %s", gateway_name, update_error)
@@ -4888,8 +4894,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             set_span_error(span, e)
 
                         # Set the logger as debug as this check happens for each interval
-                        logger.debug("Health check failed for gateway %s: %s", gateway_name, e)
-                        await self._handle_gateway_failure(gateway)
+                        safe_error = sanitize_exception_message(str(exc_to_inspect), gateway_auth_query_params)
+                        logger.debug("Health check failed for gateway %s: %s", gateway_name, safe_error)
+                        await self._handle_gateway_failure(gateway, error=exc_to_inspect)
 
     async def aggregate_capabilities(self, db: Session) -> Dict[str, Any]:
         """
