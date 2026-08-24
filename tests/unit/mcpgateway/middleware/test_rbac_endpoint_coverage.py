@@ -23,6 +23,11 @@ from unittest.mock import AsyncMock, MagicMock
 from fastapi import HTTPException
 import pytest
 
+# First-Party
+from mcpgateway.db import Permissions
+from mcpgateway.main import app
+from tests.helpers.router_helpers import collect_routes
+
 # ---------------------------------------------------------------------------
 # Helper: invoke a decorated function and assert 403
 # ---------------------------------------------------------------------------
@@ -83,6 +88,13 @@ async def _assert_permission_granted(func, user_ctx=None, mock_perm_service=None
         pass
 
 
+def _find_route_endpoint(path: str, method: str):
+    """Return the endpoint registered for an exact path and HTTP method."""
+    matches = [route for route_path, route, _ in collect_routes(app.router) if route_path == path and method in getattr(route, "methods", set())]
+    assert len(matches) == 1, f"Expected one {method} route for {path}, found {len(matches)}"
+    return matches[0].endpoint
+
+
 # ---------------------------------------------------------------------------
 # D6.1: Main endpoint permissions (main.py)
 # ---------------------------------------------------------------------------
@@ -118,6 +130,33 @@ class TestMainEndpointPermissions:
             return {"status": "ok"}
 
         await _assert_permission_granted(dummy_endpoint, mock_perm_service=mock_permission_service)
+
+
+class TestV1ServerAliasPermissions:
+    """Verify the product-language v1 aliases retain CRUD RBAC enforcement."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "method,path,permission",
+        [
+            ("POST", "/v1/virtual-servers", Permissions.SERVERS_CREATE),
+            ("GET", "/v1/virtual-servers/{server_id}", Permissions.SERVERS_READ),
+            ("PUT", "/v1/virtual-servers/{server_id}", Permissions.SERVERS_UPDATE),
+            ("DELETE", "/v1/virtual-servers/{server_id}", Permissions.SERVERS_DELETE),
+            ("POST", "/v1/mcp-servers", Permissions.GATEWAYS_CREATE),
+            ("GET", "/v1/mcp-servers/{gateway_id}", Permissions.GATEWAYS_READ),
+            ("PUT", "/v1/mcp-servers/{gateway_id}", Permissions.GATEWAYS_UPDATE),
+            ("DELETE", "/v1/mcp-servers/{gateway_id}", Permissions.GATEWAYS_DELETE),
+        ],
+    )
+    async def test_v1_alias_crud_route_enforces_permission(self, mock_permission_service, method, path, permission):
+        """Each aliased route must reject a caller denied its declared permission."""
+        mock_permission_service.check_permission = AsyncMock(return_value=False)
+        endpoint = _find_route_endpoint(path, method)
+
+        assert getattr(endpoint, "_required_permission", None) == permission
+        await _assert_permission_denied(endpoint)
+        assert mock_permission_service.check_permission.await_args.kwargs["permission"] == permission
 
 
 # ---------------------------------------------------------------------------

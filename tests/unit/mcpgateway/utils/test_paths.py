@@ -3,7 +3,7 @@
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 
-Unit tests for mcpgateway.utils.paths.resolve_root_path.
+Unit tests for shared request-path utilities.
 
 Covers the canonical root-path resolution helper introduced in issue #3298
 to replace the 12 direct ``request.scope.get("root_path", "")`` call sites
@@ -20,7 +20,7 @@ from unittest.mock import MagicMock
 import pytest
 
 # First-Party
-from mcpgateway.utils.paths import resolve_root_path
+from mcpgateway.utils.paths import replace_api_path_alias, resolve_root_path
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -35,6 +35,25 @@ def _make_request(root_path: str | None = "") -> MagicMock:
     else:
         req.scope = {"root_path": root_path}
     return req
+
+
+@pytest.mark.parametrize(
+    ("path", "expected"),
+    [
+        ("/v1/virtual-servers", "/servers"),
+        ("/v1/virtual-servers/", "/servers/"),
+        ("/v1/virtual-servers/server-1/prompts", "/servers/server-1/prompts"),
+        ("/v1/mcp-servers", "/gateways"),
+        ("/v1/mcp-servers/gateway-1/tools/refresh/", "/gateways/gateway-1/tools/refresh/"),
+        ("/servers/server-1", "/servers/server-1"),
+        ("/v1/tools", "/v1/tools"),
+        ("/v1/virtual-servers-extra/server-1", "/v1/virtual-servers-extra/server-1"),
+        ("/prefix/v1/virtual-servers/server-1", "/prefix/v1/virtual-servers/server-1"),
+    ],
+)
+def test_replace_api_path_alias(path: str, expected: str) -> None:
+    """Known aliases are replaced without broad prefix matches."""
+    assert replace_api_path_alias(path) == expected
 
 
 # ---------------------------------------------------------------------------

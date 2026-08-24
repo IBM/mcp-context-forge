@@ -68,9 +68,9 @@ def _assemble_routers(  # noqa: C901 — deliberate single-function assembly, co
         tool_router: Inline tools router from main.py.
         resource_router: Inline resources router from main.py.
         prompt_router: Inline prompts router from main.py.
-        gateway_router: Inline gateways router from main.py.
+        gateway_router: Prefix-free inline gateways router from main.py.
         root_router: Inline roots router from main.py.
-        server_router: Inline servers router from main.py.
+        server_router: Prefix-free inline servers router from main.py.
         metrics_router: Inline metrics router from main.py.
         tag_router: Inline tags router from main.py.
         export_import_router: Inline export/import router from main.py.
@@ -84,9 +84,9 @@ def _assemble_routers(  # noqa: C901 — deliberate single-function assembly, co
     target_router.include_router(tool_router)
     target_router.include_router(resource_router)
     target_router.include_router(prompt_router)
-    target_router.include_router(gateway_router)
+    target_router.include_router(gateway_router, prefix="/gateways")
     target_router.include_router(root_router)
-    target_router.include_router(server_router)
+    target_router.include_router(server_router, prefix="/servers")
     target_router.include_router(metrics_router)
     target_router.include_router(tag_router)
     target_router.include_router(export_import_router)
@@ -369,6 +369,10 @@ def build_v1_router(
         export_import_router=export_import_router,
         a2a_router=a2a_router,
     )
+
+    # Product-language aliases for the existing gateway and virtual-server APIs.
+    v1_router.include_router(gateway_router, prefix="/mcp-servers")
+    v1_router.include_router(server_router, prefix="/virtual-servers")
 
     # First-Party
     from mcpgateway.routers.catalog import router as catalog_router  # pylint: disable=import-outside-toplevel

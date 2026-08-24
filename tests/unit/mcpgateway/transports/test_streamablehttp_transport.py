@@ -14027,6 +14027,37 @@ async def test_streamable_http_auth_rejects_unauthenticated_oauth_server(monkeyp
 
 
 @pytest.mark.asyncio
+async def test_streamable_http_auth_uses_request_path_without_changing_scope(monkeypatch):
+    """An app-relative path enforces OAuth without replacing the root-prefixed scope path."""
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", False)
+
+    mock_server = MagicMock()
+    mock_server.oauth_enabled = True
+
+    mock_db = MagicMock()
+    mock_db.execute.return_value.scalar_one_or_none.return_value = mock_server
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", _make_fake_get_db(mock_db))
+
+    public_path = "/gateway/servers/abc123def/mcp"
+    scope = _make_scope(public_path)
+    scope["root_path"] = "/gateway"
+    called = []
+
+    async def send(msg):
+        called.append(msg)
+
+    token = tr._oauth_checked_var.set(False)
+    try:
+        result = await streamable_http_auth(scope, None, send, request_path="/servers/abc123def/mcp")
+    finally:
+        tr._oauth_checked_var.reset(token)
+
+    assert result is False
+    assert called and called[0]["status"] == 401
+    assert scope["path"] == public_path
+
+
+@pytest.mark.asyncio
 async def test_streamable_http_auth_rejects_unauthenticated_oauth_server_on_get(monkeypatch):
     """#4205 parity guard: GET to an oauth_enabled server must 401, not 405.
 
@@ -14147,7 +14178,9 @@ async def test_oauth_access_token_context_preserves_exp(monkeypatch):
     monkeypatch.setattr("mcpgateway.auth._get_user_by_email_sync", MagicMock(return_value=mock_user))
     monkeypatch.setattr("mcpgateway.auth._resolve_teams_from_db", AsyncMock(return_value=["team-a"]))
 
-    handler = tr._StreamableHttpAuthHandler(scope=_make_scope("/servers/oauth-server/mcp"), receive=AsyncMock(), send=AsyncMock())
+    scope = _make_scope("/gateway/servers/oauth-server/mcp")
+    scope["root_path"] = "/gateway"
+    handler = tr._StreamableHttpAuthHandler(scope=scope, receive=AsyncMock(), send=AsyncMock(), request_path="/servers/oauth-server/mcp")
 
     result = await handler._try_oauth_access_token(
         "oauth-token",
@@ -14156,6 +14189,7 @@ async def test_oauth_access_token_context_preserves_exp(monkeypatch):
 
     assert result is tr.OAuthAuthResult.SUCCESS
     assert tr.user_context_var.get()["exp"] == token_exp
+    assert scope["path"] == "/gateway/servers/oauth-server/mcp"
 
 
 @pytest.mark.asyncio

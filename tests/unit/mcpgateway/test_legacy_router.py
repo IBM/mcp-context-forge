@@ -136,7 +136,9 @@ class TestBuildLegacyRouterGroupA:
 
     def test_gateway_router_at_root(self):
         v = build_legacy_router(_settings(), **_required_kwargs())
-        assert "/sentinel-gateway" in _route_paths(v)
+        paths = _route_paths(v)
+        assert "/gateways/sentinel-gateway" in paths
+        assert "/mcp-servers/sentinel-gateway" not in paths
 
     def test_root_router_at_root(self):
         v = build_legacy_router(_settings(), **_required_kwargs())
@@ -144,7 +146,9 @@ class TestBuildLegacyRouterGroupA:
 
     def test_server_router_at_root(self):
         v = build_legacy_router(_settings(), **_required_kwargs())
-        assert "/sentinel-server" in _route_paths(v)
+        paths = _route_paths(v)
+        assert "/servers/sentinel-server" in paths
+        assert "/virtual-servers/sentinel-server" not in paths
 
     def test_metrics_router_at_root(self):
         v = build_legacy_router(_settings(), **_required_kwargs())
