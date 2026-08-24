@@ -16,7 +16,8 @@
 #  Default (no profile):  Gateway + Postgres + Redis + Nginx (HTTP only)
 #  --profile sso:         Adds Keycloak + testing + inspector (full dev SSO stack, via docker-compose.sso.yml)
 #  --profile monitoring:  Adds Prometheus, Grafana, Loki, exporters
-#  --profile testing:     Adds Locust (web UI), A2A echo agent, fast_test_server + auto-registration
+#  --profile testing:     Adds Locust (load-testing UI), A2A echo agent, fast_test_server + auto-registration
+#                          (also pulls in the ContextForge web_ui - see --profile experimental below)
 #  --profile resilience:  Adds slow_time_server for timeout, circuit breaker, and resilience testing
 #  --profile benchmark:   Adds benchmark MCP servers for load testing
 #  --profile tls:         Enables HTTPS via nginx_tls (auto-generates certs)
@@ -1181,10 +1182,13 @@ services:
     image: ${WEB_UI_IMAGE:-ghcr.io/contextforge-org/contextforge-web-ui:latest}
     restart: unless-stopped
     ports:
+      # Host and container port tied together on purpose - the image reads
+      # PORT at startup and listens on it, so both sides must match.
       - "${WEB_UI_PORT:-3001}:${WEB_UI_PORT:-3001}"
     networks: [mcpnet]
     environment:
       - PORT=${WEB_UI_PORT:-3001}
+      # Bind address - must be 0.0.0.0 inside Docker or other containers cannot connect
       - HOST=${WEB_UI_HOST:-0.0.0.0}
       # Gateway API base URL - points at this compose's gateway service (internal network address:port)
       - CONTEXTFORGE_URL=${WEB_UI_CONTEXTFORGE_URL:-http://gateway:4444}
