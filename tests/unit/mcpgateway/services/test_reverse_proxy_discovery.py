@@ -16,6 +16,7 @@ import uuid
 import pytest
 from pydantic import JsonValue
 
+from mcpgateway import __version__
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
@@ -23,6 +24,8 @@ from mcpgateway.db import Server as DbServer
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.services.gateway_service import GatewayService
 from mcpgateway.services.reverse_proxy_discovery import (
+    MCP_CLIENT_NAME,
+    MCP_CLIENT_PROTOCOL_VERSION,
     ReverseProxyDiscoveryError,
     ReverseProxyDiscoveryResult,
     ReverseProxyDiscoveryService,
@@ -200,7 +203,7 @@ async def test_initialize_precedes_initialized_and_lists(discovery, test_db, pro
     assert methods[0] == "initialize"
     initialize = fake.sent[0]
     assert isinstance(initialize, JsonRpcRequest)
-    assert initialize.params == {"protocolVersion": "2025-11-25", "capabilities": {}, "clientInfo": {"name": "mcp-context-forge", "version": "1.0.7"}}
+    assert initialize.params == {"protocolVersion": MCP_CLIENT_PROTOCOL_VERSION, "capabilities": {}, "clientInfo": {"name": MCP_CLIENT_NAME, "version": __version__}}
     initialized_at = methods.index("notifications/initialized")
     assert initialized_at == 1
     assert isinstance(fake.sent[initialized_at], JsonRpcNotification)
