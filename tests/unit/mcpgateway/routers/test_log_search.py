@@ -9,7 +9,7 @@ Tests for log search router helpers.
 # Standard
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 from fastapi import HTTPException
@@ -18,6 +18,13 @@ import pytest
 # First-Party
 from mcpgateway.middleware import rbac as rbac_module
 from mcpgateway.routers import log_search
+
+
+@pytest.fixture(autouse=True)
+def _unrestricted_scope():
+    """Grant unrestricted Layer-1 scope; this suite calls handlers directly with no request."""
+    with patch("mcpgateway.middleware.rbac._global_scope_denied", AsyncMock(return_value=False)):
+        yield
 
 
 @pytest.fixture(autouse=True)

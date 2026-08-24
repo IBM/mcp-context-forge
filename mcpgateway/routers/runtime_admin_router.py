@@ -34,7 +34,7 @@ from sqlalchemy.orm import Session
 from mcpgateway import version as version_module
 from mcpgateway.auth_context import get_user_email
 from mcpgateway.common.validators import SecurityValidator
-from mcpgateway.middleware.rbac import get_current_user_with_permissions, get_db, require_permission
+from mcpgateway.middleware.rbac import get_current_user_with_permissions, get_db, require_global_admin_permission, require_permission
 from mcpgateway.runtime_state import (
     get_runtime_state,
     get_runtime_state_coordinator,
@@ -373,14 +373,17 @@ def _write_audit_event(
 
 
 @runtime_admin_router.get("/mcp-mode")
+@require_global_admin_permission()
 @require_permission("admin.system_config")
 async def get_mcp_mode(
     user: Dict[str, Any] = Depends(get_current_user_with_permissions),
+    request: Request = None,  # pylint: disable=unused-argument
 ) -> Dict[str, Any]:
     """Return the current MCP runtime mode and override state.
 
     Args:
         user: Authenticated user context (must have ``admin.system_config``).
+        request: Incoming request, used to resolve Layer-1 token scope.
 
     Returns:
         State payload describing boot mode, effective mode, override state, and propagation status.
@@ -394,6 +397,7 @@ async def get_mcp_mode(
 
 
 @runtime_admin_router.patch("/mcp-mode")
+@require_global_admin_permission()
 @require_permission("admin.system_config")
 async def patch_mcp_mode(
     body: RuntimeModeUpdate,
@@ -433,14 +437,17 @@ async def patch_mcp_mode(
 
 
 @runtime_admin_router.get("/a2a-mode")
+@require_global_admin_permission()
 @require_permission("admin.system_config")
 async def get_a2a_mode(
     user: Dict[str, Any] = Depends(get_current_user_with_permissions),
+    request: Request = None,  # pylint: disable=unused-argument
 ) -> Dict[str, Any]:
     """Return the current A2A runtime mode and override state.
 
     Args:
         user: Authenticated user context (must have ``admin.system_config``).
+        request: Incoming request, used to resolve Layer-1 token scope.
 
     Returns:
         State payload describing boot mode, effective mode, override state, and propagation status.
@@ -454,6 +461,7 @@ async def get_a2a_mode(
 
 
 @runtime_admin_router.patch("/a2a-mode")
+@require_global_admin_permission()
 @require_permission("admin.system_config")
 async def patch_a2a_mode(
     body: RuntimeModeUpdate,

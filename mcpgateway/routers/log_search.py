@@ -33,7 +33,7 @@ from mcpgateway.db import (
     SecurityEvent,
     StructuredLogEntry,
 )
-from mcpgateway.middleware.rbac import check_permission_inline, get_current_user_with_permissions, require_permission
+from mcpgateway.middleware.rbac import check_permission_inline, get_current_user_with_permissions, require_global_admin_permission, require_permission
 from mcpgateway.services.audit_trail_service import DataClassification
 from mcpgateway.services.log_aggregator import get_log_aggregator
 
@@ -448,14 +448,16 @@ class PerformanceMetricResponse(BaseModel):
 
 # API Endpoints
 @router.post("/search", response_model=LogSearchResponse)
+@require_global_admin_permission()
 @require_permission("logs:read")
-async def search_logs(request: LogSearchRequest, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> LogSearchResponse:
+async def search_logs(body: LogSearchRequest, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db), request: Request = None) -> LogSearchResponse:  # pylint: disable=unused-argument
     """Search structured logs with filters and pagination.
 
     Args:
-        request: Search parameters
+        body: Search parameters
         user: Current authenticated user
         db: Database session
+        request: Incoming request, used to resolve Layer-1 token scope.
 
     Returns:
         Search results with pagination
@@ -470,40 +472,40 @@ async def search_logs(request: LogSearchRequest, user=Depends(get_current_user_w
         # Apply filters
         conditions = []
 
-        if request.search_text:
-            conditions.append(or_(StructuredLogEntry.message.ilike(f"%{request.search_text}%"), StructuredLogEntry.component.ilike(f"%{request.search_text}%")))
+        if body.search_text:
+            conditions.append(or_(StructuredLogEntry.message.ilike(f"%{body.search_text}%"), StructuredLogEntry.component.ilike(f"%{body.search_text}%")))
 
-        if request.level:
-            conditions.append(StructuredLogEntry.level.in_(request.level))
+        if body.level:
+            conditions.append(StructuredLogEntry.level.in_(body.level))
 
-        if request.component:
-            components = _expand_component_filters(request.component)
+        if body.component:
+            components = _expand_component_filters(body.component)
             conditions.append(StructuredLogEntry.component.in_(components))
 
         # Note: category field doesn't exist in StructuredLogEntry
-        # if request.category:
-        #     conditions.append(StructuredLogEntry.category.in_(request.category))
+        # if body.category:
+        #     conditions.append(StructuredLogEntry.category.in_(body.category))
 
-        if request.correlation_id:
-            conditions.append(StructuredLogEntry.correlation_id == request.correlation_id)
+        if body.correlation_id:
+            conditions.append(StructuredLogEntry.correlation_id == body.correlation_id)
 
-        if request.user_id:
-            conditions.append(StructuredLogEntry.user_id == request.user_id)
+        if body.user_id:
+            conditions.append(StructuredLogEntry.user_id == body.user_id)
 
-        if request.start_time:
-            conditions.append(StructuredLogEntry.timestamp >= request.start_time)
+        if body.start_time:
+            conditions.append(StructuredLogEntry.timestamp >= body.start_time)
 
-        if request.end_time:
-            conditions.append(StructuredLogEntry.timestamp <= request.end_time)
+        if body.end_time:
+            conditions.append(StructuredLogEntry.timestamp <= body.end_time)
 
-        if request.min_duration_ms is not None:
-            conditions.append(StructuredLogEntry.duration_ms >= request.min_duration_ms)
+        if body.min_duration_ms is not None:
+            conditions.append(StructuredLogEntry.duration_ms >= body.min_duration_ms)
 
-        if request.max_duration_ms is not None:
-            conditions.append(StructuredLogEntry.duration_ms <= request.max_duration_ms)
+        if body.max_duration_ms is not None:
+            conditions.append(StructuredLogEntry.duration_ms <= body.max_duration_ms)
 
-        if request.has_error is not None:
-            if request.has_error:
+        if body.has_error is not None:
+            if body.has_error:
                 conditions.append(StructuredLogEntry.error_details.isnot(None))
             else:
                 conditions.append(StructuredLogEntry.error_details.is_(None))
@@ -516,14 +518,14 @@ async def search_logs(request: LogSearchRequest, user=Depends(get_current_user_w
         total = db.execute(count_stmt).scalar() or 0
 
         # Apply sorting
-        sort_column = getattr(StructuredLogEntry, request.sort_by, StructuredLogEntry.timestamp)
-        if request.sort_order == "desc":
+        sort_column = getattr(StructuredLogEntry, body.sort_by, StructuredLogEntry.timestamp)
+        if body.sort_order == "desc":
             stmt = stmt.order_by(desc(sort_column))
         else:
             stmt = stmt.order_by(sort_column)
 
         # Apply pagination
-        stmt = stmt.limit(request.limit).offset(request.offset)
+        stmt = stmt.limit(body.limit).offset(body.offset)
 
         # Execute query
         results = db.execute(stmt).scalars().all()
@@ -557,14 +559,16 @@ async def search_logs(request: LogSearchRequest, user=Depends(get_current_user_w
 
 
 @router.get("/trace/{correlation_id}", response_model=CorrelationTraceResponse)
+@require_global_admin_permission()
 @require_permission("logs:read")
-async def trace_correlation_id(correlation_id: str, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> CorrelationTraceResponse:
+async def trace_correlation_id(correlation_id: str, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db), request: Request = None) -> CorrelationTraceResponse:  # pylint: disable=unused-argument
     """Get all logs and events for a correlation ID.
 
     Args:
         correlation_id: Correlation ID to trace
         user: Current authenticated user
         db: Database session
+        request: Incoming request, used to resolve Layer-1 token scope.
 
     Returns:
         Complete trace of all related logs and events
@@ -670,6 +674,7 @@ async def trace_correlation_id(correlation_id: str, user=Depends(get_current_use
 
 
 @router.get("/security-events", response_model=List[SecurityEventResponse])
+@require_global_admin_permission()
 @require_permission("security:read")
 async def get_security_events(
     severity: Optional[List[str]] = Query(None),
@@ -681,6 +686,7 @@ async def get_security_events(
     offset: int = Query(0, ge=0),
     user=Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
+    request: Request = None,  # pylint: disable=unused-argument
 ) -> List[SecurityEventResponse]:
     """Get security events with filters.
 
@@ -694,6 +700,7 @@ async def get_security_events(
         offset: Result offset
         user: Current authenticated user
         db: Database session
+        request: Incoming request, used to resolve Layer-1 token scope.
 
     Returns:
         List of security events
@@ -746,6 +753,7 @@ async def get_security_events(
 
 
 @router.get("/audit-trails", response_model=List[AuditTrailResponse])
+@require_global_admin_permission()
 @require_permission("audit:read")
 async def get_audit_trails(
     action: Optional[List[str]] = Query(None),
@@ -762,6 +770,7 @@ async def get_audit_trails(
     offset: int = Query(0, ge=0),
     user=Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
+    request: Request = None,  # pylint: disable=unused-argument
 ) -> List[AuditTrailResponse]:
     """Get audit trails with filters.
 
@@ -776,6 +785,7 @@ async def get_audit_trails(
         offset: Result offset
         user: Current authenticated user
         db: Database session
+        request: Incoming request, used to resolve Layer-1 token scope.
 
     Returns:
         List of audit trail entries
@@ -919,6 +929,7 @@ async def get_activity_feed(
 
 
 @router.get("/performance-metrics", response_model=List[PerformanceMetricResponse])
+@require_global_admin_permission()
 @require_permission("metrics:read")
 async def get_performance_metrics(
     component: QueryIdentifierDottedComponent = None,
@@ -927,6 +938,7 @@ async def get_performance_metrics(
     aggregation: QueryAggregation = _DEFAULT_AGGREGATION_KEY,
     user=Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
+    request: Request = None,  # pylint: disable=unused-argument
 ) -> List[PerformanceMetricResponse]:
     """Get performance metrics.
 
@@ -937,6 +949,7 @@ async def get_performance_metrics(
         hours: Hours of history
         user: Current authenticated user
         db: Database session
+        request: Incoming request, used to resolve Layer-1 token scope.
 
     Returns:
         List of performance metrics

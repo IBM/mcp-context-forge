@@ -386,6 +386,10 @@ def allow_permission(monkeypatch):
     monkeypatch.setattr("mcpgateway.middleware.rbac.PermissionService", lambda db: mock_perm_service)
     monkeypatch.setattr("mcpgateway.admin.PermissionService", lambda db: mock_perm_service)
     monkeypatch.setattr("mcpgateway.admin.is_unrestricted_platform_admin", AsyncMock(return_value=True))
+    # require_unrestricted_platform_admin() (shared rbac.py helper used by roots routes)
+    # resolves is_unrestricted_platform_admin via its own deferred import from
+    # mcpgateway.auth_context, not admin.py's module-level name, so both must be patched.
+    monkeypatch.setattr("mcpgateway.auth_context.is_unrestricted_platform_admin", AsyncMock(return_value=True))
     monkeypatch.setattr("mcpgateway.plugins.get_plugin_manager", AsyncMock(return_value=None))
     return mock_perm_service
 
@@ -3767,6 +3771,9 @@ class TestAdminRootRoutes:
     @pytest.fixture(autouse=True)
     def _allow_root_admin(self, monkeypatch):
         monkeypatch.setattr("mcpgateway.admin.is_unrestricted_platform_admin", AsyncMock(return_value=True))
+        # require_unrestricted_platform_admin() resolves is_unrestricted_platform_admin via
+        # its own deferred import from mcpgateway.auth_context, so patch it there too.
+        monkeypatch.setattr("mcpgateway.auth_context.is_unrestricted_platform_admin", AsyncMock(return_value=True))
 
     @patch("mcpgateway.admin.root_service.add_root", new_callable=AsyncMock)
     async def test_admin_add_root_with_special_characters(self, mock_add_root, mock_request):
@@ -14338,6 +14345,10 @@ async def test_admin_search_roots_denies_scoped_admin_before_service_access(monk
     root_service = MagicMock(list_roots=AsyncMock())
     monkeypatch.setattr("mcpgateway.admin.root_service", root_service)
     monkeypatch.setattr("mcpgateway.admin.is_unrestricted_platform_admin", AsyncMock(return_value=False))
+    # admin_search_roots enforces via require_unrestricted_platform_admin(), which resolves
+    # is_unrestricted_platform_admin via its own deferred import from mcpgateway.auth_context
+    # (not admin.py's module-level name), so the effective override must land there.
+    monkeypatch.setattr("mcpgateway.auth_context.is_unrestricted_platform_admin", AsyncMock(return_value=False))
 
     with pytest.raises(HTTPException) as exc_info:
         await admin_search_roots(q="tmp", limit=10, db=mock_db, user={"email": "admin@example.com"})

@@ -115,7 +115,10 @@ def test_router_has_require_permission(rel_path: str, permission: str) -> None:
 
 def test_rbac_router_uses_admin_permission_decorator() -> None:
     source = _read("mcpgateway/routers/rbac.py")
-    assert "@require_admin_permission()" in source
+    # Role definition mutations (create/update/delete) are global records
+    # (Role has no team_id) and require the stricter unrestricted-platform-admin
+    # guard rather than the plain admin-permission check. See #5982.
+    assert "@require_global_admin_permission()" in source
     assert '"admin.user_management"' in source
     assert '"admin.security_audit"' in source
 

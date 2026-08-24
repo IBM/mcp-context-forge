@@ -288,7 +288,9 @@ class PermissionService:
 
         return permissions
 
-    async def get_user_roles(self, user_email: str, scope: Optional[str] = None, team_id: Optional[str] = None, include_expired: bool = False) -> List[UserRole]:
+    async def get_user_roles(
+        self, user_email: str, scope: Optional[str] = None, team_id: Optional[str] = None, include_expired: bool = False, token_teams: Optional[List[str]] = None
+    ) -> List[UserRole]:
         """Get user's role assignments.
 
         Args:
@@ -296,9 +298,18 @@ class PermissionService:
             scope: Filter by scope ('global', 'team', 'personal')
             team_id: Filter by team ID
             include_expired: Whether to include expired roles
+            token_teams: Layer-1 visibility scope of the *caller* (not ``user_email``).
+                ``None`` means the caller is an unrestricted platform admin (or is
+                viewing their own roles) and no filtering is applied. Any other
+                value narrows the returned rows: global assignments are dropped,
+                team assignments are kept only when their ``scope_id`` is in
+                ``token_teams``, and personal assignments are dropped (they belong
+                to ``user_email``, not the caller, and must not be inferred visible
+                from the requested ``scope`` query value).
 
         Returns:
-            List[UserRole]: User's role assignments
+            List[UserRole]: User's role assignments, filtered to what the caller
+            identified by ``token_teams`` is permitted to see.
 
         Examples:
             Coroutine check:
@@ -322,6 +333,15 @@ class PermissionService:
 
         result = self.db.execute(query)
         user_roles = result.scalars().all()
+
+        if token_teams is not None:
+            # SECURITY: narrowed caller — apply the same visibility policy as
+            # role assignment (_authorize_assignment_scope): global is admin-only,
+            # team requires the row's scope_id to be in the caller's token_teams,
+            # and personal assignments belong to user_email, not the caller, so
+            # they are never disclosed to a narrowed viewer of someone else.
+            user_roles = [ur for ur in user_roles if ur.scope == "team" and ur.scope_id and ur.scope_id in token_teams]
+
         return user_roles
 
     async def has_permission_on_resource(self, user_email: str, permission: str, resource_type: str, resource_id: str, team_id: Optional[str] = None) -> bool:
