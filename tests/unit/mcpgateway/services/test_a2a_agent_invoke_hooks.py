@@ -39,6 +39,23 @@ def service():
     return A2AAgentService()
 
 
+@pytest.fixture(autouse=True)
+def route_isolated_clients_to_patched_shared_client(monkeypatch):
+    """Route isolated A2A HTTP clients through tests' patched shared client."""
+
+    class IsolatedClientCtx:
+        async def __aenter__(self):
+            # First-Party
+            from mcpgateway.services.http_client_service import get_http_client
+
+            return await get_http_client()
+
+        async def __aexit__(self, *_exc):
+            return None
+
+    monkeypatch.setattr("mcpgateway.services.http_client_service.get_isolated_http_client", lambda **_kwargs: IsolatedClientCtx())
+
+
 @pytest.fixture
 def mock_db():
     return MagicMock()

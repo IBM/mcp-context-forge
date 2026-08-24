@@ -63,7 +63,7 @@ from mcpgateway.common.models import Gateway as PydanticGateway
 from mcpgateway.common.models import TextContent
 from mcpgateway.common.models import Tool as PydanticTool
 from mcpgateway.common.models import ToolResult
-from mcpgateway.common.validators import SecurityValidator
+from mcpgateway.common.validators import pin_url_to_resolved_ip, SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.db import fresh_db_session
@@ -75,7 +75,7 @@ from mcpgateway.observability import create_child_span, create_span, inject_trac
 from mcpgateway.plugins.control_telemetry import ControlTelemetryAccumulator, record_control_telemetry
 from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
 from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolMetrics, ToolRead, ToolUpdate, TopPerformer
-from mcpgateway.services.a2a_protocol import prepare_a2a_invocation
+from mcpgateway.services.a2a_protocol import prepare_a2a_invocation, prepare_pinned_a2a_invocation
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.content_security import ContentSecurityService
@@ -232,14 +232,6 @@ def _sync_meta_traceparent(
     updated_meta = dict(meta_data or {})
     updated_meta["traceparent"] = traceparent
     return updated_meta
-
-
-def _pin_url_to_resolved_ip(url: str, resolved_ip: str) -> str:
-    """Return ``url`` with only its network location replaced by ``resolved_ip``."""
-    parsed = urlparse(url)
-    pinned_host = f"[{resolved_ip}]" if ":" in resolved_ip else resolved_ip
-    pinned_netloc = f"{pinned_host}:{parsed.port}" if parsed.port is not None else pinned_host
-    return parsed._replace(netloc=pinned_netloc).geturl()
 
 
 def _build_pinned_rest_http_client() -> ResilientHttpClient:
@@ -5739,7 +5731,7 @@ class ToolService(BaseService):
                         )
                         raise ToolInvocationError("Outbound URL blocked by URL policy")
                     if resolved_ip and original_hostname and original_authority:
-                        final_url = _pin_url_to_resolved_ip(final_url, resolved_ip)
+                        final_url = pin_url_to_resolved_ip(final_url, resolved_ip)
                         headers = {hk: hv for hk, hv in headers.items() if hk.lower() != "host"}
                         headers["Host"] = original_authority
                         rest_request_extensions["sni_hostname"] = original_hostname
@@ -6701,10 +6693,34 @@ class ToolService(BaseService):
                         logger.info("Calling A2A agent '%s' at %s", a2a_agent_name, prepared.sanitized_endpoint_url)
                         a2a_start_time = time.time()
                         try:
-                            http_response = await asyncio.wait_for(
-                                self._http_client.post(prepared.endpoint_url, json=prepared.request_data, headers=prepared.headers),
-                                timeout=effective_timeout,
-                            )
+                            try:
+                                pinned = await prepare_pinned_a2a_invocation(prepared)
+                            except ValueError as validation_error:
+                                validation_reason = SecurityValidator.sanitize_log_message(str(validation_error.__cause__ or validation_error))
+                                logger.warning(
+                                    "A2A tool outbound URL validation failed for tool %s (%s), agent=%s, url=%s, correlation_id=%s: %s",
+                                    SecurityValidator.sanitize_log_message(name),
+                                    SecurityValidator.sanitize_log_message(tool_id),
+                                    SecurityValidator.sanitize_log_message(a2a_agent_name or ""),
+                                    prepared.sanitized_endpoint_url,
+                                    get_correlation_id(),
+                                    validation_reason,
+                                )
+                                raise ToolInvocationError("Outbound A2A URL blocked by URL policy") from validation_error
+
+                            # First-Party
+                            from mcpgateway.services.http_client_service import get_isolated_http_client  # pylint: disable=import-outside-toplevel
+
+                            async with get_isolated_http_client(follow_redirects=False) as client:
+                                http_response = await asyncio.wait_for(
+                                    client.post(
+                                        pinned.endpoint_url,
+                                        json=prepared.request_data,
+                                        headers=pinned.headers,
+                                        extensions=pinned.extensions,
+                                    ),
+                                    timeout=effective_timeout,
+                                )
                             status_code = http_response.status_code
                             response_data = http_response.json() if status_code == 200 else None
                             response_text = http_response.text
@@ -8000,12 +8016,25 @@ class ToolService(BaseService):
         )
         logger.info("invoke tool request_data prepared: %s", prepared.request_data)
 
-        # Make HTTP request to the agent endpoint using shared HTTP client
-        # First-Party
-        from mcpgateway.services.http_client_service import get_http_client  # pylint: disable=import-outside-toplevel
+        try:
+            pinned = await prepare_pinned_a2a_invocation(prepared)
+        except ValueError as validation_error:
+            validation_reason = SecurityValidator.sanitize_log_message(str(validation_error.__cause__ or validation_error))
+            logger.warning(
+                "A2A helper outbound URL validation failed for agent %s, url=%s, correlation_id=%s: %s",
+                SecurityValidator.sanitize_log_message(agent.name),
+                prepared.sanitized_endpoint_url,
+                get_correlation_id(),
+                validation_reason,
+            )
+            raise ToolInvocationError("Outbound A2A URL blocked by URL policy") from validation_error
 
-        client = await get_http_client()
-        http_response = await client.post(prepared.endpoint_url, json=prepared.request_data, headers=prepared.headers)
+        # Make HTTP request to the agent endpoint using an isolated SSRF-sensitive client.
+        # First-Party
+        from mcpgateway.services.http_client_service import get_isolated_http_client  # pylint: disable=import-outside-toplevel
+
+        async with get_isolated_http_client(follow_redirects=False) as client:
+            http_response = await client.post(pinned.endpoint_url, json=prepared.request_data, headers=pinned.headers, extensions=pinned.extensions)
 
         if http_response.status_code == 200:
             return http_response.json()
