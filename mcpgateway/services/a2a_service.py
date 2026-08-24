@@ -28,6 +28,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.cache.a2a_stats_cache import a2a_stats_cache
+from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import A2AAgent as DbA2AAgent
 from mcpgateway.db import A2AAgentMetric, A2AAgentMetricsHourly, A2ATask, EmailTeam
@@ -37,9 +38,10 @@ from mcpgateway.db import Tool as DbTool
 from mcpgateway.observability import create_span, set_span_attribute, set_span_error
 from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
 from mcpgateway.schemas import A2AAgentAggregateMetrics, A2AAgentCreate, A2AAgentMetrics, A2AAgentRead, A2AAgentUpdate
-from mcpgateway.services.a2a_protocol import prepare_a2a_invocation
+from mcpgateway.services.a2a_protocol import prepare_a2a_invocation, prepare_pinned_a2a_invocation
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
+from mcpgateway.services.http_client_service import get_isolated_http_client
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
@@ -2423,12 +2425,24 @@ class A2AAgentService(BaseService):
                     },
                 )
 
-                # Make HTTP request to the agent endpoint using shared HTTP client
-                # First-Party
-                from mcpgateway.services.http_client_service import get_http_client  # pylint: disable=import-outside-toplevel
+                try:
+                    pinned = await prepare_pinned_a2a_invocation(prepared)
+                except ValueError as validation_error:
+                    error_message = "Outbound A2A URL blocked by URL policy"
+                    validation_reason = SecurityValidator.sanitize_log_message(str(validation_error.__cause__ or validation_error))
+                    logger.warning(
+                        "A2A outbound URL validation failed for agent %s (%s), url=%s, correlation_id=%s: %s",
+                        SecurityValidator.sanitize_log_message(agent_name),
+                        SecurityValidator.sanitize_log_message(agent_id),
+                        prepared.sanitized_endpoint_url,
+                        correlation_id,
+                        validation_reason,
+                    )
+                    raise A2AAgentError(error_message) from validation_error
 
-                client = await get_http_client()
-                http_response = await client.post(prepared.endpoint_url, json=prepared.request_data, headers=prepared.headers)
+                # Make HTTP request to the agent endpoint using an isolated SSRF-sensitive client.
+                async with get_isolated_http_client(follow_redirects=False) as client:
+                    http_response = await client.post(pinned.endpoint_url, json=prepared.request_data, headers=pinned.headers, extensions=pinned.extensions)
                 status_code = http_response.status_code
                 response_json = http_response.json() if status_code == 200 else None
                 response_text = http_response.text

@@ -7,7 +7,7 @@ Tests for mcpgateway.services.a2a_protocol.
 """
 
 # Standard
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 # Third-Party
 import pytest
@@ -28,6 +28,7 @@ from mcpgateway.services.a2a_protocol import (
     normalize_a2a_params,
     normalize_a2a_version_header,
     prepare_a2a_invocation,
+    prepare_pinned_a2a_invocation,
 )
 
 # ── is_v1_a2a_protocol ──────────────────────────────────────────────────────
@@ -883,3 +884,143 @@ def test_prepare_a2a_invocation_preserves_encrypted_auth_value(monkeypatch):
     )
 
     assert prepared.auth_value_encrypted == "encrypted_blob"
+
+
+# ── prepare_pinned_a2a_invocation ───────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_prepare_pinned_a2a_invocation_pins_url_and_sets_host_sni(monkeypatch):
+    """Pinned A2A calls use the resolved IP while preserving Host and SNI."""
+    monkeypatch.setattr("mcpgateway.services.a2a_protocol.settings.ssrf_protection_enabled", True)
+    validate = AsyncMock(
+        return_value={
+            "validated_url": "https://agent.example.com:8443/a2a",
+            "hostname": "agent.example.com",
+            "original_authority": "agent.example.com:8443",
+            "resolved_ip": "203.0.113.10",
+        }
+    )
+    monkeypatch.setattr("mcpgateway.services.a2a_protocol.SecurityValidator.validate_url_for_connection_pinning", validate)
+
+    prepared = prepare_a2a_invocation(
+        agent_type="generic",
+        endpoint_url="https://agent.example.com:8443/a2a",
+        protocol_version="1.0",
+        parameters={"query": "hello"},
+        interaction_type="query",
+        base_headers={"host": "attacker.example", "X-Test": "1"},
+    )
+
+    pinned = await prepare_pinned_a2a_invocation(prepared)
+
+    assert pinned.endpoint_url == "https://203.0.113.10:8443/a2a"
+    assert pinned.headers["Host"] == "agent.example.com:8443"
+    assert pinned.headers["X-Test"] == "1"
+    assert "host" not in pinned.headers
+    assert pinned.extensions == {"sni_hostname": "agent.example.com"}
+    validate.assert_awaited_once_with(prepared.endpoint_url, "A2A agent URL")
+
+
+@pytest.mark.asyncio
+async def test_prepare_pinned_a2a_invocation_brackets_ipv6(monkeypatch):
+    """IPv6 resolved addresses are bracketed when rewriting the URL netloc."""
+    monkeypatch.setattr("mcpgateway.services.a2a_protocol.settings.ssrf_protection_enabled", True)
+    monkeypatch.setattr(
+        "mcpgateway.services.a2a_protocol.SecurityValidator.validate_url_for_connection_pinning",
+        AsyncMock(
+            return_value={
+                "validated_url": "https://agent.example.com:8443/a2a",
+                "hostname": "agent.example.com",
+                "original_authority": "agent.example.com:8443",
+                "resolved_ip": "2001:4860:4860::8888",
+            }
+        ),
+    )
+    prepared = prepare_a2a_invocation(
+        agent_type="generic",
+        endpoint_url="https://agent.example.com:8443/a2a",
+        protocol_version="1.0",
+        parameters={"query": "hello"},
+        interaction_type="query",
+    )
+
+    pinned = await prepare_pinned_a2a_invocation(prepared)
+
+    assert pinned.endpoint_url == "https://[2001:4860:4860::8888]:8443/a2a"
+    assert pinned.headers["Host"] == "agent.example.com:8443"
+    assert pinned.extensions == {"sni_hostname": "agent.example.com"}
+
+
+@pytest.mark.asyncio
+async def test_prepare_pinned_a2a_invocation_validates_query_param_auth_final_url(monkeypatch):
+    """Query-param auth is applied before the final URL is pinned."""
+    monkeypatch.setattr("mcpgateway.services.a2a_protocol.settings.ssrf_protection_enabled", True)
+    monkeypatch.setattr("mcpgateway.services.a2a_protocol.decode_auth", lambda _value: {"api_key": "real-key"})  # pragma: allowlist secret
+    monkeypatch.setattr("mcpgateway.services.a2a_protocol.apply_query_param_auth", lambda url, _params: f"{url}?api_key=real-key")  # pragma: allowlist secret
+    validate = AsyncMock(
+        return_value={
+            "validated_url": "http://agent.example.com/a2a?api_key=real-key",  # pragma: allowlist secret
+            "hostname": "agent.example.com",
+            "original_authority": "agent.example.com",
+            "resolved_ip": "203.0.113.10",
+        }
+    )
+    monkeypatch.setattr("mcpgateway.services.a2a_protocol.SecurityValidator.validate_url_for_connection_pinning", validate)
+    prepared = prepare_a2a_invocation(
+        agent_type="generic",
+        endpoint_url="http://agent.example.com/a2a",
+        protocol_version="1.0",
+        parameters={"query": "hello"},
+        interaction_type="query",
+        auth_type="query_param",
+        auth_query_params={"api_key": "encrypted"},  # pragma: allowlist secret
+    )
+
+    pinned = await prepare_pinned_a2a_invocation(prepared)
+
+    validate.assert_awaited_once_with("http://agent.example.com/a2a?api_key=real-key", "A2A agent URL")  # pragma: allowlist secret
+    assert pinned.endpoint_url == "http://203.0.113.10/a2a?api_key=real-key"  # pragma: allowlist secret
+    assert prepared.sanitized_endpoint_url == "http://agent.example.com/a2a?api_key=REDACTED"
+
+
+@pytest.mark.asyncio
+async def test_prepare_pinned_a2a_invocation_fails_closed_without_pin_metadata(monkeypatch):
+    """SSRF-enabled A2A calls fail closed when validation returns no pinned target."""
+    monkeypatch.setattr("mcpgateway.services.a2a_protocol.settings.ssrf_protection_enabled", True)
+    monkeypatch.setattr(
+        "mcpgateway.services.a2a_protocol.SecurityValidator.validate_url_for_connection_pinning",
+        AsyncMock(return_value={"validated_url": "https://agent.example.com/a2a", "hostname": "agent.example.com", "original_authority": "agent.example.com", "resolved_ip": None}),
+    )
+    prepared = prepare_a2a_invocation(
+        agent_type="generic",
+        endpoint_url="https://agent.example.com/a2a",
+        protocol_version="1.0",
+        parameters={"query": "hello"},
+        interaction_type="query",
+    )
+
+    with pytest.raises(ValueError, match="Outbound A2A URL blocked by URL policy"):
+        await prepare_pinned_a2a_invocation(prepared)
+
+
+@pytest.mark.asyncio
+async def test_prepare_pinned_a2a_invocation_wraps_validation_detail(monkeypatch):
+    """Validation details remain in the cause, not the public exception message."""
+    monkeypatch.setattr("mcpgateway.services.a2a_protocol.settings.ssrf_protection_enabled", True)
+    monkeypatch.setattr(
+        "mcpgateway.services.a2a_protocol.SecurityValidator.validate_url_for_connection_pinning",
+        AsyncMock(side_effect=ValueError("A2A agent URL contains private network address")),
+    )
+    prepared = prepare_a2a_invocation(
+        agent_type="generic",
+        endpoint_url="https://agent.example.com/a2a",
+        protocol_version="1.0",
+        parameters={"query": "hello"},
+        interaction_type="query",
+    )
+
+    with pytest.raises(ValueError) as exc_info:
+        await prepare_pinned_a2a_invocation(prepared)
+
+    assert str(exc_info.value) == "Outbound A2A URL blocked by URL policy"
