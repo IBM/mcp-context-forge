@@ -7140,66 +7140,6 @@ async def test_handle_streamable_http_unknown_method_without_session_returns_326
     assert payload["id"] == 1
 
 
-class TestModernEraPeekBypass:
-    """Era-aware routing of the session-less peeks in the streamable ingress.
-
-    2026-era (modern) requests are self-describing and session-less BY DESIGN;
-    the SDK routes them off the MCP-Protocol-Version header. The gateway's
-    session-less peeks must therefore step aside for modern requests — before
-    the era-aware guard, `server/discover` was answered -32601 by the peek and
-    modern clients silently fell back to the legacy handshake, so the gateway
-    could never serve a 2026-07-28 session.
-    """
-
-    @pytest.mark.asyncio
-    async def test_modern_era_request_bypasses_unknown_method_peek(self, monkeypatch):
-        """A modern MCP-Protocol-Version header sends the request to the SDK untouched."""
-        sdk = _CountingSessionManager()
-        monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: sdk)
-        monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
-
-        wrapper = SessionManagerWrapper()
-        await wrapper.initialize()
-        send, messages = _make_send_collector()
-        body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "server/discover", "params": {}}).encode()
-
-        scope = _make_scope("/mcp", headers=[(b"mcp-protocol-version", b"2026-07-28")])
-        await wrapper.handle_streamable_http(scope, _make_receive(body), send)
-        await wrapper.shutdown()
-
-        assert sdk.called  # the SDK's modern classifier owns the request end-to-end
-        response_body = next(m for m in messages if m["type"] == "http.response.body")
-        assert response_body["body"] == b"ok"  # the SDK double answered, not the -32601 peek
-
-    @pytest.mark.asyncio
-    async def test_handshake_version_header_is_still_peeked(self, monkeypatch):
-        """A handshake-era header does NOT bypass the peek — pins the era boundary.
-
-        Legacy-era clients keep the gateway's truthful -32601 for unknown methods;
-        the boundary sits exactly at HANDSHAKE_PROTOCOL_VERSIONS.
-        """
-        sdk = _CountingSessionManager()
-        monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: sdk)
-        monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
-
-        wrapper = SessionManagerWrapper()
-        await wrapper.initialize()
-        send, messages = _make_send_collector()
-        body = json.dumps({"jsonrpc": "2.0", "id": 7, "method": "definitely/not/a/real/method", "params": {}}).encode()
-
-        scope = _make_scope("/mcp", headers=[(b"mcp-protocol-version", b"2025-11-25")])
-        await wrapper.handle_streamable_http(scope, _make_receive(body), send)
-        await wrapper.shutdown()
-
-        assert not sdk.called
-        response_body = next(m for m in messages if m["type"] == "http.response.body")
-        payload = json.loads(response_body["body"])
-        assert payload["error"]["code"] == -32601
-        assert payload["id"] == 7
-
-    def test_server_discover_is_a_known_mcp_request_method(self):
-        """`server/discover` must never again be classified as an unknown method."""
-        assert tr._is_known_mcp_request_method("server/discover")
 
 
 @pytest.mark.asyncio
@@ -18167,3 +18107,53 @@ class TestV2HandlerAdapters:
         result = await tr._adapt_complete(object(), SimpleNamespace(ref={"type": "ref/prompt", "name": "p"}, argument={"name": "a", "value": ""}))
 
         assert result is expected
+
+
+class TestDualEra:
+    """Era-aware routing of the session/session-less peeks in the streamable ingress."""
+
+    @pytest.mark.asyncio
+    async def test_modern_era_request_bypasses_unknown_method_peek(self, monkeypatch):
+        """A modern MCP-Protocol-Version header sends the request to the SDK untouched."""
+        sdk = _CountingSessionManager()
+        monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: sdk)
+        monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
+
+        wrapper = SessionManagerWrapper()
+        await wrapper.initialize()
+        send, messages = _make_send_collector()
+        body = json.dumps({"jsonrpc": "2.0", "id": 1, "method": "server/discover", "params": {}}).encode()
+
+        scope = _make_scope("/mcp", headers=[(b"mcp-protocol-version", b"2026-07-28")])
+        await wrapper.handle_streamable_http(scope, _make_receive(body), send)
+        await wrapper.shutdown()
+
+        assert sdk.called  # the SDK's modern classifier owns the request end-to-end
+        response_body = next(m for m in messages if m["type"] == "http.response.body")
+        assert response_body["body"] == b"ok"  # the SDK double answered, not the -32601 peek
+
+    @pytest.mark.asyncio
+    async def test_handshake_version_header_is_still_peeked(self, monkeypatch):
+        """A handshake-era(legacy) header does NOT bypass the peek."""
+        sdk = _CountingSessionManager()
+        monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: sdk)
+        monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
+
+        wrapper = SessionManagerWrapper()
+        await wrapper.initialize()
+        send, messages = _make_send_collector()
+        body = json.dumps({"jsonrpc": "2.0", "id": 7, "method": "definitely/not/a/real/method", "params": {}}).encode()
+
+        scope = _make_scope("/mcp", headers=[(b"mcp-protocol-version", b"2025-11-25")])
+        await wrapper.handle_streamable_http(scope, _make_receive(body), send)
+        await wrapper.shutdown()
+
+        assert not sdk.called
+        response_body = next(m for m in messages if m["type"] == "http.response.body")
+        payload = json.loads(response_body["body"])
+        assert payload["error"]["code"] == -32601
+        assert payload["id"] == 7
+
+    def test_server_discover_is_a_known_mcp_request_method(self):
+        """`server/discover` must never again be classified as an unknown method."""
+        assert tr._is_known_mcp_request_method("server/discover")
