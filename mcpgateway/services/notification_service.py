@@ -1041,6 +1041,26 @@ class NotificationService:
                 root_class,
             )
 
+    async def notify_list_changed(
+        self,
+        gateway_id: str,
+        notification_type: NotificationType,
+    ) -> None:
+        """Feed a list-changed event from a non-session source into the refresh pipeline.
+
+        Modern (2026-07-28) servers deliver change events on a dedicated
+        ``subscriptions/listen`` stream rather than the session message
+        channel, so no per-session message handler is involved. Listener
+        code calls this to route those events through the same debounced
+        refresh used for session-delivered notifications.
+
+        Args:
+            gateway_id: The gateway the event originated from.
+            notification_type: Which list changed.
+        """
+        self._notifications_received += 1
+        await self._enqueue_refresh(gateway_id, notification_type)
+
     async def _enqueue_refresh(
         self,
         gateway_id: str,
