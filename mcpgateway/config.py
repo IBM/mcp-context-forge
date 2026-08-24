@@ -2773,6 +2773,11 @@ class Settings(BaseSettings):
     # Gateways can override this with their own refresh_interval_seconds
     gateway_auto_refresh_interval: int = Field(default=300, ge=60, description="Default refresh interval in seconds for gateway tools/resources/prompts sync (minimum 60 seconds)")
 
+    # Modern (2026-07-28) change-event listeners
+    # When enabled, the gateway holds one standing subscriptions/listen stream per
+    # server to get the list changed event
+    gateway_modern_listeners_enabled: bool = Field(default=False, description="Hold standing subscriptions/listen streams to 2026-era gateways for change-driven refresh")
+
     # Async gateway lifecycle processing
     gateway_async_lifecycle_enabled: bool = Field(default=False, description="Enable asynchronous gateway create/update/delete lifecycle processing with 202 Accepted responses")
     gateway_async_lifecycle_poll_interval: float = Field(default=5.0, gt=0, description="Polling interval in seconds for asynchronous gateway lifecycle background processing")
