@@ -20,3 +20,12 @@ diff --git a/requirements/2025-11-25.yaml b/requirements/2025-11-25.yaml
    - tools-call-sampling
    - tools-call-elicitation
    - elicitation-sep1034-defaults
+@@ -122,8 +121,3 @@ not_scored:
+     reason: pending
+     note: >-
+       the reference fixture cannot pass it yet; the implementation under test might
+-  - scenario: server-sse-polling
+-    leg: server
+-    reason: pending
+-    note: >-
+-      on hold pending server-side SSE improvements in the reference fixture

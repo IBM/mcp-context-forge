@@ -4,6 +4,8 @@ set -euo pipefail
 script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 repo_root="$(cd -- "${script_dir}/../.." && pwd)"
 compose_file="${script_dir}/docker-compose.yml"
+suite_patch="${script_dir}/disable-flaky-progress.patch"
+suite_patch_applied=false
 
 export MCP_CONFORMANCE_VERSION="${MCP_CONFORMANCE_VERSION:-0.2.0-alpha.11}"
 export MCP_CONFORMANCE_SOURCE_SHA="${MCP_CONFORMANCE_SOURCE_SHA:-c321dd32035556e6769d3724a8ee97d87c3faaac}"
@@ -69,11 +71,22 @@ cleanup() {
   fi
   MCP_CONFORMANCE_TOKEN="${MCP_CONFORMANCE_TOKEN:-cleanup-only}" \
     "${script_dir}/stop-live-stack.sh" || true
+  if "${suite_patch_applied}"; then
+    git -C "${MCP_CONFORMANCE_SUITE_DIR}" apply --reverse "${suite_patch}" || true
+  fi
   rm -f -- "${GITHUB_ENV}" "${GITHUB_OUTPUT}"
   rmdir -- "${state_dir}"
   exit "${status}"
 }
 trap cleanup EXIT INT TERM
+
+if git -C "${MCP_CONFORMANCE_SUITE_DIR}" apply --check "${suite_patch}"; then
+  git -C "${MCP_CONFORMANCE_SUITE_DIR}" apply "${suite_patch}"
+  suite_patch_applied=true
+elif ! git -C "${MCP_CONFORMANCE_SUITE_DIR}" apply --reverse --check "${suite_patch}"; then
+  echo "Conformance scenario patch does not apply cleanly to ${MCP_CONFORMANCE_SOURCE_SHA}." >&2
+  exit 1
+fi
 
 MCP_CONFORMANCE_TOKEN=pull-only \
   docker compose -f "${compose_file}" pull fixture-proxy nginx

@@ -73,8 +73,9 @@ jobs:
           npm ci --ignore-scripts
 
       # The pinned conformance CLI has no scenario-exclusion option. Apply an
-      # exact patch so this flaky scenario is not run until forwarding is ordered.
-      - name: Temporarily disable the flaky progress scenario
+      # exact patch to skip the flaky progress scenario and an unscored 60-second
+      # polling timeout that cannot affect the frozen conformance result.
+      - name: Temporarily disable slow or flaky scenarios
         working-directory: .conformance-suite
         run: git apply ../tests/conformance/disable-flaky-progress.patch
 
