@@ -1336,7 +1336,7 @@ async def test_complete_authorization_code_flow_scope_as_list(oauth_manager):
         patch.object(oauth_manager, "_validate_and_retrieve_state", return_value={"code_verifier": "verifier", "app_user_email": "user@example.com"}),
         patch.object(oauth_manager, "_exchange_code_for_tokens", return_value=mock_token_response),
         patch.object(oauth_manager, "_extract_user_id", return_value="user-1"),
-        patch.object(oauth_manager, "_extract_token_audience", return_value=None),
+        patch.object(oauth_manager, "_extract_aud_and_iss", return_value=(None, None)),
     ):
         result = await oauth_manager.complete_authorization_code_flow(
             gateway_id="gw-123", code="auth-code", state="test-state", credentials={"client_id": "cid", "token_url": "https://auth.example.com/token"}
@@ -1364,7 +1364,7 @@ async def test_complete_authorization_code_flow_scope_as_string(oauth_manager):
         patch.object(oauth_manager, "_validate_and_retrieve_state", return_value={"code_verifier": "verifier", "app_user_email": "user@example.com"}),
         patch.object(oauth_manager, "_exchange_code_for_tokens", return_value=mock_token_response),
         patch.object(oauth_manager, "_extract_user_id", return_value="user-1"),
-        patch.object(oauth_manager, "_extract_token_audience", return_value=None),
+        patch.object(oauth_manager, "_extract_aud_and_iss", return_value=(None, None)),
     ):
         result = await oauth_manager.complete_authorization_code_flow(
             gateway_id="gw-123", code="auth-code", state="test-state", credentials={"client_id": "cid", "token_url": "https://auth.example.com/token"}
@@ -1392,7 +1392,7 @@ async def test_complete_authorization_code_flow_scope_empty_string(oauth_manager
         patch.object(oauth_manager, "_validate_and_retrieve_state", return_value={"code_verifier": "verifier", "app_user_email": "user@example.com"}),
         patch.object(oauth_manager, "_exchange_code_for_tokens", return_value=mock_token_response),
         patch.object(oauth_manager, "_extract_user_id", return_value="user-1"),
-        patch.object(oauth_manager, "_extract_token_audience", return_value=None),
+        patch.object(oauth_manager, "_extract_aud_and_iss", return_value=(None, None)),
     ):
         result = await oauth_manager.complete_authorization_code_flow(
             gateway_id="gw-123", code="auth-code", state="test-state", credentials={"client_id": "cid", "token_url": "https://auth.example.com/token"}
@@ -1420,7 +1420,7 @@ async def test_complete_authorization_code_flow_scope_invalid_type(oauth_manager
         patch.object(oauth_manager, "_validate_and_retrieve_state", return_value={"code_verifier": "verifier", "app_user_email": "user@example.com"}),
         patch.object(oauth_manager, "_exchange_code_for_tokens", return_value=mock_token_response),
         patch.object(oauth_manager, "_extract_user_id", return_value="user-1"),
-        patch.object(oauth_manager, "_extract_token_audience", return_value=None),
+        patch.object(oauth_manager, "_extract_aud_and_iss", return_value=(None, None)),
     ):
         result = await oauth_manager.complete_authorization_code_flow(
             gateway_id="gw-123", code="auth-code", state="test-state", credentials={"client_id": "cid", "token_url": "https://auth.example.com/token"}
@@ -1448,7 +1448,7 @@ async def test_complete_authorization_code_flow_scope_mixed_types(oauth_manager)
         patch.object(oauth_manager, "_validate_and_retrieve_state", return_value={"code_verifier": "verifier", "app_user_email": "user@example.com"}),
         patch.object(oauth_manager, "_exchange_code_for_tokens", return_value=mock_token_response),
         patch.object(oauth_manager, "_extract_user_id", return_value="user-1"),
-        patch.object(oauth_manager, "_extract_token_audience", return_value=None),
+        patch.object(oauth_manager, "_extract_aud_and_iss", return_value=(None, None)),
     ):
         result = await oauth_manager.complete_authorization_code_flow(
             gateway_id="gw-123", code="auth-code", state="test-state", credentials={"client_id": "cid", "token_url": "https://auth.example.com/token"}
@@ -1459,6 +1459,213 @@ async def test_complete_authorization_code_flow_scope_mixed_types(oauth_manager)
     mock_token_storage.store_tokens.assert_called_once()
     call_kwargs = mock_token_storage.store_tokens.call_args[1]
     assert call_kwargs["scopes"] == ["read", "write"]
+
+
+class TestRedirectUriPinning:
+    """The redirect_uri sent to the IdP at authorize time must be the exact value used at
+    token exchange (RFC 6749 §4.1.3) -- so it is pinned into server-side state at authorize
+    time and reused at callback, instead of each side independently recomputing/reading it
+    from possibly-changed live state.
+    """
+
+    @pytest.mark.asyncio
+    async def test_complete_flow_uses_redirect_uri_pinned_at_authorize(self, oauth_manager):
+        """complete_authorization_code_flow must override the caller-supplied credentials'
+        redirect_uri with the value pinned in state at authorize time, when present."""
+        mock_token_response = {"access_token": "test-token", "scope": "read", "expires_in": 3600}
+
+        mock_token_storage = AsyncMock()
+        mock_token_record = MagicMock()
+        mock_token_record.expires_at = None
+        mock_token_storage.store_tokens.return_value = mock_token_record
+        oauth_manager.token_storage = mock_token_storage
+
+        exchange_mock = AsyncMock(return_value=mock_token_response)
+
+        with (
+            patch.object(
+                oauth_manager,
+                "_validate_and_retrieve_state",
+                return_value={"code_verifier": "verifier", "app_user_email": "user@example.com", "redirect_uri": "https://pinned.example.com/oauth/callback"},
+            ),
+            patch.object(oauth_manager, "_exchange_code_for_tokens", exchange_mock),
+            patch.object(oauth_manager, "_extract_user_id", return_value="user-1"),
+            patch.object(oauth_manager, "_extract_aud_and_iss", return_value=(None, None)),
+        ):
+            result = await oauth_manager.complete_authorization_code_flow(
+                gateway_id="gw-123",
+                code="auth-code",
+                state="test-state",
+                # Router-computed value; must be superseded by the pinned one below since
+                # e.g. app_domain or the gateway's oauth_config could have changed since authorize.
+                credentials={"client_id": "cid", "token_url": "https://auth.example.com/token", "redirect_uri": "https://recomputed.example.com/oauth/callback"},
+            )
+
+        assert result["success"] is True
+        exchange_mock.assert_called_once()
+        credentials_used = exchange_mock.call_args[0][0]
+        assert credentials_used["redirect_uri"] == "https://pinned.example.com/oauth/callback"
+
+    @pytest.mark.asyncio
+    async def test_complete_flow_falls_back_when_state_has_no_pinned_redirect_uri(self, oauth_manager):
+        """States stored before pinning existed (no redirect_uri key) fall back to whatever
+        redirect_uri the caller passed in credentials."""
+        mock_token_response = {"access_token": "test-token", "scope": "read", "expires_in": 3600}
+
+        mock_token_storage = AsyncMock()
+        mock_token_record = MagicMock()
+        mock_token_record.expires_at = None
+        mock_token_storage.store_tokens.return_value = mock_token_record
+        oauth_manager.token_storage = mock_token_storage
+
+        exchange_mock = AsyncMock(return_value=mock_token_response)
+
+        with (
+            patch.object(oauth_manager, "_validate_and_retrieve_state", return_value={"code_verifier": "verifier", "app_user_email": "user@example.com"}),
+            patch.object(oauth_manager, "_exchange_code_for_tokens", exchange_mock),
+            patch.object(oauth_manager, "_extract_user_id", return_value="user-1"),
+            patch.object(oauth_manager, "_extract_aud_and_iss", return_value=(None, None)),
+        ):
+            result = await oauth_manager.complete_authorization_code_flow(
+                gateway_id="gw-123",
+                code="auth-code",
+                state="test-state",
+                credentials={"client_id": "cid", "token_url": "https://auth.example.com/token", "redirect_uri": "https://fallback.example.com/oauth/callback"},
+            )
+
+        assert result["success"] is True
+        credentials_used = exchange_mock.call_args[0][0]
+        assert credentials_used["redirect_uri"] == "https://fallback.example.com/oauth/callback"
+
+    @pytest.mark.asyncio
+    async def test_initiate_flow_pins_redirect_uri_into_state(self, oauth_manager):
+        """initiate_authorization_code_flow must store the credentials' redirect_uri
+        alongside the PKCE code_verifier so callback-time can reuse it."""
+        oauth_manager.token_storage = AsyncMock()
+        store_state_mock = AsyncMock()
+
+        with patch.object(oauth_manager, "_store_authorization_state", store_state_mock):
+            await oauth_manager.initiate_authorization_code_flow(
+                "test-gateway",
+                {"client_id": "test-client", "authorization_url": "https://auth.example.com/authorize", "redirect_uri": "https://app.example.com/callback"},
+                app_user_email="user@test.com",
+            )
+
+        store_state_mock.assert_called_once()
+        assert store_state_mock.call_args.kwargs["redirect_uri"] == "https://app.example.com/callback"
+
+
+class TestApplyDefaultRedirectUri:
+    """OAuthManager._apply_default_redirect_uri -- the single centralized guard that both
+    flow entry points call before indexing credentials["redirect_uri"] downstream, so any
+    future caller (not just the two /oauth router endpoints that populate it today) is
+    protected against an incomplete credentials dict.
+    """
+
+    def test_noop_when_already_present(self):
+        """An existing redirect_uri is returned untouched, ignoring any default."""
+        credentials = {"client_id": "cid", "redirect_uri": "https://existing.example.com/callback"}
+        result = OAuthManager._apply_default_redirect_uri(credentials, "https://should-not-be-used.example.com/callback")
+        assert result["redirect_uri"] == "https://existing.example.com/callback"
+        assert result is credentials
+
+    def test_uses_caller_supplied_default_when_missing(self):
+        """A caller-supplied default (e.g. the router's request-scoped, root-path-aware
+        value) is used when credentials carries none."""
+        credentials = {"client_id": "cid"}
+        result = OAuthManager._apply_default_redirect_uri(credentials, "https://caller-default.example.com/callback")
+        assert result["redirect_uri"] == "https://caller-default.example.com/callback"
+        # Original dict is untouched (shallow copy), so callers can't be surprised by aliasing.
+        assert "redirect_uri" not in credentials
+
+    def test_falls_back_to_settings_only_default_when_no_caller_default(self):
+        """With no caller-supplied default at all (e.g. a future call path that bypasses
+        both /oauth router endpoints), it still self-heals from settings instead of leaving
+        credentials incomplete."""
+        with patch("mcpgateway.services.oauth_manager.get_settings") as mock_settings:
+            mock_settings.return_value = MagicMock(app_domain="https://gateway.example.com", app_root_path="")
+            result = OAuthManager._apply_default_redirect_uri({"client_id": "cid"}, None)
+        assert result["redirect_uri"] == "https://gateway.example.com/oauth/callback"
+
+
+class TestIssuerPinningOnAudienceLearning:
+    """Issuer pinning at learning time (restores the PR's advertised hardening).
+
+    When ``credentials["issuer"]`` is configured, the learned audience must only
+    be persisted if the token's ``iss`` claim matches (trailing slashes
+    normalized).  A mismatched or missing ``iss`` causes
+    ``complete_authorization_code_flow`` to pass ``None`` for both learned
+    values, which leaves any previously-learned per-user value intact
+    (``store_tokens`` only overwrites on non-None).
+    """
+
+    @staticmethod
+    async def _run_flow(oauth_manager, credentials, aud_iss):
+        mock_token_response = {"access_token": "test-token", "scope": "read", "expires_in": 3600}
+        mock_token_storage = AsyncMock()
+        mock_token_record = MagicMock()
+        mock_token_record.expires_at = None
+        mock_token_storage.store_tokens.return_value = mock_token_record
+        oauth_manager.token_storage = mock_token_storage
+
+        with (
+            patch.object(oauth_manager, "_validate_and_retrieve_state", return_value={"code_verifier": "verifier", "app_user_email": "user@example.com"}),
+            patch.object(oauth_manager, "_exchange_code_for_tokens", return_value=mock_token_response),
+            patch.object(oauth_manager, "_extract_user_id", return_value="user-1"),
+            patch.object(oauth_manager, "_extract_aud_and_iss", return_value=aud_iss),
+        ):
+            result = await oauth_manager.complete_authorization_code_flow(gateway_id="gw-123", code="auth-code", state="test-state", credentials=credentials)
+
+        assert result["success"] is True
+        mock_token_storage.store_tokens.assert_called_once()
+        return mock_token_storage.store_tokens.call_args[1]
+
+    @pytest.mark.asyncio
+    async def test_no_configured_issuer_persists_learned_values(self, oauth_manager):
+        """No issuer configured: pinning is skipped, learned aud/iss persist."""
+        call_kwargs = await self._run_flow(oauth_manager, {"client_id": "cid", "token_url": "https://idp.example.com/token"}, ("opaque-aud", "https://idp.example.com"))
+        assert call_kwargs["learned_aud"] == "opaque-aud"
+        assert call_kwargs["learned_iss"] == "https://idp.example.com"
+
+    @pytest.mark.asyncio
+    async def test_matching_issuer_persists_learned_values(self, oauth_manager):
+        """Token iss matches the configured issuer: learned values persist."""
+        credentials = {"client_id": "cid", "token_url": "https://idp.example.com/token", "issuer": "https://idp.example.com"}
+        call_kwargs = await self._run_flow(oauth_manager, credentials, ("opaque-aud", "https://idp.example.com"))
+        assert call_kwargs["learned_aud"] == "opaque-aud"
+        assert call_kwargs["learned_iss"] == "https://idp.example.com"
+
+    @pytest.mark.asyncio
+    async def test_trailing_slash_difference_still_matches(self, oauth_manager):
+        """Trailing slashes are normalized: 'https://idp.example.com/' matches 'https://idp.example.com'."""
+        credentials = {"client_id": "cid", "token_url": "https://idp.example.com/token", "issuer": "https://idp.example.com/"}
+        call_kwargs = await self._run_flow(oauth_manager, credentials, ("opaque-aud", "https://idp.example.com"))
+        assert call_kwargs["learned_aud"] == "opaque-aud"
+        assert call_kwargs["learned_iss"] == "https://idp.example.com"
+
+    @pytest.mark.asyncio
+    async def test_mismatched_issuer_suppresses_learned_values(self, oauth_manager):
+        """Cross-IdP bleed defense: token from a different AS must not inject an audience."""
+        credentials = {"client_id": "cid", "token_url": "https://idp.example.com/token", "issuer": "https://idp.example.com"}
+        call_kwargs = await self._run_flow(oauth_manager, credentials, ("opaque-aud", "https://attacker-idp.example.com"))
+        assert call_kwargs["learned_aud"] is None
+        assert call_kwargs["learned_iss"] is None
+
+    @pytest.mark.asyncio
+    async def test_missing_iss_with_configured_issuer_suppresses_learned_values(self, oauth_manager):
+        """A token without an iss claim cannot be pinned — do not persist its audience."""
+        credentials = {"client_id": "cid", "token_url": "https://idp.example.com/token", "issuer": "https://idp.example.com"}
+        call_kwargs = await self._run_flow(oauth_manager, credentials, ("opaque-aud", None))
+        assert call_kwargs["learned_aud"] is None
+        assert call_kwargs["learned_iss"] is None
+
+    @pytest.mark.asyncio
+    async def test_no_audience_nothing_to_pin(self, oauth_manager):
+        """Opaque tokens carry no aud; pinning is moot and store receives None."""
+        credentials = {"client_id": "cid", "token_url": "https://idp.example.com/token", "issuer": "https://idp.example.com"}
+        call_kwargs = await self._run_flow(oauth_manager, credentials, (None, "https://idp.example.com"))
+        assert call_kwargs["learned_aud"] is None
+        assert call_kwargs["learned_iss"] == "https://idp.example.com"
 
 
 @pytest.mark.asyncio
@@ -1569,6 +1776,66 @@ def test_generate_state_is_opaque_and_no_email_leak(oauth_manager):
     assert isinstance(state, str)
     assert "user@test.com" not in state
     assert "gw-1" not in state
+
+
+def test_generate_state_with_popup_false(oauth_manager):
+    """Test that popup=False generates state without popup prefix."""
+    state = oauth_manager._generate_state("gw-1", "user@test.com", popup=False)
+    assert isinstance(state, str)
+    assert not state.startswith("popup.")
+    assert len(state) > 20
+
+
+def test_generate_state_with_popup_true(oauth_manager):
+    """Test that popup=True generates state with popup. prefix."""
+    state = oauth_manager._generate_state("gw-1", "user@test.com", popup=True)
+    assert isinstance(state, str)
+    assert state.startswith("popup.")
+    # Remove prefix and verify the rest is a valid token
+    token_part = state[6:]  # Remove "popup." prefix
+    assert len(token_part) > 20
+
+
+@pytest.mark.asyncio
+async def test_initiate_authorization_code_flow_with_popup_false(oauth_manager):
+    """Test that initiate_authorization_code_flow with popup=False generates non-prefixed state."""
+    credentials = {
+        "client_id": "test-client",
+        "authorization_url": "https://auth.example.com/authorize",
+        "redirect_uri": "https://app.example.com/callback",
+    }
+
+    result = await oauth_manager.initiate_authorization_code_flow(
+        "test-gateway",
+        credentials,
+        app_user_email="user@test.com",
+        popup=False
+    )
+
+    assert "authorization_url" in result
+    assert "state" in result
+    assert not result["state"].startswith("popup.")
+
+
+@pytest.mark.asyncio
+async def test_initiate_authorization_code_flow_with_popup_true(oauth_manager):
+    """Test that initiate_authorization_code_flow with popup=True generates popup-prefixed state."""
+    credentials = {
+        "client_id": "test-client",
+        "authorization_url": "https://auth.example.com/authorize",
+        "redirect_uri": "https://app.example.com/callback",
+    }
+
+    result = await oauth_manager.initiate_authorization_code_flow(
+        "test-gateway",
+        credentials,
+        app_user_email="user@test.com",
+        popup=True
+    )
+
+    assert "authorization_url" in result
+    assert "state" in result
+    assert result["state"].startswith("popup.")
 
 
 # ---------- _create_authorization_url_with_pkce ----------

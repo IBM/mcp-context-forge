@@ -120,7 +120,7 @@ Run from the worktree root, in order. Each must pass (or have a documented waive
 | 2 | `make test` | Full pytest suite |
 | 3 | `make coverage diff-cover` | Coverage of changed lines vs. base |
 | 4 | `make docker-nuke docker-prod-rust testing-up RUST_MCP_MODE=` | Rebuilds and launches the production-style gateway stack |
-| 5 | `make test-mcp-protocol-e2e test-mcp-rbac test-protocol-compliance` | MCP protocol E2E, RBAC, and compliance against the live gateway |
+| 5 | `make test-mcp-protocol-e2e test-mcp-rbac` | MCP protocol E2E and RBAC against the live gateway |
 | 6 | `make detect-secrets-scan` | No new secrets in files changed vs `main`; exits non-zero on live/unaudited findings (jq merge preserves out-of-scope audited entries; remediate with `make detect-secrets-audit`) |
 
 Distinct from the per-edit hygiene chain in *Essential Commands → Code Quality* (`make autoflake isort black pre-commit`, then `make ruff bandit interrogate pylint verify`): hygiene runs continuously; this gate runs once before declaring a PR ready.
@@ -173,6 +173,16 @@ ContextForge implements a **two-layer security model**:
 - **Layer 1 only**: Token scoping controls visibility (what you can see). RBAC (Layer 2) is evaluated independently — session-token narrowing does not restrict which team roles are checked for permissions.
 - **External IdP tokens**: identities provisioned from trusted external SSO providers (see `SSO_API_TOKEN_AUTH_ENABLED`) are dispatched through the session-token table above (`resolve_session_teams()`), not the API/legacy table — `is_admin`/`teams` come from the persisted local user record, never from the external token's claims.
 
+### Implementation Helpers
+
+Layer-1 derivation is centralized in `mcpgateway/auth_context.py`. Route handlers must call these rather than re-deriving the rule inline:
+
+- `get_scoped_resource_access_context(request, user)` → `(user_email, token_teams)` — the visibility scope to pass into service fetch/list/read calls. Admin bypass is signalled by `token_teams=None` while `user_email` is **kept**, so the service can still owner-match the admin's own private rows. Public-only is `(email, [])`.
+- `get_request_identity(request, user)` → `(user_email, is_admin)` — the requester's own identity, for audit capture and header masking. Use when you need the identity independent of the visibility scope.
+- `get_rpc_filter_context(request, user)` → `(user_email, token_teams, is_admin)` — the raw pre-rule triple. Reserved for the few sites that genuinely need `is_admin` or the un-normalized teams (auth-context forwarding, run-ownership capture, tool-execution authorization); these carry a `Layer-1 exception` comment naming the reason.
+
+The derived triple is memoized on `request.state` per principal, so calling the scope and identity helpers together costs one derivation rather than two.
+
 ### Security Invariants (Required)
 
 - Treat `public` as platform-public scope, not internet-anonymous scope.
@@ -181,6 +191,7 @@ ContextForge implements a **two-layer security model**:
   - Layer 1: token scoping controls what a caller can see.
   - Layer 2: RBAC controls what a caller can do.
 - Do not re-implement token team interpretation logic; use `normalize_token_teams()` for API/legacy tokens and `resolve_session_teams()` for session tokens (both in `mcpgateway/auth.py`).
+- Do not re-implement Layer 1 token scope semantics; use `token_scope_grants()` in `mcpgateway/middleware/rbac.py`, the single policy point shared by the RBAC decorators and `TokenScopingMiddleware`. Empty token scopes mean "inherit from RBAC at runtime" (what `TokenCatalogService._generate_token()` emits for tokens created without an explicit scope) and must never be treated as deny-all; `*` grants everything and `<category>.*` grants that category.
 - Do not accept inbound client auth tokens via URL query parameters.
 - Legacy `INSECURE_ALLOW_QUERYPARAM_AUTH` is interop-only for outbound peer auth and must remain opt-in and host-restricted.
 - High-risk transports must be feature-flagged and disabled by default.
@@ -290,7 +301,7 @@ JWT_SECRET_KEY=your-secret-key
 BASIC_AUTH_USER=admin
 BASIC_AUTH_PASSWORD=changeme
 AUTH_REQUIRED=true                   # Set false ONLY for development
-AUTH_ENCRYPTION_SECRET=my-test-salt  # For encrypting stored secrets
+AUTH_ENCRYPTION_SECRET=             # REQUIRED: generate with: make init-secrets-patch-env
 
 # Features
 MCPGATEWAY_UI_ENABLED=false          # .env.example sets true
@@ -529,5 +540,5 @@ When posting PR reviews, issue comments, or any public-facing text on GitHub, us
 - `gh` for GitHub operations
 - `make` for build/test automation
 - `uv` for virtual environment management and for `uv tool run` linter invocations
-- Dev-group tools installed in the venv: `pytest`, `mypy`, `bandit`, `pre-commit`, `prospector`, etc. (see `pyproject.toml` `[dependency-groups]`)
+- Dev-group tools installed in the venv: `pytest`, `mypy`, `bandit`, `pre-commit`, etc. (see `pyproject.toml` `[dependency-groups]`)
 - Formatters and linters (`ruff`, `vulture`, `interrogate`, `radon`, `yamllint`, `tomlcheck`) are pinned in the `Makefile` and invoked on demand via `uv tool run`; always prefer the Makefile targets (`make black`, `make ruff`, etc.) over calling the underlying tools directly

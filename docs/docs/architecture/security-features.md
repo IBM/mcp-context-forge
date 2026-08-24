@@ -35,24 +35,38 @@ The `jti` (JWT ID) claim is a unique identifier for each JWT token, defined in [
 
 **Token Generation Examples**:
 
+New session tokens and token-catalog API tokens issued through normal user-backed flows use an opaque user identifier in
+`sub` (`EmailUser.id`). This applies to API tokens platform-wide, not only tokens used with the Rust dataplane.
+Human-readable email identity is retained in signed metadata where needed, such as `user.email` on API tokens. Legacy
+tokens with `sub=<email>` continue to authenticate for backward compatibility.
+
 ```python
-# Email auth tokens (always include JTI)
+# Email-auth session tokens (always include JTI; teams/admin are resolved server-side)
 # Location: mcpgateway/routers/email_auth.py
 payload = {
-    "sub": user.email,
+    "sub": str(user.id),
     "jti": str(uuid.uuid4()),  # Unique per token
+    "token_use": "session",
     ...
 }
 
-# Load test tokens (configurable)
-# Location: tests/loadtest/locustfile.py
+# Token-catalog API tokens
+# Location: mcpgateway/services/token_catalog_service.py
 payload = {
-    "sub": JWT_USERNAME,
-    "jti": str(uuid.uuid4()),  # Added for proper cache keying
-    "exp": datetime.now(timezone.utc) + timedelta(hours=JWT_TOKEN_EXPIRY_HOURS),
+    "sub": str(user.id),
+    "jti": str(uuid.uuid4()),
+    "token_use": "api",
+    "user": {
+        "email": user.email,
+        "auth_provider": "api_token",
+        ...
+    },
     ...
 }
 ```
+
+Hand-minted, no-user-record fallback, and legacy tokens may still use `sub=<email>`, but new integrations should treat
+`sub` as opaque and read the human identity from signed email metadata when it is present.
 
 **Cache Behavior**:
 
@@ -175,7 +189,8 @@ The items below are active roadmap work or design explorations. Track status in 
 
 ### Data Protection & Secrets
 
-- 🚧 **HashiCorp Vault & external KMS** — Native secret backends for tool credentials, JWT keys, and OAuth secrets ([#542](https://github.com/IBM/mcp-context-forge/issues/542)).
+- ✅ **HashiCorp Vault OAuth token storage** — `VaultTokenBackend` stores per-user OAuth access/refresh tokens in Vault KV v2, keyed by team and gateway. Enabled via `OAUTH_TOKEN_BACKEND=vault`. Tokens are stored plain-text inside Vault (Vault's seal provides AES-256-GCM at-rest encryption); per-user per-gateway isolation is enforced via path structure `{mount}/{prefix}/{team_id}/{server_id}/{email}`. The `VaultTokenBackend` includes an optional in-memory LRU token cache (`VAULT_TOKEN_CACHE_ENABLED`, default TTL 300 s), per-key asyncio locking to prevent concurrent near-expiry refresh races against rotating-refresh-token IdPs, and a fail-closed decrypt guard that raises `OAuthError` rather than forwarding a raw ciphertext envelope to the token endpoint. The `/vault/authorize/{server_id}` endpoint provides a simplified entry point for clients that know only their virtual server ID. See `.env.example` for the full set of `VAULT_*` configuration variables.
+- 🚧 **HashiCorp Vault for tool credentials & JWT keys** — Extending Vault integration to tool credentials and JWT signing keys ([#542](https://github.com/IBM/mcp-context-forge/issues/542)).
 - 🚧 **mTLS and certificate pinning** — Stronger upstream trust requirements for MCP servers with automatic pin management ([#568](https://github.com/IBM/mcp-context-forge/issues/568)).
 - 🚧 **Data Loss Prevention (DLP)** — Inline scanning for sensitive payloads with redact-or-drop policies.
 - 🚧 **Advanced cryptography** — Evaluating TEEs, HSM-backed signing, and post-quantum algorithms for long-lived deployments.
@@ -200,4 +215,5 @@ These features remain aspirational until the associated PRs merge. Expect the do
 - **Configuration reference:** `.env.example` and `README.md` cover every toggle in more depth.
 - **Security policy:** `SECURITY.md` documents vulnerability disclosure expectations.
 - **Multi-tenancy details:** `docs/docs/architecture/multitenancy.md` digs deeper into RBAC and team scoping.
+- **Middleware ordering:** `docs/docs/architecture/middleware-ordering.md` explains the ASGI middleware execution order and the CSRF-vs-auth constraint that prevents Admin UI failures.
 - **Deployment guidance:** `docs/docs/deployment/helm.md` and `Containerfile` showcase hardened deployment patterns.

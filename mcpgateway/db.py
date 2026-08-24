@@ -1329,7 +1329,11 @@ class Permissions:
     TOOLS_UPDATE = "tools.update"
     TOOLS_DELETE = "tools.delete"
     TOOLS_EXECUTE = "tools.execute"
+    TOOLS_PREVIEW = "tools.preview"
     TOOLS_MANAGE_PLUGINS = "tools.manage_plugins"
+
+    # Plugin permissions
+    PLUGINS_READ = "plugins.read"
 
     # Resource permissions
     RESOURCES_CREATE = "resources.create"
@@ -1390,6 +1394,10 @@ class Permissions:
     ADMIN_SSO_PROVIDERS_READ = "admin.sso_providers:read"
     ADMIN_SSO_PROVIDERS_UPDATE = "admin.sso_providers:update"
     ADMIN_SSO_PROVIDERS_DELETE = "admin.sso_providers:delete"
+
+    # OAuth DCR registered-client management (global rows, no team scope)
+    ADMIN_OAUTH_CLIENTS_READ = "admin.oauth_clients:read"
+    ADMIN_OAUTH_CLIENTS_DELETE = "admin.oauth_clients:delete"
 
     # Observability and audit read permissions
     LOGS_READ = "logs:read"
@@ -4727,6 +4735,8 @@ class Gateway(Base):
 
     # Header passthrough configuration
     passthrough_headers: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True)  # Store list of strings as JSON array
+    add_headers: Mapped[Optional[Dict[str, str]]] = mapped_column(JSON, nullable=True, default=None)  # Static headers injected onto upstream connection
+    remove_headers: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True, default=None)  # Header names stripped from upstream connection
 
     # CA certificate
     ca_certificate: Mapped[Optional[bytes]] = mapped_column(Text, nullable=True)
@@ -5339,6 +5349,14 @@ class OAuthToken(Base):
     token_type: Mapped[str] = mapped_column(String(50), default="Bearer")
     expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     scopes: Mapped[Optional[List[str]]] = mapped_column(JSON, nullable=True)
+    # Per-user learned OAuth audience/issuer (RFC 7519 §4.1.3 aud is string OR list).
+    # Populated from the token's unverified aud/iss claims on the OAuth callback; used
+    # by the token_validation_service to authoritatively validate THIS USER'S subsequent
+    # tokens. Kept per-user (rather than on gateway.oauth_config) so multi-tenant IdPs
+    # with per-tenant aud values do not create cross-tenant DoS, and so a user without
+    # gateways.update cannot mutate shared gateway config via the callback path.
+    learned_aud: Mapped[Optional[Any]] = mapped_column(JSON, nullable=True)
+    learned_iss: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
@@ -5360,6 +5378,8 @@ class OAuthState(Base):
     state: Mapped[str] = mapped_column(String(500), nullable=False, unique=True)  # The state parameter
     code_verifier: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)  # PKCE code verifier (RFC 7636)
     app_user_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)  # Requesting user context for token association
+    redirect_uri: Mapped[Optional[str]] = mapped_column(String(2048), nullable=True)  # Pinned at authorize time; reused at callback (RFC 6749 §4.1.3)
+    team_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)  # Team ID from JWT for Vault path
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     used: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)

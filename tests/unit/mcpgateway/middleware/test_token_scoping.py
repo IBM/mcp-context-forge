@@ -250,6 +250,38 @@ class TestTokenScopingMiddleware:
         result = middleware._check_permission_restrictions("/tools", "POST", ["tools.write"])
         assert result == False, "Should reject non-canonical 'tools.write' permission"
 
+    def test_plugin_discovery_requires_plugins_read(self, middleware):
+        """Versioned plugin discovery uses explicit least-privilege permission."""
+        assert middleware._check_permission_restrictions("/v1/plugins", "GET", [Permissions.PLUGINS_READ]) is True
+        assert middleware._check_permission_restrictions("/plugins", "GET", [Permissions.PLUGINS_READ]) is True
+        assert middleware._check_permission_restrictions("/v1/plugins", "GET", [Permissions.TOOLS_READ]) is False
+
+    @pytest.mark.asyncio
+    async def test_registered_client_paths_require_oauth_client_permissions(self, middleware):
+        """Layer 1 maps the DCR registered-client routes to admin.oauth_clients permissions."""
+        # Read permission covers both GET routes (collection and per-gateway lookup)
+        assert middleware._check_permission_restrictions("/oauth/registered-clients", "GET", [Permissions.ADMIN_OAUTH_CLIENTS_READ]) is True
+        assert middleware._check_permission_restrictions("/oauth/registered-clients/gw1", "GET", [Permissions.ADMIN_OAUTH_CLIENTS_READ]) is True
+
+        # Delete permission covers the DELETE route
+        assert middleware._check_permission_restrictions("/oauth/registered-clients/c1", "DELETE", [Permissions.ADMIN_OAUTH_CLIENTS_DELETE]) is True
+
+        # Read does not grant delete
+        assert middleware._check_permission_restrictions("/oauth/registered-clients/c1", "DELETE", [Permissions.ADMIN_OAUTH_CLIENTS_READ]) is False
+
+        # Unrelated permissions do not grant access
+        assert middleware._check_permission_restrictions("/oauth/registered-clients", "GET", [Permissions.GATEWAYS_READ]) is False
+
+        # Category wildcard and full wildcard still work
+        assert middleware._check_permission_restrictions("/oauth/registered-clients", "GET", ["admin.*"]) is True
+        assert middleware._check_permission_restrictions("/oauth/registered-clients/c1", "DELETE", ["*"]) is True
+
+    @pytest.mark.asyncio
+    async def test_other_oauth_paths_still_default_deny(self, middleware):
+        """Adding registered-client mappings must not open other /oauth routes to scoped tokens."""
+        assert middleware._check_permission_restrictions("/oauth/authorize/gw1", "GET", [Permissions.ADMIN_OAUTH_CLIENTS_READ]) is False
+        assert middleware._check_permission_restrictions("/oauth/fetch-tools/gw1", "POST", [Permissions.ADMIN_OAUTH_CLIENTS_READ]) is False
+
     @pytest.mark.asyncio
     async def test_rpc_endpoint_allowed_with_servers_use_permission(self, middleware):
         """POST /rpc must be reachable for tokens that carry servers.use.
@@ -305,6 +337,84 @@ class TestTokenScopingMiddleware:
         assert result is False, "POST /mcp should be denied when token has only non-MCP permissions"
 
     @pytest.mark.asyncio
+    async def test_catalog_endpoint_allowed_with_servers_read_permission(self, middleware):
+        """GET /catalog must be reachable for tokens that carry servers.read.
+
+        Regression: same root cause as /rpc and /mcp — the endpoint's RBAC is
+        servers.read, but without a _PERMISSION_PATTERNS entry scoped tokens were
+        default-denied at the middleware layer.
+        """
+        result = middleware._check_permission_restrictions("/catalog", "GET", [Permissions.SERVERS_READ])
+        assert result is True, "GET /catalog should be allowed when token has servers.read"
+
+        result = middleware._check_permission_restrictions("/catalog", "GET", ["*"])
+        assert result is True, "GET /catalog should be allowed with wildcard permission"
+
+        result = middleware._check_permission_restrictions("/catalog", "GET", [Permissions.TOOLS_READ])
+        assert result is False, "GET /catalog should be denied when token lacks servers.read"
+
+    @pytest.mark.asyncio
+    async def test_catalog_register_endpoint_requires_servers_create(self, middleware):
+        """POST /catalog/{id}/register is gated on servers.create, with /v1 normalization.
+
+        Layer 1 here gates on servers.create only: the pattern list maps one permission
+        per route. The route's stacked decorators additionally enforce gateways.create.
+        """
+        result = middleware._check_permission_restrictions("/catalog/asana/register", "POST", [Permissions.SERVERS_CREATE])
+        assert result is True, "POST /catalog/{id}/register should be allowed when token has servers.create"
+
+        result = middleware._check_permission_restrictions("/catalog/asana/register", "POST", ["*"])
+        assert result is True, "POST /catalog/{id}/register should be allowed with wildcard permission"
+
+        result = middleware._check_permission_restrictions("/catalog/asana/register", "POST", [Permissions.SERVERS_READ])
+        assert result is False, "POST /catalog/{id}/register should be denied for a read-only scoped token"
+
+        result = middleware._check_permission_restrictions("/v1/catalog/asana/register", "POST", [Permissions.SERVERS_CREATE])
+        assert result is True, "Versioned path should normalize to /catalog before pattern matching"
+
+        result = middleware._check_permission_restrictions("/catalog/foo", "POST", [Permissions.SERVERS_CREATE])
+        assert result is False, "POST /catalog/{id} without the /register suffix must stay default-denied"
+
+    @pytest.mark.asyncio
+    async def test_observability_metrics_endpoints_require_metrics_read(self, middleware):
+        """GET /observability/metrics/* is mapped to metrics:read, not default-denied.
+
+        Only the two summary endpoints are mapped; the rest of /observability/*
+        stays default-denied for scoped tokens (admin.system_config surface).
+        """
+        for path in ("/observability/metrics/timeseries", "/observability/metrics/percentiles"):
+            result = middleware._check_permission_restrictions(path, "GET", [Permissions.METRICS_READ])
+            assert result is True, f"GET {path} should be allowed when token has metrics:read"
+
+            result = middleware._check_permission_restrictions(path, "GET", ["*"])
+            assert result is True, f"GET {path} should be allowed with wildcard permission"
+
+            result = middleware._check_permission_restrictions(path, "GET", [Permissions.LOGS_READ])
+            assert result is False, f"GET {path} should be denied when token lacks metrics:read"
+
+        result = middleware._check_permission_restrictions("/v1/observability/metrics/timeseries", "GET", [Permissions.METRICS_READ])
+        assert result is True, "Versioned path should normalize to /observability before pattern matching"
+
+        result = middleware._check_permission_restrictions("/observability/traces", "GET", [Permissions.METRICS_READ])
+        assert result is False, "The rest of /observability/* must stay default-denied for scoped tokens"
+    async def test_activity_feed_endpoint_requires_audit_read(self, middleware):
+        """GET /api/logs/activity must be mapped to audit:read, not default-denied.
+
+        _check_permission_restrictions default-denies unmapped paths, so a scoped token
+        holding audit:read would be rejected before reaching the handler without an
+        explicit _PERMISSION_PATTERNS entry. security:read alone must not open the route:
+        security events are an additive section of the feed, not its entry gate.
+        """
+        result = middleware._check_permission_restrictions("/api/logs/activity", "GET", [Permissions.AUDIT_READ])
+        assert result is True, "GET /api/logs/activity should be allowed when token has audit:read"
+
+        result = middleware._check_permission_restrictions("/api/logs/activity", "GET", ["*"])
+        assert result is True, "GET /api/logs/activity should be allowed with wildcard permission"
+
+        result = middleware._check_permission_restrictions("/api/logs/activity", "GET", [Permissions.SECURITY_READ])
+        assert result is False, "GET /api/logs/activity should be denied when token has only security:read"
+
+    @pytest.mark.asyncio
     async def test_sse_endpoint_allowed_with_servers_use_permission(self, middleware):
         """GET /sse must be reachable for tokens that carry servers.use.
 
@@ -324,6 +434,76 @@ class TestTokenScopingMiddleware:
 
         result = middleware._check_permission_restrictions("/sse", "GET", ["*"])
         assert result is True, "GET /sse should be allowed with wildcard permission"
+
+    @pytest.mark.parametrize(
+        "method,path,permission",
+        [
+            # Every route registered on a2a_router (main.py) with the permission its
+            # @require_permission decorator demands. An unmapped route is default-denied,
+            # so a gap here silently 403s validly-scoped tokens.
+            ("GET", "/a2a", Permissions.A2A_READ),
+            ("GET", "/a2a/", Permissions.A2A_READ),
+            ("GET", "/a2a/agent-1", Permissions.A2A_READ),
+            ("POST", "/a2a", Permissions.A2A_CREATE),
+            ("POST", "/a2a/", Permissions.A2A_CREATE),
+            ("PUT", "/a2a/agent-1", Permissions.A2A_UPDATE),
+            ("POST", "/a2a/agent-1/state", Permissions.A2A_UPDATE),
+            ("POST", "/a2a/agent-1/toggle", Permissions.A2A_UPDATE),
+            ("DELETE", "/a2a/agent-1", Permissions.A2A_DELETE),
+            ("POST", "/a2a/invoke", Permissions.A2A_INVOKE),
+            ("POST", "/a2a/my-agent/invoke", Permissions.A2A_INVOKE),
+            ("POST", "/a2a/my-agent/jsonrpc", Permissions.A2A_INVOKE),
+        ],
+    )
+    def test_a2a_routes_map_to_declared_permission(self, middleware, method, path, permission):
+        """Each A2A route resolves to the permission its endpoint decorator requires."""
+        assert middleware._check_permission_restrictions(path, method, [permission]) is True
+
+    @pytest.mark.parametrize(
+        "method,path,permission",
+        [
+            ("GET", "/a2a", Permissions.A2A_CREATE),
+            ("POST", "/a2a", Permissions.A2A_READ),
+            ("DELETE", "/a2a/agent-1", Permissions.A2A_UPDATE),
+            ("POST", "/a2a/my-agent/invoke", Permissions.A2A_READ),
+            ("POST", "/a2a/my-agent/jsonrpc", Permissions.A2A_UPDATE),
+        ],
+    )
+    def test_a2a_routes_reject_wrong_permission(self, middleware, method, path, permission):
+        """A token scoped to a different A2A action is denied."""
+        assert middleware._check_permission_restrictions(path, method, [permission]) is False
+
+    @pytest.mark.parametrize(
+        "token_scopes",
+        [
+            ["tools.execute"],
+            ["tools.read"],
+            ["resources.read"],
+            ["prompts.read"],
+            ["tools.read", "resources.read"],
+        ],
+    )
+    @pytest.mark.parametrize("path", ["/sse", "/servers/s1/sse", "/servers/s1/message", "/rpc", "/mcp"])
+    def test_mcp_method_tokens_keep_transport_access(self, middleware, token_scopes, path):
+        """MCP method permissions imply transport access at this layer.
+
+        These paths map to servers.use. The RBAC decorators guard the same endpoints with
+        @require_permission("servers.use"), so both layers must agree — see
+        TestTokenScopeGrants in test_rbac.py for the decorator side of this contract.
+        """
+        method = "GET" if path in ("/sse", "/servers/s1/sse") else "POST"
+        assert middleware._check_permission_restrictions(path, method, token_scopes) is True
+
+    @pytest.mark.parametrize("token_scopes", [["a2a.read"], ["admin.user_management"], ["gateways.read"]])
+    def test_non_mcp_tokens_denied_transport_access(self, middleware, token_scopes):
+        """Tokens without MCP method permissions get no transport compensation."""
+        assert middleware._check_permission_restrictions("/sse", "GET", token_scopes) is False
+
+    def test_a2a_category_wildcard_covers_all_a2a_routes(self, middleware):
+        """An `a2a.*` scope grants every A2A route but nothing outside the category."""
+        assert middleware._check_permission_restrictions("/a2a", "GET", ["a2a.*"]) is True
+        assert middleware._check_permission_restrictions("/a2a/my-agent/invoke", "POST", ["a2a.*"]) is True
+        assert middleware._check_permission_restrictions("/tools", "GET", ["a2a.*"]) is False
 
     @pytest.mark.asyncio
     async def test_admin_permissions_use_canonical_constants(self, middleware):
@@ -523,7 +703,7 @@ class TestTokenScopingMiddleware:
 
             expected_response = Response(status_code=200, content="ok")
             call_next = AsyncMock(return_value=expected_response)
-            response = await middleware(mock_request, call_next)
+            await middleware(mock_request, call_next)
 
             call_next.assert_called_once()
 
@@ -565,7 +745,7 @@ class TestTokenScopingMiddleware:
 
             expected_response = Response(status_code=200, content="ok")
             call_next = AsyncMock(return_value=expected_response)
-            response = await middleware(mock_request, call_next)
+            await middleware(mock_request, call_next)
 
             call_next.assert_called_once()
 
@@ -607,7 +787,7 @@ class TestTokenScopingMiddleware:
 
             expected_response = Response(status_code=200, content="ok")
             call_next = AsyncMock(return_value=expected_response)
-            response = await middleware(mock_request, call_next)
+            await middleware(mock_request, call_next)
 
             call_next.assert_called_once()
 
@@ -711,6 +891,36 @@ class TestTokenScopingMiddleware:
 
         result = middleware._check_team_membership(payload, db=MagicMock())
         assert result is False
+
+    def test_check_team_membership_uses_signed_user_email_for_uuid_subject(self, middleware, monkeypatch):
+        """UUID-sub API tokens validate membership with the signed email metadata."""
+        payload = {
+            "sub": "11111111-1111-1111-1111-111111111111",
+            "user": {"email": "user@example.com"},
+            "teams": ["team-1"],
+        }
+
+        cache = MagicMock()
+        cache.get_team_membership_valid_sync.return_value = None
+        monkeypatch.setattr("mcpgateway.cache.auth_cache.get_auth_cache", lambda: cache)
+
+        db = MagicMock()
+        db.execute.return_value.scalars.return_value.all.return_value = ["team-1"]
+
+        result = middleware._check_team_membership(payload, db=db)
+
+        assert result is True
+        cache.get_team_membership_valid_sync.assert_called_once_with("user@example.com", ["team-1"])
+        cache.set_team_membership_valid_sync.assert_called_once_with("user@example.com", ["team-1"], True)
+
+    def test_check_team_membership_does_not_treat_uuid_sub_as_email(self, middleware):
+        """A UUID subject without signed email metadata is not a user email."""
+        payload = {
+            "sub": "11111111-1111-1111-1111-111111111111",
+            "teams": ["team-1"],
+        }
+
+        assert middleware._check_team_membership(payload) is False
 
     @pytest.mark.asyncio
     async def test_session_token_with_teams_claim_still_resolves_from_db(self, middleware, mock_request):
@@ -844,6 +1054,43 @@ class TestTokenScopingMiddleware:
                             mock_resolve_teams.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_api_token_uuid_subject_uses_signed_user_email_for_ownership(self, middleware, mock_request, monkeypatch):
+        """API tokens can use opaque subjects without breaking email-keyed ownership checks."""
+        mock_request.url.path = "/servers"
+        mock_request.method = "GET"
+        mock_request.headers = {"Authorization": "Bearer api_token"}
+
+        api_payload = {
+            "sub": "11111111-1111-1111-1111-111111111111",
+            "user": {"email": "user@example.com"},
+            "token_use": "api",
+            "teams": ["team-1"],
+            "scopes": {"permissions": ["*"]},
+        }
+        db = MagicMock()
+
+        def _get_db():
+            yield db
+
+        monkeypatch.setattr("mcpgateway.db.get_db", _get_db)
+
+        with (
+            patch.object(middleware, "_extract_token_scopes", return_value=api_payload),
+            patch("mcpgateway.middleware.token_scoping.normalize_token_teams", return_value=["team-1"]),
+            patch.object(middleware, "_check_team_membership", return_value=True) as mock_membership,
+            patch.object(middleware, "_check_resource_team_ownership", return_value=ResourceOwnershipResult.ALLOWED) as mock_ownership,
+            patch.object(middleware, "_check_server_restriction", return_value=True),
+            patch.object(middleware, "_check_permission_restrictions", return_value=True),
+        ):
+            call_next = AsyncMock(return_value="success")
+
+            result = await middleware(mock_request, call_next)
+
+            assert result == "success"
+            mock_membership.assert_called_once_with(api_payload, db=db)
+            mock_ownership.assert_called_once_with("/servers", ["team-1"], db=db, _user_email="user@example.com")
+
+    @pytest.mark.asyncio
     async def test_legacy_token_without_token_use_uses_embedded_teams(self, middleware, mock_request):
         """Test that legacy tokens without token_use claim use embedded teams."""
         mock_request.url.path = "/servers"
@@ -901,6 +1148,48 @@ class TestTokenScopingMiddleware:
 
                     assert result == "success"
                     mock_resolve.assert_awaited_once_with(session_payload, "user@example.com", {})
+
+    @pytest.mark.asyncio
+    async def test_uuid_only_session_token_resolves_email_before_session_scope(self, middleware, mock_request, monkeypatch):
+        """Production session tokens use UUID sub without email metadata and must still get DB-backed scope."""
+        mock_request.url.path = "/servers/a1b2c3d4-e5f6-0000-1111-222233334444"
+        mock_request.method = "GET"
+        mock_request.headers = {"Authorization": "Bearer session_token"}
+
+        user_id = "11111111-1111-1111-1111-111111111111"
+        session_payload = {
+            "sub": user_id,
+            "token_use": "session",
+            "teams": ["team-1"],
+            "scopes": {"permissions": ["*"]},
+        }
+        db = MagicMock()
+
+        def _get_db():
+            yield db
+
+        monkeypatch.setattr("mcpgateway.db.get_db", _get_db)
+        monkeypatch.setattr("mcpgateway.auth._get_email_by_id_sync", MagicMock(return_value="user@example.com"))
+
+        with (
+            patch.object(middleware, "_extract_token_scopes", return_value=session_payload),
+            patch("mcpgateway.middleware.token_scoping.resolve_session_teams", new=AsyncMock(return_value=["team-1"])) as mock_resolve,
+            patch.object(middleware, "_check_resource_team_ownership", return_value=ResourceOwnershipResult.ALLOWED) as mock_ownership,
+            patch.object(middleware, "_check_server_restriction", return_value=True),
+            patch.object(middleware, "_check_permission_restrictions", return_value=True),
+        ):
+            call_next = AsyncMock(return_value="success")
+
+            result = await middleware(mock_request, call_next)
+
+            assert result == "success"
+            mock_resolve.assert_awaited_once_with(session_payload, "user@example.com", {})
+            mock_ownership.assert_called_once_with(
+                "/servers/a1b2c3d4-e5f6-0000-1111-222233334444",
+                ["team-1"],
+                db=db,
+                _user_email="user@example.com",
+            )
 
     @pytest.mark.asyncio
     async def test_session_token_skips_membership_check_on_stale_jwt_teams(self, middleware, mock_request):
@@ -1150,6 +1439,18 @@ class TestTokenScopingMiddleware:
         # POST /tools/{id}/toggle requires tools.update
         assert middleware._check_permission_restrictions("/tools/tool-123/toggle", "POST", [Permissions.TOOLS_UPDATE]) is True, "POST /tools/{id}/toggle should require tools.update"
         assert middleware._check_permission_restrictions("/tools/tool-123/toggle", "POST", [Permissions.TOOLS_CREATE]) is False, "POST /tools/{id}/toggle should NOT accept tools.create"
+
+    @pytest.mark.asyncio
+    async def test_tools_preview_pattern_precedes_update_catch_all(self, middleware):
+        """POST /tools/preview/{name} must require tools.preview, not fall through to the
+        /tools/[^/]+/ catch-all (tools.update) that would otherwise match it (#5629)."""
+        assert middleware._check_permission_restrictions("/tools/preview/my-tool", "POST", [Permissions.TOOLS_PREVIEW]) is True
+        assert middleware._check_permission_restrictions("/tools/preview/my-tool", "POST", [Permissions.TOOLS_UPDATE]) is False
+        assert middleware._check_permission_restrictions("/v1/tools/preview/my-tool", "POST", [Permissions.TOOLS_PREVIEW]) is True
+
+        # Exact /tools/preview (no trailing name segment) still matches too
+        assert middleware._check_permission_restrictions("/tools/preview", "POST", [Permissions.TOOLS_PREVIEW]) is True
+        assert middleware._check_permission_restrictions("/tools/preview/", "POST", [Permissions.TOOLS_PREVIEW]) is True
 
     @pytest.mark.asyncio
     async def test_resources_create_pattern_exact_match(self, middleware):

@@ -27,7 +27,7 @@ import logging
 import re
 import threading
 import time
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 import uuid
 
 # Third-Party
@@ -105,6 +105,17 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 "limit": settings.rate_limit_critical_rpm,
                 "burst": settings.rate_limit_critical_burst,
             },
+            "CRITICAL_INVITATION": {
+                "pattern": r"^/(?:v1/)?teams/[^/]+/invitations/?$",
+                "methods": {"POST"},
+                "limit": settings.rate_limit_critical_rpm,
+                "burst": settings.rate_limit_critical_burst,
+            },
+            "SESSION_REFRESH": {
+                "pattern": r"^(/v1)?/auth/refresh$",
+                "limit": settings.session_refresh_rate_limit,
+                "burst": settings.session_refresh_rate_limit,
+            },
             "HIGH": {
                 "pattern": r"^/(tokens|oauth|rbac)(/|$)",
                 "limit": settings.rate_limit_high_rpm,
@@ -172,10 +183,16 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             compiled.append((pattern, config))
         return compiled
 
-    def get_endpoint_tier(self, path: str) -> Dict[str, Any]:
-        """Get tier config for endpoint."""
+    @staticmethod
+    def _tier_allows_method(config: Dict[str, Any], method: Optional[str]) -> bool:
+        """Check whether a tier applies to the request method."""
+        methods = config.get("methods")
+        return not methods or (method is not None and method.upper() in methods)
+
+    def get_endpoint_tier(self, path: str, method: Optional[str] = None) -> Dict[str, Any]:
+        """Get tier config for endpoint and request method."""
         for pattern, config in self.compiled_tiers:
-            if pattern.match(path):
+            if pattern.match(path) and self._tier_allows_method(config, method):
                 return config
         return self.default_tier
 
@@ -209,10 +226,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         if is_trusted_internal_mcp_request(request):
             return await call_next(request)
 
-        tier = self.get_endpoint_tier(request.url.path)
+        tier = self.get_endpoint_tier(request.url.path, request.method)
         dimensions = self._get_client_dimensions(request)
 
-        tier_name = self._get_tier_name(request.url.path)
+        tier_name = self._get_tier_name(request.url.path, request.method)
 
         # Check lockout first — a locked-out dimension blocks regardless of
         # whether the sliding window has cleared.
@@ -277,10 +294,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
         return response
 
-    def _get_tier_name(self, path: str) -> str:
-        """Get tier name for logging."""
+    def _get_tier_name(self, path: str, method: Optional[str] = None) -> str:
+        """Get tier name for logging by endpoint and request method."""
         for tier_name, config in self.endpoint_tiers.items():
-            if re.match(config["pattern"], path):
+            if re.match(config["pattern"], path) and self._tier_allows_method(config, method):
                 return tier_name
         return "LOW"
 

@@ -51,7 +51,11 @@ export function escapeAttrValue(value) {
 
 /**
  * Extract a human-readable error message from an API error response.
- * Handles both string errors and Pydantic validation error arrays.
+ * Handles string errors, Pydantic validation error arrays, and nested error
+ * objects (FastAPI serialises ``HTTPException(detail={...})`` as
+ * ``{"detail": {"message": "...", "success": false}}``).
+ * Precedence: ``message`` -> string ``detail`` -> array ``detail`` ->
+ * object ``detail`` -> ``fallback``.
  * @param {Object} error - The parsed JSON error response
  * @param {string} fallback - Fallback message if no detail found
  * @returns {string} Human-readable error message
@@ -69,6 +73,14 @@ export function extractApiError(error, fallback = "An error occurred") {
   if (Array.isArray(error.detail)) {
     // Pydantic validation errors - extract messages
     return error.detail.map((err) => err.msg || JSON.stringify(err)).join("; ");
+  }
+  if (
+    error.detail &&
+    typeof error.detail === "object" &&
+    !Array.isArray(error.detail)
+  ) {
+    // Nested detail object, e.g. ErrorFormatter output wrapped by HTTPException
+    return error.detail.message || error.detail.error || fallback;
   }
   return fallback;
 }
@@ -255,7 +267,7 @@ export function validateInputName(name, type = "input") {
  */
 export function validateUrl(url, label = "") {
   if (!url || typeof url !== "string") {
-    return { valid: false, error: `${label || "URL"} is required` };
+    return { valid: false, error: `Enter a ${label || "URL"}.` };
   }
 
   try {
@@ -265,13 +277,13 @@ export function validateUrl(url, label = "") {
     if (!allowedProtocols.includes(urlObj.protocol)) {
       return {
         valid: false,
-        error: "Only HTTP and HTTPS URLs are allowed",
+        error: "Use http or https for the URL.",
       };
     }
 
     return { valid: true, value: url };
   } catch (error) {
-    return { valid: false, error: "Invalid URL format" };
+    return { valid: false, error: "Enter a complete URL, for example https://example.com." };
   }
 }
 
@@ -289,7 +301,7 @@ export function validateJson(jsonString, fieldName = "JSON") {
   } catch (error) {
     return {
       valid: false,
-      error: `Invalid ${fieldName} format: ${error.message}`,
+      error: `Cannot parse ${fieldName} as JSON: ${error.message}`,
     };
   }
 }

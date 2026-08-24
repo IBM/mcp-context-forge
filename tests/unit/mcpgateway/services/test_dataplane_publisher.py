@@ -12,6 +12,11 @@ from unittest.mock import ANY, AsyncMock, MagicMock, patch
 import pytest
 
 
+USER1_ID = "11111111-1111-1111-1111-111111111111"
+USER2_ID = "22222222-2222-2222-2222-222222222222"
+USER3_ID = "33333333-3333-3333-3333-333333333333"
+
+
 async def _wait_forever():
     """Block until cancelled by the test cleanup."""
     await asyncio.Event().wait()
@@ -180,6 +185,8 @@ async def test_full_payload_generation_with_mock_db():
     gateway1.url = "http://localhost:9000"
     gateway1.transport = "STREAMABLEHTTP"
     gateway1.passthrough_headers = ["Authorization"]
+    gateway1.add_headers = {"X-Tenant": "acme"}
+    gateway1.remove_headers = ["Cookie"]
     gateway1.capabilities = {"resources": {"subscribe": True}}
     gateway1.owner_email = "user1@example.com"
     gateway1.team_id = "team1"
@@ -233,7 +240,7 @@ async def test_full_payload_generation_with_mock_db():
     # Mock active users and user-team memberships
     mock_db.execute.return_value.all.side_effect = [
         # Active users query
-        [("user1@example.com", False), ("user2@example.com", False), ("user3@example.com", False)],
+        [(USER1_ID, "user1@example.com", False), (USER2_ID, "user2@example.com", False), (USER3_ID, "user3@example.com", False)],
         # User-team query
         [("user1@example.com", "team1"), ("user2@example.com", "team2")],
         # Server query
@@ -261,12 +268,10 @@ async def test_full_payload_generation_with_mock_db():
 
         # Verify payload structure
         assert payload is not None
-        assert "user1@example.com" in payload
-        assert "user2@example.com" in payload
-        assert "user3@example.com" in payload
+        assert set(payload) == {USER1_ID, USER2_ID, USER3_ID}
 
         # Verify user1 payload (has access to public server)
-        user1_config = payload["user1@example.com"]
+        user1_config = payload[USER1_ID]
         assert "virtual_hosts" in user1_config
         assert "s1" in user1_config["virtual_hosts"]
 
@@ -276,18 +281,29 @@ async def test_full_payload_generation_with_mock_db():
         assert "g1" in server1["backends"]
 
         backend = server1["backends"]["g1"]
-        assert backend["name"] == "Gateway 1"
-        assert backend["url"] == "http://localhost:9000"
-        assert backend["transport"] == "STREAMABLEHTTP"
-        assert backend["passthrough_headers"] == ["Authorization"]
-        assert backend["capabilities"] == {"resources": {"subscribe": True}}
-        assert backend["allowed_tool_names"] == ["public_tool", "private_tool"]
-        assert backend["allowed_resource_names"] == ["Resource 1"]
-        assert backend["allowed_resource_uris"] == ["resource://one"]
-        assert backend["allowed_prompt_names"] == ["Prompt 1"]
+        assert backend == {
+            "name": "Gateway 1",
+            "url": "http://localhost:9000",
+            "passthrough_headers": ["Authorization"],
+            "add_headers": {"X-Tenant": "acme"},
+            "remove_headers": ["Cookie"],
+            "capabilities": {"resources": {"subscribe": True}},
+            "allowed_tool_names": ["public_tool", "private_tool"],
+            "allowed_resource_names": ["Resource 1"],
+            "allowed_resource_uris": ["resource://one"],
+            "allowed_prompt_names": ["Prompt 1"],
+        }
+
+        # Verify the gateway SELECT projection actually includes the new columns
+        # (guards against getattr-on-Row silently returning None when columns are missing from SELECT)
+        gateway_execute_call = mock_db.execute.call_args_list[3]
+        stmt = gateway_execute_call[0][0]
+        selected_keys = {col.key for col in stmt.selected_columns}
+        assert "add_headers" in selected_keys, "Gateway SELECT must include add_headers"
+        assert "remove_headers" in selected_keys, "Gateway SELECT must include remove_headers"
 
         # Verify user2 sees public server but not private server from user1
-        user2_config = payload["user2@example.com"]
+        user2_config = payload[USER2_ID]
         assert "s1" in user2_config["virtual_hosts"]  # public
         # Own private server exists but has no backend associations, so it
         # is omitted from the payload (no publishable backends).
@@ -296,7 +312,7 @@ async def test_full_payload_generation_with_mock_db():
         assert user2_backend["allowed_tool_names"] == ["public_tool", "team2_tool"]
 
         # Verify active users with no team membership still get public-only config.
-        user3_config = payload["user3@example.com"]
+        user3_config = payload[USER3_ID]
         assert "s1" in user3_config["virtual_hosts"]
         assert "s2" not in user3_config["virtual_hosts"]
         user3_backend = user3_config["virtual_hosts"]["s1"]["backends"]["g1"]
@@ -373,7 +389,7 @@ def test_create_payload_filters_empty_backends():
 
     service = DataplanePublisherService()
     data = {
-        "user@example.com": {
+        USER1_ID: {
             "servers": [
                 {
                     "id": "server1",
@@ -392,25 +408,26 @@ def test_create_payload_filters_empty_backends():
 
     # A server with no publishable backends is omitted entirely so the
     # dataplane 404s it instead of serving an empty tool list.
-    assert "server1" not in result["user@example.com"]["virtual_hosts"]
+    assert "server1" not in result[USER1_ID]["virtual_hosts"]
 
 
-def test_create_payload_excludes_non_streamable_gateways():
+@pytest.mark.parametrize("transport", ["SSE", "STDIO"])
+def test_create_payload_excludes_non_streamable_gateways(transport: str):
     """create_payload() drops backends whose transport the dataplane cannot serve."""
     from mcpgateway.services.dataplane_publisher import DataplanePublisherService
 
     service = DataplanePublisherService()
     data = {
-        "user@example.com": {
+        USER1_ID: {
             "servers": [
                 {
                     "id": "server1",
                     "backend_items": {
-                        "gateway_sse": {"tools": ["tool1"], "resources": [], "prompts": []},
+                        "gateway_non_streamable": {"tools": ["tool1"], "resources": [], "prompts": []},
                     },
                 }
             ],
-            "gateways": [{"id": "gateway_sse", "name": "SSE Gateway", "url": "http://localhost:9000/sse", "transport": "SSE", "passthrough_headers": None}],
+            "gateways": [{"id": "gateway_non_streamable", "name": "Unsupported Gateway", "url": "http://localhost:9000/mcp", "transport": transport, "passthrough_headers": None}],
             "prompts": [],
             "resources": [],
         }
@@ -418,8 +435,8 @@ def test_create_payload_excludes_non_streamable_gateways():
 
     result = service.create_payload(data)
 
-    # The SSE backend is excluded and the now-backendless server is omitted.
-    assert result["user@example.com"]["virtual_hosts"] == {}
+    # The unsupported backend is excluded and the now-backendless server is omitted.
+    assert result[USER1_ID]["virtual_hosts"] == {}
 
 
 def test_create_payload_normalizes_null_passthrough_headers():
@@ -428,7 +445,7 @@ def test_create_payload_normalizes_null_passthrough_headers():
 
     service = DataplanePublisherService()
     data = {
-        "user@example.com": {
+        USER1_ID: {
             "servers": [
                 {
                     "id": "server1",
@@ -445,8 +462,10 @@ def test_create_payload_normalizes_null_passthrough_headers():
 
     result = service.create_payload(data)
 
-    backend = result["user@example.com"]["virtual_hosts"]["server1"]["backends"]["gateway1"]
+    backend = result[USER1_ID]["virtual_hosts"]["server1"]["backends"]["gateway1"]
     assert backend["passthrough_headers"] == []
+    assert backend["add_headers"] == {}
+    assert backend["remove_headers"] == []
     assert backend["capabilities"] == {}
 
 
@@ -456,7 +475,7 @@ def test_create_payload_handles_missing_references():
 
     service = DataplanePublisherService()
     data = {
-        "user@example.com": {
+        USER1_ID: {
             "servers": [
                 {
                     "id": "server1",
@@ -476,7 +495,7 @@ def test_create_payload_handles_missing_references():
     # Server exists but has no backends (gateway missing)
     # With its only gateway missing, the server has no publishable backends
     # and is omitted from the payload.
-    assert "server1" not in result["user@example.com"]["virtual_hosts"]
+    assert "server1" not in result[USER1_ID]["virtual_hosts"]
 
 
 @pytest.mark.asyncio
@@ -599,7 +618,7 @@ async def test_publish_writes_payload_releases_lock_and_exits_when_shutdown_wait
     from mcpgateway.services.dataplane_publisher import PUBLISHER_LOCK_KEY, USER_CONFIG_KEY, DataplanePublisherService, get_publisher_interval, get_publisher_ttl
 
     service = DataplanePublisherService()
-    payload = {"user@example.com": {"virtual_hosts": {"server1": {"backends": {}}}}}
+    payload = {USER1_ID: {"virtual_hosts": {"server1": {"backends": {}}}}}
 
     pipe = MagicMock()
     pipe.execute = AsyncMock()
@@ -623,8 +642,8 @@ async def test_publish_writes_payload_releases_lock_and_exits_when_shutdown_wait
 
     pipe.set.assert_called_once()
     key_arg, value_arg = pipe.set.call_args.args
-    assert msgpack.unpackb(key_arg, raw=False) == [USER_CONFIG_KEY, "user@example.com"]
-    assert msgpack.unpackb(value_arg, raw=False) == payload["user@example.com"]
+    assert msgpack.unpackb(key_arg, raw=False) == [USER_CONFIG_KEY, USER1_ID]
+    assert msgpack.unpackb(value_arg, raw=False) == payload[USER1_ID]
     assert pipe.set.call_args.kwargs == {"ex": get_publisher_ttl()}
     pipe.execute.assert_awaited_once()
     mock_redis.set.assert_awaited_once_with(PUBLISHER_LOCK_KEY, service.worker_id, nx=True, ex=get_publisher_interval() + 30)
@@ -639,7 +658,7 @@ async def test_publish_uses_configured_interval_for_ttl_lock_and_wait():
     from mcpgateway.services import dataplane_publisher
 
     service = dataplane_publisher.DataplanePublisherService()
-    payload = {"user@example.com": {"virtual_hosts": {}}}
+    payload = {USER1_ID: {"virtual_hosts": {}}}
 
     pipe = MagicMock()
     pipe.execute = AsyncMock()
@@ -686,7 +705,7 @@ async def test_publish_releases_lock_when_pipeline_execute_fails():
     with (
         patch("mcpgateway.services.dataplane_publisher.get_redis_client", new_callable=AsyncMock) as mock_get_redis,
         patch("mcpgateway.services.dataplane_publisher.asyncio.wait_for", new_callable=AsyncMock, side_effect=_finish_cycle),
-        patch.object(service, "fetch_payload", new_callable=AsyncMock, return_value={"user@example.com": {"virtual_hosts": {}}}),
+        patch.object(service, "fetch_payload", new_callable=AsyncMock, return_value={USER1_ID: {"virtual_hosts": {}}}),
     ):
         mock_get_redis.return_value = mock_redis
 
@@ -716,7 +735,7 @@ async def test_publish_logs_lock_release_failure():
     with (
         patch("mcpgateway.services.dataplane_publisher.get_redis_client", new_callable=AsyncMock) as mock_get_redis,
         patch("mcpgateway.services.dataplane_publisher.asyncio.wait_for", new_callable=AsyncMock, side_effect=_finish_cycle),
-        patch.object(service, "fetch_payload", new_callable=AsyncMock, return_value={"user@example.com": {"virtual_hosts": {}}}),
+        patch.object(service, "fetch_payload", new_callable=AsyncMock, return_value={USER1_ID: {"virtual_hosts": {}}}),
     ):
         mock_get_redis.return_value = mock_redis
 
@@ -746,7 +765,7 @@ async def test_publish_continues_after_cycle_timeout():
     with (
         patch("mcpgateway.services.dataplane_publisher.get_redis_client", new_callable=AsyncMock) as mock_get_redis,
         patch("mcpgateway.services.dataplane_publisher.asyncio.wait_for", new_callable=AsyncMock, side_effect=_timeout_and_stop),
-        patch.object(service, "fetch_payload", new_callable=AsyncMock, return_value={"user@example.com": {"virtual_hosts": {}}}),
+        patch.object(service, "fetch_payload", new_callable=AsyncMock, return_value={USER1_ID: {"virtual_hosts": {}}}),
     ):
         mock_get_redis.return_value = mock_redis
 

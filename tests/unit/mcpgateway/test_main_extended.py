@@ -3583,7 +3583,7 @@ class TestServerEndpointCoverage:
         db = MagicMock()
         tool = SimpleNamespace(to_dict=lambda **_kwargs: {"id": "tool-1"})
 
-        monkeypatch.setattr(main_mod, "get_rpc_filter_context", lambda _req, _user: ("user@example.com", [], False))
+        monkeypatch.setattr(main_mod, "get_scoped_resource_access_context", lambda _req, _user: ("user@example.com", []))
         monkeypatch.setattr(main_mod, "get_user_team_roles", lambda *_args, **_kwargs: None)
         monkeypatch.setattr(main_mod.tool_service, "get_tool", AsyncMock(return_value=tool))
 
@@ -3647,7 +3647,7 @@ class TestServerEndpointCoverage:
         tool = MagicMock()
         tool.model_dump.return_value = {"id": "tool-1"}
 
-        monkeypatch.setattr("mcpgateway.main.get_rpc_filter_context", lambda _req, _user: ("user@example.com", None, True))
+        monkeypatch.setattr("mcpgateway.main.get_scoped_resource_access_context", lambda _req, _user: ("user@example.com", None))
         list_tools = AsyncMock(return_value=[tool])
         monkeypatch.setattr("mcpgateway.main.tool_service.list_server_tools", list_tools)
 
@@ -3663,7 +3663,7 @@ class TestServerEndpointCoverage:
         resource = MagicMock()
         resource.model_dump.return_value = {"id": "res-1"}
 
-        monkeypatch.setattr("mcpgateway.main.get_rpc_filter_context", lambda _req, _user: ("user@example.com", None, False))
+        monkeypatch.setattr("mcpgateway.main.get_scoped_resource_access_context", lambda _req, _user: ("user@example.com", []))
         list_resources = AsyncMock(return_value=[resource])
         monkeypatch.setattr("mcpgateway.main.resource_service.list_server_resources", list_resources)
 
@@ -3679,7 +3679,7 @@ class TestServerEndpointCoverage:
         prompt = MagicMock()
         prompt.model_dump.return_value = {"id": "prompt-1"}
 
-        monkeypatch.setattr("mcpgateway.main.get_rpc_filter_context", lambda _req, _user: ("user@example.com", None, False))
+        monkeypatch.setattr("mcpgateway.main.get_scoped_resource_access_context", lambda _req, _user: ("user@example.com", []))
         list_prompts = AsyncMock(return_value=[prompt])
         monkeypatch.setattr("mcpgateway.main.prompt_service.list_server_prompts", list_prompts)
 
@@ -3692,7 +3692,7 @@ class TestServerEndpointCoverage:
         request = MagicMock(spec=Request)
         request.state = SimpleNamespace(team_id="team-1")
 
-        monkeypatch.setattr("mcpgateway.main.get_rpc_filter_context", lambda _req, _user: ("user@example.com", ["team-1"], False))
+        monkeypatch.setattr("mcpgateway.main.get_scoped_resource_access_context", lambda _req, _user: ("user@example.com", ["team-1"]))
 
         response = await list_resources(
             request,
@@ -3710,7 +3710,7 @@ class TestServerEndpointCoverage:
         resource = MagicMock()
         resource.model_dump.return_value = {"id": "res-1"}
 
-        monkeypatch.setattr("mcpgateway.main.get_rpc_filter_context", lambda _req, _user: ("user@example.com", None, True))
+        monkeypatch.setattr("mcpgateway.main.get_scoped_resource_access_context", lambda _req, _user: ("user@example.com", None))
         monkeypatch.setattr(
             "mcpgateway.main.resource_service.list_resources",
             AsyncMock(return_value=([resource], "next-cursor")),
@@ -3734,7 +3734,7 @@ class TestServerEndpointCoverage:
         resource = MagicMock()
         resource.model_dump.return_value = {"id": "res-1"}
 
-        monkeypatch.setattr("mcpgateway.main.get_rpc_filter_context", lambda _req, _user: ("user@example.com", None, True))
+        monkeypatch.setattr("mcpgateway.main.get_scoped_resource_access_context", lambda _req, _user: ("user@example.com", None))
         monkeypatch.setattr(
             "mcpgateway.main.resource_service.list_resources",
             AsyncMock(return_value=([resource], None)),
@@ -3755,7 +3755,7 @@ class TestServerEndpointCoverage:
         request = MagicMock(spec=Request)
         request.state = SimpleNamespace(team_id=None)
 
-        monkeypatch.setattr("mcpgateway.main.get_rpc_filter_context", lambda _req, _user: ("user@example.com", None, False))
+        monkeypatch.setattr("mcpgateway.main.get_scoped_resource_access_context", lambda _req, _user: ("user@example.com", []))
         monkeypatch.setattr(
             "mcpgateway.main.resource_service.list_resources",
             AsyncMock(return_value=([], None)),
@@ -3775,7 +3775,7 @@ class TestServerEndpointCoverage:
         request = MagicMock(spec=Request)
         request.state = SimpleNamespace(team_id=None)
 
-        monkeypatch.setattr("mcpgateway.main.get_rpc_filter_context", lambda _req, _user: ("user@example.com", None, True))
+        monkeypatch.setattr("mcpgateway.main.get_scoped_resource_access_context", lambda _req, _user: ("user@example.com", None))
         list_resources_mock = AsyncMock(return_value=([], None))
         monkeypatch.setattr(
             "mcpgateway.main.resource_service.list_resources",
@@ -3796,7 +3796,7 @@ class TestServerEndpointCoverage:
         request = MagicMock(spec=Request)
         request.state = SimpleNamespace(team_id=None)
 
-        monkeypatch.setattr("mcpgateway.main.get_rpc_filter_context", lambda _req, _user: ("user@example.com", None, True))
+        monkeypatch.setattr("mcpgateway.main.get_scoped_resource_access_context", lambda _req, _user: ("user@example.com", None))
         list_resources_mock = AsyncMock(return_value=([], None))
         monkeypatch.setattr(
             "mcpgateway.main.resource_service.list_resources",
@@ -4252,6 +4252,50 @@ class TestCrudEndpoints:
         assert excinfo.value.status_code == 409
 
     @pytest.mark.asyncio
+    async def test_update_resource_validation_error_maps_to_422(self, monkeypatch, allow_permission):
+        """ResourceValidationError on update must map to 422, matching create_resource (issue #4991)."""
+        request = _make_request("/resources/res-1")
+        monkeypatch.setattr(
+            "mcpgateway.main.MetadataCapture.extract_modification_metadata",
+            lambda *_args, **_kwargs: {
+                "modified_by": "user",
+                "modified_from_ip": "127.0.0.1",
+                "modified_via": "api",
+                "modified_user_agent": "test",
+            },
+        )
+        # First-Party
+        from mcpgateway.services.resource_service import ResourceValidationError
+
+        monkeypatch.setattr("mcpgateway.main.resource_service.update_resource", AsyncMock(side_effect=ResourceValidationError("Cannot create a team-scoped resource without a team_id")))
+        with pytest.raises(HTTPException) as excinfo:
+            await update_resource("res-1", ResourceUpdate(name="Res Updated"), request, db=MagicMock(), user={"email": "user@example.com"})
+        assert excinfo.value.status_code == 422
+        assert excinfo.value.detail == "Cannot create a team-scoped resource without a team_id"
+
+    @pytest.mark.asyncio
+    async def test_update_resource_resource_error_maps_to_400(self, monkeypatch, allow_permission):
+        """A plain ResourceError on update must map to 400 rather than escaping as a 500 (issue #4991)."""
+        request = _make_request("/resources/res-1")
+        monkeypatch.setattr(
+            "mcpgateway.main.MetadataCapture.extract_modification_metadata",
+            lambda *_args, **_kwargs: {
+                "modified_by": "user",
+                "modified_from_ip": "127.0.0.1",
+                "modified_via": "api",
+                "modified_user_agent": "test",
+            },
+        )
+        # First-Party
+        from mcpgateway.services.resource_service import ResourceError
+
+        monkeypatch.setattr("mcpgateway.main.resource_service.update_resource", AsyncMock(side_effect=ResourceError("resource update failed")))
+        with pytest.raises(HTTPException) as excinfo:
+            await update_resource("res-1", ResourceUpdate(name="Res Updated"), request, db=MagicMock(), user={"email": "user@example.com"})
+        assert excinfo.value.status_code == 400
+        assert excinfo.value.detail == "resource update failed"
+
+    @pytest.mark.asyncio
     async def test_update_resource_mcp_apps_validation_error_maps_to_422(self, monkeypatch, allow_permission):
         request = _make_request("/resources/res-1")
         monkeypatch.setattr(
@@ -4565,6 +4609,10 @@ class TestSecurityHealthEndpoint:
 class TestRootEndpointsCoverage:
     """Cover export_root + root lookup/update error branches."""
 
+    @pytest.fixture(autouse=True)
+    def _allow_root_admin(self, monkeypatch):
+        monkeypatch.setattr("mcpgateway.main.is_unrestricted_platform_admin", AsyncMock(return_value=True))
+
     @pytest.mark.asyncio
     async def test_export_root_success_and_username_extraction(self, monkeypatch):
         # First-Party
@@ -4615,10 +4663,11 @@ class TestRootEndpointsCoverage:
     async def test_update_root_success_and_errors(self, monkeypatch):
         # First-Party
         import mcpgateway.main as main_mod
+        from mcpgateway.schemas import RootUpdate
 
         updated = SimpleNamespace(uri="root://example", name="Updated")
         monkeypatch.setattr(main_mod.root_service, "update_root", AsyncMock(return_value=updated))
-        root_payload = SimpleNamespace(name="Updated")
+        root_payload = RootUpdate(name="Updated")
         assert await main_mod.update_root("root://example", root_payload, user={"email": "user@example.com"}) == updated
 
         monkeypatch.setattr(main_mod.root_service, "update_root", AsyncMock(side_effect=main_mod.RootServiceNotFoundError("nope")))
@@ -4647,7 +4696,7 @@ class TestToolListEndpointCoverage:
         tool.model_dump.return_value = {"id": "tool-1"}
         list_tools_mock = AsyncMock(return_value=([tool], "next"))
         monkeypatch.setattr(main_mod.tool_service, "list_tools", list_tools_mock)
-        monkeypatch.setattr(main_mod, "get_rpc_filter_context", lambda _req, _user: ("user@example.com", ["team-1"], False))
+        monkeypatch.setattr(main_mod, "get_scoped_resource_access_context", lambda _req, _user: ("user@example.com", ["team-1"]))
 
         result = await main_mod.list_tools(
             request,
@@ -4679,7 +4728,7 @@ class TestToolListEndpointCoverage:
         list_tools_mock = AsyncMock(return_value=([], None))
         monkeypatch.setattr(main_mod.tool_service, "list_tools", list_tools_mock)
 
-        monkeypatch.setattr(main_mod, "get_rpc_filter_context", lambda _req, _user: ("user@example.com", None, True))
+        monkeypatch.setattr(main_mod, "get_scoped_resource_access_context", lambda _req, _user: ("user@example.com", None))
         await main_mod.list_tools(
             request,
             cursor=None,
@@ -4698,7 +4747,7 @@ class TestToolListEndpointCoverage:
         assert list_tools_mock.await_args.kwargs["user_email"] == "user@example.com"
         assert list_tools_mock.await_args.kwargs["token_teams"] is None
 
-        monkeypatch.setattr(main_mod, "get_rpc_filter_context", lambda _req, _user: ("user@example.com", None, False))
+        monkeypatch.setattr(main_mod, "get_scoped_resource_access_context", lambda _req, _user: ("user@example.com", []))
         await main_mod.list_tools(
             request,
             cursor=None,
@@ -4724,7 +4773,7 @@ class TestToolListEndpointCoverage:
         request.state = SimpleNamespace(team_id="team-1")
         db = MagicMock()
 
-        monkeypatch.setattr(main_mod, "get_rpc_filter_context", lambda _req, _user: ("user@example.com", ["team-1"], False))
+        monkeypatch.setattr(main_mod, "get_scoped_resource_access_context", lambda _req, _user: ("user@example.com", ["team-1"]))
         response = await main_mod.list_tools(
             request,
             cursor=None,
@@ -4758,7 +4807,7 @@ class TestPromptListEndpointCoverage:
         prompt.model_dump.return_value = {"id": "prompt-1"}
         list_prompts_mock = AsyncMock(return_value=([prompt], "next"))
         monkeypatch.setattr(main_mod.prompt_service, "list_prompts", list_prompts_mock)
-        monkeypatch.setattr(main_mod, "get_rpc_filter_context", lambda _req, _user: ("user@example.com", ["team-1"], False))
+        monkeypatch.setattr(main_mod, "get_scoped_resource_access_context", lambda _req, _user: ("user@example.com", ["team-1"]))
 
         result = await main_mod.list_prompts(
             request,
@@ -4785,7 +4834,7 @@ class TestPromptListEndpointCoverage:
         request.state = SimpleNamespace(team_id="team-1")
         db = MagicMock()
 
-        monkeypatch.setattr(main_mod, "get_rpc_filter_context", lambda _req, _user: ("user@example.com", ["team-1"], False))
+        monkeypatch.setattr(main_mod, "get_scoped_resource_access_context", lambda _req, _user: ("user@example.com", ["team-1"]))
         response = await main_mod.list_prompts(
             request,
             cursor=None,
@@ -4812,7 +4861,7 @@ class TestPromptListEndpointCoverage:
 
         list_prompts_mock = AsyncMock(return_value=([], None))
         monkeypatch.setattr(main_mod.prompt_service, "list_prompts", list_prompts_mock)
-        monkeypatch.setattr(main_mod, "get_rpc_filter_context", lambda _req, _user: ("user@example.com", None, True))
+        monkeypatch.setattr(main_mod, "get_scoped_resource_access_context", lambda _req, _user: ("user@example.com", None))
 
         await main_mod.list_prompts(
             request,
@@ -4841,7 +4890,7 @@ class TestPromptListEndpointCoverage:
 
         list_prompts_mock = AsyncMock(return_value=([], None))
         monkeypatch.setattr(main_mod.prompt_service, "list_prompts", list_prompts_mock)
-        monkeypatch.setattr(main_mod, "get_rpc_filter_context", lambda _req, _user: ("user@example.com", None, True))
+        monkeypatch.setattr(main_mod, "get_scoped_resource_access_context", lambda _req, _user: ("user@example.com", None))
 
         await main_mod.list_prompts(
             request,
@@ -6466,10 +6515,13 @@ class TestA2ABranchCoverage:
         svc = MagicMock()
         svc.invoke_agent = AsyncMock(return_value={"ok": True})
         monkeypatch.setattr(main_mod, "a2a_service", svc)
-        monkeypatch.setattr(main_mod, "get_rpc_filter_context", lambda _req, _user: ("user@example.com", None, False))
+        # invoke_a2a_agent derives its scope through _extract_a2a_request_context, which uses the
+        # centralized helper; patch that rather than the raw pre-rule derivation it no longer calls.
+        monkeypatch.setattr(main_mod, "get_scoped_resource_access_context", lambda _req, _user: ("user@example.com", []))
         result = await main_mod.invoke_a2a_agent("agent", request, parameters={}, interaction_type="query", db=MagicMock(), user={"email": "user@example.com"})
         assert result["ok"] is True
         assert svc.invoke_agent.await_args.kwargs["token_teams"] == []
+        assert svc.invoke_agent.await_args.kwargs["user_email"] == "user@example.com"
 
         svc.invoke_agent = AsyncMock(side_effect=A2AAgentNotFoundError("missing"))
         with pytest.raises(HTTPException) as excinfo:
@@ -6482,7 +6534,7 @@ class TestA2ABranchCoverage:
         assert excinfo.value.status_code == 400
 
         # Cover user_id=str(user) branch by bypassing RBAC wrapper.
-        monkeypatch.setattr(main_mod, "get_rpc_filter_context", lambda _req, _user: ("user@example.com", None, True))
+        monkeypatch.setattr(main_mod, "get_scoped_resource_access_context", lambda _req, _user: ("user@example.com", None))
         svc.invoke_agent = AsyncMock(return_value={"ok": True})
         result = await main_mod.invoke_a2a_agent.__wrapped__("agent", request, parameters={}, interaction_type="query", db=MagicMock(), user="basic-user")
         assert result["ok"] is True
@@ -6520,7 +6572,7 @@ class TestA2ABranchCoverage:
         svc.list_agents = AsyncMock(return_value=([agent], "next"))
         svc.get_agent = AsyncMock(side_effect=A2AAgentNotFoundError("missing"))
         monkeypatch.setattr(main_mod, "a2a_service", svc)
-        monkeypatch.setattr(main_mod, "get_rpc_filter_context", lambda _req, _user: ("user@example.com", None, True))
+        monkeypatch.setattr(main_mod, "get_scoped_resource_access_context", lambda _req, _user: ("user@example.com", None))
 
         result = await main_mod.list_a2a_agents(
             request,
@@ -6556,6 +6608,7 @@ class TestRpcHandling:
             "mcpgateway.main._is_trusted_internal_mcp_runtime_request",
             lambda request: request.headers.get("x-contextforge-mcp-runtime") == "rust" and getattr(getattr(request, "client", None), "host", None) in ("127.0.0.1", "::1"),
         )
+        monkeypatch.setattr("mcpgateway.main.is_unrestricted_platform_admin", AsyncMock(return_value=True))
 
     @staticmethod
     def _make_request(payload: dict) -> MagicMock:
@@ -6584,7 +6637,7 @@ class TestRpcHandling:
 
         with (
             patch("mcpgateway.main.tool_service.list_server_tools", new=AsyncMock(return_value=[tool])) as mock_list_server_tools,
-            patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", None, False)),
+            patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])),
         ):
             result = await handle_rpc(request, db=mock_db, user={"email": "user@example.com"})
             assert len(result["result"]["tools"]) == 1
@@ -6604,7 +6657,7 @@ class TestRpcHandling:
 
         with (
             patch("mcpgateway.main.tool_service.list_server_tools", new=AsyncMock(return_value=[tool])) as mock_list_server_tools,
-            patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", None, False)),
+            patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])),
         ):
             result = await handle_rpc(request, db=mock_db, user={"email": "user@example.com"})
 
@@ -6625,7 +6678,7 @@ class TestRpcHandling:
         with (
             patch("mcpgateway.main.tool_service.list_tools", new=AsyncMock(return_value=([tool], None))) as mock_list_tools,
             patch("mcpgateway.main.tool_service.list_server_tools", new=AsyncMock()) as mock_list_server_tools,
-            patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", None, False)),
+            patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])),
         ):
             result = await handle_rpc(request, db=mock_db, user={"email": "user@example.com"})
 
@@ -6740,7 +6793,7 @@ class TestRpcHandling:
         with (
             patch("mcpgateway.main.SessionLocal", return_value=mock_db),
             patch("mcpgateway.main.tool_service.list_tools", new=AsyncMock(return_value=([tool], None))),
-            patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", [], False)),
+            patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])),
         ):
             result = await handle_internal_mcp_rpc(request)
 
@@ -7133,7 +7186,7 @@ class TestRpcHandling:
         with (
             patch("mcpgateway.main.SessionLocal", return_value=mock_db),
             patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
-            patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", [], False)),
+            patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])),
             patch("mcpgateway.main.resource_service.list_resources", new=AsyncMock(return_value=([resource], "next-1"))),
         ):
             response = await handle_internal_mcp_resources_list(request)
@@ -7174,7 +7227,7 @@ class TestRpcHandling:
         with (
             patch("mcpgateway.main.SessionLocal", return_value=mock_db),
             patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
-            patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", [], False)),
+            patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])),
             patch("mcpgateway.main.resource_service.read_resource", new=AsyncMock(return_value=resource)),
         ):
             response = await handle_internal_mcp_resources_read(request)
@@ -7222,7 +7275,7 @@ class TestRpcHandling:
         with (
             patch("mcpgateway.main.SessionLocal", return_value=mock_db),
             patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
-            patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", [], False)),
+            patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])),
             patch("mcpgateway.main.resource_service.read_resource", new=AsyncMock(return_value=resource)),
         ):
             response = await handle_internal_mcp_resources_read(request)
@@ -7261,7 +7314,7 @@ class TestRpcHandling:
         with (
             patch("mcpgateway.main.SessionLocal", return_value=mock_db),
             patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
-            patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", [], False)),
+            patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])),
             patch("mcpgateway.main.resource_service.list_resource_templates", new=AsyncMock(return_value=[template])),
         ):
             response = await handle_internal_mcp_resource_templates_list(request)
@@ -7288,7 +7341,7 @@ class TestRpcHandling:
         with (
             patch("mcpgateway.main.SessionLocal", return_value=ok_db),
             patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "admin@example.com"})),
-            patch("mcpgateway.main.get_rpc_filter_context", return_value=("admin@example.com", None, True)),
+            patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("admin@example.com", None)),
             patch("mcpgateway.main._enforce_internal_mcp_server_scope"),
             patch("mcpgateway.main.resource_service.list_resource_templates", new=AsyncMock(return_value=[template])),
         ):
@@ -7301,7 +7354,7 @@ class TestRpcHandling:
         with (
             patch("mcpgateway.main.SessionLocal", return_value=err_db),
             patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
-            patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", None, False)),
+            patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])),
             patch("mcpgateway.main.resource_service.list_resource_templates", new=AsyncMock(side_effect=RuntimeError("boom"))),
         ):
             with pytest.raises(RuntimeError, match="boom"):
@@ -7481,7 +7534,7 @@ class TestRpcHandling:
         with (
             patch("mcpgateway.main.SessionLocal", return_value=mock_db),
             patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
-            patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", [], False)),
+            patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])),
             patch("mcpgateway.main.prompt_service.list_prompts", new=AsyncMock(return_value=([prompt], "next-prompt"))),
         ):
             response = await handle_internal_mcp_prompts_list(request)
@@ -7522,7 +7575,7 @@ class TestRpcHandling:
         with (
             patch("mcpgateway.main.SessionLocal", return_value=mock_db),
             patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
-            patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", [], False)),
+            patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])),
             patch("mcpgateway.main.prompt_service.get_prompt", new=AsyncMock(return_value=prompt)),
         ):
             response = await handle_internal_mcp_prompts_get(request)
@@ -7570,6 +7623,35 @@ class TestRpcHandling:
             "roots": [{"uri": "file:///tmp", "name": "tmp"}],
         }
 
+    async def test_handle_internal_mcp_roots_list_denies_scoped_admin_before_listing(self, monkeypatch):
+        request = self._make_request({"jsonrpc": "2.0", "id": "roots-denied", "method": "roots/list", "params": {}})
+        request.headers = {"x-contextforge-mcp-runtime": "rust"}
+        request.client = SimpleNamespace(host="127.0.0.1")
+        mock_db = MagicMock()
+        mock_db.is_active = True
+        mock_db.in_transaction.return_value = object()
+        forwarded_user = {"email": "admin@example.com"}
+        list_roots = AsyncMock()
+        root_admin = AsyncMock(return_value=False)
+
+        monkeypatch.setattr("mcpgateway.main._build_internal_mcp_forwarded_user", lambda _request: forwarded_user)
+        monkeypatch.setattr("mcpgateway.main.is_unrestricted_platform_admin", root_admin)
+        monkeypatch.setattr("mcpgateway.main.root_service.list_roots", list_roots)
+
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=mock_db),
+            patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value=forwarded_user)),
+        ):
+            response = await handle_internal_mcp_roots_list(request)
+
+        body = json.loads(response.body.decode())
+        assert response.status_code == 403
+        assert body["code"] == -32003
+        assert body["message"] == "Access denied"
+        assert body["data"] == {"method": "roots/list"}
+        root_admin.assert_awaited_once_with(request, forwarded_user, mock_db)
+        list_roots.assert_not_awaited()
+
     async def test_handle_internal_mcp_completion_complete_returns_payload(self):
         request = self._make_request({"jsonrpc": "2.0", "id": "completion-1", "method": "completion/complete", "params": {"prompt": "hi"}})
         request.headers = {
@@ -7596,7 +7678,7 @@ class TestRpcHandling:
         with (
             patch("mcpgateway.main.SessionLocal", return_value=mock_db),
             patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
-            patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", [], False)),
+            patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])),
             patch("mcpgateway.main.completion_service.handle_completion", new=AsyncMock(return_value={"completion": {"text": "done"}})),
         ):
             response = await handle_internal_mcp_completion_complete(request)
@@ -7630,7 +7712,7 @@ class TestRpcHandling:
         with (
             patch("mcpgateway.main.SessionLocal", return_value=mock_db),
             patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
-            patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", [], False)),
+            patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])),
             patch("mcpgateway.main.completion_service.handle_completion", new=AsyncMock(side_effect=RuntimeError("boom"))),
         ):
             response = await handle_internal_mcp_completion_complete(request)
@@ -7657,7 +7739,7 @@ class TestRpcHandling:
         with (
             patch("mcpgateway.main.SessionLocal", return_value=ok_db),
             patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "admin@example.com"})),
-            patch("mcpgateway.main.get_rpc_filter_context", return_value=("admin@example.com", None, True)),
+            patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("admin@example.com", None)),
             patch("mcpgateway.main._enforce_internal_mcp_server_scope"),
             patch("mcpgateway.main.completion_service.handle_completion", new=AsyncMock(return_value={"completion": {"text": "ok"}})),
         ):
@@ -7670,7 +7752,7 @@ class TestRpcHandling:
         with (
             patch("mcpgateway.main.SessionLocal", return_value=err_db),
             patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
-            patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", None, False)),
+            patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])),
             patch("mcpgateway.main.completion_service.handle_completion", new=AsyncMock(side_effect=RuntimeError("boom"))),
         ):
             response = await handle_internal_mcp_completion_complete(request)
@@ -8042,7 +8124,6 @@ class TestRpcHandling:
         with (
             patch("mcpgateway.main.SessionLocal", return_value=mock_db),
             patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
-            patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", [], False)),
             patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])),
             patch(patch_target, new=AsyncMock(return_value=patch_value)),
         ):
@@ -8076,7 +8157,7 @@ class TestRpcHandling:
 
         with (
             patch("mcpgateway.main.SessionLocal", return_value=mock_db),
-            patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", ["team-a"], False)),
+            patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", ["team-a"])),
             patch(
                 "mcpgateway.main.tool_service.list_server_mcp_tool_definitions",
                 new=AsyncMock(return_value=[{"name": "echo", "inputSchema": {"type": "object"}, "annotations": {}}]),
@@ -8319,7 +8400,7 @@ class TestRpcHandling:
         with (
             patch("mcpgateway.main.SessionLocal", return_value=ok_db),
             patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "admin@example.com"})),
-            patch("mcpgateway.main.get_rpc_filter_context", return_value=("admin@example.com", None, True)),
+            patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("admin@example.com", None)),
             patch("mcpgateway.main.tool_service.list_server_mcp_tool_definitions", new=AsyncMock(return_value=[])),
         ):
             response = await handle_internal_mcp_tools_list(request)
@@ -8350,7 +8431,7 @@ class TestRpcHandling:
         with (
             patch("mcpgateway.main.SessionLocal", return_value=generic_db),
             patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
-            patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", None, False)),
+            patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])),
             patch("mcpgateway.main.tool_service.list_server_mcp_tool_definitions", new=AsyncMock(side_effect=RuntimeError("boom"))),
         ):
             response = await handle_internal_mcp_tools_list(request_public)
@@ -8673,7 +8754,7 @@ class TestRpcHandling:
         with (
             patch("mcpgateway.main.SessionLocal", return_value=mock_db),
             patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "admin@example.com"})),
-            patch("mcpgateway.main.get_rpc_filter_context", return_value=("admin@example.com", None, True)),
+            patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("admin@example.com", None)),
             patch("mcpgateway.main.resource_service.list_server_resources", new=AsyncMock(return_value=[resource])),
         ):
             response = await handle_internal_mcp_resources_list(request)
@@ -8697,7 +8778,7 @@ class TestRpcHandling:
         with (
             patch("mcpgateway.main.SessionLocal", return_value=list_db),
             patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
-            patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", None, False)),
+            patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])),
             patch("mcpgateway.main.resource_service.list_resources", new=AsyncMock(return_value=([resource], "next-cursor"))),
         ):
             response = await handle_internal_mcp_resources_list(request)
@@ -8709,7 +8790,7 @@ class TestRpcHandling:
         with (
             patch("mcpgateway.main.SessionLocal", return_value=error_db),
             patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
-            patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", None, False)),
+            patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])),
             patch("mcpgateway.main.resource_service.list_resources", new=AsyncMock(side_effect=RuntimeError("boom"))),
         ):
             response = await handle_internal_mcp_resources_list(request)
@@ -8751,7 +8832,7 @@ class TestRpcHandling:
         with (
             patch("mcpgateway.main.SessionLocal", return_value=mock_db),
             patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "admin@example.com"})),
-            patch("mcpgateway.main.get_rpc_filter_context", return_value=("admin@example.com", None, True)),
+            patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("admin@example.com", None)),
             patch("mcpgateway.main.resource_service.read_resource", new=AsyncMock(return_value={"uri": "resource://one"})),
         ):
             response = await handle_internal_mcp_resources_read(request)
@@ -8775,7 +8856,7 @@ class TestRpcHandling:
         with (
             patch("mcpgateway.main.SessionLocal", return_value=mock_db),
             patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
-            patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", None, False)),
+            patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])),
             patch("mcpgateway.main.resource_service.read_resource", new=AsyncMock(side_effect=ResourceNotFoundError("missing"))),
         ):
             response = await handle_internal_mcp_resources_read(request)
@@ -8798,7 +8879,7 @@ class TestRpcHandling:
         with (
             patch("mcpgateway.main.SessionLocal", return_value=mock_db),
             patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
-            patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", None, False)),
+            patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])),
             patch("mcpgateway.main.resource_service.read_resource", new=AsyncMock(side_effect=RuntimeError("boom"))),
         ):
             response = await handle_internal_mcp_resources_read(request)
@@ -8822,7 +8903,7 @@ class TestRpcHandling:
         with (
             patch("mcpgateway.main.SessionLocal", return_value=mock_db),
             patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
-            patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", None, False)),
+            patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])),
             patch(
                 "mcpgateway.main.resource_service.read_resource",
                 new=AsyncMock(side_effect=ResourceError("Resource URI 'resource://dup' is ambiguous across multiple servers; use /servers/{id}/mcp.")),
@@ -8852,7 +8933,7 @@ class TestRpcHandling:
         with (
             patch("mcpgateway.main.SessionLocal", return_value=mock_db),
             patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
-            patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", None, False)),
+            patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])),
             patch("mcpgateway.main.prompt_service.list_server_prompts", new=AsyncMock(return_value=[prompt])),
         ):
             response = await handle_internal_mcp_prompts_list(request)
@@ -8876,7 +8957,7 @@ class TestRpcHandling:
         with (
             patch("mcpgateway.main.SessionLocal", return_value=admin_db),
             patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "admin@example.com"})),
-            patch("mcpgateway.main.get_rpc_filter_context", return_value=("admin@example.com", None, True)),
+            patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("admin@example.com", None)),
             patch("mcpgateway.main.prompt_service.list_prompts", new=AsyncMock(return_value=([prompt], "next"))),
         ):
             response = await handle_internal_mcp_prompts_list(request)
@@ -8888,7 +8969,7 @@ class TestRpcHandling:
         with (
             patch("mcpgateway.main.SessionLocal", return_value=error_db),
             patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
-            patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", [], False)),
+            patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])),
             patch("mcpgateway.main.prompt_service.list_prompts", new=AsyncMock(side_effect=RuntimeError("boom"))),
         ):
             with pytest.raises(RuntimeError, match="boom"):
@@ -8929,7 +9010,7 @@ class TestRpcHandling:
         with (
             patch("mcpgateway.main.SessionLocal", return_value=mock_db),
             patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "admin@example.com"})),
-            patch("mcpgateway.main.get_rpc_filter_context", return_value=("admin@example.com", None, True)),
+            patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("admin@example.com", None)),
             patch("mcpgateway.main.prompt_service.get_prompt", new=AsyncMock(side_effect=PromptNotFoundError("missing"))),
         ):
             response = await handle_internal_mcp_prompts_get(request_not_found)
@@ -8948,7 +9029,7 @@ class TestRpcHandling:
         with (
             patch("mcpgateway.main.SessionLocal", return_value=mock_db),
             patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "admin@example.com"})),
-            patch("mcpgateway.main.get_rpc_filter_context", return_value=("admin@example.com", None, True)),
+            patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("admin@example.com", None)),
             patch("mcpgateway.main.prompt_service.get_prompt", new=AsyncMock(side_effect=PromptError("bad prompt arguments"))),
         ):
             response = await handle_internal_mcp_prompts_get(request_invalid)
@@ -8976,7 +9057,7 @@ class TestRpcHandling:
         with (
             patch("mcpgateway.main.SessionLocal", return_value=ok_db),
             patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
-            patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", None, False)),
+            patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])),
             patch("mcpgateway.main.prompt_service.get_prompt", new=AsyncMock(return_value=payload)),
         ):
             response = await handle_internal_mcp_prompts_get(request)
@@ -8988,7 +9069,7 @@ class TestRpcHandling:
         with (
             patch("mcpgateway.main.SessionLocal", return_value=err_db),
             patch("mcpgateway.main._authorize_internal_mcp_request", new=AsyncMock(return_value={"email": "user@example.com"})),
-            patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", None, False)),
+            patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])),
             patch("mcpgateway.main.prompt_service.get_prompt", new=AsyncMock(side_effect=RuntimeError("boom"))),
         ):
             with pytest.raises(RuntimeError, match="boom"):
@@ -9441,7 +9522,7 @@ class TestRpcHandling:
         request.state._mcp_internal_auth_context = {"scoped_server_id": "srv-1"}
 
         with (
-            patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", [], False)),
+            patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])),
             patch("mcpgateway.main.tool_service.list_server_mcp_tool_definitions", new=AsyncMock(return_value=[])),
         ):
             result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
@@ -9465,7 +9546,7 @@ class TestRpcHandling:
 
         with (
             patch("mcpgateway.main.tool_service.list_tools", new=AsyncMock(return_value=([tool], "next-cursor"))),
-            patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", None, False)),
+            patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])),
         ):
             result = await handle_rpc(request, db=mock_db, user={"email": "user@example.com"})
             assert result["result"]["nextCursor"] == "next-cursor"
@@ -9511,6 +9592,22 @@ class TestRpcHandling:
             result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
             assert result["error"]["code"] == -32003
 
+    @pytest.mark.parametrize("method", ["list_roots", "roots/list"])
+    async def test_handle_rpc_roots_list_denies_scoped_admin_before_listing(self, monkeypatch, method):
+        payload = {"jsonrpc": "2.0", "id": "roots-denied", "method": method, "params": {}}
+        request = self._make_request(payload)
+        list_roots = AsyncMock()
+        monkeypatch.setattr("mcpgateway.main.root_service.list_roots", list_roots)
+        monkeypatch.setattr("mcpgateway.main.is_unrestricted_platform_admin", AsyncMock(return_value=False))
+
+        with patch("mcpgateway.main.PermissionChecker.has_permission", new=AsyncMock(return_value=True)):
+            result = await handle_rpc(request, db=MagicMock(), user={"email": "admin@example.com"})
+
+        assert result["error"]["code"] == -32003
+        assert result["error"]["message"] == "Access denied"
+        assert result["error"]["data"] == {"method": method}
+        list_roots.assert_not_awaited()
+
     async def test_handle_rpc_admin_short_circuit_still_honors_token_scope_cap(self):
         payload = {"jsonrpc": "2.0", "id": "roots-scope", "method": "roots/list", "params": {}}
         request = self._make_request(payload)
@@ -9525,7 +9622,7 @@ class TestRpcHandling:
         payload = {"jsonrpc": "2.0", "id": "1", "method": "resources/read", "params": {}}
         request = self._make_request(payload)
 
-        with patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", None, False)):
+        with patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])):
             result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
             assert "error" in result
 
@@ -9539,7 +9636,7 @@ class TestRpcHandling:
 
         with (
             patch("mcpgateway.main.resource_service.list_resources", new=AsyncMock(return_value=([resource], "next-cursor"))),
-            patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", None, False)),
+            patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])),
         ):
             result = await handle_rpc(request, db=mock_db, user={"email": "user@example.com"})
             assert result["result"]["resources"][0]["id"] == "res-1"
@@ -9555,7 +9652,7 @@ class TestRpcHandling:
 
         with (
             patch("mcpgateway.main.resource_service.read_resource", new=AsyncMock(return_value=resource)),
-            patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", None, False)),
+            patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])),
         ):
             result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
             assert result["result"]["contents"][0]["uri"] == "resource://one"
@@ -9563,7 +9660,7 @@ class TestRpcHandling:
         # Gateway forwarding is removed, so missing resource returns error
         with (
             patch("mcpgateway.main.resource_service.read_resource", new=AsyncMock(side_effect=ValueError("no local"))),
-            patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", None, False)),
+            patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])),
         ):
             result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
             assert "error" in result
@@ -9609,7 +9706,7 @@ class TestRpcHandling:
 
         with (
             patch("mcpgateway.main.prompt_service.list_server_prompts", new=AsyncMock(return_value=[prompt])),
-            patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", None, False)),
+            patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])),
         ):
             result = await handle_rpc(request, db=mock_db, user={"email": "user@example.com"})
             assert result["result"]["prompts"][0]["name"] == "prompt-1"
@@ -9622,7 +9719,7 @@ class TestRpcHandling:
 
         with (
             patch("mcpgateway.main.prompt_service.get_prompt", new=AsyncMock(return_value=prompt_payload)),
-            patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", None, False)),
+            patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])),
         ):
             result = await handle_rpc(request_get, db=MagicMock(), user={"email": "user@example.com"})
             assert result["result"]["name"] == "prompt-1"
@@ -9640,7 +9737,7 @@ class TestRpcHandling:
 
         with (
             patch("mcpgateway.main.resource_service.list_resource_templates", new=AsyncMock(return_value=[template])),
-            patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", None, False)),
+            patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])),
         ):
             result = await handle_rpc(request_templates, db=MagicMock(), user={"email": "user@example.com"})
             assert result["result"]["resourceTemplates"][0]["uriTemplate"] == "resource://{id}"
@@ -9847,7 +9944,7 @@ class TestRpcHandling:
 
         with (
             patch("mcpgateway.main.tool_service.list_tools", new=AsyncMock(return_value=([], None))) as list_tools,
-            patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", None, True)),
+            patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", None)),
         ):
             await handle_rpc(request, db=mock_db, user={"email": "user@example.com"})
             list_tools.assert_called_once()
@@ -9859,7 +9956,7 @@ class TestRpcHandling:
 
         with (
             patch("mcpgateway.main.tool_service.list_server_tools", new=AsyncMock(return_value=[tool])) as list_server_tools,
-            patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", None, True)),
+            patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", None)),
         ):
             result = await handle_rpc(request_legacy, db=MagicMock(), user={"email": "user@example.com"})
             list_server_tools.assert_called_once()
@@ -9873,7 +9970,7 @@ class TestRpcHandling:
 
         with (
             patch("mcpgateway.main.resource_service.list_resources", new=AsyncMock(return_value=([resource], None))),
-            patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", None, True)),
+            patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", None)),
         ):
             result = await handle_rpc(request_list, db=MagicMock(), user={"email": "user@example.com"})
             assert result["result"]["resources"][0]["id"] == "res-admin"
@@ -9896,7 +9993,7 @@ class TestRpcHandling:
         # Gateway forwarding is removed, so missing resource returns error
         with (
             patch("mcpgateway.main.resource_service.read_resource", new=AsyncMock(side_effect=ValueError("no local"))),
-            patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", None, True)),
+            patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", None)),
         ):
             result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
             assert "error" in result
@@ -9910,7 +10007,7 @@ class TestRpcHandling:
 
         with (
             patch("mcpgateway.main.prompt_service.list_prompts", new=AsyncMock(return_value=([prompt], None))),
-            patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", None, True)),
+            patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", None)),
         ):
             result = await handle_rpc(request_list, db=MagicMock(), user={"email": "user@example.com"})
             assert result["result"]["prompts"][0]["name"] == "prompt-admin"
@@ -9929,7 +10026,7 @@ class TestRpcHandling:
 
         with (
             patch("mcpgateway.main.prompt_service.get_prompt", new=AsyncMock(return_value=prompt_payload)),
-            patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", None, True)),
+            patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", None)),
         ):
             result = await handle_rpc(request_get, db=MagicMock(), user={"email": "user@example.com"})
             assert result["result"]["name"] == "prompt-admin"
@@ -9988,7 +10085,7 @@ class TestRpcHandling:
 
         with (
             patch("mcpgateway.main.resource_service.list_resource_templates", new=AsyncMock(return_value=[template])),
-            patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", None, True)),
+            patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", None)),
         ):
             result = await handle_rpc(request_templates, db=MagicMock(), user={"email": "user@example.com"})
             assert result["result"]["resourceTemplates"][0]["uriTemplate"] == "resource://{id}"
@@ -10453,7 +10550,7 @@ class TestA2AListAndGet:
 
         with (
             patch("mcpgateway.main.a2a_service") as mock_service,
-            patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", None, False)),
+            patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])),
         ):
             mock_service.list_agents = AsyncMock(return_value=([agent], "next-cursor"))
             result = await list_a2a_agents(request, include_pagination=True, db=MagicMock(), user={"email": "user@example.com"})
@@ -10467,7 +10564,7 @@ class TestA2AListAndGet:
 
         with (
             patch("mcpgateway.main.a2a_service") as mock_service,
-            patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", ["team-a"], False)),
+            patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", ["team-a"])),
         ):
             mock_service.list_agents = AsyncMock(return_value=([], None))
             response = await list_a2a_agents(request, team_id="team-b", db=MagicMock(), user={"email": "user@example.com"})
@@ -10479,7 +10576,7 @@ class TestA2AListAndGet:
 
         with (
             patch("mcpgateway.main.a2a_service") as mock_service,
-            patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", None, False)),
+            patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])),
         ):
             mock_service.get_agent = AsyncMock(return_value={"id": "agent-1"})
             result = await get_a2a_agent("agent-1", request, db=MagicMock(), user={"email": "user@example.com"})
@@ -10535,6 +10632,37 @@ class TestExportImportEndpoints:
             await main_mod.export_configuration.__wrapped__(request, types="tools", db=MagicMock(), user="basic-user")
         assert excinfo.value.status_code == 500
 
+    async def test_export_configuration_preserves_root_authorization_denial(self, monkeypatch):
+        # First-Party
+        import mcpgateway.main as main_mod
+
+        export_service = MagicMock()
+        export_service.export_configuration = AsyncMock()
+        monkeypatch.setattr(main_mod, "export_service", export_service)
+        monkeypatch.setattr(main_mod, "is_unrestricted_platform_admin", AsyncMock(return_value=False))
+
+        with pytest.raises(HTTPException) as excinfo:
+            await main_mod.export_configuration.__wrapped__(MagicMock(spec=Request), types="roots", db=MagicMock(), user={"email": "admin@example.com"})
+
+        assert excinfo.value.status_code == 403
+        assert excinfo.value.detail == main_mod._ACCESS_DENIED_MSG
+        export_service.export_configuration.assert_not_awaited()
+
+    async def test_unfiltered_export_preserves_root_authorization_denial(self, monkeypatch):
+        # First-Party
+        import mcpgateway.main as main_mod
+
+        export_service = MagicMock()
+        export_service.export_configuration = AsyncMock()
+        monkeypatch.setattr(main_mod, "export_service", export_service)
+        monkeypatch.setattr(main_mod, "is_unrestricted_platform_admin", AsyncMock(return_value=False))
+
+        with pytest.raises(HTTPException) as excinfo:
+            await main_mod.export_configuration.__wrapped__(MagicMock(spec=Request), types=None, db=MagicMock(), user={"email": "admin@example.com"})
+
+        assert excinfo.value.status_code == 403
+        export_service.export_configuration.assert_not_awaited()
+
     async def test_export_selective_configuration_success(self):
         export_service = MagicMock()
         export_service.export_selective = AsyncMock(return_value={"tools": ["tool-1"]})
@@ -10578,6 +10706,24 @@ class TestExportImportEndpoints:
             await main_mod.export_selective_configuration.__wrapped__(request, {"tools": ["tool-1"]}, include_dependencies=False, db=MagicMock(), user={"email": "user@example.com"})
         assert excinfo.value.status_code == 500
 
+    async def test_export_selective_configuration_preserves_root_authorization_denial(self, monkeypatch):
+        # First-Party
+        import mcpgateway.main as main_mod
+
+        export_service = MagicMock()
+        export_service.export_selective = AsyncMock()
+        monkeypatch.setattr(main_mod, "export_service", export_service)
+        monkeypatch.setattr(main_mod, "is_unrestricted_platform_admin", AsyncMock(return_value=False))
+
+        with pytest.raises(HTTPException) as excinfo:
+            await main_mod.export_selective_configuration.__wrapped__(
+                MagicMock(spec=Request), {"roots": ["https://example.com/root"]}, db=MagicMock(), user={"email": "admin@example.com"}
+            )
+
+        assert excinfo.value.status_code == 403
+        assert excinfo.value.detail == main_mod._ACCESS_DENIED_MSG
+        export_service.export_selective.assert_not_awaited()
+
     async def test_import_configuration_missing_import_data(self):
         # First-Party
         import mcpgateway.main as main_mod
@@ -10605,6 +10751,39 @@ class TestExportImportEndpoints:
         with patch("mcpgateway.main.import_service", import_service):
             result = await import_configuration(import_data={"tools": []}, conflict_strategy="update", db=MagicMock(), user={"email": "user@example.com"})
             assert result["status"] == "ok"
+
+    @pytest.mark.parametrize("dry_run", [True, False])
+    async def test_import_configuration_denies_root_payload_before_service(self, monkeypatch, dry_run):
+        # First-Party
+        import mcpgateway.main as main_mod
+
+        import_service = MagicMock(import_configuration=AsyncMock())
+        monkeypatch.setattr(main_mod, "import_service", import_service)
+        monkeypatch.setattr(main_mod, "is_unrestricted_platform_admin", AsyncMock(return_value=False))
+        import_data = {"entities": {"roots": [{"uri": "https://example.com/root", "name": "Root"}]}}
+
+        with pytest.raises(HTTPException) as excinfo:
+            await main_mod.import_configuration.__wrapped__(import_data=import_data, conflict_strategy="update", dry_run=dry_run, selected_entities=None, db=MagicMock(), user={"email": "admin@example.com"})
+
+        assert excinfo.value.status_code == 403
+        assert excinfo.value.detail == main_mod._ACCESS_DENIED_MSG
+        import_service.import_configuration.assert_not_awaited()
+
+    @pytest.mark.parametrize("dry_run", [True, False])
+    async def test_import_configuration_allows_root_free_payload_when_root_gate_denies(self, monkeypatch, dry_run):
+        # First-Party
+        import mcpgateway.main as main_mod
+
+        status = MagicMock()
+        status.to_dict.return_value = {"status": "ok"}
+        import_service = MagicMock(import_configuration=AsyncMock(return_value=status))
+        monkeypatch.setattr(main_mod, "import_service", import_service)
+        monkeypatch.setattr(main_mod, "is_unrestricted_platform_admin", AsyncMock(return_value=False))
+
+        result = await main_mod.import_configuration.__wrapped__(import_data={"entities": {"tools": []}}, conflict_strategy="update", dry_run=dry_run, selected_entities=None, db=MagicMock(), user={"email": "admin@example.com"})
+
+        assert result == {"status": "ok"}
+        import_service.import_configuration.assert_awaited_once()
 
     async def test_import_configuration_error_mappings(self, monkeypatch):
         # First-Party
@@ -11638,7 +11817,7 @@ class TestRemainingCoverageGaps:
 
         tool = MagicMock()
         tool.to_dict.return_value = {"id": "t1"}
-        monkeypatch.setattr(main_mod, "get_rpc_filter_context", lambda _req, _user: ("user@example.com", [], False))
+        monkeypatch.setattr(main_mod, "get_scoped_resource_access_context", lambda _req, _user: ("user@example.com", []))
         monkeypatch.setattr(main_mod.tool_service, "list_tools", AsyncMock(return_value=([tool], None)))
         monkeypatch.setattr(main_mod, "jsonpath_modifier", MagicMock(return_value={"filtered": True}))
 
@@ -11686,7 +11865,7 @@ class TestRemainingCoverageGaps:
         tool2.to_dict.return_value = {"id": "t2", "name": "Tool 2"}
 
         # Mock list_tools to return tools with a next_cursor
-        monkeypatch.setattr(main_mod, "get_rpc_filter_context", lambda _req, _user: ("user@example.com", [], False))
+        monkeypatch.setattr(main_mod, "get_scoped_resource_access_context", lambda _req, _user: ("user@example.com", []))
         monkeypatch.setattr(main_mod.tool_service, "list_tools", AsyncMock(return_value=([tool1, tool2], "cursor123")))
 
         # Mock jsonpath_modifier to return transformed data
@@ -11742,7 +11921,7 @@ class TestRemainingCoverageGaps:
         tool1.to_dict.return_value = {"id": "t1", "name": "Tool 1"}
 
         # Mock list_tools to return tools with None as next_cursor (last page)
-        monkeypatch.setattr(main_mod, "get_rpc_filter_context", lambda _req, _user: ("user@example.com", [], False))
+        monkeypatch.setattr(main_mod, "get_scoped_resource_access_context", lambda _req, _user: ("user@example.com", []))
         monkeypatch.setattr(main_mod.tool_service, "list_tools", AsyncMock(return_value=([tool1], None)))
 
         def mock_jsonpath_modifier(data, jsonpath, mapping):
@@ -11788,7 +11967,7 @@ class TestRemainingCoverageGaps:
 
         tool = MagicMock()
         tool.to_dict.return_value = {"id": "t1"}
-        monkeypatch.setattr(main_mod, "get_rpc_filter_context", lambda _req, _user: ("user@example.com", [], False))
+        monkeypatch.setattr(main_mod, "get_scoped_resource_access_context", lambda _req, _user: ("user@example.com", []))
         monkeypatch.setattr(main_mod.tool_service, "list_tools", AsyncMock(return_value=([tool], None)))
 
         # Invalid JSON string for apijsonpath
@@ -11821,7 +12000,7 @@ class TestRemainingCoverageGaps:
 
         tool = MagicMock()
         tool.model_dump.return_value = {"id": "t1", "name": "test"}
-        monkeypatch.setattr(main_mod, "get_rpc_filter_context", lambda _req, _user: ("user@example.com", [], False))
+        monkeypatch.setattr(main_mod, "get_scoped_resource_access_context", lambda _req, _user: ("user@example.com", []))
         monkeypatch.setattr(main_mod.tool_service, "list_tools", AsyncMock(return_value=([tool], "next_cursor_123")))
 
         # Pass JsonPathModifier instance but with None jsonpath to trigger parsed_apijsonpath=None path
@@ -11860,7 +12039,7 @@ class TestRemainingCoverageGaps:
 
         tool = MagicMock()
         tool.to_dict.return_value = {"id": "t1"}
-        monkeypatch.setattr(main_mod, "get_rpc_filter_context", lambda _req, _user: ("user@example.com", [], False))
+        monkeypatch.setattr(main_mod, "get_scoped_resource_access_context", lambda _req, _user: ("user@example.com", []))
         monkeypatch.setattr(main_mod.tool_service, "list_tools", AsyncMock(return_value=([tool], None)))
 
         # Make jsonpath_modifier raise an exception
@@ -11899,7 +12078,7 @@ class TestRemainingCoverageGaps:
         request.state = SimpleNamespace(team_id=None)
 
         # Empty tools list
-        monkeypatch.setattr(main_mod, "get_rpc_filter_context", lambda _req, _user: ("user@example.com", [], False))
+        monkeypatch.setattr(main_mod, "get_scoped_resource_access_context", lambda _req, _user: ("user@example.com", []))
         monkeypatch.setattr(main_mod.tool_service, "list_tools", AsyncMock(return_value=([], None)))
         monkeypatch.setattr(main_mod, "jsonpath_modifier", MagicMock(return_value={"filtered": []}))
 
@@ -11935,7 +12114,7 @@ class TestRemainingCoverageGaps:
         async def mock_get_tool(*args, **kwargs):
             return data
 
-        monkeypatch.setattr(main_mod, "get_rpc_filter_context", lambda _req, _user: ("u", [], False))
+        monkeypatch.setattr(main_mod, "get_scoped_resource_access_context", lambda _req, _user: ("u", []))
         monkeypatch.setattr(main_mod, "get_user_team_roles", lambda _db, _email: None)
         monkeypatch.setattr(main_mod.tool_service, "get_tool", mock_get_tool)
 
@@ -11953,7 +12132,7 @@ class TestRemainingCoverageGaps:
         data = MagicMock()
         data.to_dict.return_value = {"id": "t1"}
 
-        monkeypatch.setattr(main_mod, "get_rpc_filter_context", lambda _req, _user: ("u", [], False))
+        monkeypatch.setattr(main_mod, "get_scoped_resource_access_context", lambda _req, _user: ("u", []))
         monkeypatch.setattr(main_mod, "get_user_team_roles", lambda _db, _email: None)
         monkeypatch.setattr(main_mod.tool_service, "get_tool", AsyncMock(return_value=data))
 
@@ -11977,7 +12156,7 @@ class TestRemainingCoverageGaps:
         data = MagicMock()
         data.to_dict.return_value = {"id": "t1"}
 
-        monkeypatch.setattr(main_mod, "get_rpc_filter_context", lambda _req, _user: ("u", [], False))
+        monkeypatch.setattr(main_mod, "get_scoped_resource_access_context", lambda _req, _user: ("u", []))
         monkeypatch.setattr(main_mod, "get_user_team_roles", lambda _db, _email: None)
         monkeypatch.setattr(main_mod.tool_service, "get_tool", AsyncMock(return_value=data))
 
@@ -12002,7 +12181,7 @@ class TestRemainingCoverageGaps:
 
         tool = MagicMock()
         tool.to_dict.return_value = {"id": "t1"}
-        monkeypatch.setattr(main_mod, "get_rpc_filter_context", lambda _req, _user: ("user@example.com", [], False))
+        monkeypatch.setattr(main_mod, "get_scoped_resource_access_context", lambda _req, _user: ("user@example.com", []))
         monkeypatch.setattr(main_mod.tool_service, "list_tools", AsyncMock(return_value=([tool], None)))
 
         # Make jsonpath_modifier raise HTTPException (e.g., from invalid JSONPath)
@@ -12040,7 +12219,7 @@ class TestRemainingCoverageGaps:
         data = MagicMock()
         data.to_dict.return_value = {"id": "t1"}
 
-        monkeypatch.setattr(main_mod, "get_rpc_filter_context", lambda _req, _user: ("u", [], False))
+        monkeypatch.setattr(main_mod, "get_scoped_resource_access_context", lambda _req, _user: ("u", []))
         monkeypatch.setattr(main_mod, "get_user_team_roles", lambda _db, _email: None)
         monkeypatch.setattr(main_mod.tool_service, "get_tool", AsyncMock(return_value=data))
 
@@ -12064,7 +12243,7 @@ class TestRemainingCoverageGaps:
 
         tool = MagicMock()
         tool.model_dump.return_value = {"id": "t1", "name": "test"}
-        monkeypatch.setattr(main_mod, "get_rpc_filter_context", lambda _req, _user: ("user@example.com", [], False))
+        monkeypatch.setattr(main_mod, "get_scoped_resource_access_context", lambda _req, _user: ("user@example.com", []))
         monkeypatch.setattr(main_mod.tool_service, "list_tools", AsyncMock(return_value=([tool], "cursor_abc")))
 
         # Pass apijsonpath=None to trigger pagination path
@@ -12104,7 +12283,7 @@ class TestRemainingCoverageGaps:
 
         tool = MagicMock()
         tool.to_dict.return_value = {"id": "t1"}
-        monkeypatch.setattr(main_mod, "get_rpc_filter_context", lambda _req, _user: ("user@example.com", [], False))
+        monkeypatch.setattr(main_mod, "get_scoped_resource_access_context", lambda _req, _user: ("user@example.com", []))
         monkeypatch.setattr(main_mod.tool_service, "list_tools", AsyncMock(return_value=([tool], None)))
 
         # Pass invalid type (integer) - should raise 400 with clear message
@@ -12139,7 +12318,7 @@ class TestRemainingCoverageGaps:
         data = MagicMock()
         data.to_dict.return_value = {"id": "t1"}
 
-        monkeypatch.setattr(main_mod, "get_rpc_filter_context", lambda _req, _user: ("u", [], False))
+        monkeypatch.setattr(main_mod, "get_scoped_resource_access_context", lambda _req, _user: ("u", []))
         monkeypatch.setattr(main_mod, "get_user_team_roles", lambda _db, _email: None)
         monkeypatch.setattr(main_mod.tool_service, "get_tool", AsyncMock(return_value=data))
 
@@ -12161,7 +12340,7 @@ class TestRemainingCoverageGaps:
 
         tool = MagicMock()
         tool.to_dict.return_value = {"id": "t1"}
-        monkeypatch.setattr(main_mod, "get_rpc_filter_context", lambda _req, _user: ("user@example.com", [], False))
+        monkeypatch.setattr(main_mod, "get_scoped_resource_access_context", lambda _req, _user: ("user@example.com", []))
         monkeypatch.setattr(main_mod.tool_service, "list_tools", AsyncMock(return_value=([tool], None)))
 
         # Empty jsonpath string - should raise 400
@@ -12195,7 +12374,7 @@ class TestRemainingCoverageGaps:
         data = MagicMock()
         data.to_dict.return_value = {"id": "t1"}
 
-        monkeypatch.setattr(main_mod, "get_rpc_filter_context", lambda _req, _user: ("u", [], False))
+        monkeypatch.setattr(main_mod, "get_scoped_resource_access_context", lambda _req, _user: ("u", []))
         monkeypatch.setattr(main_mod, "get_user_team_roles", lambda _db, _email: None)
         monkeypatch.setattr(main_mod.tool_service, "get_tool", AsyncMock(return_value=data))
 
@@ -12341,11 +12520,11 @@ class TestRemainingCoverageGaps:
 
         monkeypatch.setattr(main_mod.resource_service, "list_resource_templates", AsyncMock(return_value=[]))
 
-        monkeypatch.setattr(main_mod, "get_rpc_filter_context", lambda _req, _user: ("u", None, True))
+        monkeypatch.setattr(main_mod, "get_scoped_resource_access_context", lambda _req, _user: ("u", None))
         result = await main_mod.list_resource_templates.__wrapped__(request, db=MagicMock(), include_inactive=False, tags="a, b", visibility=None, user={"email": "u"})
         assert result.resource_templates == []
 
-        monkeypatch.setattr(main_mod, "get_rpc_filter_context", lambda _req, _user: ("u", None, False))
+        monkeypatch.setattr(main_mod, "get_scoped_resource_access_context", lambda _req, _user: ("u", []))
         result = await main_mod.list_resource_templates.__wrapped__(request, db=MagicMock(), include_inactive=False, tags=None, visibility=None, user={"email": "u"})
         assert result.resource_templates == []
 
@@ -12359,7 +12538,7 @@ class TestRemainingCoverageGaps:
         list_prompts = AsyncMock(return_value=([], None))
         monkeypatch.setattr(main_mod.prompt_service, "list_prompts", list_prompts)
 
-        monkeypatch.setattr(main_mod, "get_rpc_filter_context", lambda _req, _user: ("u", None, True))
+        monkeypatch.setattr(main_mod, "get_scoped_resource_access_context", lambda _req, _user: ("u", None))
         await main_mod.list_prompts.__wrapped__(
             request,
             cursor=None,
@@ -12376,7 +12555,7 @@ class TestRemainingCoverageGaps:
         assert list_prompts.call_args.kwargs["user_email"] == "u"
         assert list_prompts.call_args.kwargs["token_teams"] is None
 
-        monkeypatch.setattr(main_mod, "get_rpc_filter_context", lambda _req, _user: ("u", None, False))
+        monkeypatch.setattr(main_mod, "get_scoped_resource_access_context", lambda _req, _user: ("u", []))
         await main_mod.list_prompts.__wrapped__(
             request,
             cursor=None,
@@ -12406,7 +12585,7 @@ class TestRemainingCoverageGaps:
         prompt.model_dump.return_value = {"id": "p1"}
         monkeypatch.setattr(main_mod.prompt_service, "list_server_prompts", AsyncMock(return_value=[prompt]))
 
-        monkeypatch.setattr(main_mod, "get_rpc_filter_context", lambda _req, _user: ("u", None, True))
+        monkeypatch.setattr(main_mod, "get_scoped_resource_access_context", lambda _req, _user: ("u", None))
         result = await main_mod.server_get_resources.__wrapped__(request, "srv", include_inactive=False, db=MagicMock(), user={"email": "u"})
         assert result == [{"id": "r1"}]
 
@@ -12452,6 +12631,7 @@ class TestRemainingCoverageGaps:
         # Provide lightweight router modules to avoid importing heavy optional dependencies.
         monkeypatch.setitem(sys.modules, "mcpgateway.routers.observability", ModuleType("mcpgateway.routers.observability"))
         sys.modules["mcpgateway.routers.observability"].router = APIRouter()
+        sys.modules["mcpgateway.routers.observability"].observability_metrics_router = APIRouter()
 
         # Force ImportError branches for optional routers.
         force_error = {
@@ -12563,7 +12743,7 @@ class TestRemainingCoverageGaps:
         tool = MagicMock()
         tool.model_dump.return_value = {"id": "t1"}
 
-        monkeypatch.setattr(main_mod, "get_rpc_filter_context", lambda _req, _user: ("u", None, False))
+        monkeypatch.setattr(main_mod, "get_scoped_resource_access_context", lambda _req, _user: ("u", []))
         monkeypatch.setattr(main_mod.tool_service, "list_server_tools", AsyncMock(return_value=[tool]))
 
         result = await main_mod.server_get_tools.__wrapped__(request, "srv", include_inactive=False, include_metrics=False, db=MagicMock(), user={"email": "u"})
@@ -12574,7 +12754,7 @@ class TestRemainingCoverageGaps:
         import mcpgateway.main as main_mod
 
         request = _make_request("/tags")
-        monkeypatch.setattr(main_mod, "get_rpc_filter_context", lambda _request, _user: ("u", [], False))
+        monkeypatch.setattr(main_mod, "get_scoped_resource_access_context", lambda _request, _user: ("u", []))
 
         monkeypatch.setattr(main_mod.tag_service, "get_all_tags", AsyncMock(return_value=[]))
         _ = await main_mod.list_tags.__wrapped__(request, "Tools, Servers", include_entities=False, db=MagicMock(), user={"email": "u"})
@@ -13064,6 +13244,7 @@ class TestRemainingCoverageGaps:
         # Keep router imports light.
         monkeypatch.setitem(sys.modules, "mcpgateway.routers.observability", ModuleType("mcpgateway.routers.observability"))
         sys.modules["mcpgateway.routers.observability"].router = APIRouter()
+        sys.modules["mcpgateway.routers.observability"].observability_metrics_router = APIRouter()
 
         overrides = {
             "structured_logging_enabled": True,
@@ -13385,7 +13566,7 @@ async def test_protocol_completion_endpoint_direct_admin_null_teams_preserves_by
     db = object()
 
     monkeypatch.setattr(main_mod, "_read_request_json", AsyncMock(return_value=payload))
-    monkeypatch.setattr(main_mod, "get_rpc_filter_context", lambda _req, _user: ("admin@example.com", None, True))
+    monkeypatch.setattr(main_mod, "get_scoped_resource_access_context", lambda _req, _user: ("admin@example.com", None))
     completion_mock = AsyncMock(return_value={"result": "ok"})
     monkeypatch.setattr(main_mod.completion_service, "handle_completion", completion_mock)
 
@@ -13409,7 +13590,7 @@ async def test_protocol_completion_endpoint_direct_non_admin_none_teams_becomes_
     db = object()
 
     monkeypatch.setattr(main_mod, "_read_request_json", AsyncMock(return_value=payload))
-    monkeypatch.setattr(main_mod, "get_rpc_filter_context", lambda _req, _user: ("viewer@example.com", None, False))
+    monkeypatch.setattr(main_mod, "get_scoped_resource_access_context", lambda _req, _user: ("viewer@example.com", []))
     completion_mock = AsyncMock(return_value={"result": "ok"})
     monkeypatch.setattr(main_mod.completion_service, "handle_completion", completion_mock)
 
@@ -13423,7 +13604,11 @@ async def test_protocol_completion_endpoint_direct_non_admin_none_teams_becomes_
 
 @pytest.mark.asyncio
 async def test_handle_rpc_completion_direct_admin_null_teams_preserves_bypass(monkeypatch):
-    """RPC completion direct path should preserve admin bypass context."""
+    """RPC completion direct path should preserve admin bypass context.
+
+    Admin bypass keeps user_email set so the completion service can still match the admin's
+    own private rows. The dispatcher passes the scoped context through verbatim.
+    """
     # First-Party
     import mcpgateway.main as main_mod
 
@@ -13434,7 +13619,7 @@ async def test_handle_rpc_completion_direct_admin_null_teams_preserves_bypass(mo
     db = MagicMock()
 
     monkeypatch.setattr(main_mod.settings, "mcpgateway_session_affinity_enabled", False)
-    monkeypatch.setattr(main_mod, "get_rpc_filter_context", lambda _req, _user: ("admin@example.com", None, True))
+    monkeypatch.setattr(main_mod, "get_scoped_resource_access_context", lambda _req, _user: ("admin@example.com", None))
     completion_mock = AsyncMock(return_value={"done": True})
     monkeypatch.setattr(main_mod.completion_service, "handle_completion", completion_mock)
 
@@ -13442,7 +13627,7 @@ async def test_handle_rpc_completion_direct_admin_null_teams_preserves_bypass(mo
     assert result["jsonrpc"] == "2.0"
     assert result["id"] == "rpc-id"
     assert result["result"] == {"done": True}
-    assert completion_mock.await_args.kwargs["user_email"] is None
+    assert completion_mock.await_args.kwargs["user_email"] == "admin@example.com"
     assert completion_mock.await_args.kwargs["token_teams"] is None
 
 
@@ -13459,7 +13644,7 @@ async def test_handle_rpc_completion_direct_non_admin_none_teams_becomes_public_
     db = MagicMock()
 
     monkeypatch.setattr(main_mod.settings, "mcpgateway_session_affinity_enabled", False)
-    monkeypatch.setattr(main_mod, "get_rpc_filter_context", lambda _req, _user: ("viewer@example.com", None, False))
+    monkeypatch.setattr(main_mod, "get_scoped_resource_access_context", lambda _req, _user: ("viewer@example.com", []))
     completion_mock = AsyncMock(return_value={"done": True})
     monkeypatch.setattr(main_mod.completion_service, "handle_completion", completion_mock)
 
@@ -13512,7 +13697,7 @@ class TestRpcScopedPermissions:
 
         with (
             patch("mcpgateway.main.tool_service.list_tools", new=AsyncMock(return_value=([tool], None))),
-            patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", None, False)),
+            patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])),
             patch("mcpgateway.main.PermissionChecker.has_permission", new=AsyncMock(return_value=True)),
         ):
             result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
@@ -13528,7 +13713,7 @@ class TestRpcScopedPermissions:
 
         with (
             patch("mcpgateway.main.tool_service.list_tools", new=AsyncMock(return_value=([tool], None))),
-            patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", None, False)),
+            patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])),
             patch("mcpgateway.main.PermissionChecker.has_permission", new=AsyncMock(return_value=True)),
         ):
             result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
@@ -13544,7 +13729,7 @@ class TestRpcScopedPermissions:
 
         with (
             patch("mcpgateway.main.tool_service.list_tools", new=AsyncMock(return_value=([tool], None))),
-            patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", None, False)),
+            patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])),
             patch("mcpgateway.main.PermissionChecker.has_permission", new=AsyncMock(return_value=True)),
         ):
             result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
@@ -13560,7 +13745,7 @@ class TestRpcScopedPermissions:
 
         with (
             patch("mcpgateway.main.tool_service.list_tools", new=AsyncMock(return_value=([tool], None))),
-            patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", None, False)),
+            patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])),
             patch("mcpgateway.main.PermissionChecker.has_permission", new=AsyncMock(return_value=True)),
         ):
             result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
@@ -13654,7 +13839,7 @@ class TestRpcScopedPermissions:
 
         with (
             patch("mcpgateway.main.tool_service.list_tools", new=AsyncMock(return_value=([tool], None))),
-            patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", None, False)),
+            patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])),
             patch("mcpgateway.main.PermissionChecker.has_permission", new=AsyncMock(return_value=True)),
         ):
             result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})
@@ -13677,7 +13862,7 @@ class TestRpcScopedPermissions:
 
         with (
             patch("mcpgateway.main.tool_service.list_tools", new=AsyncMock(return_value=([tool], None))),
-            patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", None, False)),
+            patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("user@example.com", [])),
             patch("mcpgateway.main.PermissionChecker.has_permission", new=AsyncMock(return_value=True)),
         ):
             result = await handle_rpc(request, db=MagicMock(), user={"email": "user@example.com"})

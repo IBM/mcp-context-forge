@@ -754,7 +754,7 @@ For detailed guidance on resource limits and process management, see `docs/docs/
 | mcpContextForge.secret.REQUIRE_TOKEN_EXPIRATION | string | `"true"` |  |
 | mcpContextForge.secret.REQUIRE_JTI | string | `"true"` |  |
 | mcpContextForge.secret.REQUIRE_USER_IN_DB | string | `"false"` |  |
-| mcpContextForge.secret.AUTH_ENCRYPTION_SECRET | string | `"my-test-salt"` |  |
+| mcpContextForge.secret.AUTH_ENCRYPTION_SECRET | string | `""` |  |
 | mcpContextForge.secret.EMAIL_AUTH_ENABLED | string | `"true"` |  |
 | mcpContextForge.secret.PROTECT_ALL_ADMINS | string | `"true"` |  |
 | mcpContextForge.secret.PLATFORM_ADMIN_EMAIL | string | `"admin@example.com"` |  |

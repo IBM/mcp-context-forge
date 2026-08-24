@@ -45,7 +45,7 @@ async def test_admin_export_configuration_success():
     mock_db = MagicMock()
     user = {"email": "admin@example.com", "username": "admin"}
 
-    with patch.object(admin, "export_service") as mock_export:
+    with patch.object(admin, "export_service") as mock_export, patch.object(admin, "is_unrestricted_platform_admin", new=AsyncMock(return_value=True)):
         mock_export.export_configuration = AsyncMock(return_value={"ok": True})
         response = await admin.admin_export_configuration(request, db=mock_db, user=user)
         assert response.media_type == "application/json"
@@ -66,6 +66,22 @@ async def test_admin_export_selective_success():
 
 
 @pytest.mark.asyncio
+async def test_admin_export_selective_preserves_root_authorization_denial(monkeypatch):
+    request = _make_json_request({"entity_selections": {"roots": ["https://example.com/root"]}})
+    export_service = MagicMock()
+    export_service.export_selective = AsyncMock()
+    monkeypatch.setattr(admin, "export_service", export_service)
+    monkeypatch.setattr(admin, "is_unrestricted_platform_admin", AsyncMock(return_value=False))
+
+    with pytest.raises(HTTPException) as excinfo:
+        await admin.admin_export_selective(request, db=MagicMock(), user={"email": "admin@example.com"})
+
+    assert excinfo.value.status_code == 403
+    assert excinfo.value.detail == admin._ACCESS_DENIED_MSG
+    export_service.export_selective.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_admin_import_preview_missing_data():
     request = _make_json_request({})
     with pytest.raises(HTTPException) as exc:
@@ -80,6 +96,34 @@ async def test_admin_import_preview_success():
         mock_import.preview_import = AsyncMock(return_value={"summary": {"total_items": 0}})
         response = await admin.admin_import_preview(request, db=MagicMock(), user={"email": "admin@example.com", "username": "admin"})
         assert b"preview" in response.body
+
+
+@pytest.mark.asyncio
+async def test_admin_import_preview_denies_root_payload_before_service(monkeypatch):
+    request = _make_json_request({"data": {"entities": {"roots": [{"uri": "https://example.com/root"}]}}})
+    preview_service = MagicMock(preview_import=AsyncMock())
+    monkeypatch.setattr(admin, "import_service", preview_service)
+    monkeypatch.setattr(admin, "is_unrestricted_platform_admin", AsyncMock(return_value=False))
+
+    with pytest.raises(HTTPException) as excinfo:
+        await admin.admin_import_preview(request, db=MagicMock(), user={"email": "admin@example.com"})
+
+    assert excinfo.value.status_code == 403
+    assert excinfo.value.detail == admin._ACCESS_DENIED_MSG
+    preview_service.preview_import.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_admin_import_preview_allows_root_free_payload_when_root_gate_denies(monkeypatch):
+    request = _make_json_request({"data": {"entities": {"tools": []}}})
+    preview_service = MagicMock(preview_import=AsyncMock(return_value={"summary": {"total_items": 0}}))
+    monkeypatch.setattr(admin, "import_service", preview_service)
+    monkeypatch.setattr(admin, "is_unrestricted_platform_admin", AsyncMock(return_value=False))
+
+    response = await admin.admin_import_preview(request, db=MagicMock(), user={"email": "admin@example.com"})
+
+    assert response.status_code == 200
+    preview_service.preview_import.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -101,6 +145,42 @@ async def test_admin_import_configuration_success():
         mock_import.import_configuration = AsyncMock(return_value=_Status())
         response = await admin.admin_import_configuration(request, db=MagicMock(), user={"email": "admin@example.com", "username": "admin"})
         assert b"status" in response.body
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("dry_run", [True, False])
+async def test_admin_import_configuration_denies_root_payload_before_service(monkeypatch, dry_run):
+    request = _make_json_request(
+        {"import_data": {"entities": {"roots": [{"uri": "https://example.com/root"}]}}, "conflict_strategy": "update", "dry_run": dry_run}
+    )
+    import_service = MagicMock(import_configuration=AsyncMock())
+    monkeypatch.setattr(admin, "import_service", import_service)
+    monkeypatch.setattr(admin, "is_unrestricted_platform_admin", AsyncMock(return_value=False))
+
+    with pytest.raises(HTTPException) as excinfo:
+        await admin.admin_import_configuration(request, db=MagicMock(), user={"email": "admin@example.com"})
+
+    assert excinfo.value.status_code == 403
+    assert excinfo.value.detail == admin._ACCESS_DENIED_MSG
+    import_service.import_configuration.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("dry_run", [True, False])
+async def test_admin_import_configuration_allows_root_free_payload_when_root_gate_denies(monkeypatch, dry_run):
+    class _Status:
+        def to_dict(self):
+            return {"status": "ok"}
+
+    request = _make_json_request({"import_data": {"entities": {"tools": []}}, "conflict_strategy": "update", "dry_run": dry_run})
+    import_service = MagicMock(import_configuration=AsyncMock(return_value=_Status()))
+    monkeypatch.setattr(admin, "import_service", import_service)
+    monkeypatch.setattr(admin, "is_unrestricted_platform_admin", AsyncMock(return_value=False))
+
+    response = await admin.admin_import_configuration(request, db=MagicMock(), user={"email": "admin@example.com"})
+
+    assert response.status_code == 200
+    import_service.import_configuration.assert_awaited_once()
 
 
 @pytest.mark.asyncio

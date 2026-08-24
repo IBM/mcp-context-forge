@@ -282,6 +282,10 @@ DETECT_SECRETS_SPEC     ?= git+https://github.com/ibm/detect-secrets.git@076672a
 
 .PHONY: venv
 venv: uv
+	@if [ -d "$(VENV_DIR)" ] && [ ! -e "$(VENV_DIR)/bin/python3" ]; then \
+		echo "⚠️  Cached virtual env has a broken Python interpreter symlink; recreating."; \
+		rm -rf "$(VENV_DIR)"; \
+	fi
 	@if [ ! -d "$(VENV_DIR)" ]; then \
 		$(UV_BIN) venv "$(VENV_DIR)"; \
 		echo -e "✅  Virtual env created.\n💡  Enter it with:\n    . $(VENV_DIR)/bin/activate\n"; \
@@ -800,18 +804,14 @@ clean:
 # =============================================================================
 # help: 🧪 TESTING
 # help: smoketest            - Run smoketest.py --verbose (build container, add MCP server, test endpoints)
-# help: test-protocol-compliance - MCP protocol compliance harness: full (target, transport) matrix across reference + gateway (K=<filter> to pick one)
-# help: test-protocol-compliance-reference - Protocol compliance harness, reference server only (fast, always-on)
-# help: test-protocol-compliance-gateway - Protocol compliance harness, gateway-proxy + gateway-virtual targets (requires working gateway boot)
-# help: test-protocol-compliance-matrix - Protocol compliance matrix across every runnable engine; summary table (pass MATRIX_ARGS='--format markdown --out X' to override)
-# help: test-mcp-protocol-e2e - MCP protocol E2E via FastMCP client against live gateway (K=<filter> to pick one; MCP_E2E_CLIENT_TIMEOUT env to extend the 5s client timeout)
+# help: test-mcp-protocol-e2e - MCP protocol E2E via mcp SDK client against live gateway (K=<filter> to pick one; MCP_E2E_CLIENT_TIMEOUT env to extend the 5s client timeout)
 # help: test-mcp-cli         - [DEPRECATED] Alias for test-mcp-protocol-e2e (accepts same K=<filter>)
 # help: test-bats            - Run bats tests for git tooling (tests/bash; requires bats)
 # help: test-mcp-rbac        - RBAC + multi-transport MCP protocol tests (needs live gateway + SSE)
 # help: test-mcp-access-matrix - MCP role/access matrix (Rust transport, edge/full mode)
 # help: test-mcp-plugin-parity - MCP plugin parity E2E for current Python or Rust stack
 # help: test-mcp-session-isolation - MCP session/auth isolation tests for Rust public transport
-# help: test-e2e-sso         - E2E tests requiring a live SSO identity provider (Keycloak or Entra ID)
+# help: test-live-gateway    - Run ALL live-gateway tests (mcp + sso + e2e_rust)
 # help: test-live-gateway    - Run ALL live-gateway tests (mcp + sso + protocol_compliance + e2e_rust)
 # help: test-plugin-integration - Self-contained plugin E2E tests (boots gateway; PLUGIN=<name> ENFORCEMENT=static|binding|both)
 # help: test-plugin-secrets-detection  - Plugin E2E: SecretsDetection
@@ -820,7 +820,7 @@ clean:
 # help: test-plugin-rate-limiter       - Plugin E2E: RateLimiter (needs Redis)
 # help: test-plugin-retry-with-backoff - Plugin E2E: RetryWithBackoff (needs Redis)
 # help: test-plugin-pii-filter         - Plugin E2E: PIIFilter
-# help: test-plugin-sql-sanitizer      - Plugin E2E: SQLSanitizer (native plugin)
+# help: test-plugin-sql-sanitizer      - Plugin E2E: SQLSanitizer
 # help: test                 - Run unit tests with pytest
 # help: test-verbose         - Run tests sequentially with real-time test name output
 # help: test-profile         - Run tests and show slowest 20 tests (durations >= 1s)
@@ -860,12 +860,11 @@ clean:
 
 # Dirs/files always excluded from standard pytest runs.
 # tests/live_gateway/ — see tests/live_gateway/README.md. Subsuites need
-# a running gateway (`make testing-up`), Keycloak/Entra (sso/), the Rust
-# transport (e2e_rust/), or specific protocol setup (protocol_compliance/).
+# a running gateway (`make testing-up`), Keycloak/Entra (sso/), or the Rust
+# transport (e2e_rust/).
 # Invoke via `make test-live-gateway` (everything) or a targeted helper
 # (test-mcp-protocol-e2e, test-mcp-rbac, test-mcp-plugin-parity,
-# test-mcp-access-matrix, test-mcp-session-isolation, test-e2e-sso,
-# test-protocol-compliance{,-reference,-gateway}).
+# test-mcp-access-matrix, test-mcp-session-isolation, test-e2e-sso).
 PYTEST_IGNORE := tests/fuzz tests/manual test.py \
     tests/live_gateway
 
@@ -879,7 +878,7 @@ smoketest:
 	@$(VENV_DIR)/bin/python ./smoketest.py --verbose || { echo "❌ Smoketest failed!"; exit 1; }
 	@echo "✅ Smoketest passed!"
 
-test-mcp-protocol-e2e: uv  ## MCP protocol E2E via FastMCP client (K=<filter> to pick one)
+test-mcp-protocol-e2e: uv  ## MCP protocol E2E via mcp SDK client (K=<filter> to pick one)
 	@echo "🔌 Running MCP protocol E2E tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
 	@echo "   Env: MCP_CLI_BASE_URL (gateway URL)  JWT_SECRET_KEY  PLATFORM_ADMIN_EMAIL"
 	@echo "   Timeout: $${MCP_E2E_CLIENT_TIMEOUT:-5.0}s per client operation (override MCP_E2E_CLIENT_TIMEOUT)"
@@ -904,28 +903,6 @@ test-bats:                     ## 🧪  Run bats tests for git tooling (tests/ba
 	}
 	@echo "🧪  Running bats tests for git tooling (tests/bash)..."
 	@bats tests/bash/ && echo "✅  bats tests passed!" || { echo "❌  bats tests failed!"; exit 1; }
-
-test-protocol-compliance: uv  ## MCP protocol compliance harness — full (target, transport) matrix (K=<filter> to pick one)
-	@echo "📜 Running MCP protocol compliance harness (tests/live_gateway/protocol_compliance)..."
-	@if [ -n "$(K)" ]; then echo "   Filter: -k \"$(K)\""; fi
-	@$(UV_BIN) run pytest tests/live_gateway/protocol_compliance $(if $(K),-k "$(K)") -v --tb=short \
-		|| { echo "❌ protocol compliance harness failed!"; exit 1; }
-	@echo "✅ protocol compliance harness passed!"
-
-test-protocol-compliance-reference: uv  ## Protocol compliance harness — reference server only (fast, always-on)
-	@echo "📜 Running MCP protocol compliance harness (reference target only)..."
-	@$(UV_BIN) run pytest tests/live_gateway/protocol_compliance -k "reference-stdio" -v --tb=short \
-		|| { echo "❌ reference-target compliance harness failed!"; exit 1; }
-	@echo "✅ reference-target compliance harness passed!"
-
-test-protocol-compliance-gateway: uv  ## Protocol compliance harness — gateway-proxy + gateway-virtual (needs in-process gateway boot to succeed)
-	@echo "📜 Running MCP protocol compliance harness (gateway targets)..."
-	@$(UV_BIN) run pytest tests/live_gateway/protocol_compliance -k "gateway_proxy or gateway_virtual" -v --tb=short \
-		|| { echo "❌ gateway-target compliance harness failed!"; exit 1; }
-	@echo "✅ gateway-target compliance harness passed!"
-
-test-protocol-compliance-matrix: uv  ## MCP compliance matrix across every runnable engine (reference, python, rust_edge, rust_full) with aggregated summary
-	@$(UV_BIN) run python scripts/compliance_matrix.py $(MATRIX_ARGS)
 
 test-mcp-rbac: uv  ## RBAC + multi-transport MCP protocol tests (needs live gateway + SSE)
 	@echo "🔐 Running RBAC + multi-transport MCP protocol tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
@@ -967,16 +944,16 @@ test-mcp-session-isolation: uv  ## MCP session/auth isolation tests for the Rust
 		|| { echo "❌ MCP session/auth isolation tests failed!"; exit 1; }
 	@echo "✅ MCP session/auth isolation tests passed!"
 
-test-e2e-sso: uv  ## E2E tests requiring a live SSO identity provider (Keycloak or Entra ID)
+test-e2e-sso: uv  ## E2E tests requiring a live Keycloak SSO identity provider
 	@echo "🔐 Running SSO-dependent E2E tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
-	@echo "   Requires one of:"
-	@echo "     - Keycloak: 'docker compose --profile sso up -d' (for test_oauth_jwks_e2e.py)"
-	@echo "     - Entra ID: AZURE_CLIENT_ID/AZURE_CLIENT_SECRET/AZURE_TENANT_ID env vars (for test_entra_id_integration.py)"
+	@echo "   Requires: Keycloak via 'docker compose --profile sso up -d' (for test_oauth_jwks_e2e.py)"
+	@echo "   Note: the Entra ID integration test now lives at tests/integration/test_entra_id_integration.py"
+	@echo "         and runs (skipping when AZURE_* creds are absent) as part of the default 'make test'."
 	@$(UV_BIN) run pytest -p playwright tests/live_gateway/sso/ -v -s --tb=short \
 		|| { echo "❌ SSO E2E tests failed!"; exit 1; }
 	@echo "✅ SSO E2E tests passed!"
 
-test-live-gateway: uv  ## Run ALL live-gateway tests (mcp + sso + protocol_compliance)
+test-live-gateway: uv  ## Run ALL live-gateway tests (mcp + sso)
 	@echo "🌐 Running all tests in tests/live_gateway/ ..."
 	@echo "   Requires: live ContextForge gateway (typically 'make testing-up') and any"
 	@echo "             extra services per subsuite — see tests/live_gateway/README.md."
@@ -2721,7 +2698,11 @@ MCP_BENCHMARK_WORKERS ?= 4
 MCP_BENCHMARK_MIXED_MASTER_PORT ?= 5567
 MCP_BENCHMARK_TOOLS_MASTER_PORT ?= 5569
 MCP_BENCHMARK_LOCUST_LOG_LEVEL ?= ERROR
-MCP_BENCHMARK_WORKER_LOG_DIR ?= reports/mcp_benchmark_workers
+MCP_BENCHMARK_TOOL_POOL_SIZE ?= 0
+MCP_BENCHMARK_TOOL_DENYLIST ?= schema_error,flaky
+MCP_BENCHMARK_WORKER_LOG_DIR      ?= reports/mcp_benchmark_workers
+MCP_BENCHMARK_TOOLS_HTML_REPORT   ?= reports/benchmark_mcp_tools.html
+MCP_BENCHMARK_TOOLS_CSV_PREFIX    ?= reports/benchmark_mcp_tools
 RL_LIMIT_PER_MIN ?= 30
 
 load-test-mcp-protocol:                    ## MCP Streamable HTTP protocol test (150 users, 2min)
@@ -2773,6 +2754,8 @@ benchmark-mcp-mixed:                        ## Quick mixed MCP benchmark against
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -eu -o pipefail -c 'source $(VENV_DIR)/bin/activate && \
 		LOCUST_LOG_LEVEL=$(MCP_BENCHMARK_LOCUST_LOG_LEVEL) MCP_SERVER_ID=$(MCP_BENCHMARK_SERVER_ID) \
+		MCP_BENCHMARK_TOOL_POOL_SIZE=$(MCP_BENCHMARK_TOOL_POOL_SIZE) \
+		MCP_BENCHMARK_TOOL_DENYLIST=$(MCP_BENCHMARK_TOOL_DENYLIST) \
 		locust -f $(MCP_PROTOCOL_LOCUSTFILE) \
 			--host=$(MCP_BENCHMARK_HOST) \
 			--users=$(MCP_BENCHMARK_USERS) \
@@ -2788,16 +2771,24 @@ benchmark-mcp-tools:                        ## Quick tools-only MCP benchmark ag
 	@echo "   Server: $(MCP_BENCHMARK_SERVER_ID)"
 	@echo "   Users: $(MCP_BENCHMARK_USERS), Spawn: $(MCP_BENCHMARK_SPAWN_RATE)/s, Duration: $(MCP_BENCHMARK_RUN_TIME)"
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@mkdir -p reports
 	@/bin/bash -eu -o pipefail -c 'source $(VENV_DIR)/bin/activate && \
 		LOCUST_LOG_LEVEL=$(MCP_BENCHMARK_LOCUST_LOG_LEVEL) MCP_SERVER_ID=$(MCP_BENCHMARK_SERVER_ID) \
+		MCP_BENCHMARK_TOOL_POOL_SIZE=$(MCP_BENCHMARK_TOOL_POOL_SIZE) \
+		MCP_BENCHMARK_TOOL_DENYLIST=$(MCP_BENCHMARK_TOOL_DENYLIST) \
 		locust -f $(MCP_PROTOCOL_LOCUSTFILE) \
 			--host=$(MCP_BENCHMARK_HOST) \
 			--users=$(MCP_BENCHMARK_USERS) \
 			--spawn-rate=$(MCP_BENCHMARK_SPAWN_RATE) \
 			--run-time=$(MCP_BENCHMARK_RUN_TIME) \
 			--headless \
+			--html=$(MCP_BENCHMARK_TOOLS_HTML_REPORT) \
+			--csv=$(MCP_BENCHMARK_TOOLS_CSV_PREFIX) \
 			--only-summary \
 			MCPToolCallerUser'
+	@echo ""
+	@echo "📄 HTML Report: $(MCP_BENCHMARK_TOOLS_HTML_REPORT)"
+	@echo "📊 CSV Reports: $(MCP_BENCHMARK_TOOLS_CSV_PREFIX)_stats.csv"
 
 # help: benchmark-rate-limiter   - Rate limiter correctness test: unique users, controlled pacing
 .PHONY: benchmark-rate-limiter
@@ -2916,6 +2907,8 @@ benchmark-mcp-mixed-300:                    ## Distributed 300-user mixed MCP be
 		trap cleanup EXIT INT TERM; \
 		for i in $$(seq 1 $(MCP_BENCHMARK_WORKERS)); do \
 			LOCUST_LOG_LEVEL=$(MCP_BENCHMARK_LOCUST_LOG_LEVEL) MCP_SERVER_ID=$(MCP_BENCHMARK_SERVER_ID) \
+			MCP_BENCHMARK_TOOL_POOL_SIZE=$(MCP_BENCHMARK_TOOL_POOL_SIZE) \
+			MCP_BENCHMARK_TOOL_DENYLIST=$(MCP_BENCHMARK_TOOL_DENYLIST) \
 			locust -f $(MCP_PROTOCOL_LOCUSTFILE) \
 				--worker \
 				--master-host=127.0.0.1 \
@@ -2924,6 +2917,8 @@ benchmark-mcp-mixed-300:                    ## Distributed 300-user mixed MCP be
 			pids="$$pids $$!"; \
 		done; \
 		LOCUST_LOG_LEVEL=$(MCP_BENCHMARK_LOCUST_LOG_LEVEL) MCP_SERVER_ID=$(MCP_BENCHMARK_SERVER_ID) \
+		MCP_BENCHMARK_TOOL_POOL_SIZE=$(MCP_BENCHMARK_TOOL_POOL_SIZE) \
+		MCP_BENCHMARK_TOOL_DENYLIST=$(MCP_BENCHMARK_TOOL_DENYLIST) \
 		locust -f $(MCP_PROTOCOL_LOCUSTFILE) \
 			--host=$(MCP_BENCHMARK_HOST) \
 			--master \
@@ -2952,6 +2947,8 @@ benchmark-mcp-tools-300:                    ## Distributed 300-user tools-only M
 		trap cleanup EXIT INT TERM; \
 		for i in $$(seq 1 $(MCP_BENCHMARK_WORKERS)); do \
 			LOCUST_LOG_LEVEL=$(MCP_BENCHMARK_LOCUST_LOG_LEVEL) MCP_SERVER_ID=$(MCP_BENCHMARK_SERVER_ID) \
+			MCP_BENCHMARK_TOOL_POOL_SIZE=$(MCP_BENCHMARK_TOOL_POOL_SIZE) \
+			MCP_BENCHMARK_TOOL_DENYLIST=$(MCP_BENCHMARK_TOOL_DENYLIST) \
 			locust -f $(MCP_PROTOCOL_LOCUSTFILE) \
 				--worker \
 				--master-host=127.0.0.1 \
@@ -2960,6 +2957,8 @@ benchmark-mcp-tools-300:                    ## Distributed 300-user tools-only M
 			pids="$$pids $$!"; \
 		done; \
 		LOCUST_LOG_LEVEL=$(MCP_BENCHMARK_LOCUST_LOG_LEVEL) MCP_SERVER_ID=$(MCP_BENCHMARK_SERVER_ID) \
+		MCP_BENCHMARK_TOOL_POOL_SIZE=$(MCP_BENCHMARK_TOOL_POOL_SIZE) \
+		MCP_BENCHMARK_TOOL_DENYLIST=$(MCP_BENCHMARK_TOOL_DENYLIST) \
 		locust -f $(MCP_PROTOCOL_LOCUSTFILE) \
 			--host=$(MCP_BENCHMARK_HOST) \
 			--master \
@@ -4783,8 +4782,9 @@ deps-update:
 # =============================================================================
 .PHONY: dist wheel sdist verify publish publish-testpypi
 
-dist: clean uv               ## Build wheel + sdist into ./dist (optionally includes Rust)
+dist: uv                     ## Build wheel + sdist into ./dist (optionally includes Rust)
 	@echo "📦 Building Python package..."
+	@rm -rf dist build *.egg-info
 	@BUILD_UI_ASSETS=true $(UV_BIN) build
 	@if [ "$(ENABLE_RUST_BUILD)" = "1" ]; then \
 		echo "🦀 Building Rust..."; \
@@ -4965,7 +4965,7 @@ container-build:
 	if [ "$(ENABLE_FIPS_BUILD)" = "true" ] || [ "$(ENABLE_FIPS_BUILD)" = "1" ]; then \
 		echo "🔐 Building container WITH FedRAMP/FIPS compliance (UBI 9 stack)..."; \
 		FIPS_ARG="--build-arg ENABLE_FIPS=true \
-			--build-arg PYTHON_VERSION=3.11 \
+			--build-arg PYTHON_VERSION=3.12 \
 			--build-arg UBI_BASE=registry.access.redhat.com/ubi9/ubi:latest \
 			--build-arg NODEJS_IMAGE=registry.access.redhat.com/ubi9/nodejs-20:latest \
 			--build-arg UBI_MINIMAL=registry.access.redhat.com/ubi9/ubi-minimal:latest"; \
@@ -7380,7 +7380,6 @@ test-full: coverage test-js test-ui-report
 
 # help: pyupgrade           - Upgrade Python syntax to newer versions
 # help: interrogate         - Check docstring coverage
-# help: prospector          - Comprehensive Python code analysis
 # help: pip-audit           - Audit Python dependencies for published CVEs
 # help: detect-secrets-scan    - detect-secrets scan for secrets in repository using baseline file .secrets.baseline
 # help: detect-secrets-audit   - detect-secrets audit for unverified secrets detected in baseline file .secrets.baseline
@@ -7388,7 +7387,7 @@ test-full: coverage test-js test-ui-report
 # help: devskim             - Run DevSkim static analysis for security anti-patterns
 
 # List of security tools to run with security-all
-SECURITY_TOOLS := semgrep dodgy detect-secrets-scan interrogate prospector pip-audit devskim
+SECURITY_TOOLS := semgrep dodgy detect-secrets-scan interrogate pip-audit devskim
 
 .PHONY: security-all security-report security-fix $(SECURITY_TOOLS) pyupgrade devskim-install-dotnet devskim
 
@@ -7438,18 +7437,10 @@ interrogate: uv                     ## 📝 Docstring coverage
 	@echo "📝  interrogate - checking docstring coverage..."
 	@$(UV_BIN) tool run interrogate==$(INTERROGATE_VERSION) -vv mcpgateway || true
 
-prospector:                         ## 🔬 Comprehensive code analysis
-	@echo "🔬  prospector - running comprehensive analysis..."
-	@test -d "$(VENV_DIR)" || $(MAKE) venv
-	@/bin/bash -c "source $(VENV_DIR)/bin/activate && \
-		$(UV_BIN) pip install -q prospector[with_everything] && \
-		$(VENV_DIR)/bin/prospector mcpgateway || true"
-
 pip-audit:                          ## 🔒 Audit Python dependencies for CVEs
 	@echo "🔒  pip-audit vulnerability scan..."
 	@echo ""
-	@echo "  ⚠️  NOTE: --skip-editable is active. Two editable installs are expected to be skipped:"
-	@echo "       • compliance-reference-server   (mcp-servers/ dev install)"
+	@echo "  ⚠️  NOTE: --skip-editable is active. One editable install is expected to be skipped:"
 	@echo "       • mcp-contextforge-gateway      (main gateway dev install)"
 	@echo ""
 	@echo "  🚨 If ANY OTHER package appears in the skip table → STOP and investigate."

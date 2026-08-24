@@ -17,6 +17,7 @@ import json
 import time
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, call, MagicMock, patch
+from urllib.parse import urlparse
 
 # Third-Party
 import jsonschema
@@ -93,8 +94,20 @@ def reset_tool_lookup_cache():
 
 
 @pytest.fixture
-def tool_service():
+def tool_service(monkeypatch):
     """Create a tool service instance with a mocked HTTP client."""
+
+    async def validate_without_pinning(value: str, _field_name: str = "URL"):
+        parsed = urlparse(value)
+        return {
+            "validated_url": value,
+            "hostname": parsed.hostname,
+            "original_authority": parsed.netloc,
+            "resolved_ip": None,
+        }
+
+    monkeypatch.setattr("mcpgateway.services.tool_service.SecurityValidator.validate_url_for_connection_pinning", validate_without_pinning)
+    monkeypatch.setattr("mcpgateway.services.tool_service.settings.ssrf_protection_enabled", False)
     service = ToolService()
     service._http_client = AsyncMock()
     return service
@@ -4199,13 +4212,7 @@ class TestExtractUsingJqErrors:
         # First-Party
         import mcpgateway.services.tool_service as ts
 
-        with patch.object(ts, "_compile_jq_filter") as mock_compile:
-            mock_prog = MagicMock()
-            mock_input = MagicMock()
-            mock_input.all = MagicMock(return_value=[None])
-            mock_prog.input = MagicMock(return_value=mock_input)
-            mock_compile.return_value = mock_prog
-
+        with patch.object(ts, "run_jq_filter", return_value=[None]):
             result = extract_using_jq({"key": "value"}, ".x")
         assert isinstance(result, list)
         assert len(result) == 1
@@ -4213,16 +4220,18 @@ class TestExtractUsingJqErrors:
         assert result[0].text == "Error applying jsonpath filter"
 
     def test_jq_filter_exception(self):
-        """When jq raises exception, returns error message as TextContent in list."""
+        """When the filter engine raises, a fixed error message is returned."""
         # First-Party
         import mcpgateway.services.tool_service as ts
+        from mcpgateway.utils.jq_runner import JqFilterError
 
-        with patch.object(ts, "_compile_jq_filter", side_effect=ValueError("bad filter")):
+        with patch.object(ts, "run_jq_filter", side_effect=JqFilterError("bad filter")):
             result = extract_using_jq({"data": 1}, "bad_filter")
         assert isinstance(result, list)
         assert len(result) == 1
         assert isinstance(result[0], TextContent)
-        assert "Error" in result[0].text
+        assert result[0].text == "Error applying jsonpath filter"
+        assert "bad filter" not in result[0].text
 
 
 # ---------------------------------------------------------------------------
@@ -6314,8 +6323,8 @@ class TestInvokeToolRestTimeout:
         plugin_manager.has_hooks_for = MagicMock(return_value=True)
         plugin_manager.invoke_hook = AsyncMock(
             side_effect=[
-                (SimpleNamespace(modified_payload=None, metadata=None), context_table),  # pre-invoke
-                (SimpleNamespace(modified_payload=None, retry_delay_ms=0, metadata=None), context_table),  # post-invoke (timeout handler)
+                (SimpleNamespace(modified_payload=None, metadata=None, executions=[]), context_table),  # pre-invoke
+                (SimpleNamespace(modified_payload=None, retry_delay_ms=0, metadata=None, executions=[]), context_table),  # post-invoke (timeout handler)
             ]
         )
 
@@ -6474,7 +6483,7 @@ class TestInvokeToolRestPreInvokeModifiedPayload:
 
         plugin_manager.has_hooks_for = MagicMock(side_effect=_has_hooks_for)
         modified_payload = SimpleNamespace(name="test_tool", args={"k": "v"}, headers=None)
-        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=modified_payload, metadata=None), {}))
+        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=modified_payload, metadata=None, executions=[]), {}))
 
         mock_response = MagicMock()
         mock_response.status_code = 200
@@ -7552,8 +7561,8 @@ class TestInvokeToolPluginPostInvokeSerialization:
         plugin_manager.has_hooks_for = MagicMock(return_value=True)
         plugin_manager.invoke_hook = AsyncMock(
             side_effect=[
-                (SimpleNamespace(modified_payload=None, retry_delay_ms=0, metadata=None), {}),  # pre-invoke
-                (SimpleNamespace(modified_payload=SimpleNamespace(result={"status": "transformed", "valid": False}), retry_delay_ms=0, metadata=None), {}),  # post-invoke
+                (SimpleNamespace(modified_payload=None, retry_delay_ms=0, metadata=None, executions=[]), {}),  # pre-invoke
+                (SimpleNamespace(modified_payload=SimpleNamespace(result={"status": "transformed", "valid": False}), retry_delay_ms=0, metadata=None, executions=[]), {}),  # post-invoke
             ]
         )
 
@@ -7605,8 +7614,8 @@ class TestInvokeToolPluginPostInvokeSerialization:
         plugin_manager.has_hooks_for = MagicMock(return_value=True)
         plugin_manager.invoke_hook = AsyncMock(
             side_effect=[
-                (SimpleNamespace(modified_payload=None, retry_delay_ms=0, metadata=None), {}),  # pre-invoke
-                (SimpleNamespace(modified_payload=SimpleNamespace(result={"unserializable", "set", "values"}), retry_delay_ms=0, metadata=None), {}),  # post-invoke
+                (SimpleNamespace(modified_payload=None, retry_delay_ms=0, metadata=None, executions=[]), {}),  # pre-invoke
+                (SimpleNamespace(modified_payload=SimpleNamespace(result={"unserializable", "set", "values"}), retry_delay_ms=0, metadata=None, executions=[]), {}),  # post-invoke
             ]
         )
 
@@ -7764,9 +7773,11 @@ class TestInvokeToolMcpSessionAffinity:
 
         captured_headers = {}
 
-        async def fake_get(url, params=None, headers=None):
+        async def fake_get(url, params=None, headers=None, **_kwargs):
             captured_headers.update(headers or {})
             return mock_response
+
+        pinned_client = SimpleNamespace(get=fake_get, request=AsyncMock(), aclose=AsyncMock())
 
         with (
             _setup_cache_for_invoke(tp),
@@ -7776,6 +7787,18 @@ class TestInvokeToolMcpSessionAffinity:
             patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={"MCP-Session-Id": "session-abc123def456"}),
+            patch(
+                "mcpgateway.services.tool_service.SecurityValidator.validate_url_for_connection_pinning",
+                AsyncMock(
+                    return_value={
+                        "validated_url": tp["url"],
+                        "hostname": "backend",
+                        "original_authority": "backend:8000",
+                        "resolved_ip": "8.8.4.4",
+                    }
+                ),
+            ),
+            patch("mcpgateway.services.tool_service._build_pinned_rest_http_client", return_value=pinned_client),
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
             mock_trace.get = MagicMock(return_value=None)
@@ -7794,6 +7817,7 @@ class TestInvokeToolMcpSessionAffinity:
             )
         assert "x-mcp-session-id" in captured_headers
         assert captured_headers["x-mcp-session-id"] == "session-abc123def456"
+        pinned_client.aclose.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
@@ -7813,8 +7837,10 @@ class TestInvokeToolRestPost:
         mock_response.json = MagicMock(return_value={"data": "ok"})
         mock_response.raise_for_status = MagicMock()
 
-        async def fake_request(method, url, json=None, headers=None):
+        async def fake_request(method, url, json=None, headers=None, **_kwargs):
             return mock_response
+
+        pinned_client = SimpleNamespace(request=fake_request, get=AsyncMock(), aclose=AsyncMock())
 
         with (
             _setup_cache_for_invoke(tp),
@@ -7824,6 +7850,18 @@ class TestInvokeToolRestPost:
             patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+            patch(
+                "mcpgateway.services.tool_service.SecurityValidator.validate_url_for_connection_pinning",
+                AsyncMock(
+                    return_value={
+                        "validated_url": tp["url"],
+                        "hostname": "backend",
+                        "original_authority": "backend:8000",
+                        "resolved_ip": "8.8.4.4",
+                    }
+                ),
+            ),
+            patch("mcpgateway.services.tool_service._build_pinned_rest_http_client", return_value=pinned_client),
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
             mock_trace.get = MagicMock(return_value=None)
@@ -7837,6 +7875,7 @@ class TestInvokeToolRestPost:
             result = await tool_service.invoke_tool(db, "test_tool", {"key": "val"})
         assert result is not None
         assert result.is_error is not True
+        pinned_client.aclose.assert_awaited_once()
 
 
 # ---------------------------------------------------------------------------
@@ -8078,7 +8117,7 @@ class TestInvokeToolA2A:
             args={"interaction_type": "query", "foo": "bar"},
             headers=SimpleNamespace(model_dump=lambda: {"Content-Type": "application/json", "X-Test": "1"}),
         )
-        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=modified_payload, metadata=None), {}))
+        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=modified_payload, metadata=None, executions=[]), {}))
 
         captured = {}
         mock_http_response = MagicMock()
@@ -8844,7 +8883,7 @@ class TestInvokeToolA2A:
             return hook_type == ToolHookType.TOOL_POST_INVOKE
 
         plugin_manager.has_hooks_for = MagicMock(side_effect=_has_hooks_for)
-        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=None, retry_delay_ms=0, metadata=None), context_table))
+        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=None, retry_delay_ms=0, metadata=None, executions=[]), context_table))
 
         with (
             _setup_cache_for_invoke(tp),
@@ -8893,7 +8932,7 @@ class TestInvokeToolMcpSse:
             patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
-            patch("mcpgateway.services.tool_service.TokenStorageService") as mock_tss,
+            patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_tss,
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
             mock_trace.get = MagicMock(return_value=None)
@@ -8947,7 +8986,7 @@ class TestInvokeToolMcpSse:
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
             patch("mcpgateway.services.tool_service.get_correlation_id", return_value="corr-1"),
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
-            patch("mcpgateway.services.tool_service.TokenStorageService") as mock_tss,
+            patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_tss,
             patch("mcpgateway.services.tool_service.sse_client", side_effect=fake_sse_client),
             patch("mcpgateway.services.tool_service.ClientSession", return_value=_SessionCM()),
             patch("mcpgateway.services.tool_service.httpx.AsyncClient", return_value=MagicMock()),
@@ -9051,7 +9090,7 @@ class TestInvokeToolMcpSse:
             patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
-            patch("mcpgateway.services.tool_service.TokenStorageService") as mock_tss,
+            patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_tss,
             patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=None)),
         ):
             mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
@@ -9130,7 +9169,7 @@ class TestInvokeToolMcpSse:
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
             patch("mcpgateway.services.tool_service.get_correlation_id", return_value="corr-1"),
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
-            patch("mcpgateway.services.tool_service.TokenStorageService") as mock_tss,
+            patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_tss,
             patch("mcpgateway.services.tool_service.sse_client", side_effect=fake_sse_client),
             patch("mcpgateway.services.tool_service.ClientSession", return_value=_SessionCM()),
             patch("mcpgateway.services.tool_service.httpx.AsyncClient", return_value=MagicMock()),
@@ -9747,7 +9786,7 @@ class TestInvokeToolMcpSseTimeoutAndErrors:
             return hook_type == ToolHookType.TOOL_POST_INVOKE
 
         plugin_manager.has_hooks_for = MagicMock(side_effect=_has_hooks_for)
-        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=None, retry_delay_ms=0, metadata=None), context_table))
+        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=None, retry_delay_ms=0, metadata=None, executions=[]), context_table))
 
         def fake_sse_client(*, url=None, headers=None, httpx_client_factory=None, **_kw):
             class _CM:
@@ -9873,7 +9912,7 @@ class TestInvokeToolMcpStreamableHttpCoverage:
             return hook_type == ToolHookType.TOOL_PRE_INVOKE
 
         plugin_manager.has_hooks_for = MagicMock(side_effect=_has_hooks_for)
-        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=None, metadata=None), {}))
+        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=None, metadata=None, executions=[]), {}))
 
         def fake_streamablehttp_client(*, url=None, headers=None, httpx_client_factory=None, **_kw):
             class _CM:
@@ -9945,7 +9984,7 @@ class TestInvokeToolMcpStreamableHttpCoverage:
 
         plugin_manager.has_hooks_for = MagicMock(side_effect=_has_hooks_for)
         modified_payload = SimpleNamespace(name="test_tool", args={}, headers=None)
-        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=modified_payload, metadata=None), {}))
+        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=modified_payload, metadata=None, executions=[]), {}))
 
         upstream_session = AsyncMock()
         upstream_session.call_tool = AsyncMock(return_value=ToolResult(content=[TextContent(type="text", text="ok")], is_error=False))
@@ -10005,7 +10044,7 @@ class TestInvokeToolMcpStreamableHttpCoverage:
             return hook_type == ToolHookType.TOOL_POST_INVOKE
 
         plugin_manager.has_hooks_for = MagicMock(side_effect=_has_hooks_for)
-        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=None, retry_delay_ms=0, metadata=None), None))
+        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=None, retry_delay_ms=0, metadata=None, executions=[]), None))
 
         def fake_streamablehttp_client(*, url=None, headers=None, httpx_client_factory=None, **_kw):
             class _CM:

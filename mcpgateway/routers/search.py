@@ -21,7 +21,7 @@ Security model:
 from typing import Any, Optional
 
 # Third-Party
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
@@ -36,6 +36,7 @@ router = APIRouter(tags=["Search"])
 
 @router.get("/search", response_class=JSONResponse)
 async def unified_search(
+    request: Request = None,
     q: str = Query("", max_length=500, description="Search query"),
     tags: QueryTagsFilter = None,
     entity_types: QueryEntityTypes = None,
@@ -59,11 +60,12 @@ async def unified_search(
     :func:`mcpgateway.admin.perform_unified_search`.
 
     Args:
+        request: Current request object.
         q (str): Free-text search query.
         tags (Optional[str]): Tag filter expression (comma=OR, plus=AND).
         entity_types (Optional[str]): Optional comma-separated entity type list.
             Supported values: servers, gateways, tools, resources, prompts,
-            agents, teams, users, roots.
+            agents, teams, users, roots, catalog. Catalog must be explicitly requested.
         include_inactive (bool): Whether to include inactive entities.
         limit (int): Default per-entity limit for returned items.
         limit_per_type (Optional[int]): Optional alias overriding ``limit``.
@@ -86,6 +88,7 @@ async def unified_search(
 
     team_id = _validated_team_id_param(team_id)
     return await perform_unified_search(
+        request=request,
         q=q,
         tags=tags,
         entity_types=entity_types,

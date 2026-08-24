@@ -66,7 +66,16 @@ from mcpgateway import version as version_module
 from mcpgateway.auth import get_current_user, get_user_team_roles
 
 # Re-export canonical get_user_email from auth_context for backward compatibility.
-from mcpgateway.auth_context import get_scoped_resource_access_context, get_token_teams_from_request, get_user_email
+from mcpgateway.auth_context import (
+    configuration_export_includes_roots,
+    extract_token_team_ids,
+    get_scoped_resource_access_context,
+    get_token_teams_from_request,
+    get_user_email,
+    import_envelope_includes_roots,
+    is_unrestricted_platform_admin,
+    selective_selection_includes_roots,
+)
 from mcpgateway.cache.a2a_stats_cache import a2a_stats_cache
 from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.common.models import LogLevel
@@ -158,6 +167,7 @@ from mcpgateway.services.email_auth_service import AuthenticationError, EmailAut
 from mcpgateway.services.encryption_service import get_encryption_service
 from mcpgateway.services.export_service import ExportError, ExportService
 from mcpgateway.services.gateway_service import (
+    gateway_capability_loaders,
     GatewayConnectionError,
     GatewayDuplicateConflictError,
     GatewayLookupConflictError,
@@ -170,14 +180,15 @@ from mcpgateway.services.import_service import ConflictStrategy
 from mcpgateway.services.import_service import ImportError as ImportServiceError
 from mcpgateway.services.import_service import ImportService, ImportValidationError
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.observability_service import ensure_timezone_aware
 from mcpgateway.services.openapi_service import fetch_and_extract_schemas
 from mcpgateway.services.password_policy_service import PasswordPolicyService
 from mcpgateway.services.performance_service import get_performance_service
 from mcpgateway.services.permission_service import PermissionService
-from mcpgateway.services.plugin_service import get_plugin_service
+from mcpgateway.services.plugin_service import get_plugin_service, sync_plugin_service_from_runtime
 from mcpgateway.services.prompt_service import PromptArgumentsJSONError, PromptNameConflictError, PromptNotFoundError, PromptService
 from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService, ResourceURIConflictError, ResourceValidationError
-from mcpgateway.services.root_service import RootService, RootServiceError, RootServiceNotFoundError
+from mcpgateway.services.root_service import RootService, RootServiceError, RootServiceNotFoundError, RootServiceValidationError
 from mcpgateway.services.server_service import ServerError, ServerLockConflictError, ServerNameConflictError, ServerNotFoundError, ServerService
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.tag_service import TagService
@@ -187,6 +198,7 @@ from mcpgateway.services.tool_service import ToolError, ToolLockConflictError, T
 from mcpgateway.utils.create_jwt_token import create_jwt_token, get_jwt_token
 from mcpgateway.utils.error_formatter import ErrorFormatter, sanitize_validation_error_for_log
 from mcpgateway.utils.metadata_capture import MetadataCapture
+from mcpgateway.utils.oauth_resource import parse_oauth_resource_form
 from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.pagination import paginate_query
 from mcpgateway.utils.passthrough_headers import PassthroughHeadersError
@@ -934,6 +946,84 @@ def _form_team_id(form: Any) -> Optional[str]:
     return str(raw).strip() or None
 
 
+async def _assemble_oauth_config_from_fields(fields: Any, *, encrypt_secret: bool, include_resource: bool = True) -> Optional[Dict[str, Any]]:
+    """Assemble an ``oauth_config`` dict from individual OAuth form/JSON fields.
+
+    Shared by all four admin OAuth form handlers (gateway create/edit, A2A
+    agent create/edit), which previously carried four near-identical copies of
+    this block — a duplication that already caused one create-form site to be
+    missed in review.  Field semantics:
+
+    * ``oauth_resource`` is parsed via
+      :func:`mcpgateway.utils.oauth_resource.parse_oauth_resource_form`
+      (single URI → ``str``, multiple → ``list[str]``, RFC 7519 §4.1.3 shapes).
+      Pass ``include_resource=False`` for entity types that do not consume
+      ``oauth_config["resource"]`` (A2A agents) so the value is neither
+      assembled nor able to trigger assembly on its own.
+    * ``encrypt_secret=True`` encrypts ``client_secret`` before storage
+      (UI edit/add handlers); ``False`` stores it as submitted (the gateway
+      create path, where encryption happens downstream in the service layer).
+
+    Args:
+        fields: Mapping with ``.get()`` (a form dict or parsed JSON body)
+            containing the ``oauth_*`` keys.
+        encrypt_secret: Whether to encrypt a submitted ``client_secret``.
+        include_resource: Whether to read and emit ``oauth_resource``.
+
+    Returns:
+        Assembled ``oauth_config`` dict, or ``None`` when no meaningful OAuth
+        field was provided.
+    """
+    oauth_grant_type = str(fields.get("oauth_grant_type", ""))
+    oauth_issuer = str(fields.get("oauth_issuer", ""))
+    oauth_token_url = str(fields.get("oauth_token_url", ""))
+    oauth_authorization_url = str(fields.get("oauth_authorization_url", ""))
+    oauth_redirect_uri = str(fields.get("oauth_redirect_uri", ""))
+    oauth_client_id = str(fields.get("oauth_client_id", ""))
+    oauth_client_secret = str(fields.get("oauth_client_secret", ""))
+    oauth_username = str(fields.get("oauth_username", ""))
+    oauth_password = str(fields.get("oauth_password", ""))
+    oauth_scopes_str = str(fields.get("oauth_scopes", ""))
+    oauth_audience = str(fields.get("oauth_audience", "")).strip()
+    oauth_resource = parse_oauth_resource_form(fields.get("oauth_resource")) if include_resource else None
+
+    if not any([oauth_grant_type, oauth_issuer, oauth_token_url, oauth_authorization_url, oauth_client_id, oauth_resource]):
+        return None
+
+    oauth_config: Dict[str, Any] = {}
+    if oauth_grant_type:
+        oauth_config["grant_type"] = oauth_grant_type
+    if oauth_issuer:
+        oauth_config["issuer"] = oauth_issuer
+    if oauth_token_url:
+        oauth_config["token_url"] = oauth_token_url
+    if oauth_authorization_url:
+        oauth_config["authorization_url"] = oauth_authorization_url
+    if oauth_redirect_uri:
+        oauth_config["redirect_uri"] = oauth_redirect_uri
+    if oauth_client_id:
+        oauth_config["client_id"] = oauth_client_id
+    if oauth_client_secret:
+        if encrypt_secret:
+            encryption = get_encryption_service(settings.auth_encryption_secret)
+            oauth_config["client_secret"] = await encryption.encrypt_secret_async(oauth_client_secret)
+        else:
+            oauth_config["client_secret"] = oauth_client_secret
+    if oauth_username:
+        oauth_config["username"] = oauth_username
+    if oauth_password:
+        oauth_config["password"] = oauth_password
+    if oauth_audience:
+        oauth_config["audience"] = oauth_audience
+    if oauth_scopes_str:
+        scopes = [s.strip() for s in oauth_scopes_str.replace(",", " ").split() if s.strip()]
+        if scopes:
+            oauth_config["scopes"] = scopes
+    if oauth_resource:
+        oauth_config["resource"] = oauth_resource
+    return oauth_config
+
+
 async def _parse_gateway_data_from_request(request: Request) -> dict[str, Any]:
     """Parse gateway data from either JSON body or form data.
 
@@ -1018,49 +1108,10 @@ async def _parse_gateway_data_from_request(request: Request) -> dict[str, Any]:
 
         # Option 2: Assemble from individual UI form fields
         # Only try this if oauth_config field was NOT provided
+        # (client_secret encryption happens downstream in the service layer)
         if not oauth_config and not oauth_config_field_provided:
-            oauth_grant_type = str(data.get("oauth_grant_type", ""))
-            oauth_issuer = str(data.get("oauth_issuer", ""))
-            oauth_token_url = str(data.get("oauth_token_url", ""))
-            oauth_authorization_url = str(data.get("oauth_authorization_url", ""))
-            oauth_redirect_uri = str(data.get("oauth_redirect_uri", ""))
-            oauth_client_id = str(data.get("oauth_client_id", ""))
-            oauth_client_secret = str(data.get("oauth_client_secret", ""))
-            oauth_username = str(data.get("oauth_username", ""))
-            oauth_password = str(data.get("oauth_password", ""))
-            oauth_scopes_str = str(data.get("oauth_scopes", ""))
-            oauth_audience = str(data.get("oauth_audience", ""))
+            oauth_config = await _assemble_oauth_config_from_fields(data, encrypt_secret=False)
 
-            # If any OAuth field is provided, assemble oauth_config
-            if any([oauth_grant_type, oauth_issuer, oauth_token_url, oauth_authorization_url, oauth_client_id]):
-                oauth_config = {}
-                if oauth_grant_type:
-                    oauth_config["grant_type"] = oauth_grant_type
-                if oauth_issuer:
-                    oauth_config["issuer"] = oauth_issuer
-                if oauth_token_url:
-                    oauth_config["token_url"] = oauth_token_url
-                if oauth_authorization_url:
-                    oauth_config["authorization_url"] = oauth_authorization_url
-                if oauth_redirect_uri:
-                    oauth_config["redirect_uri"] = oauth_redirect_uri
-                if oauth_client_id:
-                    oauth_config["client_id"] = oauth_client_id
-                if oauth_client_secret:
-                    oauth_config["client_secret"] = oauth_client_secret
-                if oauth_username:
-                    oauth_config["username"] = oauth_username
-                if oauth_password:
-                    oauth_config["password"] = oauth_password
-                # Add audience parameter (for Atlassian, Auth0, and other non-RFC-8707 providers)
-                if oauth_audience:
-                    oauth_config["audience"] = oauth_audience
-                if oauth_scopes_str:
-                    scopes = [s.strip() for s in oauth_scopes_str.replace(",", " ").split() if s.strip()]
-                    if scopes:
-                        oauth_config["scopes"] = scopes
-
-        # Only set oauth_config if it's a non-empty dict
         if oauth_config:
             data["oauth_config"] = oauth_config
 
@@ -1807,10 +1858,15 @@ async def enforce_admin_csrf(request: Request) -> None:
     if request.method.upper() in {"GET", "HEAD", "OPTIONS", "TRACE"}:
         return
 
-    jwt_cookie = request.cookies.get("jwt_token")
-    if not jwt_cookie:
+    session_cookie = request.cookies.get("jwt_token") or request.cookies.get("access_token")
+    request_path = getattr(request.url, "path", "") or ""
+    is_login_post = request_path.rstrip("/").endswith("/admin/login")
+    if not session_cookie and not is_login_post:
         # CSRF is relevant only for browser cookie auth. Token-auth API calls
-        # without session cookies are not subject to browser CSRF.
+        # without session cookies are not subject to browser CSRF. The login
+        # POST is the one exception: it is pre-auth (no session cookie exists
+        # yet) but still a state-changing browser action, so it is validated
+        # against the pre-auth nonce minted by admin_login_page's GET.
         return
 
     if not _request_origin_matches(request):
@@ -1899,18 +1955,9 @@ async def _get_user_team_ids(user: dict, db: Session) -> list:
     if cached is not None:
         return cached
 
-    if "token_teams" in user:
-        token_teams = user.get("token_teams")
-        if token_teams is not None:
-            team_ids: list[str] = []
-            for team in token_teams:
-                if isinstance(team, dict):
-                    team_id = team.get("id")
-                    if isinstance(team_id, str) and team_id:
-                        team_ids.append(team_id)
-                elif isinstance(team, str) and team:
-                    team_ids.append(team)
-            return team_ids
+    team_ids = extract_token_team_ids(user)
+    if team_ids is not None:
+        return team_ids
 
     user_email = get_user_email(user)
     team_service = TeamManagementService(db)
@@ -1950,9 +1997,7 @@ def _is_explicit_token_team_scope(user: Any) -> bool:
     Returns:
         bool: True when ``token_teams`` is present and not ``None``.
     """
-    if not isinstance(user, dict):
-        return False
-    return "token_teams" in user and user.get("token_teams") is not None
+    return extract_token_team_ids(user) is not None
 
 
 def _owner_access_condition(owner_column, team_column, *, user_email: str, team_ids: list[str], user: Any):
@@ -2273,7 +2318,7 @@ async def get_overview_partial(
         # Plugin stats — self-heal the cache so the overview reflects the live
         # shared toggle even on a process that booted with plugins disabled.
         overview_plugin_service = get_plugin_service()
-        await _sync_plugin_service_from_runtime(request, overview_plugin_service)
+        await sync_plugin_service_from_runtime(request, overview_plugin_service)
         plugin_stats = await overview_plugin_service.get_plugin_statistics()
 
         # Infrastructure status (database, cache, uptime)
@@ -3795,6 +3840,10 @@ async def admin_ui(
         # Merge permission-based hiding with query-param and static config
         hidden_sections = hidden_sections | permission_hidden_sections
 
+    can_manage_roots = await is_unrestricted_platform_admin(request, user, db)
+    if not can_manage_roots:
+        hidden_sections.add("roots")
+
     # --------------------------------------------------------------------------------
     # Get user action permissions for UI button visibility
     # Only check permissions when email auth is enabled (same as section hiding)
@@ -4143,8 +4192,10 @@ async def admin_ui(
     # If gateways need team filtering as dicts too, apply _to_dict_and_filter similarly:
     gateways = _to_dict_and_filter(gateways_raw) if isinstance(gateways_raw, (list, tuple)) else gateways
 
-    # roots
-    roots = [root.model_dump(by_alias=True) for root in await root_service.list_roots()]
+    # roots are global platform configuration; scoped admins see dashboard without root data.
+    roots = []
+    if can_manage_roots:
+        roots = [root.model_dump(by_alias=True) for root in await root_service.list_roots()]
 
     # Load A2A agents if enabled
     a2a_agents = []
@@ -4318,7 +4369,11 @@ async def admin_ui(
 
         # Set HTTP-only cookie using centralized security cookie utility
         set_auth_cookie(response, token, remember_me=False)
-        csrf_user_id = str(payload["sub"])
+        # CSRF tokens are HMAC-bound to the identity CSRFMiddleware derives from
+        # request.state.user, which is EmailUser.email — not EmailUser.id (the PK
+        # used for the JWT `sub` claim). Matches routers/auth.py and
+        # routers/email_auth.py, which already bind to the email.
+        csrf_user_id = admin_email
         csrf_session_id = str(payload["jti"])
         LOGGER.debug(f"Set session JWT token cookie for user: {admin_email}")
     except Exception as e:
@@ -4580,8 +4635,15 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
             if needs_password_change:
                 LOGGER.info(f"User {email} requires password change - redirecting to change password page")
 
+                # Mint the session id up front so the CSRF cookie can be HMAC-bound to
+                # the exact JWT we are about to set. Without it the cookie falls back to
+                # an opaque value that passes enforce_admin_csrf but fails
+                # CSRFMiddleware, so /admin/** and /v1/admin/** diverge until the
+                # dashboard rotates the cookie.
+                session_jti = str(uuid.uuid4())
+
                 # Create temporary JWT token for password change process
-                token, _ = await create_access_token(user)
+                token, _ = await create_access_token(user, jti=session_jti)
 
                 # Create redirect response to password change page
                 response = RedirectResponse(url=f"{root_path}/admin/change-password-required", status_code=303)
@@ -4595,11 +4657,16 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
                         status_code=303,
                     )
 
-                _set_admin_csrf_cookie(request, response)
+                _set_admin_csrf_cookie(request, response, user_id=user.email, session_id=session_jti)
                 return response
 
+            # Mint the session id up front so the CSRF cookie is HMAC-bound to this
+            # exact JWT from the first request of the session, matching routers/auth.py
+            # and routers/email_auth.py.
+            session_jti = str(uuid.uuid4())
+
             # Create JWT token with proper audience and issuer claims
-            token, _ = await create_access_token(user)  # expires_seconds not needed here
+            token, _ = await create_access_token(user, jti=session_jti)  # expires_seconds not needed here
 
             # Create redirect response
             response = RedirectResponse(url=f"{root_path}/admin", status_code=303)
@@ -4613,7 +4680,7 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
                     status_code=303,
                 )
 
-            _set_admin_csrf_cookie(request, response)
+            _set_admin_csrf_cookie(request, response, user_id=user.email, session_id=session_jti)
             LOGGER.info(f"Admin user {email} logged in successfully")
             return response
 
@@ -5242,8 +5309,13 @@ async def change_password_required_handler(request: Request, db: Session = Depen
                     LOGGER.error(f"Failed to re-attach user {user_email} to session: {e} - password changed but token creation skipped")
                     return RedirectResponse(url=f"{root_path}/admin/login?message=password_changed", status_code=303)
 
+                # Bind the CSRF cookie to the replacement session. The password change
+                # mints a new jti, which invalidates the HMAC bound to the login-time
+                # jti in admin_login_handler's password-change branch.
+                session_jti = str(uuid.uuid4())
+
                 # Create new JWT token
-                token, _ = await create_access_token(current_user)
+                token, _ = await create_access_token(current_user, jti=session_jti)
 
                 # Create redirect response to admin panel
                 response = RedirectResponse(url=f"{root_path}/admin", status_code=303)
@@ -5256,6 +5328,8 @@ async def change_password_required_handler(request: Request, db: Session = Depen
                         url=f"{root_path}/admin/login?error=token_too_large",
                         status_code=303,
                     )
+
+                _set_admin_csrf_cookie(request, response, user_id=current_user.email, session_id=session_jti)
 
                 LOGGER.info(f"User {current_user.email} successfully changed their expired password")
                 return response
@@ -5287,13 +5361,14 @@ async def change_password_required_handler(request: Request, db: Session = Depen
 # ============================================================================ #
 
 
-async def _generate_unified_teams_view(team_service, current_user, root_path):  # pylint: disable=unused-argument
+async def _generate_unified_teams_view(team_service, current_user, root_path, scoped_team_ids: Optional[list[str]] = None):  # pylint: disable=unused-argument
     """Generate unified team view with relationship badges.
 
     Args:
         team_service: Service for team operations
         current_user: Current authenticated user
         root_path: Application root path
+        scoped_team_ids: Explicit token team scope to apply to the generated list
 
     Returns:
         HTML string containing the unified teams view
@@ -5303,6 +5378,11 @@ async def _generate_unified_teams_view(team_service, current_user, root_path):  
 
     # Get public teams user can join
     public_teams = await team_service.discover_public_teams(current_user.email)
+
+    if scoped_team_ids is not None:
+        allowed_team_ids = set(scoped_team_ids)
+        user_teams = [team for team in user_teams if str(team.id) in allowed_team_ids]
+        public_teams = [team for team in public_teams if str(team.id) in allowed_team_ids]
 
     # Batch fetch ALL data upfront - 3 queries instead of 3N queries (N+1 elimination)
     user_team_ids = [str(t.id) for t in user_teams]
@@ -5581,9 +5661,22 @@ async def admin_search_teams(
     # The CALLER (admin.py) distinguishes.
 
     if current_user.is_admin:
-        # Admin sees all non-personal teams plus their own personal team (single query)
+        # Honor explicit token narrowing even for admins (Layer 1 constrains
+        # visibility independently of RBAC/admin status). token_teams is None for
+        # full admin bypass (unrestricted); an explicit list (including []) scopes
+        # the result. The scope is pushed into the query so it applies before
+        # pagination (an allowed team must not be dropped for sorting past the
+        # first page) and so an explicit scope no longer surfaces the personal team.
+        admin_scoped_team_ids = extract_token_team_ids(user)
         result = await team_service.list_teams(
-            page=1, per_page=limit, include_inactive=include_inactive, visibility_filter=visibility, include_personal=False, search_query=search_query, personal_owner_email=user_email
+            page=1,
+            per_page=limit,
+            include_inactive=include_inactive,
+            visibility_filter=visibility,
+            include_personal=False,
+            search_query=search_query,
+            personal_owner_email=user_email,
+            team_ids=admin_scoped_team_ids,
         )
         # Result is dict {data, pagination...} (since page provided)
         teams = result["data"]
@@ -5595,12 +5688,14 @@ async def admin_search_teams(
         # returns every membership and ignores token scope, so a token narrowed to
         # a team subset would otherwise leak sibling teams the caller belongs to but
         # is scoped out of. _get_user_team_ids honors token_teams/_cached_team_ids;
-        # the caller's own personal team stays visible (owner is always visible).
+        # an unscoped caller's own memberships (including their personal team) are in
+        # this set, while an explicit scope (including [] = public-only) does not add
+        # a personal-team fallback, matching normalize_token_teams()/get_team_from_token().
         scoped_team_ids = set(await _get_user_team_ids(user, db))
         # Filter in memory
         filtered = []
         for t in all_teams:
-            if not getattr(t, "is_personal", False) and t.id not in scoped_team_ids:
+            if t.id not in scoped_team_ids:
                 continue
             if not include_inactive and not t.is_active:
                 continue
@@ -5672,6 +5767,8 @@ async def admin_teams_partial_html(
     if not current_user:
         return HTMLResponse(content='<div class="text-center py-8"><p class="text-red-500">User not found</p></div>', status_code=404)
 
+    scoped_team_ids = extract_token_team_ids(user)
+
     # Get user's teams and public teams for relationship info
     user_teams = await team_service.get_user_teams(user_email, include_personal=True)
     user_team_ids = {str(t.id) for t in user_teams}
@@ -5691,7 +5788,15 @@ async def admin_teams_partial_html(
     if current_user.is_admin and not relationship:
         # Admin sees all non-personal teams plus their own personal team (single query, correct pagination)
         paginated_result = await team_service.list_teams(
-            page=page, per_page=per_page, include_inactive=include_inactive, visibility_filter=visibility, base_url=base_url, include_personal=False, search_query=q, personal_owner_email=user_email
+            page=page,
+            per_page=per_page,
+            include_inactive=include_inactive,
+            visibility_filter=visibility,
+            base_url=base_url,
+            include_personal=False,
+            search_query=q,
+            personal_owner_email=user_email,
+            team_ids=scoped_team_ids,
         )
         data = paginated_result["data"]
         pagination = paginated_result["pagination"]
@@ -5712,6 +5817,10 @@ async def admin_teams_partial_html(
         else:
             # All teams: user's teams + public teams they can join
             all_teams = list(user_teams) + list(public_teams)
+
+        if scoped_team_ids is not None:
+            allowed_team_ids = set(scoped_team_ids)
+            all_teams = [t for t in all_teams if str(t.id) in allowed_team_ids]
 
         # Apply search filter
         if q:
@@ -5891,10 +6000,11 @@ async def admin_list_teams(
             return HTMLResponse(content='<div class="text-center py-8"><p class="text-red-500">User not found</p></div>', status_code=200)
 
         root_path = _resolve_root_path(request)
+        scoped_team_ids = extract_token_team_ids(user)
 
         if unified:
             # Generate unified team view
-            return await _generate_unified_teams_view(team_service, current_user, root_path)
+            return await _generate_unified_teams_view(team_service, current_user, root_path, scoped_team_ids=scoped_team_ids)
 
         # Traditional admin view refactored to use partial logic
         # We can reuse the logic by calling the service directly or redirecting?
@@ -5909,12 +6019,23 @@ async def admin_list_teams(
                 base_url += f"?q={urllib.parse.quote(q, safe='')}"
 
             # Admin sees all non-personal teams plus their own personal team (single query, correct pagination)
-            paginated_result = await team_service.list_teams(page=page, per_page=per_page, base_url=base_url, include_personal=False, search_query=q, personal_owner_email=user_email)
+            paginated_result = await team_service.list_teams(
+                page=page,
+                per_page=per_page,
+                base_url=base_url,
+                include_personal=False,
+                search_query=q,
+                personal_owner_email=user_email,
+                team_ids=scoped_team_ids,
+            )
             data = paginated_result["data"]
             pagination = paginated_result["pagination"]
             links = paginated_result["links"]
         else:
             all_teams = await team_service.get_user_teams(current_user.email, include_personal=True)
+            if scoped_team_ids is not None:
+                allowed_team_ids = set(scoped_team_ids)
+                all_teams = [team for team in all_teams if str(team.id) in allowed_team_ids]
             # Basic pagination for user view
             total = len(all_teams)
             start = (page - 1) * per_page
@@ -9622,7 +9743,7 @@ async def admin_gateways_partial_html(
     team_ids = await _get_user_team_ids(user, db)
 
     # Build base query
-    query = select(DbGateway).options(joinedload(DbGateway.email_team), selectinload(DbGateway.tools))
+    query = select(DbGateway).options(joinedload(DbGateway.email_team), *gateway_capability_loaders())
 
     if not include_inactive:
         query = query.where(DbGateway.enabled.is_(True))
@@ -11459,8 +11580,34 @@ async def admin_search_a2a_agents(
     return _build_search_response(entity_key="agents", entity_type="agents", items=agents, query=search_query, tags=normalized_tags, tag_groups=tag_groups)
 
 
+@require_permission("servers.read", allow_admin_bypass=False)
+async def admin_search_catalog(
+    q: str,
+    limit: int,
+    db: Session,
+    user: Any,
+    request: Request,
+) -> dict[str, Any]:
+    """Search visible open-auth catalog servers by name or description."""
+    search_query = _normalize_search_query(q)
+    if not search_query or not settings.mcpgateway_catalog_enabled:
+        return _build_search_response(entity_key="catalog", entity_type="catalog", items=[], query=search_query, tags="", tag_groups=[])
+
+    user_email, token_teams = get_scoped_resource_access_context(request, user)
+    catalog_request = CatalogListRequest(search=search_query, auth_type="Open", limit=limit)
+    catalog_response = await catalog_service.get_catalog_servers(
+        catalog_request,
+        db,
+        user_email=user_email,
+        token_teams=token_teams,
+    )
+    items = [{"id": server.id, "name": server.name, "description": server.description} for server in catalog_response.servers]
+    return _build_search_response(entity_key="catalog", entity_type="catalog", items=items, query=search_query, tags="", tag_groups=[])
+
+
 async def perform_unified_search(
     *,
+    request: Optional[Request] = None,
     q: str,
     tags: Optional[str],
     entity_types: Optional[str],
@@ -11480,14 +11627,15 @@ async def perform_unified_search(
     enforced inside each ``admin_search_*`` call.
 
     Searches servers, gateways, tools, resources, prompts, agents, teams, roots,
-    and optionally users (when the caller has ``admin.user_management`` permission).
+    and optionally catalog entries or users (when explicitly requested and permitted).
 
     Args:
+        request: Current request object.
         q (str): Free-text search query.
         tags (Optional[str]): Tag filter expression (comma=OR, plus=AND).
         entity_types (Optional[str]): Optional comma-separated entity type list.
             Supported values: servers, gateways, tools, resources, prompts,
-            agents, teams, users, roots.
+            agents, teams, users, roots, catalog.
         include_inactive (bool): Whether to include inactive entities.
         limit (int): Default per-entity limit for returned items.
         limit_per_type (Optional[int]): Optional alias overriding ``limit``.
@@ -11507,7 +11655,7 @@ async def perform_unified_search(
     normalized_entity_types = _normalize_tags_query(entity_types)
     tag_groups = _parse_tag_filter_groups(normalized_tags)
 
-    supported_entity_types = ["servers", "gateways", "tools", "resources", "prompts", "agents", "teams", "users", "roots"]
+    supported_entity_types = ["servers", "gateways", "tools", "resources", "prompts", "agents", "teams", "users", "roots", "catalog"]
     default_entity_types = ["servers", "gateways", "tools", "resources", "prompts", "agents", "teams", "roots"]
     selected_entity_types: list[str] = []
     if normalized_entity_types:
@@ -11704,11 +11852,26 @@ async def perform_unified_search(
         roots_result = await _safe_entity_search(
             admin_search_roots,
             "roots",
+            request=request,
             q=search_query,
             limit=effective_limit,
+            db=db,
             user=user,
         )
         grouped_results["roots"] = typing_cast(list[dict[str, Any]], roots_result.get("roots", roots_result.get("items", [])))
+
+    # Catalog does not support tag filtering and remains opt-in for unified search.
+    if "catalog" in selected_entity_types and search_query:
+        catalog_result = await _safe_entity_search(
+            admin_search_catalog,
+            "catalog",
+            request=request,
+            q=search_query,
+            limit=effective_limit,
+            db=db,
+            user=user,
+        )
+        grouped_results["catalog"] = typing_cast(list[dict[str, Any]], catalog_result.get("catalog", catalog_result.get("items", [])))
 
     groups = []
     flat_items: list[dict[str, Any]] = []
@@ -11736,6 +11899,7 @@ async def perform_unified_search(
 @admin_router.get("/search", response_class=JSONResponse)
 @require_permission("admin.dashboard", allow_admin_bypass=False)
 async def admin_unified_search(
+    request: Request = None,
     q: str = Query("", max_length=500, description="Search query"),
     tags: QueryTagsFilter = None,
     entity_types: QueryEntityTypes = None,
@@ -11758,6 +11922,7 @@ async def admin_unified_search(
     to :func:`perform_unified_search`.
 
     Args:
+        request: Current request object.
         q (str): Free-text search query.
         tags (Optional[str]): Tag filter expression (comma=OR, plus=AND).
         entity_types (Optional[str]): Optional comma-separated entity type list.
@@ -11775,6 +11940,7 @@ async def admin_unified_search(
         dict[str, Any]: Grouped and flattened search results with metadata.
     """
     return await perform_unified_search(
+        request=request,
         q=q,
         tags=tags,
         entity_types=entity_types,
@@ -13037,56 +13203,9 @@ async def admin_edit_gateway(
 
         # Option 2: Assemble from individual UI form fields
         if not oauth_config:
-            oauth_grant_type = str(form.get("oauth_grant_type", ""))
-            oauth_issuer = str(form.get("oauth_issuer", ""))
-            oauth_token_url = str(form.get("oauth_token_url", ""))
-            oauth_authorization_url = str(form.get("oauth_authorization_url", ""))
-            oauth_redirect_uri = str(form.get("oauth_redirect_uri", ""))
-            oauth_client_id = str(form.get("oauth_client_id", ""))
-            oauth_client_secret = str(form.get("oauth_client_secret", ""))
-            oauth_username = str(form.get("oauth_username", ""))
-            oauth_password = str(form.get("oauth_password", ""))
-            oauth_scopes_str = str(form.get("oauth_scopes", ""))
-            oauth_audience = str(form.get("oauth_audience", "")).strip()
-
-            # If any OAuth field is provided, assemble oauth_config
-            if any([oauth_grant_type, oauth_issuer, oauth_token_url, oauth_authorization_url, oauth_client_id]):
-                oauth_config = {}
-
-                if oauth_grant_type:
-                    oauth_config["grant_type"] = oauth_grant_type
-                if oauth_issuer:
-                    oauth_config["issuer"] = oauth_issuer
-                if oauth_token_url:
-                    oauth_config["token_url"] = oauth_token_url  # OAuthManager expects 'token_url', not 'token_endpoint'
-                if oauth_authorization_url:
-                    oauth_config["authorization_url"] = oauth_authorization_url  # OAuthManager expects 'authorization_url', not 'authorization_endpoint'
-                if oauth_redirect_uri:
-                    oauth_config["redirect_uri"] = oauth_redirect_uri
-                if oauth_client_id:
-                    oauth_config["client_id"] = oauth_client_id
-                if oauth_client_secret:
-                    # Encrypt the client secret
-                    encryption = get_encryption_service(settings.auth_encryption_secret)
-                    oauth_config["client_secret"] = await encryption.encrypt_secret_async(oauth_client_secret)
-
-                # Add username and password for password grant type
-                if oauth_username:
-                    oauth_config["username"] = oauth_username
-                if oauth_password:
-                    oauth_config["password"] = oauth_password
-
-                # Add audience parameter (for Atlassian, Auth0, and other non-RFC-8707 providers)
-                if oauth_audience:
-                    oauth_config["audience"] = oauth_audience
-
-                # Parse scopes (comma or space separated)
-                if oauth_scopes_str:
-                    scopes = [s.strip() for s in oauth_scopes_str.replace(",", " ").split() if s.strip()]
-                    if scopes:
-                        oauth_config["scopes"] = scopes
-
-                LOGGER.info(f"✅ Assembled OAuth config from UI form fields (edit): grant_type={oauth_grant_type}, issuer={oauth_issuer}")
+            oauth_config = await _assemble_oauth_config_from_fields(form, encrypt_secret=True)
+            if oauth_config:
+                LOGGER.info(f"✅ Assembled OAuth config from UI form fields (edit): grant_type={oauth_config.get('grant_type')}, issuer={oauth_config.get('issuer')}")
 
         user_email = get_user_email(user)
         # Preserve existing gateway's team_id when no explicit team_id is provided.
@@ -14077,11 +14196,19 @@ async def admin_set_prompt_state(
     return RedirectResponse(redirect_url, status_code=303)
 
 
+async def _require_unrestricted_root_admin(request: Optional[Request], user: Any, db: Session) -> None:
+    """Require unrestricted platform-admin authority for global roots."""
+    if not await is_unrestricted_platform_admin(request, user, db):
+        raise HTTPException(status_code=403, detail=_ACCESS_DENIED_MSG)
+
+
 @admin_router.get("/roots/search", response_class=JSONResponse)
 @require_permission("admin.system_config", allow_admin_bypass=False)
 async def admin_search_roots(
+    request: Request = None,
     q: str = Query("", max_length=500, description="Search query"),
     limit: int = Query(settings.pagination_default_page_size, ge=1, le=settings.pagination_max_page_size, description="Maximum number of results to return"),
+    db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> dict:
     """Search roots by name or URI.
@@ -14093,8 +14220,10 @@ async def admin_search_roots(
     :meth:`~mcpgateway.services.root_service.RootService.list_roots`.
 
     Args:
+        request: Current request object.
         q (str): Free-text search query matched against root name and URI.
         limit (int): Maximum number of results to return.
+        db: Database session.
         user: Authenticated user context.
 
     Returns:
@@ -14106,6 +14235,7 @@ async def admin_search_roots(
         >>> admin_search_roots.__name__
         'admin_search_roots'
     """
+    await _require_unrestricted_root_admin(request, user, db)
     search_query = _normalize_search_query(q)
     # Defense-in-depth clamp: FastAPI validates ge/le at the HTTP layer, but direct
     # Python calls (e.g. from admin_unified_search) bypass that validation.
@@ -14129,6 +14259,8 @@ async def admin_search_roots(
 @require_permission("admin.system_config", allow_admin_bypass=False)
 async def admin_export_root(
     uri: str,
+    request: Request = None,
+    db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ):
     """
@@ -14136,6 +14268,8 @@ async def admin_export_root(
 
     Args:
         uri: Root URI to export (query parameter)
+        request: Current request object.
+        db: Database session.
         user: Authenticated user
 
     Returns:
@@ -14145,7 +14279,8 @@ async def admin_export_root(
         HTTPException: If root not found or export fails
     """
     try:
-        LOGGER.info(f"Admin user {get_user_email(user)} requested root export for URI: {uri}")
+        await _require_unrestricted_root_admin(request, user, db)
+        LOGGER.info("Admin user %s requested root export", get_user_email(user))
 
         # Get the root by URI
         root = await root_service.get_root_by_uri(uri)
@@ -14184,6 +14319,10 @@ async def admin_export_root(
     except RootServiceNotFoundError as e:
         LOGGER.error(f"Root not found for export by user {get_user_email(user)}: {str(e)}")
         raise HTTPException(status_code=404, detail=str(e))
+    except RootServiceValidationError as e:
+        raise HTTPException(status_code=400, detail={"message": "Root URI rejected by policy", "reason_code": e.reason_code}) from e
+    except HTTPException:
+        raise
     except Exception as e:
         LOGGER.error(f"Unexpected root export error for user {get_user_email(user)}: {str(e)}")
         raise HTTPException(status_code=500, detail="Root export failed")
@@ -14191,7 +14330,7 @@ async def admin_export_root(
 
 @admin_router.get("/roots/{uri:path}")
 @require_permission("admin.system_config", allow_admin_bypass=False)
-async def admin_get_root(uri: str, user=Depends(get_current_user_with_permissions)) -> dict:
+async def admin_get_root(uri: str, request: Request = None, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> dict:
     """Get a specific root by URI via the admin UI.
 
     This endpoint retrieves details for a specific root URI from the system.
@@ -14199,6 +14338,8 @@ async def admin_get_root(uri: str, user=Depends(get_current_user_with_permission
 
     Args:
         uri (str): The URI of the root to retrieve.
+        request: Current request object.
+        db: Database session.
         user: Authenticated user dependency.
 
     Returns:
@@ -14214,12 +14355,15 @@ async def admin_get_root(uri: str, user=Depends(get_current_user_with_permission
         >>> admin_get_root.__name__
         'admin_get_root'
     """
-    LOGGER.debug(f"User {get_user_email(user)} is retrieving root URI {uri}")
+    await _require_unrestricted_root_admin(request, user, db)
+    LOGGER.debug("User %s is retrieving root", get_user_email(user))
     try:
         root = await root_service.get_root_by_uri(uri)
         return root.model_dump(by_alias=True)
     except RootServiceNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except RootServiceValidationError as e:
+        raise HTTPException(status_code=400, detail={"message": "Root URI rejected by policy", "reason_code": e.reason_code}) from e
     except Exception as e:
         LOGGER.error(f"Error getting root {uri}: {e}")
         raise e
@@ -14227,7 +14371,7 @@ async def admin_get_root(uri: str, user=Depends(get_current_user_with_permission
 
 @admin_router.post("/roots")
 @require_permission("admin.system_config", allow_admin_bypass=False)
-async def admin_add_root(request: Request, user=Depends(get_current_user_with_permissions), _db: Session = Depends(get_db)) -> RedirectResponse:
+async def admin_add_root(request: Request, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> RedirectResponse:
     """Add a new root via the admin UI.
 
     Expects form fields:
@@ -14237,7 +14381,7 @@ async def admin_add_root(request: Request, user=Depends(get_current_user_with_pe
     Args:
         request: FastAPI request containing form data.
         user: Authenticated user.
-        _db: Database session for permission checks.
+        db: Database session for permission checks.
 
     Returns:
         RedirectResponse: A redirect response to the admin dashboard.
@@ -14249,6 +14393,7 @@ async def admin_add_root(request: Request, user=Depends(get_current_user_with_pe
         'admin_add_root'
     """
     error_message = None
+    await _require_unrestricted_root_admin(request, user, db)
     user_email = get_user_email(user)
     LOGGER.debug(f"User {user_email} is adding a new root")
 
@@ -14264,8 +14409,11 @@ async def admin_add_root(request: Request, user=Depends(get_current_user_with_pe
             raise ValueError("URI is required")
         await root_service.add_root(str(uri), name)
 
-    except RootServiceError as e:
-        LOGGER.warning(f"Failed to add root for user {user_email}: {e}")
+    except RootServiceValidationError as e:
+        LOGGER.warning("Failed to add root for user %s: reason=%s", user_email, e.reason_code)
+        error_message = "Failed to add root. Please check the URI format."
+    except RootServiceError:
+        LOGGER.warning("Failed to add root for user %s", user_email)
         error_message = "Failed to add root. Please check the URI format."
     except ValueError as e:
         LOGGER.warning(f"Invalid input from user {user_email}: {e}")
@@ -14282,7 +14430,7 @@ async def admin_add_root(request: Request, user=Depends(get_current_user_with_pe
 
 @admin_router.post("/roots/{uri:path}/update")
 @require_permission("admin.system_config", allow_admin_bypass=False)
-async def admin_update_root(uri: str, request: Request, user=Depends(get_current_user_with_permissions)) -> RedirectResponse:
+async def admin_update_root(uri: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> RedirectResponse:
     """Update a root via the admin UI.
 
     This endpoint updates an existing root URI in the system. It expects form
@@ -14295,6 +14443,7 @@ async def admin_update_root(uri: str, request: Request, user=Depends(get_current
     Args:
         uri (str): The URI of the root to update.
         request (Request): FastAPI request object containing form data.
+        db: Database session.
         user: Authenticated user dependency.
 
     Returns:
@@ -14311,7 +14460,8 @@ async def admin_update_root(uri: str, request: Request, user=Depends(get_current
         >>> admin_update_root.__name__
         'admin_update_root'
     """
-    LOGGER.debug(f"User {get_user_email(user)} is updating root URI {uri}")
+    await _require_unrestricted_root_admin(request, user, db)
+    LOGGER.debug("User %s is updating root", get_user_email(user))
 
     try:
         form = await request.form()
@@ -14331,6 +14481,9 @@ async def admin_update_root(uri: str, request: Request, user=Depends(get_current
 
     except RootServiceNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except RootServiceValidationError:
+        root_path = _resolve_root_path(request)
+        return RedirectResponse(_build_admin_redirect(root_path, "roots", error="Failed to update root. Please check the URI format."), status_code=303)
     except Exception as e:
         LOGGER.error(f"Error updating root {uri}: {e}")
         raise e
@@ -14338,7 +14491,7 @@ async def admin_update_root(uri: str, request: Request, user=Depends(get_current
 
 @admin_router.post("/roots/{uri:path}/delete")
 @require_permission("admin.system_config", allow_admin_bypass=False)
-async def admin_delete_root(uri: str, request: Request, user=Depends(get_current_user_with_permissions), _db: Session = Depends(get_db)) -> RedirectResponse:
+async def admin_delete_root(uri: str, request: Request, user=Depends(get_current_user_with_permissions), db: Session = Depends(get_db)) -> RedirectResponse:
     """
     Delete a root via the admin UI.
 
@@ -14350,7 +14503,7 @@ async def admin_delete_root(uri: str, request: Request, user=Depends(get_current
         uri (str): The URI of the root to delete.
         request (Request): FastAPI request object (not used directly but required by the route signature).
         user (str): Authenticated user dependency.
-        _db: Database session for permission checks.
+        db: Database session for permission checks.
 
     Returns:
         RedirectResponse: A redirect response to the roots section of the admin
@@ -14362,12 +14515,17 @@ async def admin_delete_root(uri: str, request: Request, user=Depends(get_current
         >>> admin_delete_root.__name__
         'admin_delete_root'
     """
-    LOGGER.debug(f"User {get_user_email(user)} is deleting root URI {uri}")
-    await root_service.remove_root(uri)
+    await _require_unrestricted_root_admin(request, user, db)
+    LOGGER.debug("User %s is deleting root", get_user_email(user))
     form = await request.form()
     root_path = _resolve_root_path(request)
     is_inactive_checked: str = str(form.get("is_inactive_checked", "false"))
     team_id = str(form.get("team_id", "") or "")
+    try:
+        await root_service.remove_root(uri)
+    except RootServiceValidationError:
+        redirect_url = _build_admin_redirect(root_path, "roots", error="Failed to delete root. Please check the URI format.", include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
+        return RedirectResponse(redirect_url, status_code=303)
     redirect_url = _build_admin_redirect(root_path, "roots", include_inactive=is_inactive_checked.lower() == "true", team_id=team_id)
     return RedirectResponse(redirect_url, status_code=303)
 
@@ -15575,6 +15733,9 @@ async def admin_export_configuration(
         if tags:
             tags_list = [t.strip() for t in tags.split(",") if t.strip()]
 
+        if configuration_export_includes_roots(include_types, exclude_types_list):
+            await _require_unrestricted_root_admin(request, user, db)
+
         # Extract username from user (which could be string or dict with token)
         username = user if isinstance(user, str) else user.get("username", "unknown")
 
@@ -15610,6 +15771,8 @@ async def admin_export_configuration(
     except ExportError as e:
         LOGGER.error(f"Admin export failed for user {user}: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         LOGGER.error(f"Unexpected admin export error for user {user}: {str(e)}")
         raise HTTPException(status_code=500, detail="Export failed")
@@ -15648,6 +15811,9 @@ async def admin_export_selective(request: Request, db: Session = Depends(get_db)
         entity_selections = body.get("entity_selections", {})
         include_dependencies = body.get("include_dependencies", True)
 
+        if selective_selection_includes_roots(entity_selections):
+            await _require_unrestricted_root_admin(request, user, db)
+
         # Extract username from user (which could be string or dict with token)
         username = user if isinstance(user, str) else user.get("username", "unknown")
 
@@ -15674,6 +15840,8 @@ async def admin_export_selective(request: Request, db: Session = Depends(get_db)
     except ExportError as e:
         LOGGER.error(f"Admin selective export failed for user {user}: {str(e)}")
         raise HTTPException(status_code=400, detail=str(e))
+    except HTTPException:
+        raise
     except Exception as e:
         LOGGER.error(f"Unexpected admin selective export error for user {user}: {str(e)}")
         raise HTTPException(status_code=500, detail="Export failed")
@@ -15715,6 +15883,9 @@ async def admin_import_preview(request: Request, db: Session = Depends(get_db), 
         import_data = data.get("data")
         if not import_data:
             raise HTTPException(status_code=400, detail="Missing 'data' field with import content")
+
+        if import_envelope_includes_roots(import_data):
+            await _require_unrestricted_root_admin(request, user, db)
 
         # Validate user permissions for import preview
         username = user if isinstance(user, str) else user.get("username", "unknown")
@@ -15773,6 +15944,9 @@ async def admin_import_configuration(request: Request, db: Session = Depends(get
         dry_run = body.get("dry_run", False)
         rekey_secret = body.get("rekey_secret")
         selected_entities = body.get("selected_entities")
+
+        if import_envelope_includes_roots(import_data, selected_entities):
+            await _require_unrestricted_root_admin(request, user, db)
 
         # Validate conflict strategy
         try:
@@ -16037,59 +16211,14 @@ async def admin_add_a2a_agent(
                 LOGGER.error(f"Failed to parse OAuth config: {e}")
                 oauth_config = None
 
-        # Option 2: Assemble from individual UI form fields
+        # Option 2: Assemble from individual UI form fields.
+        # include_resource=False: A2A agents do not consume oauth_config["resource"]
+        # (no per-user token storage / audience validation on the A2A path), so the
+        # field is not offered on A2A forms and is not assembled here.
         if not oauth_config:
-            oauth_grant_type = str(form.get("oauth_grant_type", ""))
-            oauth_issuer = str(form.get("oauth_issuer", ""))
-            oauth_token_url = str(form.get("oauth_token_url", ""))
-            oauth_authorization_url = str(form.get("oauth_authorization_url", ""))
-            oauth_redirect_uri = str(form.get("oauth_redirect_uri", ""))
-            oauth_client_id = str(form.get("oauth_client_id", ""))
-            oauth_client_secret = str(form.get("oauth_client_secret", ""))
-            oauth_username = str(form.get("oauth_username", ""))
-            oauth_password = str(form.get("oauth_password", ""))
-            oauth_scopes_str = str(form.get("oauth_scopes", ""))
-            oauth_audience = str(form.get("oauth_audience", "")).strip()
-
-            # If any OAuth field is provided, assemble oauth_config
-            if any([oauth_grant_type, oauth_issuer, oauth_token_url, oauth_authorization_url, oauth_client_id]):
-                oauth_config = {}
-
-                if oauth_grant_type:
-                    oauth_config["grant_type"] = oauth_grant_type
-                if oauth_issuer:
-                    oauth_config["issuer"] = oauth_issuer
-                if oauth_token_url:
-                    oauth_config["token_url"] = oauth_token_url  # OAuthManager expects 'token_url', not 'token_endpoint'
-                if oauth_authorization_url:
-                    oauth_config["authorization_url"] = oauth_authorization_url  # OAuthManager expects 'authorization_url', not 'authorization_endpoint'
-                if oauth_redirect_uri:
-                    oauth_config["redirect_uri"] = oauth_redirect_uri
-                if oauth_client_id:
-                    oauth_config["client_id"] = oauth_client_id
-                if oauth_client_secret:
-                    # Encrypt the client secret
-                    encryption = get_encryption_service(settings.auth_encryption_secret)
-                    oauth_config["client_secret"] = await encryption.encrypt_secret_async(oauth_client_secret)
-
-                # Add username and password for password grant type
-                if oauth_username:
-                    oauth_config["username"] = oauth_username
-                if oauth_password:
-                    oauth_config["password"] = oauth_password
-
-                # Add audience parameter (for Atlassian, Auth0, and other non-RFC-8707 providers)
-                if oauth_audience:
-                    oauth_config["audience"] = oauth_audience
-
-                # Parse scopes (comma or space separated)
-                if oauth_scopes_str:
-                    scopes = [s.strip() for s in oauth_scopes_str.replace(",", " ").split() if s.strip()]
-                    if scopes:
-                        oauth_config["scopes"] = scopes
-
-                LOGGER.info(f"✅ Assembled OAuth config from UI form fields: grant_type={oauth_grant_type}, issuer={oauth_issuer}")
-                LOGGER.info(f"DEBUG: Complete oauth_config = {oauth_config}")
+            oauth_config = await _assemble_oauth_config_from_fields(form, encrypt_secret=True, include_resource=False)
+            if oauth_config:
+                LOGGER.info(f"✅ Assembled OAuth config from UI form fields: grant_type={oauth_config.get('grant_type')}, issuer={oauth_config.get('issuer')}")
 
         passthrough_headers = str(form.get("passthrough_headers"))
         if passthrough_headers and passthrough_headers.strip():
@@ -16307,58 +16436,14 @@ async def admin_edit_a2a_agent(
                 LOGGER.error(f"Failed to parse OAuth config: {e}")
                 oauth_config = None
 
-        # Option 2: Assemble from individual UI form fields
+        # Option 2: Assemble from individual UI form fields.
+        # include_resource=False: A2A agents do not consume oauth_config["resource"]
+        # (no per-user token storage / audience validation on the A2A path), so the
+        # field is not offered on A2A forms and is not assembled here.
         if not oauth_config:
-            oauth_grant_type = str(form.get("oauth_grant_type", ""))
-            oauth_issuer = str(form.get("oauth_issuer", ""))
-            oauth_token_url = str(form.get("oauth_token_url", ""))
-            oauth_authorization_url = str(form.get("oauth_authorization_url", ""))
-            oauth_redirect_uri = str(form.get("oauth_redirect_uri", ""))
-            oauth_client_id = str(form.get("oauth_client_id", ""))
-            oauth_client_secret = str(form.get("oauth_client_secret", ""))
-            oauth_username = str(form.get("oauth_username", ""))
-            oauth_password = str(form.get("oauth_password", ""))
-            oauth_scopes_str = str(form.get("oauth_scopes", ""))
-            oauth_audience = str(form.get("oauth_audience", "")).strip()
-
-            # If any OAuth field is provided, assemble oauth_config
-            if any([oauth_grant_type, oauth_issuer, oauth_token_url, oauth_authorization_url, oauth_client_id]):
-                oauth_config = {}
-
-                if oauth_grant_type:
-                    oauth_config["grant_type"] = oauth_grant_type
-                if oauth_issuer:
-                    oauth_config["issuer"] = oauth_issuer
-                if oauth_token_url:
-                    oauth_config["token_url"] = oauth_token_url  # OAuthManager expects 'token_url', not 'token_endpoint'
-                if oauth_authorization_url:
-                    oauth_config["authorization_url"] = oauth_authorization_url  # OAuthManager expects 'authorization_url', not 'authorization_endpoint'
-                if oauth_redirect_uri:
-                    oauth_config["redirect_uri"] = oauth_redirect_uri
-                if oauth_client_id:
-                    oauth_config["client_id"] = oauth_client_id
-                if oauth_client_secret:
-                    # Encrypt the client secret
-                    encryption = get_encryption_service(settings.auth_encryption_secret)
-                    oauth_config["client_secret"] = await encryption.encrypt_secret_async(oauth_client_secret)
-
-                # Add username and password for password grant type
-                if oauth_username:
-                    oauth_config["username"] = oauth_username
-                if oauth_password:
-                    oauth_config["password"] = oauth_password
-
-                # Add audience parameter (for Atlassian, Auth0, and other non-RFC-8707 providers)
-                if oauth_audience:
-                    oauth_config["audience"] = oauth_audience
-
-                # Parse scopes (comma or space separated)
-                if oauth_scopes_str:
-                    scopes = [s.strip() for s in oauth_scopes_str.replace(",", " ").split() if s.strip()]
-                    if scopes:
-                        oauth_config["scopes"] = scopes
-
-                LOGGER.info(f"✅ Assembled OAuth config from UI form fields (edit): grant_type={oauth_grant_type}, issuer={oauth_issuer}")
+            oauth_config = await _assemble_oauth_config_from_fields(form, encrypt_secret=True, include_resource=False)
+            if oauth_config:
+                LOGGER.info(f"✅ Assembled OAuth config from UI form fields (edit): grant_type={oauth_config.get('grant_type')}, issuer={oauth_config.get('issuer')}")
 
         user_email = get_user_email(user)
 
@@ -16407,7 +16492,6 @@ async def admin_edit_a2a_agent(
             oauth_config=oauth_config,
             visibility=visibility,
             team_id=team_id,
-            owner_email=user_email,
             capabilities=capabilities,  # Optional, not editable via UI
             config=config,  # Optional, not editable via UI
             # UAID generation fields (only applies if agent doesn't have UAID yet)
@@ -16431,6 +16515,7 @@ async def admin_edit_a2a_agent(
             modified_from_ip=mod_metadata["modified_from_ip"],
             modified_via=mod_metadata["modified_via"],
             modified_user_agent=mod_metadata["modified_user_agent"],
+            user_email=user_email,
         )
 
         return ORJSONResponse({"message": "A2A agent updated successfully", "success": True}, status_code=200)
@@ -16439,10 +16524,24 @@ async def admin_edit_a2a_agent(
         return ORJSONResponse({"message": str(ve), "success": False}, status_code=422)
     except IntegrityError as ie:
         return ORJSONResponse({"message": str(ie), "success": False}, status_code=409)
+    except PermissionError as e:
+        LOGGER.warning(
+            "Permission denied for user %s editing A2A agent %s: %s",
+            SecurityValidator.sanitize_log_message(get_user_email(user)),
+            SecurityValidator.sanitize_log_message(agent_id),
+            e,
+        )
+        return ORJSONResponse({"message": str(e), "success": False}, status_code=403)
+    except A2AAgentNotFoundError:
+        return ORJSONResponse({"message": "A2A agent not found.", "success": False}, status_code=404)
     except HTTPException:
         raise
     except Exception as e:
-        return ORJSONResponse({"message": str(e), "success": False}, status_code=500)
+        LOGGER.exception("Unexpected error in admin_edit_a2a_agent: %s", e)
+        return ORJSONResponse(
+            {"message": "An unexpected error occurred. Please try again or contact support.", "success": False},
+            status_code=500,
+        )
 
 
 @admin_router.post("/a2a/{agent_id}/state")
@@ -16988,16 +17087,13 @@ async def get_resources_section(
         user_email, token_teams = get_scoped_resource_access_context(request, user)
         LOGGER.debug(f"User {user_email} requesting resources section with team_id={team_id}, token_teams={token_teams}")
 
-        # Get all resources with token_teams for proper scoping
-        resources_result = await local_resource_service.list_resources(db, include_inactive=True, user_email=user_email, token_teams=token_teams)
+        # Filter in the service, not here: a strict team_id comparison would drop
+        # globally-public rows owned by other teams.
+        resources_result = await local_resource_service.list_resources(db, include_inactive=True, user_email=user_email, token_teams=token_teams, team_id=team_id)
         if isinstance(resources_result, tuple):
             resources_list = resources_result[0]
         else:
             resources_list = resources_result
-
-        # Apply team filtering if specified
-        if team_id:
-            resources_list = [r for r in resources_list if getattr(r, "team_id", None) == team_id]
 
         # Convert to JSON-serializable format
         resources = []
@@ -17049,16 +17145,13 @@ async def get_prompts_section(
         user_email, token_teams = get_scoped_resource_access_context(request, user)
         LOGGER.debug(f"User {user_email} requesting prompts section with team_id={team_id}, token_teams={token_teams}")
 
-        # Get all prompts with token_teams for proper scoping
-        prompts_result = await local_prompt_service.list_prompts(db, include_inactive=True, user_email=user_email, token_teams=token_teams)
+        # Filter in the service, not here: a strict team_id comparison would drop
+        # globally-public rows owned by other teams.
+        prompts_result = await local_prompt_service.list_prompts(db, include_inactive=True, user_email=user_email, token_teams=token_teams, team_id=team_id)
         if isinstance(prompts_result, tuple):
             prompts_list = prompts_result[0]
         else:
             prompts_list = prompts_result
-
-        # Apply team filtering if specified
-        if team_id:
-            prompts_list = [p for p in prompts_list if getattr(p, "team_id", None) == team_id]
 
         # Convert to JSON-serializable format
         prompts = []
@@ -17090,6 +17183,7 @@ async def get_prompts_section(
 @admin_router.get("/sections/servers")
 @require_permission("servers.read", allow_admin_bypass=False)
 async def get_servers_section(
+    request: Request,
     team_id: Optional[str] = None,
     include_inactive: bool = False,
     db: Session = Depends(get_db),
@@ -17098,6 +17192,7 @@ async def get_servers_section(
     """Get servers data filtered by team.
 
     Args:
+        request: FastAPI request, used to derive the caller's Layer-1 visibility scope
         team_id: Optional team ID to filter by
         include_inactive: Whether to include inactive servers
         db: Database session
@@ -17108,19 +17203,16 @@ async def get_servers_section(
     """
     try:
         local_server_service = ServerService()
-        user_email = get_user_email(user)
-        LOGGER.debug(f"User {user_email} requesting servers section with team_id={team_id}, include_inactive={include_inactive}")
+        user_email, token_teams = get_scoped_resource_access_context(request, user)
+        LOGGER.debug(f"User {user_email} requesting servers section with team_id={team_id}, include_inactive={include_inactive}, token_teams={token_teams}")
 
-        # Get servers with optional include_inactive parameter
-        servers_result = await local_server_service.list_servers(db, include_inactive=include_inactive)
+        # Filter in the service, not here: a strict team_id comparison would drop
+        # globally-public rows owned by other teams.
+        servers_result = await local_server_service.list_servers(db, include_inactive=include_inactive, user_email=user_email, token_teams=token_teams, team_id=team_id)
         if isinstance(servers_result, tuple):
             servers_list = servers_result[0]
         else:
             servers_list = servers_result
-
-        # Apply team filtering if specified
-        if team_id:
-            servers_list = [s for s in servers_list if getattr(s, "team_id", None) == team_id]
 
         # Convert to JSON-serializable format
         servers = []
@@ -17150,6 +17242,7 @@ async def get_servers_section(
 @admin_router.get("/sections/gateways")
 @require_permission("gateways.read", allow_admin_bypass=False)
 async def get_gateways_section(
+    request: Request,
     team_id: Optional[str] = None,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -17157,6 +17250,7 @@ async def get_gateways_section(
     """Get gateways data filtered by team.
 
     Args:
+        request: FastAPI request, used to derive the caller's Layer-1 visibility scope
         team_id: Optional team ID to filter by
         db: Database session
         user: Current authenticated user context
@@ -17166,14 +17260,11 @@ async def get_gateways_section(
     """
     try:
         local_gateway_service = GatewayService()
-        get_user_email(user)
+        user_email, token_teams = get_scoped_resource_access_context(request, user)
 
-        # Get all gateways and filter by team
-        gateways_list, _ = await local_gateway_service.list_gateways(db, include_inactive=True)
-
-        # Apply team filtering if specified
-        if team_id:
-            gateways_list = [g for g in gateways_list if g.team_id == team_id]
+        # Filter in the service, not here: a strict team_id comparison would drop
+        # globally-public rows owned by other teams.
+        gateways_list, _ = await local_gateway_service.list_gateways(db, include_inactive=True, user_email=user_email, token_teams=token_teams, team_id=team_id)
 
         # Convert to JSON-serializable format
         gateways = []
@@ -17213,42 +17304,6 @@ async def get_gateways_section(
 ####################
 
 
-async def _sync_plugin_service_from_runtime(request: Request, plugin_service) -> None:
-    """Self-heal the admin plugin cache from the live framework state.
-
-    The framework's ``get_plugin_manager`` is the single source of truth — it
-    reads the shared toggle (TTL-cached, so this is a cheap call) and returns
-    ``None`` when plugins are globally disabled, even when the disable came
-    from a *remote* node via the Redis toggle.
-
-    Every admin read mirrors that answer back into ``app.state.plugin_manager``
-    and the ``PluginService`` singleton. This closes three gaps:
-
-    1. Processes that booted with plugins disabled never had ``app.state`` set,
-       so admin views returned empty until restart even after the shared
-       toggle was flipped on.
-    2. If ``toggle_plugins_global`` swallowed an admin-cache sync failure, the
-       stale cache would persist forever — now the next GET repairs it.
-    3. A remote disable (``PUT /admin/plugins {"enabled": false}`` on another
-       worker) would leave this worker's ``app.state.plugin_manager``
-       populated from a prior enable, making admin views serve plugin
-       metadata the cluster had already turned off.
-
-    Best-effort: a failure logs a WARNING and leaves ``app.state`` alone. It
-    never raises, so it can't turn a read into a 500.
-    """
-    try:
-        # pylint: disable=import-outside-toplevel
-        # First-Party
-        from mcpgateway.plugins import get_plugin_manager
-
-        plugin_manager = await get_plugin_manager()
-        request.app.state.plugin_manager = plugin_manager
-        plugin_service.set_plugin_manager(plugin_manager)
-    except Exception as sync_exc:
-        LOGGER.warning("Admin plugin-cache self-heal failed (%s) — view may render stale/empty", sync_exc)
-
-
 @admin_router.get("/plugins/partial")
 @require_permission("admin.plugins", allow_admin_bypass=False)
 async def get_plugins_partial(request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)) -> HTMLResponse:  # pylint: disable=unused-argument
@@ -17273,7 +17328,7 @@ async def get_plugins_partial(request: Request, db: Session = Depends(get_db), u
         plugin_service = get_plugin_service()
 
         # Self-heal the cache so the partial reflects the live shared toggle.
-        await _sync_plugin_service_from_runtime(request, plugin_service)
+        await sync_plugin_service_from_runtime(request, plugin_service)
 
         # Get plugin data
         plugins = plugin_service.get_all_plugins()
@@ -17338,7 +17393,7 @@ async def get_a2a_plugin_bindings_partial(
 async def _render_a2a_plugin_bindings_partial(request: Request, db: Session, team_id: Optional[str] = None) -> HTMLResponse:
     """Build and return the A2A agent plugin bindings partial template."""
     plugin_service = get_plugin_service()
-    await _sync_plugin_service_from_runtime(request, plugin_service)
+    await sync_plugin_service_from_runtime(request, plugin_service)
     binding_service = A2AAgentPluginBindingService()
     bindings, _ = binding_service.list_bindings(db, team_id=team_id)
     agents = db.query(DbA2AAgent.name).distinct().order_by(DbA2AAgent.name).all()
@@ -17522,7 +17577,7 @@ async def list_plugins(
         plugin_service = get_plugin_service()
 
         # Self-heal the cache from the live framework state.
-        await _sync_plugin_service_from_runtime(request, plugin_service)
+        await sync_plugin_service_from_runtime(request, plugin_service)
 
         # Get filtered plugins
         if any([search, mode, hook, tag]):
@@ -17648,7 +17703,7 @@ async def get_plugin_stats(request: Request, db: Session = Depends(get_db), user
         plugin_service = get_plugin_service()
 
         # Self-heal the cache from the live framework state.
-        await _sync_plugin_service_from_runtime(request, plugin_service)
+        await sync_plugin_service_from_runtime(request, plugin_service)
 
         # Get statistics
         stats = await plugin_service.get_plugin_statistics()
@@ -17708,7 +17763,7 @@ async def get_plugin_details(name: str, request: Request, db: Session = Depends(
         plugin_service = get_plugin_service()
 
         # Self-heal the cache from the live framework state.
-        await _sync_plugin_service_from_runtime(request, plugin_service)
+        await sync_plugin_service_from_runtime(request, plugin_service)
 
         # Get plugin details
         plugin = plugin_service.get_plugin_by_name(name)
@@ -18948,7 +19003,7 @@ def _get_latency_percentiles_postgresql(db: Session, cutoff_time: datetime, inte
     p99_values = []
 
     for row in results:
-        timestamps.append(row.bucket.isoformat() if row.bucket else "")
+        timestamps.append(ensure_timezone_aware(row.bucket).astimezone(timezone.utc).isoformat() if row.bucket else "")
         p50_values.append(round(float(row.p50), 2) if row.p50 else 0)
         p90_values.append(round(float(row.p90), 2) if row.p90 else 0)
         p95_values.append(round(float(row.p95), 2) if row.p95 else 0)
@@ -19113,7 +19168,7 @@ def _get_timeseries_metrics_postgresql(db: Session, cutoff_time: datetime, inter
         error = row.error or 0
         error_rate = (error / total * 100) if total > 0 else 0
 
-        timestamps.append(row.bucket.isoformat() if row.bucket else "")
+        timestamps.append(ensure_timezone_aware(row.bucket).astimezone(timezone.utc).isoformat() if row.bucket else "")
         request_counts.append(total)
         success_counts.append(row.success or 0)
         error_counts.append(error)

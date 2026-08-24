@@ -6510,7 +6510,7 @@ class AuthEmailCRUDUser(BaseUser):
     Endpoints tested:
     - POST /auth/email/admin/users - Admin create user
     - GET /auth/email/admin/users/{user_email} - Admin get user
-    - PUT /auth/email/admin/users/{user_email} - Admin update user
+    - PATCH /auth/email/admin/users/{user_email} - Admin update user
     - DELETE /auth/email/admin/users/{user_email} - Admin delete user
     - POST /auth/email/change-password - Change password
     - POST /auth/email/login - Email login
@@ -6525,7 +6525,7 @@ class AuthEmailCRUDUser(BaseUser):
     @task(3)
     @tag("auth", "email", "admin", "crud")
     def admin_user_lifecycle(self):
-        """POST/GET/PUT/DELETE /auth/email/admin/users - Full lifecycle."""
+        """POST/GET/PATCH/DELETE /auth/email/admin/users - Full lifecycle."""
         email = f"loadtest-{uuid.uuid4().hex}@example.com"
         user_data = {
             "email": email,
@@ -6550,9 +6550,9 @@ class AuthEmailCRUDUser(BaseUser):
                         headers=self.auth_headers,
                         name="/auth/email/admin/users/[email]",
                     )
-                    # PUT update
+                    # PATCH update
                     time.sleep(0.05)
-                    with self.client.put(
+                    with self.client.patch(
                         f"/auth/email/admin/users/{email}",
                         json={**user_data, "full_name": "Updated Load Test User"},
                         headers={**self.auth_headers, "Content-Type": "application/json"},

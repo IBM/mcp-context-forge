@@ -18,6 +18,7 @@ import asyncio
 import base64
 import binascii
 from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import lru_cache
 import json  # NOTE: httpx uses stdlib json, not orjson, so response.json() raises json.JSONDecodeError
@@ -45,7 +46,6 @@ from cpex.framework import (
 )
 from cpex.framework.constants import GATEWAY_METADATA, TOOL_METADATA
 import httpx
-import jq
 import jsonschema
 from jsonschema import Draft4Validator, Draft6Validator, Draft7Validator, validators
 from mcp import ClientSession, types
@@ -72,6 +72,7 @@ from mcpgateway.db import get_for_update, server_tool_association
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric, ToolMetricsHourly
 from mcpgateway.observability import create_child_span, create_span, inject_trace_context_headers, otel_context_active, set_span_attribute, set_span_error
+from mcpgateway.plugins.control_telemetry import ControlTelemetryAccumulator, record_control_telemetry
 from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
 from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolMetrics, ToolRead, ToolUpdate, TopPerformer
 from mcpgateway.services.a2a_protocol import prepare_a2a_invocation
@@ -85,12 +86,12 @@ from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_servic
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
 from mcpgateway.services.metrics_query_service import get_top_performers_combined
 from mcpgateway.services.oauth_manager import OAuthManager
+from mcpgateway.services.token_backends.vault_backend import VaultAuthError, VaultConnectionError
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
 from mcpgateway.services.performance_tracker import get_performance_tracker
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.services.token_exchange_cache import TokenExchangeCache
-from mcpgateway.services.token_storage_service import TokenStorageService
 from mcpgateway.services.upstream_session_registry import downstream_session_id_from_request_context, get_upstream_session_registry, RegistryNotInitializedError, TransportType
 from mcpgateway.transports.context import UserContext
 from mcpgateway.utils.admin_check import is_admin_bypass_granted, is_user_admin
@@ -100,6 +101,8 @@ from mcpgateway.utils.display_name import generate_display_name
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access, extract_gateway_id_from_headers
 from mcpgateway.utils.header_filtering import filter_sensitive_headers
 from mcpgateway.utils.identity_propagation import build_identity_headers, build_identity_meta
+from mcpgateway.utils.jq_guard import assert_safe_jq_filter
+from mcpgateway.utils.jq_runner import JqFilterBusy, JqFilterError, JqFilterTimeout, run_jq_filter
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import decode_cursor, encode_cursor, unified_paginate
@@ -229,6 +232,26 @@ def _sync_meta_traceparent(
     updated_meta = dict(meta_data or {})
     updated_meta["traceparent"] = traceparent
     return updated_meta
+
+
+def _pin_url_to_resolved_ip(url: str, resolved_ip: str) -> str:
+    """Return ``url`` with only its network location replaced by ``resolved_ip``."""
+    parsed = urlparse(url)
+    pinned_host = f"[{resolved_ip}]" if ":" in resolved_ip else resolved_ip
+    pinned_netloc = f"{pinned_host}:{parsed.port}" if parsed.port is not None else pinned_host
+    return parsed._replace(netloc=pinned_netloc).geturl()
+
+
+def _build_pinned_rest_http_client() -> ResilientHttpClient:
+    """Build an isolated client for IP-pinned REST requests."""
+    return ResilientHttpClient(
+        client_args={
+            "timeout": settings.federation_timeout,
+            "verify": not settings.skip_ssl_verify,
+            "limits": httpx.Limits(max_connections=1, max_keepalive_connections=0),
+            "cookies": {},
+        }
+    )
 
 
 # Initialize performance tracker, structured logger, audit trail, and metrics buffer for tool operations
@@ -615,23 +638,6 @@ def _handle_json_parse_error(response, error, is_error_response: bool = False) -
     return {"response_text": text}
 
 
-@lru_cache(maxsize=256)
-def _compile_jq_filter(jq_filter: str):
-    """Cache compiled jq filter program.
-
-    Args:
-        jq_filter: The jq filter string to compile.
-
-    Returns:
-        Compiled jq program object.
-
-    Raises:
-        ValueError: If the jq filter is invalid.
-    """
-    # pylint: disable=c-extension-no-member
-    return jq.compile(jq_filter)
-
-
 @lru_cache(maxsize=128)
 def _get_validator_class_and_check(schema_json: str) -> Tuple[type, dict]:
     """Cache schema validation and validator class selection.
@@ -718,7 +724,11 @@ def extract_using_jq(data, jq_filter=""):
     """
     Extracts data from a given input (string, dict, or list) using a jq filter string.
 
-    Uses cached compiled jq programs for performance.
+    The filter is refused if it uses a restricted jq built-in, then delegated to
+    the sandboxed runner in :mod:`mcpgateway.utils.jq_runner`, which owns program
+    compilation, caching, and the worker pool. A refusal, a timeout, or an
+    execution failure comes back as a single ``TextContent`` in a list, which
+    callers must treat as an error result rather than as tool output.
 
     Args:
         data (str, dict, list): The input JSON data. Can be a string, dict, or list.
@@ -767,17 +777,48 @@ def extract_using_jq(data, jq_filter=""):
         # If the input is not a string, dict, or list, raise an error
         return ["Input data must be a JSON string, dictionary, or list."]
 
-    # Apply the jq filter to the data using cached compiled program
+    # Refuse restricted built-ins before execution. This covers rows written
+    # before the schema validator existed, and any writer that bypasses it.
     try:
-        program = _compile_jq_filter(jq_filter)
-        result = program.input(data).all()
+        assert_safe_jq_filter(jq_filter_str)
+    except ValueError as exc:
+        logger.warning("Refused jq filter: %s", exc)
+        return [TextContent(type="text", text="jsonpath filter uses a restricted jq builtin")]
+
+    try:
+        result = run_jq_filter(jq_filter_str, data)
         if result == [None]:
             return [TextContent(type="text", text="Error applying jsonpath filter")]
-    except Exception as e:
-        message = "Error applying jsonpath filter: " + str(e)
-        return [TextContent(type="text", text=message)]
+    except JqFilterTimeout:
+        logger.warning("jq filter exceeded its time limit and was terminated")
+        return [TextContent(type="text", text="jsonpath filter exceeded the execution time limit")]
+    except JqFilterBusy:
+        logger.warning("jq filter sandbox had no free worker")
+        return [TextContent(type="text", text="jsonpath filter sandbox is busy, try again")]
+    except JqFilterError as exc:
+        logger.warning("jq filter failed: %s", exc)
+        return [TextContent(type="text", text="Error applying jsonpath filter")]
 
     return result
+
+
+def _is_jq_filter_error(filtered_response) -> bool:
+    """Report whether ``extract_using_jq`` returned an error rather than data.
+
+    Refusals, timeouts, and execution failures come back as a list holding a
+    single ``TextContent``. Filter output never contains ``TextContent``
+    instances on either sink: the REST sink filters ``response.json()`` and the
+    MCP passthrough sink filters a ``model_dump(mode="json")`` payload, both of
+    which are plain JSON data by the time the filter runs.
+
+    Args:
+        filtered_response: Whatever ``extract_using_jq`` returned.
+
+    Returns:
+        True when the value is an error result that must not be reported as a
+        successful invocation.
+    """
+    return isinstance(filtered_response, list) and len(filtered_response) > 0 and isinstance(filtered_response[0], TextContent)
 
 
 _VALID_HTTP_HEADER_NAME = re.compile(r"^[!#$%&'*+\-.0-9A-Z^_`a-z|~]+$")
@@ -1033,6 +1074,33 @@ def _build_retry_policy_config(raw_cfg: Optional[Dict[str, Any]], tool_name: str
     effective_cfg["max_retries"] = min(effective_cfg["max_retries"], settings.max_tool_retries)
 
     return effective_cfg
+
+
+@dataclass
+class ResolvedTool:
+    """Result of resolving and authorizing a tool name for invocation.
+
+    Shared return type of ``ToolService._resolve_tool_for_invocation``, called by both
+    ``invoke_tool`` (live invocation) and ``preview_tool_invocation`` (dry-run, #5629) so
+    tool lookup, RBAC, and visibility rules can never drift between the two paths.
+
+    Attributes:
+        is_direct_proxy: True when resolved via the X-Context-Forge-Gateway-Id direct-proxy
+            header (no DB tool row involved).
+        tool: ORM Tool row when resolved via a DB/cache-miss lookup; None on a cache hit or
+            in direct-proxy mode.
+        gateway: ORM Gateway row eager-loaded alongside ``tool``; None when the tool has no
+            gateway, on a cache hit, or in direct-proxy mode.
+        tool_payload: Flattened tool fields, from a cache hit, a cache-miss ORM conversion,
+            or direct-proxy synthesis. Always populated.
+        gateway_payload: Flattened gateway fields, or None when the tool has no gateway.
+    """
+
+    is_direct_proxy: bool
+    tool: Optional[DbTool]
+    gateway: Optional[DbGateway]
+    tool_payload: Dict[str, Any]
+    gateway_payload: Optional[Dict[str, Any]]
 
 
 class ToolService(BaseService):
@@ -2721,7 +2789,9 @@ class ToolService(BaseService):
             page: Page number for page-based pagination (1-indexed). Mutually exclusive with cursor.
             per_page: Items per page for page-based pagination. Defaults to pagination_default_page_size.
             user_email (Optional[str]): User email for team-based access control. If None, no access control is applied.
-            team_id (Optional[str]): Filter by specific team ID. Requires user_email for access validation.
+            team_id (Optional[str]): Filter by specific team ID. Applies to every caller shape,
+                including the admin and anonymous bypasses; globally-public rows from other
+                teams remain visible.
             visibility (Optional[str]): Filter by visibility (private, team, public).
             token_teams (Optional[List[str]]): Override DB team lookup with token's teams. Used for MCP/API token access
                 where the token scope should be respected instead of the user's full team memberships.
@@ -2780,15 +2850,18 @@ class ToolService(BaseService):
                 converter_is_default = False
 
             if cursor is None and user_email is None and token_teams is None and page is None and converter_is_default:
-                # Include visibility in the cache hash so admin requests that include
-                # an explicit visibility filter don't get served stale results from
-                # a previously cached unfiltered admin request.
+                # Include visibility and team_id in the cache hash so admin requests that
+                # include an explicit filter don't get served stale results from a
+                # previously cached unfiltered admin request. Omitting team_id would let a
+                # warm cross-team entry satisfy a team-scoped request, bypassing the
+                # team_id narrowing applied in _apply_access_control below.
                 filters_hash = cache.hash_filters(
                     include_inactive=include_inactive,
                     tags=sorted(tags) if tags else None,
                     gateway_id=gateway_id,
                     limit=limit,
                     visibility=visibility,
+                    team_id=team_id,
                 )
                 cached = await cache.get("tools", filters_hash)
                 if cached is not None:
@@ -4082,6 +4155,63 @@ class ToolService(BaseService):
 
     # pylint: enable=duplicate-code
 
+    async def _resolve_vault_auth_headers(
+        self,
+        app_user_email: Optional[str],
+        token_teams: Optional[List[str]],
+        gateway_id_str: str,
+        gateway_name: str,
+        jwt_teams_claim: Optional[List[str]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Return per-user Vault auth headers for non-OAuth gateways, or None.
+
+        ICA writes a plain ``{header: value}`` dict under the ``headers`` field
+        of the per-user Vault path.  Only the Vault backend implements
+        ``get_user_auth_headers``; the DB backend's base-class default returns
+        ``None``, so this method guards with ``settings.oauth_token_backend ==
+        "vault"`` to avoid the DB round-trip on every non-OAuth tool invocation
+        when Vault is not in use.
+
+        Args:
+            app_user_email: Authenticated end-user email.
+            token_teams: JWT-scoped team list from the caller token.
+            gateway_id_str: Gateway UUID string.
+            gateway_name: Gateway display name (for log messages only).
+            jwt_teams_claim: Raw JWT teams claim for Vault path hint on admin bypass.
+
+        Returns:
+            Dict of ``{header: value}`` pairs if found, otherwise ``None``.
+        """
+        if not app_user_email or settings.oauth_token_backend != "vault":  # nosec B105 - config discriminator, not a password
+            return None
+        try:
+            from mcpgateway.services.token_storage_service import TokenStorageService, build_token_user_context  # pylint: disable=import-outside-toplevel
+
+            with fresh_db_session() as token_db:
+                token_storage_context = build_token_user_context(token_db, app_user_email, token_teams, jwt_teams_claim)
+                token_storage = TokenStorageService(token_db, user_context=token_storage_context)
+                user_headers = await token_storage.get_user_auth_headers(gateway_id_str, app_user_email)
+            if user_headers:
+                logger.info(
+                    "Using per-user Vault auth headers for gateway '%s' (user=%s)",
+                    SecurityValidator.sanitize_log_message(gateway_name),
+                    SecurityValidator.sanitize_log_message(app_user_email),
+                )
+                return user_headers
+        except (VaultConnectionError, VaultAuthError):
+            # Vault is unreachable or authentication failed — fail closed rather than
+            # silently degrade per-user credential isolation by falling back to the
+            # gateway's shared credentials.  The caller should surface a 503 instead
+            # of using a different user's (or a shared) token.
+            raise
+        except Exception as e:  # pylint: disable=broad-except
+            logger.warning(
+                "Per-user Vault auth-header lookup failed for gateway %s: %s; falling back to gateway auth",
+                gateway_name,
+                e,
+            )
+        return None
+
     async def prepare_rust_mcp_tool_execution(
         self,
         db: Session,
@@ -4091,6 +4221,7 @@ class ToolService(BaseService):
         app_user_email: Optional[str] = None,
         user_email: Optional[str] = None,
         token_teams: Optional[List[str]] = None,
+        jwt_teams_claim: Optional[List[str]] = None,
         server_id: Optional[str] = None,
         plugin_global_context: Optional[GlobalContext] = None,
         plugin_context_table: Optional[PluginContextTable] = None,
@@ -4115,6 +4246,7 @@ class ToolService(BaseService):
             app_user_email: OAuth application user email, when present.
             user_email: Effective requester email after auth normalization.
             token_teams: Normalized team scope from the caller token.
+            jwt_teams_claim: Raw JWT teams claim forwarded as Vault path hint for admin bypass.
             server_id: Optional virtual server identifier restricting tool access.
             plugin_global_context: Optional global context from middleware for hook continuity.
             plugin_context_table: Optional context table from prior hooks for state sharing.
@@ -4367,10 +4499,17 @@ class ToolService(BaseService):
             gateway_grant_type = grant_type
             if grant_type == "authorization_code":
                 try:
+                    # First-Party
+                    from mcpgateway.services.token_storage_service import TokenStorageService, build_token_user_context  # pylint: disable=import-outside-toplevel
+
+                    if not app_user_email:
+                        raise ToolInvocationError(f"User authentication required for OAuth-protected gateway '{gateway_name}'. Please ensure you are authenticated.")
+
                     with fresh_db_session() as token_db:
-                        token_storage = TokenStorageService(token_db)
-                        if not app_user_email:
-                            raise ToolInvocationError(f"User authentication required for OAuth-protected gateway '{gateway_name}'. Please ensure you are authenticated.")
+                        # build_token_user_context uses token_teams as-is (JWT sole authority)
+                        # and only queries DB for the non-scoped is_admin flag.
+                        token_storage_context = build_token_user_context(token_db, app_user_email, token_teams, jwt_teams_claim)
+                        token_storage = TokenStorageService(token_db, user_context=token_storage_context)
                         access_token = await token_storage.get_user_token(gateway_id_str, app_user_email)
 
                     if access_token:
@@ -4402,7 +4541,22 @@ class ToolService(BaseService):
                     logger.error("Failed to obtain OAuth access token for gateway %s: %s", gateway_name, e)
                     raise ToolInvocationError(f"OAuth authentication failed for gateway: {str(e)}")
         else:
-            headers = decode_auth(gateway_auth_value) if gateway_auth_value else {}
+            # Non-OAuth auth types (bearer / basic / authheaders / none): resolve PER-USER creds
+            # from Vault FIRST, then fall back to the gateway-wide (admin-set) static auth. ICA
+            # writes the per-user credential as a plain {header: value} dict under a `headers` field
+            # at the same per-user Vault path used for OAuth tokens.
+            try:
+                vault_headers = await self._resolve_vault_auth_headers(app_user_email, token_teams, gateway_id_str, gateway_name, jwt_teams_claim)
+            except (VaultConnectionError, VaultAuthError) as vault_err:
+                # Vault is down or auth failed — surface a 503-style error rather than
+                # falling back to shared credentials (CWE-284 credential isolation).
+                logger.warning(
+                    "Vault unavailable for gateway '%s': %s — failing closed",
+                    SecurityValidator.sanitize_log_message(gateway_name),
+                    SecurityValidator.sanitize_log_message(str(vault_err)),
+                )
+                raise ToolInvocationError(f"Credential storage unavailable for gateway '{gateway_name}'. Tool invocation refused to protect per-user credential isolation.") from vault_err
+            headers = vault_headers or (decode_auth(gateway_auth_value) if gateway_auth_value else {})
 
         if request_headers:
             # B3: when the gateway uses token-exchange, the exchanged Authorization header
@@ -4443,6 +4597,14 @@ class ToolService(BaseService):
 
         # Run tool_pre_invoke hooks so that plugins (e.g. wxo_connections) can
         # inject credentials and clean arguments before the Rust direct call.
+        #
+        # NOTE: CPEX control-execution telemetry is intentionally not emitted from this
+        # path.  prepare_rust_mcp_tool_execution() builds an execution plan and returns
+        # before the actual tool invocation — there is no downstream flush point where
+        # record_control_telemetry() can be called.  When the Rust runtime falls back to
+        # the Python invoke_tool() path (e.g. post-invoke hooks configured, ineligible
+        # transport) the Python path's own accumulator will capture all telemetry.
+        # Tracked in the Phase 5 attribute-policy follow-on issue.
         modified_args = arguments
         if has_pre_invoke and arguments is not None:
             pre_invoke_headers = HttpHeaderPayload(root=dict(runtime_headers))
@@ -4648,6 +4810,7 @@ class ToolService(BaseService):
         global_context: Any,
         context_table: Any,
         plugin_manager: Any = None,
+        ctl_acc: Optional["ControlTelemetryAccumulator"] = None,
     ) -> None:
         """Invoke post-invoke plugins after a timeout and raise with retry signal if requested.
 
@@ -4663,6 +4826,9 @@ class ToolService(BaseService):
             global_context: Plugin global context for cross-hook state.
             context_table: Plugin local context table for per-plugin state.
             plugin_manager: Optional pre-fetched plugin manager to avoid redundant lookups.
+            ctl_acc: Optional invocation-local control-telemetry accumulator.  When provided,
+                the post-invoke hook's execution records are added here so they are included
+                in the telemetry emitted on the timeout path.
 
         Raises:
             ToolTimeoutError: When the retry plugin requests a delayed retry.
@@ -4682,6 +4848,8 @@ class ToolService(BaseService):
                 extensions=build_request_extensions(),
             )
             record_plugin_metrics(current_trace_id.get(), timeout_post_result.metadata if timeout_post_result else None)
+            if ctl_acc is not None:
+                ctl_acc.add(timeout_post_result, hook="post")
             if timeout_post_result and timeout_post_result.retry_delay_ms > 0:
                 raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s", retry_delay_ms=timeout_post_result.retry_delay_ms)
 
@@ -4695,6 +4863,7 @@ class ToolService(BaseService):
         app_user_email: Optional[str],
         user_email: Optional[str],
         token_teams: Optional[List[str]],
+        jwt_teams_claim: Optional[List[str]],
         server_id: Optional[str],
         context_table: Any,
         global_context: Any,
@@ -4720,6 +4889,7 @@ class ToolService(BaseService):
             app_user_email: ContextForge user email for OAuth.
             user_email: User email for authorization.
             token_teams: Team IDs from JWT token.
+            jwt_teams_claim: Raw JWT teams claim forwarded for Vault path hint.
             server_id: Virtual server ID for scoping.
             context_table: Plugin local context table.
             global_context: Plugin global context.
@@ -4750,6 +4920,7 @@ class ToolService(BaseService):
                 app_user_email=app_user_email,
                 user_email=user_email,
                 token_teams=token_teams,
+                jwt_teams_claim=jwt_teams_claim,
                 server_id=server_id,
                 plugin_context_table=context_table,
                 plugin_global_context=global_context,
@@ -4760,77 +4931,46 @@ class ToolService(BaseService):
                 retry_attempt=retry_attempt + 1,
             )
 
-    async def invoke_tool(
+    async def _resolve_tool_for_invocation(
         self,
         db: Session,
         name: str,
-        arguments: Dict[str, Any],
-        request_headers: Optional[Dict[str, str]] = None,
-        app_user_email: Optional[str] = None,
-        user_email: Optional[str] = None,
-        token_teams: Optional[List[str]] = None,
-        server_id: Optional[str] = None,
-        plugin_context_table: Optional[PluginContextTable] = None,
-        plugin_global_context: Optional[GlobalContext] = None,
-        meta_data: Optional[Dict[str, Any]] = None,
-        skip_pre_invoke: bool = False,
-        require_app_visible: bool = False,
-        require_model_visible: bool = False,
-        retry_attempt: int = 0,
-    ) -> ToolResult:
-        """
-        Invoke a registered tool and record execution metrics.
+        request_headers: Optional[Dict[str, str]],
+        user_email: Optional[str],
+        token_teams: Optional[List[str]],
+        server_id: Optional[str],
+        require_app_visible: bool,
+        require_model_visible: bool,
+    ) -> ResolvedTool:
+        """Resolve a tool name to an authorized, invocable target.
+
+        Side-effect-free (beyond cache reads/writes and the read-only DB queries already
+        required to answer "is this tool invocable by this caller"): no network call, no
+        plugin hook, no dispatch. Extracted from ``invoke_tool`` (#5629) so the live
+        invocation path and the dry-run preview path (``preview_tool_invocation``) share
+        one resolution/RBAC implementation and cannot silently drift apart.
 
         Args:
             db: Database session.
-            name: Name of tool to invoke.
-            arguments: Tool arguments.
-            request_headers (Optional[Dict[str, str]], optional): Headers from the request to pass through.
-                Defaults to None.
-            app_user_email (Optional[str], optional): ContextForge user email for OAuth token retrieval.
-                Required for OAuth-protected gateways.
-            user_email (Optional[str], optional): User email for authorization checks.
-                None = unauthenticated request.
-            token_teams (Optional[List[str]], optional): Team IDs from JWT token for authorization.
-                None = unrestricted admin, [] = public-only, [...] = team-scoped.
-            server_id (Optional[str], optional): Virtual server ID for server scoping enforcement.
-                If provided, tool must be attached to this server.
-            plugin_context_table: Optional plugin context table from previous hooks for cross-hook state sharing.
-            plugin_global_context: Optional global context from middleware for consistency across hooks.
-            meta_data: Optional metadata dictionary for additional context (e.g., request ID).
-            skip_pre_invoke: When True, skip TOOL_PRE_INVOKE hooks (used by trusted Rust fallback path).
-            require_app_visible: When True, deny execution unless the resolved tool is MCP Apps app-visible.
-            require_model_visible: When True, deny execution unless the resolved tool is model-visible.
-            retry_attempt: Zero-based retry counter; 0 = original call.  Incremented by the retry
-                loop and compared against ``settings.max_tool_retries``.
+            name: Name of tool to resolve.
+            request_headers: Headers from the request (used for X-Context-Forge-Gateway-Id
+                direct-proxy detection).
+            user_email: User email for authorization checks. None = unauthenticated request.
+            token_teams: Team IDs from JWT token for authorization. None = unrestricted admin,
+                [] = public-only, [...] = team-scoped.
+            server_id: Virtual server ID for server scoping enforcement. If provided, tool
+                must be attached to this server.
+            require_app_visible: When True, deny resolution unless the tool is MCP Apps
+                app-visible.
+            require_model_visible: When True, deny resolution unless the tool is model-visible.
 
         Returns:
-            Tool invocation result.
+            ResolvedTool: The resolved, authorized tool (or direct-proxy target).
 
         Raises:
-            ToolNotFoundError: If tool not found or access denied.
-            ToolInvocationError: If invocation fails or A2A authentication decryption fails.
-            ToolTimeoutError: If tool invocation times out.
-            PluginViolationError: If plugin blocks tool invocation.
-            PluginError: If encounters issue with plugin.
-
-        Examples:
-            >>> # Note: This method requires extensive mocking of SQLAlchemy models,
-            >>> # database relationships, and caching infrastructure, which is not
-            >>> # suitable for doctests. See tests/unit/mcpgateway/services/test_tool_service.py
-            >>> pass  # doctest: +SKIP
+            ToolNotFoundError: If tool not found, inaccessible, or fails a visibility gate.
+            ToolInvocationError: If the tool name is ambiguous or the tool is deprecated.
         """
-        # pylint: disable=comparison-with-callable
-        logger.info("Invoking tool: %s with arguments: %s and headers: %s, server_id=%s", name, arguments.keys() if arguments else None, request_headers.keys() if request_headers else None, server_id)
-        # ═══════════════════════════════════════════════════════════════════════════
-        # PHASE 0: Set request_headers_var ContextVar so downstream_session_id_from_request_context() can access it
-        # This is needed for upstream session registry to work correctly
-        # ═══════════════════════════════════════════════════════════════════════════
-        # First-Party
-        from mcpgateway.transports.context import request_headers_var  # pylint: disable=import-outside-toplevel
-
-        if request_headers:
-            request_headers_var.set(request_headers)
         # ═══════════════════════════════════════════════════════════════════════════
         # PHASE 1: Check for X-Context-Forge-Gateway-Id header for direct_proxy mode (no DB lookup)
         # ═══════════════════════════════════════════════════════════════════════════
@@ -5005,6 +5145,95 @@ class ToolService(BaseService):
                 raise ToolNotFoundError(f"Tool not found: {name}")
         elif require_model_visible and not is_direct_proxy and not is_model_visible_tool(tool_payload):
             raise ToolNotFoundError(f"Tool not found: {name}")
+
+        return ResolvedTool(is_direct_proxy=is_direct_proxy, tool=tool, gateway=gateway, tool_payload=tool_payload, gateway_payload=gateway_payload)
+
+    async def invoke_tool(
+        self,
+        db: Session,
+        name: str,
+        arguments: Dict[str, Any],
+        request_headers: Optional[Dict[str, str]] = None,
+        app_user_email: Optional[str] = None,
+        user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
+        jwt_teams_claim: Optional[List[str]] = None,
+        server_id: Optional[str] = None,
+        plugin_context_table: Optional[PluginContextTable] = None,
+        plugin_global_context: Optional[GlobalContext] = None,
+        meta_data: Optional[Dict[str, Any]] = None,
+        skip_pre_invoke: bool = False,
+        require_app_visible: bool = False,
+        require_model_visible: bool = False,
+        retry_attempt: int = 0,
+    ) -> ToolResult:
+        """
+        Invoke a registered tool and record execution metrics.
+
+        Args:
+            db: Database session.
+            name: Name of tool to invoke.
+            arguments: Tool arguments.
+            request_headers (Optional[Dict[str, str]], optional): Headers from the request to pass through.
+                Defaults to None.
+            app_user_email (Optional[str], optional): ContextForge user email for OAuth token retrieval.
+                Required for OAuth-protected gateways.
+            user_email (Optional[str], optional): User email for authorization checks.
+                None = unauthenticated request.
+            token_teams (Optional[List[str]], optional): Team IDs from JWT token for authorization.
+                None = unrestricted admin, [] = public-only, [...] = team-scoped.
+            jwt_teams_claim (Optional[List[str]], optional): Raw JWT ``teams`` claim forwarded
+                from ``request.state.jwt_teams_claim``.  Used ONLY as a Vault path hint for
+                admin bypass (token_teams=None) — never for access-control decisions.  Default None.
+            server_id (Optional[str], optional): Virtual server ID for server scoping enforcement.
+                If provided, tool must be attached to this server.
+            plugin_context_table: Optional plugin context table from previous hooks for cross-hook state sharing.
+            plugin_global_context: Optional global context from middleware for consistency across hooks.
+            meta_data: Optional metadata dictionary for additional context (e.g., request ID).
+            skip_pre_invoke: When True, skip TOOL_PRE_INVOKE hooks (used by trusted Rust fallback path).
+            require_app_visible: When True, deny execution unless the resolved tool is MCP Apps app-visible.
+            require_model_visible: When True, deny execution unless the resolved tool is model-visible.
+            retry_attempt: Zero-based retry counter; 0 = original call.  Incremented by the retry
+                loop and compared against ``settings.max_tool_retries``.
+
+        Returns:
+            Tool invocation result.
+
+        Raises:
+            ToolNotFoundError: If tool not found or access denied.
+            ToolInvocationError: If invocation fails or A2A authentication decryption fails.
+            ToolTimeoutError: If tool invocation times out.
+            PluginViolationError: If plugin blocks tool invocation.
+            PluginError: If encounters issue with plugin.
+
+        Examples:
+            >>> # Note: This method requires extensive mocking of SQLAlchemy models,
+            >>> # database relationships, and caching infrastructure, which is not
+            >>> # suitable for doctests. See tests/unit/mcpgateway/services/test_tool_service.py
+            >>> pass  # doctest: +SKIP
+        """
+        # pylint: disable=comparison-with-callable
+        logger.info("Invoking tool: %s with arguments: %s and headers: %s, server_id=%s", name, arguments.keys() if arguments else None, request_headers.keys() if request_headers else None, server_id)
+        # ═══════════════════════════════════════════════════════════════════════════
+        # PHASE 0: Set request_headers_var ContextVar so downstream_session_id_from_request_context() can access it
+        # This is needed for upstream session registry to work correctly
+        # ═══════════════════════════════════════════════════════════════════════════
+        # First-Party
+        from mcpgateway.transports.context import request_headers_var  # pylint: disable=import-outside-toplevel
+
+        if request_headers:
+            request_headers_var.set(request_headers)
+        # ═══════════════════════════════════════════════════════════════════════════
+        # PHASE 1: Resolve tool name to an authorized, invocable target.
+        # Shared with preview_tool_invocation (#5629) via _resolve_tool_for_invocation
+        # so tool lookup, RBAC, and visibility rules cannot drift between the two paths.
+        # ═══════════════════════════════════════════════════════════════════════════
+        resolved = await self._resolve_tool_for_invocation(db, name, request_headers, user_email, token_teams, server_id, require_app_visible, require_model_visible)
+        is_direct_proxy = resolved.is_direct_proxy
+        tool = resolved.tool
+        gateway = resolved.gateway
+        tool_payload = resolved.tool_payload
+        gateway_payload = resolved.gateway_payload
 
         # Extract A2A-related data from annotations (will be used after db.close() if A2A tool)
         tool_annotations = tool_payload.get("annotations") or {}
@@ -5233,6 +5462,34 @@ class ToolService(BaseService):
             content_type = request_headers.get("content-type") if request_headers else None
             global_context = GlobalContext(request_id=request_id, server_id=context_server_id, tenant_id=payload_tenant_id, user=app_user_email, content_type=content_type)
 
+        # Per-invocation accumulator for CPEX control-execution telemetry.
+        # Declared here (before the try/with block) so it survives into the
+        # exception handlers and the finally block for partial pre-deny telemetry.
+        _ctl_acc = ControlTelemetryAccumulator()
+        # Tracks which hook a PluginError propagated from so mark_plugin_error(hook=)
+        # can report the correct enforcement point even when no records were appended.
+        # Updated to "post" immediately before each post-hook invoke_hook call.
+        _ctl_last_hook: str = "pre"
+
+        def _emit_ctl_telemetry() -> None:
+            """Flush CPEX control-execution telemetry for this invocation (best-effort).
+
+            Thin wrapper that captures the invocation-local ``_ctl_acc``, ``name``,
+            and identity fields so all five exit paths (normal return, PluginViolationError,
+            PluginError, ToolTimeoutError, BaseException) call a single canonical site.
+            Identity mapping is provisional — see issue #5785 follow-on for a dedicated
+            agent-identity model:
+              agent_id     = app_user_email ?? user_email  (authenticated caller email)
+              binding_name = gateway_name ?? server_id     (closest proxy for binding context)
+            """
+            record_control_telemetry(
+                trace_id=current_trace_id.get(),
+                accumulator=_ctl_acc,
+                tool_name=name,
+                agent_id=app_user_email or user_email or "",
+                binding_name=gateway_name or server_id or "",
+            )
+
         start_time = time.monotonic()
         success = False
         error_message = None
@@ -5357,15 +5614,24 @@ class ToolService(BaseService):
                         if tool_metadata:
                             global_context.metadata[TOOL_METADATA] = tool_metadata
                         pre_invoke_headers = HttpHeaderPayload(root=headers)
-                        pre_result, context_table = await plugin_manager.invoke_hook(
-                            ToolHookType.TOOL_PRE_INVOKE,
-                            payload=ToolPreInvokePayload(name=name, args=arguments, headers=pre_invoke_headers),
-                            global_context=global_context,
-                            local_contexts=context_table,  # Pass context from previous hooks
-                            violations_as_exceptions=True,
-                            extensions=build_request_extensions(),
-                        )
+                        try:
+                            pre_result, context_table = await plugin_manager.invoke_hook(
+                                ToolHookType.TOOL_PRE_INVOKE,
+                                payload=ToolPreInvokePayload(name=name, args=arguments, headers=pre_invoke_headers),
+                                global_context=global_context,
+                                local_contexts=context_table,  # Pass context from previous hooks
+                                violations_as_exceptions=True,
+                                extensions=build_request_extensions(),
+                            )
+                        except PluginViolationError:
+                            # Deliberate policy denial: mark so telemetry emits result.allowed=False.
+                            # PluginError (outage) is not caught here — it propagates to the outer
+                            # except PluginError handler without mark_denied(), keeping enforcement
+                            # denials and plugin crashes distinguishable in downstream dashboards.
+                            _ctl_acc.mark_denied(hook="pre")
+                            raise
                         record_plugin_metrics(current_trace_id.get(), pre_result.metadata)
+                        _ctl_acc.add(pre_result, hook="pre")
                         _log_tool_pre_invoke_result(name, arguments, pre_invoke_headers, pre_result)
                         if pre_result.modified_payload:
                             payload = pre_result.modified_payload
@@ -5442,13 +5708,57 @@ class ToolService(BaseService):
                             final_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
                             _url_query_params = {k: v[0] for k, v in parse_qs(parsed.query).items()}
 
+                    rest_request_extensions: dict[str, str] = {}
+                    rest_http_client = self._http_client
+                    pinned_rest_http_client: Optional[ResilientHttpClient] = None
+                    try:
+                        validated_target = await SecurityValidator.validate_url_for_connection_pinning(final_url, "Tool URL")
+                    except ValueError as validation_error:
+                        safe_url = sanitize_url_for_logging(final_url)
+                        logger.warning(
+                            "REST tool outbound URL validation failed for tool %s (%s), url=%s, correlation_id=%s: %s",
+                            SecurityValidator.sanitize_log_message(tool_name_computed),
+                            SecurityValidator.sanitize_log_message(tool_id),
+                            safe_url,
+                            get_correlation_id(),
+                            SecurityValidator.sanitize_log_message(str(validation_error)),
+                        )
+                        raise ToolInvocationError("Outbound URL blocked by URL policy") from validation_error
+
+                    resolved_ip = validated_target.get("resolved_ip")
+                    original_hostname = validated_target.get("hostname")
+                    original_authority = validated_target.get("original_authority")
+                    if settings.ssrf_protection_enabled and not (resolved_ip and original_hostname and original_authority):
+                        safe_url = sanitize_url_for_logging(final_url)
+                        logger.warning(
+                            "REST tool outbound URL validation did not return a pinned target for tool %s (%s), url=%s, correlation_id=%s",
+                            SecurityValidator.sanitize_log_message(tool_name_computed),
+                            SecurityValidator.sanitize_log_message(tool_id),
+                            safe_url,
+                            get_correlation_id(),
+                        )
+                        raise ToolInvocationError("Outbound URL blocked by URL policy")
+                    if resolved_ip and original_hostname and original_authority:
+                        final_url = _pin_url_to_resolved_ip(final_url, resolved_ip)
+                        headers = {hk: hv for hk, hv in headers.items() if hk.lower() != "host"}
+                        headers["Host"] = original_authority
+                        rest_request_extensions["sni_hostname"] = original_hostname
+                        pinned_rest_http_client = _build_pinned_rest_http_client()
+                        rest_http_client = pinned_rest_http_client
+
                     with create_child_span("tool.gateway_call", {"tool.name": name, "tool.id": tool_id, "tool.integration_type": "REST"}):
                         rest_start_time = time.time()
 
                         async def _send(call_headers: dict) -> Any:
                             """Issue the REST upstream call with the given headers (B2 retry hook)."""
+                            request_options = {"headers": call_headers}
+                            if rest_request_extensions:
+                                request_options["extensions"] = rest_request_extensions
                             if method == "GET":
-                                return await asyncio.wait_for(self._http_client.get(final_url, params=payload, headers=call_headers), timeout=effective_timeout)
+                                return await asyncio.wait_for(
+                                    rest_http_client.get(final_url, params=payload, **request_options),
+                                    timeout=effective_timeout,
+                                )
                             if _ct_base == "application/x-www-form-urlencoded":
                                 # NOTE: Intentional asymmetry with the JSON/default path below.
                                 # Form-encoded bodies use params= to keep URL query params on the
@@ -5457,18 +5767,38 @@ class ToolService(BaseService):
                                 # backward compatibility and signed-URL support.
                                 form_payload = {k: self._form_value_to_str(v) for k, v in payload.items()}
                                 return await asyncio.wait_for(
-                                    self._http_client.request(method, final_url, data=form_payload, params=_url_query_params, headers=call_headers), timeout=effective_timeout
+                                    rest_http_client.request(
+                                        method,
+                                        final_url,
+                                        data=form_payload,
+                                        params=_url_query_params,
+                                        **request_options,
+                                    ),
+                                    timeout=effective_timeout,
                                 )
                             if _ct_base == "multipart/form-data":
                                 # Strip Content-Type so httpx can set it with the correct boundary parameter.
                                 # URL query params forwarded via params= (same asymmetry as form-urlencoded above).
                                 headers_mp = {k: v for k, v in call_headers.items() if k.lower() != "content-type"}
+                                multipart_request_options = {"headers": headers_mp}
+                                if rest_request_extensions:
+                                    multipart_request_options["extensions"] = rest_request_extensions
                                 files_payload = {k: (None, self._form_value_to_str(v)) for k, v in payload.items()}
                                 return await asyncio.wait_for(
-                                    self._http_client.request(method, final_url, files=files_payload, params=_url_query_params, headers=headers_mp), timeout=effective_timeout
+                                    rest_http_client.request(
+                                        method,
+                                        final_url,
+                                        files=files_payload,
+                                        params=_url_query_params,
+                                        **multipart_request_options,
+                                    ),
+                                    timeout=effective_timeout,
                                 )
                             # For POST/PUT/PATCH/DELETE (JSON body, default path)
-                            return await asyncio.wait_for(self._http_client.request(method, final_url, json=payload, headers=call_headers), timeout=effective_timeout)
+                            return await asyncio.wait_for(
+                                rest_http_client.request(method, final_url, json=payload, **request_options),
+                                timeout=effective_timeout,
+                            )
 
                         try:
                             if method == "GET":
@@ -5495,18 +5825,22 @@ class ToolService(BaseService):
                             # else: No mappings (None or empty) - preserve query params in URL for signed URL support
                             # (Azure SAS, AWS presigned URLs, webhook signatures, etc.)
 
-                            response = await self._send_with_token_exchange_retry(
-                                _send,
-                                headers,
-                                gateway_oauth_config if (has_gateway and gateway_grant_type == "token-exchange") else None,
-                                gateway_id_str,
-                                gateway_name,
-                                app_user_email,
-                                request_headers or {},
-                                ca_certificate=gateway_ca_cert,
-                                client_cert=gateway_client_cert,
-                                client_key=gateway_client_key,
-                            )
+                            try:
+                                response = await self._send_with_token_exchange_retry(
+                                    _send,
+                                    headers,
+                                    gateway_oauth_config if (has_gateway and gateway_grant_type == "token-exchange") else None,
+                                    gateway_id_str,
+                                    gateway_name,
+                                    app_user_email,
+                                    request_headers or {},
+                                    ca_certificate=gateway_ca_cert,
+                                    client_cert=gateway_client_cert,
+                                    client_key=gateway_client_key,
+                                )
+                            finally:
+                                if pinned_rest_http_client is not None:
+                                    await pinned_rest_http_client.aclose()
                         except (asyncio.TimeoutError, httpx.TimeoutException):
                             rest_elapsed_ms = (time.time() - rest_start_time) * 1000
                             structured_logger.log(
@@ -5532,7 +5866,7 @@ class ToolService(BaseService):
                                     exc_info=True,
                                 )
                             if plugin_manager:
-                                await self._run_timeout_post_invoke(name, effective_timeout, global_context, context_table, plugin_manager)
+                                await self._run_timeout_post_invoke(name, effective_timeout, global_context, context_table, plugin_manager, ctl_acc=_ctl_acc)
 
                             raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s")
                         try:
@@ -5580,9 +5914,9 @@ class ToolService(BaseService):
                             except (json.JSONDecodeError, orjson.JSONDecodeError, UnicodeDecodeError, AttributeError) as e:
                                 result = _handle_json_parse_error(response, e, is_error_response=False)
                             logger.debug("REST API tool response: %s", result)
-                            filtered_response = extract_using_jq(result, tool_jsonpath_filter)
+                            filtered_response = await asyncio.to_thread(extract_using_jq, result, tool_jsonpath_filter)
                             # Check if extract_using_jq returned an error (list of TextContent objects)
-                            if isinstance(filtered_response, list) and len(filtered_response) > 0 and isinstance(filtered_response[0], TextContent):
+                            if _is_jq_filter_error(filtered_response):
                                 # Error case - use the TextContent directly
                                 tool_result = ToolResult(content=filtered_response, is_error=True)
                                 success = False
@@ -5619,13 +5953,21 @@ class ToolService(BaseService):
                             # For Authorization Code flow, try to get stored tokens
                             # NOTE: Use fresh_db_session() since the original db was closed
                             try:
+                                # First-Party
+                                from mcpgateway.services.token_storage_service import TokenStorageService  # pylint: disable=import-outside-toplevel
+
+                                # Get user-specific OAuth token
+                                if not app_user_email:
+                                    raise ToolInvocationError(f"User authentication required for OAuth-protected gateway '{gateway_name}'. Please ensure you are authenticated.")
+
                                 with fresh_db_session() as token_db:
-                                    token_storage = TokenStorageService(token_db)
+                                    # First-Party
+                                    from mcpgateway.services.token_storage_service import TokenStorageService, build_token_user_context  # pylint: disable=import-outside-toplevel
 
-                                    # Get user-specific OAuth token
-                                    if not app_user_email:
-                                        raise ToolInvocationError(f"User authentication required for OAuth-protected gateway '{gateway_name}'. Please ensure you are authenticated.")
-
+                                    # build_token_user_context uses token_teams as-is (JWT sole authority)
+                                    # and only queries DB for the non-scoped is_admin flag.
+                                    token_storage_context = build_token_user_context(token_db, app_user_email, token_teams, jwt_teams_claim)
+                                    token_storage = TokenStorageService(token_db, user_context=token_storage_context)
                                     access_token = await token_storage.get_user_token(gateway_id_str, app_user_email)
 
                                 if access_token:
@@ -5667,7 +6009,19 @@ class ToolService(BaseService):
                                 logger.error("Failed to obtain OAuth access token for gateway %s: %s", gateway_name, e)
                                 raise ToolInvocationError(f"OAuth authentication failed for gateway: {str(e)}")
                     else:
-                        headers = decode_auth(gateway_auth_value) if gateway_auth_value else {}
+                        # Non-OAuth: per-user Vault creds FIRST, then gateway-wide static auth.
+                        try:
+                            vault_headers = await self._resolve_vault_auth_headers(app_user_email, token_teams, gateway_id_str, gateway_name, jwt_teams_claim)
+                        except (VaultConnectionError, VaultAuthError) as vault_err:
+                            # Vault is down or auth failed — surface a clear error rather than
+                            # falling back to shared credentials (CWE-284 credential isolation).
+                            logger.warning(
+                                "Vault unavailable for gateway '%s': %s — failing closed",
+                                SecurityValidator.sanitize_log_message(gateway_name),
+                                SecurityValidator.sanitize_log_message(str(vault_err)),
+                            )
+                            raise ToolInvocationError(f"Credential storage unavailable for gateway '{gateway_name}'. Tool invocation refused to protect per-user credential isolation.") from vault_err
+                        headers = vault_headers or (decode_auth(gateway_auth_value) if gateway_auth_value else {})
 
                     # Use cached passthrough headers (no DB query needed)
                     if request_headers:
@@ -5974,7 +6328,7 @@ class ToolService(BaseService):
                                 )
 
                             if plugin_manager:
-                                await self._run_timeout_post_invoke(name, effective_timeout, global_context, context_table, plugin_manager)
+                                await self._run_timeout_post_invoke(name, effective_timeout, global_context, context_table, plugin_manager, ctl_acc=_ctl_acc)
 
                             raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s")
                         except asyncio.CancelledError:
@@ -6161,7 +6515,7 @@ class ToolService(BaseService):
                                 )
 
                             if plugin_manager:
-                                await self._run_timeout_post_invoke(name, effective_timeout, global_context, context_table, plugin_manager)
+                                await self._run_timeout_post_invoke(name, effective_timeout, global_context, context_table, plugin_manager, ctl_acc=_ctl_acc)
 
                             raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s")
                         except asyncio.CancelledError:
@@ -6200,15 +6554,22 @@ class ToolService(BaseService):
                         if gateway_metadata:
                             global_context.metadata[GATEWAY_METADATA] = gateway_metadata
                         pre_invoke_headers = HttpHeaderPayload(root=headers)
-                        pre_result, context_table = await plugin_manager.invoke_hook(
-                            ToolHookType.TOOL_PRE_INVOKE,
-                            payload=ToolPreInvokePayload(name=name, args=arguments, headers=pre_invoke_headers),
-                            global_context=global_context,
-                            local_contexts=None,
-                            violations_as_exceptions=True,
-                            extensions=build_request_extensions(),
-                        )
+                        try:
+                            pre_result, context_table = await plugin_manager.invoke_hook(
+                                ToolHookType.TOOL_PRE_INVOKE,
+                                payload=ToolPreInvokePayload(name=name, args=arguments, headers=pre_invoke_headers),
+                                global_context=global_context,
+                                local_contexts=None,
+                                violations_as_exceptions=True,
+                                extensions=build_request_extensions(),
+                            )
+                        except PluginViolationError:
+                            # Deliberate policy denial: mark so telemetry emits result.allowed=False.
+                            # PluginError propagates to the outer handler without mark_denied().
+                            _ctl_acc.mark_denied(hook="pre")
+                            raise
                         record_plugin_metrics(current_trace_id.get(), pre_result.metadata)
+                        _ctl_acc.add(pre_result, hook="pre")
                         _log_tool_pre_invoke_result(name, arguments, pre_invoke_headers, pre_result)
                         if pre_result.modified_payload:
                             payload = pre_result.modified_payload
@@ -6255,11 +6616,17 @@ class ToolService(BaseService):
                             content = dump.get("content", [])
                             # Accept both alias and pythonic names for structured content
                             structured = dump.get("structuredContent") or dump.get("structured_content")
-                            filtered_response = extract_using_jq(content, tool_jsonpath_filter)
+                            filtered_response = await asyncio.to_thread(extract_using_jq, content, tool_jsonpath_filter)
 
                             is_err = getattr(tool_call_result, "is_error", None)
                             if is_err is None:
                                 is_err = getattr(tool_call_result, "isError", False)
+                            # A refused or timed-out filter must be reported as an error here
+                            # too. Without this the refusal string was recorded as a successful
+                            # invocation carrying it as if it were real tool output.
+                            if _is_jq_filter_error(filtered_response):
+                                is_err = True
+                                structured = None
                             tool_result = ToolResult(content=filtered_response, structured_content=structured, is_error=is_err, meta=getattr(tool_call_result, "meta", None))
                             success = not is_err
                             logger.debug("Final tool_result: %s", tool_result)
@@ -6286,15 +6653,22 @@ class ToolService(BaseService):
                         if tool_metadata:
                             global_context.metadata[TOOL_METADATA] = tool_metadata
                         pre_invoke_headers = HttpHeaderPayload(root=plugin_headers)
-                        pre_result, context_table = await plugin_manager.invoke_hook(
-                            ToolHookType.TOOL_PRE_INVOKE,
-                            payload=ToolPreInvokePayload(name=name, args=arguments, headers=pre_invoke_headers),
-                            global_context=global_context,
-                            local_contexts=context_table,
-                            violations_as_exceptions=True,
-                            extensions=build_request_extensions(),
-                        )
+                        try:
+                            pre_result, context_table = await plugin_manager.invoke_hook(
+                                ToolHookType.TOOL_PRE_INVOKE,
+                                payload=ToolPreInvokePayload(name=name, args=arguments, headers=pre_invoke_headers),
+                                global_context=global_context,
+                                local_contexts=context_table,
+                                violations_as_exceptions=True,
+                                extensions=build_request_extensions(),
+                            )
+                        except PluginViolationError:
+                            # Deliberate policy denial: mark so telemetry emits result.allowed=False.
+                            # PluginError propagates to the outer handler without mark_denied().
+                            _ctl_acc.mark_denied(hook="pre")
+                            raise
                         record_plugin_metrics(current_trace_id.get(), pre_result.metadata)
+                        _ctl_acc.add(pre_result, hook="pre")
                         _log_tool_pre_invoke_result(name, arguments, pre_invoke_headers, pre_result)
                         if pre_result.modified_payload:
                             payload = pre_result.modified_payload
@@ -6356,7 +6730,7 @@ class ToolService(BaseService):
 
                             # Trigger circuit breaker on timeout
                             if plugin_manager:
-                                await self._run_timeout_post_invoke(name, effective_timeout, global_context, context_table, plugin_manager)
+                                await self._run_timeout_post_invoke(name, effective_timeout, global_context, context_table, plugin_manager, ctl_acc=_ctl_acc)
 
                             raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s")
                         if status_code == 200:
@@ -6397,7 +6771,7 @@ class ToolService(BaseService):
                     except (asyncio.TimeoutError, ToolTimeoutError) as timeout_err:
                         logger.warning("gRPC tool invocation timed out for %s after %ss", tool_name_original, effective_timeout, exc_info=True)
                         if plugin_manager:
-                            await self._run_timeout_post_invoke(name, effective_timeout, global_context, context_table, plugin_manager)
+                            await self._run_timeout_post_invoke(name, effective_timeout, global_context, context_table, plugin_manager, ctl_acc=_ctl_acc)
                         raise ToolTimeoutError(f"Tool invocation timed out after {effective_timeout}s") from timeout_err
                     except Exception as grpc_err:
                         logger.error("gRPC tool invocation failed for %s: %s", tool_name_original, grpc_err, exc_info=True)
@@ -6410,15 +6784,23 @@ class ToolService(BaseService):
                     # Plugin hook: tool post-invoke
                     plugin_manager = await self._get_plugin_manager(plugin_context_id)
                     if plugin_manager and plugin_manager.has_hooks_for(ToolHookType.TOOL_POST_INVOKE):
-                        post_result, _ = await plugin_manager.invoke_hook(
-                            ToolHookType.TOOL_POST_INVOKE,
-                            payload=ToolPostInvokePayload(name=name, result=tool_result.model_dump(by_alias=True)),
-                            global_context=global_context,
-                            local_contexts=context_table,
-                            violations_as_exceptions=True,
-                            extensions=build_request_extensions(),
-                        )
+                        _ctl_last_hook = "post"  # update hook tracker before the call
+                        try:
+                            post_result, _ = await plugin_manager.invoke_hook(
+                                ToolHookType.TOOL_POST_INVOKE,
+                                payload=ToolPostInvokePayload(name=name, result=tool_result.model_dump(by_alias=True)),
+                                global_context=global_context,
+                                local_contexts=context_table,
+                                violations_as_exceptions=True,
+                                extensions=build_request_extensions(),
+                            )
+                        except PluginViolationError:
+                            # Deliberate policy denial: mark so telemetry emits result.allowed=False.
+                            # PluginError propagates to the outer handler without mark_denied().
+                            _ctl_acc.mark_denied(hook="post")
+                            raise
                         record_plugin_metrics(current_trace_id.get(), post_result.metadata)
+                        _ctl_acc.add(post_result, hook="post")
                         # Use modified payload if provided
                         if post_result.modified_payload:
                             # Reconstruct ToolResult from modified result
@@ -6451,6 +6833,7 @@ class ToolService(BaseService):
                             app_user_email,
                             user_email,
                             token_teams,
+                            jwt_teams_claim,
                             server_id,
                             context_table,
                             global_context,
@@ -6461,12 +6844,38 @@ class ToolService(BaseService):
                             path_label="success",
                         )
 
+                # Emit CPEX control-execution telemetry for this invocation (best-effort).
+                # Placed here on the normal-return path so both pre and post records are
+                # accumulated before emitting.  Exception paths below also call this helper
+                # so partial pre-deny / error telemetry is never lost.
+                # Identity mapping rationale: see _emit_ctl_telemetry() docstring above.
+                _emit_ctl_telemetry()
                 return tool_result
-            except (PluginError, PluginViolationError):
+            except PluginViolationError:
+                # Deliberate policy denial — emit partial telemetry so the summary span captures
+                # result.allowed=False and any pre-denial execution records.
+                # Note: when violations_as_exceptions=True, CPEX raises PluginViolationError
+                # *before* appending a ControlExecutionRecord for the denying plugin to the
+                # executions list (see cpex/framework/manager.py:680-682).  _ctl_acc therefore
+                # contains only records from plugins that ran before the denier.
+                # Upstream CPEX gap tracked in issue #5785 follow-on.
+                _emit_ctl_telemetry()
+                raise
+            except PluginError:
+                # Plugin outage (crash/timeout/misconfiguration) — mark the accumulator so
+                # the summary span carries cpex.control.plugin_error=True, emit partial
+                # telemetry (even when the accumulator is empty, e.g. first-plugin failure),
+                # and do NOT treat this as a policy denial (effective_allowed stays True).
+                # hook= is derived from _ctl_last_hook which is "pre" by default and updated
+                # to "post" immediately before the post-hook invoke_hook call.
+                _ctl_acc.mark_plugin_error(hook=_ctl_last_hook)
+                _emit_ctl_telemetry()
                 raise
             except ToolTimeoutError as e:
                 # ToolTimeoutError is raised by timeout handlers which already called tool_post_invoke.
                 # Do NOT call post_invoke again — the retry_delay_ms signal is carried on the exception.
+                # Emit partial telemetry before retrying or re-raising so timeout records are not lost.
+                _emit_ctl_telemetry()
                 error_message = str(e)
                 if span:
                     set_span_error(span, error_message)
@@ -6482,6 +6891,7 @@ class ToolService(BaseService):
                         app_user_email,
                         user_email,
                         token_teams,
+                        jwt_teams_claim,
                         server_id,
                         context_table,
                         global_context,
@@ -6529,8 +6939,12 @@ class ToolService(BaseService):
                             extensions=build_request_extensions(),
                         )
                         record_plugin_metrics(current_trace_id.get(), exc_post_result.metadata if exc_post_result else None)
+                        _ctl_acc.add(exc_post_result, hook="post")
                     except Exception as plugin_exc:
                         logger.debug("Failed to invoke post-invoke plugins on exception: %s", plugin_exc)
+
+                # Emit partial telemetry for unhandled exceptions (post-hook records already added above).
+                _emit_ctl_telemetry()
 
                 # Retry if the plugin requested a delayed retry and we haven't hit the ceiling.
                 # Same counting convention as the success path: retry_attempt is 0-based,
@@ -6545,6 +6959,7 @@ class ToolService(BaseService):
                         app_user_email,
                         user_email,
                         token_teams,
+                        jwt_teams_claim,
                         server_id,
                         context_table,
                         global_context,

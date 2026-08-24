@@ -937,7 +937,9 @@ class A2AAgentService(BaseService):
             token_teams: Teams from JWT token. None with user_email=None = anonymous admin bypass (public+team only);
                          None with user_email set = DB admin check (public+team+own-private);
                          [] = public-only; [...] = team-scoped access.
-            team_id: Optional team ID to filter by specific team.
+            team_id: Optional team ID to filter by specific team. Applies to every caller
+                shape, including the admin and anonymous bypasses; globally-public rows
+                from other teams remain visible.
             visibility: Optional visibility filter (private, team, public).
 
         Returns:
@@ -986,7 +988,7 @@ class A2AAgentService(BaseService):
         # ══════════════════════════════════════════════════════════════════════
         cache = _get_registry_cache()
         if cursor is None and user_email is None and token_teams is None and page is None:
-            filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None, visibility=visibility)
+            filters_hash = cache.hash_filters(include_inactive=include_inactive, tags=sorted(tags) if tags else None, visibility=visibility, team_id=team_id)
             cached = await cache.get("agents", filters_hash)
             if cached is not None:
                 # Reconstruct A2AAgentRead objects from cached dicts
@@ -1520,6 +1522,9 @@ class A2AAgentService(BaseService):
                 if field == "visibility" and value == "team":
                     target_team_id = update_data.get("team_id", agent.team_id) if "team_id" in update_data else agent.team_id
                     _validate_a2a_team_assignment(db, user_email, target_team_id)
+
+                if field == "owner_email":
+                    continue  # ownership is set at creation; never overwritten by an update
 
                 if hasattr(agent, field):
                     setattr(agent, field, value)
@@ -2282,6 +2287,7 @@ class A2AAgentService(BaseService):
                     oauth_config=agent_oauth_config,
                     passthrough_headers=agent_passthrough_headers,
                     auth_type=agent_auth_type,
+                    endpoint_url=agent_endpoint_url,
                 )
                 if content_type:
                     agent_metadata.content_type = content_type
@@ -2319,6 +2325,21 @@ class A2AAgentService(BaseService):
                             agent=agent,
                             feature_flag_enabled=settings.enable_sensitive_header_passthrough,
                         )
+
+                        # Honor header REMOVALS as well as additions. ``prepared.headers`` was
+                        # built from the passthrough set, so a plugin that drops a header (e.g.
+                        # the Vault plugin stripping ``X-Vault-Tokens``) would otherwise leak it
+                        # upstream, since ``.update()`` cannot delete keys. Reconcile removals
+                        # against the sanitized set the plugin was actually given
+                        # (``plugin_headers``) so a plugin can only remove headers it saw.
+                        plugin_returned_lower = {k.lower() for k in plugin_returned}
+                        for received_key in plugin_headers:
+                            rk = received_key.lower()
+                            if rk not in plugin_returned_lower:
+                                # Plugin removed this header — drop it from the outbound set.
+                                for existing_key in [k for k in prepared.headers if k.lower() == rk]:
+                                    del prepared.headers[existing_key]
+
                         prepared.headers.update(safe_headers)
 
                         # Log security-blocked headers for forensic awareness
@@ -2336,6 +2357,13 @@ class A2AAgentService(BaseService):
             except Exception as e:
                 logger.error("Pre-invoke plugin error for A2A agent %s: %s", agent_id, e)
                 raise A2AAgentError(f"Pre-invoke plugin error: {e}") from e
+
+        # Defense in depth: strip X-Vault-Tokens (case-insensitive) from outbound
+        # headers. The Vault plugin removes this header when it processes the token,
+        # but stripping unconditionally prevents leakage when the plugin is disabled,
+        # errors in permissive mode, or the header is mistakenly in passthrough_headers.
+        for existing_key in [hk for hk in prepared.headers if hk.lower() == "x-vault-tokens"]:
+            del prepared.headers[existing_key]
 
         span_attributes = {
             "a2a.agent.name": agent_name,

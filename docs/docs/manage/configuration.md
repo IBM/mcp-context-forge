@@ -10,8 +10,8 @@ These variables have insecure defaults and **must be changed** before production
 
 | Variable | Description | Default | Action Required |
 |----------|-------------|---------|-----------------|
-| `JWT_SECRET_KEY` | Secret key for signing JWT tokens | `my-test-key-but-now-longer-than-32-bytes` | Generate with `openssl rand -hex 32` |
-| `AUTH_ENCRYPTION_SECRET` | Passphrase for encrypting stored credentials | `my-test-salt` | Generate with `openssl rand -hex 32` |
+| `JWT_SECRET_KEY` | Secret key for signing JWT tokens | *(must be set — no default)* | Generate with `make init-secrets-patch-env` or `openssl rand -hex 32` |
+| `AUTH_ENCRYPTION_SECRET` | Passphrase for encrypting stored credentials | *(must be set — no default)* | Generate with `make init-secrets-patch-env` or `openssl rand -hex 32` |
 | `BASIC_AUTH_USER` | Username for HTTP Basic auth | `admin` | Change for production |
 | `BASIC_AUTH_PASSWORD` | Password for HTTP Basic auth | `changeme` | Set a strong password |
 | `PLATFORM_ADMIN_EMAIL` | Email for bootstrap admin user | `admin@example.com` | Use real admin email |
@@ -98,6 +98,7 @@ ContextForge supports multiple database backends with full feature parity across
 | `CLIENT_MODE`      | Client-only mode for gateway-as-client   | `false`                | bool                   |
 | `DATABASE_URL`     | SQLAlchemy connection URL                | `sqlite:///./mcp.db`   | any SQLAlchemy dialect |
 | `APP_ROOT_PATH`    | Subpath prefix for app (e.g. `/gateway`) | (empty)                | string                 |
+| `UI_BASE_URL`      | Trusted base URL for browser-facing links in invitation and password emails | (unset) | HTTP/HTTPS URL |
 | `TEMPLATES_DIR`    | Path to Jinja2 templates                 | `mcpgateway/templates` | path                   |
 | `STATIC_DIR`       | Path to static files                     | `mcpgateway/static`    | path                   |
 | `PROTOCOL_VERSION` | MCP protocol version supported           | `2025-06-18`           | string                 |
@@ -105,6 +106,31 @@ ContextForge supports multiple database backends with full feature parity across
 
 !!! tip "Subpath Deployment"
     Use `APP_ROOT_PATH=/foo` if reverse-proxying under a subpath like `https://host.com/foo/`.
+
+### Browser-facing email links
+
+Set `UI_BASE_URL` when the React client is deployed at a different origin or path from the gateway:
+
+```bash
+UI_BASE_URL=https://ui.example.com/contextforge
+```
+
+ContextForge uses this trusted base to generate these browser-facing email links:
+
+- `https://ui.example.com/contextforge/accept-invitation/{token}`
+- `https://ui.example.com/contextforge/reset-password/{token}`
+- `https://ui.example.com/contextforge/forgot-password`
+
+When `UI_BASE_URL` is unset, links use `APP_DOMAIN + APP_ROOT_PATH` as their base. Password-reset and account-lockout
+emails preserve compatibility with the bundled Admin UI by using `/admin/reset-password/{token}` and
+`/admin/forgot-password`; these routes require `MCPGATEWAY_ADMIN_API_ENABLED=true`. Invitation emails continue to use
+`/accept-invitation/{token}`, so the fallback host must serve that frontend route. ContextForge does not provide the
+React invitation page. If the React client is deployed separately, configure `UI_BASE_URL`. ContextForge never
+derives these links from the inbound `Host` header. Tokens are URL-encoded as individual path segments.
+
+`UI_BASE_URL` controls links only; it does not configure browser access to gateway APIs. For a React client on a
+different origin, add that exact origin to `ALLOWED_ORIGINS`. Deployments using cross-origin cookies must also set
+appropriate secure-cookie, SameSite, credential, and CSRF configuration.
 
 ### Authentication
 
@@ -130,7 +156,7 @@ ContextForge supports multiple database backends with full feature parity across
 | `REQUIRE_USER_IN_DB`        | Require all authenticated users to exist in the database                     | `false`             | bool        |
 | `EMBED_ENVIRONMENT_IN_TOKENS` | Embed environment claim in gateway-issued JWTs                             | `false`             | bool        |
 | `VALIDATE_TOKEN_ENVIRONMENT` | Reject tokens with mismatched environment claim                             | `false`             | bool        |
-| `AUTH_ENCRYPTION_SECRET`    | Passphrase used to derive AES key for encrypting tool auth headers           | `my-test-salt`      | string      |
+| `AUTH_ENCRYPTION_SECRET`    | Passphrase used to derive AES key for encrypting tool auth headers           | *(must be set)*     | string      |
 | `OAUTH_REQUEST_TIMEOUT`     | OAuth request timeout in seconds                                             | `30`                | int > 0     |
 | `OAUTH_MAX_RETRIES`         | Maximum retries for OAuth token requests                                     | `3`                 | int > 0     |
 | `INSECURE_ALLOW_QUERYPARAM_AUTH` | Enable query parameter authentication for gateways (see security warning) | `false`             | bool        |
@@ -607,6 +633,83 @@ ContextForge implements **OAuth 2.0 Dynamic Client Registration (RFC 7591)** and
     - `X_FRAME_OPTIONS=SAMEORIGIN`: Allows embedding from same domain only
     - `X_FRAME_OPTIONS="ALLOW-ALL"`: Allows embedding from all sources
     - `X_FRAME_OPTIONS=null` or `none`: Completely removes iframe restrictions
+
+### CSRF Protection
+
+ContextForge provides Cross-Site Request Forgery (CSRF) protection through three independent implementations optimized for different request paths. Understanding the distinctions is critical for configuration.
+
+| Setting                   | Description                    | Default                                        | Options    |
+| ------------------------- | ------------------------------ | ---------------------------------------------- | ---------- |
+| `CSRF_ENABLED`            | Enable CSRF protection for state-changing operations | `true`                                   | bool       |
+| `CSRF_SECRET_KEY`         | Secret key for CSRF token generation (falls back to `JWT_SECRET_KEY` if empty) | `""`                              | string     |
+| `CSRF_TOKEN_NAME`         | HTTP header name for CSRF token | `X-CSRF-Token`                                 | string     |
+| `CSRF_COOKIE_NAME`        | Cookie name for CSRF token (middleware-path-only; hardcoded in admin routes) | `mcpgateway_csrf_token`            | string     |
+| `CSRF_TOKEN_EXPIRY`       | CSRF token expiration time in seconds (middleware-path-only; different calculation in admin routes) | `3600`                            | int        |
+| `CSRF_COOKIE_SECURE`      | Set Secure flag on CSRF cookie (middleware-path-only; production-aware in admin routes) | `true`                            | bool       |
+| `CSRF_COOKIE_SAMESITE`    | SameSite attribute for CSRF cookie (middleware-path-only; hardcoded `strict` in admin routes) | `Strict`                          | `Strict`/`Lax`/`None` |
+| `CSRF_COOKIE_HTTPONLY`    | Set HttpOnly flag on CSRF cookie (middleware-path-only; hardcoded `false` in admin routes) | `false`                           | bool       |
+| `CSRF_CHECK_REFERER`      | Validate Referer header for CSRF protection | `true`                                 | bool       |
+| `CSRF_ROTATE_ON_LOGIN`    | Rotate CSRF token on user login for enhanced security | `true`                                 | bool       |
+| `CSRF_TRUSTED_ORIGINS`    | Additional trusted origins for CSRF validation (code default is `[]`; `.env.example` overrides with localhost) | `[]`                              | JSON array |
+| `CSRF_EXEMPT_PATHS`       | Paths exempt from CSRF middleware (admin routes use per-route enforcement instead) | See below | JSON array |
+
+**Three Independent CSRF Implementations:**
+
+ContextForge implements CSRF protection in three distinct paths:
+
+1. **`CSRFMiddleware` (global protection)**: Applies to non-exempt routes (e.g., `/llm/*`, `/v1/mcp/*`) and also to versioned admin routes (`/v1/admin/*`)
+2. **`enforce_admin_csrf` (per-route dependency)**: Applies to admin routes at both the legacy (`/admin/*`, `/admin/llm/*`) and versioned (`/v1/admin/*`, `/v1/admin/llm/*`) mounts
+3. **`enforce_fetch_tools_csrf` (per-route dependency, `mcpgateway/routers/oauth_router.py`)**: Applies only to `POST /oauth/fetch-tools/{gateway_id}` — the reason that path is in `CSRF_EXEMPT_PATHS` rather than relying on `CSRFMiddleware`. It duplicates its own module-level `ADMIN_CSRF_COOKIE_NAME`/`ADMIN_CSRF_HEADER_NAME` constants (not imported from `admin.py`) and its own Origin/Referer same-origin check, independent of both `CSRFMiddleware`'s and `enforce_admin_csrf`'s origin-check logic.
+
+The five settings marked as "middleware-path-only" in the table above govern only the first path; the other two dependencies use hardcoded equivalents for all cookie and header attributes:
+
+| Attribute | `CSRFMiddleware` (Middleware) | `enforce_admin_csrf` (Admin Routes) |
+| --- | --- | --- |
+| Cookie name | `CSRF_COOKIE_NAME` setting | hardcoded `mcpgateway_csrf_token` |
+| Header name | `CSRF_TOKEN_NAME` setting | hardcoded `x-csrf-token` |
+| SameSite | `CSRF_COOKIE_SAMESITE` setting | hardcoded `strict` |
+| Secure flag | `CSRF_COOKIE_SECURE` setting | `true` in production, else `SECURE_COOKIES` setting |
+| HttpOnly flag | `CSRF_COOKIE_HTTPONLY` setting | hardcoded `false` |
+| Max age | `CSRF_TOKEN_EXPIRY` setting | `max(300, TOKEN_EXPIRY * 60)` |
+| Token scheme | HMAC over `user_id:session_id:window` | plain double-submit with `secrets.compare_digest()` |
+| Origin check | `CSRF_CHECK_REFERER` setting + `CSRF_TRUSTED_ORIGINS` | always via `_request_origin_matches()` |
+
+**Default Exempt Paths** (middleware only):
+```json
+["/health", "/auth/login", "/auth/logout", "/auth/refresh", "/auth/email/login", "/auth/email/register", "/auth/email/forgot-password", "/auth/email/reset-password", "/admin", "/admin/login", "/admin/forgot-password", "/admin/reset-password", "/oauth/fetch-tools", "/docs", "/redoc", "/openapi.json", "/metrics", "/mcp/", "/sse", "/message", "/rpc", "/api/metrics/", "/toolops/", "/tokens", "/teams/", "/llmchat/", "/api/logs/", "/_internal/mcp/"]
+```
+
+!!! warning "CSRF_COOKIE_NAME Synchronization Risk"
+    The `CSRF_COOKIE_NAME` setting governs `CSRFMiddleware` only. Every other CSRF consumer — `enforce_admin_csrf` (`mcpgateway/admin.py`), `enforce_fetch_tools_csrf` (`mcpgateway/routers/oauth_router.py`), the Admin UI JavaScript, and the server-rendered login/password/admin templates — hardcodes `mcpgateway_csrf_token` independently rather than reading the setting. There is no complete, stable list of these consumers to enumerate here; treat the name as effectively fixed. Changing `CSRF_COOKIE_NAME` desynchronizes the middleware from everything else, breaking login, password reset, and admin panel writes. If you migrated from an older ContextForge version, verify your `.env` uses `mcpgateway_csrf_token` (not `csrf_token` from a pre-#5780 template).
+
+!!! warning "CSRF_COOKIE_HTTPONLY Should Stay False for CSRFMiddleware-Protected Writes"
+    `CSRF_COOKIE_HTTPONLY` is honored only by `CSRFMiddleware` (`set_csrf_cookie()` reads `settings.csrf_cookie_httponly` directly). Admin-route CSRF (`enforce_admin_csrf`, `enforce_fetch_tools_csrf`) always issues its cookie with `httponly=False`, hardcoded, regardless of this setting. The browser JavaScript for `CSRFMiddleware`-protected writes (e.g. `/v1/llm/*`) must read the CSRF cookie to echo it in the `X-CSRF-Token` header (double-submit pattern); setting `CSRF_COOKIE_HTTPONLY=true` makes that cookie unreadable to JavaScript and breaks those writes specifically — not admin-route writes, which are unaffected either way. The cookie is safe: the middleware's HMAC token is bound to user + session identity, preventing CSRF abuse regardless of this setting.
+
+!!! info "CSRF_TRUSTED_ORIGINS: Code Default vs. Template"
+    The code default is an empty list `[]`, meaning no additional origins beyond same-site are trusted. However, `.env.example` overrides this with `["http://localhost:4444","http://localhost:8080"]` for development convenience. Production deployments should verify the code default and explicitly configure `CSRF_TRUSTED_ORIGINS` to match your frontend origin(s).
+
+!!! info "CSRF_EXEMPT_PATHS and Versioned Route Interaction"
+    The middleware exemption uses prefix matching on the raw request path (e.g., `/admin` matches `/admin/llm/*` but not `/v1/admin/llm/*`). This means versioned admin routes at `/v1/admin/*` are validated by both the middleware and the per-route `enforce_admin_csrf` dependency (double validation), while legacy routes at `/admin/*` use only the per-route dependency (exempt from middleware). Cross-validate your paths against both implementations. See [Middleware Ordering and Stacking](../architecture/middleware-ordering.md) for details on how CSRF middleware interacts with other middleware and per-route dependencies.
+
+    This double-validation used to expose a timing gap: in the window between `/admin/login` and the first dashboard load, the versioned mount's extra `CSRFMiddleware` pass rejected writes that the legacy mount's `enforce_admin_csrf`-only path accepted, because the CSRF cookie had not yet rotated from its opaque pre-login value to its HMAC-bound one. Fixed in [IBM/mcp-context-forge#5978](https://github.com/IBM/mcp-context-forge/issues/5978) — see *Admin CSRF token lifecycle* below.
+
+#### Admin CSRF token lifecycle
+
+The `mcpgateway_csrf_token` cookie is an HMAC-SHA256 digest bound to `(user email, session JWT jti)`. Every handler that mints a session JWT now issues the bound cookie in the same response:
+
+| Handler | When |
+| --- | --- |
+| `admin_login_handler` | `POST /admin/login`, both the normal and the forced-password-change branch |
+| `change_password_required_handler` | `POST /admin/change-password-required`, which re-mints the JWT with a new `jti` |
+| `admin_ui()` | every `/admin/` dashboard load, which also re-mints and therefore rotates |
+| `/auth/*` login endpoints | `routers/auth.py`, `routers/email_auth.py` |
+
+Because the token is bound to the session, it cannot be replayed across sessions or users, and the unprefixed `/admin/**` and versioned `/v1/admin/**` mounts accept it identically from the first request after login — no dashboard load required.
+
+Unauthenticated pages (`GET /admin/login`, forgot-password, reset-password) still receive an opaque, unbound token. That is correct: there is no session to bind to yet, and neither CSRF layer engages without a session cookie. The bound token replaces it on successful login.
+
+!!! warning "Long sessions can outlive their CSRF token"
+    The admin CSRF cookie's `max_age` is `max(300, TOKEN_EXPIRY * 60)`, but the HMAC is only accepted for the current and previous `CSRF_TOKEN_EXPIRY` window — 1 to 2 hours at the `3600` default. At the shipped `TOKEN_EXPIRY` of 20 minutes the cookie expires first and there is no gap. If you raise `TOKEN_EXPIRY` above 120 minutes, the cookie can outlive its own HMAC, after which `/v1/admin/**` writes fail with `CSRF_TOKEN_INVALID` while `/admin/**` still accepts them. Browsers are unaffected because every dashboard load rotates the cookie; long-lived non-browser cookie clients are not. Keep `CSRF_TOKEN_EXPIRY >= TOKEN_EXPIRY * 60`, or re-authenticate rather than holding one cookie for the full session.
 
 ### Identity Propagation
 

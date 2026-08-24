@@ -7,9 +7,9 @@ authors = [
 ]
 license = { text = "Apache-2.0" }
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
-    "fastmcp>=3.3.0",
+    "fastmcp>=3.4.4",
     "feedparser>=6.0.12",
     "httpx>=0.28.1",
     "orjson>=3.11.9",
@@ -19,31 +19,31 @@ dependencies = [
 
 [project.optional-dependencies]
 similarity = [
-    "numpy>=2.4.4",
+    "numpy>=2.5.1",
     "rank-bm25>=0.2.2",
     "scikit-learn>=1.9.0",
-    "sentence-transformers>=5.6.0",
+    "sentence-transformers>=5.6.1",
 ]
 dev = [
     "black>=26.5.1",
-    "mypy>=2.1.0",
+    "mypy>=2.3.0",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
     "pytest-cov>=7.1.0",
     "pytest-httpx>=0.36.2",
-    "ruff>=0.15.20",
+    "ruff>=0.16.0",
 ]
 full = [
     "black>=26.5.1",
-    "mypy>=2.1.0",
-    "numpy>=2.4.4",
+    "mypy>=2.3.0",
+    "numpy>=2.5.1",
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
     "pytest-cov>=7.1.0",
     "pytest-httpx>=0.36.2",
-    "ruff>=0.15.20",
+    "ruff>=0.16.0",
     "scikit-learn>=1.9.0",
-    "sentence-transformers>=5.6.0",
+    "sentence-transformers>=5.6.1",
 ]
 
 [build-system]
@@ -58,17 +58,17 @@ mcp-rss-search = "mcp_rss_search.server_fastmcp:main"
 
 [tool.black]
 line-length = 100
-target-version = ["py311"]
+target-version = ["py312"]
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.12"
 strict = true
 warn_return_any = true
 warn_unused_configs = true
 
 [tool.ruff]
 line-length = 100
-target-version = "py311"
+target-version = "py312"
 select = ["E", "W", "F", "B", "I", "N", "UP"]
 
 [tool.pytest.ini_options]

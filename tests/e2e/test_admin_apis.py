@@ -812,7 +812,7 @@ class TestAdminGatewayAPIs:
                 data = response.json()
                 assert data["statusCode"] == 400  # Error status in response body (camelCase due to BaseModelWithConfigDict)
                 assert "error" in data["body"]
-                assert data["body"]["error"] == "Invalid gateway URL"
+                assert data["body"]["error"] == "The MCP server URL is not allowed for testing. Confirm the URL is correct and the host is permitted by your test policy."
                 mock_client_class.assert_not_called()
 
     async def test_admin_test_gateway_allowlist_allows_allowlisted(self, client: AsyncClient, mock_settings):
@@ -883,7 +883,7 @@ class TestAdminGatewayAPIs:
                             data = response.json()
                             assert data["statusCode"] == 400  # Error in response body
                             assert "error" in data["body"]
-                            assert data["body"]["error"] == "Invalid gateway URL"
+                            assert data["body"]["error"] == "The MCP server URL is not allowed for testing. Confirm the URL is correct and the host is permitted by your test policy."
                             mock_client_class.assert_not_called()
 
     async def test_gateway_test_endpoint_allowlist_enforcement(self, client: AsyncClient, mock_settings):
@@ -906,7 +906,7 @@ class TestAdminGatewayAPIs:
             assert response.status_code == 200  # HTTP status is always 200
             response_data = response.json()
             assert response_data["statusCode"] == 400  # Gateway test result status
-            assert response_data["body"]["error"] == "Invalid gateway URL"
+            assert response_data["body"]["error"] == "The MCP server URL is not allowed for testing. Confirm the URL is correct and the host is permitted by your test policy."
 
         # Test 2: URL with trailing dot should be normalized and still rejected if not in allowlist
         with patch("mcpgateway.common.validators.socket.getaddrinfo") as mock_dns:
@@ -922,7 +922,7 @@ class TestAdminGatewayAPIs:
             assert response.status_code == 200
             response_data = response.json()
             assert response_data["statusCode"] == 400
-            assert response_data["body"]["error"] == "Invalid gateway URL"
+            assert response_data["body"]["error"] == "The MCP server URL is not allowed for testing. Confirm the URL is correct and the host is permitted by your test policy."
 
         # Test 3: Private IP should be rejected even if in allowlist
         mock_settings.gateway_test_allowed_hosts = ["192.168.1.1"]
@@ -935,7 +935,7 @@ class TestAdminGatewayAPIs:
         assert response.status_code == 200
         response_data = response.json()
         assert response_data["statusCode"] == 400
-        assert response_data["body"]["error"] == "Invalid gateway URL"
+        assert response_data["body"]["error"] == "The MCP server URL is not allowed for testing. Confirm the URL is correct and the host is permitted by your test policy."
 
         # Test 4: Loopback should be rejected
         request_data = {
@@ -978,7 +978,7 @@ class TestAdminGatewayAPIs:
             response_data = response.json()
             # When allowlist is empty (no registered gateways), all requests should be rejected
             assert response_data["statusCode"] == 400
-            assert response_data["body"]["error"] == "Invalid gateway URL"
+            assert response_data["body"]["error"] == "The MCP server URL is not allowed for testing. Confirm the URL is correct and the host is permitted by your test policy."
 
 
 # -------------------------
@@ -987,19 +987,22 @@ class TestAdminGatewayAPIs:
 class TestAdminRootAPIs:
     """Test admin root management endpoints."""
 
-    async def test_admin_root_lifecycle(self, client: AsyncClient, mock_settings):
+    async def test_admin_root_lifecycle(self, client: AsyncClient, mock_settings, monkeypatch):
         """Test complete root lifecycle through admin UI."""
+        monkeypatch.setattr("mcpgateway.admin.is_unrestricted_platform_admin", AsyncMock(return_value=True))
+        monkeypatch.setattr(settings, "root_allow_file_scheme", True, raising=False)
+        monkeypatch.setattr(settings, "root_allowed_file_prefixes", ["/test/admin"], raising=False)
         # Add a root
         form_data = {
-            "uri": f"/test/admin/root/{uuid.uuid4().hex[:8]}",
+            "uri": f"file:///test/admin/root/{uuid.uuid4().hex[:8]}",
             "name": "Test Admin Root",
         }
 
         response = await client.post("/admin/roots", data=form_data, headers=TEST_AUTH_HEADER, follow_redirects=False)
         assert response.status_code == 303
 
-        # Delete the root - use the normalized URI with file:// prefix
-        normalized_uri = f"file://{form_data['uri']}"
+        # Delete the root - use the canonical URI.
+        normalized_uri = form_data["uri"]
         encoded_uri = quote(normalized_uri, safe="")
         response = await client.post(f"/admin/roots/{encoded_uri}/delete", headers=TEST_AUTH_HEADER, follow_redirects=False)
         assert response.status_code == 303

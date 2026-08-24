@@ -56,9 +56,11 @@ vi.mock("../../../mcpgateway/admin_ui/tokens.js", () => ({
   getAuthToken: vi.fn(() => Promise.resolve("test-token")),
 }));
 
-vi.mock("../../../mcpgateway/admin_ui/utils.js", () => ({
+vi.mock("../../../mcpgateway/admin_ui/utils.js", async (importOriginal) => ({
+  ...(await importOriginal()),
   safeGetElement: vi.fn((id) => document.getElementById(id)),
   showToast: vi.fn(),
+  getCookie: vi.fn(() => ""),
 }));
 
 beforeEach(() => {

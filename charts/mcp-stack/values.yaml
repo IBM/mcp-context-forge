@@ -85,7 +85,7 @@ mcpContextForge:
 
   image:
     repository: ghcr.io/ibm/mcp-context-forge
-    tag: "v1.0.6"                # PRODUCTION: pin a specific immutable tag (e.g. "v1.0.0")
+    tag: "v1.0.8"                # PRODUCTION: pin a specific immutable tag (e.g. "v1.0.0")
     pullPolicy: Always          # Always pull to ensure latest security patches
 
   # Service that fronts the gateway
@@ -818,7 +818,7 @@ mcpContextForge:
     REQUIRE_TOKEN_EXPIRATION: "true"       # require all JWT tokens to have expiration claims
     REQUIRE_JTI: "true"                    # require JTI (JWT ID) claim for revocation support
     REQUIRE_USER_IN_DB: "false"            # require all users to exist in database (disables platform admin bootstrap)
-    AUTH_ENCRYPTION_SECRET: my-test-salt   # passphrase to derive AES key for secure storage
+    AUTH_ENCRYPTION_SECRET: ""             # REQUIRED: passphrase to derive AES key for secure storage — must be set before deploying; generate with: make init-secrets-patch-env
     ALLOW_UNAUTHENTICATED_ADMIN: "false"  # DANGER: grants admin to unauthenticated requests when AUTH_REQUIRED=false
     TRUST_PROXY_AUTH_DANGEROUSLY: "false" # DANGER: trusts proxy identity headers without JWT verification
     PUBLIC_REGISTRATION_ENABLED: "false"  # disable public self-registration (admin must create accounts)
@@ -1024,7 +1024,7 @@ migration:
   # Use same image as mcpgateway
   image:
     repository: ghcr.io/ibm/mcp-context-forge
-    tag: "v1.0.6"                            # Should match mcpContextForge.image.tag
+    tag: "v1.0.8"                            # Should match mcpContextForge.image.tag
     pullPolicy: Always                      # Always pull to ensure latest security patches
 
   # Resource limits for the migration job

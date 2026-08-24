@@ -19,6 +19,7 @@ import { fetchWithTimeout, showErrorMessage, showSuccessMessage } from "../../..
 import { openModal } from "../../../mcpgateway/admin_ui/modals";
 
 vi.mock("../../../mcpgateway/admin_ui/auth.js", () => ({
+  getAuthHeaders: vi.fn().mockResolvedValue({ "X-CSRF-Token": "csrf-abc" }),
   loadAuthHeaders: vi.fn(),
   updateAuthHeadersJSON: vi.fn(),
 }));
@@ -1118,6 +1119,7 @@ describe("editGateway - auth types", () => {
       <input id="oauth-authorization-url-gw-edit" />
       <input id="oauth-redirect-uri-gw-edit" />
       <input id="oauth-scopes-gw-edit" />
+      <input id="oauth-resource-gw-edit" />
       <div id="oauth-auth-code-fields-gw-edit" style="display:none"></div>
       <div id="auth-query_param-fields-gw-edit" style="display:none">
         <input name="auth_query_param_key" />
@@ -1210,6 +1212,72 @@ describe("editGateway - auth types", () => {
     expect(document.getElementById("oauth-token-url-gw-edit").value).toBe("http://auth/token");
     expect(document.getElementById("oauth-scopes-gw-edit").value).toBe("api");
     expect(document.getElementById("edit-gateway-visibility-private").checked).toBe(true);
+  });
+
+  test("populates OAuth resource field from string shape for gateway edit", async () => {
+    // RFC 8707 allows a single resource as a string; edit dialog must round-trip it verbatim.
+    window.ROOT_PATH = "";
+    document.body.innerHTML = createGatewayEditHTML();
+
+    fetchWithTimeout.mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          name: "OAuth GW",
+          url: "http://localhost:8080",
+          visibility: "public",
+          transport: "SSE",
+          authType: "oauth",
+          oauthConfig: {
+            grant_type: "client_credentials",
+            client_id: "cid",
+            token_url: "http://auth/token",
+            resource: "https://api.example.com/mcp",
+          },
+          tags: [],
+        }),
+    });
+
+    await editGateway("gw-oauth-res-str");
+
+    expect(document.getElementById("oauth-resource-gw-edit").value).toBe(
+      "https://api.example.com/mcp"
+    );
+  });
+
+  test("populates OAuth resource field from list shape for gateway edit", async () => {
+    // RFC 8707 also allows resource as a list; edit dialog must render it comma-space joined
+    // so the operator can edit it in the same shape the admin form parses on submit.
+    window.ROOT_PATH = "";
+    document.body.innerHTML = createGatewayEditHTML();
+
+    fetchWithTimeout.mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          name: "OAuth GW",
+          url: "http://localhost:8080",
+          visibility: "public",
+          transport: "SSE",
+          authType: "oauth",
+          oauthConfig: {
+            grant_type: "client_credentials",
+            client_id: "cid",
+            token_url: "http://auth/token",
+            resource: [
+              "https://api-a.example.com/mcp",
+              "https://api-b.example.com/mcp",
+            ],
+          },
+          tags: [],
+        }),
+    });
+
+    await editGateway("gw-oauth-res-list");
+
+    expect(document.getElementById("oauth-resource-gw-edit").value).toBe(
+      "https://api-a.example.com/mcp, https://api-b.example.com/mcp"
+    );
   });
 
   test("populates query_param auth fields for gateway edit", async () => {
@@ -1488,7 +1556,7 @@ describe("refreshGatewayTools", () => {
       expect.objectContaining({
         method: "POST",
         credentials: "include", // pragma: allowlist secret
-        headers: { Accept: "application/json" },
+        headers: { Accept: "application/json", "X-CSRF-Token": "csrf-abc" },
       })
     );
 
@@ -1504,6 +1572,37 @@ describe("refreshGatewayTools", () => {
         swap: "outerHTML",
       })
     );
+  });
+
+  test("sends CSRF/auth headers on the refresh request", async () => {
+    window.ROOT_PATH = "";
+    document.body.innerHTML = `
+      <button id="refresh-btn">Refresh</button>
+      <div id="gateways-table"></div>
+      <input id="show-inactive-gateways" type="checkbox" />
+      <input id="gateways-search-input" value="" />
+      <input id="gateways-tag-filter" value="" />
+    `;
+
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({
+        success: true,
+        toolsAdded: 5,
+        toolsUpdated: 2,
+        toolsRemoved: 1,
+      }),
+    });
+
+    window.htmx = {
+      ajax: vi.fn(),
+    };
+
+    const { refreshGatewayTools } = await import("../../../mcpgateway/admin_ui/gateways.js");
+    await refreshGatewayTools("gw-1", "GW", null);
+    const [, opts] = global.fetch.mock.calls[0];
+    expect(opts.headers["X-CSRF-Token"]).toBe("csrf-abc");
+    expect(opts.headers.Accept).toBe("application/json");
   });
 
   test("disables button during refresh and restores text after", async () => {
@@ -1804,6 +1903,9 @@ describe("refreshToolsForSelectedGateways", () => {
     expect(showSuccessMessage).toHaveBeenCalledWith(
       "2 added, 1 updated, 0 removed"
     );
+
+    const [, opts] = global.fetch.mock.calls[0];
+    expect(opts.headers["X-CSRF-Token"]).toBe("csrf-abc");
   });
 
   test("shows error when only null sentinel is selected", async () => {

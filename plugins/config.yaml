@@ -798,7 +798,7 @@ plugins:
 
   # SQL Sanitizer - detect dangerous SQL patterns in inputs
   - name: "SQLSanitizer"
-    kind: "plugins.sql_sanitizer.sql_sanitizer.SQLSanitizerPlugin"
+    kind: "cpex_sql_sanitizer.sql_sanitizer.SQLSanitizerPlugin"
     description: "Detects risky SQL and optionally strips comments or blocks"
     version: "0.1.0"
     author: "ContextForge"
@@ -1059,7 +1059,7 @@ plugins:
     description: "Generates bearer tokens based on vault-saved tokens"
     version: "0.0.1"
     author: "Adrian Popa"
-    hooks: ["tool_pre_invoke"]
+    hooks: ["tool_pre_invoke", "agent_pre_invoke"]
     tags: ["security", "vault", "OAUTH2"]
     mode: "disabled" # enforce | enforce_ignore_error | permissive | disabled
     priority: 10
