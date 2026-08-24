@@ -17,18 +17,14 @@ required-version = ">=0.6.9"
 exclude-newer = "10 days"
 
 [tool.uv.exclude-newer-package]
-cpex = "2026-08-09T23:59:59Z"
-cpex-url-reputation = "2026-08-09T23:59:59Z"
-cpex-rate-limiter = "2026-08-09T23:59:59Z"
-cpex-encoded-exfil-detection = "2026-08-09T23:59:59Z"
-cpex-pii-filter = "2026-08-09T23:59:59Z"
-cpex-retry-with-backoff = "2026-08-09T23:59:59Z"
-cpex-secrets-detection = "2026-08-09T23:59:59Z"
-cpex-sql-sanitizer = "2026-08-09T23:59:59Z"
-# additional packages below this: remove before next upgrade cycle starts
-cryptography = "2026-08-09T23:59:59Z"
-greenlet = "2026-07-22T13:00:00Z"
-h2 = "2026-08-09T23:59:59Z"
+cpex = "2026-08-24T23:59:59Z"
+cpex-url-reputation = "2026-08-24T23:59:59Z"
+cpex-rate-limiter = "2026-08-24T23:59:59Z"
+cpex-encoded-exfil-detection = "2026-08-24T23:59:59Z"
+cpex-pii-filter = "2026-08-24T23:59:59Z"
+cpex-retry-with-backoff = "2026-08-24T23:59:59Z"
+cpex-secrets-detection = "2026-08-24T23:59:59Z"
+cpex-sql-sanitizer = "2026-08-24T23:59:59Z"
 
 
 # ----------------------------------------------------------------
