@@ -53,6 +53,7 @@ from mcp.server.streamable_http import EventCallback, EventId, EventMessage, Eve
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 import mcp_types as types
 from mcp_types import JSONRPCMessage
+from mcp_types.version import HANDSHAKE_PROTOCOL_VERSIONS
 import orjson
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
@@ -3375,6 +3376,7 @@ async def _maybe_short_circuit_notification(receive: Receive) -> _BodyPeekResult
 _MCP_KNOWN_REQUEST_METHODS = frozenset(
     {
         "initialize",
+        "server/discover",
         "tools/list",
         "list_tools",
         "list_gateways",
@@ -4755,6 +4757,9 @@ class SessionManagerWrapper:
         # common case (zero pending) takes the streaming-receive fast path.
         _notif_svc = _resolve_intercept_target(method, mcp_session_id)
         is_mcp_path = path == "/mcp" or path.endswith("/mcp") or _SERVER_SCOPED_PATH_RE.search(path) is not None
+        # check if modern era request
+        _pv_header = headers.get("mcp-protocol-version")
+        is_modern_era_request = _pv_header is not None and _pv_header not in HANDSHAKE_PROTOCOL_VERSIONS
         if _notif_svc is not None:
             # Authorize the caller against the session BEFORE touching the
             # body or matching the held responder. Without this, an
@@ -4800,7 +4805,7 @@ class SessionManagerWrapper:
         # collapse this case to -32600 "Missing session ID". Peek only small,
         # single-message JSON-RPC requests; known methods and malformed/large
         # bodies fall through to the SDK's normal transport/session checks.
-        if method == "POST" and mcp_session_id == "not-provided" and is_mcp_path and not is_internally_forwarded:
+        if method == "POST" and mcp_session_id == "not-provided" and is_mcp_path and not is_internally_forwarded and not is_modern_era_request:
             peek = await _drain_request_body(receive)
             if peek.disconnected:
                 logger.debug("POST %s aborted by client mid-body (unknown-method peek); not replaying", path)
@@ -4853,7 +4858,7 @@ class SessionManagerWrapper:
         # depends on. Forwarded requests already carry an Mcp-Session-Id
         # in production, but tests exercise the no-session forwarded path
         # so the gate is needed.
-        if method == "POST" and mcp_session_id == "not-provided" and is_mcp_path and not is_internally_forwarded:
+        if method == "POST" and mcp_session_id == "not-provided" and is_mcp_path and not is_internally_forwarded and not is_modern_era_request:
             peek = await _maybe_short_circuit_notification(receive)
             outcome, receive = await _dispatch_peek_outcome(
                 peek,
