@@ -463,17 +463,6 @@ def test_admin_update_partial(ctx: TestContext):
         test("Multi: is_active updated", resp.body.get("is_active") is False)
         test("Multi: pcr updated", resp.body.get("password_change_required") is True)
 
-    # ----------> [#2754] Code to be removed after Sun, 16 Aug 2026 23:59:59 UTC
-    # Tests to improve the coverage and maintain compatibility with PATCH endpoint
-    resp = ctx.api("PUT", f"/auth/email/admin/users/{email}", {"full_name": "Updated Name2"})
-    test("Name-only update with PUT returns 200", resp.status == 200, f"status={resp.status}")
-    if resp.status == 200:
-        test("Name updated", resp.body.get("full_name") == "Updated Name2")
-        test("is_admin preserved (True)", resp.body.get("is_admin") is True)
-        test("is_active preserved (False)", resp.body.get("is_active") is False)
-        test("pcr preserved (True)", resp.body.get("password_change_required") is True)
-    # ---------->
-
     # Update non-existent user
     resp = ctx.api("PATCH", "/auth/email/admin/users/nonexistent-xyz@example.com", {"full_name": "Ghost"})
     test("Update non-existent user returns 404", resp.status == 404, f"status={resp.status}")
