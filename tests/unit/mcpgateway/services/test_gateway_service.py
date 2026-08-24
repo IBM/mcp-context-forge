@@ -9823,3 +9823,64 @@ class TestFetchToolsAfterOAuthEnforcementPoint:
 
             assert "Refusing to forward" in str(exc_info.value)
             mock_connect.assert_not_awaited()
+
+
+class TestGatewayImpactPreviewTeamResolution:
+    """Regression tests for impact-preview team-membership resolution."""
+
+    @pytest.mark.asyncio
+    async def test_resolves_fallback_teams_once(self, gateway_service, test_db):
+        """Impact preview preloads fallback team memberships once for all servers."""
+        gateway_service.get_gateway = AsyncMock(return_value=SimpleNamespace(id="gateway-1"))
+        impacted_servers = [
+            SimpleNamespace(id="server-1", name="First server"),
+            SimpleNamespace(id="server-2", name="Second server"),
+        ]
+        test_db.execute = Mock(
+            side_effect=[
+                _make_execute_result(scalars_list=["server-1", "server-2"]),
+                _make_execute_result(scalars_list=[]),
+                _make_execute_result(scalars_list=[]),
+                _make_execute_result(scalars_list=impacted_servers),
+            ]
+        )
+        team_service = MagicMock()
+        team_service.get_user_teams = AsyncMock(return_value=[SimpleNamespace(id="team-1")])
+
+        with (
+            patch("mcpgateway.services.gateway_service.is_admin_bypass_granted", return_value=False),
+            patch("mcpgateway.services.gateway_service.TeamManagementService", return_value=team_service) as mock_team_service,
+            patch("mcpgateway.services.gateway_service.server_service._check_server_access", new=AsyncMock(return_value=True)) as mock_access,
+        ):
+            result = await gateway_service.get_gateway_impact_preview(test_db, "gateway-1", user_email="user@example.com", token_teams=None)
+
+        assert len(result.servers) == 2
+        mock_team_service.assert_called_once_with(test_db)
+        team_service.get_user_teams.assert_awaited_once_with("user@example.com")
+        assert mock_access.await_count == 2
+        assert all(access_call.kwargs["resolved_team_ids"] == ["team-1"] for access_call in mock_access.await_args_list)
+
+    @pytest.mark.asyncio
+    async def test_preserves_admin_bypass(self, gateway_service, test_db):
+        """Impact preview does not replace admin bypass with resolved team memberships."""
+        gateway_service.get_gateway = AsyncMock(return_value=SimpleNamespace(id="gateway-1"))
+        impacted_server = SimpleNamespace(id="server-1", name="Team server")
+        test_db.execute = Mock(
+            side_effect=[
+                _make_execute_result(scalars_list=["server-1"]),
+                _make_execute_result(scalars_list=[]),
+                _make_execute_result(scalars_list=[]),
+                _make_execute_result(scalars_list=[impacted_server]),
+            ]
+        )
+
+        with (
+            patch("mcpgateway.services.gateway_service.is_admin_bypass_granted", return_value=True),
+            patch("mcpgateway.services.gateway_service.TeamManagementService") as mock_team_service,
+            patch("mcpgateway.services.gateway_service.server_service._check_server_access", new=AsyncMock(return_value=True)) as mock_access,
+        ):
+            result = await gateway_service.get_gateway_impact_preview(test_db, "gateway-1", user_email="admin@example.com", token_teams=None)
+
+        assert len(result.servers) == 1
+        mock_team_service.assert_not_called()
+        mock_access.assert_awaited_once_with(test_db, impacted_server, "admin@example.com", None, resolved_team_ids=None)

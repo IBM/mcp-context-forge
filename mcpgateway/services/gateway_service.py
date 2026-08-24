@@ -3646,9 +3646,21 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             return GatewayImpactPreview(gateway_id=canonical_gateway_id)
 
         impacted_servers = db.execute(select(DbServer).where(DbServer.id.in_(server_ids)).order_by(DbServer.name, DbServer.id)).scalars().all()
+        resolved_team_ids = None
+        if token_teams is None and user_email and not is_admin_bypass_granted(db, user_email, token_teams):
+            team_service = TeamManagementService(db)
+            user_teams = await team_service.get_user_teams(user_email)
+            resolved_team_ids = [team.id for team in user_teams]
+
         visible_servers = []
         for impacted_server in impacted_servers:
-            if await server_service._check_server_access(db, impacted_server, user_email, token_teams):  # pylint: disable=protected-access
+            if await server_service._check_server_access(  # pylint: disable=protected-access
+                db,
+                impacted_server,
+                user_email,
+                token_teams,
+                resolved_team_ids=resolved_team_ids,
+            ):
                 visible_servers.append(GatewayImpactServer(id=str(impacted_server.id), name=impacted_server.name))
 
         return GatewayImpactPreview(gateway_id=canonical_gateway_id, servers=visible_servers)
