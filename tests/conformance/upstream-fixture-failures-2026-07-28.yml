@@ -1,0 +1,14 @@
+# The pinned alpha.11 JavaScript fixture reports 129 passed and 54 failed when
+# the official runner targets it directly at MCP 2026-07-28, plus one scored
+# warning. Of those failures, 47 belong to extension or pending scenarios and
+# are already unscored by the requirements file. These are its seven scored
+# failures and one warning. Update this file with MCP_CONFORMANCE_SOURCE_SHA.
+server:
+  - tools-call-simple-text:wire-schema-valid
+  - tools-call-image:wire-schema-valid
+  - tools-call-audio:wire-schema-valid
+  - tools-call-embedded-resource:wire-schema-valid
+  - tools-call-mixed-content:wire-schema-valid
+  - tools-call-error:wire-schema-valid
+  - tools-call-with-progress:wire-schema-valid
+  - input-required-result-validate-input:sep-2322-validate-input-responses

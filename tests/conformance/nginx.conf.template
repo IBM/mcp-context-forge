@@ -1,0 +1,67 @@
+user nginx;
+worker_processes auto;
+error_log /var/log/nginx/error.log warn;
+pid /var/run/nginx.pid;
+
+events {
+    worker_connections 1024;
+}
+
+http {
+    include /etc/nginx/mime.types;
+    default_type application/octet-stream;
+    access_log /var/log/nginx/access.log;
+    resolver 127.0.0.11 valid=5s ipv6=off;
+
+    map $http_authorization $conformance_authorization {
+        default $http_authorization;
+        "" "Bearer ${MCP_CONFORMANCE_TOKEN}";
+    }
+
+    server {
+        listen 80 default_server;
+        server_name _;
+
+        proxy_http_version 1.1;
+        proxy_set_header Host $http_host;
+        proxy_set_header Authorization $conformance_authorization;
+        proxy_set_header Mcp-Session-Id $http_mcp_session_id;
+        proxy_set_header Mcp-Protocol-Version $http_mcp_protocol_version;
+        proxy_set_header Mcp-Method $http_mcp_method;
+        proxy_set_header Mcp-Name $http_mcp_name;
+        proxy_set_header Origin $http_origin;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host $http_host;
+        proxy_set_header Connection "";
+
+        location ~ ^/servers/([^/]+)/mcp/?$ {
+            set $contextforge http://control-plane:4444;
+            proxy_pass $contextforge/servers/$1/mcp$is_args$args;
+            proxy_request_buffering on;
+            proxy_buffering off;
+            proxy_cache off;
+            proxy_connect_timeout 30s;
+            proxy_send_timeout 1h;
+            proxy_read_timeout 1h;
+            add_header X-Accel-Buffering "no" always;
+            add_header X-CF-Conformance-Backend python-builtin always;
+        }
+
+        location = /health {
+            set $contextforge http://control-plane:4444;
+            proxy_pass $contextforge/health;
+            proxy_connect_timeout 5s;
+            proxy_read_timeout 5s;
+        }
+
+        location / {
+            set $contextforge http://control-plane:4444;
+            proxy_pass $contextforge;
+            proxy_buffering off;
+            proxy_connect_timeout 30s;
+            proxy_send_timeout 120s;
+            proxy_read_timeout 120s;
+        }
+    }
+}

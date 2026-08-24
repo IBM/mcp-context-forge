@@ -23,6 +23,7 @@ on:
       - "pyproject.toml"
       - "uv.lock"
       - ".github/workflows/pytest.yml"
+      - ".github/workflows/mcp_conformance.yml"
   # schedule:
   #   - cron: '42 3 * * 1'   # Monday 03:42 UTC
 
@@ -59,6 +60,11 @@ jobs:
           GITHUB_REF_TYPE_VALUE: ${{ github.ref_type }}
           GITHUB_SHA_VALUE: ${{ github.sha }}
         run: python3 .github/scripts/secret_baseline_ci_decision.py
+
+  conformance:
+    needs: ci-decision
+    if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (needs.ci-decision.result != 'success' || needs.ci-decision.outputs.run-full-ci != 'false')
+    uses: ./.github/workflows/mcp_conformance.yml
 
   test:
     needs: ci-decision

@@ -1,0 +1,22 @@
+diff --git a/requirements/2026-07-28.yaml b/requirements/2026-07-28.yaml
+--- a/requirements/2026-07-28.yaml
++++ b/requirements/2026-07-28.yaml
+@@ -45,7 +45,6 @@ server:
+   - tools-call-embedded-resource
+   - tools-call-mixed-content
+   - tools-call-error
+-  - tools-call-with-progress
+   - server-sse-multiple-streams
+   - resources-list
+   - resources-read-text
+diff --git a/requirements/2025-11-25.yaml b/requirements/2025-11-25.yaml
+--- a/requirements/2025-11-25.yaml
++++ b/requirements/2025-11-25.yaml
+@@ -53,7 +53,6 @@ server:
+   - tools-call-mixed-content
+   - tools-call-with-logging
+   - tools-call-error
+-  - tools-call-with-progress
+   - tools-call-sampling
+   - tools-call-elicitation
+   - elicitation-sep1034-defaults

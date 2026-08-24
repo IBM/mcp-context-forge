@@ -43,6 +43,7 @@ MCP_2025_PYTEST_ARGS ?=
 MCP_2025_BASE_URL ?=
 MCP_2025_RPC_PATH ?= /mcp/
 MCP_2025_BEARER_TOKEN ?=
+MCP_CONFORMANCE_IMAGE ?= mcpgateway/mcpgateway:conformance
 
 # Virtual-environment variables
 VENV_DIR ?= $(CURDIR)/.venv
@@ -809,6 +810,8 @@ clean:
 # =============================================================================
 # help: 🧪 TESTING
 # help: smoketest            - Run smoketest.py --verbose (build container, add MCP server, test endpoints)
+# help: conformance          - Build Python ContextForge and run official MCP 2025-11-25 + 2026-07-28 conformance
+# help: conformance-bless    - Run conformance and update the expected-failure baseline
 # help: test-mcp-protocol-e2e - MCP protocol E2E via mcp SDK client against live gateway (K=<filter> to pick one; MCP_E2E_CLIENT_TIMEOUT env to extend the 5s client timeout)
 # help: test-mcp-cli         - [DEPRECATED] Alias for test-mcp-protocol-e2e (accepts same K=<filter>)
 # help: test-bats            - Run bats tests for git tooling (tests/bash; requires bats)
@@ -852,7 +855,7 @@ clean:
 # help: query-log-analyze    - Analyze query log for N+1 patterns and slow queries
 # help: query-log-clear      - Clear database query log files
 
-.PHONY: smoketest test-mcp-cli test-mcp-rbac test-mcp-plugin-parity test-mcp-access-matrix \
+.PHONY: smoketest conformance conformance-bless test-mcp-cli test-mcp-rbac test-mcp-plugin-parity test-mcp-access-matrix \
 	test-mcp-session-isolation test-mcp-session-isolation-load test-e2e-sso \
 	test-live-gateway test test-verbose test-profile coverage test-docs pytest-examples \
 	test-curl htmlcov doctest doctest-verbose doctest-coverage doctest-check test-db-perf \
@@ -882,6 +885,13 @@ smoketest:
 	@test -d "$(VENV_DIR)" || $(MAKE) venv install install-dev
 	@$(VENV_DIR)/bin/python ./smoketest.py --verbose || { echo "❌ Smoketest failed!"; exit 1; }
 	@echo "✅ Smoketest passed!"
+
+conformance: ## Build Python ContextForge and run official MCP 2025-11-25 + 2026-07-28 conformance locally
+	@$(MAKE) docker-prod IMAGE_TAG=conformance ENABLE_RUST_BUILD=0 RUST_MCP_BUILD=0
+	@CF_CONTEXTFORGE_IMAGE="$(MCP_CONFORMANCE_IMAGE)" tests/conformance/run-local.sh
+
+conformance-bless: ## Run conformance and update the expected-failure baseline
+	@MCP_CONFORMANCE_BLESS=true $(MAKE) conformance
 
 test-mcp-protocol-e2e: uv  ## MCP protocol E2E via mcp SDK client (K=<filter> to pick one)
 	@echo "🔌 Running MCP protocol E2E tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."

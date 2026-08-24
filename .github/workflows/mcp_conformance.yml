@@ -1,0 +1,151 @@
+name: MCP Conformance (Python)
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  MCP_CONFORMANCE_COLOR: always
+  MCP_CONFORMANCE_VERSION: 0.2.0-alpha.11
+  MCP_CONFORMANCE_SOURCE_SHA: c321dd32035556e6769d3724a8ee97d87c3faaac # pragma: allowlist secret
+  MCP_CONFORMANCE_SERVER_ID: 3f33286667d34b65a31c3bafd30e4c21
+  CF_CONTEXTFORGE_IMAGE: mcpgateway/mcpgateway:conformance
+
+jobs:
+  conformance:
+    name: MCP 2025 + 2026 gateway server/client paths
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out ContextForge
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+
+      - name: Test conformance reporter
+        run: tests/conformance/report-baseline-diff-test.sh
+
+      # Reuse the same BuildKit cache as the repository's amd64 image jobs.
+      # Only the final source layers should rebuild for most pull requests.
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Build ContextForge without Rust
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: Containerfile
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: ${{ env.CF_CONTEXTFORGE_IMAGE }}
+          build-args: |
+            ENABLE_RUST=false
+            ENABLE_RUST_MCP_RMCP=false
+            ENABLE_PROFILING=false
+            ENABLE_FIPS=false
+          cache-from: type=gha,scope=containerfile-lite-amd64
+          cache-to: type=gha,mode=min,scope=containerfile-lite-amd64
+          provenance: false
+
+      - name: Check out the alpha.11 conformance fixture
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          repository: modelcontextprotocol/conformance
+          ref: ${{ env.MCP_CONFORMANCE_SOURCE_SHA }}
+          path: .conformance-suite
+          persist-credentials: false
+
+      - name: Install Node.js 22
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: .conformance-suite/package-lock.json
+
+      - name: Install official conformance dependencies
+        working-directory: .conformance-suite
+        run: |
+          test "$(node -p "require('./package.json').version")" = "${MCP_CONFORMANCE_VERSION}"
+          npm ci --ignore-scripts
+
+      # The pinned conformance CLI has no scenario-exclusion option. Apply an
+      # exact patch so this flaky scenario is not run until forwarding is ordered.
+      - name: Temporarily disable the flaky progress scenario
+        working-directory: .conformance-suite
+        run: git apply ../tests/conformance/disable-flaky-progress.patch
+
+      - name: Pull external stack images
+        env:
+          MCP_CONFORMANCE_TOKEN: pull-only
+        run: >-
+          docker compose -f tests/conformance/docker-compose.yml
+          pull fixture-proxy nginx
+
+      - name: Start the official conformance server fixture and ContextForge
+        env:
+          MCP_CONFORMANCE_TOKEN: bootstrap-only
+        run: tests/conformance/start-fixture-and-control-plane.sh
+
+      - name: Register the fixture through ContextForge's outbound client path
+        env:
+          MCP_CONFORMANCE_TOKEN: bootstrap-only
+        run: tests/conformance/register-fixture.sh
+
+      - name: Start the built-in Python data plane and nginx
+        run: tests/conformance/start-builtin-dataplane-and-nginx.sh
+
+      - name: Run the official conformance client against MCP 2025-11-25
+        id: runner_2025
+        env:
+          MCP_CONFORMANCE_SPEC_VERSION: 2025-11-25
+          MCP_CONFORMANCE_RESULTS_DIR: conformance-results/2025-11-25
+        run: tests/conformance/run-conformance.sh
+
+      - name: Report MCP 2025-11-25 baseline diff
+        if: always()
+        env:
+          MCP_CONFORMANCE_SPEC_VERSION: 2025-11-25
+          MCP_CONFORMANCE_RESULTS_DIR: conformance-results/2025-11-25
+        run: tests/conformance/report-baseline-diff.sh "${MCP_CONFORMANCE_RESULTS_DIR}"
+
+      - name: Run the official conformance client against MCP 2026-07-28
+        id: runner_2026
+        if: always()
+        env:
+          MCP_CONFORMANCE_SPEC_VERSION: 2026-07-28
+          MCP_CONFORMANCE_RESULTS_DIR: conformance-results/2026-07-28
+        run: tests/conformance/run-conformance.sh
+
+      - name: Report MCP 2026-07-28 baseline diff
+        if: always()
+        env:
+          MCP_CONFORMANCE_SPEC_VERSION: 2026-07-28
+          MCP_CONFORMANCE_RESULTS_DIR: conformance-results/2026-07-28
+        run: tests/conformance/report-baseline-diff.sh "${MCP_CONFORMANCE_RESULTS_DIR}"
+
+      - name: Print live stack logs
+        if: always()
+        env:
+          MCP_CONFORMANCE_TOKEN: diagnostics-only
+        run: >-
+          docker compose -f tests/conformance/docker-compose.yml
+          logs --no-color || true
+
+      - name: Print official fixture log
+        if: always()
+        run: |
+          if [ -f conformance-logs/reference-server.log ]; then
+            sed -n '1,240p' conformance-logs/reference-server.log
+          else
+            echo "No official fixture log was produced."
+          fi
+
+      - name: Stop the live stack
+        if: always()
+        env:
+          MCP_CONFORMANCE_TOKEN: cleanup-only
+        run: tests/conformance/stop-live-stack.sh
