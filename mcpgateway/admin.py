@@ -204,6 +204,7 @@ from mcpgateway.utils.oauth_resource import parse_oauth_resource_form
 from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.pagination import paginate_query
 from mcpgateway.utils.passthrough_headers import PassthroughHeadersError
+from mcpgateway.utils.paths import is_path_within
 from mcpgateway.utils.paths import resolve_root_path as _resolve_root_path
 from mcpgateway.utils.security_cookies import clear_auth_cookie, CookieTooLargeError, set_auth_cookie
 from mcpgateway.utils.services_auth import encode_auth
@@ -15503,17 +15504,35 @@ async def admin_get_log_file(
     log_dir = Path(settings.log_folder) if settings.log_folder else Path(".")
 
     if filename:
-        # Download specific file
-        file_path = log_dir / filename
-
-        # Security: Ensure file is within log directory
-        try:
-            file_path = file_path.resolve()
-            log_dir_resolved = log_dir.resolve()
-            if not str(file_path).startswith(str(log_dir_resolved)):
-                raise HTTPException(403, _ACCESS_DENIED_MSG)
-        except Exception:
+        # Download specific file.
+        #
+        # Security: the download is confined to LOG_FOLDER by two independent checks.
+        #
+        #   1. Reject obviously hostile input *before* joining it onto the log
+        #      directory: absolute paths and drive/UNC anchors would make ``/`` discard
+        #      log_dir entirely, ``..`` segments walk upwards, and a NUL byte can
+        #      truncate the path at the OS layer.
+        #   2. Resolve the joined path (collapsing symlinks and any remaining relative
+        #      segments) and require it to stay inside the resolved log directory.
+        #
+        # Check 2 is the real control; ``is_path_within`` compares whole path
+        # components, so a sibling directory that merely shares a textual prefix with
+        # LOG_FOLDER is rejected.
+        if "\x00" in filename:
             raise HTTPException(400, "Invalid file path")
+
+        candidate = Path(filename)
+        if candidate.is_absolute() or candidate.drive or candidate.root or ".." in candidate.parts:
+            raise HTTPException(400, "Invalid file path")
+
+        try:
+            file_path = (log_dir / candidate).resolve()
+            log_dir_resolved = log_dir.resolve()
+        except (OSError, ValueError, RuntimeError):
+            raise HTTPException(400, "Invalid file path")
+
+        if not is_path_within(file_path, log_dir_resolved):
+            raise HTTPException(403, _ACCESS_DENIED_MSG)
 
         # Check if file exists
         if not file_path.exists() or not file_path.is_file():

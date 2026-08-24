@@ -3,7 +3,7 @@
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 
-Unit tests for shared request-path utilities.
+Unit tests for shared request-path and filesystem-path utilities.
 
 Covers the canonical root-path resolution helper introduced in issue #3298
 to replace the 12 direct ``request.scope.get("root_path", "")`` call sites
@@ -14,13 +14,14 @@ that lacked the ``settings.app_root_path`` fallback.
 from __future__ import annotations
 
 # Standard
+from pathlib import Path
 from unittest.mock import MagicMock
 
 # Third-Party
 import pytest
 
 # First-Party
-from mcpgateway.utils.paths import replace_api_path_alias, resolve_root_path
+from mcpgateway.utils.paths import is_path_within, replace_api_path_alias, resolve_root_path
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -255,3 +256,63 @@ def test_encoded_chars_preserved() -> None:
     """Percent-encoded characters are preserved as-is."""
     req = _make_request("/app%2Fpath")
     assert resolve_root_path(req) == "/app%2Fpath"
+
+
+# ---------------------------------------------------------------------------
+# is_path_within
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "candidate",
+    [
+        "/srv/logs",
+        "/srv/logs/app.log",
+        "/srv/logs/archive/app.log",
+    ],
+)
+def test_is_path_within_accepts_root_and_descendants(candidate: str) -> None:
+    """The root itself and anything beneath it are confined."""
+    assert is_path_within(Path(candidate), Path("/srv/logs")) is True
+
+
+@pytest.mark.parametrize(
+    "candidate",
+    [
+        "/srv/logs_secret/creds.json",
+        "/srv/logsx",
+        "/srv/logs-backup/app.log",
+        "/srv",
+        "/etc/passwd",
+    ],
+)
+def test_is_path_within_rejects_paths_outside_root(candidate: str) -> None:
+    """Anything outside the root tree is rejected, siblings included."""
+    assert is_path_within(Path(candidate), Path("/srv/logs")) is False
+
+
+def test_is_path_within_rejects_sibling_that_startswith_would_allow() -> None:
+    """Regression: the sibling-prefix case a ``startswith`` check gets wrong.
+
+    ``/srv/logs_secret/creds.json`` shares a textual prefix with ``/srv/logs`` but
+    lives outside that directory tree.
+    """
+    candidate = Path("/srv/logs_secret/creds.json")
+    root = Path("/srv/logs")
+
+    # The insecure check this helper replaces would allow it...
+    assert str(candidate).startswith(str(root)) is True
+    # ...while component-aware confinement correctly denies it.
+    assert is_path_within(candidate, root) is False
+
+
+def test_is_path_within_resolves_relative_escape(tmp_path: Path) -> None:
+    """A ``..`` escape collapsed by ``resolve()`` is rejected."""
+    root = (tmp_path / "logs").resolve()
+    root.mkdir()
+    (tmp_path / "logs_secret").mkdir()
+
+    escaped = (root / ".." / "logs_secret" / "creds.json").resolve()
+
+    assert str(escaped).startswith(str(root)) is True
+    assert is_path_within(escaped, root) is False

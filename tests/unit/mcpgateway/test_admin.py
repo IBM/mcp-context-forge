@@ -14622,6 +14622,7 @@ class TestAdminAdditionalCoverage:
         assert isinstance(response, Response)
         assert "app.log" in response.headers.get("content-disposition", "")
 
+        # Rejected by the pre-join input filter (".." component), before any path join.
         with pytest.raises(HTTPException) as excinfo:
             await admin_get_log_file(filename="../secret.log", user={"email": "admin@example.com", "db": mock_db})
         assert excinfo.value.status_code == 400
@@ -14633,6 +14634,115 @@ class TestAdminAdditionalCoverage:
         with pytest.raises(HTTPException) as excinfo:
             await admin_get_log_file(filename="random.txt", user={"email": "admin@example.com", "db": mock_db})
         assert excinfo.value.status_code == 403
+
+    @patch("mcpgateway.admin.settings")
+    async def test_admin_get_log_file_rejects_sibling_prefix_directory(self, mock_settings, tmp_path, mock_db):
+        """A sibling directory sharing LOG_FOLDER's textual prefix must not be readable.
+
+        ``/tmp/.../logs_secret`` shares a string prefix with the ``/tmp/.../logs`` log
+        directory, so a ``startswith`` confinement check would wrongly allow it.
+        """
+        log_dir = tmp_path / "logs"
+        log_dir.mkdir()
+        (log_dir / "app.log").write_text("main")
+
+        secret_dir = tmp_path / "logs_secret"
+        secret_dir.mkdir()
+        canary = "CANARY-SIBLING-PREFIX-MUST-NOT-LEAK"
+        (secret_dir / "creds.json").write_text('{"secret": "%s"}' % canary)  # pragma: allowlist secret
+
+        mock_settings.log_to_file = True
+        mock_settings.log_file = "app.log"
+        mock_settings.log_folder = str(log_dir)
+        mock_settings.log_rotation_enabled = False
+
+        for payload in ("../logs_secret/creds.json", "sub/../../logs_secret/creds.json", "./../logs_secret/creds.json"):
+            with pytest.raises(HTTPException) as excinfo:
+                await admin_get_log_file(filename=payload, user={"email": "admin@example.com", "db": mock_db})
+            assert excinfo.value.status_code == 400
+            assert canary not in str(excinfo.value.detail)
+
+    @patch("mcpgateway.admin.settings")
+    async def test_admin_get_log_file_rejects_symlink_escaping_log_dir(self, mock_settings, tmp_path, mock_db):
+        """A symlink planted inside LOG_FOLDER must not read outside it.
+
+        This payload contains no ``..`` component, so it reaches the post-resolve
+        confinement check — the primary control — rather than the input filter.
+        """
+        log_dir = tmp_path / "logs"
+        log_dir.mkdir()
+        (log_dir / "app.log").write_text("main")
+
+        secret_dir = tmp_path / "logs_secret"
+        secret_dir.mkdir()
+        secret_file = secret_dir / "creds.json"
+        secret_file.write_text('{"secret": "CANARY-SYMLINK-MUST-NOT-LEAK"}')  # pragma: allowlist secret
+
+        link = log_dir / "escape.json"
+        try:
+            link.symlink_to(secret_file)
+        except (OSError, NotImplementedError):
+            pytest.skip("symlinks not supported on this platform")
+
+        mock_settings.log_to_file = True
+        mock_settings.log_file = "app.log"
+        mock_settings.log_folder = str(log_dir)
+        mock_settings.log_rotation_enabled = False
+
+        with pytest.raises(HTTPException) as excinfo:
+            await admin_get_log_file(filename="escape.json", user={"email": "admin@example.com", "db": mock_db})
+        assert excinfo.value.status_code == 403
+
+    @patch("mcpgateway.admin.settings")
+    async def test_admin_get_log_file_rejects_absolute_and_nul_filenames(self, mock_settings, tmp_path, mock_db):
+        """Absolute paths and NUL bytes are rejected before the path join."""
+        log_dir = tmp_path / "logs"
+        log_dir.mkdir()
+        (log_dir / "app.log").write_text("main")
+
+        mock_settings.log_to_file = True
+        mock_settings.log_file = "app.log"
+        mock_settings.log_folder = str(log_dir)
+        mock_settings.log_rotation_enabled = False
+
+        for payload in ("/etc/passwd", "/var/log/syslog.log", "app.log\x00.png"):
+            with pytest.raises(HTTPException) as excinfo:
+                await admin_get_log_file(filename=payload, user={"email": "admin@example.com", "db": mock_db})
+            assert excinfo.value.status_code == 400
+
+    @patch("mcpgateway.admin.settings")
+    async def test_admin_get_log_file_resolve_failure_is_rejected(self, mock_settings, tmp_path, mock_db):
+        """An OS-level failure while resolving the path is rejected, never allowed through."""
+        log_dir = tmp_path / "logs"
+        log_dir.mkdir()
+        (log_dir / "app.log").write_text("main")
+
+        mock_settings.log_to_file = True
+        mock_settings.log_file = "app.log"
+        mock_settings.log_folder = str(log_dir)
+        mock_settings.log_rotation_enabled = False
+
+        with patch("mcpgateway.admin.Path.resolve", side_effect=OSError("ELOOP")):
+            with pytest.raises(HTTPException) as excinfo:
+                await admin_get_log_file(filename="app.log", user={"email": "admin@example.com", "db": mock_db})
+        assert excinfo.value.status_code == 400
+
+    @patch("mcpgateway.admin.settings")
+    async def test_admin_get_log_file_allows_nested_file_inside_log_dir(self, mock_settings, tmp_path, mock_db):
+        """Confinement must not be so tight that legitimate nested log files break."""
+        log_dir = tmp_path / "logs"
+        (log_dir / "archive").mkdir(parents=True)
+        (log_dir / "app.log").write_text("main")
+        (log_dir / "archive" / "app.log").write_text("rotated")
+
+        mock_settings.log_to_file = True
+        mock_settings.log_file = "app.log"
+        mock_settings.log_folder = str(log_dir)
+        mock_settings.log_rotation_enabled = False
+
+        response = await admin_get_log_file(filename="archive/app.log", user={"email": "admin@example.com", "db": mock_db})
+        assert isinstance(response, Response)
+        assert "app.log" in response.headers.get("content-disposition", "")
 
     @patch("mcpgateway.admin.settings")
     async def test_admin_get_log_file_download_stat_filenotfound(self, mock_settings, tmp_path, mock_db):

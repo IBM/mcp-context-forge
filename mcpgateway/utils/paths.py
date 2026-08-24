@@ -3,7 +3,7 @@
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 
-Shared request-path utilities for ContextForge.
+Shared request-path and filesystem-path utilities for ContextForge.
 
 Some embedded/proxy deployments do not populate ``scope["root_path"]``
 consistently.  This module provides a single canonical helper that checks
@@ -17,6 +17,7 @@ directly should use :func:`resolve_root_path` instead.
 
 # Standard
 import logging
+from pathlib import Path
 import re
 
 # Third-Party
@@ -130,3 +131,45 @@ def resolve_root_path(request: Request, *, fallback: str | None = None) -> str:
     if root_path:
         root_path = "/" + root_path.lstrip("/")
     return root_path.rstrip("/")
+
+
+def is_path_within(candidate: Path, root: Path) -> bool:
+    """Report whether *candidate* is confined to the directory tree rooted at *root*.
+
+    This is the canonical directory-confinement check for ContextForge.  It must be
+    used instead of ``str(candidate).startswith(str(root))``: a plain string prefix
+    comparison has no notion of a path-component boundary, so a *sibling* directory
+    that merely shares a textual prefix (``/srv/logs_secret`` vs. root ``/srv/logs``)
+    passes the prefix test while living entirely outside the intended tree.
+
+    Both arguments are expected to be already resolved (``Path.resolve()``) by the
+    caller, so that symlinks and ``..`` segments have been collapsed before the
+    comparison.  The check itself is purely lexical and touches no filesystem.
+
+    Args:
+        candidate: Resolved path to test.
+        root: Resolved directory that *candidate* must not escape.
+
+    Returns:
+        ``True`` when *candidate* is *root* itself or lives beneath it, else ``False``.
+
+    Examples:
+        >>> from pathlib import Path
+        >>> is_path_within(Path("/srv/logs/app.log"), Path("/srv/logs"))
+        True
+        >>> is_path_within(Path("/srv/logs"), Path("/srv/logs"))
+        True
+        >>> is_path_within(Path("/srv/logs/sub/app.log"), Path("/srv/logs"))
+        True
+
+        A sibling directory sharing a textual prefix is correctly rejected, where a
+        ``startswith`` check would wrongly allow it:
+
+        >>> str(Path("/srv/logs_secret/creds.json")).startswith(str(Path("/srv/logs")))
+        True
+        >>> is_path_within(Path("/srv/logs_secret/creds.json"), Path("/srv/logs"))
+        False
+        >>> is_path_within(Path("/etc/passwd"), Path("/srv/logs"))
+        False
+    """
+    return candidate == root or candidate.is_relative_to(root)
