@@ -25,6 +25,7 @@ cpex-pii-filter = "2026-08-24T23:59:59Z"
 cpex-retry-with-backoff = "2026-08-24T23:59:59Z"
 cpex-secrets-detection = "2026-08-24T23:59:59Z"
 cpex-sql-sanitizer = "2026-08-24T23:59:59Z"
+# additional packages below this: remove before next upgrade cycle starts
 
 
 # ----------------------------------------------------------------
@@ -43,7 +44,6 @@ classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Framework :: FastAPI",
