@@ -4435,7 +4435,7 @@ def test_gateway_service_singleton_and_cache_helpers(monkeypatch):
     # First-Party
     import mcpgateway.services.gateway_service as gs
 
-    gs._gateway_service_instance = None
+    monkeypatch.setattr(gs, "_gateway_service_instance", None)
     instance = gs.gateway_service
     assert isinstance(instance, GatewayService)
     assert gs.gateway_service is instance
@@ -4448,10 +4448,11 @@ def test_gateway_service_singleton_and_cache_helpers(monkeypatch):
         invalidate_resources=AsyncMock(),
         invalidate_prompts=AsyncMock(),
         invalidate_gateways=AsyncMock(),
+        invalidate_catalog=AsyncMock(),
     )
     tool_sentinel = SimpleNamespace(invalidate_gateway=AsyncMock())
-    gs._REGISTRY_CACHE = None
-    gs._TOOL_LOOKUP_CACHE = None
+    monkeypatch.setattr(gs, "_REGISTRY_CACHE", None)
+    monkeypatch.setattr(gs, "_TOOL_LOOKUP_CACHE", None)
 
     monkeypatch.setitem(sys.modules, "mcpgateway.cache.registry_cache", SimpleNamespace(registry_cache=registry_sentinel))
     monkeypatch.setitem(sys.modules, "mcpgateway.cache.tool_lookup_cache", SimpleNamespace(tool_lookup_cache=tool_sentinel))
