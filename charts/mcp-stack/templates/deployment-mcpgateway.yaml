@@ -129,11 +129,21 @@ spec:
 
             # ---------- REDIS ----------
             {{- if .Values.redis.external.enabled }}
-            {{- if and (not .Values.redis.external.existingSecret) (not .Values.redis.external.url) }}
+            {{- if .Values.redis.external.url }}
             - name: REDIS_HOST
               value: {{ .Values.redis.external.host | quote }}
             - name: REDIS_PORT
               value: "{{ .Values.redis.external.port }}"
+            {{- end }}
+            {{- if and .Values.redis.external.existingSecret .Values.redis.external.passwordKey }}
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.redis.external.existingSecret | quote }}
+                  key: {{ .Values.redis.external.passwordKey | quote }}
+            {{- else if .Values.redis.external.password }}
+            - name: REDIS_PASSWORD
+              value: {{ .Values.redis.external.password | quote }}
             {{- end }}
             {{- else if or .Values.redis.enabled .Values.mcpContextForge.env.redis.host }}
             - name: REDIS_HOST
@@ -179,13 +189,15 @@ spec:
                 postgresql+psycopg://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$(POSTGRES_DB)
             - name: REDIS_URL
               {{- if .Values.redis.external.enabled }}
-              {{- if .Values.redis.external.existingSecret }}
+              {{- if and .Values.redis.external.existingSecret .Values.redis.external.urlKey }}
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.redis.external.existingSecret }}
-                  key: {{ .Values.redis.external.urlKey | default "REDIS_URL" }}
+                  key: {{ .Values.redis.external.urlKey }}
               {{- else if .Values.redis.external.url }}
               value: {{ .Values.redis.external.url | quote }}
+              {{- else if or .Values.redis.external.password .Values.redis.external.passwordKey }}
+              value: "redis://:$(REDIS_PASSWORD)@$(REDIS_HOST):$(REDIS_PORT)/{{ .Values.redis.external.db }}"
               {{- else }}
               value: "redis://$(REDIS_HOST):$(REDIS_PORT)/{{ .Values.redis.external.db }}"
               {{- end }}
