@@ -1774,6 +1774,21 @@ class SSOService:
             normalized.update(extra)
         return normalized
 
+    def normalize_user_info(self, provider: SSOProvider, user_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Normalize provider claims to the canonical ContextForge user shape.
+
+        Token-authenticated and browser SSO flows call this public entry point
+        so provider claim mappings resolve to the same local principal.
+
+        Args:
+            provider: SSO provider configuration.
+            user_data: Raw, trusted claims or user-info data from the provider.
+
+        Returns:
+            Normalized user information.
+        """
+        return self._normalize_user_info(provider, user_data)
+
     def _normalize_user_info(self, provider: SSOProvider, user_data: Dict[str, Any]) -> Dict[str, Any]:
         """Normalize user info from different providers to common format.
 
@@ -1805,6 +1820,10 @@ class SSOService:
                 normalized["email_verified"] = github_email_verified
             return normalized
 
+        metadata = provider.provider_metadata or {}
+        email_claim = metadata.get("email_claim", "email")
+        username_claim = metadata.get("username_claim", "preferred_username")
+
         # Handle Google provider
         if provider.id == "google":
             return self._build_normalized_user_info(
@@ -1814,7 +1833,6 @@ class SSOService:
                 username=user_data.get("email", "").split("@")[0],
             )
 
-        metadata = provider.provider_metadata or {}
         groups_claim = metadata.get("groups_claim", "groups")
 
         # Handle IBM Verify provider
@@ -1829,9 +1847,6 @@ class SSOService:
 
         # Handle Keycloak provider with role mapping
         if provider.id == "keycloak":
-            username_claim = metadata.get("username_claim", "preferred_username")
-            email_claim = metadata.get("email_claim", "email")
-
             groups: list[str] = []
 
             # Extract realm roles
@@ -1919,7 +1934,14 @@ class SSOService:
 
         # Generic OIDC format for all other providers.
         groups = self._extract_groups_and_roles(user_data, groups_claim)
-        return self._build_normalized_user_info(user_data, provider.id, groups)
+        email = user_data.get(email_claim)
+        return self._build_normalized_user_info(
+            user_data,
+            provider.id,
+            groups,
+            email=email,
+            username=user_data.get(username_claim) or (email.split("@")[0] if isinstance(email, str) and "@" in email else None),
+        )
 
     def _reset_pending_approval(self, pending: PendingUserApproval, incoming_provider: str, user_info: Dict[str, Any]) -> None:
         """Reset a pending approval request to pending state with fresh metadata.
@@ -2105,8 +2127,8 @@ class SSOService:
                 user.auth_provider = incoming_provider
                 current_auth_provider = incoming_provider
 
-            # Persist verification status from provider claims.
-            user.email_verified = self._is_email_verified_claim(user_info)
+            # The verification check above has already accepted this identity.
+            user.email_verified_at = utc_now()
             user.last_login = utc_now()
 
             # Synchronize is_admin status based on current group membership
@@ -2184,6 +2206,11 @@ class SSOService:
             )
             if not user:
                 return None
+
+            # SSO identities accepted by the verification gate above are locally
+            # verified. Persist that state for APIs that inspect the user row.
+            user.email_verified_at = utc_now()
+            self.db.commit()
 
             user_email = getattr(user, "email", None)
             if isinstance(user_email, str) and user_email.strip():

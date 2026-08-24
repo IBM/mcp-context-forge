@@ -802,6 +802,44 @@ When `trusted_for_api_auth=true`, `api_audience` **must** also be set — the re
 5. The token's identity is JIT-provisioned/looked up as a local user (the same provisioning path used by browser SSO).
 6. The resulting principal is a **session-semantics** identity (`token_use="session"`): `is_admin` is read from the persisted local user record, and `teams` are resolved via `resolve_session_teams()` — both are DB-authoritative, never derived directly from the external token's claims.
 
+### OAuth-enabled virtual-server MCP calls
+
+An OAuth-enabled virtual server validates access tokens against its own issuer
+and audience configuration. If the verified principal does not yet exist in
+ContextForge, it can use the same SSO JIT-provisioning path described above.
+This requires all of the following:
+
+- `SSO_API_TOKEN_AUTH_ENABLED=true`
+- the verified token issuer matches an enabled provider with
+  `trusted_for_api_auth=true`
+- that provider has `auto_create_users=true`
+- the provider's email-verification, trusted-domain, admin-approval,
+  account-linking, role, and team rules accept the identity
+
+Existing users continue through a direct local lookup. Provisioning failures
+are denied, and disabled local users remain denied.
+
+The local user key is selected through the SSO provider's existing
+`provider_metadata.email_claim` setting. Keycloak providers populated from the
+environment use `SSO_KEYCLOAK_EMAIL_CLAIM` (default `email`). Generic OIDC
+providers can configure the same metadata explicitly:
+
+```json
+{
+  "provider_metadata": {
+    "email_claim": "principal_email",
+    "username_claim": "preferred_username"
+  }
+}
+```
+
+The selected claim must contain an email-shaped value (including `@`) because
+ContextForge uses email as the local user key. When a trusted provider has an
+explicit mapping, a missing or invalid mapped claim fails closed instead of
+falling back to another claim such as a contact email. Browser SSO and MCP token
+authentication use the same mapping, preventing one IdP subject from resolving
+to different local users across authentication flows.
+
 ### Role and group mapping
 
 Role/group → team mapping for externally-authenticated principals reuses the same provider configuration as browser SSO (e.g. `SSO_KEYCLOAK_ROLE_MAPPINGS`, `SSO_ENTRA_ROLE_MAPPINGS`, `SSO_GENERIC_ROLE_MAPPINGS`). If role-sync is enabled for the provider, teams and admin status are re-derived from the token's claims into the local DB on each provisioning pass — see the role-sync caveat below.
