@@ -1046,13 +1046,7 @@ class NotificationService:
         gateway_id: str,
         notification_type: NotificationType,
     ) -> None:
-        """Feed a list-changed event from a non-session source into the refresh pipeline.
-
-        Modern (2026-07-28) servers deliver change events on a dedicated
-        ``subscriptions/listen`` stream rather than the session message
-        channel, so no per-session message handler is involved. Listener
-        code calls this to route those events through the same debounced
-        refresh used for session-delivered notifications.
+        """Feed a list-changed event from a non-session source (e.g. a listen stream) into the debounced refresh.
 
         Args:
             gateway_id: The gateway the event originated from.

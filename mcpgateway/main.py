@@ -197,6 +197,7 @@ from mcpgateway.services.mcp_apps import (
     serialize_resource_content_for_mcp,
 )
 from mcpgateway.services.mcp_method_registry import mcp_method_registry
+from mcpgateway.services.modern_listener_service import get_modern_listener_service, init_modern_listener_service
 from mcpgateway.services.metrics import setup_metrics
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.prompt_service import PromptError, PromptLockConflictError, PromptNameConflictError, PromptNotFoundError
@@ -1591,9 +1592,6 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
     # Standing subscriptions/listen streams to modern (2026-07-28) servers
     if settings.gateway_modern_listeners_enabled:
-        # First-Party
-        from mcpgateway.services.modern_listener_service import init_modern_listener_service  # pylint: disable=import-outside-toplevel
-
         await init_modern_listener_service(_notification_svc).initialize()
 
     # Initialize LLM chat router Redis client (only if LLM chat is enabled —
@@ -2023,9 +2021,6 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
             services_to_shutdown.insert(3, dataplane_publisher_service)
 
         if settings.gateway_modern_listeners_enabled:
-            # First-Party
-            from mcpgateway.services.modern_listener_service import get_modern_listener_service  # pylint: disable=import-outside-toplevel
-
             modern_listener_service = get_modern_listener_service()
             if modern_listener_service is not None:
                 services_to_shutdown.insert(0, modern_listener_service)
