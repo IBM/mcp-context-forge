@@ -5221,7 +5221,7 @@ class ToolService(BaseService):
         )
         return validated_result
 
-    async def invoke_tool(
+    async def _resolve_tool_for_invocation(
         self,
         db: Session,
         name: str,

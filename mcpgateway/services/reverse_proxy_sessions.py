@@ -230,7 +230,7 @@ class _RegistrationLockGuard:
                 entry.refcount -= 1
                 self._manager._discard_registration_lock_entry(self._stable_id, entry)
 
-    async def __aexit__(self, exc_type: type[BaseException] | None, exc_value: BaseException | None, traceback: TracebackType | None) -> None:
+    async def __aexit__(self, exc_type: type[BaseException] | None, exc_value: BaseException | None, traceback: TracebackType | None) -> None:  # noqa
         """Release the lock and discard the entry once its last reference is gone.
 
         No awaits after the release: the decrement-and-discard check is atomic

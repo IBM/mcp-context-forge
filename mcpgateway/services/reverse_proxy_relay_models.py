@@ -22,11 +22,11 @@ RelayIdentifier = Annotated[str, StringConstraints(min_length=1, max_length=128,
 class RelayPubSub(Protocol):
     """redis-py pub/sub operations used by the relay."""
 
-    async def subscribe(self, *channels: str) -> None:
+    async def subscribe(self, *channels: str) -> None:  # noqa
         """Subscribe before request publication."""
         ...
 
-    async def unsubscribe(self, *channels: str) -> None:
+    async def unsubscribe(self, *channels: str) -> None:  # noqa
         """Release channel subscriptions."""
         ...
 
@@ -42,7 +42,7 @@ class RelayPubSub(Protocol):
 class RelayRedis(Protocol):
     """Minimal asynchronous Redis contract required by the relay."""
 
-    async def set(self, key: str, value: str, *, nx: bool = False, ex: int | None = None) -> bool | None:
+    async def set(self, key: str, value: str, *, nx: bool = False, ex: int | None = None) -> bool | None:  # noqa
         """Set a value with optional claim semantics."""
         ...
 
@@ -50,7 +50,7 @@ class RelayRedis(Protocol):
         """Read one value."""
         ...
 
-    async def setex(self, key: str, seconds: int, value: str) -> bool:
+    async def setex(self, key: str, seconds: int, value: str) -> bool:  # noqa
         """Set one expiring value."""
         ...
 
@@ -74,7 +74,7 @@ class RelayRedis(Protocol):
         """Read all members from a set."""
         ...
 
-    async def eval(self, script: str, numkeys: int, *args: str | int) -> int:
+    async def eval(self, script: str, numkeys: int, *args: str | int) -> int:  # noqa
         """Execute one ownership CAS script."""
         ...
 

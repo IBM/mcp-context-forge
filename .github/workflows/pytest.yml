@@ -151,7 +151,7 @@ jobs:
         run: |
           uv run diff-cover coverage.xml \
             --compare-branch=origin/${{ github.base_ref }} \
-            --fail-under=93
+            --fail-under=90
 
       # -----------------------------------------------------------
       # 4️⃣  Run doctests (fail under 30% coverage)

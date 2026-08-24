@@ -7,6 +7,7 @@ Additional tests for token scoping middleware helpers.
 """
 
 # Standard
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -220,10 +221,12 @@ def test_check_team_membership_public_helper_revoked_membership_denies(monkeypat
     result_proxy.scalars.return_value.all.return_value = ["team-1"]
     db.execute.return_value = result_proxy
 
-    def _get_db():
+    @contextmanager
+    def _session_local():
+        # validate_token_team_membership owns its session when none is passed in.
         yield db
 
-    monkeypatch.setattr("mcpgateway.db.get_db", _get_db)
+    monkeypatch.setattr("mcpgateway.auth.SessionLocal", _session_local)
     assert middleware.check_team_membership(payload) is False
     cache.set_team_membership_valid_sync.assert_called_with("user@example.com", ["team-1", "team-2"], False)
 
