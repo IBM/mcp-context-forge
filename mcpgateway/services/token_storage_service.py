@@ -3,202 +3,238 @@
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 
-OAuth Token Storage Service for ContextForge.
+OAuth Token Storage Service for ContextForge - Façade Pattern.
 
-This module handles the storage, retrieval, and management of OAuth access and refresh tokens
-for Authorization Code flow implementations.
+This module provides a unified interface for token storage, delegating to
+pluggable backends (database or Vault) based on configuration.
+
+Phase 1: Minimal façade implementation with backend selection.
 """
 
-# Standard
-from datetime import datetime, timedelta, timezone
 import logging
 from typing import Any, Dict, List, Optional
 
-# Third-Party
-from sqlalchemy import and_, delete, or_, select
 from sqlalchemy.orm import Session
 
-# First-Party
-from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import get_settings
-from mcpgateway.db import OAuthToken
-from mcpgateway.services.encryption_service import get_encryption_service
-from mcpgateway.services.oauth_manager import OAuthError, OAuthInvalidGrantError
-from mcpgateway.utils.oauth_resource import derive_resource_origin, normalize_resource
+
+# Import backends
+from mcpgateway.services.token_backends import (
+    AbstractTokenBackend,
+    DatabaseTokenBackend,
+    TokenRecord,
+    VaultTokenBackend,
+)
+
+# For backward compatibility with tests that patch get_encryption_service
+# Import it so it's accessible as a module attribute
+from mcpgateway.services.token_backends.db_backend import get_encryption_service  # noqa: F401  # pylint: disable=unused-import
 
 logger = logging.getLogger(__name__)
 
 
-def _resolve_refresh_resource(oauth_config: Dict[str, Any], gateway_url: Optional[str]) -> None:
-    """Resolve the RFC 8707 ``resource`` parameter for a token refresh request.
+def build_token_user_context(
+    db: Session,
+    user_email: str,
+    token_teams: Optional[List[str]],
+    jwt_teams_claim: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """Build a user_context dict for TokenStorageService without querying DB for teams.
 
-    Mutates ``oauth_config`` in place.  Precedence (first match wins):
+    SECURITY: ``token_teams`` is the sole authority for the teams list.
+    It comes from ``request.state.token_teams`` (already resolved by
+    ``normalize_token_teams`` or ``resolve_session_teams`` in auth middleware).
+    We deliberately do NOT query ``EmailTeamMember`` here — doing so would
+    widen a narrowed session token back to full DB membership, violating the
+    Layer 1 token-scoping invariant documented in AGENTS.md.
 
-    0. ``omit_resource: true`` explicitly disables the resource parameter —
-       any ``resource`` key (configured or derived) is removed and nothing is
-       injected, for IdPs that reject the parameter (see
-       ``docs/docs/manage/oauth.md``).
-    1. An explicitly configured ``oauth_config["resource"]`` is normalized per
-       RFC 8707 (fragment stripped, query preserved — the admin's value may
-       carry a significant query).  Opaque non-URL identifiers (learned
-       client_id-style audiences) pass through verbatim; RFC 8707 §2 permits
-       the AS to map ``resource`` to an abstract identifier.
-    2. Otherwise the ORIGIN (``scheme://netloc``) is derived from
-       ``gateway_url``, matching what ``oauth_router`` sends on the initial
-       authorization + callback exchanges.  Using the full URL here would
-       ship a different ``resource`` on refresh than the IdP saw at login,
-       causing the refresh to fail or mint a token whose aud no longer
-       matches the audience the user already validated against (RFC 8707
-       §2.2 limits refresh-time resources to the original grant or a subset).
+    The ``is_admin`` flag is a global, non-token-scoped property so a DB
+    lookup for it is safe and intentional.
 
     Args:
-        oauth_config: The gateway OAuth config dict (copied by the caller);
-            mutated so the downstream refresh request carries the resolved
-            ``resource`` value.
-        gateway_url: The gateway's URL, used for origin derivation when no
-            explicit resource is configured.
-
-    Examples:
-        >>> cfg = {"resource": "https://api.example.com/mcp?x=1#f"}
-        >>> _resolve_refresh_resource(cfg, "https://gw.example.com/deep/path")
-        >>> cfg["resource"]
-        'https://api.example.com/mcp?x=1'
-        >>> cfg = {}
-        >>> _resolve_refresh_resource(cfg, "https://gw.example.com/deep/path")
-        >>> cfg["resource"]
-        'https://gw.example.com'
-        >>> cfg = {}
-        >>> _resolve_refresh_resource(cfg, "urn:example:app")
-        >>> "resource" in cfg
-        False
-        >>> cfg = {"resource": ["https://a.example.com/x", "opaque-id"]}
-        >>> _resolve_refresh_resource(cfg, None)
-        >>> cfg["resource"]
-        ['https://a.example.com/x', 'opaque-id']
-        >>> cfg = {"omit_resource": True, "resource": "https://api.example.com"}
-        >>> _resolve_refresh_resource(cfg, "https://gw.example.com")
-        >>> "resource" in cfg
-        False
-    """
-    # Explicit opt-out: the operator disabled the RFC 8707 resource parameter
-    # for this gateway (e.g. IdPs that reject it) — remove any configured
-    # value and skip derivation entirely.
-    if oauth_config.get("omit_resource", False):
-        oauth_config.pop("resource", None)
-        logger.debug("Omitting resource parameter during refresh as per omit_resource=true config")
-        return
-
-    existing_resource = oauth_config.get("resource")
-    if existing_resource:
-        # Normalize existing resource - preserve query for explicit config
-        if isinstance(existing_resource, list):
-            original_count = len(existing_resource)
-            normalized = [normalize_resource(r, preserve_query=True) for r in existing_resource]
-            oauth_config["resource"] = [r for r in normalized if r]
-            if not oauth_config["resource"] and original_count > 0:
-                logger.warning("All %s configured resource values were empty and removed during refresh", original_count)
-        else:
-            normalized = normalize_resource(existing_resource, preserve_query=True)
-            if not normalized and existing_resource:
-                logger.warning("Configured resource was empty and removed during refresh: %s", existing_resource)
-            oauth_config["resource"] = normalized
-    elif gateway_url:
-        derived_origin = derive_resource_origin(gateway_url)
-        if derived_origin:
-            oauth_config["resource"] = derived_origin
-        else:
-            logger.warning(
-                "Cannot derive resource origin from gateway URL (URN or scheme-less), skipping resource parameter: %s",
-                gateway_url,
-            )
-
-
-def _preserve_prior_ttl(token_record: OAuthToken) -> Optional[int]:
-    """Compute the token's prior TTL in seconds, or ``None`` if not derivable.
-
-    Used when an OAuth refresh response omits ``expires_in`` but the token
-    previously had a finite lifetime - the gateway preserves the original
-    issuance TTL by computing ``expires_at - updated_at`` from the existing
-    record. Returns ``None`` when either timestamp is missing or the difference
-    is non-positive (clock skew or already-expired records).
-
-    Args:
-        token_record: Existing OAuth token row, before the refresh applies.
+        db: SQLAlchemy session (used only for the is_admin flag lookup).
+        user_email: ContextForge user email address.
+        token_teams: JWT-scoped team list from ``request.state.token_teams``.
+            - ``None``  → Admin UI session (admin bypass) → shared Vault path
+                          *unless* jwt_teams_claim provides a path hint (see below)
+            - ``[]``    → Public-only token               → shared Vault path (always)
+            - ``[...]`` → Team-scoped API token           → team Vault path
+        jwt_teams_claim: Raw JWT ``teams`` claim from ``request.state.jwt_teams_claim``.
+            Used ONLY as a Vault-path hint when ``token_teams`` is ``None`` (admin
+            bypass from ``resolve_session_teams``).  Mirrors the same fallback logic
+            in ``oauth_router._build_user_context`` (lines 128-133) so that the store
+            path and the lookup path resolve to the same Vault segment for admins.
+            NEVER used for access-control decisions.  Default ``None``.
 
     Returns:
-        Positive integer seconds of prior TTL, or ``None``.
+        Dict with keys ``email``, ``teams``, ``is_admin``.
 
     Examples:
-        >>> from types import SimpleNamespace
-        >>> from datetime import datetime, timedelta, timezone
-        >>> issued = datetime(2026, 1, 1, tzinfo=timezone.utc)
-        >>> rec = SimpleNamespace(expires_at=issued + timedelta(hours=1), updated_at=issued)
-        >>> _preserve_prior_ttl(rec)
-        3600
-        >>> _preserve_prior_ttl(SimpleNamespace(expires_at=None, updated_at=issued)) is None
+        >>> from unittest.mock import MagicMock, patch
+        >>> db = MagicMock()
+        >>> db.execute.return_value.scalar_one_or_none.return_value = None
+        >>> ctx = build_token_user_context(db, 'alice@example.com', ['engineering'])
+        >>> ctx == {'email': 'alice@example.com', 'teams': ['engineering'], 'is_admin': False}
         True
-        >>> _preserve_prior_ttl(SimpleNamespace(expires_at=issued, updated_at=issued + timedelta(hours=1))) is None
+        >>> ctx2 = build_token_user_context(db, 'alice@example.com', None)
+        >>> ctx2['teams'] is None
         True
+        >>> ctx3 = build_token_user_context(db, 'alice@example.com', None, ['engineering'])
+        >>> ctx3['teams']
+        ['engineering']
     """
-    prev_expires_at = token_record.expires_at
-    prev_updated_at = token_record.updated_at
-    if prev_expires_at is None or prev_updated_at is None:
-        return None
-    # Normalize naive timestamps to UTC for the subtraction.
-    if prev_expires_at.tzinfo is None:
-        prev_expires_at = prev_expires_at.replace(tzinfo=timezone.utc)
-    if prev_updated_at.tzinfo is None:
-        prev_updated_at = prev_updated_at.replace(tzinfo=timezone.utc)
-    prev_ttl = int((prev_expires_at - prev_updated_at).total_seconds())
-    if prev_ttl <= 0:
-        return None
-    return prev_ttl
+    # First-Party - deferred to avoid circular imports at module load time
+    from mcpgateway.db import EmailUser  # pylint: disable=import-outside-toplevel
+    from sqlalchemy import select  # pylint: disable=import-outside-toplevel
+
+    is_admin = False
+    user_row = db.execute(select(EmailUser).where(EmailUser.email == user_email)).scalar_one_or_none()
+    if user_row:
+        is_admin = user_row.is_admin
+
+    # Determine the effective team for Vault path routing.
+    #
+    # token_teams == [...] : team-scoped token  → use it directly (most common path)
+    # token_teams is None  : admin bypass       → fall back to jwt_teams_claim hint so
+    #                        an admin who stored under "engineering/" can read from the
+    #                        same path.  Mirrors oauth_router._build_user_context:128-133.
+    #                        jwt_teams_claim is a path hint ONLY, never used for authz.
+    # token_teams == []    : public-only/revoked → shared path (always, no hint applies)
+    if token_teams:
+        effective_teams: Optional[List[str]] = token_teams
+    elif token_teams is None and jwt_teams_claim:
+        filtered = [t for t in jwt_teams_claim if t and isinstance(t, str)]
+        effective_teams = filtered or None
+    else:
+        # token_teams == [] (public-only/revoked) → shared Vault path; correct.
+        effective_teams = None
+
+    return {
+        "email": user_email,
+        "teams": effective_teams,
+        "is_admin": is_admin,
+    }
 
 
 class TokenStorageService:
-    """Manages OAuth token storage and retrieval.
+    """
+    Façade for OAuth token storage with pluggable backends.
 
-    Examples:
-        >>> service = TokenStorageService(None)  # Mock DB for doctest
-        >>> service.db is None
-        True
-        >>> service.encryption is not None or service.encryption is None  # Encryption may or may not be available
-        True
-        >>> # Test token expiration calculation
-        >>> from datetime import datetime, timedelta
-        >>> expires_in = 3600  # 1 hour
-        >>> now = datetime.now(tz=timezone.utc)
-        >>> expires_at = now + timedelta(seconds=expires_in)
-        >>> expires_at > now
-        True
-        >>> # Test scope list handling
-        >>> scopes = ["read", "write", "admin"]
-        >>> isinstance(scopes, list)
-        True
-        >>> "read" in scopes
-        True
-        >>> # Test token encryption detection
-        >>> short_token = "abc123"
-        >>> len(short_token) < 100
-        True
-        >>> encrypted_token = "gAAAAABh" + "x" * 100
-        >>> len(encrypted_token) > 100
-        True
+    Selects backend based on OAUTH_TOKEN_BACKEND environment variable:
+    - 'database' (default): DatabaseTokenBackend (existing behavior)
+    - 'vault': VaultTokenBackend (stores in HashiCorp Vault)
+
+    Extracts team_id from user_context and passes to backend along with gateway_id.
+    Public method signatures remain unchanged for backward compatibility.
     """
 
-    def __init__(self, db: Session):
-        """Initialize Token Storage Service.
+    def __init__(self, db: Session, user_context: Optional[Dict[str, Any]] = None):
+        """Initialize token storage service with selected backend.
 
         Args:
-            db: Database session
+            db: SQLAlchemy session (used by both backends for different purposes:
+                DatabaseTokenBackend uses it for token CRUD operations,
+                VaultTokenBackend uses it for gateway_id → gateways.url resolution)
+            user_context: JWT claims or session data for team_id extraction.
+                Expected keys: 'email', 'teams' (list), 'is_admin' (bool)
+
+        Raises:
+            ValueError: If OAUTH_TOKEN_BACKEND has unknown value
         """
         self.db = db
-        try:
-            settings = get_settings()
-            self.encryption = get_encryption_service(settings.auth_encryption_secret)
-        except (ImportError, AttributeError):
-            logger.warning("OAuth encryption not available, using plain text storage")
-            self.encryption = None
+        self.user_context = user_context or {}
+        settings = get_settings()
+
+        # Select backend based on configuration
+        if settings.oauth_token_backend == "vault":  # nosec B105 - config discriminator, not a password
+            self._backend: AbstractTokenBackend = VaultTokenBackend(db, settings)
+            logger.info("Token storage backend: Vault (addr=%s)", settings.vault_addr)
+        elif settings.oauth_token_backend == "database":  # nosec B105 - config discriminator, not a password
+            self._backend = DatabaseTokenBackend(db, settings)
+            logger.debug("Token storage backend: Database")
+        else:
+            raise ValueError(f"Unknown OAUTH_TOKEN_BACKEND: {settings.oauth_token_backend}. Expected 'database' or 'vault'.")
+
+    def _get_team_id(self, gateway_id: str, app_user_email: str) -> Optional[str]:
+        """
+        Extract team_id from JWT user_context (sole source of truth).
+
+        AUTHORITY DECISION: For multi-team tokens, uses teams[0] as the effective team.
+        This is deterministic because:
+        1. Token scoping middleware orders teams consistently (from DB query order)
+        2. Vault backend requires a single team_id for path selection
+        3. Same teams[0] logic used in OAuthManager.initiate_authorization_code_flow()
+
+        Why JWT is the sole authority:
+        - Vault path must match the team_id from the JWT that authorized the OAuth flow
+        - Token scoping middleware (Layer 1) already validated user is member of this team
+        - No fallback to DB prevents stale data or mismatched team context
+        - Consistent with ContextForge security model: JWT claims are authoritative
+
+        Args:
+            gateway_id: Gateway ID (used only for the warning log message)
+            app_user_email: User email (used only for the warning log message)
+
+        Returns:
+            Team identifier string from JWT (teams[0] if multiple teams), or None when
+            the JWT has no 'teams' claim (Admin UI sessions without team context). A None
+            return causes the Vault backend to use the shared path (vault/oauth/shared/...).
+
+        Examples:
+            >>> from unittest.mock import MagicMock
+            >>> db = MagicMock()
+            >>> service = TokenStorageService(db, user_context={'email': 'user@example.com', 'teams': ['engineering']})
+            >>> service._get_team_id('gateway-123', 'user@example.com')
+            'engineering'
+            >>> service2 = TokenStorageService(db, user_context={'email': 'user@example.com'})
+            >>> service2._get_team_id('gateway-123', 'user@example.com') is None
+            True
+        """
+        # JWT teams claim is the ONLY source of truth
+        if self.user_context:
+            teams = self.user_context.get("teams", [])
+            # Filter out empty strings — a JWT with teams=[""] is treated the same
+            # as teams=[] (no meaningful team scope → shared path).
+            if isinstance(teams, list):
+                teams = [t for t in teams if t and isinstance(t, str)]
+            if isinstance(teams, list) and teams:
+                team_id = teams[0]
+
+                # SECURITY: Vault backend relies on teams[0] being consistent across requests
+                # for the same user. This consistency is guaranteed by AuthMiddleware's DB ordering
+                # (sort by EmailTeamMember.id ascending). If teams ordering regresses, tokens would
+                # be stored under the wrong Vault path, causing authorization failures.
+                #
+                # REGRESSION RISK: Any change to the team-query ORDER BY in AuthMiddleware
+                # (e.g., sorting by team_name for display purposes) silently breaks multi-team
+                # token lookup for the Vault backend. There is no runtime assertion here — track
+                # this with a test fixture that exercises a multi-team user and asserts that
+                # _get_team_id() returns the same team_id across multiple requests with the
+                # same JWT. See: tests/unit/services/test_token_storage_service.py.
+                #
+                # Log a warning when multiple teams are present to aid debugging.
+                if len(teams) > 1 and hasattr(self._backend, "__class__") and "Vault" in self._backend.__class__.__name__:
+                    logger.warning(
+                        "User %s has %d teams; using teams[0]=%s for Vault OAuth token path. "
+                        "Vault backend requires stable team ordering (guaranteed by AuthMiddleware DB query ordering). "
+                        "If token lookups fail, verify middleware team ordering has not regressed.",
+                        app_user_email,
+                        len(teams),
+                        team_id,
+                    )
+
+                return team_id
+
+        # Fallback: return None when JWT teams missing (for Admin UI sessions without team context)
+        # This triggers fallback storage behavior (database or shared Vault path, less isolated)
+        logger.warning(
+            "OAuth token operation for user=%s, gateway=%s has no team_id from JWT 'teams' claim. "
+            "Falling back to non-team-isolated storage (database or shared path). "
+            "For multi-tenant isolation, ensure JWT includes 'teams' claim.",
+            app_user_email,
+            gateway_id,
+        )
+        return None
 
     async def store_tokens(
         self,
@@ -209,9 +245,9 @@ class TokenStorageService:
         refresh_token: Optional[str],
         expires_in: Optional[int],
         scopes: List[str],
-        learned_aud: Optional[Any] = None,
+        learned_aud: Optional[str] = None,
         learned_iss: Optional[str] = None,
-    ) -> OAuthToken:
+    ) -> TokenRecord:
         """Store OAuth tokens for a gateway-user combination.
 
         Args:
@@ -222,119 +258,35 @@ class TokenStorageService:
             refresh_token: Refresh token from OAuth provider (optional)
             expires_in: Token expiration time in seconds, or None if the provider does not specify expiration
             scopes: List of OAuth scopes granted
-            learned_aud: The ``aud`` claim (string or list) extracted best-effort from the
-                access token; used later by token_validation_service to authoritatively
-                validate this user's subsequent tokens. Stored per-user to avoid cross-tenant
-                DoS and to prevent RBAC bypass via callback-driven writes to shared config.
-            learned_iss: The ``iss`` claim from the access token, stored alongside
-                learned_aud to enable issuer-pinned validation.
+            learned_aud: Learned JWT audience from token introspection (optional)
+            learned_iss: Learned JWT issuer from token introspection (optional)
 
         Returns:
-            OAuthToken record
+            TokenRecord with token data
 
         Raises:
             OAuthError: If token storage fails
         """
-        try:
-            # Encrypt sensitive tokens if encryption is available
-            encrypted_access = access_token
-            encrypted_refresh = refresh_token
+        team_id = self._get_team_id(gateway_id, app_user_email)
+        return await self._backend.store_tokens(
+            gateway_id=gateway_id,
+            team_id=team_id,
+            user_id=user_id,
+            app_user_email=app_user_email,
+            access_token=access_token,
+            refresh_token=refresh_token,
+            expires_in=expires_in,
+            scopes=scopes,
+            learned_aud=learned_aud,
+            learned_iss=learned_iss,
+        )
 
-            if self.encryption:
-                encrypted_access = await self.encryption.encrypt_secret_async(access_token)
-                if refresh_token:
-                    encrypted_refresh = await self.encryption.encrypt_secret_async(refresh_token)
-
-            # Calculate expiration (None if provider does not specify expires_in)
-            if expires_in is not None:
-                expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
-            else:
-                logger.info(
-                    "No expires_in from OAuth provider for gateway %s; token will not auto-expire",
-                    SecurityValidator.sanitize_log_message(gateway_id),
-                )
-                expires_at = None
-            # Create or update token record - now scoped by app_user_email
-            token_record = self.db.execute(select(OAuthToken).where(OAuthToken.gateway_id == gateway_id, OAuthToken.app_user_email == app_user_email)).scalar_one_or_none()
-
-            if token_record:
-                # Update existing record
-                token_record.user_id = user_id  # Update OAuth provider ID in case it changed
-                token_record.access_token = encrypted_access
-                token_record.refresh_token = encrypted_refresh
-                token_record.expires_at = expires_at
-                token_record.scopes = scopes
-                token_record.updated_at = datetime.now(timezone.utc)
-                # Refresh learned aud/iss on re-authentication so a re-auth with a changed
-                # tenant / audience updates this user's own row. Only overwrite when the
-                # caller supplied non-None values so callers that don't inspect the token
-                # (e.g. token_exchange) do not accidentally clear learned metadata.
-                if learned_aud is not None:
-                    token_record.learned_aud = learned_aud
-                if learned_iss is not None:
-                    token_record.learned_iss = learned_iss
-                logger.info(
-                    "Updated OAuth tokens for gateway %s, app user %s, OAuth user %s",
-                    SecurityValidator.sanitize_log_message(gateway_id),
-                    SecurityValidator.sanitize_log_message(app_user_email),
-                    SecurityValidator.sanitize_log_message(user_id),
-                )
-            else:
-                # Create new record
-                token_record = OAuthToken(
-                    gateway_id=gateway_id,
-                    user_id=user_id,
-                    app_user_email=app_user_email,
-                    access_token=encrypted_access,
-                    refresh_token=encrypted_refresh,
-                    expires_at=expires_at,
-                    scopes=scopes,
-                    learned_aud=learned_aud,
-                    learned_iss=learned_iss,
-                )
-                self.db.add(token_record)
-                logger.info(
-                    "Stored new OAuth tokens for gateway %s, app user %s, OAuth user %s",
-                    SecurityValidator.sanitize_log_message(gateway_id),
-                    SecurityValidator.sanitize_log_message(app_user_email),
-                    SecurityValidator.sanitize_log_message(user_id),
-                )
-
-            self.db.commit()
-            return token_record
-
-        except Exception as e:
-            self.db.rollback()
-            logger.error("Failed to store OAuth tokens: %s", str(e))
-            raise OAuthError(f"Token storage failed: {str(e)}")
-
-    async def get_user_learned_audience(self, gateway_id: str, app_user_email: str) -> tuple[Optional[Any], Optional[str]]:
-        """Return the per-user learned ``aud`` and ``iss`` for a gateway-user pair.
-
-        Used by :func:`mcpgateway.services.token_validation_service.validate_oauth_token_claims`
-        to authoritatively validate a user's token audience against the value learned from
-        their own prior OAuth callback, rather than a globally-shared gateway.oauth_config
-        value.
-
-        Args:
-            gateway_id: ID of the gateway.
-            app_user_email: ContextForge user email.
-
-        Returns:
-            Tuple of ``(learned_aud, learned_iss)``. Either element may be ``None`` if
-            no token record exists for the pair or if the fields were never populated
-            (e.g. opaque tokens, decode failures, or pre-migration rows).
-        """
-        try:
-            token_record = self.db.execute(select(OAuthToken.learned_aud, OAuthToken.learned_iss).where(OAuthToken.gateway_id == gateway_id, OAuthToken.app_user_email == app_user_email)).one_or_none()
-            if token_record is None:
-                return (None, None)
-            return (token_record.learned_aud, token_record.learned_iss)
-        except Exception as e:
-            logger.debug("Failed to retrieve learned audience for gateway %s: %s", SecurityValidator.sanitize_log_message(gateway_id), e)
-            return (None, None)
-
-    async def get_user_token(self, gateway_id: str, app_user_email: str, threshold_seconds: int = 300) -> Optional[str]:
+    async def get_user_token(
+        self,
+        gateway_id: str,
+        app_user_email: str,
+        threshold_seconds: int = 300,
+    ) -> Optional[str]:
         """Get a valid access token for a specific ContextForge user, refreshing if necessary.
 
         Args:
@@ -345,257 +297,46 @@ class TokenStorageService:
         Returns:
             Valid access token or None if no valid token available for this user
         """
-        try:
-            token_record = self.db.execute(select(OAuthToken).where(OAuthToken.gateway_id == gateway_id, OAuthToken.app_user_email == app_user_email)).scalar_one_or_none()
-
-            if not token_record:
-                logger.debug("No OAuth tokens found for gateway %s, app user %s", SecurityValidator.sanitize_log_message(gateway_id), SecurityValidator.sanitize_log_message(app_user_email))
-                return None
-
-            # Verify token_type is Bearer
-            if hasattr(token_record, "token_type") and token_record.token_type and token_record.token_type.lower() != "bearer":
-                logger.warning(
-                    "Unexpected token_type '%s' for gateway %s, app user %s; expected 'Bearer'",
-                    token_record.token_type,
-                    SecurityValidator.sanitize_log_message(gateway_id),
-                    SecurityValidator.sanitize_log_message(app_user_email),
-                )
-
-            # Check if token is expired or near expiration
-            if self._is_token_expired(token_record, threshold_seconds):
-                logger.info("OAuth token expired for gateway %s, app user %s", SecurityValidator.sanitize_log_message(gateway_id), SecurityValidator.sanitize_log_message(app_user_email))
-                if token_record.refresh_token:
-                    # Attempt to refresh token
-                    new_token = await self._refresh_access_token(token_record)
-                    if new_token:
-                        return new_token
-                return None
-
-            # Decrypt and return valid token
-            if self.encryption:
-                return await self.encryption.decrypt_secret_async(token_record.access_token)
-            return token_record.access_token
-
-        except Exception as e:
-            logger.error("Failed to retrieve OAuth token: %s", str(e))
-            return None
+        team_id = self._get_team_id(gateway_id, app_user_email)
+        return await self._backend.get_user_token(
+            gateway_id=gateway_id,
+            team_id=team_id,
+            app_user_email=app_user_email,
+            threshold_seconds=threshold_seconds,
+        )
 
     # REMOVED: get_any_valid_token() - This was a security vulnerability
     # All OAuth tokens MUST be user-specific to prevent cross-user token access
 
-    async def _refresh_access_token(self, token_record: OAuthToken) -> Optional[str]:
-        """Refresh an expired access token using refresh token.
+    async def get_user_auth_headers(
+        self,
+        gateway_id: str,
+        app_user_email: str,
+    ) -> Optional[Dict[str, str]]:
+        """Get per-user non-OAuth auth headers (bearer/basic/authheaders) for a user.
+
+        Only the Vault backend stores these (written by ICA as a ``headers`` dict at the
+        per-user path). Returns None for backends that don't support it.
 
         Args:
-            token_record: OAuth token record to refresh
+            gateway_id: ID of the gateway
+            app_user_email: ContextForge user email (required)
 
         Returns:
-            New access token or None if refresh failed
+            The ``{header: value}`` dict, or None.
         """
-        try:
-            if not token_record.refresh_token:
-                logger.warning("No refresh token available for gateway %s", token_record.gateway_id)
-                return None
+        team_id = self._get_team_id(gateway_id, app_user_email)
+        return await self._backend.get_user_auth_headers(
+            gateway_id=gateway_id,
+            team_id=team_id,
+            app_user_email=app_user_email,
+        )
 
-            # Get the gateway configuration to retrieve OAuth settings
-            # First-Party
-            from mcpgateway.db import Gateway  # pylint: disable=import-outside-toplevel
-
-            gateway = self.db.query(Gateway).filter(Gateway.id == token_record.gateway_id).first()
-
-            if not gateway or not gateway.oauth_config:
-                logger.error("No OAuth configuration found for gateway %s", token_record.gateway_id)
-                return None
-
-            # Refuse refresh on a private gateway whose owner is not the token
-            # owner (PR #4341 invariant): prevents OAuth secret leakage when a
-            # gateway's ownership / visibility changes after token issuance.
-            # The token owner is ``app_user_email`` (ContextForge user), not
-            # the OAuth provider's ``user_id``. Public and team gateways are
-            # not gated here — their RBAC enforcement happens at the call
-            # sites that issue refreshes.
-            gateway_visibility = getattr(gateway, "visibility", "public")
-            gateway_owner_email = getattr(gateway, "owner_email", None)
-            if gateway_visibility == "private" and gateway_owner_email and gateway_owner_email != token_record.app_user_email:
-                logger.warning(
-                    "OAuth refresh denied: gateway %s is private and owned by %s, not token owner %s",
-                    token_record.gateway_id,
-                    gateway_owner_email,
-                    token_record.app_user_email,
-                )
-                return None
-
-            # Decrypt the refresh token if encryption is available
-            refresh_token = token_record.refresh_token
-            if self.encryption:
-                try:
-                    refresh_token = await self.encryption.decrypt_secret_async(refresh_token)
-                except Exception as e:
-                    logger.error("Failed to decrypt refresh token: %s", str(e))
-                    return None
-
-            # Decrypt client_secret if encryption is available.
-            # Always attempt decryption rather than using an is_encrypted() heuristic.
-            # Fail closed on decryption failure: decrypt_secret_async() is the idempotent
-            # wrapper — it returns None (never raises) when decryption fails due to a wrong
-            # key or corrupted ciphertext. Sending None or the raw ciphertext envelope as a
-            # literal client_secret to an Authorization Server causes repeated invalid_client
-            # attempts that can trigger IdP rate-limiting/lockout. We raise OAuthError on
-            # None so the outer OAuthError handler preserves the token for a later retry.
-            oauth_config = gateway.oauth_config.copy()
-            if "client_secret" in oauth_config and oauth_config["client_secret"]:
-                if self.encryption:
-                    client_secret_value = oauth_config["client_secret"]
-                    decrypted_secret = await self.encryption.decrypt_secret_async(client_secret_value)
-                    if decrypted_secret is None:
-                        raise OAuthError(
-                            f"client_secret decryption failed for gateway {token_record.gateway_id}: "
-                            "decrypt_secret_async returned None (wrong AUTH_ENCRYPTION_SECRET or corrupted ciphertext). "
-                            "Check that AUTH_ENCRYPTION_SECRET matches the value used when the gateway was stored."
-                        )
-                    oauth_config["client_secret"] = decrypted_secret
-
-            # RFC 8707: resolve the resource parameter for the refresh request
-            # (explicit config normalized; otherwise origin derived from gateway.url).
-            _resolve_refresh_resource(oauth_config, gateway.url)
-
-            # Use OAuthManager to refresh the token
-            # First-Party
-            from mcpgateway.services.oauth_manager import OAuthManager, parse_expires_in  # pylint: disable=import-outside-toplevel
-
-            oauth_manager = OAuthManager()
-
-            logger.info("Attempting to refresh token for gateway %s, user %s", token_record.gateway_id, token_record.app_user_email)
-            token_response = await oauth_manager.refresh_token(
-                refresh_token,
-                oauth_config,
-                ca_certificate=gateway.ca_certificate,
-                client_cert=gateway.client_cert,
-                client_key=gateway.client_key,
-            )
-
-            # Update stored tokens with new values
-            new_access_token = token_response["access_token"]
-            new_refresh_token = token_response.get("refresh_token", refresh_token)  # Some providers return new refresh token
-            # Reuse the same parsing as the initial-auth path so refresh and
-            # callback flows agree on what "missing expires_in" means.
-            expires_in = parse_expires_in(token_response)
-
-            # Encrypt new tokens if encryption is available
-            encrypted_access = new_access_token
-            encrypted_refresh = new_refresh_token
-            if self.encryption:
-                encrypted_access = await self.encryption.encrypt_secret_async(new_access_token)
-                encrypted_refresh = await self.encryption.encrypt_secret_async(new_refresh_token)
-
-            # Update the token record
-            token_record.access_token = encrypted_access
-            token_record.refresh_token = encrypted_refresh
-            now = datetime.now(timezone.utc)
-            if expires_in is not None:
-                token_record.expires_at = now + timedelta(seconds=expires_in)
-            else:
-                # Refresh response omitted expires_in. If the token previously had a finite
-                # expiry, preserve the prior TTL (expires_at - updated_at) so proactive
-                # refresh keeps working - clearing it outright would cause _is_token_expired
-                # to return False forever and stop the refresh loop. If there was no prior
-                # expiry, leave it as None (provider-level "no known lifetime").
-                preserved_ttl = _preserve_prior_ttl(token_record)
-                if preserved_ttl is not None:
-                    logger.info(
-                        "No expires_in on refresh response for gateway %s; preserving prior TTL of %d seconds",
-                        SecurityValidator.sanitize_log_message(token_record.gateway_id),
-                        preserved_ttl,
-                    )
-                    token_record.expires_at = now + timedelta(seconds=preserved_ttl)
-                else:
-                    logger.info(
-                        "No expires_in on refresh response for gateway %s; no prior TTL to preserve",
-                        SecurityValidator.sanitize_log_message(token_record.gateway_id),
-                    )
-                    token_record.expires_at = None
-            token_record.updated_at = now
-
-            self.db.commit()
-            logger.info("Successfully refreshed token for gateway %s, user %s", token_record.gateway_id, token_record.app_user_email)
-
-            return new_access_token
-
-        except OAuthInvalidGrantError as e:
-            # RFC 6749 §5.2: invalid_grant is a permanent failure — the refresh
-            # token has been revoked, expired, or does not match the grant.
-            # OAuthInvalidGrantError is raised by OAuthManager only when the
-            # token endpoint explicitly returns {"error": "invalid_grant"}, so
-            # this match is based on structured type, not substring heuristics.
-            logger.warning(
-                "Refresh token is permanently invalid for gateway %s (invalid_grant). Deleting token to force re-authorization. Error: %s",
-                token_record.gateway_id,
-                str(e),
-            )
-            self.db.delete(token_record)
-            self.db.commit()
-            return None
-        except OAuthError as e:
-            # All other OAuth errors (invalid_client, invalid_request, network
-            # failures wrapped as OAuthError, decryption failure, etc.).
-            # These are configuration or transient errors — NOT a permanent
-            # token failure.  Preserve the token so a later retry can succeed.
-            logger.error(
-                "Token refresh failed for gateway %s but error does not indicate invalid refresh token. Preserving token for retry. Error: %s",
-                token_record.gateway_id,
-                str(e),
-            )
-            return None
-        except Exception as e:
-            # Non-OAuth errors (network, parsing, encryption, etc.)
-            logger.error("Unexpected error refreshing token for gateway %s: %s", token_record.gateway_id, str(e))
-            # Preserve token - this is likely a transient or configuration issue
-            return None
-
-    def _is_token_expired(self, token_record: OAuthToken, threshold_seconds: int = 300) -> bool:
-        """Check if token is expired or near expiration.
-
-        Tokens with ``expires_at IS NULL`` are returned as non-expired by
-        design: when the OAuth provider omits ``expires_in`` (RFC 6749 §5.1
-        marks it RECOMMENDED, not REQUIRED — see e.g. GitHub OAuth Apps),
-        the gateway has no local lifetime to check against. Stale-token
-        accumulation is bounded by
-        :meth:`cleanup_expired_tokens`, which ages out NULL-expiry rows
-        once ``created_at`` exceeds ``max_age_days``.
-
-        Args:
-            token_record: OAuth token record to check
-            threshold_seconds: Seconds before expiry to consider token expired
-
-        Returns:
-            True if token is expired or near expiration
-
-        Examples:
-            >>> from types import SimpleNamespace
-            >>> from datetime import datetime, timedelta
-            >>> svc = TokenStorageService(None)
-            >>> future = datetime.now(tz=timezone.utc) + timedelta(seconds=600)
-            >>> past = datetime.now(tz=timezone.utc) - timedelta(seconds=10)
-            >>> rec_future = SimpleNamespace(expires_at=future)
-            >>> rec_past = SimpleNamespace(expires_at=past)
-            >>> svc._is_token_expired(rec_future, threshold_seconds=300)  # 10 min ahead, 5 min threshold
-            False
-            >>> svc._is_token_expired(rec_future, threshold_seconds=900)  # 10 min ahead, 15 min threshold
-            True
-            >>> svc._is_token_expired(rec_past, threshold_seconds=0)
-            True
-            >>> svc._is_token_expired(SimpleNamespace(expires_at=None))
-            False
-        """
-        if not token_record.expires_at:
-            # No provider-supplied lifetime; treat as non-expired (see contract above).
-            return False
-        expires_at = token_record.expires_at
-        if expires_at.tzinfo is None:
-            expires_at = expires_at.replace(tzinfo=timezone.utc)
-        return datetime.now(timezone.utc) + timedelta(seconds=threshold_seconds) >= expires_at
-
-    async def get_token_info(self, gateway_id: str, app_user_email: str) -> Optional[Dict[str, Any]]:
+    async def get_token_info(
+        self,
+        gateway_id: str,
+        app_user_email: str,
+    ) -> Optional[Dict[str, Any]]:
         """Get information about stored OAuth tokens.
 
         Args:
@@ -604,50 +345,19 @@ class TokenStorageService:
 
         Returns:
             Token information dictionary or None if not found
-
-        Examples:
-            >>> from types import SimpleNamespace
-            >>> from datetime import datetime, timedelta
-            >>> svc = TokenStorageService(None)
-            >>> now = datetime.now(tz=timezone.utc)
-            >>> future = now + timedelta(seconds=60)
-            >>> rec = SimpleNamespace(user_id='u1', app_user_email='u1', token_type='bearer', expires_at=future, scopes=['s1'], created_at=now, updated_at=now)
-            >>> class _Res:
-            ...     def scalar_one_or_none(self):
-            ...         return rec
-            >>> class _DB:
-            ...     def execute(self, *_args, **_kw):
-            ...         return _Res()
-            >>> svc.db = _DB()
-            >>> import asyncio
-            >>> info = asyncio.run(svc.get_token_info('g1', 'u1'))
-            >>> info['user_id']
-            'u1'
-            >>> isinstance(info['is_expired'], bool)
-            True
         """
-        try:
-            token_record = self.db.execute(select(OAuthToken).where(OAuthToken.gateway_id == gateway_id, OAuthToken.app_user_email == app_user_email)).scalar_one_or_none()
+        team_id = self._get_team_id(gateway_id, app_user_email)
+        return await self._backend.get_token_info(
+            gateway_id=gateway_id,
+            team_id=team_id,
+            app_user_email=app_user_email,
+        )
 
-            if not token_record:
-                return None
-
-            return {
-                "user_id": token_record.user_id,  # OAuth provider user ID
-                "app_user_email": token_record.app_user_email,  # ContextForge user
-                "token_type": token_record.token_type,
-                "expires_at": token_record.expires_at.isoformat() if token_record.expires_at else None,
-                "scopes": token_record.scopes,
-                "created_at": token_record.created_at.isoformat(),
-                "updated_at": token_record.updated_at.isoformat(),
-                "is_expired": self._is_token_expired(token_record, 0),
-            }
-
-        except Exception as e:
-            logger.error("Failed to get token info: %s", str(e))
-            return None
-
-    async def revoke_user_tokens(self, gateway_id: str, app_user_email: str) -> bool:
+    async def revoke_user_tokens(
+        self,
+        gateway_id: str,
+        app_user_email: str,
+    ) -> bool:
         """Revoke OAuth tokens for a specific user.
 
         Args:
@@ -656,91 +366,98 @@ class TokenStorageService:
 
         Returns:
             True if tokens were revoked successfully
-
-        Examples:
-            >>> from types import SimpleNamespace
-            >>> from unittest.mock import MagicMock
-            >>> svc = TokenStorageService(MagicMock())
-            >>> rec = SimpleNamespace()
-            >>> svc.db.execute.return_value.scalar_one_or_none.return_value = rec
-            >>> svc.db.delete = lambda obj: None
-            >>> svc.db.commit = lambda: None
-            >>> import asyncio
-            >>> asyncio.run(svc.revoke_user_tokens('g1', 'u1'))
-            True
-            >>> # Not found
-            >>> svc.db.execute.return_value.scalar_one_or_none.return_value = None
-            >>> asyncio.run(svc.revoke_user_tokens('g1', 'u1'))
-            False
         """
-        try:
-            token_record = self.db.execute(select(OAuthToken).where(OAuthToken.gateway_id == gateway_id, OAuthToken.app_user_email == app_user_email)).scalar_one_or_none()
+        team_id = self._get_team_id(gateway_id, app_user_email)
+        return await self._backend.revoke_user_tokens(
+            gateway_id=gateway_id,
+            team_id=team_id,
+            app_user_email=app_user_email,
+        )
 
-            if token_record:
-                self.db.delete(token_record)
-                self.db.commit()
-                logger.info("Revoked OAuth tokens for gateway %s, user %s", SecurityValidator.sanitize_log_message(gateway_id), SecurityValidator.sanitize_log_message(app_user_email))
-                return True
+    async def cleanup_expired_tokens(
+        self,
+        max_age_days: int = 30,
+    ) -> int:
+        """Clean up expired/old tokens.
 
-            return False
-
-        except Exception as e:
-            self.db.rollback()
-            logger.error("Failed to revoke OAuth tokens: %s", str(e))
-            return False
-
-    async def cleanup_expired_tokens(self, max_age_days: int = 30) -> int:
-        """Clean up stale OAuth tokens older than ``max_age_days``.
-
-        Two cohorts are deleted in a single SQL ``DELETE`` so the table doesn't
-        accumulate dead rows:
-
-        1. Tokens whose ``expires_at`` is older than the cutoff (the original
-           "expired more than N days ago" behaviour).
-        2. Tokens with ``expires_at IS NULL`` (provider omitted ``expires_in``)
-           whose ``updated_at`` is older than the cutoff. ``NULL < <cutoff>``
-           evaluates to ``NULL`` in SQL three-valued logic, so without this
-           branch those rows would never age out. ``updated_at`` (rather than
-           ``created_at``) is the right freshness signal because
-           ``store_tokens`` advances it on re-authorization, so a recently
-           re-authorized token isn't deleted just because its original row was
-           old.
+        DatabaseTokenBackend: Deletes expired rows from oauth_tokens table.
+        VaultTokenBackend: Returns 0 (Vault KV TTL handles cleanup).
 
         Args:
-            max_age_days: Maximum age of tokens to keep, measured from
-                ``expires_at`` for tokens with a known expiry and from
-                ``updated_at`` for tokens with no provider-supplied expiry.
+            max_age_days: Maximum age of tokens to keep
 
         Returns:
-            Number of tokens cleaned up
-
-        Examples:
-            >>> from unittest.mock import MagicMock
-            >>> svc = TokenStorageService(MagicMock())
-            >>> svc.db.execute.return_value.rowcount = 2
-            >>> svc.db.commit = lambda: None
-            >>> import asyncio
-            >>> asyncio.run(svc.cleanup_expired_tokens(1))
-            2
+            Number of tokens cleaned up (0 for Vault backend)
         """
-        try:
-            cutoff_date = datetime.now(tz=timezone.utc) - timedelta(days=max_age_days)
+        return await self._backend.cleanup_expired_tokens(max_age_days=max_age_days)
 
-            stale_filter = or_(
-                OAuthToken.expires_at < cutoff_date,
-                and_(OAuthToken.expires_at.is_(None), OAuthToken.updated_at < cutoff_date),
-            )
-            result = self.db.execute(delete(OAuthToken).where(stale_filter))
-            count = result.rowcount
+    async def get_user_learned_audience(
+        self,
+        gateway_id: str,
+        app_user_email: str,
+    ) -> tuple[str | None, str | None]:
+        """Return the per-user learned JWT audience and issuer for a gateway-user pair.
 
-            self.db.commit()
+        Used by token_validation_service.validate_oauth_token_claims to authoritatively
+        validate a user's token audience against the value learned from their own prior
+        OAuth callback, rather than a globally-shared gateway.oauth_config value.
 
-            if count > 0:
-                logger.info("Cleaned up %d stale OAuth tokens", count)
+        Args:
+            gateway_id: ID of the gateway
+            app_user_email: ContextForge user email
 
-            return count
+        Returns:
+            Tuple of (learned_aud, learned_iss). Either element may be None if
+            no token record exists or if the fields were never populated.
+        """
+        team_id = self._get_team_id(gateway_id, app_user_email)
+        return await self._backend.get_user_learned_audience(gateway_id, team_id, app_user_email)
 
-        except Exception as e:
-            self.db.rollback()
-            logger.error("Failed to cleanup expired tokens: %s", e)
-            return 0
+    async def get_oauth_credentials(
+        self,
+        team_id: Optional[str],
+        mcp_url: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Retrieve team-scoped OAuth credentials from the active backend.
+
+        DatabaseTokenBackend always returns None (no-op).
+        VaultTokenBackend returns credentials stored at the team's Vault path.
+
+        Args:
+            team_id: Team identifier from JWT (or None for shared path)
+            mcp_url: Gateway URL
+
+        Returns:
+            OAuth config dict or None if not found / not supported
+        """
+        return await self._backend.get_oauth_credentials(team_id, mcp_url)
+
+    async def _refresh_access_token(self, token_record):
+        """Refresh an expired access token using refresh token.
+
+        Delegates to DatabaseTokenBackend's _refresh_access_token method.
+        This method is exposed for backward compatibility with tests written
+        before the pluggable backend refactoring.
+
+        IMPORTANT: This façade only supports DatabaseTokenBackend.
+        VaultTokenBackend has a different signature (5 params vs 1) and is
+        called internally, never through this façade.
+
+        Args:
+            token_record: OAuth token record to refresh (OAuthToken ORM object)
+
+        Returns:
+            New access token or None if refresh failed
+
+        Raises:
+            TypeError: If backend is not DatabaseTokenBackend
+        """
+        # Type check: Only DatabaseTokenBackend uses this signature
+        if not isinstance(self._backend, DatabaseTokenBackend):
+            raise TypeError("_refresh_access_token façade is only available for DatabaseTokenBackend. VaultTokenBackend uses a different internal signature and should not use this façade.")
+
+        # pylint: disable=protected-access,no-value-for-parameter
+        # protected-access: Calling backend's private method for test compatibility
+        # no-value-for-parameter: Pylint checks against VaultTokenBackend signature (5 params),
+        #                        but isinstance check above ensures only DatabaseTokenBackend (1 param) is used
+        return await self._backend._refresh_access_token(token_record)

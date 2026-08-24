@@ -264,10 +264,12 @@ def _get_user_team_ids_sync(email: str) -> List[str]:
         from mcpgateway.db import EmailTeamMember  # pylint: disable=import-outside-toplevel
 
         result = db.execute(
-            select(EmailTeamMember.team_id).where(
+            select(EmailTeamMember.team_id)
+            .where(
                 EmailTeamMember.user_email == email,
                 EmailTeamMember.is_active.is_(True),
             )
+            .order_by(EmailTeamMember.id)  # Stable ordering: teams[0] used as Vault path key
         )
         return [row[0] for row in result.all()]
 
@@ -1119,6 +1121,7 @@ def _get_auth_context_batched_sync(email: str, jti: Optional[str] = None) -> Dic
                     EmailTeamMember.is_active.is_(True),
                     EmailTeam.is_active.is_(True),
                 )
+                .order_by(EmailTeamMember.id)  # Stable ordering: consistent with _get_user_team_ids_sync
             )
             team_rows = team_ids_result.all()
             team_ids: list[str] = []
@@ -1639,6 +1642,11 @@ async def get_current_user(
                             teams = normalize_token_teams(payload)
 
                         request.state.token_teams = teams
+                        # Preserve raw JWT teams claim separately from the RBAC-resolved value.
+                        # Used by OAuth token storage path selection (jwt_teams_claim is the
+                        # authority for which Vault path was used during authorization — admin
+                        # bypass must not collapse it to None for that purpose).
+                        request.state.jwt_teams_claim = payload.get("teams")
 
                         # Set team_id: only for single-team API tokens
                         if teams is None:
@@ -1726,6 +1734,8 @@ async def get_current_user(
                     request.state.team_id = team_id
                     request.state.token_use = token_use
                     request.state.trace_team_name = await resolve_trace_team_name(payload, teams, preresolved_team_names=auth_ctx.get("team_names"))
+                    # Preserve raw JWT teams claim for OAuth storage path selection.
+                    request.state.jwt_teams_claim = payload.get("teams")
                     await _set_auth_method_from_payload(payload)
 
                 # Store in cache for future requests
@@ -1917,6 +1927,8 @@ async def get_current_user(
             request.state.team_id = team_id
             request.state.token_use = token_use
             request.state.trace_team_name = await resolve_trace_team_name(payload, normalized_teams)
+            # Preserve raw JWT teams claim for OAuth storage path selection.
+            request.state.jwt_teams_claim = payload.get("teams")
             # Store JTI for use in middleware (e.g., token usage logging)
             if jti:
                 request.state.jti = jti

@@ -98,7 +98,7 @@ def extract_subject_jwt(request_headers: Optional[Dict[str, str]]) -> Optional[s
     except CookieError:
         return None
     except (AttributeError, TypeError) as e:
-        logger.debug(f"Unexpected cookie parsing error: {type(e).__name__}: {e}")
+        logger.debug("Unexpected cookie parsing error: %s: %s", type(e).__name__, e)
         return None
     morsel = jar.get("jwt_token")
     cookie_token = morsel.value if morsel is not None else None

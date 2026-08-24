@@ -7596,12 +7596,18 @@ async def refresh_gateway_tools(
         _enforce_scoped_resource_access(request, db, user, f"/gateways/{gateway_id}")
 
         user_email = get_user_email(user)
+        # Build user_context for Vault token path selection on authorization_code gateways.
+        # Uses jwt_teams_claim for session tokens so admin bypass doesn't erase team scope.
+        from mcpgateway.routers.oauth_router import _build_user_context  # pylint: disable=import-outside-toplevel
+
+        user_context = _build_user_context(user)
         result = await gateway_service.refresh_gateway_manually(
             gateway_id=gateway_id,
             include_resources=include_resources,
             include_prompts=include_prompts,
             user_email=user_email,
             request_headers=dict(request.headers),
+            user_context=user_context,
         )
         return GatewayRefreshResponse(gateway_id=gateway_id, **result)
     except GatewayNotFoundError as e:
@@ -10419,6 +10425,7 @@ async def _execute_rpc_tools_call(
                     app_user_email=oauth_user_email,
                     user_email=auth_user_email,
                     token_teams=auth_token_teams,
+                    jwt_teams_claim=getattr(request.state, "jwt_teams_claim", None),
                     server_id=server_id,
                     plugin_context_table=plugin_context_table,
                     plugin_global_context=plugin_global_context,
@@ -10647,6 +10654,7 @@ async def _handle_app_bridge_tools_call(db: Session, request: Request, app_sessi
             app_user_email=requester_email,
             user_email=tool_user_email,
             token_teams=token_teams,
+            jwt_teams_claim=getattr(request.state, "jwt_teams_claim", None),
             server_id=app_session.server_id,
             plugin_context_table=getattr(request.state, "plugin_context_table", None),
             plugin_global_context=getattr(request.state, "plugin_global_context", None),
@@ -10965,6 +10973,7 @@ async def handle_internal_mcp_tools_call_resolve(request: Request):
             app_user_email=get_user_email(user),
             user_email=auth_user_email,
             token_teams=auth_token_teams,
+            jwt_teams_claim=getattr(request.state, "jwt_teams_claim", None),
             server_id=server_id,
             plugin_global_context=plugin_global_context,
             plugin_context_table=plugin_context_table,
@@ -11740,6 +11749,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                     app_user_email=oauth_user_email,
                     user_email=auth_user_email,
                     token_teams=auth_token_teams,
+                    jwt_teams_claim=getattr(request.state, "jwt_teams_claim", None),
                     server_id=server_id,
                     plugin_context_table=plugin_context_table,
                     plugin_global_context=plugin_global_context,
@@ -12881,6 +12891,22 @@ try:
     logger.info("OAuth router included")
 except ImportError:
     logger.debug("OAuth router not available")
+
+# Vault OAuth router (conditionally registered when OAUTH_TOKEN_BACKEND=vault)
+if settings.oauth_token_backend == "vault":  # nosec B105 - config discriminator, not a password
+    try:
+        # First-Party
+        from mcpgateway.routers.vault_router import vault_router  # pylint: disable=import-outside-toplevel
+
+        app.include_router(vault_router)
+        logger.info(
+            "Vault OAuth router included (oauth_token_backend=vault, vault_addr=%s)",
+            settings.vault_addr,
+        )
+    except ImportError as e:
+        logger.error("Vault OAuth router not available: %s", e)
+else:
+    logger.debug("Vault OAuth router skipped (oauth_token_backend=%s)", settings.oauth_token_backend)
 
 # A2A agent plugin bindings router
 try:

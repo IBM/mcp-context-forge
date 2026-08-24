@@ -86,12 +86,12 @@ from mcpgateway.services.metrics_buffer_service import get_metrics_buffer_servic
 from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batches, pause_rollup_during_purge
 from mcpgateway.services.metrics_query_service import get_top_performers_combined
 from mcpgateway.services.oauth_manager import OAuthManager
+from mcpgateway.services.token_backends.vault_backend import VaultAuthError, VaultConnectionError
 from mcpgateway.services.observability_service import current_trace_id, ObservabilityService
 from mcpgateway.services.performance_tracker import get_performance_tracker
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.services.token_exchange_cache import TokenExchangeCache
-from mcpgateway.services.token_storage_service import TokenStorageService
 from mcpgateway.services.upstream_session_registry import downstream_session_id_from_request_context, get_upstream_session_registry, RegistryNotInitializedError, TransportType
 from mcpgateway.transports.context import UserContext
 from mcpgateway.utils.admin_check import is_admin_bypass_granted, is_user_admin
@@ -4155,6 +4155,63 @@ class ToolService(BaseService):
 
     # pylint: enable=duplicate-code
 
+    async def _resolve_vault_auth_headers(
+        self,
+        app_user_email: Optional[str],
+        token_teams: Optional[List[str]],
+        gateway_id_str: str,
+        gateway_name: str,
+        jwt_teams_claim: Optional[List[str]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Return per-user Vault auth headers for non-OAuth gateways, or None.
+
+        ICA writes a plain ``{header: value}`` dict under the ``headers`` field
+        of the per-user Vault path.  Only the Vault backend implements
+        ``get_user_auth_headers``; the DB backend's base-class default returns
+        ``None``, so this method guards with ``settings.oauth_token_backend ==
+        "vault"`` to avoid the DB round-trip on every non-OAuth tool invocation
+        when Vault is not in use.
+
+        Args:
+            app_user_email: Authenticated end-user email.
+            token_teams: JWT-scoped team list from the caller token.
+            gateway_id_str: Gateway UUID string.
+            gateway_name: Gateway display name (for log messages only).
+            jwt_teams_claim: Raw JWT teams claim for Vault path hint on admin bypass.
+
+        Returns:
+            Dict of ``{header: value}`` pairs if found, otherwise ``None``.
+        """
+        if not app_user_email or settings.oauth_token_backend != "vault":  # nosec B105 - config discriminator, not a password
+            return None
+        try:
+            from mcpgateway.services.token_storage_service import TokenStorageService, build_token_user_context  # pylint: disable=import-outside-toplevel
+
+            with fresh_db_session() as token_db:
+                token_storage_context = build_token_user_context(token_db, app_user_email, token_teams, jwt_teams_claim)
+                token_storage = TokenStorageService(token_db, user_context=token_storage_context)
+                user_headers = await token_storage.get_user_auth_headers(gateway_id_str, app_user_email)
+            if user_headers:
+                logger.info(
+                    "Using per-user Vault auth headers for gateway '%s' (user=%s)",
+                    SecurityValidator.sanitize_log_message(gateway_name),
+                    SecurityValidator.sanitize_log_message(app_user_email),
+                )
+                return user_headers
+        except (VaultConnectionError, VaultAuthError):
+            # Vault is unreachable or authentication failed — fail closed rather than
+            # silently degrade per-user credential isolation by falling back to the
+            # gateway's shared credentials.  The caller should surface a 503 instead
+            # of using a different user's (or a shared) token.
+            raise
+        except Exception as e:  # pylint: disable=broad-except
+            logger.warning(
+                "Per-user Vault auth-header lookup failed for gateway %s: %s; falling back to gateway auth",
+                gateway_name,
+                e,
+            )
+        return None
+
     async def prepare_rust_mcp_tool_execution(
         self,
         db: Session,
@@ -4164,6 +4221,7 @@ class ToolService(BaseService):
         app_user_email: Optional[str] = None,
         user_email: Optional[str] = None,
         token_teams: Optional[List[str]] = None,
+        jwt_teams_claim: Optional[List[str]] = None,
         server_id: Optional[str] = None,
         plugin_global_context: Optional[GlobalContext] = None,
         plugin_context_table: Optional[PluginContextTable] = None,
@@ -4188,6 +4246,7 @@ class ToolService(BaseService):
             app_user_email: OAuth application user email, when present.
             user_email: Effective requester email after auth normalization.
             token_teams: Normalized team scope from the caller token.
+            jwt_teams_claim: Raw JWT teams claim forwarded as Vault path hint for admin bypass.
             server_id: Optional virtual server identifier restricting tool access.
             plugin_global_context: Optional global context from middleware for hook continuity.
             plugin_context_table: Optional context table from prior hooks for state sharing.
@@ -4440,10 +4499,17 @@ class ToolService(BaseService):
             gateway_grant_type = grant_type
             if grant_type == "authorization_code":
                 try:
+                    # First-Party
+                    from mcpgateway.services.token_storage_service import TokenStorageService, build_token_user_context  # pylint: disable=import-outside-toplevel
+
+                    if not app_user_email:
+                        raise ToolInvocationError(f"User authentication required for OAuth-protected gateway '{gateway_name}'. Please ensure you are authenticated.")
+
                     with fresh_db_session() as token_db:
-                        token_storage = TokenStorageService(token_db)
-                        if not app_user_email:
-                            raise ToolInvocationError(f"User authentication required for OAuth-protected gateway '{gateway_name}'. Please ensure you are authenticated.")
+                        # build_token_user_context uses token_teams as-is (JWT sole authority)
+                        # and only queries DB for the non-scoped is_admin flag.
+                        token_storage_context = build_token_user_context(token_db, app_user_email, token_teams, jwt_teams_claim)
+                        token_storage = TokenStorageService(token_db, user_context=token_storage_context)
                         access_token = await token_storage.get_user_token(gateway_id_str, app_user_email)
 
                     if access_token:
@@ -4475,7 +4541,22 @@ class ToolService(BaseService):
                     logger.error("Failed to obtain OAuth access token for gateway %s: %s", gateway_name, e)
                     raise ToolInvocationError(f"OAuth authentication failed for gateway: {str(e)}")
         else:
-            headers = decode_auth(gateway_auth_value) if gateway_auth_value else {}
+            # Non-OAuth auth types (bearer / basic / authheaders / none): resolve PER-USER creds
+            # from Vault FIRST, then fall back to the gateway-wide (admin-set) static auth. ICA
+            # writes the per-user credential as a plain {header: value} dict under a `headers` field
+            # at the same per-user Vault path used for OAuth tokens.
+            try:
+                vault_headers = await self._resolve_vault_auth_headers(app_user_email, token_teams, gateway_id_str, gateway_name, jwt_teams_claim)
+            except (VaultConnectionError, VaultAuthError) as vault_err:
+                # Vault is down or auth failed — surface a 503-style error rather than
+                # falling back to shared credentials (CWE-284 credential isolation).
+                logger.warning(
+                    "Vault unavailable for gateway '%s': %s — failing closed",
+                    SecurityValidator.sanitize_log_message(gateway_name),
+                    SecurityValidator.sanitize_log_message(str(vault_err)),
+                )
+                raise ToolInvocationError(f"Credential storage unavailable for gateway '{gateway_name}'. Tool invocation refused to protect per-user credential isolation.") from vault_err
+            headers = vault_headers or (decode_auth(gateway_auth_value) if gateway_auth_value else {})
 
         if request_headers:
             # B3: when the gateway uses token-exchange, the exchanged Authorization header
@@ -4782,6 +4863,7 @@ class ToolService(BaseService):
         app_user_email: Optional[str],
         user_email: Optional[str],
         token_teams: Optional[List[str]],
+        jwt_teams_claim: Optional[List[str]],
         server_id: Optional[str],
         context_table: Any,
         global_context: Any,
@@ -4807,6 +4889,7 @@ class ToolService(BaseService):
             app_user_email: ContextForge user email for OAuth.
             user_email: User email for authorization.
             token_teams: Team IDs from JWT token.
+            jwt_teams_claim: Raw JWT teams claim forwarded for Vault path hint.
             server_id: Virtual server ID for scoping.
             context_table: Plugin local context table.
             global_context: Plugin global context.
@@ -4837,6 +4920,7 @@ class ToolService(BaseService):
                 app_user_email=app_user_email,
                 user_email=user_email,
                 token_teams=token_teams,
+                jwt_teams_claim=jwt_teams_claim,
                 server_id=server_id,
                 plugin_context_table=context_table,
                 plugin_global_context=global_context,
@@ -5073,6 +5157,7 @@ class ToolService(BaseService):
         app_user_email: Optional[str] = None,
         user_email: Optional[str] = None,
         token_teams: Optional[List[str]] = None,
+        jwt_teams_claim: Optional[List[str]] = None,
         server_id: Optional[str] = None,
         plugin_context_table: Optional[PluginContextTable] = None,
         plugin_global_context: Optional[GlobalContext] = None,
@@ -5097,6 +5182,9 @@ class ToolService(BaseService):
                 None = unauthenticated request.
             token_teams (Optional[List[str]], optional): Team IDs from JWT token for authorization.
                 None = unrestricted admin, [] = public-only, [...] = team-scoped.
+            jwt_teams_claim (Optional[List[str]], optional): Raw JWT ``teams`` claim forwarded
+                from ``request.state.jwt_teams_claim``.  Used ONLY as a Vault path hint for
+                admin bypass (token_teams=None) — never for access-control decisions.  Default None.
             server_id (Optional[str], optional): Virtual server ID for server scoping enforcement.
                 If provided, tool must be attached to this server.
             plugin_context_table: Optional plugin context table from previous hooks for cross-hook state sharing.
@@ -5865,13 +5953,21 @@ class ToolService(BaseService):
                             # For Authorization Code flow, try to get stored tokens
                             # NOTE: Use fresh_db_session() since the original db was closed
                             try:
+                                # First-Party
+                                from mcpgateway.services.token_storage_service import TokenStorageService  # pylint: disable=import-outside-toplevel
+
+                                # Get user-specific OAuth token
+                                if not app_user_email:
+                                    raise ToolInvocationError(f"User authentication required for OAuth-protected gateway '{gateway_name}'. Please ensure you are authenticated.")
+
                                 with fresh_db_session() as token_db:
-                                    token_storage = TokenStorageService(token_db)
+                                    # First-Party
+                                    from mcpgateway.services.token_storage_service import TokenStorageService, build_token_user_context  # pylint: disable=import-outside-toplevel
 
-                                    # Get user-specific OAuth token
-                                    if not app_user_email:
-                                        raise ToolInvocationError(f"User authentication required for OAuth-protected gateway '{gateway_name}'. Please ensure you are authenticated.")
-
+                                    # build_token_user_context uses token_teams as-is (JWT sole authority)
+                                    # and only queries DB for the non-scoped is_admin flag.
+                                    token_storage_context = build_token_user_context(token_db, app_user_email, token_teams, jwt_teams_claim)
+                                    token_storage = TokenStorageService(token_db, user_context=token_storage_context)
                                     access_token = await token_storage.get_user_token(gateway_id_str, app_user_email)
 
                                 if access_token:
@@ -5913,7 +6009,19 @@ class ToolService(BaseService):
                                 logger.error("Failed to obtain OAuth access token for gateway %s: %s", gateway_name, e)
                                 raise ToolInvocationError(f"OAuth authentication failed for gateway: {str(e)}")
                     else:
-                        headers = decode_auth(gateway_auth_value) if gateway_auth_value else {}
+                        # Non-OAuth: per-user Vault creds FIRST, then gateway-wide static auth.
+                        try:
+                            vault_headers = await self._resolve_vault_auth_headers(app_user_email, token_teams, gateway_id_str, gateway_name, jwt_teams_claim)
+                        except (VaultConnectionError, VaultAuthError) as vault_err:
+                            # Vault is down or auth failed — surface a clear error rather than
+                            # falling back to shared credentials (CWE-284 credential isolation).
+                            logger.warning(
+                                "Vault unavailable for gateway '%s': %s — failing closed",
+                                SecurityValidator.sanitize_log_message(gateway_name),
+                                SecurityValidator.sanitize_log_message(str(vault_err)),
+                            )
+                            raise ToolInvocationError(f"Credential storage unavailable for gateway '{gateway_name}'. Tool invocation refused to protect per-user credential isolation.") from vault_err
+                        headers = vault_headers or (decode_auth(gateway_auth_value) if gateway_auth_value else {})
 
                     # Use cached passthrough headers (no DB query needed)
                     if request_headers:
@@ -6725,6 +6833,7 @@ class ToolService(BaseService):
                             app_user_email,
                             user_email,
                             token_teams,
+                            jwt_teams_claim,
                             server_id,
                             context_table,
                             global_context,
@@ -6782,6 +6891,7 @@ class ToolService(BaseService):
                         app_user_email,
                         user_email,
                         token_teams,
+                        jwt_teams_claim,
                         server_id,
                         context_table,
                         global_context,
@@ -6849,6 +6959,7 @@ class ToolService(BaseService):
                         app_user_email,
                         user_email,
                         token_teams,
+                        jwt_teams_claim,
                         server_id,
                         context_table,
                         global_context,
