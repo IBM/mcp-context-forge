@@ -108,7 +108,7 @@ python3 -m mcpgateway.translate \
 | **Bidirectional communication** | Full duplex message flow in all modes |
 | **Session management** | Stateful sessions with event replay (streamable HTTP) |
 | **Flexible response modes** | Choose between SSE streams or JSON responses |
-| **Dynamic environment injection** | Extract HTTP headers and inject as environment variables for multi-tenant support |
+| **Dynamic environment injection** | Extract HTTP headers and inject environment variables for local single-user development |
 | **Keep-alive support** | Automatic keepalive frames prevent connection timeouts |
 | **CORS configuration** | Enable cross-origin requests for web applications |
 | **Authentication** | OAuth2 Bearer token support for secure connections |
@@ -192,17 +192,43 @@ Connect to a remote streamable HTTP endpoint.
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| `--enable-dynamic-env` | Enable dynamic environment variable injection from HTTP headers | False |
+| `--enable-dynamic-env` | Enable dynamic environment variable injection from HTTP headers | **False** |
 | `--header-to-env <HEADER=ENV_VAR>` | Map HTTP header to environment variable (can be specified multiple times) | None |
 
-**Use case**: Multi-tenant deployments where different users need different credentials passed to the MCP server.
+!!! danger "Development and local testing only — never use in production"
+    `--enable-dynamic-env` is **disabled by default** and must never be enabled in any
+    deployment that serves more than one client simultaneously.
 
-**Example - GitHub Enterprise with per-user tokens**:
+    **Why it is unsafe for production:**
+
+    - There is a single shared stdio subprocess for all connected clients. Each request
+      carrying a mapped header can restart it; concurrent requests can replace the
+      subprocess environment before another request is forwarded.
+    - The `session_id` included in the SSE `endpoint` bootstrap URL is accepted by
+      `/message` but **not used for routing**. All requests go to the same subprocess
+      regardless of which session sent them.
+    - Under concurrent load, Client B's request will silently execute under Client A's
+      credential context. Neither client receives any error or indication that the wrong
+      identity was used.
+
+    **Consequence:** Cross-client credential leakage. One user can read data or perform
+    actions under another user's authentication token. Audit logs will record the HTTP
+    caller's identity, not the credential actually used by the subprocess.
+
+    **Safe use:** Local development and single-user testing only — where only one person
+    is sending requests at a time and no real credentials are at risk.
+
+**Use case**: Local development and testing — injecting credentials into a stdio MCP server
+without modifying its source or environment configuration.
+
+**Example - local development with a GitHub token**:
 ```bash
+# Safe only when you are the sole user of this bridge instance
 python3 -m mcpgateway.translate \
   --stdio "uvx mcp-server-github" \
   --expose-sse \
   --port 9000 \
+  --host 127.0.0.1 \
   --enable-dynamic-env \
   --header-to-env "Authorization=GITHUB_TOKEN" \
   --header-to-env "X-GitHub-Enterprise-Host=GITHUB_HOST"
@@ -217,7 +243,7 @@ curl -X POST http://localhost:9000/message \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
 ```
 
-**Security features**:
+**Input validation features** (these do not provide session isolation):
 
 - Header names validated (alphanumeric + hyphens only)
 - Environment variable names validated (standard naming rules)
@@ -361,41 +387,37 @@ curl -X POST http://localhost:9001/message \
 curl -N http://localhost:9001/sse
 ```
 
-### Multi-Tenant GitHub Enterprise
+### Local Development with Dynamic Credential Injection
 
-Enable per-user GitHub tokens for enterprise deployments:
+!!! warning
+    The example below is for **local single-user development only**.
+    Do not adapt it for multi-user or production use. See the
+    [security warning above](#dynamic-environment-variable-injection).
 
 ```bash
-# Start the bridge with dynamic environment injection
+# Safe only when you are the sole user — localhost-only, one request at a time
 python3 -m mcpgateway.translate \
   --stdio "uvx mcp-server-github" \
   --expose-sse \
   --port 9000 \
+  --host 127.0.0.1 \
   --enable-dynamic-env \
   --header-to-env "Authorization=GITHUB_TOKEN" \
   --header-to-env "X-GitHub-Enterprise-Host=GITHUB_HOST"
 
-# User A's request (uses their personal access token)
+# Your own request (only safe when no other client is connected)
 curl -X POST http://localhost:9000/message \
-  -H "Authorization: Bearer ghp_userA_token123" \
+  -H "Authorization: Bearer ghp_mytoken" \
   -H "X-GitHub-Enterprise-Host: github.company.com" \
   -H "Content-Type: application/json" \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"get_repositories"}}'
-
-# User B's request (uses their own token)
-curl -X POST http://localhost:9000/message \
-  -H "Authorization: Bearer ghp_userB_token456" \
-  -H "X-GitHub-Enterprise-Host: github.company.com" \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_repositories"}}'
 ```
 
-**Benefits**:
+**Limitations to be aware of**:
 
-- Each user's credentials are isolated per request
-- No shared token security risks
-- Supports different enterprise hosts per user
-- MCP server process restarts with new credentials for each request
+- Requests carrying mapped headers restart the same shared subprocess; concurrent clients
+  can replace its credential environment before another request is forwarded
+- For production or multi-tenant deployments, **do not enable this flag**; use the full [ContextForge gateway](../overview/index.md), which provides proper session and credential isolation
 
 ### Container Deployment
 
@@ -490,6 +512,10 @@ When bridging to remote endpoints, connections are reused with automatic retry:
 3. **Enable authentication** with `--oauth2Bearer` for remote endpoints
 4. **Run with minimal privileges** in production
 5. **Use HTTPS** when exposing to public networks (reverse proxy recommended)
+6. **Never use `--enable-dynamic-env` in production** — it provides no cross-client
+   credential isolation. The flag is safe only for local single-user development where
+   one person is sending requests at a time. For multi-user or production deployments,
+   use the full ContextForge gateway instead.
 
 ## Integration with ContextForge
 
