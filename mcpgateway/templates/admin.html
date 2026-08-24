@@ -3321,7 +3321,7 @@
             <div class="relative">
               <button
                 id="bulk-import-dropdown-btn"
-                data-action-click="toggleBulkImportDropdown"
+                data-action-click="toggleElementClass" data-arg0="bulk-import-dropdown" data-arg1="hidden"
                 class="inline-flex items-center px-3 py-2 border border-gray-300 dark:border-gray-600 shadow-sm text-sm leading-4 font-medium rounded-md text-gray-700 dark:text-gray-300 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
               >
                 <svg
@@ -3586,7 +3586,7 @@
                     </button>
                     <div class="space-x-2">
                       <button
-                        data-action-click="toggleBulkImportDropdown"
+                        data-action-click="toggleElementClass" data-arg0="bulk-import-dropdown" data-arg1="hidden"
                         class="px-3 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-600"
                       >
                         Cancel
@@ -13512,7 +13512,7 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
 
         window.showDropdownActionButtons = function() {
           const actionButtonsHtml = `<div class="mt-3 flex justify-center space-x-2">
-            <button data-action-click="toggleBulkImportDropdown" class="px-3 py-1 text-xs bg-gray-600 text-white rounded hover:bg-gray-700">
+            <button data-action-click="toggleElementClass" data-arg0="bulk-import-dropdown" data-arg1="hidden" class="px-3 py-1 text-xs bg-gray-600 text-white rounded hover:bg-gray-700">
               Discard
             </button>
             <button data-action-click="executeBulkImportAndReload" class="px-3 py-1 text-xs bg-blue-600 text-white rounded hover:bg-blue-700">
@@ -13623,6 +13623,20 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
             importBtn.textContent = "Import Tools";
           }
         };
+
+        Object.assign(window.Admin, {
+          toggleDropdownImportMethod: window.toggleDropdownImportMethod,
+          handleDropdownFileSelect: window.handleDropdownFileSelect,
+          validateDropdownJson: window.validateDropdownJson,
+          validateDropdownData: window.validateDropdownData,
+          showDropdownStatus: window.showDropdownStatus,
+          showDropdownResults: window.showDropdownResults,
+          showDropdownFailedTools: window.showDropdownFailedTools,
+          showDropdownActionButtons: window.showDropdownActionButtons,
+          resetDropdownImport: window.resetDropdownImport,
+          submitDropdownImport: window.submitDropdownImport,
+          performDropdownImport: window.performDropdownImport,
+        });
 
         // Close dropdown when clicking outside
         document.addEventListener("click", function (event) {
@@ -14954,17 +14968,6 @@ class="fixed z-40 inset-0 bg-gray-800 bg-opacity-75 flex items-center justify-ce
       if (typeof togglePreviewDetails !== 'undefined') window.Admin.togglePreviewDetails = togglePreviewDetails;
       if (typeof submitBulkImport !== 'undefined') window.Admin.submitBulkImport = submitBulkImport;
       if (typeof toggleBulkImportDropdown !== 'undefined') window.Admin.toggleBulkImportDropdown = toggleBulkImportDropdown;
-      if (typeof toggleDropdownImportMethod !== 'undefined') window.Admin.toggleDropdownImportMethod = toggleDropdownImportMethod;
-      if (typeof handleDropdownFileSelect !== 'undefined') window.Admin.handleDropdownFileSelect = handleDropdownFileSelect;
-      if (typeof validateDropdownJson !== 'undefined') window.Admin.validateDropdownJson = validateDropdownJson;
-      if (typeof validateDropdownData !== 'undefined') window.Admin.validateDropdownData = validateDropdownData;
-      if (typeof showDropdownStatus !== 'undefined') window.Admin.showDropdownStatus = showDropdownStatus;
-      if (typeof showDropdownResults !== 'undefined') window.Admin.showDropdownResults = showDropdownResults;
-      if (typeof showDropdownFailedTools !== 'undefined') window.Admin.showDropdownFailedTools = showDropdownFailedTools;
-      if (typeof showDropdownActionButtons !== 'undefined') window.Admin.showDropdownActionButtons = showDropdownActionButtons;
-      if (typeof resetDropdownImport !== 'undefined') window.Admin.resetDropdownImport = resetDropdownImport;
-      if (typeof submitDropdownImport !== 'undefined') window.Admin.submitDropdownImport = submitDropdownImport;
-      if (typeof performDropdownImport !== 'undefined') window.Admin.performDropdownImport = performDropdownImport;
       if (typeof downloadSampleJSON !== 'undefined') window.Admin.downloadSampleJSON = downloadSampleJSON;
       if (typeof openCreateTeamModal !== 'undefined') window.Admin.openCreateTeamModal = openCreateTeamModal;
       if (typeof closeCreateTeamModal !== 'undefined') window.Admin.closeCreateTeamModal = closeCreateTeamModal;
