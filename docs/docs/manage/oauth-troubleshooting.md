@@ -771,7 +771,7 @@ grep "Stored OAuth state" logs/mcpgateway.log
 
 **Fix**:
 - Verify `popup=true` query parameter is included in authorize URL
-- Check `oauth_manager.py:1033` generates prefixed state
+- Check `oauth_manager.py:1021-1037` generates prefixed state
 - Ensure state prefix isn't stripped during storage/retrieval
 
 ### CSP Blocks Inline Script
