@@ -1786,7 +1786,7 @@ class TestTokenStorageService:
         # Create valid token record
         future_time = datetime.now(tz=timezone.utc) + timedelta(hours=1)
         token_record = OAuthToken(gateway_id="gateway123", user_id="user123", access_token="encrypted_token", refresh_token="encrypted_refresh", expires_at=future_time, scopes=["read", "write"])
-        mock_db.execute.return_value.scalar_one_or_none.return_value = token_record
+        mock_db.execute.return_value.scalars.return_value.first.return_value = token_record
 
         mock_encryption = Mock()
         mock_encryption.decrypt_secret_async = AsyncMock(return_value="decrypted_access_token")
@@ -1813,7 +1813,7 @@ class TestTokenStorageService:
 
         future_time = datetime.now(tz=timezone.utc) + timedelta(hours=1)
         token_record = OAuthToken(gateway_id="gateway123", user_id="user123", access_token="plain_access_token", refresh_token="plain_refresh", expires_at=future_time, scopes=["read", "write"])
-        mock_db.execute.return_value.scalar_one_or_none.return_value = token_record
+        mock_db.execute.return_value.scalars.return_value.first.return_value = token_record
 
         with patch("mcpgateway.services.token_storage_service.get_settings") as mock_get_settings:
             mock_get_settings.side_effect = ImportError("No encryption")
@@ -1828,7 +1828,7 @@ class TestTokenStorageService:
     async def test_get_valid_token_not_found(self):
         """Test getting token when no record exists."""
         mock_db = Mock()
-        mock_db.execute.return_value.scalar_one_or_none.return_value = None
+        mock_db.execute.return_value.scalars.return_value.first.return_value = None
 
         with patch("mcpgateway.services.token_storage_service.get_settings") as mock_get_settings:
             mock_get_settings.side_effect = ImportError("No encryption")
@@ -1847,7 +1847,7 @@ class TestTokenStorageService:
         # Create expired token record
         past_time = datetime.now(tz=timezone.utc) - timedelta(hours=1)
         token_record = OAuthToken(gateway_id="gateway123", user_id="user123", access_token="expired_token", refresh_token="refresh_token", expires_at=past_time, scopes=["read", "write"])
-        mock_db.execute.return_value.scalar_one_or_none.return_value = token_record
+        mock_db.execute.return_value.scalars.return_value.first.return_value = token_record
 
         with patch("mcpgateway.services.token_storage_service.get_settings") as mock_get_settings:
             mock_get_settings.side_effect = ImportError("No encryption")
@@ -1870,7 +1870,7 @@ class TestTokenStorageService:
 
         past_time = datetime.now(tz=timezone.utc) - timedelta(hours=1)
         token_record = OAuthToken(gateway_id="gateway123", user_id="user123", access_token="expired_token", refresh_token=None, expires_at=past_time, scopes=["read", "write"])
-        mock_db.execute.return_value.scalar_one_or_none.return_value = token_record
+        mock_db.execute.return_value.scalars.return_value.first.return_value = token_record
 
         with patch("mcpgateway.services.token_storage_service.get_settings") as mock_get_settings:
             mock_get_settings.side_effect = ImportError("No encryption")
@@ -1889,7 +1889,7 @@ class TestTokenStorageService:
         # Token expires in 2 minutes, threshold is 5 minutes (300 seconds)
         near_expiry = datetime.now(tz=timezone.utc) + timedelta(minutes=2)
         token_record = OAuthToken(gateway_id="gateway123", user_id="user123", access_token="near_expiry_token", refresh_token="refresh_token", expires_at=near_expiry, scopes=["read", "write"])
-        mock_db.execute.return_value.scalar_one_or_none.return_value = token_record
+        mock_db.execute.return_value.scalars.return_value.first.return_value = token_record
 
         with patch("mcpgateway.services.token_storage_service.get_settings") as mock_get_settings:
             mock_get_settings.side_effect = ImportError("No encryption")
@@ -2137,7 +2137,7 @@ class TestTokenStorageService:
             created_at=created_time,
             updated_at=updated_time,
         )
-        mock_db.execute.return_value.scalar_one_or_none.return_value = token_record
+        mock_db.execute.return_value.scalars.return_value.first.return_value = token_record
 
         with patch("mcpgateway.services.token_storage_service.get_settings") as mock_get_settings:
             mock_get_settings.side_effect = ImportError("No encryption")
@@ -2168,7 +2168,7 @@ class TestTokenStorageService:
     async def test_get_token_info_not_found(self):
         """Test getting token info when token doesn't exist."""
         mock_db = Mock()
-        mock_db.execute.return_value.scalar_one_or_none.return_value = None
+        mock_db.execute.return_value.scalars.return_value.first.return_value = None
 
         with patch("mcpgateway.services.token_storage_service.get_settings") as mock_get_settings:
             mock_get_settings.side_effect = ImportError("No encryption")
@@ -2194,7 +2194,7 @@ class TestTokenStorageService:
             created_at=datetime(2025, 1, 1, 10, 0, 0),
             updated_at=datetime(2025, 1, 1, 11, 0, 0),
         )
-        mock_db.execute.return_value.scalar_one_or_none.return_value = token_record
+        mock_db.execute.return_value.scalars.return_value.first.return_value = token_record
 
         with patch("mcpgateway.services.token_storage_service.get_settings") as mock_get_settings:
             mock_get_settings.side_effect = ImportError("No encryption")
@@ -2229,8 +2229,10 @@ class TestTokenStorageService:
         """Test successfully revoking user tokens."""
         mock_db = Mock()
 
-        token_record = OAuthToken(gateway_id="gateway123", user_id="user123", access_token="token")
-        mock_db.execute.return_value.scalar_one_or_none.return_value = token_record
+        # Mock the execute result with rowcount
+        mock_result = Mock()
+        mock_result.rowcount = 1
+        mock_db.execute.return_value = mock_result
 
         with patch("mcpgateway.services.token_storage_service.get_settings") as mock_get_settings:
             mock_get_settings.side_effect = ImportError("No encryption")
@@ -2240,14 +2242,17 @@ class TestTokenStorageService:
             result = await service.revoke_user_tokens("gateway123", "user123")
 
             assert result is True
-            mock_db.delete.assert_called_once_with(token_record)
             mock_db.commit.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_revoke_user_tokens_not_found(self):
         """Test revoking tokens when no tokens exist."""
         mock_db = Mock()
-        mock_db.execute.return_value.scalar_one_or_none.return_value = None
+
+        # Mock the execute result with rowcount = 0
+        mock_result = Mock()
+        mock_result.rowcount = 0
+        mock_db.execute.return_value = mock_result
 
         with patch("mcpgateway.services.token_storage_service.get_settings") as mock_get_settings:
             mock_get_settings.side_effect = ImportError("No encryption")
@@ -2257,8 +2262,8 @@ class TestTokenStorageService:
             result = await service.revoke_user_tokens("gateway123", "user123")
 
             assert result is False
-            mock_db.delete.assert_not_called()
-            mock_db.commit.assert_not_called()
+            # Note: commit() is still called even when no tokens are found (transaction cleanup)
+            mock_db.commit.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_revoke_user_tokens_exception(self):
