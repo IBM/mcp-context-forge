@@ -207,17 +207,12 @@ spec:
               value: {{ .Values.mcpContextForge.tls.certFile | quote }}
             - name: KEY_FILE
               value: {{ .Values.mcpContextForge.tls.keyFile | quote }}
-            {{- if .Values.mcpContextForge.tls.keyFilePassword }}
+            {{- with .Values.mcpContextForge.tls.keyFilePasswordSecret }}
             - name: KEY_FILE_PASSWORD
-              value: {{ .Values.mcpContextForge.tls.keyFilePassword | quote }}
-            {{- end }}
-            {{- if .Values.mcpContextForge.tls.caCerts }}
-            - name: CA_CERTS
-              value: {{ .Values.mcpContextForge.tls.caCerts | quote }}
-            {{- end }}
-            {{- if .Values.mcpContextForge.tls.certReqs }}
-            - name: CERT_REQS
-              value: {{ .Values.mcpContextForge.tls.certReqs | quote }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "mcpContextForge.tls.keyFilePasswordSecret.name is required" .name }}
+                  key: {{ .key | default "keyFilePassword" }}
             {{- end }}
             {{- end }}
 

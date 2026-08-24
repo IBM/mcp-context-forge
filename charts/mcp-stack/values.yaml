@@ -210,18 +210,12 @@ mcpContextForge:
     keyFile: /app/certs/tls/tls.key
 
     # Optional passphrase for an encrypted private key.
-    # Leave empty for unencrypted keys (recommended for Kubernetes Secrets).
-    keyFilePassword: ""
-
-    # ── Inbound mTLS (client-certificate authentication) ─────────────────────
-    # Optional: path to a CA bundle inside the container for verifying client certs.
-    caCerts: ""                 # e.g. /app/certs/tls/ca.crt (add ca.crt to the Secret)
-
-    # Client certificate requirement level (passed as CERT_REQS env var):
-    #   0 = none     (server does not request a client cert)
-    #   1 = optional (client cert accepted but not required)
-    #   2 = required (connection rejected without valid client cert)
-    certReqs: 0
+    # Reference a Kubernetes Secret key rather than inlining the value here —
+    # plain strings end up in helm get values, kubectl get pod -o yaml, and CI logs.
+    # Example:
+    #   kubectl create secret generic my-gateway-tls-pass \
+    #     --from-literal=keyFilePassword=my-passphrase
+    keyFilePasswordSecret: {}   # e.g. { name: my-gateway-tls-pass, key: keyFilePassword }
 
   ####################################################################
   # CORE ENVIRONMENT - injected one-by-one as name/value pairs.

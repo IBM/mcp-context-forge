@@ -978,9 +978,10 @@ mcpContextForge:
     certFile:  /app/certs/tls/tls.crt
     keyFile:   /app/certs/tls/tls.key
 
-    # Optional: mTLS client-certificate verification
-    # caCerts:  /app/certs/tls/ca.crt       # add ca.crt to the Secret
-    # certReqs: 2                            # 0=none 1=optional 2=required
+    # Optional: passphrase for an encrypted private key (reference a Secret, not a plain string)
+    # keyFilePasswordSecret:
+    #   name: my-gateway-tls-pass
+    #   key:  keyFilePassword
 ```
 
 Apply with:
@@ -994,22 +995,6 @@ helm upgrade --install my-release charts/mcp-stack \
 ### Probe scheme
 
 When `mcpContextForge.tls.enabled=true` the chart automatically switches the readiness and liveness probe scheme from `HTTP` to `HTTPS`. No manual probe override is needed.
-
-### mTLS (client-certificate authentication)
-
-To require clients to present a certificate signed by your CA:
-
-1. Add `ca.crt` to the same Secret alongside `tls.crt` / `tls.key`
-2. Set `caCerts` to the path inside the container and `certReqs: 2`:
-
-```yaml
-mcpContextForge:
-  tls:
-    enabled: true
-    secretName: "my-release-gateway-tls"
-    caCerts:  /app/certs/tls/ca.crt
-    certReqs: 2
-```
 
 ---
 
