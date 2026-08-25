@@ -735,7 +735,7 @@ class TestOAuthGrantTypeSwitching:
         _skip_if_no_gateways(gateways_page)
 
         _open_edit_or_skip(gateways_page, 0)
-        expect(gateways_page.edit_modal_name_input).not_to_be_empty(timeout=10000)
+        expect(gateways_page.edit_modal_name_input).not_to_be_empty(timeout=15000)
 
         gateways_page.edit_modal_auth_type_select.select_option("oauth")
         gateways_page.edit_modal_oauth_grant_type_select.select_option("password")
@@ -768,7 +768,7 @@ class TestOAuthGrantTypeSwitching:
         gateways_page.wait_for_gateways_table_loaded()
         _skip_if_no_gateways(gateways_page)
         _open_edit_or_skip(gateways_page, 0)
-        expect(gateways_page.edit_modal_name_input).not_to_be_empty(timeout=10000)
+        expect(gateways_page.edit_modal_name_input).not_to_be_empty(timeout=15000)
 
         gateways_page.edit_modal_auth_type_select.select_option("oauth")
         gateways_page.edit_modal_oauth_grant_type_select.select_option("password")

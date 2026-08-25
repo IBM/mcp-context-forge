@@ -84,8 +84,24 @@ def invite_and_accept(admin_api: APIRequestContext, playwright: Playwright, team
     user_ctx = make_playwright_api_context(playwright, BASE_URL, user_jwt)
     accept_resp = _post_with_retry(user_ctx, f"/teams/invitations/{invitation_token}/accept", data=None, ok_statuses=(200,))
     user_ctx.dispose()
-    assert accept_resp.status == 200, f"Failed to accept invitation: {accept_resp.status} {accept_resp.text()}"
+    if accept_resp.status != 200:
+        # A 400 here can mean the invitation was already consumed: a prior request
+        # in the retry loop may have succeeded server-side while the client saw a
+        # transient error and retried against the now-already-accepted token. Treat
+        # that as success if the user actually ended up a team member.
+        already_member = accept_resp.status == 400 and _is_team_member(admin_api, team_id, email)
+        assert already_member, f"Failed to accept invitation: {accept_resp.status} {accept_resp.text()}"
     return inv_data
+
+
+def _is_team_member(admin_api: APIRequestContext, team_id: str, email: str) -> bool:
+    """Check whether email is already a member of team_id."""
+    resp = admin_api.get(f"/teams/{team_id}/members")
+    if resp.status != 200:
+        return False
+    members = resp.json()
+    member_list = members if isinstance(members, list) else members.get("members", [])
+    return any(m.get("user_email") == email for m in member_list)
 
 
 @pytest.fixture(scope="module")
