@@ -80,9 +80,10 @@ class CatalogService:
         Raises:
             CatalogRegistrationPermissionError: If the caller lacks permission for the requested scope.
         """
-        # Extract requested scope from request
         visibility = request.visibility if request and request.visibility else "private"
-        requested_team_id = request.team_id if request and request.team_id else None
+        # Normalize whitespace-only team IDs the same way as admin handlers.
+        raw_team_id = request.team_id if request and request.team_id else None
+        requested_team_id = raw_team_id.strip() if raw_team_id and raw_team_id.strip() else None
 
         # Reject unknown or empty owner
         if not owner_email or owner_email == "unknown":

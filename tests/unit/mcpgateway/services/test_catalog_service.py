@@ -1064,3 +1064,11 @@ def test_resolve_scope_blocks_public_when_flag_disabled(service, monkeypatch):
     db = MagicMock()
     with pytest.raises(CatalogRegistrationPermissionError, match="ALLOW_PUBLIC_VISIBILITY=false"):
         service._resolve_registration_scope(db, req, owner_email="u@x.com", token_teams=None)
+
+
+def test_resolve_scope_ignores_whitespace_team_id_when_checking_public_visibility(service, monkeypatch):
+    """Whitespace-only team IDs are treated as absent for public visibility policy."""
+    monkeypatch.setattr("mcpgateway.services.catalog_service.settings.allow_public_visibility", False)
+    request = CatalogServerRegisterRequest(server_id="1", visibility="public", team_id="   ")
+
+    assert service._resolve_registration_scope(MagicMock(), request, owner_email="u@x.com", token_teams=None) == ("public", None)

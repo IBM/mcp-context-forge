@@ -863,8 +863,10 @@ async def delete_user(user_email: str, current_user_ctx: dict = Depends(get_curr
     except HTTPException:
         raise  # Re-raise HTTP exceptions as-is (401, 403, 404, etc.)
     except ValueError as e:
+        error_msg = str(e)
+        status_code = status.HTTP_404_NOT_FOUND if "not found" in error_msg.lower() else status.HTTP_409_CONFLICT
         logger.warning(f"Cannot delete user {SecurityValidator.sanitize_log_message(user_email)}: {e}")
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+        raise HTTPException(status_code=status_code, detail=error_msg)
     except Exception as e:
         logger.error(f"Error deleting user {SecurityValidator.sanitize_log_message(user_email)}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to delete user")

@@ -18239,20 +18239,6 @@ async def catalog_partial(
         "servers_by_provider": servers_by_provider,
     }
 
-    # Load user teams for visibility/team selector in registration modal
-    registration_teams: list[dict[str, str]] = []
-    try:
-        user_email, token_teams = get_scoped_resource_access_context(request, _user)
-        if user_email and "@" in user_email:
-            team_service = TeamManagementService(db)
-            raw_teams = await team_service.get_user_teams(user_email, include_personal=True)
-            if token_teams is not None:
-                token_team_set = set(token_teams)
-                raw_teams = [t for t in raw_teams if str(t.id) in token_team_set]
-            registration_teams = [{"id": str(t.id), "name": t.name} for t in raw_teams]
-    except Exception as e:
-        LOGGER.warning(f"Failed to load registration teams for catalog: {e}")
-
     context = {
         "request": request,
         "servers": response.servers,
@@ -18262,7 +18248,6 @@ async def catalog_partial(
         "total_pages": total_pages,
         "page_size": page_size,
         "filter_params": filter_params,
-        "registration_teams": registration_teams,
     }
 
     return request.app.state.templates.TemplateResponse(request, "mcp_registry_partial.html", context)

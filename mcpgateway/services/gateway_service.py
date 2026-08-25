@@ -5694,7 +5694,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             if not member:
                 raise ValueError(f"Target user {target_owner_email} is not an active member of team {effective_team_id}")
 
-        if target_team_id:
+        if target_team_id and gateway.visibility != "team":
             # Validate target owner is active member of the explicit target team
             member = db.execute(
                 select(DbEmailTeamMember).where(
@@ -5706,40 +5706,37 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             if not member:
                 raise ValueError(f"Target user {target_owner_email} is not an active member of target team {target_team_id}")
 
+        def _apply_team_transfer(entity: Any) -> None:
+            """Assign a transferred entity to the target team and expose it to members."""
+            entity.team_id = target_team_id
+            if entity.visibility == "private":
+                entity.visibility = "team"
+
         # Update gateway ownership
         gateway.owner_email = target_owner_email
         if target_team_id:
-            gateway.team_id = target_team_id
-            # Private gateways assigned to a team must become team-visible so members can access them
-            if gateway.visibility == "private":
-                gateway.visibility = "team"
+            _apply_team_transfer(gateway)
 
         # Update linked tools
         tools = db.execute(select(DbTool).where(DbTool.gateway_id == gateway_id)).scalars().all()
         for tool in tools:
             tool.owner_email = target_owner_email
             if target_team_id:
-                tool.team_id = target_team_id
-                if tool.visibility == "private":
-                    tool.visibility = "team"
+                _apply_team_transfer(tool)
 
         # Update linked resources
         resources = db.execute(select(DbResource).where(DbResource.gateway_id == gateway_id)).scalars().all()
         for resource in resources:
             resource.owner_email = target_owner_email
             if target_team_id:
-                resource.team_id = target_team_id
-                if resource.visibility == "private":
-                    resource.visibility = "team"
+                _apply_team_transfer(resource)
 
         # Update linked prompts
         prompts = db.execute(select(DbPrompt).where(DbPrompt.gateway_id == gateway_id)).scalars().all()
         for prompt in prompts:
             prompt.owner_email = target_owner_email
             if target_team_id:
-                prompt.team_id = target_team_id
-                if prompt.visibility == "private":
-                    prompt.visibility = "team"
+                _apply_team_transfer(prompt)
 
         db.commit()
         db.refresh(gateway)
