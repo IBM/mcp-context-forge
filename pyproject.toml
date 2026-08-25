@@ -168,10 +168,12 @@ dev = [
     "radon>=6.0.1",
     "redis>=8.0.1",
     "rich>=15.0.0",
+    "Pillow>=12.2.0",
     #"semgrep>=1.136.0",   # conflicts with opentelemetry-sdk
     "settings-doc>=4.3.2",
     "snakeviz>=2.2.2",
     "tomlkit>=0.15.0",
+    "tldextract>=5.3.0",
     "tox>=4.34.1",
     "tox-uv>=1.35.2",
     "twine>=6.2.0",
@@ -338,6 +340,7 @@ mcpgateway = [
   "static/*.css",
   "static/css/*.css",
   "static/*.js",
+  "static/catalog-icons/*",
   "templates/*.html",
   "*.json",
   "alembic.ini",
@@ -372,6 +375,7 @@ ignore = [
     "mcpgateway/static/css/**",
     "mcpgateway/static/chunk-*.js",
     "mcpgateway/static/bundle-*.js",
+    "mcpgateway/static/catalog-icons/*",
 ]
 
 [tool.black]

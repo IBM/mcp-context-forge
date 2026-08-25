@@ -359,6 +359,11 @@ build-ui:
 		exit 1; \
 	fi
 
+# help: catalog-icons         - Fetch and bundle catalog icons as local static PNG assets
+.PHONY: catalog-icons
+catalog-icons:
+	@$(UV_BIN) run python scripts/fetch_catalog_icons.py
+
 .PHONY: update
 update:
 	@echo "⬆️   Updating installed dependencies..."
