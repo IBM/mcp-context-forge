@@ -932,3 +932,36 @@ class TestRespondWithPayloadV2Fallback:
             await NotificationService._respond_with_payload(SimpleNamespace(), {"result": {}})
 
         assert "downstream result dropped" in caplog.text
+
+
+class TestV2ClientCallbacks:
+    """Tests for typed v2 callbacks used by upstream Client."""
+
+    @pytest.mark.asyncio
+    async def test_list_roots_callback_round_trips_through_event_bus(self):
+        service = NotificationService()
+        published = []
+
+        class FakeBus:
+            async def publish(self, session_id, message):
+                published.append((session_id, message))
+                await service.complete_request(
+                    session_id,
+                    str(message.id),
+                    {"jsonrpc": "2.0", "id": message.id, "result": {"roots": []}},
+                )
+
+        async def get_bus():
+            return FakeBus()
+
+        callbacks = service.create_client_callbacks(
+            gateway_id="gw-1",
+            gateway_url="https://upstream.example/mcp",
+            downstream_session_id="downstream-1",
+        )
+        with patch("mcpgateway.transports.server_event_bus.get_server_event_bus", get_bus):
+            result = await callbacks["list_roots_callback"](MagicMock())
+
+        assert result.roots == []
+        assert published[0][0] == "downstream-1"
+        assert published[0][1].method == "roots/list"

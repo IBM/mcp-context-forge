@@ -422,8 +422,8 @@ async function toolPreInvoke({ payload, context }: any) {
 
      @pytest.mark.asyncio
      async def test_mcp_server_tool_pre_invoke():
-         async with (await streamable_http_client("http://localhost:8000/mcp")) as (http, write, _):
-             async with ClientSession(http, write) as session:
+         async with streamable_http_client("http://localhost:8000/mcp") as (read_stream, write_stream):
+             async with ClientSession(read_stream, write_stream) as session:
                  await session.initialize()
                  # Minimal payload/context as JSON-serializable dicts
                  payload = {"name": "some_tool", "args": {"x": "y"}}

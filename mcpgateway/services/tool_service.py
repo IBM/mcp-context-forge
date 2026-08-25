@@ -49,7 +49,8 @@ import httpx
 import httpx2
 import jsonschema
 from jsonschema import Draft4Validator, Draft6Validator, Draft7Validator, validators
-import mcp_types as types
+from mcp import MCPError, types
+from mcp.types import REQUEST_TIMEOUT
 import orjson
 from pydantic import BaseModel, ValidationError
 from sqlalchemy import and_, delete, desc, or_, select
@@ -5837,7 +5838,7 @@ class ToolService(BaseService):
                             finally:
                                 if pinned_rest_http_client is not None:
                                     await pinned_rest_http_client.aclose()
-                        except (asyncio.TimeoutError, httpx.TimeoutException):
+                        except (asyncio.TimeoutError, httpx.TimeoutException, httpx2.TimeoutException):
                             rest_elapsed_ms = (time.time() - rest_start_time) * 1000
                             structured_logger.log(
                                 level="WARNING",
@@ -6302,7 +6303,9 @@ class ToolService(BaseService):
                             )
 
                             return tool_call_result
-                        except (asyncio.TimeoutError, httpx.TimeoutException):
+                        except (asyncio.TimeoutError, httpx.TimeoutException, httpx2.TimeoutException, MCPError) as timeout_error:
+                            if isinstance(timeout_error, MCPError) and timeout_error.code != REQUEST_TIMEOUT:
+                                raise
                             # Handle timeout specifically - log and raise ToolInvocationError
                             mcp_duration_ms = (time.time() - mcp_start_time) * 1000
                             structured_logger.log(
@@ -6489,7 +6492,9 @@ class ToolService(BaseService):
                             )
 
                             return tool_call_result
-                        except (asyncio.TimeoutError, httpx.TimeoutException):
+                        except (asyncio.TimeoutError, httpx.TimeoutException, httpx2.TimeoutException, MCPError) as timeout_error:
+                            if isinstance(timeout_error, MCPError) and timeout_error.code != REQUEST_TIMEOUT:
+                                raise
                             # Handle timeout specifically - log and raise ToolInvocationError
                             mcp_duration_ms = (time.time() - mcp_start_time) * 1000
                             structured_logger.log(
@@ -6730,7 +6735,7 @@ class ToolService(BaseService):
                             status_code = http_response.status_code
                             response_data = http_response.json() if status_code == 200 else None
                             response_text = http_response.text
-                        except (asyncio.TimeoutError, httpx.TimeoutException):
+                        except (asyncio.TimeoutError, httpx.TimeoutException, httpx2.TimeoutException):
                             a2a_elapsed_ms = (time.time() - a2a_start_time) * 1000
                             structured_logger.log(
                                 level="WARNING",

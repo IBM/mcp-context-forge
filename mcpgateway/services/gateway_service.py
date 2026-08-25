@@ -61,6 +61,7 @@ from filelock import FileLock, Timeout
 import httpx
 from mcp import ClientSession, MCPError
 from mcp.client.sse import sse_client
+from mcp.types import REQUEST_TIMEOUT
 import httpx2
 from pydantic import ValidationError
 from sqlalchemy import and_, delete, desc, or_, select, update
@@ -7574,9 +7575,11 @@ def _classify_handshake_error(root_cause: BaseException) -> tuple[str, str]:
     """
     if isinstance(root_cause, httpx.HTTPStatusError) and root_cause.response.status_code in (401, 403):
         return "auth", _HANDSHAKE_AUTH_COPY
-    if isinstance(root_cause, (httpx.RequestError, OSError)):
+    if isinstance(root_cause, (httpx.RequestError, httpx2.RequestError, OSError)):
         return "transport", _HANDSHAKE_TRANSPORT_COPY
-    if isinstance(root_cause, MCPError) or (isinstance(root_cause, RuntimeError) and "protocol" in str(root_cause).lower()):
+    if isinstance(root_cause, MCPError):
+        if root_cause.code == REQUEST_TIMEOUT:
+            return "transport", _HANDSHAKE_TRANSPORT_COPY
         return "protocol", _HANDSHAKE_PROTOCOL_COPY
     return "invalid_response", _HANDSHAKE_INVALID_COPY
 

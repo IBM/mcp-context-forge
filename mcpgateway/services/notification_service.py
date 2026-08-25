@@ -6,22 +6,18 @@ SPDX-License-Identifier: Apache-2.0
 Description:
     Centralized handler for MCP server-to-gateway notifications AND the
     server-to-client fanout surface introduced by ADR-052 (GET /mcp stream).
-    Connects upstream ``ClientSession`` message-handler callbacks to the
-    per-session event bus and to the worker-local request-correlation dict
-    that lets downstream POSTs resolve held ``RequestResponder`` instances.
+    Connects upstream ``Client`` callbacks to the per-session event bus and
+    worker-local request-correlation futures resolved by downstream POSTs.
 
     Responsibilities:
     - Debounced gateway refresh triggered by ``tools/resources/prompts
       list_changed`` notifications (with flag merging during the debounce
       window, per-gateway refresh lock, capability-aware filtering).
-    - ``ServerNotification`` fanout to the GET /mcp event bus so
-      downstream clients on the SSE stream see the notification.
-    - ``ServerRequest`` correlation (``_forward_request_to_stream`` +
-      ``complete_request``) for sampling / elicitation / roots-list —
-      registers the responder under ``(session_id, request_id)``, spawns
-      a holder task, publishes the envelope, and waits for a downstream
-      POST to resolve it. Timeout is per-task via ``wait_for``; there is
-      no background sweeper.
+    - ``ServerNotification`` fanout to the GET /mcp event bus so downstream
+      clients on the SSE stream see the notification.
+    - Typed v2 callback correlation for sampling, elicitation, and roots-list:
+      publishes a request, waits for the matching downstream response, and
+      returns the validated SDK result.
     - Bounded ``shutdown`` that drains holder tasks within a configurable
       timeout and cancels any stragglers.
 
@@ -29,15 +25,18 @@ Usage:
     ```python
     from mcpgateway.services.notification_service import NotificationService
 
-    # Create service instance
     notification_service = NotificationService()
     await notification_service.initialize()
-
-    # Create a message handler for a specific gateway
-    handler = notification_service.create_message_handler(gateway_id="gw-123")
-
-    # Pass handler to ClientSession
-    session = ClientSession(read_stream, write_stream, message_handler=handler)
+    handler = notification_service.create_message_handler(
+        gateway_id="gw-123",
+        downstream_session_id="downstream-1",
+    )
+    callbacks = notification_service.create_client_callbacks(
+        gateway_id="gw-123",
+        gateway_url="https://upstream.example/mcp",
+        downstream_session_id="downstream-1",
+    )
+    client = Client(transport, message_handler=handler, **callbacks)
     ```
 """
 
@@ -50,9 +49,10 @@ from dataclasses import dataclass, field
 from enum import Enum
 import time
 from typing import Any, Awaitable, Callable, Dict, Optional, Set, TYPE_CHECKING
+import uuid
 
 # Third-Party
-import mcp_types
+import mcp.types as mcp_types
 
 # First-Party
 from mcpgateway.services.logging_service import LoggingService
@@ -228,11 +228,10 @@ class NotificationService:
         self._refreshes_failed = 0
 
         # Server-initiated request correlation (ADR-052). Worker-local: the
-        # POST carrying the response is affinity-routed to the worker that
-        # holds the upstream RequestResponder, so a process-local dict is
-        # sufficient — no Redis dispatch table needed. Key:
-        # (downstream_session_id, request_id). Value: future the holder task
-        # awaits; the response payload is set when the downstream POST lands.
+        # POST carrying the response is affinity-routed to the worker holding
+        # the future, so a process-local dict is sufficient — no Redis dispatch
+        # table needed. Key: (downstream_session_id, request_id). Value: the
+        # future the typed v2 callback awaits.
         self._pending_requests: Dict[tuple[str, str], asyncio.Future[Any]] = {}
         self._pending_lock = asyncio.Lock()
         self._pending_request_ttl_seconds: float = 60.0
@@ -516,6 +515,75 @@ class NotificationService:
                 logger.warning("Received exception from MCP server %s: %s", gateway_id, message)
 
         return message_handler
+
+    def create_client_callbacks(
+        self,
+        *,
+        gateway_id: str,
+        gateway_url: Optional[str],
+        downstream_session_id: str,
+    ) -> Dict[str, Callable[..., Awaitable[Any]]]:
+        """Build v2 callbacks for server-initiated client requests.
+
+        MCP v2 routes sampling, elicitation, and roots through typed callback
+        parameters instead of ``RequestResponder`` values in ``message_handler``.
+        Each callback publishes the JSON-RPC request to the downstream GET
+        stream and waits for the matching POST response.
+        """
+
+        async def forward(method: str, params: Any = None) -> Any:
+            request_id = f"cf-{uuid.uuid4().hex}"
+            payload = params.model_dump(by_alias=True, exclude_none=True) if hasattr(params, "model_dump") else (params or {})
+            request = mcp_types.JSONRPCRequest(
+                jsonrpc="2.0",
+                id=request_id,
+                method=method,
+                params=payload,
+            )
+            loop = asyncio.get_running_loop()
+            future: asyncio.Future[Dict[str, Any]] = loop.create_future()
+            key = (downstream_session_id, request_id)
+            async with self._pending_lock:
+                self._pending_requests[key] = future
+            try:
+                from mcpgateway.transports.server_event_bus import get_server_event_bus  # pylint: disable=import-outside-toplevel
+
+                bus = await get_server_event_bus()
+                await bus.publish(downstream_session_id, request)
+                response = await asyncio.wait_for(future, timeout=self._pending_request_ttl_seconds)
+                if response.get("error") is not None:
+                    return mcp_types.ErrorData.model_validate(response["error"])
+                return mcp_types.client_result_adapter.validate_python(response.get("result") or {})
+            except asyncio.TimeoutError:
+                return mcp_types.ErrorData(code=mcp_types.INTERNAL_ERROR, message=f"{method} response timed out")
+            except Exception as exc:  # noqa: BLE001 - callback must return a protocol result
+                logger.warning(
+                    "Failed to proxy %s for gateway %s (%s): %s",
+                    method,
+                    gateway_id,
+                    gateway_url,
+                    exc,
+                )
+                return mcp_types.ErrorData(code=mcp_types.INTERNAL_ERROR, message=f"Failed to proxy {method}")
+            finally:
+                async with self._pending_lock:
+                    if self._pending_requests.get(key) is future:
+                        self._pending_requests.pop(key, None)
+
+        async def sampling_callback(_context: Any, params: Any) -> Any:
+            return await forward("sampling/createMessage", params)
+
+        async def elicitation_callback(_context: Any, params: Any) -> Any:
+            return await forward("elicitation/create", params)
+
+        async def list_roots_callback(_context: Any) -> Any:
+            return await forward("roots/list")
+
+        return {
+            "sampling_callback": sampling_callback,
+            "elicitation_callback": elicitation_callback,
+            "list_roots_callback": list_roots_callback,
+        }
 
     async def _forward_request_to_stream(
         self,
