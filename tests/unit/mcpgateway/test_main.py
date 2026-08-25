@@ -1183,6 +1183,25 @@ class TestServerHandshakeEndpoint:
 
     @patch("mcpgateway.main.test_server_handshake")
     @patch("mcpgateway.main.server_service.get_server")
+    def test_handshake_falls_back_to_cookie_when_no_bearer_header(self, mock_get_server, mock_handshake, test_client):
+        """With no Authorization header, a jwt_token cookie is forwarded as the handshake's credentials."""
+        # First-Party
+        from mcpgateway.schemas import GatewayHandshakeResponse
+
+        mock_get_server.return_value = ServerRead(**MOCK_SERVER_READ)
+        mock_handshake.return_value = GatewayHandshakeResponse(success=True, latency_ms=1)
+
+        test_client.cookies.set("jwt_token", "cookie-token")
+        try:
+            test_client.post("/servers/1/test-handshake", json={})
+        finally:
+            test_client.cookies.delete("jwt_token")
+
+        forwarded_headers = mock_handshake.call_args.args[4]
+        assert forwarded_headers.get("Authorization") == "Bearer cookie-token"
+
+    @patch("mcpgateway.main.test_server_handshake")
+    @patch("mcpgateway.main.server_service.get_server")
     def test_handshake_forwards_bearer_token(self, mock_get_server, mock_handshake, test_client, auth_headers):
         """The caller's own bearer token is forwarded as the handshake's default credentials."""
         # First-Party

@@ -23,8 +23,16 @@ from mcpgateway.schemas import GatewayHandshakeResponse, ServerHandshakeRequest
 from mcpgateway.services.gateway_service import test_server_handshake as run_server_handshake
 
 
-def _mock_sdk_session():
-    """Build mocked streamablehttp_client / ClientSession context managers for a successful initialize."""
+def _mock_sdk_session(init_side_effect=None):
+    """Build mocked streamablehttp_client / ClientSession context managers.
+
+    Args:
+        init_side_effect: Optional exception (or exception instance) for
+            ``session.initialize()`` to raise instead of succeeding.
+
+    Returns:
+        Tuple of (transport context manager, session) mocks.
+    """
     init_result = MagicMock()
     init_result.protocolVersion = "2025-11-25"
     init_result.serverInfo.name = "smoke-test-server"
@@ -40,7 +48,7 @@ def _mock_sdk_session():
     tools_result.nextCursor = None
 
     session = MagicMock()
-    session.initialize = AsyncMock(return_value=init_result)
+    session.initialize = AsyncMock(side_effect=init_side_effect, return_value=init_result) if init_side_effect else AsyncMock(return_value=init_result)
     session.list_tools = AsyncMock(return_value=tools_result)
     session.__aenter__ = AsyncMock(return_value=session)
     session.__aexit__ = AsyncMock(return_value=None)
@@ -158,3 +166,65 @@ async def test_connect_error_is_classified_as_transport_failure():
 
     assert result.success is False
     assert result.failure_class == "transport"
+
+
+@pytest.mark.asyncio
+async def test_initialize_timeout_is_transport_failure():
+    """A TimeoutError from the SDK session re-raises past the inner handler and is caught as a transport failure."""
+    # First-Party
+    from mcpgateway.services.gateway_service import _HANDSHAKE_TRANSPORT_COPY
+
+    transport_cm, session = _mock_sdk_session(init_side_effect=TimeoutError())
+
+    with patch("mcpgateway.main.app", MagicMock()):
+        with patch("mcpgateway.services.gateway_service.streamablehttp_client", return_value=transport_cm):
+            with patch("mcpgateway.services.gateway_service.ClientSession", return_value=session):
+                result = await run_server_handshake("srv-1", "my-server", True, ServerHandshakeRequest(), {})
+
+    assert result.success is False
+    assert result.failure_class == "transport"
+    assert result.error == _HANDSHAKE_TRANSPORT_COPY
+
+
+@pytest.mark.asyncio
+async def test_exception_group_unwraps_root_cause():
+    """A grouped initialize failure is classified from its root cause and keeps the detail suffix."""
+    # Third-Party
+    import httpx
+
+    # First-Party
+    from mcpgateway.services.gateway_service import _HANDSHAKE_TRANSPORT_COPY
+
+    transport_cm, session = _mock_sdk_session(init_side_effect=ExceptionGroup("handshake failed", [httpx.ConnectError("connection refused")]))
+
+    with patch("mcpgateway.main.app", MagicMock()):
+        with patch("mcpgateway.services.gateway_service.streamablehttp_client", return_value=transport_cm):
+            with patch("mcpgateway.services.gateway_service.ClientSession", return_value=session):
+                result = await run_server_handshake("srv-1", "my-server", True, ServerHandshakeRequest(), {})
+
+    assert result.success is False
+    assert result.failure_class == "transport"
+    assert result.error == f"{_HANDSHAKE_TRANSPORT_COPY}: connection refused"
+
+
+@pytest.mark.asyncio
+async def test_httpx_client_factory_builds_asgi_transport_client():
+    """The httpx_client_factory passed to the SDK builds a client wired to the ASGI transport."""
+    # Third-Party
+    import httpx
+
+    transport_cm, session = _mock_sdk_session()
+    fake_app = MagicMock()
+
+    with patch("mcpgateway.main.app", fake_app):
+        with patch("mcpgateway.services.gateway_service.streamablehttp_client", return_value=transport_cm) as mock_streamable:
+            with patch("mcpgateway.services.gateway_service.ClientSession", return_value=session):
+                await run_server_handshake("srv-1", "my-server", True, ServerHandshakeRequest(), {})
+
+    factory = mock_streamable.call_args.kwargs["httpx_client_factory"]
+    client = factory()
+    try:
+        assert isinstance(client, httpx.AsyncClient)
+        assert isinstance(client._transport, httpx.ASGITransport)
+    finally:
+        await client.aclose()
