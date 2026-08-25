@@ -33,6 +33,7 @@ from fastapi import HTTPException
 import httpx
 from mcp_types import PromptArgument
 import mcp_types as types
+from mcp.shared.exceptions import MCPError
 import pytest
 from starlette.types import Scope
 
@@ -43,12 +44,18 @@ from starlette.types import Scope
 from mcpgateway.services.oauth_manager import OAuthEnforcementUnavailableError, OAuthRequiredError
 from mcpgateway.services.mcp_apps import MCP_UI_EXTENSION
 from mcpgateway.transports import streamablehttp_transport as tr  # noqa: E402
+from mcpgateway.services.prompt_service import PromptNotFoundError
+from mcpgateway.services.resource_service import ResourceNotFoundError
+from mcpgateway.services.tool_service import ToolNotFoundError
 from mcpgateway.transports.streamablehttp_transport import (
     _MCPGATEWAY_CONTEXT_KEY,
+    call_tool,
+    get_prompt,
     list_prompts,
     list_resources,
     list_tools,
     prompt_service,
+    read_resource,
     resource_service,
     server_id_var,
     tool_service,
@@ -1505,7 +1512,8 @@ async def test_get_prompt_no_content(monkeypatch, caplog):
 
     with caplog.at_level("WARNING", logger="mcpgateway.transports.streamablehttp_transport"):
         result = await get_prompt("empty_prompt")
-        assert result == []
+        assert isinstance(result, types.GetPromptResult)
+        assert result.messages == []
         assert "No content returned by prompt: empty_prompt" in caplog.text
 
 
@@ -1526,13 +1534,14 @@ async def test_get_prompt_no_result(monkeypatch, caplog):
 
     with caplog.at_level("WARNING", logger="mcpgateway.transports.streamablehttp_transport"):
         result = await get_prompt("missing_prompt")
-        assert result == []
+        assert isinstance(result, types.GetPromptResult)
+        assert result.messages == []
         assert "No content returned by prompt: missing_prompt" in caplog.text
 
 
 @pytest.mark.asyncio
 async def test_get_prompt_service_exception(monkeypatch, caplog):
-    """Test get_prompt returns [] and logs exception from service."""
+    """Service exceptions from get_prompt are logged and re-raised (not swallowed as [])."""
     # First-Party
     from mcpgateway.transports.streamablehttp_transport import get_prompt, prompt_service
 
@@ -1546,14 +1555,14 @@ async def test_get_prompt_service_exception(monkeypatch, caplog):
     monkeypatch.setattr(prompt_service, "get_prompt", AsyncMock(side_effect=Exception("service error!")))
 
     with caplog.at_level("ERROR"):
-        result = await get_prompt("error_prompt")
-        assert result == []
+        with pytest.raises(Exception, match="service error!"):
+            await get_prompt("error_prompt")
         assert "Error getting prompt 'error_prompt': service error!" in caplog.text
 
 
 @pytest.mark.asyncio
 async def test_get_prompt_outer_exception(monkeypatch, caplog):
-    """Test get_prompt returns [] and logs exception from outer try-catch."""
+    """Outer-scope exceptions from get_prompt are logged and re-raised."""
     # Standard
     from contextlib import asynccontextmanager
 
@@ -1569,8 +1578,8 @@ async def test_get_prompt_outer_exception(monkeypatch, caplog):
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", failing_get_db)
 
     with caplog.at_level("ERROR"):
-        result = await get_prompt("db_error_prompt")
-        assert result == []
+        with pytest.raises(Exception, match="db error!"):
+            await get_prompt("db_error_prompt")
         assert "Error getting prompt 'db_error_prompt': db error!" in caplog.text
 
 
@@ -1920,7 +1929,7 @@ async def test_read_resource_no_result(monkeypatch, caplog):
 
 @pytest.mark.asyncio
 async def test_read_resource_service_exception(monkeypatch, caplog):
-    """Test read_resource returns empty string and logs exception from service."""
+    """Service exceptions from read_resource are logged and re-raised (not masked as \"\")."""
     # Third-Party
     from pydantic import AnyUrl
 
@@ -1938,8 +1947,8 @@ async def test_read_resource_service_exception(monkeypatch, caplog):
 
     test_uri = AnyUrl("file:///error.txt")
     with caplog.at_level("ERROR"):
-        result = await read_resource(test_uri)
-        assert result == ""
+        with pytest.raises(Exception, match="service error!"):
+            await read_resource(test_uri)
         assert "Error reading resource 'file:///error.txt': service error!" in caplog.text
 
 
@@ -1963,14 +1972,13 @@ async def test_read_resource_service_resource_error_propagates(monkeypatch):
     monkeypatch.setattr(resource_service, "read_resource", AsyncMock(side_effect=ResourceError("template did not resolve")))
 
     test_uri = AnyUrl("file:///template.txt")
-    # MCP v2: all exceptions are caught and "" is returned (no ResourceError propagation)
-    result = await read_resource(test_uri)
-    assert result == ""
+    with pytest.raises(ResourceError, match="template did not resolve"):
+        await read_resource(test_uri)
 
 
 @pytest.mark.asyncio
 async def test_read_resource_outer_exception(monkeypatch, caplog):
-    """Test read_resource returns empty string and logs exception from outer try-catch."""
+    """Outer-scope exceptions from read_resource are logged and re-raised."""
     # Standard
     from contextlib import asynccontextmanager
 
@@ -1990,8 +1998,8 @@ async def test_read_resource_outer_exception(monkeypatch, caplog):
 
     test_uri = AnyUrl("file:///db_error.txt")
     with caplog.at_level("ERROR"):
-        result = await read_resource(test_uri)
-        assert result == ""
+        with pytest.raises(Exception, match="db error!"):
+            await read_resource(test_uri)
         assert "Error reading resource 'file:///db_error.txt': db error!" in caplog.text
 
 
@@ -18157,3 +18165,58 @@ class TestDualEra:
     def test_server_discover_is_a_known_mcp_request_method(self):
         """`server/discover` must never again be classified as an unknown method."""
         assert tr._is_known_mcp_request_method("server/discover")
+
+
+class TestUnknownEntityErrors:
+    """Not-found answers for tools/prompts/resources: native shapes, never SDK catch-all defaults."""
+
+    @staticmethod
+    def _fake_db(monkeypatch):
+        mock_db = MagicMock()
+
+        @asynccontextmanager
+        async def fake_get_db():
+            yield mock_db
+
+        monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+
+    @pytest.mark.asyncio
+    async def test_unknown_tool_returns_native_iserror_result(self, monkeypatch):
+        """ToolNotFoundError becomes an isError CallToolResult, matching native servers of both eras."""
+        self._fake_db(monkeypatch)
+        monkeypatch.setattr(tool_service, "invoke_tool", AsyncMock(side_effect=ToolNotFoundError("Tool not found: missing_tool")))
+
+        result = await call_tool("missing_tool", {})
+        assert isinstance(result, types.CallToolResult)
+        assert result.is_error is True
+        assert result.content[0].text == "Unknown tool: missing_tool"
+
+    @pytest.mark.asyncio
+    async def test_unknown_prompt_raises_invalid_params(self, monkeypatch):
+        """PromptNotFoundError becomes MCPError(-32602) with the prompt name in the message."""
+        self._fake_db(monkeypatch)
+        monkeypatch.setattr(prompt_service, "get_prompt", AsyncMock(side_effect=PromptNotFoundError("Prompt not found: missing_prompt")))
+
+        with pytest.raises(MCPError) as exc_info:
+            await get_prompt("missing_prompt")
+        assert exc_info.value.error.code == types.INVALID_PARAMS
+        assert exc_info.value.error.message == "Unknown prompt: missing_prompt"
+
+    @pytest.mark.asyncio
+    async def test_unknown_resource_raises_invalid_params(self, monkeypatch):
+        """ResourceNotFoundError becomes MCPError(-32602) with the URI in the message."""
+        self._fake_db(monkeypatch)
+        monkeypatch.setattr(resource_service, "read_resource", AsyncMock(side_effect=ResourceNotFoundError("Resource not found: missing://resource")))
+
+        with pytest.raises(MCPError) as exc_info:
+            await read_resource("missing://resource")
+        assert exc_info.value.error.code == types.INVALID_PARAMS
+        assert exc_info.value.error.message == "Unknown resource: missing://resource"
+
+    @pytest.mark.asyncio
+    async def test_uncontented_cache_resource_still_returns_empty(self, monkeypatch):
+        """Cache-mode rows without ingested content keep the historical "" answer (P1, not B1)."""
+        self._fake_db(monkeypatch)
+        monkeypatch.setattr(resource_service, "read_resource", AsyncMock(side_effect=ValueError("Resource has no content")))
+
+        assert await read_resource("poc://cached/empty") == ""
