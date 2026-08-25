@@ -991,6 +991,8 @@ The gateway includes built-in observability features for tracking HTTP requests,
 | `TRANSPORT_TYPE`          | Enabled transports                 | `all`   | `http`,`ws`,`sse`,`stdio`,`all` |
 | `MCPGATEWAY_WS_RELAY_ENABLED` | Enable `/ws` JSON-RPC WebSocket relay | `false` | bool                       |
 | `MCPGATEWAY_REVERSE_PROXY_ENABLED` | Enable `/reverse-proxy/*` endpoints | `false` | bool                     |
+| `MCPGATEWAY_REVERSE_PROXY_DISTRIBUTED_ENABLED` | Enable Redis-backed cross-worker reverse-proxy routing | `false` | bool |
+| `MCPGATEWAY_REVERSE_PROXY_HEARTBEAT_TIMEOUT` | Seconds before a silent reverse-proxy client is evicted; `0` disables eviction | `90` | float >= 0 |
 | `WEBSOCKET_PING_INTERVAL` | WebSocket ping (secs)              | `30`    | int > 0                         |
 | `SSE_RETRY_TIMEOUT`       | SSE retry timeout (ms)             | `5000`  | int > 0                         |
 | `SSE_KEEPALIVE_ENABLED`   | Enable SSE keepalive events        | `true`  | bool                            |
@@ -999,6 +1001,7 @@ The gateway includes built-in observability features for tracking HTTP requests,
 | `JSON_RESPONSE_ENABLED`   | json/sse streams (streamable http) | `true`  | bool                            |
 
 `MCPGATEWAY_WS_RELAY_ENABLED` and `MCPGATEWAY_REVERSE_PROXY_ENABLED` are disabled by default and should be enabled only when those WebSocket transport paths are explicitly required.
+Distributed reverse-proxy routing requires `MCPGATEWAY_REVERSE_PROXY_ENABLED=true` and `CACHE_TYPE=redis`.
 
 ### Federation
 

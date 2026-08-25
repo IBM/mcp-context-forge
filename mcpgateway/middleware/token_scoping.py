@@ -126,6 +126,11 @@ _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     ("POST", re.compile(r"^/servers/[^/]+/mcp(?:$|/)"), Permissions.SERVERS_USE),  # Server MCP access endpoint
     ("PUT", re.compile(r"^/servers/[^/]+(?:$|/)"), Permissions.SERVERS_UPDATE),
     ("DELETE", re.compile(r"^/servers/[^/]+(?:$|/)"), Permissions.SERVERS_DELETE),
+    # Reverse-proxy session permissions
+    ("GET", re.compile(r"^/reverse-proxy/sessions/?$"), Permissions.GATEWAYS_READ),
+    ("GET", re.compile(r"^/reverse-proxy/sse/[^/]+/?$"), Permissions.GATEWAYS_READ),
+    ("DELETE", re.compile(r"^/reverse-proxy/sessions/[^/]+/?$"), Permissions.GATEWAYS_DELETE),
+    ("POST", re.compile(r"^/reverse-proxy/sessions/[^/]+/request/?$"), Permissions.TOOLS_EXECUTE),
     # Gateway permissions
     # Connectivity test and handshake probe exposed through the /v1/mcp-servers product alias.
     # They must precede the generic POST sub-resource rule below.
@@ -631,6 +636,8 @@ class TokenScopingMiddleware:
         Returns:
             Parsed positive integer limit, or ``None`` when invalid/non-positive.
         """
+        if not isinstance(value, (str, bytes, bytearray, int, float)):
+            return None
         try:
             parsed = int(value)
         except (TypeError, ValueError):
@@ -751,6 +758,40 @@ class TokenScopingMiddleware:
 
         # Default deny for unmatched paths with server restrictions
         return False
+
+    def enforce_non_permission_restrictions(self, payload: dict, request_path: str, client_ip: str) -> None:
+        """Enforce server, network, time, and usage restrictions from a verified token.
+
+        Args:
+            payload: Verified JWT payload.
+            request_path: Canonical request path used for server restriction matching.
+            client_ip: Direct or trusted-proxy-normalized client address.
+
+        Raises:
+            HTTPException: When any non-permission token restriction denies access.
+        """
+        scopes = payload.get("scopes", {})
+
+        server_id = scopes.get("server_id")
+        if not self._check_server_restriction(request_path, server_id):
+            logger.warning(f"Token not authorized for this server. Required: {SecurityValidator.sanitize_log_message(str(server_id))}")
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
+
+        ip_restrictions = scopes.get("ip_restrictions", [])
+        if ip_restrictions and not self._check_ip_restrictions(client_ip, ip_restrictions):
+            logger.warning(f"Request from IP {client_ip} not allowed by token restrictions")
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
+
+        time_restrictions = scopes.get("time_restrictions", {})
+        if not self._check_time_restrictions(time_restrictions):
+            logger.warning("Request not allowed at this time by token restrictions")
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Request not allowed at this time by token restrictions")
+
+        usage_limits = scopes.get("usage_limits", {})
+        usage_allowed, usage_reason = self._check_usage_limits(payload.get("jti"), usage_limits)
+        if not usage_allowed:
+            logger.warning("Token usage limit exceeded for jti %s: %s", payload.get("jti"), usage_reason)
+            raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=usage_reason or "Token usage limit exceeded")
 
     def _check_permission_restrictions(self, request_path: str, request_method: str, permissions: list) -> bool:
         """Check if request is allowed by permission restrictions.
@@ -934,13 +975,32 @@ class TokenScopingMiddleware:
                 finally:
                     db.close()
 
+    def check_team_membership(self, payload: dict, db=None) -> bool:
+        """Validate token team membership through the single admission policy point.
+
+        Thin public wrapper over the HTTP-admission membership rule so non-HTTP
+        admission paths (for example the reverse-proxy WebSocket handshake)
+        enforce the identical policy instead of re-implementing it. Callers
+        apply it to non-session (API/legacy) tokens only; session tokens
+        resolve membership from the database via ``resolve_session_teams``.
+
+        Args:
+            payload: Decoded JWT payload containing teams
+            db: Optional database session. If provided, caller manages lifecycle.
+                If None, creates and manages its own session.
+
+        Returns:
+            bool: True if team membership is valid, False otherwise
+        """
+        return self._check_team_membership(payload, db=db)
+
     def _is_targeted_missing_resource_delete(self, request_path: str, method: str) -> bool:
         """Return whether request is an exact server or gateway DELETE path."""
         normalized_path = self._normalize_path_for_matching(request_path)
         return method == "DELETE" and bool(_TARGETED_MISSING_DELETE_PATTERN.fullmatch(normalized_path))
 
     def _check_resource_team_ownership(  # noqa: PLR0911  # pylint: disable=too-many-return-statements
-        self, request_path: str, token_teams: list, db=None, _user_email: str = None
+        self, request_path: str, token_teams: list, db=None, _user_email: str | None = None
     ) -> ResourceOwnershipResult:
         """
         Check if the requested resource is accessible by the token.
@@ -1440,38 +1500,13 @@ class TokenScopingMiddleware:
             # Extract scopes from payload
             scopes = payload.get("scopes", {})
 
-            # Check server ID restriction
-            server_id = scopes.get("server_id")
-            if not self._check_server_restriction(normalized_path, server_id):
-                logger.warning(f"Token not authorized for this server. Required: {SecurityValidator.sanitize_log_message(str(server_id))}")
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
-
-            # Check IP restrictions
-            ip_restrictions = scopes.get("ip_restrictions", [])
-            if ip_restrictions:
-                client_ip = self._get_client_ip(request)
-                if not self._check_ip_restrictions(client_ip, ip_restrictions):
-                    logger.warning(f"Request from IP {client_ip} not allowed by token restrictions")
-                    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
-
-            # Check time restrictions
-            time_restrictions = scopes.get("time_restrictions", {})
-            if not self._check_time_restrictions(time_restrictions):
-                logger.warning("Request not allowed at this time by token restrictions")
-                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Request not allowed at this time by token restrictions")
+            self.enforce_non_permission_restrictions(payload, normalized_path, self._get_client_ip(request))
 
             # Check permission restrictions
             permissions = scopes.get("permissions", [])
             if not self._check_permission_restrictions(normalized_path, request.method, permissions):
                 logger.warning("Insufficient permissions for this operation")
                 raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
-
-            # Check optional token usage limits.
-            usage_limits = scopes.get("usage_limits", {})
-            usage_allowed, usage_reason = self._check_usage_limits(payload.get("jti"), usage_limits)
-            if not usage_allowed:
-                logger.warning("Token usage limit exceeded for jti %s: %s", payload.get("jti"), usage_reason)
-                raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=usage_reason or "Token usage limit exceeded")
 
             # All scoping checks passed, continue
             return await call_next(request)

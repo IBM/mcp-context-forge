@@ -165,6 +165,90 @@ class TestBuildGatewayAuthHeaders:
 
 
 # First-Party
+from mcpgateway.utils import gateway_access  # noqa: E402  (module-attribute access keeps red-first failures per-test)
+
+
+class TestNormalizeDownstreamAuthHeaders:
+    """Strict stored-credential normalization for PROXIED downstream forwarding (Phase 4 T3)."""
+
+    def test_bearer_dict_normalizes_authorization_header(self):
+        """Bearer dict material normalizes to a single Authorization header."""
+        headers = gateway_access.normalize_downstream_auth_headers("bearer", {"Authorization": "Bearer token123"})
+
+        assert headers == {"Authorization": "Bearer token123"}
+
+    def test_bearer_dict_without_prefix_gets_prefixed(self):
+        """Bearer material lacking the scheme prefix is prefixed, matching legacy behavior."""
+        headers = gateway_access.normalize_downstream_auth_headers("bearer", {"Authorization": "token123"})
+
+        assert headers == {"Authorization": "Bearer token123"}
+
+    def test_basic_dict_passes_authorization_through(self):
+        """Basic material forwards the stored Authorization header verbatim."""
+        headers = gateway_access.normalize_downstream_auth_headers("basic", {"Authorization": "Basic dXNlcjpwYXNz"})
+
+        assert headers == {"Authorization": "Basic dXNlcjpwYXNz"}
+
+    def test_authheaders_dict_forwards_full_mapping(self):
+        """Custom authheaders material forwards every stored header (the Oracle authheaders gap)."""
+        headers = gateway_access.normalize_downstream_auth_headers("authheaders", {"X-Api-Key": "k", "X-Tenant": "t"})
+
+        assert headers == {"X-Api-Key": "k", "X-Tenant": "t"}
+
+    def test_encoded_string_form_round_trips(self):
+        """The encrypted string form (tool invoke-seam representation) decodes to the same mapping."""
+        # First-Party
+        from mcpgateway.utils.services_auth import encode_auth
+
+        encoded = encode_auth({"X-Api-Key": "encoded-marker"})  # pragma: allowlist secret
+
+        headers = gateway_access.normalize_downstream_auth_headers("authheaders", encoded)
+
+        assert headers == {"X-Api-Key": "encoded-marker"}  # pragma: allowlist secret
+
+    @pytest.mark.parametrize("auth_type,auth_value", [(None, {"Authorization": "Bearer x"}), ("bearer", None), ("bearer", {}), ("", {"Authorization": "Bearer x"})])
+    def test_absent_material_returns_empty(self, auth_type, auth_value):
+        """No stored material means no headers (the envelope omits authentication entirely)."""
+        assert gateway_access.normalize_downstream_auth_headers(auth_type, auth_value) == {}
+
+    @pytest.mark.parametrize("auth_type", ["query_param", "oauth", "one_time_auth", "ntlm"])
+    def test_unsupported_modes_raise_code_only(self, auth_type):
+        """Unsupported auth modes are explicitly rejected, never silently omitted; message carries no values."""
+        with pytest.raises(gateway_access.GatewayAuthValueError) as exc_info:
+            gateway_access.normalize_downstream_auth_headers(auth_type, {"Authorization": "Bearer marker-secret"})
+
+        message = str(exc_info.value)
+        assert auth_type in message
+        assert "marker-secret" not in message
+
+    def test_corrupt_encoded_string_raises_without_echo(self):
+        """Undecryptable material raises a code-only typed error that never echoes the blob."""
+        with pytest.raises(gateway_access.GatewayAuthValueError) as exc_info:
+            gateway_access.normalize_downstream_auth_headers("bearer", "!!!not-valid-encoded!!!")
+
+        assert "!!!not-valid-encoded!!!" not in str(exc_info.value)
+
+    def test_non_string_mapping_value_raises_without_echo(self):
+        """Non-string header values are rejected at the boundary; the value never appears in the error."""
+        with pytest.raises(gateway_access.GatewayAuthValueError) as exc_info:
+            gateway_access.normalize_downstream_auth_headers("authheaders", {"X-Api-Key": 12345})
+
+        assert "12345" not in str(exc_info.value)
+
+    def test_non_mapping_non_string_representation_raises(self):
+        """A wholly unsupported stored representation raises the code-only typed error."""
+        with pytest.raises(gateway_access.GatewayAuthValueError):
+            gateway_access.normalize_downstream_auth_headers("bearer", 12345)
+
+    def test_bearer_non_string_authorization_raises_not_attribute_error(self):
+        """Malformed bearer material yields the typed error, never an AttributeError from .replace."""
+        with pytest.raises(gateway_access.GatewayAuthValueError) as exc_info:
+            gateway_access.normalize_downstream_auth_headers("bearer", {"Authorization": 999})
+
+        assert "999" not in str(exc_info.value)
+
+
+# First-Party
 from mcpgateway.utils.gateway_access import check_gateway_access
 
 

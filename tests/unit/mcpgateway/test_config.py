@@ -123,8 +123,6 @@ def test_parse_sso_entra_admin_groups_json_and_csv():
     assert s_json.sso_entra_admin_groups == ["admin", "superadmin"]
 
 
-
-
 def test_ratelimiter_redis_url_defaults():
     """Test rate limiter Redis config defaults to None."""
     s = Settings(environment="development", _env_file=None)
@@ -1788,7 +1786,6 @@ def test_experimental_rust_mcp_runtime_uds_rejects_missing_parent(tmp_path: Path
         Settings(experimental_rust_mcp_runtime_uds=str(missing_parent), _env_file=None)
 
 
-
 def test_auth_required_true_with_explicit_mcp_permissive_warns(caplog):
     """AUTH_REQUIRED=true with explicit MCP_REQUIRE_AUTH=false should warn."""
     caplog.set_level("WARNING", logger="mcpgateway.config")
@@ -1890,6 +1887,64 @@ def test_reverse_proxy_feature_default_false():
     """mcpgateway_reverse_proxy_enabled should default to False."""
     s = Settings(environment="development", _env_file=None)
     assert s.mcpgateway_reverse_proxy_enabled is False
+
+
+def test_reverse_proxy_distributed_feature_default_false():
+    """Distributed reverse-proxy routing remains opt-in."""
+    settings = Settings(environment="development", _env_file=None)
+
+    assert settings.mcpgateway_reverse_proxy_distributed_enabled is False
+
+
+@pytest.mark.parametrize(
+    ("reverse_proxy_enabled", "cache_type"),
+    [(False, "redis"), (True, "memory"), (True, "database"), (True, "none")],
+)
+def test_reverse_proxy_distributed_feature_requires_reverse_proxy_and_redis(reverse_proxy_enabled, cache_type):
+    """Distributed routing rejects every unsupported startup matrix."""
+    with pytest.raises(ValidationError, match="distributed reverse proxy requires"):
+        Settings(
+            mcpgateway_reverse_proxy_enabled=reverse_proxy_enabled,
+            mcpgateway_reverse_proxy_distributed_enabled=True,
+            cache_type=cache_type,
+            environment="development",
+            _env_file=None,
+        )
+
+
+def test_reverse_proxy_distributed_feature_accepts_enabled_reverse_proxy_with_redis():
+    """Distributed routing accepts its sole supported configuration."""
+    settings = Settings(
+        mcpgateway_reverse_proxy_enabled=True,
+        mcpgateway_reverse_proxy_distributed_enabled=True,
+        cache_type="redis",
+        environment="development",
+        _env_file=None,
+    )
+
+    assert settings.mcpgateway_reverse_proxy_distributed_enabled is True
+
+
+def test_reverse_proxy_heartbeat_timeout_defaults_to_90_seconds():
+    """The reverse-proxy heartbeat timeout defaults to the maintained client's documented tolerance."""
+    s = Settings(environment="development", _env_file=None)
+    assert s.mcpgateway_reverse_proxy_heartbeat_timeout == 90.0
+
+
+def test_reverse_proxy_heartbeat_timeout_zero_disables_reaping():
+    """Zero explicitly disables stale-session reaping while negative values are rejected."""
+    disabled = Settings(mcpgateway_reverse_proxy_heartbeat_timeout=0, environment="development", _env_file=None)
+    assert disabled.mcpgateway_reverse_proxy_heartbeat_timeout == 0
+
+    with pytest.raises(ValidationError):
+        Settings(mcpgateway_reverse_proxy_heartbeat_timeout=-1, environment="development", _env_file=None)
+
+
+@pytest.mark.parametrize("invalid_timeout", [float("nan"), float("inf"), float("-inf"), 5e-324])
+def test_reverse_proxy_heartbeat_timeout_rejects_non_finite_or_tiny_positive(invalid_timeout):
+    """Enabled reaping must always derive a finite, nonzero scheduling interval."""
+    with pytest.raises(ValidationError):
+        Settings(mcpgateway_reverse_proxy_heartbeat_timeout=invalid_timeout, environment="development", _env_file=None)
 
 
 def test_hot_server_check_interval_property():

@@ -499,6 +499,8 @@ mcpContextForge:
     TRANSPORT_TYPE: all              # valid: http, sse, streamablehttp, all (WS/stdio gated by their own flags)
     MCPGATEWAY_WS_RELAY_ENABLED: "false" # /ws JSON-RPC relay (disabled)
     MCPGATEWAY_REVERSE_PROXY_ENABLED: "false" # /reverse-proxy/* endpoints (disabled)
+    MCPGATEWAY_REVERSE_PROXY_DISTRIBUTED_ENABLED: "false" # Redis-backed cross-worker routing; requires reverse proxy and Redis
+    MCPGATEWAY_REVERSE_PROXY_HEARTBEAT_TIMEOUT: "90" # seconds before a silent client is evicted; 0 disables eviction
     SSE_SEND_TIMEOUT: "30.0"         # ASGI send timeout (seconds), 0=disabled
     SSE_KEEPALIVE_ENABLED: "true"    # enable SSE keepalive events
     SSE_KEEPALIVE_INTERVAL: "30"     # seconds between keepalive events

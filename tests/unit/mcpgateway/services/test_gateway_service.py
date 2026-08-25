@@ -15,11 +15,13 @@ from __future__ import annotations
 
 # Standard
 import asyncio
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 import sys
 from types import SimpleNamespace
 from typing import TypeVar
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
+import uuid
 
 # Third-Party
 import httpx
@@ -8369,6 +8371,56 @@ class TestCheckHealthOfGateways:
         assert result is True
         gateway_service._check_single_gateway_health.assert_awaited_once()
 
+    @pytest.mark.asyncio
+    async def test_batch_excludes_internal_proxied_gateway_from_url_probe(self, gateway_service, monkeypatch):
+        """Server-authoritative PROXIED rows derive health from WebSocket state and are never URL-probed."""
+        proxied = MagicMock(spec=DbGateway)
+        proxied.id = "proxied"
+        proxied.name = "proxied"
+        proxied.auth_type = None
+        proxied.transport = "PROXIED"
+        proxied.created_via = "reverse_proxy"
+        normal = MagicMock(spec=DbGateway)
+        normal.id = "normal"
+        normal.name = "normal"
+        normal.auth_type = None
+        normal.transport = "SSE"
+        normal.created_via = "api"
+        monkeypatch.setattr("mcpgateway.services.gateway_service.create_span", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False))))
+        gateway_service._check_single_gateway_health = AsyncMock()
+
+        result = await gateway_service.check_health_of_gateways([proxied, normal])
+
+        assert result is True
+        gateway_service._check_single_gateway_health.assert_awaited_once_with(normal, None)
+
+    @pytest.mark.asyncio
+    async def test_forged_proxied_gateway_fails_health_closed(self, gateway_service):
+        """A PROXIED transport without server provenance is unsupported, never healthy."""
+        gateway = MagicMock(spec=DbGateway)
+        gateway.id = "forged"
+        gateway.name = "forged"
+        gateway.url = "reverse-proxy://catalog/forged"
+        gateway.transport = "PROXIED"
+        gateway.created_via = "api"
+        gateway.enabled = True
+        gateway.reachable = False
+        gateway.ca_certificate = None
+        gateway.ca_certificate_sig = None
+        gateway.auth_type = None
+        gateway.oauth_config = None
+        gateway.auth_value = None
+        gateway.auth_query_params = None
+        gateway.client_cert = None
+        gateway.client_key = None
+        gateway_service._mark_gateway_reachable = AsyncMock()
+        gateway_service._handle_gateway_failure = AsyncMock()
+
+        await gateway_service._check_single_gateway_health(gateway)
+
+        gateway_service._mark_gateway_reachable.assert_not_awaited()
+        gateway_service._handle_gateway_failure.assert_awaited_once_with(gateway)
+
 
 # ---------------------------------------------------------------------------
 # set_gateway_state activation with stale cleanup
@@ -9773,3 +9825,275 @@ class TestFetchToolsAfterOAuthEnforcementPoint:
 
             assert "Refusing to forward" in str(exc_info.value)
             mock_connect.assert_not_awaited()
+
+
+class TestUpdateProxiedGateway:
+    """PROXIED gateway updates must persist field/auth changes without a URL-bound network re-init."""
+
+    @pytest.fixture
+    def proxied_gateway_row(self, test_db):
+        """Persist a PROXIED gateway row, cleaning the shared in-memory table before and after."""
+        test_db.query(DbGateway).delete()
+        test_db.commit()
+        stable_id = uuid.uuid4().hex
+        gateway = DbGateway(
+            id=stable_id,
+            name="proxied-update-target",
+            slug="proxied-update-target",
+            url=f"reverse-proxy://catalog/{stable_id}",
+            transport="PROXIED",
+            capabilities={},
+            tags=[],
+            owner_email="owner@example.com",
+            visibility="public",
+            created_via="reverse_proxy",
+            reachable=True,
+        )
+        test_db.add(gateway)
+        test_db.commit()
+        yield gateway
+        test_db.query(DbGateway).delete()
+        test_db.commit()
+
+    @pytest.mark.asyncio
+    async def test_auth_update_persists_without_network_init(self, gateway_service, proxied_gateway_row, test_db):
+        """Setting bearer auth on a PROXIED gateway persists the material and never probes a network URL."""
+        gateway_service._initialize_gateway = AsyncMock(side_effect=GatewayConnectionError("PROXIED rows must never be network-probed"))
+        gateway_service._notify_gateway_updated = AsyncMock()
+        registry_cache = SimpleNamespace(invalidate_gateways=AsyncMock())
+        tool_lookup_cache = SimpleNamespace(invalidate_gateway=AsyncMock())
+
+        with (
+            patch("mcpgateway.services.gateway_service.audit_trail") as mock_audit,
+            patch("mcpgateway.services.gateway_service.structured_logger") as mock_logger,
+            patch("mcpgateway.services.gateway_service._get_registry_cache", return_value=registry_cache),
+            patch("mcpgateway.services.gateway_service._get_tool_lookup_cache", return_value=tool_lookup_cache),
+            patch("mcpgateway.services.gateway_service._evict_upstream_sessions_for_gateway", new=AsyncMock()),
+            patch("mcpgateway.cache.admin_stats_cache.admin_stats_cache", SimpleNamespace(invalidate_tags=AsyncMock())),
+        ):
+            mock_audit.log_action = MagicMock(return_value=None)
+            mock_logger.log = MagicMock(return_value=None)
+            result = await gateway_service.update_gateway(test_db, proxied_gateway_row.id, GatewayUpdate(auth_type="bearer", auth_token="proxied-write-path-secret"))
+
+        assert result is not None
+        gateway_service._initialize_gateway.assert_not_called()
+        test_db.expire_all()
+        persisted = test_db.get(DbGateway, proxied_gateway_row.id)
+        assert persisted.auth_type == "bearer"
+        assert persisted.auth_value == {"Authorization": "Bearer proxied-write-path-secret"}
+
+    @contextmanager
+    def _infra(self, gateway_service):
+        """Patch the network/catalog/cache/audit seams update_gateway touches; asserts nothing itself."""
+        gateway_service._initialize_gateway = AsyncMock(side_effect=GatewayConnectionError("PROXIED rows must never be network-probed"))
+        gateway_service._sync_gateway_catalog = MagicMock()
+        gateway_service._notify_gateway_updated = AsyncMock()
+        with (
+            patch("mcpgateway.services.gateway_service.audit_trail") as mock_audit,
+            patch("mcpgateway.services.gateway_service.structured_logger") as mock_logger,
+            patch("mcpgateway.services.gateway_service._get_registry_cache", return_value=SimpleNamespace(invalidate_gateways=AsyncMock())),
+            patch("mcpgateway.services.gateway_service._get_tool_lookup_cache", return_value=SimpleNamespace(invalidate_gateway=AsyncMock())),
+            patch("mcpgateway.services.gateway_service._evict_upstream_sessions_for_gateway", new=AsyncMock()),
+            patch("mcpgateway.cache.admin_stats_cache.admin_stats_cache", SimpleNamespace(invalidate_tags=AsyncMock())),
+        ):
+            mock_audit.log_action = MagicMock(return_value=None)
+            mock_logger.log = MagicMock(return_value=None)
+            yield
+
+    @pytest.mark.asyncio
+    async def test_cosmetic_update_preserves_reachability_without_init(self, gateway_service, proxied_gateway_row, test_db):
+        """A description-only update persists, keeps reachable=True, and runs no network/catalog re-init."""
+        with self._infra(gateway_service):
+            result = await gateway_service.update_gateway(test_db, proxied_gateway_row.id, GatewayUpdate(description="cosmetic touch"))
+
+        assert result is not None
+        gateway_service._initialize_gateway.assert_not_called()
+        gateway_service._sync_gateway_catalog.assert_not_called()
+        test_db.expire_all()
+        persisted = test_db.get(DbGateway, proxied_gateway_row.id)
+        assert persisted.description == "cosmetic touch"
+        assert persisted.reachable is True
+
+    @pytest.mark.asyncio
+    async def test_auth_update_preserves_reachability_and_skips_catalog_sync(self, gateway_service, proxied_gateway_row, test_db):
+        """Auth updates keep the live-session reachability signal and never trigger catalog reconciliation."""
+        with self._infra(gateway_service):
+            await gateway_service.update_gateway(test_db, proxied_gateway_row.id, GatewayUpdate(auth_type="bearer", auth_token="proxied-write-path-secret"))
+
+        gateway_service._initialize_gateway.assert_not_called()
+        gateway_service._sync_gateway_catalog.assert_not_called()
+        test_db.expire_all()
+        persisted = test_db.get(DbGateway, proxied_gateway_row.id)
+        assert persisted.reachable is True
+
+    @pytest.mark.asyncio
+    async def test_authheaders_update_persists_custom_mapping(self, gateway_service, proxied_gateway_row, test_db):
+        """authheaders mode persists the custom header mapping so dispatch can forward it downstream."""
+        with self._infra(gateway_service):
+            await gateway_service.update_gateway(
+                test_db,
+                proxied_gateway_row.id,
+                GatewayUpdate(auth_type="authheaders", auth_headers=[{"key": "X-Api-Key", "value": "proxied-gw-key"}, {"key": "X-Tenant", "value": "acme"}]),
+            )
+
+        gateway_service._initialize_gateway.assert_not_called()
+        test_db.expire_all()
+        persisted = test_db.get(DbGateway, proxied_gateway_row.id)
+        assert persisted.auth_type == "authheaders"
+        assert persisted.auth_value == {"X-Api-Key": "proxied-gw-key", "X-Tenant": "acme"}  # pragma: allowlist secret
+
+    @pytest.mark.asyncio
+    async def test_async_lifecycle_mode_still_skips_network_init(self, gateway_service, proxied_gateway_row, test_db, monkeypatch):
+        """With the async lifecycle enabled, PROXIED updates persist synchronously: no pending/offline flip, no init."""
+        monkeypatch.setattr(settings, "gateway_async_lifecycle_enabled", True)
+
+        with self._infra(gateway_service):
+            result = await gateway_service.update_gateway(test_db, proxied_gateway_row.id, GatewayUpdate(auth_type="bearer", auth_token="proxied-write-path-secret"))
+
+        assert result is not None
+        gateway_service._initialize_gateway.assert_not_called()
+        gateway_service._sync_gateway_catalog.assert_not_called()
+        test_db.expire_all()
+        persisted = test_db.get(DbGateway, proxied_gateway_row.id)
+        assert persisted.auth_type == "bearer"
+        assert persisted.reachable is True
+        assert persisted.status != "pending"
+
+    @pytest.mark.asyncio
+    async def test_url_mutation_rejected(self, gateway_service, proxied_gateway_row, test_db):
+        """The server-minted reverse-proxy URL is immutable; client URL changes are rejected."""
+        with pytest.raises(GatewayError, match="URL"):
+            await gateway_service.update_gateway(test_db, proxied_gateway_row.id, GatewayUpdate(url="http://evil.example/mcp"))
+
+        test_db.expire_all()
+        persisted = test_db.get(DbGateway, proxied_gateway_row.id)
+        assert persisted.url == f"reverse-proxy://catalog/{proxied_gateway_row.id}"
+
+    @pytest.mark.asyncio
+    async def test_transport_mutation_rejected(self, gateway_service, proxied_gateway_row, test_db):
+        """A PROXIED row cannot be re-typed into a URL-bound transport."""
+        with pytest.raises(GatewayError, match="transport"):
+            await gateway_service.update_gateway(test_db, proxied_gateway_row.id, GatewayUpdate(transport="SSE"))
+
+        test_db.expire_all()
+        persisted = test_db.get(DbGateway, proxied_gateway_row.id)
+        assert persisted.transport == "PROXIED"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "gateway_update",
+        [
+            GatewayUpdate(name="spoofed-name"),
+            GatewayUpdate(owner_email="attacker@example.com"),
+            GatewayUpdate(team_id="attacker-team"),
+            GatewayUpdate(visibility="private"),
+        ],
+    )
+    async def test_server_owned_identity_mutation_rejected(self, gateway_service, proxied_gateway_row, test_db, gateway_update):
+        """Client updates cannot mutate identity derived from the authenticated registration."""
+        with pytest.raises(GatewayError, match="identity"):
+            await gateway_service.update_gateway(test_db, proxied_gateway_row.id, gateway_update)
+
+        test_db.expire_all()
+        persisted = test_db.get(DbGateway, proxied_gateway_row.id)
+        assert persisted.name == "proxied-update-target"
+        assert persisted.owner_email == "owner@example.com"
+        assert persisted.team_id is None
+        assert persisted.visibility == "public"
+
+    @pytest.mark.asyncio
+    async def test_one_time_auth_rejected(self, gateway_service, proxied_gateway_row, test_db):
+        """One-time auth semantics require a network init that PROXIED rows never perform — rejected, not half-applied."""
+        with pytest.raises(GatewayError, match="one-time"):
+            await gateway_service.update_gateway(test_db, proxied_gateway_row.id, GatewayUpdate(auth_type="bearer", auth_token="proxied-write-path-secret", one_time_auth=True))
+
+        test_db.expire_all()
+        persisted = test_db.get(DbGateway, proxied_gateway_row.id)
+        assert persisted.auth_type is None
+        assert persisted.auth_value is None
+
+    @pytest.mark.asyncio
+    async def test_query_param_auth_rejected(self, gateway_service, proxied_gateway_row, test_db):
+        """query_param credentials attach to a URL the PROXIED row does not have — rejected, never persisted inertly."""
+        with pytest.raises(GatewayError, match="query_param"):
+            await gateway_service.update_gateway(
+                test_db,
+                proxied_gateway_row.id,
+                GatewayUpdate(auth_type="query_param", auth_query_param_key="api_key", auth_query_param_value="proxied-write-path-secret"),
+            )
+
+        test_db.expire_all()
+        persisted = test_db.get(DbGateway, proxied_gateway_row.id)
+        assert persisted.auth_type is None
+
+    @pytest.mark.asyncio
+    async def test_oauth_config_rejected(self, gateway_service, proxied_gateway_row, test_db):
+        """OAuth flows need a token URL the PROXIED row does not have — rejected, never persisted inertly."""
+        with pytest.raises(GatewayError, match="OAuth"):
+            await gateway_service.update_gateway(
+                test_db,
+                proxied_gateway_row.id,
+                GatewayUpdate(auth_type="oauth", oauth_config={"grant_type": "client_credentials", "client_id": "cid", "client_secret": "csec", "token_url": "https://idp.example/token"}),  # pragma: allowlist secret
+            )
+
+        test_db.expire_all()
+        persisted = test_db.get(DbGateway, proxied_gateway_row.id)
+        assert persisted.auth_type is None
+        assert persisted.oauth_config is None
+
+    @pytest.mark.asyncio
+    async def test_transport_upgrade_to_proxied_rejected_on_url_gateway(self, gateway_service, test_db):
+        """Client input cannot claim PROXIED authority: the update schema itself rejects the transport."""
+        test_db.query(DbGateway).delete()
+        test_db.commit()
+        url_gateway = DbGateway(
+            id=uuid.uuid4().hex,
+            name="url-gateway",
+            slug="url-gateway",
+            url="http://upstream.example/mcp",
+            transport="STREAMABLEHTTP",
+            capabilities={},
+            tags=[],
+            owner_email="owner@example.com",
+            visibility="public",
+            created_via="api",
+            reachable=True,
+        )
+        test_db.add(url_gateway)
+        test_db.commit()
+
+        # The boundary validator hard-rejects PROXIED on update payloads (SSE/STREAMABLEHTTP only),
+        # so the service layer never even sees an attempt to claim reverse-proxy authority.
+        with pytest.raises(ValidationError, match="Invalid transport type"):
+            GatewayUpdate(transport="PROXIED")
+
+        test_db.expire_all()
+        persisted = test_db.get(DbGateway, url_gateway.id)
+        assert persisted.transport == "STREAMABLEHTTP"
+
+    @pytest.mark.asyncio
+    async def test_provenance_required_for_proxied_guard(self, gateway_service, test_db):
+        """transport=PROXIED without server provenance (created_via) is NOT treated as internal: init is attempted."""
+        test_db.query(DbGateway).delete()
+        test_db.commit()
+        forged = DbGateway(
+            id=uuid.uuid4().hex,
+            name="forged-proxied",
+            slug="forged-proxied",
+            url="reverse-proxy://catalog/forged",
+            transport="PROXIED",
+            capabilities={},
+            tags=[],
+            owner_email="owner@example.com",
+            visibility="public",
+            created_via="api",
+            reachable=True,
+        )
+        test_db.add(forged)
+        test_db.commit()
+        gateway_service._initialize_gateway = AsyncMock(side_effect=GatewayConnectionError("probe attempted"))
+
+        with pytest.raises(GatewayConnectionError, match="probe attempted"):
+            await gateway_service.update_gateway(test_db, forged.id, GatewayUpdate(auth_type="bearer", auth_token="proxied-write-path-secret"))
+
+        gateway_service._initialize_gateway.assert_called_once()

@@ -4977,6 +4977,36 @@ class TestReadResourceEndpointCoverage:
     """Cover read_resource() serialization branches."""
 
     @pytest.mark.asyncio
+    async def test_read_resource_serializes_mcp_blob_content(self, monkeypatch):
+        # First-Party
+        import mcpgateway.main as main_mod
+        from mcpgateway.common.models import BlobResourceContents
+
+        request = MagicMock(spec=Request)
+        request.headers = {"X-Request-ID": "rid", "X-Server-ID": "sid"}
+        request.state = SimpleNamespace(plugin_context_table=None, plugin_global_context=None)
+        db = MagicMock()
+        monkeypatch.setattr(
+            main_mod.resource_service,
+            "read_resource",
+            AsyncMock(
+                return_value=BlobResourceContents(
+                    uri="reference://static/blob",
+                    mimeType="application/x-t8-binary",
+                    blob="dDgtYmluYXJ5",
+                )
+            ),
+        )
+
+        result = await main_mod.read_resource("res-blob", request=request, db=db, user={"email": "user@example.com", "is_admin": False})
+
+        assert result == {
+            "uri": "reference://static/blob",
+            "mimeType": "application/x-t8-binary",
+            "blob": "dDgtYmluYXJ5",
+        }
+
+    @pytest.mark.asyncio
     async def test_read_resource_serializes_text_bytes_and_str(self, monkeypatch):
         # First-Party
         import mcpgateway.main as main_mod
@@ -14005,6 +14035,261 @@ class TestRedisStartupPath:
             },
         )
         # If we reach here the module loaded — lines 255/257 were executed.
+
+
+@pytest.mark.asyncio
+async def test_reverse_proxy_reaper_evicts_and_persists_at_injected_cycle(monkeypatch):
+    """The reaper delegates stale cleanup to the manager and persists returned stable IDs before its next interval."""
+    # First-Party
+    import mcpgateway.main as main_mod
+    from mcpgateway.services.reverse_proxy_sessions import ConnectionId, ReverseProxyEviction, StableGatewayId
+
+    manager = MagicMock()
+    eviction = ReverseProxyEviction(StableGatewayId("stable-stale"), ConnectionId("old"))
+    manager.reap_stale = AsyncMock(return_value=(eviction,))
+    monkeypatch.setattr("mcpgateway.services.reverse_proxy_sessions.get_reverse_proxy_session_manager", AsyncMock(return_value=manager))
+    sleep = AsyncMock(side_effect=[None, asyncio.CancelledError()])
+    monkeypatch.setattr(main_mod.asyncio, "sleep", sleep)
+    monkeypatch.setattr(main_mod.settings, "mcpgateway_reverse_proxy_heartbeat_timeout", 90.0)
+    main_mod.gateway_service.mark_reverse_proxy_gateways_unreachable = AsyncMock()
+
+    with pytest.raises(asyncio.CancelledError):
+        await main_mod._run_reverse_proxy_reaper()
+
+    manager.reap_stale.assert_awaited_once()
+    reap_call = manager.reap_stale.await_args
+    assert reap_call is not None
+    assert reap_call.kwargs["timeout_seconds"] == 90.0
+    main_mod.gateway_service.mark_reverse_proxy_gateways_unreachable.assert_awaited_once()
+    persistence_call = main_mod.gateway_service.mark_reverse_proxy_gateways_unreachable.await_args
+    assert persistence_call is not None
+    assert persistence_call.args == (manager, (eviction,))
+
+
+@pytest.mark.parametrize(
+    ("feature_enabled", "timeout_seconds", "expected"),
+    [(False, 90.0, False), (True, 0.0, False), (True, 90.0, True)],
+)
+def test_reverse_proxy_reaper_lifespan_gate(feature_enabled, timeout_seconds, expected, monkeypatch):
+    """Lifespan starts the task only when the feature and positive timeout are both enabled."""
+    # First-Party
+    import mcpgateway.main as main_mod
+
+    monkeypatch.setattr(main_mod.settings, "mcpgateway_reverse_proxy_enabled", feature_enabled)
+    monkeypatch.setattr(main_mod.settings, "mcpgateway_reverse_proxy_heartbeat_timeout", timeout_seconds)
+
+    assert main_mod._reverse_proxy_reaper_enabled() is expected
+
+
+@pytest.mark.asyncio
+async def test_reverse_proxy_reaper_continues_after_persistence_failure(monkeypatch):
+    """A failed persistence iteration is logged and the reaper reaches its next scan."""
+    import mcpgateway.main as main_mod
+
+    manager = MagicMock(reap_stale=AsyncMock(side_effect=[(), asyncio.CancelledError()]))
+    monkeypatch.setattr("mcpgateway.services.reverse_proxy_sessions.get_reverse_proxy_session_manager", AsyncMock(return_value=manager))
+    monkeypatch.setattr(main_mod.asyncio, "sleep", AsyncMock())
+    monkeypatch.setattr(main_mod.settings, "mcpgateway_reverse_proxy_heartbeat_timeout", 90.0)
+    main_mod.gateway_service.mark_reverse_proxy_gateways_unreachable = AsyncMock(side_effect=RuntimeError("db unavailable"))
+
+    with pytest.raises(asyncio.CancelledError):
+        await main_mod._run_reverse_proxy_reaper()
+
+    assert manager.reap_stale.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_reverse_proxy_reaper_release_failure_still_persists_and_continues(monkeypatch):
+    import mcpgateway.main as main_mod
+    from mcpgateway.services import reverse_proxy_relay_runtime
+    from mcpgateway.services.reverse_proxy_sessions import ConnectionId, ReverseProxyEviction, StableGatewayId
+    from redis.exceptions import ConnectionError as RedisConnectionError
+
+    eviction = ReverseProxyEviction(StableGatewayId("stable-stale"), ConnectionId("old"))
+    manager = MagicMock(reap_stale=AsyncMock(side_effect=[(eviction,), asyncio.CancelledError()]))
+    relay = MagicMock(release_owner=AsyncMock(side_effect=RedisConnectionError("redis://user:synthetic-secret@cache.invalid/0")))  # pragma: allowlist secret
+    monkeypatch.setattr("mcpgateway.services.reverse_proxy_sessions.get_reverse_proxy_session_manager", AsyncMock(return_value=manager))
+    monkeypatch.setattr(reverse_proxy_relay_runtime, "get_reverse_proxy_relay", AsyncMock(return_value=relay))
+    monkeypatch.setattr(main_mod.asyncio, "sleep", AsyncMock())
+    monkeypatch.setattr(main_mod.settings, "mcpgateway_reverse_proxy_distributed_enabled", True)
+    monkeypatch.setattr(main_mod.settings, "mcpgateway_reverse_proxy_heartbeat_timeout", 90.0)
+    mark_unreachable = AsyncMock()
+    main_mod.gateway_service.mark_reverse_proxy_gateways_unreachable = mark_unreachable
+
+    with pytest.raises(asyncio.CancelledError):
+        await main_mod._run_reverse_proxy_reaper()
+
+    await_args = mark_unreachable.await_args
+    assert await_args is not None
+    mark_unreachable.assert_awaited_once_with(
+        manager,
+        (eviction,),
+        seen_at=await_args.kwargs["seen_at"],
+        authority_guard=relay.unreachable_write_guard,
+    )
+    assert manager.reap_stale.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_lifespan_cancels_reaper_before_service_shutdown(monkeypatch):
+    """The lifespan teardown awaits reaper cancellation before shutdown_services starts."""
+    import mcpgateway.main as main_mod
+
+    events: list[str] = []
+
+    class ReaperTask:
+        def cancel(self) -> None:
+            events.append("cancel")
+
+        def __await__(self):
+            async def cancelled():
+                events.append("await")
+                raise asyncio.CancelledError
+
+            return cancelled().__await__()
+
+    async def shutdown_services(_services) -> None:
+        events.append("shutdown")
+
+    def create_reaper_task(coroutine):  # noqa: ANN001
+        coroutine.close()
+        return ReaperTask()
+
+    # Reuse the established lifespan stubs and intercept only task ownership.
+    test_case = TestLifespanAdvanced()
+    await test_case._prepare_lifespan_stubs(monkeypatch, plugins_enabled=False)
+    monkeypatch.setattr("mcpgateway.utils.db_isready.wait_for_db_ready", MagicMock())
+    monkeypatch.setattr("mcpgateway.bootstrap_db.main", AsyncMock())
+    monkeypatch.setattr(main_mod.settings, "mcpgateway_reverse_proxy_enabled", True)
+    monkeypatch.setattr(main_mod.settings, "mcpgateway_reverse_proxy_heartbeat_timeout", 90.0)
+    notification_service = MagicMock(initialize=AsyncMock(), shutdown=AsyncMock())
+    monkeypatch.setattr("mcpgateway.services.notification_service.init_notification_service", MagicMock(return_value=notification_service))
+    monkeypatch.setattr(main_mod.asyncio, "create_task", create_reaper_task)
+    monkeypatch.setattr(main_mod, "shutdown_services", shutdown_services)
+    monkeypatch.setattr(main_mod, "init_plugin_manager_factory", MagicMock())
+
+    async with main_mod.lifespan(main_mod.app):
+        pass
+
+    assert events.index("cancel") < events.index("await") < events.index("shutdown")
+
+
+@pytest.mark.asyncio
+async def test_lifespan_distributed_subscribe_failure_propagates_and_cleans_up(monkeypatch):
+    from contextlib import asynccontextmanager
+
+    import mcpgateway.main as main_mod
+    from mcpgateway.services.reverse_proxy_relay import RelayUnavailableError
+    from mcpgateway.services import reverse_proxy_relay_runtime
+
+    test_case = TestLifespanAdvanced()
+    await test_case._prepare_lifespan_stubs(monkeypatch, plugins_enabled=False)
+    monkeypatch.setattr("mcpgateway.utils.db_isready.wait_for_db_ready", MagicMock())
+    monkeypatch.setattr("mcpgateway.bootstrap_db.main", AsyncMock())
+    monkeypatch.setattr(main_mod.settings, "mcpgateway_reverse_proxy_distributed_enabled", True)
+    monkeypatch.setattr(main_mod.settings, "mcpgateway_reverse_proxy_enabled", True)
+    monkeypatch.setattr(main_mod.settings, "mcpgateway_reverse_proxy_heartbeat_timeout", 0.0)
+    monkeypatch.setattr(main_mod, "init_plugin_manager_factory", MagicMock())
+
+    @asynccontextmanager
+    async def failed_start():
+        try:
+            raise RelayUnavailableError
+            yield
+        finally:
+            reverse_proxy_relay_runtime.reset_reverse_proxy_relay()
+
+    monkeypatch.setattr(reverse_proxy_relay_runtime, "reverse_proxy_relay_lifespan", failed_start)
+
+    with pytest.raises(RelayUnavailableError, match="reverse-proxy relay unavailable"):
+        async with main_mod.lifespan(main_mod.app):
+            pytest.fail("distributed lifespan unexpectedly started")
+
+    assert reverse_proxy_relay_runtime._default_relay is None
+
+
+@pytest.mark.asyncio
+async def test_lifespan_distributed_heartbeat_failure_retries_under_supervision(monkeypatch):
+    import anyio
+    from anyio import TASK_STATUS_IGNORED
+
+    import mcpgateway.main as main_mod
+    from mcpgateway.services.reverse_proxy_relay import RelayUnavailableError
+    from mcpgateway.services import reverse_proxy_relay_runtime
+
+    test_case = TestLifespanAdvanced()
+    await test_case._prepare_lifespan_stubs(monkeypatch, plugins_enabled=False)
+    monkeypatch.setattr("mcpgateway.utils.db_isready.wait_for_db_ready", MagicMock())
+    monkeypatch.setattr("mcpgateway.bootstrap_db.main", AsyncMock())
+    monkeypatch.setattr(main_mod.settings, "mcpgateway_reverse_proxy_distributed_enabled", True)
+    monkeypatch.setattr(main_mod.settings, "mcpgateway_reverse_proxy_enabled", True)
+    monkeypatch.setattr(main_mod.settings, "mcpgateway_reverse_proxy_heartbeat_timeout", 0.0)
+    monkeypatch.setattr(main_mod, "_reverse_proxy_reaper_enabled", MagicMock(return_value=False))
+    monkeypatch.setattr(main_mod, "init_plugin_manager_factory", MagicMock())
+    notification_service = MagicMock()
+    notification_service.initialize = AsyncMock()
+    notification_service.shutdown = AsyncMock()
+    monkeypatch.setattr("mcpgateway.services.notification_service.init_notification_service", MagicMock(return_value=notification_service))
+    relay = MagicMock()
+    heartbeat_retried = anyio.Event()
+    heartbeat_calls = 0
+
+    async def listen(*, task_status=TASK_STATUS_IGNORED) -> None:
+        task_status.started()
+        await anyio.sleep_forever()
+
+    async def heartbeat() -> None:
+        nonlocal heartbeat_calls
+        heartbeat_calls += 1
+        if heartbeat_calls == 2:
+            raise RelayUnavailableError
+        if heartbeat_calls >= 3:
+            heartbeat_retried.set()
+
+    relay.listen = listen
+    relay.heartbeat = heartbeat
+    monkeypatch.setattr(reverse_proxy_relay_runtime, "get_reverse_proxy_relay", AsyncMock(return_value=relay))
+
+    with anyio.fail_after(2):
+        async with main_mod.lifespan(main_mod.app):
+            await heartbeat_retried.wait()
+
+    assert heartbeat_calls >= 3
+    assert reverse_proxy_relay_runtime._default_relay is None
+
+
+@pytest.mark.asyncio
+async def test_lifespan_stops_distributed_relay_before_service_shutdown(monkeypatch):
+    from contextlib import asynccontextmanager
+
+    import mcpgateway.main as main_mod
+    from mcpgateway.services import reverse_proxy_relay_runtime
+
+    events: list[str] = []
+    test_case = TestLifespanAdvanced()
+    await test_case._prepare_lifespan_stubs(monkeypatch, plugins_enabled=False)
+    monkeypatch.setattr("mcpgateway.utils.db_isready.wait_for_db_ready", MagicMock())
+    monkeypatch.setattr("mcpgateway.bootstrap_db.main", AsyncMock())
+    monkeypatch.setattr(main_mod.settings, "mcpgateway_reverse_proxy_distributed_enabled", True)
+    monkeypatch.setattr(main_mod.settings, "mcpgateway_reverse_proxy_enabled", True)
+    monkeypatch.setattr(main_mod.settings, "mcpgateway_reverse_proxy_heartbeat_timeout", 0.0)
+    monkeypatch.setattr(main_mod, "init_plugin_manager_factory", MagicMock())
+    monkeypatch.setattr(main_mod, "shutdown_services", AsyncMock(side_effect=lambda _services: events.append("services")))
+
+    @asynccontextmanager
+    async def managed_relay():
+        events.append("relay-start")
+        try:
+            yield MagicMock()
+        finally:
+            events.append("relay-stop")
+
+    monkeypatch.setattr(reverse_proxy_relay_runtime, "reverse_proxy_relay_lifespan", managed_relay)
+
+    async with main_mod.lifespan(main_mod.app):
+        pass
+
+    assert events.index("relay-start") < events.index("relay-stop") < events.index("services")
 
 
 @pytest.fixture

@@ -10,7 +10,7 @@ in direct_proxy mode, ensuring consistent RBAC enforcement across the codebase.
 """
 
 # Standard
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional, TYPE_CHECKING
 
 # Third-Party
 from sqlalchemy.orm import Session
@@ -19,6 +19,10 @@ from sqlalchemy.orm import Session
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.utils.admin_check import is_user_admin
 from mcpgateway.utils.services_auth import decode_auth
+
+if TYPE_CHECKING:
+    # First-Party
+    from mcpgateway.services.reverse_proxy_protocol import DownstreamAuth
 
 # Header name used by clients to target a specific gateway for direct_proxy mode.
 # Defined once here to avoid string literal repetition across the codebase.
@@ -120,6 +124,28 @@ async def check_gateway_access(
     return False
 
 
+class GatewayAuthValueError(ValueError):
+    """Stored gateway credential material is malformed or not forwardable downstream.
+
+    Messages name only the auth mode and a fixed reason — never credential
+    material — so the error is safe to wrap into service exceptions, logs, and
+    telemetry text.
+    """
+
+
+# Auth modes whose stored material can be forwarded to a downstream server as HTTP headers.
+DOWNSTREAM_FORWARDABLE_AUTH_TYPES = frozenset({"bearer", "basic", "authheaders"})
+
+
+def _bearer_basic_headers(auth_type: str, decoded: Mapping[str, str]) -> Dict[str, str]:
+    """Normalize bearer/basic stored material to a single ``Authorization`` header."""
+    if auth_type == "bearer":
+        token = decoded.get("Authorization", "").replace("Bearer ", "")
+        return {"Authorization": f"Bearer {token}"} if token else {}
+    auth_header = decoded.get("Authorization", "")
+    return {"Authorization": auth_header} if auth_header else {}
+
+
 def build_gateway_auth_headers(gateway: DbGateway) -> Dict[str, str]:
     """Build authentication headers for gateway requests.
 
@@ -139,27 +165,92 @@ def build_gateway_auth_headers(gateway: DbGateway) -> Dict[str, str]:
         >>> headers["Authorization"]
         'Bearer token123'
     """
-    headers: Dict[str, str] = {}
+    auth_type = getattr(gateway, "auth_type", None)
+    auth_value = getattr(gateway, "auth_value", None)
+    if auth_type not in ("bearer", "basic") or not auth_value:
+        return {}
+    if isinstance(auth_value, dict):
+        decoded: Mapping[str, Any] = auth_value
+    elif isinstance(auth_value, str):
+        decoded = decode_auth(auth_value)
+    else:
+        return {}
+    return _bearer_basic_headers(auth_type, decoded)
 
-    if gateway.auth_type == "bearer" and gateway.auth_value:
-        if isinstance(gateway.auth_value, dict):
-            token = gateway.auth_value.get("Authorization", "").replace("Bearer ", "")
-            if token:  # Only add header if token is not empty
-                headers["Authorization"] = f"Bearer {token}"
-        elif isinstance(gateway.auth_value, str):
-            decoded = decode_auth(gateway.auth_value)
-            token = decoded.get("Authorization", "").replace("Bearer ", "")
-            if token:  # Only add header if token is not empty
-                headers["Authorization"] = f"Bearer {token}"
-    elif gateway.auth_type == "basic" and gateway.auth_value:
-        if isinstance(gateway.auth_value, dict):
-            auth_header = gateway.auth_value.get("Authorization", "")
-            if auth_header:  # Only add header if not empty
-                headers["Authorization"] = auth_header
-        elif isinstance(gateway.auth_value, str):
-            decoded = decode_auth(gateway.auth_value)
-            auth_header = decoded.get("Authorization", "")
-            if auth_header:  # Only add header if not empty
-                headers["Authorization"] = auth_header
 
-    return headers
+def normalize_downstream_auth_headers(auth_type: Optional[str], auth_value: Optional[Any]) -> Dict[str, str]:
+    """Strictly normalize stored gateway credentials for PROXIED downstream forwarding.
+
+    Covers the three forwardable modes: ``bearer``/``basic`` (normalized to a single
+    ``Authorization`` header, matching ``build_gateway_auth_headers`` semantics) and
+    ``authheaders`` (the full custom header mapping). Returns ``{}`` when no material
+    is stored, so the wire envelope omits ``authentication``/``authType`` entirely.
+
+    Args:
+        auth_type: Stored gateway auth type ("bearer", "basic", "authheaders", ...).
+        auth_value: Stored auth material — encrypted string or already-decoded mapping.
+
+    Returns:
+        The header mapping to attach downstream, or ``{}`` when nothing is stored.
+
+    Raises:
+        GatewayAuthValueError: If the mode is not forwardable downstream (e.g.
+            ``query_param``/``oauth``/``one_time_auth``) or the stored material is
+            undecryptable, not a mapping, or carries non-string header keys/values.
+            The message names only the mode and a fixed reason — never material.
+    """
+    if not auth_type or not auth_value:
+        return {}
+    if auth_type not in DOWNSTREAM_FORWARDABLE_AUTH_TYPES:
+        raise GatewayAuthValueError(f"auth mode '{auth_type}' is not supported for downstream forwarding")
+    if isinstance(auth_value, str):
+        try:
+            raw_decoded: Any = decode_auth(auth_value)
+        except Exception as exc:  # boundary: every decrypt/parse failure becomes one code-only typed error
+            raise GatewayAuthValueError(f"stored '{auth_type}' credentials are undecryptable or malformed") from exc
+        if not isinstance(raw_decoded, Mapping):
+            raise GatewayAuthValueError(f"stored '{auth_type}' credentials are not a header mapping")
+        decoded = raw_decoded
+    elif isinstance(auth_value, Mapping):
+        decoded = auth_value
+    else:
+        raise GatewayAuthValueError(f"stored '{auth_type}' credentials have an unsupported representation")
+    strict: Dict[str, str] = {}
+    for key, value in decoded.items():
+        if not isinstance(key, str) or not isinstance(value, str):
+            raise GatewayAuthValueError(f"stored '{auth_type}' credentials must be string header key/value pairs")
+        strict[key] = value
+    if auth_type in ("bearer", "basic"):
+        return _bearer_basic_headers(auth_type, strict)
+    return strict
+
+
+def build_downstream_auth(auth_type: Optional[str], auth_value: Optional[Any]) -> Optional["DownstreamAuth"]:
+    """Build the typed downstream-auth envelope for PROXIED dispatch.
+
+    Wraps ``normalize_downstream_auth_headers``: returns ``None`` when no forwardable
+    material is stored (the wire envelope then omits ``authentication``/``authType``
+    entirely), otherwise a ``DownstreamAuth`` carrying the normalized headers and the
+    auth mode. The material is never logged.
+
+    Args:
+        auth_type: Stored gateway auth type ("bearer", "basic", "authheaders", ...).
+        auth_value: Stored auth material — encrypted string or already-decoded mapping.
+
+    Returns:
+        A ``DownstreamAuth`` for the dispatch envelope, or ``None`` when nothing is stored.
+
+    Raises:
+        GatewayAuthValueError: If the mode is not forwardable downstream or the stored
+            material is malformed. The message names only the mode and a fixed
+            reason — never material.
+    """
+    # Lazy import: services/__init__ eagerly imports the tool/resource/prompt services,
+    # which import this module — a top-level import here would circular-import.
+    # First-Party
+    from mcpgateway.services.reverse_proxy_protocol import DownstreamAuth  # pylint: disable=import-outside-toplevel
+
+    headers = normalize_downstream_auth_headers(auth_type, auth_value)
+    if not headers:
+        return None
+    return DownstreamAuth(headers=headers, auth_type=auth_type)
