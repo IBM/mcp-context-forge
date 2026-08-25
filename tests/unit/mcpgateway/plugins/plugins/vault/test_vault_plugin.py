@@ -327,7 +327,9 @@ class TestVaultPluginFunctionality:
         vault_tokens = {"github.com": "ghp_root_access_test"}
 
         # Create payload with vault header
-        payload = ToolPreInvokePayload(name="test_tool", arguments={}, headers=HttpHeaderPayload(root={"Content-Type": "application/json", "X-Vault-Tokens": json.dumps(vault_tokens), "X-Custom-Header": "custom_value"}))
+        payload = ToolPreInvokePayload(
+            name="test_tool", arguments={}, headers=HttpHeaderPayload(root={"Content-Type": "application/json", "X-Vault-Tokens": json.dumps(vault_tokens), "X-Custom-Header": "custom_value"})
+        )
 
         # Verify .root contains actual headers (the correct access pattern)
         assert len(payload.headers.root) == 3, "Headers.root should contain all headers"
@@ -889,6 +891,74 @@ class TestVaultPluginMcpServerBinding:
 
         assert result.modified_payload is not None
         assert "authorization" not in result.modified_payload.headers.root
+
+    @pytest.mark.asyncio
+    async def test_a2a_backed_tool_injects_token_from_tool_metadata(self, plugin_config):
+        """A2A-backed tools resolve the vault system from tool metadata tags (#6394)."""
+        plugin = Vault(plugin_config)
+
+        gateway_metadata = type("obj", (object,), {"tags": []})()
+        tool_metadata = type(
+            "obj",
+            (object,),
+            {
+                "tags": [{"id": "1", "label": "system:echo.local"}],
+                "annotations": {"title": "A2A Agent: echo", "a2a_agent_id": "agent-1"},
+            },
+        )()
+        context = PluginContext(
+            global_context=GlobalContext(
+                request_id="a2a-tool-1",
+                metadata={"gateway": gateway_metadata, "tool": tool_metadata},
+            )
+        )
+
+        vault_tokens = {"echo.local": "tok-secret"}
+        payload = ToolPreInvokePayload(
+            name="a2a_echo",
+            arguments={},
+            headers=HttpHeaderPayload(root={"content-type": "application/json", "x-vault-tokens": json.dumps(vault_tokens)}),
+        )
+
+        result = await plugin.tool_pre_invoke(payload, context)
+
+        assert result.modified_payload is not None
+        assert result.modified_payload.headers.root["authorization"] == "Bearer tok-secret"
+        assert "x-vault-tokens" not in result.modified_payload.headers.root
+
+    @pytest.mark.asyncio
+    async def test_regular_tool_ignores_tool_metadata(self, plugin_config):
+        """Non-A2A tools keep resolving the system from gateway metadata only."""
+        plugin = Vault(plugin_config)
+
+        gateway_metadata = type("obj", (object,), {"tags": [{"id": "1", "label": "system:github.com"}]})()
+        tool_metadata = type(
+            "obj",
+            (object,),
+            {
+                "tags": [{"id": "1", "label": "system:echo.local"}],
+                "annotations": {"title": "regular tool"},
+            },
+        )()
+        context = PluginContext(
+            global_context=GlobalContext(
+                request_id="regular-tool-1",
+                metadata={"gateway": gateway_metadata, "tool": tool_metadata},
+            )
+        )
+
+        vault_tokens = {"github.com": "tok-github", "echo.local": "tok-echo"}
+        payload = ToolPreInvokePayload(
+            name="regular_tool",
+            arguments={},
+            headers=HttpHeaderPayload(root={"content-type": "application/json", "x-vault-tokens": json.dumps(vault_tokens)}),
+        )
+
+        result = await plugin.tool_pre_invoke(payload, context)
+
+        assert result.modified_payload is not None
+        assert result.modified_payload.headers.root["authorization"] == "Bearer tok-github"
+        assert "x-vault-tokens" not in result.modified_payload.headers.root
 
 
 if __name__ == "__main__":

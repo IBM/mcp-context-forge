@@ -396,7 +396,20 @@ class Vault(Plugin):
         system_key: str | None = None
         auth_header: str | None = None
         if self._sconfig.system_handling == SystemHandling.TAG:
-            system_key, auth_header = self._resolve_system_and_auth_from_tags(gateway_metadata)
+            # When an A2A agent is wrapped as an MCP tool (annotations carry
+            # ``a2a_agent_id``), the tool metadata replicates the agent's tags
+            # (e.g. ``system:<host>``) which the gateway metadata may not have.
+            # Resolve the system from the tool metadata in that case so vault
+            # token injection works regardless of the invocation path.
+            tool_metadata = context.global_context.metadata.get("tool")
+            if tool_metadata is not None:
+                annotations = get_attr(tool_metadata, "annotations", None) or {}
+                is_a2a_backed = "a2a_agent_id" in annotations
+                if is_a2a_backed:
+                    system_key, auth_header = self._resolve_system_and_auth_from_tags(tool_metadata)
+
+            if system_key is None:
+                system_key, auth_header = self._resolve_system_and_auth_from_tags(gateway_metadata)
         elif self._sconfig.system_handling == SystemHandling.OAUTH2_CONFIG:
             system_key = await self._resolve_system_from_oauth2_config(context.global_context.server_id)
 
