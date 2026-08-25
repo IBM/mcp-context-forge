@@ -475,7 +475,7 @@ services:
       # - CA_CERTS=/app/certs/client/ca-cert.pem
       # - CERT_REQS=2
       ## Client certificate for the gateway's own loopback /rpc self-calls.
-      ## Required when CERT_REQS is non-zero, or SSE and WebSocket break.
+      ## Required when CERT_REQS=2, or SSE and WebSocket break.
       # - LOOPBACK_CLIENT_CERT=/app/certs/client/client-cert.pem
       # - LOOPBACK_CLIENT_KEY=/app/certs/client/client-key.pem
       # Uncomment to enable plugins

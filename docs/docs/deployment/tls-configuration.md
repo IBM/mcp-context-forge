@@ -344,8 +344,9 @@ curl -sS --cacert certs/cert.pem https://localhost:4444/health
 The gateway makes real network calls to its own listener: the SSE message-dispatch path and the
 WebSocket endpoint both POST to `/rpc` over `127.0.0.1`. Those calls skip *server* certificate
 validation (the local certificate is usually self-signed) but they do not *present* a client
-certificate. Under `CERT_REQS=1` or `2` the gateway would therefore reject its own self-calls at the
-handshake, taking the SSE and WebSocket transports down.
+certificate. Under `CERT_REQS=2` the gateway would therefore reject its own self-calls at the
+handshake, taking the SSE and WebSocket transports down. `CERT_REQS=1` still admits a certless
+caller, so the gateway's own certless self-calls succeed without a loopback certificate.
 
 Setting `LOOPBACK_CLIENT_CERT` and `LOOPBACK_CLIENT_KEY` fixes this: the loopback client presents
 that certificate while keeping the existing trust posture, so no new server-certificate or SAN

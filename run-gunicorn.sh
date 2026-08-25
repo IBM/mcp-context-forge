@@ -358,6 +358,40 @@ if [[ "${SSL}" == "true" ]]; then
         exit 1
     fi
 
+    # The gateway makes real loopback HTTPS calls to its own /rpc for the SSE and
+    # WebSocket transports. Under CERT_REQS=2 those calls must present a client
+    # certificate or the handshake is rejected, taking both transports down.
+    # Validated unconditionally (not just when CA_CERTS is set) so a typo'd path
+    # fails here at boot instead of per-request inside internal_loopback_verify().
+    LOOPBACK_CLIENT_CERT=${LOOPBACK_CLIENT_CERT:-}
+    LOOPBACK_CLIENT_KEY=${LOOPBACK_CLIENT_KEY:-}
+
+    if [[ -n "${LOOPBACK_CLIENT_CERT}" || -n "${LOOPBACK_CLIENT_KEY}" ]]; then
+        if [[ -z "${LOOPBACK_CLIENT_CERT}" || -z "${LOOPBACK_CLIENT_KEY}" ]]; then
+            echo "❌  FATAL: LOOPBACK_CLIENT_CERT and LOOPBACK_CLIENT_KEY must be set together."
+            exit 1
+        fi
+        for _loopback_file in "${LOOPBACK_CLIENT_CERT}" "${LOOPBACK_CLIENT_KEY}"; do
+            if [[ ! -f "${_loopback_file}" ]]; then
+                echo "❌  FATAL: Loopback client credential not found: ${_loopback_file}"
+                exit 1
+            fi
+            if [[ ! -r "${_loopback_file}" ]]; then
+                echo "❌  FATAL: Cannot read loopback client credential: ${_loopback_file}"
+                exit 1
+            fi
+        done
+        unset _loopback_file
+        export LOOPBACK_CLIENT_CERT LOOPBACK_CLIENT_KEY
+    elif [[ "${CERT_REQS}" == "2" ]]; then
+        # CERT_REQS=1 (CERT_OPTIONAL) still admits a certless caller, so the
+        # gateway's own certless self-calls succeed - only CERT_REQS=2 breaks them.
+        echo "⚠️  WARNING: CERT_REQS=2 without LOOPBACK_CLIENT_CERT/KEY."
+        echo "   The gateway's own loopback calls to /rpc present no client certificate,"
+        echo "   so the SSE and WebSocket transports will fail at the TLS handshake."
+        echo "   Set LOOPBACK_CLIENT_CERT and LOOPBACK_CLIENT_KEY (see 'make certs-client')."
+    fi
+
     if [[ -n "${CA_CERTS}" ]]; then
         # Validated even when CERT_REQS=0: the CA bundle is loaded whenever it is
         # passed, so an unreadable file breaks worker boot regardless of policy.
@@ -380,36 +414,8 @@ if [[ "${SSL}" == "true" ]]; then
         echo "   CA Bundle:  ${CA_CERTS}"
         echo "   Cert reqs:  ${CERT_REQS} (0=none, 1=optional, 2=required)"
 
-        # The gateway makes real loopback HTTPS calls to its own /rpc for the SSE
-        # and WebSocket transports. Under CERT_REQS>=1 those calls must present a
-        # client certificate or the handshake is rejected, taking both transports
-        # down. Export the pair so the worker processes can find it.
-        LOOPBACK_CLIENT_CERT=${LOOPBACK_CLIENT_CERT:-}
-        LOOPBACK_CLIENT_KEY=${LOOPBACK_CLIENT_KEY:-}
-
-        if [[ -n "${LOOPBACK_CLIENT_CERT}" || -n "${LOOPBACK_CLIENT_KEY}" ]]; then
-            if [[ -z "${LOOPBACK_CLIENT_CERT}" || -z "${LOOPBACK_CLIENT_KEY}" ]]; then
-                echo "❌  FATAL: LOOPBACK_CLIENT_CERT and LOOPBACK_CLIENT_KEY must be set together."
-                exit 1
-            fi
-            for _loopback_file in "${LOOPBACK_CLIENT_CERT}" "${LOOPBACK_CLIENT_KEY}"; do
-                if [[ ! -f "${_loopback_file}" ]]; then
-                    echo "❌  FATAL: Loopback client credential not found: ${_loopback_file}"
-                    exit 1
-                fi
-                if [[ ! -r "${_loopback_file}" ]]; then
-                    echo "❌  FATAL: Cannot read loopback client credential: ${_loopback_file}"
-                    exit 1
-                fi
-            done
-            unset _loopback_file
-            export LOOPBACK_CLIENT_CERT LOOPBACK_CLIENT_KEY
+        if [[ -n "${LOOPBACK_CLIENT_CERT}" ]]; then
             echo "   Loopback:   ${LOOPBACK_CLIENT_CERT} (self-call client certificate)"
-        elif [[ "${CERT_REQS}" != "0" ]]; then
-            echo "⚠️  WARNING: CERT_REQS=${CERT_REQS} without LOOPBACK_CLIENT_CERT/KEY."
-            echo "   The gateway's own loopback calls to /rpc present no client certificate,"
-            echo "   so the SSE and WebSocket transports will fail at the TLS handshake."
-            echo "   Set LOOPBACK_CLIENT_CERT and LOOPBACK_CLIENT_KEY (see 'make certs-client')."
         fi
     fi
 

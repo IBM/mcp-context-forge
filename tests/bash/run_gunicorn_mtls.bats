@@ -168,9 +168,36 @@ tls_args() {
     [[ "$output" == *"Loopback client credential not found"* ]]
 }
 
-@test "CERT_REQS without loopback credentials warns about SSE and WebSocket" {
+@test "CERT_REQS=2 without loopback credentials warns about SSE and WebSocket" {
     run_launcher SSL=true CERT_FILE="${TMP_DIR}/cert.pem" KEY_FILE="${TMP_DIR}/key.pem" \
         CA_CERTS="${TMP_DIR}/ca.pem" CERT_REQS=2
     [ "$status" -eq 0 ]
     [[ "$output" == *"SSE and WebSocket transports will fail"* ]]
+}
+
+@test "CERT_REQS=1 without loopback credentials does not warn" {
+    run_launcher SSL=true CERT_FILE="${TMP_DIR}/cert.pem" KEY_FILE="${TMP_DIR}/key.pem" \
+        CA_CERTS="${TMP_DIR}/ca.pem" CERT_REQS=1
+    [ "$status" -eq 0 ]
+    [[ "$output" != *"SSE and WebSocket transports will fail"* ]]
+}
+
+@test "unreadable LOOPBACK_CLIENT_CERT is fatal even without CA_CERTS/CERT_REQS" {
+    if [ "$(id -u)" -eq 0 ]; then
+        skip "root bypasses file permission checks"
+    fi
+    chmod 000 "${TMP_DIR}/client-cert.pem"
+    run_launcher SSL=true CERT_FILE="${TMP_DIR}/cert.pem" KEY_FILE="${TMP_DIR}/key.pem" \
+        LOOPBACK_CLIENT_CERT="${TMP_DIR}/client-cert.pem" \
+        LOOPBACK_CLIENT_KEY="${TMP_DIR}/client-key.pem"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"Cannot read loopback client credential"* ]]
+}
+
+@test "missing loopback credential file is fatal even without CA_CERTS/CERT_REQS" {
+    run_launcher SSL=true CERT_FILE="${TMP_DIR}/cert.pem" KEY_FILE="${TMP_DIR}/key.pem" \
+        LOOPBACK_CLIENT_CERT=/nonexistent/client.pem \
+        LOOPBACK_CLIENT_KEY="${TMP_DIR}/client-key.pem"
+    [ "$status" -eq 1 ]
+    [[ "$output" == *"Loopback client credential not found"* ]]
 }
