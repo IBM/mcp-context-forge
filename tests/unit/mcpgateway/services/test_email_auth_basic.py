@@ -3076,8 +3076,11 @@ class TestEmailAuthServiceUserDeletion:
         mock_gateways = MagicMock()
         mock_gateways.scalars.return_value.all.return_value = [gw]
 
-        # execute calls: user, teams, gateways, team member delete, auth event delete
-        mock_db.execute.side_effect = [mock_user_result, mock_no_teams, mock_gateways, MagicMock(), MagicMock()]
+        mock_admin_result = MagicMock()
+        mock_admin_result.scalar_one_or_none.return_value = MagicMock(email="admin@x.com", is_active=True)
+
+        # execute calls: user, teams, gateways, active platform admin, team member delete, auth event delete
+        mock_db.execute.side_effect = [mock_user_result, mock_no_teams, mock_gateways, mock_admin_result, MagicMock(), MagicMock()]
 
         def _build_query():
             q = MagicMock()
@@ -3105,6 +3108,59 @@ class TestEmailAuthServiceUserDeletion:
 
         assert result is True
         assert gw.owner_email == "admin@x.com"
+
+    @pytest.mark.asyncio
+    async def test_delete_user_rejects_missing_platform_admin_fallback(self, service, mock_db, mock_user):
+        """Reject deletion when the configured platform admin has no active user row."""
+        gw = MagicMock(spec=Gateway)
+        gw.id = "gw-4"
+        gw.name = "Stale Admin GW"
+        gw.owner_email = "test@example.com"
+        gw.visibility = "public"
+        gw.team_id = None
+        gw.tools = []
+        gw.resources = []
+        gw.prompts = []
+
+        mock_user_result = MagicMock()
+        mock_user_result.scalar_one_or_none.return_value = mock_user
+
+        mock_no_teams = MagicMock()
+        mock_no_teams.scalars.return_value.all.return_value = []
+
+        mock_gateways = MagicMock()
+        mock_gateways.scalars.return_value.all.return_value = [gw]
+
+        # The active-user lookup returns no row for missing or inactive configured admins.
+        mock_missing_admin = MagicMock()
+        mock_missing_admin.scalar_one_or_none.return_value = None
+        mock_db.execute.side_effect = [mock_user_result, mock_no_teams, mock_gateways, mock_missing_admin, MagicMock()]
+
+        def _build_query():
+            q = MagicMock()
+            q.filter.return_value = q
+            q.order_by.return_value = q
+            q.update.return_value = 0
+            q.delete.return_value = 0
+            q.first.return_value = None
+            return q
+
+        mock_db.query.side_effect = lambda *a: _build_query()
+
+        mock_role_svc = MagicMock()
+        mock_role_svc.delete_all_user_roles = AsyncMock(return_value=0)
+
+        def _close_task(coro):
+            coro.close()
+
+        with patch.object(type(service), "role_service", new_callable=lambda: property(lambda self: mock_role_svc)):
+            with patch("asyncio.create_task", side_effect=_close_task):
+                with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
+                    mock_settings.platform_admin_email = "stale-admin@x.com"
+                    with pytest.raises(ValueError, match="orphaned"):
+                        await service.delete_user("test@example.com")
+
+        mock_db.rollback.assert_called()
 
     @pytest.mark.asyncio
     async def test_delete_user_raises_if_gateway_would_be_orphaned(self, service, mock_db, mock_user):

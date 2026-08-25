@@ -2127,11 +2127,18 @@ class EmailAuthService:
                     if alternate:
                         new_owner_email = alternate.user_email
 
-                # Fallback: platform admin
+                # Fallback: active platform admin
                 if not new_owner_email:
-                    admin_email = settings.platform_admin_email
-                    if admin_email and admin_email.strip() and admin_email.strip() != email:
-                        new_owner_email = admin_email.strip()
+                    admin_email = (settings.platform_admin_email or "").strip()
+                    if admin_email and admin_email != email:
+                        admin_user = self.db.execute(
+                            select(EmailUser).where(
+                                EmailUser.email == admin_email,
+                                EmailUser.is_active == True,  # noqa: E712  # pylint: disable=singleton-comparison
+                            )
+                        ).scalar_one_or_none()
+                        if admin_user:
+                            new_owner_email = admin_user.email
 
                 if not new_owner_email:
                     raise ValueError(f"Cannot delete user {email}: gateway {gw.id} would become orphaned and no fallback owner is available")
