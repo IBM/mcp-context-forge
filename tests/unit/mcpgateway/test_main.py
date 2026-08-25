@@ -1124,6 +1124,111 @@ class TestServerEndpoints:
         mock_list_prompts.assert_called_once()
 
 
+class TestServerHandshakeEndpoint:
+    """Tests for POST /servers/{server_id}/test-handshake (issue #6370).
+
+    Unlike /gateways/test-handshake, the target is the virtual server's own
+    /servers/{id}/mcp transport (derived from the ID, not a caller-supplied
+    URL), so these tests focus on: 404 for an invisible/missing server, the
+    router-level credential-forwarding logic (Authorization header vs. cookie
+    vs. neither), and that both the legacy and /v1/virtual-servers alias
+    paths reach the same handler. The handshake mechanics themselves
+    (in-process ASGI dispatch, MCP negotiation) are covered directly against
+    ``gateway_service.test_server_handshake``.
+    """
+
+    @pytest.mark.parametrize("path_prefix", SERVER_CRUD_PREFIXES)
+    @patch("mcpgateway.main.test_server_handshake")
+    @patch("mcpgateway.main.server_service.get_server")
+    def test_handshake_endpoint_success(self, mock_get_server, mock_handshake, path_prefix, test_client, auth_headers):
+        """A visible, enabled server reaches test_server_handshake and returns its result."""
+        # First-Party
+        from mcpgateway.schemas import GatewayHandshakeResponse
+
+        mock_get_server.return_value = ServerRead(**MOCK_SERVER_READ)
+        mock_handshake.return_value = GatewayHandshakeResponse(
+            success=True,
+            latency_ms=12,
+            negotiation_path="initialize",
+            protocol_version="2025-11-25",
+            server_name="test_server",
+            server_version="1.0",
+            credential_source="session",
+        )
+
+        response = test_client.post(f"{path_prefix}/1/test-handshake", json={}, headers=auth_headers)
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["negotiationPath"] == "initialize"
+        assert data["credentialSource"] == "session"
+        mock_handshake.assert_called_once()
+        call_args = mock_handshake.call_args.args
+        assert call_args[0] == MOCK_SERVER_READ["id"]
+        assert call_args[1] == MOCK_SERVER_READ["name"]
+        assert call_args[2] == MOCK_SERVER_READ["enabled"]
+
+    @patch("mcpgateway.main.server_service.get_server")
+    def test_handshake_endpoint_not_found(self, mock_get_server, test_client, auth_headers):
+        """A missing or invisible server returns 404 without attempting a handshake."""
+        # First-Party
+        from mcpgateway.services.server_service import ServerNotFoundError
+
+        mock_get_server.side_effect = ServerNotFoundError("Server not found: missing")
+
+        response = test_client.post("/servers/missing/test-handshake", json={}, headers=auth_headers)
+
+        assert response.status_code == 404
+
+    @patch("mcpgateway.main.test_server_handshake")
+    @patch("mcpgateway.main.server_service.get_server")
+    def test_handshake_forwards_bearer_token(self, mock_get_server, mock_handshake, test_client, auth_headers):
+        """The caller's own bearer token is forwarded as the handshake's default credentials."""
+        # First-Party
+        from mcpgateway.schemas import GatewayHandshakeResponse
+
+        mock_get_server.return_value = ServerRead(**MOCK_SERVER_READ)
+        mock_handshake.return_value = GatewayHandshakeResponse(success=True, latency_ms=1)
+
+        test_client.post("/servers/1/test-handshake", json={}, headers=auth_headers)
+
+        forwarded_headers = mock_handshake.call_args.args[4]
+        assert forwarded_headers.get("Authorization") == auth_headers["Authorization"]
+
+    @patch("mcpgateway.main.test_server_handshake")
+    @patch("mcpgateway.main.server_service.get_server")
+    def test_handshake_without_credentials_forwards_nothing(self, mock_get_server, mock_handshake, test_client):
+        """A request with no Authorization header and no cookie forwards no credentials."""
+        # First-Party
+        from mcpgateway.schemas import GatewayHandshakeResponse
+
+        mock_get_server.return_value = ServerRead(**MOCK_SERVER_READ)
+        mock_handshake.return_value = GatewayHandshakeResponse(success=True, latency_ms=1)
+
+        # The test_client fixture's dependency overrides bypass auth regardless of headers,
+        # so this exercises the router's own extraction logic in isolation.
+        test_client.post("/servers/1/test-handshake", json={})
+
+        forwarded_headers = mock_handshake.call_args.args[4]
+        assert "Authorization" not in forwarded_headers
+
+    @patch("mcpgateway.main.test_server_handshake")
+    @patch("mcpgateway.main.server_service.get_server")
+    def test_handshake_header_override_reaches_service(self, mock_get_server, mock_handshake, test_client, auth_headers):
+        """An explicit ``headers`` override in the request body is passed through to the service."""
+        # First-Party
+        from mcpgateway.schemas import GatewayHandshakeResponse
+
+        mock_get_server.return_value = ServerRead(**MOCK_SERVER_READ)
+        mock_handshake.return_value = GatewayHandshakeResponse(success=True, latency_ms=1)
+
+        test_client.post("/servers/1/test-handshake", json={"headers": {"X-Custom": "value"}}, headers=auth_headers)
+
+        body = mock_handshake.call_args.args[3]
+        assert body.headers == {"X-Custom": "value"}
+
+
 # ----------------------------------------------------- #
 # Tool Management Tests                                 #
 # ----------------------------------------------------- #

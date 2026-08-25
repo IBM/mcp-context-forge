@@ -110,6 +110,7 @@ from mcpgateway.schemas import (
     GatewayUpdate,
     PromptCreate,
     ResourceCreate,
+    ServerHandshakeRequest,
     ToolCreate,
 )
 
@@ -130,6 +131,7 @@ from mcpgateway.services.token_exchange_cache import TokenExchangeCache
 from mcpgateway.utils.admin_check import is_admin_bypass_granted
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.display_name import generate_display_name
+from mcpgateway.utils.internal_http import internal_loopback_base_url
 from mcpgateway.utils.pagination import unified_paginate
 from mcpgateway.utils.passthrough_headers import get_passthrough_headers
 from mcpgateway.utils.redis_client import get_redis_client
@@ -7812,6 +7814,184 @@ def _classify_handshake_error(root_cause: BaseException) -> tuple[str, str]:
     return "invalid_response", _HANDSHAKE_INVALID_COPY
 
 
+async def _probe_mcp_session(
+    session: ClientSession,
+    *,
+    credential_source: Literal["stored", "form", "none", "session"],
+    start_time: float,
+    log_context: str,
+) -> GatewayHandshakeResponse:
+    """Run initialize plus first-page component listings on an open MCP session.
+
+    Shared by the gateway-URL handshake and the virtual-server handshake: both
+    open a session by different means (an externally validated, DNS-pinned URL
+    vs. an in-process ASGI call to the gateway's own transport) but negotiate
+    and summarize the result identically.
+
+    Args:
+        session: The connected MCP client session.
+        credential_source: Provenance of the credentials used to open the session.
+        start_time: ``time.monotonic()`` value captured when the handshake attempt began.
+        log_context: Sanitized identifier (URL or server id) used in list-call debug logs.
+
+    Returns:
+        GatewayHandshakeResponse: The successful initialize-path result.
+    """
+    init = await session.initialize()
+    capabilities = init.capabilities.model_dump(by_alias=True, exclude_none=True)
+    component_counts: Dict[str, int] = {}
+    counts_partial = False
+    for capability, list_call, attr in (
+        (init.capabilities.tools, session.list_tools, "tools"),
+        (init.capabilities.resources, session.list_resources, "resources"),
+        (init.capabilities.prompts, session.list_prompts, "prompts"),
+    ):
+        if capability is None:
+            continue
+        try:
+            list_result = await list_call()
+            component_counts[attr] = len(getattr(list_result, attr))
+            if getattr(list_result, "nextCursor", None):
+                counts_partial = True
+        except Exception as list_exc:
+            logger.debug("MCP handshake list_%s failed for %s: %s", attr, log_context, list_exc)
+
+    return GatewayHandshakeResponse(
+        success=True,
+        latency_ms=int((time.monotonic() - start_time) * 1000),
+        negotiation_path="initialize",
+        protocol_version=str(init.protocolVersion),
+        server_name=init.serverInfo.name,
+        server_version=init.serverInfo.version,
+        capabilities=capabilities,
+        component_counts=component_counts or None,
+        counts_partial=counts_partial,
+        credential_source=credential_source,
+        raw_preview=json.dumps(init.model_dump(by_alias=True, exclude_none=True), default=str)[:4096],
+    )
+
+
+async def test_server_handshake(
+    server_id: str,
+    server_name: str,
+    server_enabled: bool,
+    body: ServerHandshakeRequest,
+    forwarded_headers: Dict[str, str],
+) -> GatewayHandshakeResponse:
+    """Test whether a virtual server's own MCP endpoint speaks MCP via a protocol handshake.
+
+    Unlike :func:`test_gateway_handshake`, the target is not an arbitrary
+    caller-supplied URL that must clear the gateway-test SSRF allowlist — it is
+    the gateway's own ``/servers/{server_id}/mcp`` transport endpoint, derived
+    from an ID the caller already had read access to (checked by the router via
+    :meth:`ServerService.get_server` before this is called). Skipping URL
+    validation here is deliberate: that gate exists to keep the process from
+    being used to probe arbitrary/internal hosts, and this target is never
+    anything other than the process's own transport.
+
+    The probe dispatches through an in-process ASGI transport (``httpx.ASGITransport``)
+    rather than a real network round trip, so it works identically behind any
+    reverse proxy/LB and — critically for multi-worker deployments — always lands
+    on this worker rather than being routed to an arbitrary one by the kernel.
+    It still runs the full request through the real ASGI app: auth, RBAC and MCP
+    negotiation are exercised exactly as they would be for a real client, using
+    the caller's own forwarded credentials (or an explicit header override), so
+    the result reflects what an actual client would see.
+
+    Args:
+        server_id: ID of the virtual server to test.
+        server_name: Display name of the virtual server, for error copy.
+        server_enabled: Whether the virtual server is currently enabled.
+        body: Optional header overrides for the handshake request.
+        forwarded_headers: Headers from the caller's original request (typically
+            just ``Authorization``/``Cookie``) to reuse as the handshake's credentials.
+
+    Returns:
+        GatewayHandshakeResponse: The handshake outcome, including negotiation path,
+            server identity, capabilities, component counts, and failure classification.
+    """
+    start_time = time.monotonic()
+
+    if not server_enabled:
+        return GatewayHandshakeResponse(
+            success=False,
+            latency_ms=int((time.monotonic() - start_time) * 1000),
+            failure_class="transport",
+            error=f"Virtual server '{server_name}' is disabled. Enable it before testing the connection.",
+        )
+
+    # SECURITY: Host is stripped from both sources — it must be derived from the
+    # in-process target, never from caller input, the same rule test_gateway_handshake
+    # applies to gateway-test headers.
+    headers = {key: value for key, value in forwarded_headers.items() if key.lower() != "host"}
+    credential_source: Literal["stored", "form", "none", "session"] = "session" if headers else "none"
+    form_headers = {key: value for key, value in (body.headers or {}).items() if key.lower() != "host"}
+    if form_headers:
+        overridden_keys = {key.lower() for key in form_headers}
+        headers = {key: value for key, value in headers.items() if key.lower() not in overridden_keys}
+        headers.update(form_headers)
+        credential_source = "form"
+
+    def _failure(failure_class: Literal["transport", "protocol", "auth", "invalid_response"], error: str) -> GatewayHandshakeResponse:
+        """Build a failed handshake response preserving the resolved credential source."""
+        return GatewayHandshakeResponse(success=False, latency_ms=int((time.monotonic() - start_time) * 1000), credential_source=credential_source, failure_class=failure_class, error=error)
+
+    # Deferred import: `main` imports this module at load time, so importing the
+    # ASGI `app` singleton at module scope here would be circular.
+    from mcpgateway.main import app  # pylint: disable=import-outside-toplevel,cyclic-import
+
+    def get_httpx_client_factory(
+        headers: Optional[Dict[str, str]] = None,
+        timeout: Optional[httpx.Timeout] = None,
+        auth: Optional[httpx.Auth] = None,
+    ) -> httpx.AsyncClient:
+        """Build the SDK's httpx client to dispatch in-process via ASGI transport rather than a real socket.
+
+        Args:
+            headers: Optional headers for the client.
+            timeout: Optional timeout for the client.
+            auth: Optional auth for the client.
+
+        Returns:
+            httpx.AsyncClient: Client wired to the gateway's own ASGI app.
+        """
+        return httpx.AsyncClient(
+            follow_redirects=False,
+            headers=headers,
+            timeout=timeout if timeout else get_http_timeout(),
+            auth=auth,
+            # client=("127.0.0.1", 0) sets scope["client"] to a loopback address, matching
+            # the trust posture of a same-host caller (see post_rpc_in_process precedent).
+            transport=httpx.ASGITransport(app=app, client=("127.0.0.1", 0)),
+        )
+
+    target_url = f"{internal_loopback_base_url()}/servers/{server_id}/mcp"
+
+    try:
+        async with asyncio.timeout(settings.health_check_timeout):
+            try:
+                async with streamablehttp_client(url=target_url, headers=headers, timeout=settings.health_check_timeout, httpx_client_factory=get_httpx_client_factory) as (
+                    read_stream,
+                    write_stream,
+                    _get_session_id,
+                ):
+                    async with ClientSession(read_stream, write_stream) as session:
+                        return await _probe_mcp_session(session, credential_source=credential_source, start_time=start_time, log_context=server_id)
+            except TimeoutError:
+                raise
+            except Exception as e:
+                root_cause: BaseException = e
+                while isinstance(root_cause, BaseExceptionGroup) and root_cause.exceptions:  # pylint: disable=no-member
+                    root_cause = root_cause.exceptions[0]  # pylint: disable=no-member
+                failure_class, copy = _classify_handshake_error(root_cause)
+                if failure_class == "transport":
+                    copy = f"{copy}: {sanitize_exception_message(str(root_cause))}"
+                logger.warning("MCP handshake initialize failed for virtual server %s: %s", server_id, sanitize_exception_message(str(root_cause)))
+                return _failure(failure_class, copy)
+    except TimeoutError:
+        return _failure("transport", _HANDSHAKE_TRANSPORT_COPY)
+
+
 async def test_gateway_connectivity(
     request: GatewayTestRequest,
     team_id: Optional[str],
@@ -8301,38 +8481,7 @@ async def test_gateway_handshake(
                 Returns:
                     GatewayHandshakeResponse: The successful initialize-path result.
                 """
-                init = await session.initialize()
-                capabilities = init.capabilities.model_dump(by_alias=True, exclude_none=True)
-                component_counts: Dict[str, int] = {}
-                counts_partial = False
-                for capability, list_call, attr in (
-                    (init.capabilities.tools, session.list_tools, "tools"),
-                    (init.capabilities.resources, session.list_resources, "resources"),
-                    (init.capabilities.prompts, session.list_prompts, "prompts"),
-                ):
-                    if capability is None:
-                        continue
-                    try:
-                        list_result = await list_call()
-                        component_counts[attr] = len(getattr(list_result, attr))
-                        if getattr(list_result, "nextCursor", None):
-                            counts_partial = True
-                    except Exception as list_exc:
-                        logger.debug("MCP handshake list_%s failed for %s: %s", attr, sanitize_url_for_logging(validated_base_url), list_exc)
-
-                return GatewayHandshakeResponse(
-                    success=True,
-                    latency_ms=_latency_ms(),
-                    negotiation_path="initialize",
-                    protocol_version=str(init.protocolVersion),
-                    server_name=init.serverInfo.name,
-                    server_version=init.serverInfo.version,
-                    capabilities=capabilities,
-                    component_counts=component_counts or None,
-                    counts_partial=counts_partial,
-                    credential_source=credential_source,
-                    raw_preview=json.dumps(init.model_dump(by_alias=True, exclude_none=True), default=str)[:4096],
-                )
+                return await _probe_mcp_session(session, credential_source=credential_source, start_time=start_time, log_context=sanitize_url_for_logging(validated_base_url))
 
             try:
                 # SECURITY: the SDK keeps the validated hostname (it rejects a server-advertised

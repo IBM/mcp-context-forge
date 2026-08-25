@@ -121,6 +121,10 @@ _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     ("GET", re.compile(r"^/servers/[^/]+/sse(?:$|/)"), Permissions.SERVERS_USE),  # Server SSE access endpoint
     ("GET", re.compile(r"^/servers(?:$|/)"), Permissions.SERVERS_READ),
     ("POST", re.compile(r"^/servers/?$"), Permissions.SERVERS_CREATE),  # Only exact /servers or /servers/
+    # Handshake probe against the virtual server's own MCP endpoint — read-only, symmetric
+    # with GATEWAYS_READ on the gateway test-handshake endpoint. Must precede the generic
+    # state|toggle sub-resource rule below.
+    ("POST", re.compile(r"^/servers/[^/]+/test-handshake(?:$|/)"), Permissions.SERVERS_READ),
     ("POST", re.compile(r"^/servers/[^/]+/(?:state|toggle)(?:$|/)"), Permissions.SERVERS_UPDATE),  # Server management sub-resources
     ("POST", re.compile(r"^/servers/[^/]+/message(?:$|/)"), Permissions.SERVERS_USE),  # Server message access endpoint
     ("POST", re.compile(r"^/servers/[^/]+/mcp(?:$|/)"), Permissions.SERVERS_USE),  # Server MCP access endpoint
