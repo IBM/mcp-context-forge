@@ -242,6 +242,16 @@ async def test_full_payload_generation_with_mock_db():
     tool3.visibility = "team"
     tool3.enabled = True
 
+    malformed_tool = Mock()
+    malformed_tool.id = "bad-tool"
+    malformed_tool.name = "gw1-bad_tool"
+    malformed_tool.original_name = "bad_tool"
+    malformed_tool.input_schema = None
+    malformed_tool.owner_email = "user1@example.com"
+    malformed_tool.team_id = "team1"
+    malformed_tool.visibility = "private"
+    malformed_tool.enabled = True
+
     # Mock active users and user-team memberships
     mock_db.execute.return_value.all.side_effect = [
         # Active users query
@@ -257,9 +267,9 @@ async def test_full_payload_generation_with_mock_db():
         # Resource query
         [resource1],
         # Tool query
-        [tool1, tool2, tool3],
+        [tool1, tool2, tool3, malformed_tool],
         # Tool associations
-        [("s1", "t1", "g1"), ("s1", "t2", "g1"), ("s1", "t3", "g1")],
+        [("s1", "t1", "g1"), ("s1", "t2", "g1"), ("s1", "t3", "g1"), ("s1", "bad-tool", "g1")],
         # Resource associations
         [("s1", "r1", "g1")],
         # Prompt associations
@@ -302,6 +312,8 @@ async def test_full_payload_generation_with_mock_db():
             "allowed_resource_uris": ["resource://one"],
             "allowed_prompt_names": ["Prompt 1"],
         }
+        assert "bad_tool" not in backend["allowed_tool_names"]
+        assert "bad_tool" not in backend["tool_schemas"]
 
         # Verify the gateway SELECT projection actually includes the new columns
         # (guards against getattr-on-Row silently returning None when columns are missing from SELECT)
@@ -338,16 +350,31 @@ async def test_full_payload_generation_with_mock_db():
         assert user3_backend["tool_schemas"] == {"public_tool": tool1.input_schema}
 
 
-def test_build_user_data_rejects_non_object_tool_schema():
-    """Dataplane snapshots fail closed when an enabled tool schema is malformed."""
+def test_build_user_data_excludes_non_object_tool_schema(caplog):
+    """A malformed tool is excluded without dropping valid tools from the snapshot."""
     from unittest.mock import Mock
 
-    from mcpgateway.services.dataplane_publisher import DataplanePublisherService
+    from mcpgateway.services.dataplane_publisher import BackendItemsByServer, DataplanePublisherService
 
-    tool = Mock(id="bad-tool", original_name="bad", input_schema=None, visibility="public")
+    bad_tool = Mock(id="bad-tool", original_name="bad", input_schema=None, visibility="public")
+    good_tool = Mock(id="good-tool", original_name="good", input_schema={"type": "object"}, visibility="public")
+    server = Mock(id="server", visibility="public")
+    backend_items_by_server: BackendItemsByServer = {
+        "server": {
+            "gateway": {
+                "tools": ["bad-tool", "good-tool"],
+                "resources": [],
+                "prompts": [],
+            }
+        }
+    }
 
-    with pytest.raises(ValueError, match="Tool bad-tool has a non-object input schema"):
-        DataplanePublisherService()._build_user_data("user@example.com", set(), False, [], [], [], [], [tool], {})
+    result = DataplanePublisherService()._build_user_data("user@example.com", set(), False, [server], [], [], [], [bad_tool, good_tool], backend_items_by_server)
+
+    backend_items = result["servers"][0]["backend_items"]["gateway"]
+    assert backend_items["tools"] == ["good"]
+    assert backend_items["tool_schemas"] == {"good": {"type": "object"}}
+    assert "Excluding tool bad-tool" in caplog.text
 
 
 # ============================================================================

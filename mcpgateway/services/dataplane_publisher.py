@@ -400,18 +400,17 @@ class DataplanePublisherService:
         backend_items_by_server: BackendItemsByServer,
     ) -> dict[str, Any]:
         """Build already-filtered dataplane data for one user."""
-        visible_tools = [tool for tool in tool_rows if self._filter_for_user(tool, user_email, team_ids, is_admin=is_admin)]
-        for tool in visible_tools:
+        tool_by_id: dict[str, ToolMetadata] = {}
+        for tool in tool_rows:
+            if not self._filter_for_user(tool, user_email, team_ids, is_admin=is_admin):
+                continue
             if not isinstance(tool.input_schema, dict):
-                raise ValueError(f"Tool {tool.id} has a non-object input schema")
-
-        tool_by_id: dict[str, ToolMetadata] = {
-            tool.id: {
+                logger.warning("Excluding tool %s from the dataplane snapshot because its input schema is not an object", tool.id)
+                continue
+            tool_by_id[tool.id] = {
                 "name": tool.original_name,
                 "input_schema": tool.input_schema,
             }
-            for tool in visible_tools
-        }
 
         return {
             "servers": [
