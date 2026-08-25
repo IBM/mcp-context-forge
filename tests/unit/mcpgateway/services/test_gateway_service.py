@@ -39,6 +39,7 @@ from mcpgateway.db import Tool as DbTool
 from mcpgateway.schemas import GatewayCreate, GatewayUpdate
 from mcpgateway.services.encryption_service import get_encryption_service
 from mcpgateway.services.gateway_service import (
+    GatewayCatalogSyncResult,
     GatewayConnectionError,
     GatewayDuplicateConflictError,
     GatewayError,
@@ -46,6 +47,7 @@ from mcpgateway.services.gateway_service import (
     GatewayNameConflictError,
     GatewayNotFoundError,
     GatewayService,
+    MCP_SYNC_CREATED_VIA_VALUES,
     OAuthToolValidationError,
 )
 from mcpgateway.services.mcp_apps import MCP_UI_EXTENSION
@@ -9631,3 +9633,41 @@ class TestFetchToolsAfterOAuthEnforcementPoint:
 
             assert "Refusing to forward" in str(exc_info.value)
             mock_connect.assert_not_awaited()
+
+
+class TestStaleCatalogPruning:
+    """Prune safelist: rows created by automated MCP sync paths are removable, user-created rows are not."""
+
+    def test_notification_service_rows_are_prunable(self):
+        """A stale tool ingested via a change notification must be pruned; user-created rows must survive."""
+        assert "notification_service" in MCP_SYNC_CREATED_VIA_VALUES
+        assert "api" not in MCP_SYNC_CREATED_VIA_VALUES
+        assert "ui" not in MCP_SYNC_CREATED_VIA_VALUES
+
+        stale_notif = MagicMock(id="t-notif", original_name="gone_tool", created_via="notification_service")
+        user_made = MagicMock(id="t-ui", original_name="user_tool", created_via="ui")
+        gateway = MagicMock()
+        gateway.tools = [stale_notif, user_made]
+        gateway.resources = []
+        gateway.prompts = []
+
+        catalog_sync = GatewayCatalogSyncResult(
+            new_tool_names=[],  # the server no longer offers any of these tools
+            new_resource_uris=None,
+            new_prompt_names=None,
+            tools_to_add=[],
+            resources_to_add=[],
+            prompts_to_add=[],
+        )
+
+        service = GatewayService()
+        result = service._reconcile_gateway_catalog(
+            MagicMock(),
+            gateway=gateway,
+            catalog_sync=catalog_sync,
+            log_context="unit test",
+            stale_created_via_values=MCP_SYNC_CREATED_VIA_VALUES,
+        )
+
+        assert result.tools_removed == 1
+        assert gateway.tools == [user_made]  # ui-created row survives the prune
