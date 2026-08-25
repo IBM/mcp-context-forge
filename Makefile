@@ -1765,7 +1765,7 @@ HOST_UID ?= $(shell id -u 2>/dev/null || echo 1000)
 HOST_GID ?= $(shell id -g 2>/dev/null || echo 1000)
 
 .PHONY: testing-up
-testing-up:                                ## Start testing stack (Locust + A2A echo)
+testing-up:                                ## Start testing stack (Locust + Fast Time + A2A echo)
 	@echo "🧪 Starting testing stack..."
 	@echo "   🦗 Locust workers: $(TESTING_LOCUST_WORKERS) (override: TESTING_LOCUST_WORKERS=4 make testing-up)"
 	@# Fail early if port 8080 is already bound (nginx needs it)
@@ -1786,6 +1786,7 @@ testing-up:                                ## Start testing stack (Locust + A2A 
 	@echo "──────────────────────────────────────────────────────────────────────────"
 	@echo "Gateway (nginx)      http://localhost:8080         API proxy"
 	@echo "Locust Web UI        http://localhost:8089         Load testing (master+workers)"
+	@echo "Fast Time Server     http://localhost:8888         MCP benchmark target"
 	@echo "A2A Echo Agent       http://localhost:9100         A2A protocol target"
 	@echo "MCP Inspector        http://localhost:6274         Interactive MCP client"
 	@echo "Keycloak             http://localhost:8180         SSO / OAuth 2.1 provider (realm: mcp-gateway)"
@@ -1793,6 +1794,7 @@ testing-up:                                ## Start testing stack (Locust + A2A 
 	@echo "   🔒 For DAST security scanning, also start ZAP: make testing-zap-up"
 	@echo ""
 	@echo "   📝 Auto-registered:"
+	@echo "      • MCP gateway: fast_time (from fast_time_server)"
 	@echo "      • A2A agent:   a2a-echo-agent"
 	@echo ""
 	@echo "   Next:"
@@ -1840,7 +1842,7 @@ testing-down:                              ## Stop testing stack
 .PHONY: testing-status
 testing-status:                            ## Show status of testing services
 	@echo "🧪 Testing stack status:"
-	@$(COMPOSE_CMD_MONITOR) ps | grep -E "(fast_time_server|a2a_echo_agent|locust|mcp_inspector)" || \
+	@$(COMPOSE_CMD_MONITOR) ps | grep -E "(fast_time_server|register_fast_time|a2a_echo_agent|locust|mcp_inspector)" || \
 		echo "   No testing services running. Start with 'make testing-up'"
 	@WORKERS=$$($(COMPOSE_CMD_MONITOR) ps | grep -c "locust_worker" || true); \
 		echo "   🦗 Locust workers: $$WORKERS"

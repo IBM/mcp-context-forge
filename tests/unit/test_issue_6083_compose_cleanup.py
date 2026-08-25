@@ -43,6 +43,7 @@ def test_static_stack_files_contain_no_fast_test_backend() -> None:
     paths = (
         "docker-compose.yml",
         "docker-compose.with-langfuse.yml",
+        "Makefile",
         "charts/mcp-stack/values.yaml",
         "charts/mcp-stack/values-minikube.yaml",
         "charts/mcp-stack/profiles/ocp/values-pgo.yaml",

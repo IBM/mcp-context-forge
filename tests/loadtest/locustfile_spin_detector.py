@@ -826,6 +826,19 @@ class FastTimeUser(BaseUser):
         except Exception:
             pass  # Connection errors are expected during stress testing
 
+    @task(3)
+    @tag("mcp", "fasttime", "echo")
+    def call_echo(self):
+        """Call fast-time-echo with a load-test message."""
+        payload = _json_rpc_request(
+            "tools/call",
+            {
+                "name": "fast-time-echo",
+                "arguments": {"message": "load-test-echo"},
+            },
+        )
+        self._rpc_request(payload, "/rpc fast-time-echo")
+
     @task(10)
     @tag("mcp", "fasttime", "tools")
     def call_get_system_time(self):

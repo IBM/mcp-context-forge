@@ -168,6 +168,11 @@ Unit tests:
 - `tests/unit/mcpgateway/transports/test_streamablehttp_transport.py::test_call_tool_preserves_is_error_for_egress` — Validator C short-circuit, local (non-pooled) branch.
 - `tests/unit/mcpgateway/transports/test_streamablehttp_transport.py::test_call_tool_session_affinity_forwarded_preserves_is_error` — Validator C short-circuit, worker-forwarded branch.
 
+End-to-end (via `make test-mcp-protocol-e2e`):
+
+- `tests/live_gateway/mcp/test_mcp_protocol_e2e.py::TestToolCalls::test_schema_error_preserves_payload` — drives the full pipeline against the upstream Rust fixture `fast-time-schema-error`, asserts the original error text arrives at the downstream client untouched (all three validator layers verified in concert).
+- `tests/live_gateway/mcp/test_mcp_protocol_e2e.py::TestToolCalls::test_schema_success_validates_payload` — positive control against `fast-time-schema-success`, asserts `structuredContent` reaches the client when the payload satisfies the schema.
+
 ## Adding a new backend
 
 When adding a new tool backend (e.g. gRPC, WebSocket stdio), keep the contract uniform:
@@ -175,4 +180,4 @@ When adding a new tool backend (e.g. gRPC, WebSocket stdio), keep the contract u
 1. Produce a `ToolResult` pydantic model from the upstream response (use `_coerce_to_tool_result` for anything non-MCP-shaped).
 2. Decide whether the backend has its own authoritative validator (like Validator A for MCP). If so, you may skip Validator B; if not, call `_extract_and_validate_structured_content` before returning.
 3. Ensure the egress path in `streamablehttp_transport.py::call_tool` returns a `CallToolResult` for error responses so Validator C doesn't re-clobber them.
-4. Add regression tests at both layers — unit for the in-process validator(s), e2e for the full round-trip. A preflight `tools/list` guard is worth replicating to give operators an actionable failure when the fixture stack is stale.
+4. Add regression tests at both layers — unit for the in-process validator(s), e2e for the full round-trip. A preflight `tools/list` guard like `_require_declared_output_schema` is worth replicating to give operators an actionable failure when the fixture stack is stale.
