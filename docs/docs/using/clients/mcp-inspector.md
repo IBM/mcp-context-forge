@@ -71,7 +71,8 @@ Then simply start Inspector:
 
 ```bash
 npx @modelcontextprotocol/inspector \
-  --url http://localhost:9002/sse
+  --server-url http://localhost:9002/sse \
+  --transport sse
 ```
 
 Translate Bridge handles the bridging; Inspector thinks it is speaking native SSE.
