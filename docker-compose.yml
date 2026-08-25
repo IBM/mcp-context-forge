@@ -16,11 +16,14 @@
 #  Default (no profile):  Gateway + Postgres + Redis + Nginx (HTTP only)
 #  --profile sso:         Adds Keycloak + testing + inspector (full dev SSO stack, via docker-compose.sso.yml)
 #  --profile monitoring:  Adds Prometheus, Grafana, Loki, exporters
-#  --profile testing:     Adds Locust (web UI), A2A echo agent, fast_test_server + auto-registration
+#  --profile testing:     Adds Locust (load-testing UI), A2A echo agent, fast_test_server + auto-registration
+#                          (also pulls in the ContextForge web_ui - see --profile experimental below)
 #  --profile resilience:  Adds slow_time_server for timeout, circuit breaker, and resilience testing
 #  --profile benchmark:   Adds benchmark MCP servers for load testing
 #  --profile tls:         Enables HTTPS via nginx_tls (auto-generates certs)
 #  --profile inspector:   Adds MCP Inspector client (http://localhost:6274)
+#  --profile experimental: Adds the ContextForge web UI (web_ui) + its Redis session store
+#                          (web_ui is also included in --profile testing)
 #
 #  Compose overlays (separate files):
 #  docker-compose.with-phoenix.yml:   Phoenix observability (OTEL traces)
@@ -59,6 +62,7 @@ volumes:                # Named volumes survive podman-compose down/up
   locust_token:
   prometheus_token:
   keycloakdata:
+  web_ui_redis_data:
 
 ###############################################################################
 #  CORE SERVICE - ContextForge
@@ -348,8 +352,8 @@ services:
       # Admin UI uses email/password authentication
       - EMAIL_AUTH_ENABLED=true
       - PROTECT_ALL_ADMINS=${PROTECT_ALL_ADMINS:-true}
-      - PLATFORM_ADMIN_EMAIL=admin@example.com
-      - PLATFORM_ADMIN_PASSWORD=changeme
+      - PLATFORM_ADMIN_EMAIL=${PLATFORM_ADMIN_EMAIL:-admin@example.com}
+      - PLATFORM_ADMIN_PASSWORD=${PLATFORM_ADMIN_PASSWORD:-changeme}
       # Compose default off so /admin/* REST works without bootstrap redirect; override for production.
       - PASSWORD_CHANGE_ENFORCEMENT_ENABLED=${PASSWORD_CHANGE_ENFORCEMENT_ENABLED:-true}
       - ACCOUNT_LOCKOUT_NOTIFICATION_ENABLED=${ACCOUNT_LOCKOUT_NOTIFICATION_ENABLED:-true}
@@ -1053,6 +1057,7 @@ services:
       - BASIC_AUTH_USER=${BASIC_AUTH_USER:-admin}
       - BASIC_AUTH_PASSWORD=${BASIC_AUTH_PASSWORD:-changeme}
       - PLATFORM_ADMIN_EMAIL=${PLATFORM_ADMIN_EMAIL:-admin@example.com}
+      - PLATFORM_ADMIN_PASSWORD=${PLATFORM_ADMIN_PASSWORD:-changeme}
       - AUTH_REQUIRED=${AUTH_REQUIRED:-true}
       - "AUTH_ENCRYPTION_SECRET=${AUTH_ENCRYPTION_SECRET:?AUTH_ENCRYPTION_SECRET is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
@@ -1144,6 +1149,57 @@ services:
         reservations:
           cpus: '1'
           memory: 1G
+
+###############################################################################
+#  CONTEXTFORGE WEB UI (enabled with --profile testing or --profile experimental)
+#  Usage: docker compose --profile experimental up -d
+#  Access: http://localhost:${WEB_UI_PORT:-3001}
+###############################################################################
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Redis - dedicated session store for the web UI's BFF (separate from the
+  # gateway's cache `redis` service above; this one is persisted to a volume)
+  # ──────────────────────────────────────────────────────────────────────
+  web_ui_redis:
+    image: redis:latest
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - web_ui_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    networks: [mcpnet]
+    profiles: ["testing", "experimental"]
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Web UI - BFF-style frontend for the gateway API
+  # ──────────────────────────────────────────────────────────────────────
+  web_ui:
+    image: ${WEB_UI_IMAGE:-ghcr.io/contextforge-org/contextforge-web-ui:latest}
+    restart: unless-stopped
+    ports:
+      # Host and container port tied together on purpose - the image reads
+      # PORT at startup and listens on it, so both sides must match.
+      - "${WEB_UI_PORT:-3001}:${WEB_UI_PORT:-3001}"
+    networks: [mcpnet]
+    environment:
+      - PORT=${WEB_UI_PORT:-3001}
+      # Bind address - must be 0.0.0.0 inside Docker or other containers cannot connect
+      - HOST=${WEB_UI_HOST:-0.0.0.0}
+      # Gateway API base URL - points at this compose's gateway service (internal network address:port)
+      - CONTEXTFORGE_URL=${WEB_UI_CONTEXTFORGE_URL:-http://gateway:4444}
+      - COOKIE_SECURE=${WEB_UI_COOKIE_SECURE:-false}
+      - REDIS_URL=${WEB_UI_REDIS_URL:-redis://web_ui_redis:6379/0}
+    depends_on:
+      gateway:
+        condition: service_healthy
+      web_ui_redis:
+        condition: service_healthy
+    profiles: ["testing", "experimental"]
 
 ###############################################################################
 #  MONITORING STACK (enabled with --profile monitoring)
