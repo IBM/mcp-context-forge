@@ -30,15 +30,11 @@ tools you publish through **ContextForge** - no plug-in code required.
 
 ## 🔗 Connecting Continue to ContextForge
 
-Attach Continue to a gateway over SSE:
-
-| Transport | When to use | Snippet |
-|-----------|-------------|---------|
-| **SSE (HTTP)** | Remote / SSL / no local process | see below |
+Attach Continue to a gateway over **Streamable HTTP**:
 
 > You still need a **JWT** or Basic auth if the gateway is protected.
 
-### Direct SSE
+### Direct Streamable HTTP
 
 ```jsonc
 // ~/.continue/config.json
@@ -46,8 +42,8 @@ Attach Continue to a gateway over SSE:
   "experimental": {
     "modelContextProtocolServer": {
       "transport": {
-        "type": "sse",
-        "url": "http://localhost:4444/servers/UUID_OF_SERVER_1/sse",
+        "type": "http",
+        "url": "http://localhost:4444/servers/UUID_OF_SERVER_1/mcp/",
         "headers": {
           "Authorization": "Bearer ${env:MCP_AUTH}"
         }
