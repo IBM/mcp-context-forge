@@ -30,6 +30,7 @@ from sqlalchemy.exc import IntegrityError
 # First-Party
 from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.cache.tool_lookup_cache import tool_lookup_cache
+from mcpgateway.common.validators import pin_url_to_resolved_ip
 from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Tool as DbTool
@@ -42,7 +43,6 @@ from mcpgateway.services.tool_service import (
     _encrypt_tool_header_value,
     _get_validator_class_and_check,
     _is_sensitive_tool_header_name,
-    _pin_url_to_resolved_ip,
     _protect_tool_headers_for_storage,
     _sync_meta_traceparent,
     _validate_header_mapping_targets,
@@ -431,6 +431,17 @@ def tool_service(monkeypatch):
     service.get_plugin_manager = AsyncMock()
     # service._plugin_manager = False  # Disable plugin manager to avoid real plugin execution in tests
 
+    class IsolatedClientCtx:
+        async def __aenter__(self):
+            # First-Party
+            from mcpgateway.services.http_client_service import get_http_client
+
+            return await get_http_client()
+
+        async def __aexit__(self, *_exc):
+            return None
+
+    monkeypatch.setattr("mcpgateway.services.tool_service.get_isolated_http_client", lambda **_kwargs: IsolatedClientCtx())
     return service
 
 
@@ -2444,7 +2455,7 @@ class TestToolService:
 
     def test_pin_url_to_resolved_ip_brackets_ipv6_and_preserves_query(self):
         """Pinned IPv6 netlocs must be bracketed without losing URL parts."""
-        assert _pin_url_to_resolved_ip("https://api.example.com:8443/path?sig=abc", "2001:4860:4860::8888") == "https://[2001:4860:4860::8888]:8443/path?sig=abc"
+        assert pin_url_to_resolved_ip("https://api.example.com:8443/path?sig=abc", "2001:4860:4860::8888") == "https://[2001:4860:4860::8888]:8443/path?sig=abc"
 
     @pytest.mark.asyncio
     async def test_build_pinned_rest_http_client_disables_connection_reuse(self):
