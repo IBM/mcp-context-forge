@@ -7581,6 +7581,8 @@ def _classify_handshake_error(root_cause: BaseException) -> tuple[str, str]:
         if root_cause.code == REQUEST_TIMEOUT:
             return "transport", _HANDSHAKE_TRANSPORT_COPY
         return "protocol", _HANDSHAKE_PROTOCOL_COPY
+    if isinstance(root_cause, RuntimeError) and "protocol" in str(root_cause).lower():
+        return "protocol", _HANDSHAKE_PROTOCOL_COPY
     return "invalid_response", _HANDSHAKE_INVALID_COPY
 
 
