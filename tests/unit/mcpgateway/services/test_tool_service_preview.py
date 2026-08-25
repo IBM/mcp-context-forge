@@ -167,20 +167,24 @@ class TestPreviewToolInvocationSchemaValidation:
 class TestPreviewToolInvocationPluginHooks:
     """preview_safe-tagged TOOL_PRE_INVOKE hooks run; everything else is a warning."""
 
-    def _plugin_manager_with_refs(self, refs, invoke_side_effect=None):
+    def _plugin_manager_with_refs(self, refs, invoke_side_effect=None, runtime_disabled=None):
         pm = Mock()
         pm.has_hooks_for = Mock(return_value=True)
         pm._registry = Mock()
         pm._registry.get_hook_refs_for_hook = Mock(return_value=refs)
+        pm._runtime_disabled = runtime_disabled if runtime_disabled is not None else set()
         pm.invoke_hook_for_plugin = AsyncMock(side_effect=invoke_side_effect)
         return pm
 
     @staticmethod
-    def _hook_ref(name, tags, mode=PluginMode.SEQUENTIAL):
+    def _hook_ref(name, tags, mode=PluginMode.SEQUENTIAL, conditions=None):
         ref = Mock()
         ref.plugin_ref = Mock()
         ref.plugin_ref.name = name
         ref.plugin_ref.tags = tags
+        # None/[] -> falsy, so the conditions check short-circuits without calling
+        # cpex's real payload_matches (which expects real PluginCondition objects).
+        ref.plugin_ref.conditions = conditions
         ref.plugin_ref.mode = mode
         return ref
 
@@ -301,6 +305,10 @@ class TestPreviewToolInvocationPluginHooks:
         assert any(w.code == "preview_hook_violation" and w.hook == "strict_plugin" for w in result.warnings)
         # The rest of the envelope must still be populated -- a hook violation isn't fatal to preview.
         assert result.target.kind == "local"
+        # Locks in the fix: with violations_as_exceptions=False, cpex returns a blocking
+        # PluginResult instead of raising, and the except PluginViolationError below would
+        # never fire -- a denied call would silently preview as clean.
+        assert pm.invoke_hook_for_plugin.call_args.kwargs["violations_as_exceptions"] is True
 
     @pytest.mark.asyncio
     async def test_hook_error_folds_into_warning_not_raised(self, service, test_db):
@@ -350,6 +358,91 @@ class TestPreviewToolInvocationPluginHooks:
         assert result.warnings == [], "a disabled plugin should be silently excluded, not reported as skipped/not-previewed either"
         pm.invoke_hook_for_plugin.assert_not_awaited()
 
+    @pytest.mark.asyncio
+    async def test_runtime_disabled_plugin_is_filtered_even_if_preview_safe_tagged(self, service, test_db):
+        """cpex's live dispatch (_group_by_mode) skips plugins it auto-disabled at runtime
+        after repeated on_error=disable trips -- invoke_hook_for_plugin bypasses that check
+        too, so preview must apply it itself or a currently-runtime-disabled plugin would
+        still be invoked (and could still warn/error) during preview."""
+        ref = self._hook_ref("flaky_plugin", ["preview_safe"])
+        pm = self._plugin_manager_with_refs([ref], runtime_disabled={"flaky_plugin"})
+
+        with patch.object(service, "_resolve_tool_for_invocation", AsyncMock(return_value=_resolved(_local_tool_payload()))), patch.object(
+            service, "_get_plugin_manager", AsyncMock(return_value=pm)
+        ):
+            result = await service.preview_tool_invocation(test_db, "test_tool", {"param": "value"})
+
+        assert result.pre_hooks_run == []
+        assert result.warnings == [], "a runtime-disabled plugin should be silently excluded, not reported as skipped/not-previewed either"
+        pm.invoke_hook_for_plugin.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_condition_mismatched_hook_is_filtered_out_entirely(self, service, test_db):
+        """A preview_safe plugin scoped via conditions to a different tool would never fire
+        for this tool live -- it must not run in preview, and must not appear as a
+        hook_not_previewed warning either (it was never dispatch-eligible to begin with)."""
+        # Third-Party
+        from cpex.framework import PluginCondition
+
+        ref = self._hook_ref("scoped_plugin", ["preview_safe"], conditions=[PluginCondition(tools={"some_other_tool"})])
+        pm = self._plugin_manager_with_refs([ref])
+
+        with patch.object(
+            service, "_resolve_tool_for_invocation", AsyncMock(return_value=_resolved(_local_tool_payload(name="test_tool")))
+        ), patch.object(service, "_get_plugin_manager", AsyncMock(return_value=pm)):
+            result = await service.preview_tool_invocation(test_db, "test_tool", {"param": "value"})
+
+        assert result.pre_hooks_run == []
+        assert result.warnings == []
+        pm.invoke_hook_for_plugin.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_condition_matched_hook_still_runs(self, service, test_db):
+        """Sanity check for the condition-matching test above: a condition that *does*
+        match the tool must not be incorrectly filtered out."""
+        # Third-Party
+        from cpex.framework import PluginCondition
+
+        ref = self._hook_ref("scoped_plugin", ["preview_safe"], conditions=[PluginCondition(tools={"test_tool"})])
+        pm = self._plugin_manager_with_refs([ref])
+
+        with patch.object(
+            service, "_resolve_tool_for_invocation", AsyncMock(return_value=_resolved(_local_tool_payload(name="test_tool")))
+        ), patch.object(service, "_get_plugin_manager", AsyncMock(return_value=pm)):
+            result = await service.preview_tool_invocation(test_db, "test_tool", {"param": "value"})
+
+        assert result.pre_hooks_run == ["scoped_plugin"]
+
+    @pytest.mark.asyncio
+    async def test_request_headers_forwarded_into_hook_payload(self, service, test_db):
+        """The caller's inbound request headers reach the preview_safe hook's payload, so a
+        plugin that inspects/conditions on headers sees something instead of always-empty."""
+        ref = self._hook_ref("header_aware_plugin", ["preview_safe"])
+        pm = self._plugin_manager_with_refs([ref])
+
+        with patch.object(service, "_resolve_tool_for_invocation", AsyncMock(return_value=_resolved(_local_tool_payload()))), patch.object(
+            service, "_get_plugin_manager", AsyncMock(return_value=pm)
+        ):
+            await service.preview_tool_invocation(test_db, "test_tool", {"param": "value"}, request_headers={"x-custom": "abc"})
+
+        payload = pm.invoke_hook_for_plugin.call_args.kwargs["payload"]
+        assert payload.headers is not None
+        assert payload.headers.root == {"x-custom": "abc"}
+
+    @pytest.mark.asyncio
+    async def test_no_request_headers_means_no_payload_headers(self, service, test_db):
+        """Omitting request_headers must not synthesize headers out of nowhere."""
+        ref = self._hook_ref("header_aware_plugin", ["preview_safe"])
+        pm = self._plugin_manager_with_refs([ref])
+
+        with patch.object(service, "_resolve_tool_for_invocation", AsyncMock(return_value=_resolved(_local_tool_payload()))), patch.object(
+            service, "_get_plugin_manager", AsyncMock(return_value=pm)
+        ):
+            await service.preview_tool_invocation(test_db, "test_tool", {"param": "value"})
+
+        payload = pm.invoke_hook_for_plugin.call_args.kwargs["payload"]
+        assert payload.headers is None
+
 
 class TestSharedResolutionPath:
     """#5629 explicit requirement: preview and live invocation must call the same
@@ -370,3 +463,20 @@ class TestSharedResolutionPath:
                 await service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
 
         assert mock_resolve.await_count == 2, "invoke_tool and preview_tool_invocation must both call _resolve_tool_for_invocation"
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_and_preview_derive_plugin_context_id_the_same_way(self, service, test_db):
+        """The plugin_context_id derivation drifted once already between invoke_tool and
+        preview_tool_invocation (#5629 review) -- both must go through the one shared
+        _derive_plugin_context_id helper, not independent copies."""
+        resolved = _resolved(_local_tool_payload())
+        mock_derive = Mock(wraps=service._derive_plugin_context_id)
+
+        with patch.object(service, "_resolve_tool_for_invocation", AsyncMock(return_value=resolved)), patch.object(
+            service, "_derive_plugin_context_id", mock_derive
+        ), patch.object(service, "_get_plugin_manager", AsyncMock(return_value=None)):
+            await service.preview_tool_invocation(test_db, "test_tool", {"param": "value"})
+            with suppress(Exception):
+                await service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
+
+        assert mock_derive.call_count == 2, "invoke_tool and preview_tool_invocation must both call _derive_plugin_context_id"
