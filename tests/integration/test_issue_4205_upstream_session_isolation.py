@@ -36,9 +36,9 @@ from typing import Any, List
 import pytest
 
 # First-Party
+from types import SimpleNamespace
 from mcpgateway.services.upstream_session_registry import (
     SessionCreateRequest,
-    SessionLifecycle,
     TransportType,
     UpstreamSessionRegistry,
 )
@@ -92,11 +92,11 @@ def _make_counter_session_factory():
             await shutdown_event.wait()
 
         task = asyncio.create_task(owner(), name="counter-upstream-owner")
-        # The registry takes the owner task + shutdown event from the typed
-        # SessionLifecycle handle in the second tuple slot — the same
+        # The registry takes the owner task + shutdown event from the lifecycle
+        # SimpleNamespace in the second tuple slot — the same
         # contract the real default_session_factory fulfils.
         created.append(session)
-        return session, SessionLifecycle(owner_task=task, shutdown_event=shutdown_event, client=None)
+        return session, SimpleNamespace(owner_task=task, shutdown_event=shutdown_event, client=None)
 
     return factory, created
 

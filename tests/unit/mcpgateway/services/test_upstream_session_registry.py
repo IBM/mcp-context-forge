@@ -22,6 +22,7 @@ from __future__ import annotations
 
 # Standard
 import asyncio
+from types import SimpleNamespace
 
 # Third-Party
 import pytest
@@ -31,7 +32,6 @@ from mcpgateway.services.upstream_session_registry import (
     get_upstream_session_registry,
     init_upstream_session_registry,
     SessionCreateRequest,
-    SessionLifecycle,
     shutdown_upstream_session_registry,
     TransportType,
     UpstreamSessionRegistry,
@@ -81,10 +81,10 @@ def _make_fake_factory():
 
         task = asyncio.create_task(owner(), name="fake-owner")
         # Match the real factory's contract: the second tuple slot carries a
-        # typed SessionLifecycle handle (owner task + shutdown event + the SDK
+        # SimpleNamespace lifecycle handle (owner task + shutdown event + the SDK
         # Client), never attributes smuggled onto the session object.
         created.append((req, session, shutdown_event, task))
-        return session, SessionLifecycle(owner_task=task, shutdown_event=shutdown_event, client=None)
+        return session, SimpleNamespace(owner_task=task, shutdown_event=shutdown_event, client=None)
 
     return factory, created
 
@@ -726,7 +726,7 @@ async def test_close_all_drains_in_parallel_not_series():
             await asyncio.sleep(0.3)
 
         task = asyncio.create_task(owner(), name="slow-owner")
-        return session, SessionLifecycle(owner_task=task, shutdown_event=shutdown_event, client=None)
+        return session, SimpleNamespace(owner_task=task, shutdown_event=shutdown_event, client=None)
 
     reg = UpstreamSessionRegistry(
         session_factory=slow_drain_factory,
@@ -1713,7 +1713,7 @@ async def test_acquire_populates_session_and_client_from_factory_lifecycle():
     """UpstreamSession.session is the factory-built ClientSession and UpstreamSession.client carries the SDK Client.
 
     Lifecycle (owner task + shutdown event) flows through the typed
-    SessionLifecycle handle into the UpstreamSession dataclass fields — no
+    lifecycle SimpleNamespace into the UpstreamSession dataclass fields — no
     ``_cf_owner_task`` / ``_cf_shutdown_event`` attributes are ever attached
     to the session object.
     """
@@ -1726,7 +1726,7 @@ async def test_acquire_populates_session_and_client_from_factory_lifecycle():
 
     async def factory(req: SessionCreateRequest):  # pylint: disable=unused-argument
         task = asyncio.create_task(owner(), name="client-carrying-owner")
-        return sentinel_session, SessionLifecycle(owner_task=task, shutdown_event=shutdown_event, client=sentinel_client)
+        return sentinel_session, SimpleNamespace(owner_task=task, shutdown_event=shutdown_event, client=sentinel_client)
 
     reg = UpstreamSessionRegistry(session_factory=factory, idle_validation_seconds=1_000)
     async with reg.acquire(
@@ -1747,7 +1747,7 @@ async def test_acquire_populates_session_and_client_from_factory_lifecycle():
 
 @pytest.mark.asyncio
 async def test_default_session_factory_returns_lifecycle_handle_without_session_smuggling(monkeypatch):
-    """The real factory's return carries a SessionLifecycle; the session object stays free of _cf_* attributes."""
+    """The real factory's return carries a SimpleNamespace lifecycle; the session object stays free of _cf_* attributes."""
     # First-Party
     from mcpgateway.services import upstream_session_registry as usr
 
@@ -1756,7 +1756,7 @@ async def test_default_session_factory_returns_lifecycle_handle_without_session_
 
     session, lifecycle = await usr._default_session_factory(_make_request())  # pylint: disable=protected-access
 
-    assert isinstance(lifecycle, SessionLifecycle)
+    assert hasattr(lifecycle, 'owner_task')
     assert lifecycle.client is _FakeClient.instances[-1]
     assert isinstance(lifecycle.owner_task, asyncio.Task)
     assert isinstance(lifecycle.shutdown_event, asyncio.Event)

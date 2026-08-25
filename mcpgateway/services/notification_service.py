@@ -56,7 +56,6 @@ import mcp_types
 
 # First-Party
 from mcpgateway.services.logging_service import LoggingService
-from mcpgateway.utils.session_compat import RequestResponder
 
 if TYPE_CHECKING:
     # First-Party
@@ -64,7 +63,7 @@ if TYPE_CHECKING:
 
 # Type alias for message handler callback
 MessageHandlerCallback = Callable[
-    [RequestResponder[mcp_types.ServerRequest, mcp_types.ClientResult] | mcp_types.ServerNotification | Exception],
+    [mcp_types.ServerNotification | Exception],
     Awaitable[None],
 ]
 
@@ -291,7 +290,7 @@ class NotificationService:
 
     @staticmethod
     async def _safe_cancel(
-        responder: "RequestResponder[mcp_types.ServerRequest, mcp_types.ClientResult]",
+        responder: Any,
         downstream_session_id: str,
         request_id: str,
     ) -> None:
@@ -499,7 +498,7 @@ class NotificationService:
         """
 
         async def message_handler(
-            message: RequestResponder[mcp_types.ServerRequest, mcp_types.ClientResult] | mcp_types.ServerNotification | Exception,
+            message: mcp_types.ServerNotification | Exception,
         ) -> None:
             """Handle incoming messages from MCP server.
 
@@ -513,12 +512,6 @@ class NotificationService:
                 # listener for this downstream session, if a listener exists.
                 if downstream_session_id is not None:
                     await self._forward_notification_to_stream(downstream_session_id, message)
-            elif isinstance(message, RequestResponder):
-                if downstream_session_id is not None:
-                    await self._forward_request_to_stream(downstream_session_id, message)
-                # If no downstream session is wired the responder will be
-                # auto-cancelled when the message handler returns and the SDK
-                # cleans up; we deliberately do nothing in that path.
             elif isinstance(message, Exception):
                 logger.warning("Received exception from MCP server %s: %s", gateway_id, message)
 
@@ -527,7 +520,7 @@ class NotificationService:
     async def _forward_request_to_stream(
         self,
         downstream_session_id: str,
-        responder: "RequestResponder[mcp_types.ServerRequest, mcp_types.ClientResult]",
+        responder: Any,
     ) -> None:
         """Forward a server-initiated request to the GET /mcp listener and hold the responder.
 
@@ -762,7 +755,7 @@ class NotificationService:
 
     @staticmethod
     async def _respond_with_payload(
-        responder: "RequestResponder[mcp_types.ServerRequest, mcp_types.ClientResult]",
+        responder: Any,
         payload: Dict[str, Any],
     ) -> None:
         """Translate a downstream JSON-RPC response payload into ``responder.respond()``.

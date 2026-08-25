@@ -125,7 +125,7 @@ from mcpgateway.utils.admin_check import is_admin_bypass_granted
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.display_name import generate_display_name
 from mcpgateway.utils.mcp_proxy_client import mcp_proxy_client
-from mcpgateway.utils.streamable_http_compat import streamable_http_client
+from mcp.client.streamable_http import streamable_http_client
 from mcpgateway.utils.pagination import unified_paginate
 from mcpgateway.utils.passthrough_headers import get_passthrough_headers
 from mcpgateway.utils.redis_client import get_redis_client
@@ -8102,9 +8102,15 @@ async def test_gateway_handshake(
                         async with ClientSession(read_stream, write_stream) as session:
                             return await _probe_session(session)
                 else:
-                    async with streamable_http_client(url=hostname_url, headers=headers, timeout=settings.health_check_timeout, httpx_client_factory=get_httpx_client_factory) as (read_stream, write_stream):
-                        async with ClientSession(read_stream, write_stream) as session:
-                            return await _probe_session(session)
+                    _hc_client = get_httpx_client_factory(
+                        headers=headers,
+                        timeout=httpx2.Timeout(settings.health_check_timeout),
+                        auth=None,
+                    )
+                    async with _hc_client:
+                        async with streamable_http_client(hostname_url, http_client=_hc_client) as (read_stream, write_stream):
+                            async with ClientSession(read_stream, write_stream) as session:
+                                return await _probe_session(session)
             except TimeoutError:
                 raise
             except Exception as e:
