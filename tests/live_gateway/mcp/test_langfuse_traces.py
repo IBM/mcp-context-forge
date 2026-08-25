@@ -31,6 +31,9 @@ from ..helpers.mcp_test_helpers import TOKEN_EXPIRY
 BASE_URL = os.getenv("MCP_CLI_BASE_URL", "http://localhost:8080")
 LANGFUSE_URL = os.getenv("LANGFUSE_URL", "http://localhost:3100").rstrip("/")
 
+# Matches the version negotiated by the rest of tests/live_gateway/.
+MCP_PROTOCOL_VERSION = "2025-03-26"
+
 
 def _resolve_langfuse_auth() -> str:
     """Resolve Langfuse basic auth from explicit auth or project keys.
@@ -100,17 +103,51 @@ def _lookup_server_id(jwt_token: str, server_name: str) -> str:
 
 
 def _send_jsonrpc_http(jwt_token: str, path: str, payload: dict[str, Any]) -> dict[str, Any]:
-    """Send a direct JSON-RPC request to a live MCP HTTP endpoint."""
-    response = httpx.post(
-        f"{BASE_URL}{path}",
-        headers={
-            **_gateway_api_headers(jwt_token),
-            "Content-Type": "application/json",
-            "mcp-protocol-version": "2025-11-25",
+    """Send a JSON-RPC request to a live MCP Streamable HTTP endpoint.
+
+    Streamable HTTP is session-oriented: the server issues an ``mcp-session-id``
+    during ``initialize`` and rejects later calls that omit it with
+    ``-32600 Bad Request: Missing session ID``. This helper performs the
+    handshake, then replays the caller's payload on the resulting session.
+
+    Issuing a session id is a spec-level MAY, so a gateway that omits it is
+    still compliant and the payload is simply replayed without the header.
+
+    Args:
+        jwt_token: Bearer token for the live gateway.
+        path: Gateway-relative MCP endpoint path, e.g. ``/servers/<id>/mcp/``.
+        payload: JSON-RPC request to send once the session is established.
+
+    Returns:
+        Parsed JSON-RPC response for ``payload``.
+    """
+    url = f"{BASE_URL}{path}"
+    headers = {
+        **_gateway_api_headers(jwt_token),
+        "Accept": "application/json, text/event-stream",
+        "Content-Type": "application/json",
+        "mcp-protocol-version": MCP_PROTOCOL_VERSION,
+    }
+
+    init = httpx.post(
+        url,
+        headers=headers,
+        json={
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {"protocolVersion": MCP_PROTOCOL_VERSION, "capabilities": {}, "clientInfo": {"name": "langfuse-e2e", "version": "1.0"}},
         },
-        json=payload,
         timeout=20,
     )
+    init.raise_for_status()
+
+    session_id = init.headers.get("mcp-session-id")
+    if session_id:
+        headers["mcp-session-id"] = session_id
+        httpx.post(url, headers=headers, json={"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}}, timeout=20)
+
+    response = httpx.post(url, headers=headers, json=payload, timeout=20)
     response.raise_for_status()
     return response.json()
 
