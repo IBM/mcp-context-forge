@@ -30,11 +30,6 @@ from mcp.server import Server as SDKServer
 from mcp.shared.dispatcher import Dispatcher
 from mcp.shared.message import SessionMessage
 
-# Compat shim under test
-from mcpgateway.utils.streamable_http_compat import (
-    streamable_http_client as compat_streamable_http_client,
-)
-
 
 # --------------------------------------------------------------------------- #
 # Helpers
@@ -73,71 +68,6 @@ async def _make_inproc_client(
 
 # --------------------------------------------------------------------------- #
 # (a) Transport ACM acceptance — compat shim yields 2-tuple satisfying Transport
-# --------------------------------------------------------------------------- #
-
-@pytest.mark.asyncio
-async def test_compat_shim_yields_2tuple() -> None:
-    """Compat shim ``streamable_http_client(...)`` is an async context manager
-    that yields a 2-tuple (read_stream, write_stream) matching the ``Transport``
-    protocol ``Client`` accepts."""
-    url = "http://localhost:9000/mcp"
-
-    # Patch the underlying SDK client so no real HTTP fires
-    mock_streams: tuple[Any, Any] = (MagicMock(), MagicMock())
-    mock_acm = AsyncMock()
-    mock_acm.__aenter__.return_value = mock_streams
-    mock_acm.__aexit__.return_value = AsyncMock()
-
-    with patch(
-        "mcpgateway.utils.streamable_http_compat._sdk_streamable_http_client",
-        return_value=mock_acm,
-    ):
-        async with compat_streamable_http_client(url) as streams:
-            assert isinstance(streams, tuple), "shim must yield a tuple"
-            assert len(streams) == 2, "shim must yield a 2-tuple (read_stream, write_stream)"
-            read_stream, write_stream = streams
-            # Confirm the streams are the mock objects the patched ACM returned
-            assert read_stream is mock_streams[0]
-            assert write_stream is mock_streams[1]
-
-
-@pytest.mark.asyncio
-async def test_client_accepts_compat_shim_as_transport() -> None:
-    """``Client(transport=<ACM yielding 2-tuple>)`` resolves without TypeError.
-
-    Verifies that ``Client._connect`` is set to ``_connect_transport`` for a
-    Transport argument, and that the connector returns a ``JSONRPCDispatcher``.
-    No live handshake — only construction and connector resolution.
-    """
-    url = "http://localhost:9000/mcp"
-    mock_read = MagicMock()
-    mock_write = MagicMock()
-    mock_streams = (mock_read, mock_write)
-
-    mock_acm = AsyncMock()
-    mock_acm.__aenter__.return_value = mock_streams
-    mock_acm.__aexit__.return_value = AsyncMock()
-
-    with patch(
-        "mcpgateway.utils.streamable_http_compat._sdk_streamable_http_client",
-        return_value=mock_acm,
-    ):
-        # Wrap the shim ACM as the transport — this exercises the path
-        # Client(server=<str URL>) would take after __post_init__ resolves
-        # _connect = _connect_transport(streamable_http_client(url))
-        # _connect is called during _build_session in __aenter__.
-        # We only verify construction + connector resolution here.
-        client: SDKClient = SDKClient(
-            server=url,  # str URL path → uses streamable_http_client
-            mode="legacy",  # force legacy so __aenter__ doesn't call discover/negotiate
-        )
-        # Verify _connect is set (not the call — that needs __aenter__)
-        assert hasattr(client, "_connect"), "Client must have _connect after __post_init__"
-        assert callable(client._connect), "_connect must be callable"
-
-
-# --------------------------------------------------------------------------- #
-# (b) SSE arm — sse_client ACM is accepted by Client as a transport
 # --------------------------------------------------------------------------- #
 
 @pytest.mark.asyncio
@@ -405,55 +335,3 @@ def test_modern_protocol_version_is_2026_07_28() -> None:
         "MODERN_PROTOCOL_VERSIONS must be ('2026-07-28',); "
         "update these tests if a new modern version is added"
     )
-
-
-async def test_compat_shim_factory_path_receives_kwargs() -> None:
-    """httpx_client_factory receives headers/timeout/auth kwargs (line 69)."""
-    # Standard
-    from contextlib import asynccontextmanager
-
-    # Third-Party
-    import httpx2
-
-    # First-Party
-    from mcpgateway.utils import streamable_http_compat as compat
-
-    captured = {}
-
-    def factory(**kwargs):
-        captured.update(kwargs)
-        return httpx2.AsyncClient()
-
-    @asynccontextmanager
-    async def fake_sdk_acm(url, http_client):
-        yield ("r", "w")
-
-    with patch.object(compat, "_sdk_streamable_http_client", side_effect=fake_sdk_acm):
-        async with compat.streamable_http_client("http://x.example/mcp", headers={"A": "b"}, timeout=5.0, auth=None, httpx_client_factory=factory) as streams:
-            assert streams == ("r", "w")
-
-    assert captured["headers"] == {"A": "b"}
-    assert captured["timeout"] == 5.0
-
-
-async def test_compat_shim_default_client_applies_kwargs() -> None:
-    """Default AsyncClient path applies headers/Timeout/auth kwargs (lines 73-77)."""
-    # Standard
-    from contextlib import asynccontextmanager
-
-    # Third-Party
-    import httpx2
-
-    # First-Party
-    from mcpgateway.utils import streamable_http_compat as compat
-
-    @asynccontextmanager
-    async def fake_sdk_acm(url, http_client):
-        assert http_client.headers["A"] == "b"
-        assert isinstance(http_client.timeout, httpx2.Timeout)
-        yield ("r", "w")
-
-    auth = httpx2.BasicAuth(username="u", password="p")  # pragma: allowlist secret
-    with patch.object(compat, "_sdk_streamable_http_client", side_effect=fake_sdk_acm):
-        async with compat.streamable_http_client("http://x.example/mcp", headers={"A": "b"}, timeout=5.0, auth=auth) as streams:
-            assert streams == ("r", "w")

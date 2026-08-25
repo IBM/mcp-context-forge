@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 import logging
 import time
-from types import MappingProxyType
+from types import MappingProxyType, SimpleNamespace
 from typing import Any, AsyncIterator, Awaitable, Callable, Mapping, Optional, Protocol
 
 # Third-Party
@@ -37,14 +37,42 @@ import httpx
 import httpx2
 from mcp import Client, ClientSession, MCPError
 from mcp.client.sse import sse_client
+from mcp.client.streamable_http import streamable_http_client as _sdk_streamable_http
 import mcp_types
 
 # First-Party
 
 from mcpgateway.transports.context import request_headers_var
-from mcpgateway.utils.session_compat import RequestResponder
-from mcpgateway.utils.streamable_http_compat import streamable_http_client
 from mcpgateway.utils.url_auth import sanitize_url_for_logging
+
+
+@asynccontextmanager
+async def streamable_http_client(
+    url: str,
+    *,
+    headers: Optional[dict] = None,
+    timeout: Optional[float] = None,
+    httpx_client_factory: Optional["HttpxClientFactory"] = None,
+    auth: Optional[Any] = None,
+) -> "AsyncIterator[Any]":
+    """v2 bridge: create an httpx2 client and pass it to the SDK transport.
+
+    Exposes the same keyword interface the tests patch, but implements
+    the v2 pattern (httpx2.AsyncClient → _sdk_streamable_http) so the
+    shim file is no longer needed.
+    """
+    if httpx_client_factory is not None:
+        http_client = httpx_client_factory(headers, httpx2.Timeout(timeout or 30.0), auth)
+    else:
+        http_client = httpx2.AsyncClient(
+            headers=headers or {},
+            timeout=httpx2.Timeout(timeout or 30.0),
+            follow_redirects=False,
+        )
+    async with http_client:
+        async with _sdk_streamable_http(url, http_client=http_client) as streams:
+            yield streams
+
 
 logger = logging.getLogger(__name__)
 
@@ -74,7 +102,7 @@ HttpxClientFactory = Callable[
 # Type alias for the per-session message handler that the SDK ClientSession
 # calls into. Receives ServerNotification, ServerRequest responders, or Exceptions.
 MessageHandler = Callable[
-    [RequestResponder[mcp_types.ServerRequest, mcp_types.ClientResult] | mcp_types.ServerNotification | Exception],
+    [mcp_types.ServerNotification | Exception],
     Any,
 ]
 
@@ -102,19 +130,15 @@ class MessageHandlerFactory(Protocol):
 
 # Factory for constructing an upstream MCP session.
 #
-# Return shape is ``(ClientSession, SessionLifecycle)``: the live session
-# (post-handshake, safe for callers to drive) plus a typed lifecycle handle
-# carrying the owner task, the shutdown event, and the high-level
-# ``mcp.client.Client``. The handle replaced the old convention of smuggling
-# ``_cf_owner_task`` / ``_cf_shutdown_event`` attributes onto the session
-# object (issue #4344). Fake factories in the test suite and any downstream
-# overrides must mirror this contract.
+# Return shape is ``(ClientSession, Any)``: the live session plus a lifecycle
+# namespace (SimpleNamespace) carrying owner_task, shutdown_event, and client.
+# Fake factories in the test suite must mirror this contract.
 #
 # Defaults to the real MCP transports; tests inject a fake so no network is
 # touched.
 SessionFactory = Callable[
     ["SessionCreateRequest"],
-    Awaitable[tuple[ClientSession, "SessionLifecycle"]],
+    Awaitable[tuple[ClientSession, Any]],
 ]
 
 
@@ -404,23 +428,6 @@ def _categorize_upstream_error(exc: BaseException, auth_query_params: Optional[d
     return error_category, exception_type, sanitized_message, exception_count
 
 
-@dataclass(frozen=True)
-class SessionLifecycle:
-    """Typed lifecycle handle for a factory-built upstream session.
-
-    Returned in the second slot of the ``SessionFactory`` tuple. Replaces the
-    previous convention of smuggling ``_cf_owner_task`` / ``_cf_shutdown_event``
-    attributes onto the ClientSession object (issue #4344). ``client`` is the
-    high-level ``mcp.client.Client`` that owns the transport and performed the
-    handshake; it is retained so callers can reach modern-negotiation state
-    (e.g. ``client.protocol_version``) without re-deriving it.
-    """
-
-    owner_task: asyncio.Task
-    shutdown_event: asyncio.Event
-    client: Any
-
-
 @dataclass
 class UpstreamSession:
     """A single upstream MCP session bound to one downstream session.
@@ -476,7 +483,7 @@ class UpstreamSession:
         return _mcp_transport_is_broken(self.session)
 
 
-async def _default_session_factory(req: SessionCreateRequest) -> tuple[ClientSession, SessionLifecycle]:
+async def _default_session_factory(req: SessionCreateRequest) -> tuple[ClientSession, Any]:
     """Owner-task wrapper that builds the real transport + SDK Client.
 
     Runs inside a dedicated asyncio.Task so the transport's anyio cancel scope
@@ -505,14 +512,14 @@ async def _default_session_factory(req: SessionCreateRequest) -> tuple[ClientSes
         if req.httpx_client_factory is not None:
             transport_ctx = streamable_http_client(
                 url=req.url,
-                headers=req.headers,
+                headers=dict(req.headers),
                 httpx_client_factory=req.httpx_client_factory,
                 timeout=req.timeout_seconds,
             )
         else:
             transport_ctx = streamable_http_client(
                 url=req.url,
-                headers=req.headers,
+                headers=dict(req.headers),
                 timeout=req.timeout_seconds,
             )
 
@@ -739,7 +746,7 @@ async def _default_session_factory(req: SessionCreateRequest) -> tuple[ClientSes
                         exc,
                     )
 
-    return session, SessionLifecycle(owner_task=task, shutdown_event=shutdown_event, client=client)
+    return session, SimpleNamespace(owner_task=task, shutdown_event=shutdown_event, client=client)
 
 
 class UpstreamSessionRegistry:
