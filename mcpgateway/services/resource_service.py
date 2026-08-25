@@ -2096,11 +2096,11 @@ class ResourceService(BaseService):
                                     SSE connection fails or the response is invalid.
 
                             Notes:
-                                - This function assumes the SSE client context manager yields:
-                                    ``(read_stream, write_stream, get_session_id)``.
-                                - The expected response object from `session.read_resource()` must have a
-                                `contents` attribute containing a list, where the first element has a
-                                `text` attribute.
+                                - This helper uses the v2 `mcp_proxy_client`, which owns the
+                                transport and yields an initialized high-level `Client`.
+                                - The expected response object from `client.read_resource()` must
+                                have a `contents` attribute containing a list whose first element
+                                has a `text` attribute.
                             """
                             if authentication is None:
                                 authentication = {}
@@ -2183,11 +2183,10 @@ class ResourceService(BaseService):
                                     if the connection fails or the response format is invalid.
 
                             Notes:
-                                - The `streamable_http_client` context manager must yield a tuple:
-                                ``(read_stream, write_stream, get_session_id)``.
-                                - The expected `resource_response` returned by ``session.read_resource()``
-                                must contain a `contents` list, whose first element exposes a `text`
-                                attribute.
+                                - This helper uses the v2 `mcp_proxy_client`, which owns the
+                                transport and yields an initialized high-level `Client`.
+                                - The expected response from `client.read_resource()` must contain
+                                a `contents` list whose first element exposes a `text` attribute.
                             """
                             if authentication is None:
                                 authentication = {}
