@@ -61,6 +61,7 @@ from filelock import FileLock, Timeout
 import httpx
 from mcp import ClientSession, MCPError
 from mcp.client.sse import sse_client
+from mcp.client.streamable_http import streamable_http_client
 from mcp.types import REQUEST_TIMEOUT
 import httpx2
 from pydantic import ValidationError
@@ -126,7 +127,6 @@ from mcpgateway.utils.admin_check import is_admin_bypass_granted
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.display_name import generate_display_name
 from mcpgateway.utils.mcp_proxy_client import mcp_proxy_client
-from mcp.client.streamable_http import streamable_http_client
 from mcpgateway.utils.pagination import unified_paginate
 from mcpgateway.utils.passthrough_headers import get_passthrough_headers
 from mcpgateway.utils.redis_client import get_redis_client
