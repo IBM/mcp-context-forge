@@ -221,9 +221,9 @@ class TestRedisEventStore:
         # Should replay events 3, 4, 5 (after event 2)
         assert result_stream_id == stream_id
         assert len(replayed) == 3
-        assert replayed[0] == messages[2]
-        assert replayed[1] == messages[3]
-        assert replayed[2] == messages[4]
+        assert replayed[0].message.model_dump(by_alias=True, exclude_none=True) == messages[2]
+        assert replayed[1].message.model_dump(by_alias=True, exclude_none=True) == messages[3]
+        assert replayed[2].message.model_dump(by_alias=True, exclude_none=True) == messages[4]
 
     async def test_eviction(self, redis_event_store):
         """Ring buffer evicts oldest when exceeding max_events."""
@@ -408,7 +408,7 @@ class TestRedisEventStore:
         # Should replay the real message
         assert result == stream_id
         assert len(replayed) == 1
-        assert replayed[0] == msg
+        assert replayed[0].message.model_dump(by_alias=True, exclude_none=True) == msg
 
     async def test_replay_nonexistent_event(self, redis_event_store):
         """Return None when event_id doesn't exist."""
@@ -469,7 +469,7 @@ class TestRedisEventStore:
         assert result == stream_id
         assert len(replayed) == 15
         for i, msg in enumerate(replayed):
-            assert msg["method"] == f"msg_{i + 5}"
+            assert msg.message.method == f"msg_{i + 5}"
 
     async def test_store_event_raises_when_redis_client_unavailable(self, monkeypatch: pytest.MonkeyPatch):
         store = RedisEventStore(max_events_per_stream=10, ttl=60, key_prefix="mcpgw:eventstore:test:mocked")
@@ -544,7 +544,7 @@ class TestRedisEventStore:
                 if key == messages_key and field == "ev-1":
                     return None
                 if key == messages_key and field == "ev-2":
-                    return b"{"  # invalid JSON -> replay None
+                    return b"{"  # invalid JSON -> replay skips malformed event
                 raise AssertionError(f"Unexpected hget: {key=} {field=}")
 
         monkeypatch.setattr(
@@ -554,7 +554,7 @@ class TestRedisEventStore:
 
         callback = AsyncMock()
         assert await store.replay_events_after("event-id", callback) == stream_id
-        callback.assert_awaited_once_with(None)
+        callback.assert_not_awaited()
 
     async def test_replay_events_after_returns_none_when_event_evicted_by_start_seq(self, monkeypatch: pytest.MonkeyPatch):
         import orjson
@@ -600,7 +600,7 @@ class TestRedisEventStore:
                 if field == "start_seq":
                     return None
                 if key == messages_key and field == "ev-2":
-                    return orjson.dumps({"jsonrpc": "2.0", "id": 2})
+                    return orjson.dumps({"jsonrpc": "2.0", "method": "test", "params": {}})
                 raise AssertionError(f"Unexpected hget: {key=} {field=}")
 
         monkeypatch.setattr(

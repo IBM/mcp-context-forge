@@ -13234,16 +13234,18 @@ class TestRemainingCoverageGaps:
         monkeypatch.setattr(registry_cache_mod, "get_cache_invalidation_subscriber", MagicMock(return_value=subscriber))
 
         sentinel_handler = MagicMock(name="message_handler")
+        sentinel_callbacks = {"sampling_callback": MagicMock(name="sampling_callback")}
         notification_svc = MagicMock()
         notification_svc.initialize = AsyncMock()
         notification_svc.create_message_handler = MagicMock(return_value=sentinel_handler)
+        notification_svc.create_client_callbacks = MagicMock(return_value=sentinel_callbacks)
         monkeypatch.setattr("mcpgateway.services.notification_service.init_notification_service", MagicMock(return_value=notification_svc))
 
         captured = {}
 
-        def capture_registry(*, message_handler_factory):  # noqa: ANN001
+        def capture_registry(*, message_handler_factory, client_callbacks_factory):  # noqa: ANN001
             captured["factory"] = message_handler_factory
-
+            captured["callbacks_factory"] = client_callbacks_factory
         monkeypatch.setattr(
             "mcpgateway.services.upstream_session_registry.init_upstream_session_registry",
             capture_registry,
@@ -13252,8 +13254,16 @@ class TestRemainingCoverageGaps:
         async with main_mod.lifespan(main_mod.app):
             factory = captured["factory"]
             handler = factory("https://peer.example/mcp", "gw-1", downstream_session_id="sess-123")
+            callbacks_factory = captured["callbacks_factory"]
+            callbacks = callbacks_factory("https://peer.example/mcp", "gw-1", downstream_session_id="sess-123")
 
         assert handler is sentinel_handler
+        assert callbacks == sentinel_callbacks
+        notification_svc.create_client_callbacks.assert_called_once_with(
+            gateway_id="gw-1",
+            gateway_url="https://peer.example/mcp",
+            downstream_session_id="sess-123",
+        )
         notification_svc.create_message_handler.assert_called_once_with(
             "gw-1",
             "https://peer.example/mcp",

@@ -1789,7 +1789,7 @@ class TestResourceServiceIdentityPropagationCoverage:
 
         class _AsyncCM:
             async def __aenter__(self):
-                return ("read", "write", lambda: None)
+                return _ClientSessionCM()._session
 
             async def __aexit__(self, exc_type, exc, tb):
                 return False
@@ -1806,10 +1806,10 @@ class TestResourceServiceIdentityPropagationCoverage:
                 return False
 
         class _FakeTextResourceContents:
-            def __init__(self, uri, mimeType=None, text=""):
+            def __init__(self, uri, mime_type=None, text=""):
                 self.id = "resource-1"
                 self.uri = uri
-                self.mimeType = mimeType
+                self.mime_type = mime_type
                 self.text = text
 
         service = ResourceService()
@@ -1839,8 +1839,7 @@ class TestResourceServiceIdentityPropagationCoverage:
             patch("mcpgateway.services.resource_service.is_input_capture_enabled", return_value=False),
             patch("mcpgateway.services.resource_service.is_output_capture_enabled", return_value=False),
             patch("mcpgateway.services.resource_service.build_identity_headers", return_value={"X-Identity": "1"}) as mock_build_headers,
-            patch("mcpgateway.services.resource_service.streamablehttp_client", return_value=_AsyncCM()),
-            patch("mcpgateway.services.resource_service.ClientSession", _ClientSessionCM),
+            patch("mcpgateway.services.resource_service.mcp_proxy_client", return_value=_AsyncCM()),
             patch("mcpgateway.services.resource_service._read_resource_with_meta", AsyncMock(return_value=mock_response)),
         ):
             result = await service.invoke_resource(
@@ -1862,7 +1861,7 @@ class TestResourceServiceIdentityPropagationCoverage:
 
         class _AsyncCM:
             async def __aenter__(self):
-                return ("read", "write", lambda: None)
+                return _ClientSessionCM()._session
 
             async def __aexit__(self, exc_type, exc, tb):
                 return False
@@ -1879,10 +1878,10 @@ class TestResourceServiceIdentityPropagationCoverage:
                 return False
 
         class _FakeTextResourceContents:
-            def __init__(self, uri, mimeType=None, text=""):
+            def __init__(self, uri, mime_type=None, text=""):
                 self.id = "resource-1"
                 self.uri = uri
-                self.mimeType = mimeType
+                self.mime_type = mime_type
                 self.text = text
 
         service = ResourceService()
@@ -1902,8 +1901,7 @@ class TestResourceServiceIdentityPropagationCoverage:
             patch.object(service, "_check_resource_access", AsyncMock(return_value=True)),
             patch("mcpgateway.services.resource_service.build_gateway_auth_headers", return_value={"Authorization": "Bearer gateway"}),
             patch("mcpgateway.services.resource_service.build_identity_headers", return_value={"X-Identity": "1"}) as mock_build_headers,
-            patch("mcpgateway.services.resource_service.streamablehttp_client", return_value=_AsyncCM()),
-            patch("mcpgateway.services.resource_service.ClientSession", _ClientSessionCM),
+            patch("mcpgateway.services.resource_service.mcp_proxy_client", return_value=_AsyncCM()),
             patch("mcpgateway.services.resource_service._read_resource_with_meta", AsyncMock(return_value=mock_response)),
             patch("mcpgateway.common.models.TextResourceContents", _FakeTextResourceContents),
             patch.object(__import__("mcpgateway.services.resource_service", fromlist=["settings"]).settings, "experimental_validate_io", False),
@@ -1941,7 +1939,7 @@ class TestToolServiceIdentityPropagationCoverage:
 
         class _AsyncCM:
             async def __aenter__(self):
-                return ("read", "write", lambda: None)
+                return _ClientSessionCM()._session
 
             async def __aexit__(self, exc_type, exc, tb):
                 return False
@@ -1985,8 +1983,7 @@ class TestToolServiceIdentityPropagationCoverage:
             patch("mcpgateway.services.tool_service.build_identity_meta", return_value={"identity": True}) as mock_build_meta,
             patch("mcpgateway.services.tool_service.create_span", return_value=mock_span),
             patch("mcpgateway.services.tool_service.inject_trace_context_headers", side_effect=lambda headers: headers),
-            patch("mcpgateway.services.tool_service.streamablehttp_client", return_value=_AsyncCM()),
-            patch("mcpgateway.services.tool_service.ClientSession", _ClientSessionCM),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", return_value=_AsyncCM()),
             patch.object(__import__("mcpgateway.services.tool_service", fromlist=["settings"]).settings, "mcpgateway_direct_proxy_enabled", True),
         ):
             await service.invoke_tool_direct(
@@ -2071,7 +2068,7 @@ class TestToolServiceIdentityPropagationCoverage:
 
         class _AsyncCM:
             async def __aenter__(self):
-                return ("read", "write", lambda: None)
+                return _ClientSessionCM()._session
 
             async def __aexit__(self, exc_type, exc, tb):
                 return False
@@ -2141,8 +2138,7 @@ class TestToolServiceIdentityPropagationCoverage:
             patch("mcpgateway.services.tool_service.create_child_span", return_value=mock_span),
             patch("mcpgateway.services.tool_service.is_input_capture_enabled", return_value=False),
             patch("mcpgateway.services.tool_service.inject_trace_context_headers", side_effect=lambda headers: headers),
-            patch("mcpgateway.services.tool_service.streamablehttp_client", return_value=_AsyncCM()),
-            patch("mcpgateway.services.tool_service.ClientSession", _ClientSessionCM),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", return_value=_AsyncCM()),
         ):
             await service.invoke_tool(
                 db,
@@ -2167,7 +2163,7 @@ class TestStreamableHttpTransportIdentityPropagationCoverage:
 
         class _AsyncCM:
             async def __aenter__(self):
-                return ("read", "write", lambda: None)
+                return _ClientSessionCM()._session
 
             async def __aexit__(self, exc_type, exc, tb):
                 return False
@@ -2192,8 +2188,7 @@ class TestStreamableHttpTransportIdentityPropagationCoverage:
             with (
                 patch("mcpgateway.transports.streamablehttp_transport.build_gateway_auth_headers", return_value={}),
                 patch("mcpgateway.transports.streamablehttp_transport.build_identity_headers", return_value={"X-Identity": "1"}) as mock_build_headers,
-                patch("mcpgateway.transports.streamablehttp_transport.streamablehttp_client", return_value=_AsyncCM()),
-                patch("mcpgateway.transports.streamablehttp_transport.ClientSession", _ClientSessionCM),
+                patch("mcpgateway.transports.streamablehttp_transport.mcp_proxy_client", return_value=_AsyncCM()),
             ):
                 await _proxy_list_tools_to_gateway(gateway, {}, {})
         finally:
@@ -2209,7 +2204,7 @@ class TestStreamableHttpTransportIdentityPropagationCoverage:
 
         class _AsyncCM:
             async def __aenter__(self):
-                return ("read", "write", lambda: None)
+                return _ClientSessionCM()._session
 
             async def __aexit__(self, exc_type, exc, tb):
                 return False
@@ -2234,8 +2229,7 @@ class TestStreamableHttpTransportIdentityPropagationCoverage:
             with (
                 patch("mcpgateway.transports.streamablehttp_transport.build_gateway_auth_headers", return_value={}),
                 patch("mcpgateway.transports.streamablehttp_transport.build_identity_headers", return_value={"X-Identity": "1"}) as mock_build_headers,
-                patch("mcpgateway.transports.streamablehttp_transport.streamablehttp_client", return_value=_AsyncCM()),
-                patch("mcpgateway.transports.streamablehttp_transport.ClientSession", _ClientSessionCM),
+                patch("mcpgateway.transports.streamablehttp_transport.mcp_proxy_client", return_value=_AsyncCM()),
             ):
                 await _proxy_list_resources_to_gateway(gateway, {}, {})
         finally:
@@ -2251,7 +2245,7 @@ class TestStreamableHttpTransportIdentityPropagationCoverage:
 
         class _AsyncCM:
             async def __aenter__(self):
-                return ("read", "write", lambda: None)
+                return _ClientSessionCM()._session
 
             async def __aexit__(self, exc_type, exc, tb):
                 return False
@@ -2277,8 +2271,7 @@ class TestStreamableHttpTransportIdentityPropagationCoverage:
             with (
                 patch("mcpgateway.transports.streamablehttp_transport.build_gateway_auth_headers", return_value={}),
                 patch("mcpgateway.transports.streamablehttp_transport.build_identity_headers", return_value={"X-Identity": "1"}) as mock_build_headers,
-                patch("mcpgateway.transports.streamablehttp_transport.streamablehttp_client", return_value=_AsyncCM()),
-                patch("mcpgateway.transports.streamablehttp_transport.ClientSession", _ClientSessionCM),
+                patch("mcpgateway.transports.streamablehttp_transport.mcp_proxy_client", return_value=_AsyncCM()),
             ):
                 await _proxy_read_resource_to_gateway(gateway, "resource://example", {})
         finally:

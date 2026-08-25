@@ -717,15 +717,10 @@ async def test_handshake_discover_fallback_to_initialize(handshake_request, user
     assert result.protocol_version == "2025-11-25"
     assert result.server_name == "legacy-srv"
     assert result.component_counts == {"tools": 2}
-    # The SDK keeps the validated hostname; _SniPinningTransport dials the pinned address.
-    assert mock_streamable.call_args.kwargs["url"] == "http://example.com/mcp"
-
-    with patch("mcpgateway.services.gateway_service._SniPinningTransport", wraps=_SniPinningTransport) as mock_transport:
-        factory_client = mock_streamable.call_args.kwargs["httpx_client_factory"]()
-        await factory_client.aclose()
-
-    assert mock_transport.call_args.kwargs["sni_hostname"] == "example.com"
-    assert mock_transport.call_args.kwargs["pinned_host"] == "8.8.8.8"
+    # The v2 transport receives a pre-built httpx2 client positionally.
+    assert mock_streamable.call_args.args[0] == "http://example.com/mcp"
+    http_client = mock_streamable.call_args.kwargs["http_client"]
+    assert isinstance(http_client, httpx2.AsyncClient)
 
 
 @pytest.mark.asyncio
@@ -1601,13 +1596,11 @@ async def test_handshake_uses_gateway_custom_ca_for_tls(user_ctx, db_session):
     assert result.success is True
     mock_ssl.assert_called_once_with("ca-pem", client_cert="client-pem", client_key="key-pem")
 
-    with patch("mcpgateway.services.gateway_service._SniPinningTransport", wraps=_SniPinningTransport) as mock_transport:
-        factory_client = mock_streamable.call_args.kwargs["httpx_client_factory"]()
-        await factory_client.aclose()
-
-    assert mock_transport.call_args.kwargs["verify"] is ssl_context
-    # The stateless discover probe runs first, so it needs the same TLS settings or it fails
-    # the handshake before the SDK client is ever built.
+    assert mock_streamable.call_args.args[0] == "https://example.com/mcp"
+    http_client = mock_streamable.call_args.kwargs["http_client"]
+    assert isinstance(http_client, httpx2.AsyncClient)
+    # The stateless discover probe runs first, so it needs the same TLS settings
+    # or it fails the handshake before the SDK client is built.
     assert mock_resilient.call_args.kwargs["client_args"]["verify"] is ssl_context
 
 
