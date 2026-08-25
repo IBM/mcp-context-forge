@@ -195,6 +195,33 @@ class TestPreviewToolInvocationPluginHooks:
         assert result.warnings == []
 
     @pytest.mark.asyncio
+    async def test_plugin_context_id_matches_invoke_tool_for_team_scoped_tool(self, service, test_db):
+        """Must resolve to the exact same plugin_manager as invoke_tool for a team-scoped
+        tool, or team-scoped ToolPluginBindings silently never match in preview (#5629
+        review). invoke_tool's derivation: make_context_id(team_id, tool.name)."""
+        # First-Party
+        from mcpgateway.plugins.gateway_plugin_manager import make_context_id
+
+        mock_get_pm = AsyncMock(return_value=None)
+        with patch.object(service, "_resolve_tool_for_invocation", AsyncMock(return_value=_resolved(_local_tool_payload(team_id="team-a", name="test_tool")))), patch.object(
+            service, "_get_plugin_manager", mock_get_pm
+        ):
+            await service.preview_tool_invocation(test_db, "test_tool", {"param": "value"}, server_id="some-server")
+
+        mock_get_pm.assert_awaited_once_with(make_context_id("team-a", "test_tool"))
+
+    @pytest.mark.asyncio
+    async def test_plugin_context_id_falls_back_to_server_id_without_team(self, service, test_db):
+        """Matches invoke_tool: only falls back to server_id when the tool has no team_id."""
+        mock_get_pm = AsyncMock(return_value=None)
+        with patch.object(service, "_resolve_tool_for_invocation", AsyncMock(return_value=_resolved(_local_tool_payload(team_id=None)))), patch.object(
+            service, "_get_plugin_manager", mock_get_pm
+        ):
+            await service.preview_tool_invocation(test_db, "test_tool", {"param": "value"}, server_id="server-xyz")
+
+        mock_get_pm.assert_awaited_once_with("server-xyz")
+
+    @pytest.mark.asyncio
     async def test_preview_safe_hook_runs_and_is_reported(self, service, test_db):
         ref = self._hook_ref("safe_plugin", ["preview_safe"])
         pm = self._plugin_manager_with_refs([ref])
@@ -208,6 +235,36 @@ class TestPreviewToolInvocationPluginHooks:
         assert result.warnings == []
         pm.invoke_hook_for_plugin.assert_awaited_once()
         assert pm.invoke_hook_for_plugin.call_args.kwargs["name"] == "safe_plugin"
+
+    @pytest.mark.asyncio
+    async def test_global_context_server_id_matches_gateway_id_for_federated_tool(self, service, test_db):
+        """invoke_tool's fallback GlobalContext sets server_id from the tool's gateway_id;
+        preview's hand-built context omitted it entirely (#5629 review) -- a preview_safe
+        plugin with server-scoped conditions would evaluate differently in preview vs live."""
+        ref = self._hook_ref("safe_plugin", ["preview_safe"])
+        pm = self._plugin_manager_with_refs([ref])
+
+        with patch.object(
+            service, "_resolve_tool_for_invocation", AsyncMock(return_value=_resolved(_federated_tool_payload(), {"name": "remote-gw"}))
+        ), patch.object(service, "_get_plugin_manager", AsyncMock(return_value=pm)):
+            await service.preview_tool_invocation(test_db, "test_tool", {"param": "value"})
+
+        context = pm.invoke_hook_for_plugin.call_args.kwargs["context"]
+        assert context.server_id == "gw-1"
+
+    @pytest.mark.asyncio
+    async def test_global_context_server_id_defaults_to_unknown_for_local_tool(self, service, test_db):
+        """Matches invoke_tool's fallback default when the tool has no gateway_id."""
+        ref = self._hook_ref("safe_plugin", ["preview_safe"])
+        pm = self._plugin_manager_with_refs([ref])
+
+        with patch.object(service, "_resolve_tool_for_invocation", AsyncMock(return_value=_resolved(_local_tool_payload()))), patch.object(
+            service, "_get_plugin_manager", AsyncMock(return_value=pm)
+        ):
+            await service.preview_tool_invocation(test_db, "test_tool", {"param": "value"})
+
+        context = pm.invoke_hook_for_plugin.call_args.kwargs["context"]
+        assert context.server_id == "unknown"
 
     @pytest.mark.asyncio
     async def test_untagged_hook_is_skipped_and_warned(self, service, test_db):

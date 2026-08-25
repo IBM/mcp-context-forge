@@ -7197,15 +7197,24 @@ class ToolService(BaseService):
         # Plugin pre-invoke hooks: only preview_safe-tagged plugins actually run;
         # every other registered hook is reported as a warning instead of exercised.
         pre_hooks_run: List[str] = []
+        # First-Party
+        from mcpgateway.plugins.gateway_plugin_manager import make_context_id  # pylint: disable=import-outside-toplevel
+
         _tool_team_id = tool_payload.get("team_id")
-        plugin_context_id = server_id or (str(_tool_team_id) if _tool_team_id else None)
+        # Same derivation as invoke_tool (tool_service.py) -- must match exactly, or team-scoped
+        # ToolPluginBindings resolve to a different plugin_manager than the live path (#5629 review).
+        _binding_tool_name = tool_payload.get("name") or name
+        plugin_context_id = make_context_id(str(_tool_team_id), _binding_tool_name) if _tool_team_id else server_id
         plugin_manager = await self._get_plugin_manager(plugin_context_id)
         if plugin_manager and plugin_manager.has_hooks_for(ToolHookType.TOOL_PRE_INVOKE):
             all_refs = self._get_hook_refs(plugin_manager, ToolHookType.TOOL_PRE_INVOKE)
             preview_safe_refs = [ref for ref in all_refs if self._is_preview_safe(ref)]
             skipped_refs = [ref for ref in all_refs if not self._is_preview_safe(ref)]
 
-            global_context = GlobalContext(request_id=get_correlation_id() or uuid.uuid4().hex, tenant_id=_extract_tenant_id_from_payload(_tool_team_id), user=user_email)
+            # server_id mirrors invoke_tool's fallback-context derivation so server-scoped
+            # plugin conditions evaluate the same way in preview as they would live.
+            context_server_id = gateway_id if gateway_id and isinstance(gateway_id, str) else "unknown"
+            global_context = GlobalContext(request_id=get_correlation_id() or uuid.uuid4().hex, server_id=context_server_id, tenant_id=_extract_tenant_id_from_payload(_tool_team_id), user=user_email)
             payload = ToolPreInvokePayload(name=name, args=arguments)
             for ref in preview_safe_refs:
                 try:
