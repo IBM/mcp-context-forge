@@ -7,7 +7,7 @@ resolution-markers = [
 ]
 
 [options]
-exclude-newer = "2026-08-14T14:47:41.411879Z"
+exclude-newer = "2026-08-15T16:41:32.493246Z"
 exclude-newer-span = "P10D"
 
 [options.exclude-newer-package]
@@ -2585,6 +2585,7 @@ dependencies = [
     { name = "gunicorn" },
     { name = "h2" },
     { name = "httpx", extra = ["http2"] },
+    { name = "httpx2" },
     { name = "idna" },
     { name = "jinja2" },
     { name = "jq" },
@@ -2592,7 +2593,6 @@ dependencies = [
     { name = "jsonschema" },
     { name = "mako" },
     { name = "mcp" },
-    { name = "mcp-types" },
     { name = "msgpack" },
     { name = "orjson" },
     { name = "parse" },
@@ -2788,6 +2788,7 @@ requires-dist = [
     { name = "h2", specifier = ">=4.4.1" },
     { name = "httpx", specifier = ">=0.28.1" },
     { name = "httpx", extras = ["http2"], specifier = ">=0.28.1" },
+    { name = "httpx2", specifier = ">=2.5.0" },
     { name = "idna", specifier = ">=3.18" },
     { name = "jinja2", specifier = ">=3.1.6" },
     { name = "jq", specifier = ">=1.12.0" },
@@ -2803,7 +2804,6 @@ requires-dist = [
     { name = "mcp", specifier = ">=2.0" },
     { name = "mcp-contextforge-gateway", extras = ["redis"], marker = "extra == 'all'", specifier = ">=1.0.8" },
     { name = "mcp-contextforge-gateway", extras = ["redis", "dev", "plugins"], marker = "extra == 'dev-all'", specifier = ">=1.0.8" },
-    { name = "mcp-types", specifier = ">=2.0.0" },
     { name = "memray", marker = "extra == 'profiling'", specifier = ">=1.19.3" },
     { name = "msgpack", specifier = ">=1.2.1" },
     { name = "opentelemetry-api", marker = "extra == 'observability'", specifier = ">=1.44.0" },

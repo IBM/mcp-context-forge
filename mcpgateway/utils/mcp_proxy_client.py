@@ -53,7 +53,6 @@ async def mcp_proxy_client(
     timeout: float = 30.0,
     httpx_client_factory: Callable[..., httpx2.AsyncClient] | None = None,
     transport: Literal["streamablehttp", "sse"] = "streamablehttp",
-
 ) -> "Client":  # type: ignore[misc]
     """Yield an MCP v2 ``Client`` connected via streamable-http transport.
 

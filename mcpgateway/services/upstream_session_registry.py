@@ -38,7 +38,6 @@ import httpx2
 from mcp import Client, ClientSession, MCPError
 from mcp.client.sse import sse_client
 from mcp.client.streamable_http import streamable_http_client as _sdk_streamable_http
-import mcp_types
 
 # First-Party
 
@@ -99,24 +98,11 @@ HttpxClientFactory = Callable[
     httpx2.AsyncClient,
 ]
 
-# Type alias for the per-session message handler that the SDK ClientSession
-# calls into. Receives ServerNotification, ServerRequest responders, or Exceptions.
-MessageHandler = Callable[
-    [mcp_types.ServerNotification | Exception],
-    Any,
-]
+MessageHandler = Callable[[Any], Any]
 
 
 class MessageHandlerFactory(Protocol):
-    """Build a per-session MCP message handler.
-
-    Optional. If absent, no handler is wired and server-initiated messages
-    will be dropped. The ``downstream_session_id`` is keyword-only so any
-    future positional additions can't accidentally shuffle existing args.
-
-    The handler closure uses ``downstream_session_id`` to forward
-    server-initiated messages to the correct GET /mcp listener.
-    """
+    """Build a per-session MCP message handler."""
 
     def __call__(
         self,
@@ -125,7 +111,20 @@ class MessageHandlerFactory(Protocol):
         *,
         downstream_session_id: str,
     ) -> MessageHandler:
-        """Build the per-session message handler. See class docstring."""
+        """Build the per-session message handler."""
+
+
+class ClientCallbacksFactoryProtocol(Protocol):
+    """Build v2 typed callbacks for server-initiated requests."""
+
+    def __call__(
+        self,
+        url: str,
+        gateway_id: Optional[str],
+        *,
+        downstream_session_id: str,
+    ) -> Mapping[str, Callable[..., Any]]:
+        """Build callback keyword arguments for ``Client``."""
 
 
 # Factory for constructing an upstream MCP session.
@@ -185,6 +184,7 @@ class SessionCreateRequest:
     httpx_client_factory: Optional[HttpxClientFactory]
     message_handler_factory: Optional[MessageHandlerFactory]
     timeout_seconds: float
+    client_callbacks_factory: Optional[ClientCallbacksFactoryProtocol] = None
 
     def __post_init__(self) -> None:
         """Validate invariants the registry relies on at creation time."""
@@ -528,9 +528,10 @@ async def _default_session_factory(req: SessionCreateRequest) -> tuple[ClientSes
     ready: asyncio.Future[tuple[ClientSession, Client]] = loop.create_future()
 
     async def owner() -> None:
-        """Own the transport + Client lifecycle; unblock on shutdown_event."""
+        """Own the transport and high-level Client lifecycle."""
         try:
             message_handler = None
+            client_callbacks: Mapping[str, Callable[..., Any]] = {}
             if req.message_handler_factory is not None:
                 try:
                     message_handler = req.message_handler_factory(
@@ -544,24 +545,30 @@ async def _default_session_factory(req: SessionCreateRequest) -> tuple[ClientSes
                         sanitize_url_for_logging(req.url),
                         exc,
                     )
-            # cache=None is load-bearing: the SDK default (a CacheConfig
-            # instance) builds a ClientResponseCache that WRAPS message_handler
-            # in an evicting layer, which would change ADR-052
-            # notification/RequestResponder behaviour. None disables the cache
-            # and passes the handler through unwrapped.
+            if req.client_callbacks_factory is not None:
+                try:
+                    client_callbacks = dict(
+                        req.client_callbacks_factory(
+                            req.url,
+                            req.gateway_id,
+                            downstream_session_id=req.downstream_session_id,
+                        )
+                    )
+                except Exception as exc:  # noqa: BLE001 — callbacks are optional
+                    logger.warning(
+                        "Failed to build v2 client callbacks for %s: %s",
+                        sanitize_url_for_logging(req.url),
+                        exc,
+                    )
             client = Client(
                 transport_ctx,
-
                 message_handler=message_handler,
                 cache=None,
+                **client_callbacks,
             )
-            # __aenter__ enters the transport and performs the handshake; no
-            # explicit session.initialize() here.
             async with client:
                 if not ready.done():
                     ready.set_result((client.session, client))
-                # Block until the registry signals shutdown; do NOT rely on
-                # task cancellation from a request handler (see class docs).
                 await shutdown_event.wait()
         except Exception as exc:  # noqa: BLE001 — see below
             # Broad catch on purpose: the upstream-setup path runs many
@@ -777,6 +784,7 @@ class UpstreamSessionRegistry:
         *,
         session_factory: Optional[SessionFactory] = None,
         message_handler_factory: Optional[MessageHandlerFactory] = None,
+        client_callbacks_factory: Optional[ClientCallbacksFactoryProtocol] = None,
         idle_validation_seconds: float = _DEFAULT_IDLE_VALIDATION_SECONDS,
         health_check_timeout_seconds: float = _DEFAULT_HEALTH_CHECK_TIMEOUT_SECONDS,
         session_create_timeout_seconds: float = _DEFAULT_SESSION_CREATE_TIMEOUT_SECONDS,
@@ -785,6 +793,7 @@ class UpstreamSessionRegistry:
         """Build a registry. ``session_factory`` is injectable for tests."""
         self._session_factory: SessionFactory = session_factory or _default_session_factory
         self._message_handler_factory = message_handler_factory
+        self._client_callbacks_factory = client_callbacks_factory
         self._idle_validation_seconds = idle_validation_seconds
         self._health_check_timeout_seconds = health_check_timeout_seconds
         self._session_create_timeout_seconds = session_create_timeout_seconds
@@ -997,6 +1006,7 @@ class UpstreamSessionRegistry:
             httpx_client_factory=httpx_client_factory,
             message_handler_factory=self._message_handler_factory,
             timeout_seconds=self._session_create_timeout_seconds,
+            client_callbacks_factory=self._client_callbacks_factory,
         )
         session, lifecycle = await self._session_factory(req)
         return UpstreamSession(
@@ -1149,11 +1159,16 @@ class RegistryNotInitializedError(RuntimeError):
 def init_upstream_session_registry(
     *,
     message_handler_factory: Optional[MessageHandlerFactory] = None,
+    client_callbacks_factory: Optional[ClientCallbacksFactoryProtocol] = None,
     **overrides: Any,
 ) -> UpstreamSessionRegistry:
     """Install the process-wide registry. Call once at app startup."""
     global _registry
-    _registry = UpstreamSessionRegistry(message_handler_factory=message_handler_factory, **overrides)
+    _registry = UpstreamSessionRegistry(
+        message_handler_factory=message_handler_factory,
+        client_callbacks_factory=client_callbacks_factory,
+        **overrides,
+    )
     return _registry
 
 

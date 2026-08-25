@@ -51,8 +51,8 @@ import jwt
 from mcp.server.lowlevel import Server
 from mcp.server.streamable_http import EventCallback, EventId, EventMessage, EventStore, StreamId
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
-import mcp_types as types
-from mcp_types import JSONRPCMessage
+from mcp import types
+from mcp.types import JSONRPCMessage
 import orjson
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
@@ -341,13 +341,10 @@ mcp_app: Server[Any] = ContextForgeMCPServer("mcp-streamable-http")
 # bridged by the ``_adapt_*`` wrappers + ``mcp_app.add_request_handler(...)``
 # block at module bottom (see "mcp v1 → v2 handler adapters").
 #
-# Two known gaps remain from the migration:
-#   1. ``mcpgateway/services/notification_service.py``'s hold-then-respond
-#      multiplexer relies on ``responder.respond()``, which no longer exists
-#      in v2 (``RequestResponder`` is a typing-only stub). Responses to
-#      server-initiated requests are currently dropped with a warning; the
-#      mechanism needs a redesign around v2's return-based callback contract.
-#   2. MCP Apps extension support (``capabilities.extensions`` advertising via
+# Server-initiated requests use the typed v2 callbacks registered on the
+# upstream ``Client``. Their futures are correlated through
+# ``NotificationService.complete_request`` and the GET /mcp event stream.
+# MCP Apps extension support (``capabilities.extensions`` advertising via
 #      ``ContextForgeMCPServer`` and ``_meta`` projection via
 #      ``apply_tool_meta``/``apply_resource_meta``) has been restored on the
 #      v2 API; direct-proxy resource reads route through
@@ -791,7 +788,16 @@ class RustEventStore(EventStore):
         for event in payload.get("events", []):
             if not isinstance(event, dict):
                 continue
-            await send_callback(event.get("message"))
+            msg_dict = event.get("message")
+            ev_id = event.get("eventId") or event.get("event_id")
+            if not isinstance(msg_dict, dict):
+                continue
+            try:
+                message = types.jsonrpc_message_adapter.validate_python(msg_dict)
+            except Exception as exc:
+                logger.warning("RustEventStore: discarding malformed replay event %s: %s", ev_id, exc)
+                continue
+            await send_callback(EventMessage(message, ev_id))
         return stream_id
 
 
@@ -1742,7 +1748,7 @@ async def call_tool(
     meta_data = None
     # Extract _meta from request context if available
     try:
-        ctx = mcp_app.request_context
+        ctx = _get_v2_ctx()
         if ctx and ctx.meta is not None:
             # MCP 2.0 RequestParamsMeta is a TypedDict (no model_dump); tolerate
             # legacy model-shaped meta for tests that inject a Pydantic object.
@@ -2098,8 +2104,8 @@ async def _get_request_context_or_default() -> Tuple[str, dict[str, Any], dict[s
     2. ASGI scope. The middleware stores resolved context on
        ``scope[_MCPGATEWAY_CONTEXT_KEY]`` before handing off to the MCP SDK.
        Because the SDK passes the same ``scope`` dictionary through to
-       ``mcp_app.request_context.request``, this survives task-group
-       boundaries where ContextVars may be lost.
+       ``ctx.request``, this survives task-group boundaries where ContextVars
+       may be lost.
     3. Re-authentication fallback. Re-extracts identity from the request's
        Authorization header or cookies. This is the most expensive path and
        may produce a different context shape for anonymous callers (an empty
@@ -2142,7 +2148,7 @@ async def _get_request_context_or_default() -> Tuple[str, dict[str, Any], dict[s
     # 2. Try ASGI scope context injected by handle_streamable_http()
     ctx = None
     try:
-        ctx = mcp_app.request_context
+        ctx = _get_v2_ctx()
         request = ctx.request
         if request:
             gw_ctx = getattr(request, "scope", {}).get(_MCPGATEWAY_CONTEXT_KEY)
@@ -2168,10 +2174,9 @@ async def _get_request_context_or_default() -> Tuple[str, dict[str, Any], dict[s
     # 3. Re-authentication fallback (stateful session path)
     try:
         # Reuse ctx from the scope-reading block above (step 2) to avoid
-        # a redundant mcp_app.request_context lookup.
         if ctx is None:
-            ctx = mcp_app.request_context
-        request = ctx.request
+            return s_id, request_headers_var.get(), user_context_var.get()
+        request = getattr(ctx, "request", None)
         if not request:
             logger.warning("No request object found in MCP context")
             return s_id, request_headers_var.get(), user_context_var.get()
@@ -2361,7 +2366,7 @@ async def list_tools() -> List[types.Tool]:
                         # Get _meta from request context if available
                         meta = None
                         try:
-                            request_ctx = mcp_app.request_context
+                            request_ctx = _get_v2_ctx()
                             meta = request_ctx.meta
                             logger.info(
                                 "[LIST TOOLS] Using direct_proxy mode for server %s, gateway %s (from %s header). Meta Attached: %s",
@@ -2510,7 +2515,7 @@ async def get_prompt(prompt_id: str, arguments: dict[str, str] | None = None) ->
     meta_data = None
     # Extract _meta from request context if available
     try:
-        ctx = mcp_app.request_context
+        ctx = _get_v2_ctx()
         if ctx and ctx.meta is not None:
             # MCP 2.0 RequestParamsMeta is a TypedDict (no model_dump); tolerate
             # legacy model-shaped meta for tests that inject a Pydantic object.
@@ -2604,7 +2609,7 @@ async def list_resources() -> List[types.Resource]:
                         # Get _meta from request context if available
                         meta = None
                         try:
-                            request_ctx = mcp_app.request_context
+                            request_ctx = _get_v2_ctx()
                             meta = request_ctx.meta
                             logger.info(
                                 "[LIST RESOURCES] Using direct_proxy mode for server %s, gateway %s (from %s header). Meta Attached: %s",
@@ -2689,7 +2694,7 @@ async def read_resource(resource_uri: str) -> Union[str, bytes, List[Any]]:
     meta_data = None
     # Extract _meta from request context if available
     try:
-        ctx = mcp_app.request_context
+        ctx = _get_v2_ctx()
         if ctx and ctx.meta is not None:
             # MCP 2.0 RequestParamsMeta is a TypedDict (no model_dump); tolerate
             # legacy model-shaped meta for tests that inject a Pydantic object.
@@ -3000,22 +3005,17 @@ async def complete(
 # mcp v1 → v2 handler adapters (thin compatibility layer)
 # ============================================================================
 # The handler functions above are kept in their v1 shape: bare returns
-# (``List[Tool]``, ``Union[str, bytes]``, etc.) and internal ``mcp_app
-# .request_context`` access. The adapters below wrap each into the v2
-# ``(ctx, params)`` shape required by ``Server.add_request_handler``:
+# (``List[Tool]``, ``Union[str, bytes]``, etc.) and request-scoped data access.
+# The adapters below wrap each into the v2 ``(ctx, params)`` shape required by
+# ``Server.add_request_handler``:
 #
-#   1. The v2 ``ctx`` is stashed on a ContextVar before the v1 handler runs,
-#      and a property shim on the ``Server`` class makes ``mcp_app
-#      .request_context`` keep returning the live ctx so existing handler
-#      bodies (and helpers like ``_get_request_context_or_default``) work
-#      unchanged.
+#   1. The v2 ``ctx`` is stashed on a ContextVar before the legacy-shaped
+#      handler runs. Handler helpers read it through ``_get_v2_ctx()``.
 #   2. v1 return values are wrapped in the matching v2 result types
-#      (``ListToolsResult``, ``CallToolResult``, ``ReadResourceResult``,
-#      ...).
+#      (``ListToolsResult``, ``CallToolResult``, ``ReadResourceResult``, ...).
 #
-# This is intentionally less invasive than rewriting each handler body.
-# Future work: inline the v2 ``(ctx, params)`` signatures into the handlers
-# themselves and delete these adapters + the property shim.
+# This keeps the existing service-layer behavior while all protocol entry
+# points now receive the v2 context explicitly.
 # ============================================================================
 
 _v2_request_ctx: "contextvars.ContextVar[Any]" = contextvars.ContextVar(
@@ -3027,13 +3027,6 @@ _v2_request_ctx: "contextvars.ContextVar[Any]" = contextvars.ContextVar(
 def _get_v2_ctx() -> Any:
     """Return the ServerRequestContext set by the active adapter (or None)."""
     return _v2_request_ctx.get()
-
-
-# Inject ``request_context`` property on the v2 Server class so v1 handler
-# bodies' ``mcp_app.request_context`` access continues to work. v2 ``Server``
-# does not define this property natively.
-if not hasattr(type(mcp_app), "request_context"):
-    type(mcp_app).request_context = property(lambda _self: _get_v2_ctx())  # type: ignore[attr-defined]
 
 
 async def _adapt_list_tools(ctx: Any, _params: Any = None) -> "types.ListToolsResult":
@@ -4746,13 +4739,10 @@ class SessionManagerWrapper:
             return message
 
         # ADR-052: server-initiated request response interception.
-        # When this session has any pending RequestResponder waiting for a
-        # downstream reply, peek at this POST body. If it's a JSON-RPC
-        # response whose id matches a pending entry, route it directly to
-        # NotificationService.complete_request and short-circuit the SDK.
-        # Otherwise replay the buffered body to the SDK transparently.
-        # Only triggered when there's at least one pending request — the
-        # common case (zero pending) takes the streaming-receive fast path.
+        # Typed v2 callbacks publish requests to the downstream GET stream and
+        # await the matching POST response. When a response is posted, route
+        # it directly to NotificationService.complete_request and short-circuit
+        # the SDK. Otherwise replay the buffered body to the SDK transparently.
         _notif_svc = _resolve_intercept_target(method, mcp_session_id)
         is_mcp_path = path == "/mcp" or path.endswith("/mcp") or _SERVER_SCOPED_PATH_RE.search(path) is not None
         if _notif_svc is not None:

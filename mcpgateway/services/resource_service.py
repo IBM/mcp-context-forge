@@ -36,8 +36,8 @@ import uuid
 # Third-Party
 import httpx2
 from mcp import ClientSession
-import mcp_types as types
-from mcp_types import ReadResourceRequest, ReadResourceRequestParams
+from mcp import types
+from mcp.types import ReadResourceRequest, ReadResourceRequestParams
 import parse
 from pydantic import ValidationError
 from sqlalchemy import and_, delete, desc, not_, or_, select

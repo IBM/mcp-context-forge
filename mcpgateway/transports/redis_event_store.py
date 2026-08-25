@@ -20,8 +20,8 @@ from typing import AsyncIterator, Optional, TYPE_CHECKING
 import uuid
 
 # Third-Party
-from mcp.server.streamable_http import EventCallback, EventStore
-from mcp_types import jsonrpc_message_adapter, JSONRPCMessage
+from mcp.server.streamable_http import EventCallback, EventMessage, EventStore
+from mcp.types import jsonrpc_message_adapter, JSONRPCMessage
 import orjson
 
 # First-Party
@@ -389,10 +389,11 @@ class RedisEventStore(EventStore):
             if msg_json is None:
                 continue
             try:
-                msg = orjson.loads(msg_json)
-            except Exception:
-                msg = None
-            await send_callback(msg)
+                msg = jsonrpc_message_adapter.validate_python(orjson.loads(msg_json))
+            except Exception as exc:
+                logger.warning("Discarding malformed event %s during replay: %s", ev_id, exc)
+                continue
+            await send_callback(EventMessage(msg, ev_id))
 
         return stream_id
 

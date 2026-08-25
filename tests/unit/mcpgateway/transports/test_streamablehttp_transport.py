@@ -60,6 +60,32 @@ streamable_http_auth = tr.streamable_http_auth
 SessionManagerWrapper = tr.SessionManagerWrapper
 
 
+@pytest.fixture(autouse=True)
+def _legacy_request_context_test_bridge(monkeypatch):
+    """Bridge legacy property-based test seams to the v2 context accessor.
+
+    Production code uses ``_get_v2_ctx()`` directly. Existing coverage tests
+    still patch the removed v1 property; keep that test seam local to this
+    module while the cases are migrated incrementally.
+    """
+    server_type = type(tr.mcp_app)
+    original_property = server_type.__dict__.get("request_context")
+    if original_property is None:
+        server_type.request_context = property(lambda _self: None)
+
+    def get_context():
+        context = tr._v2_request_ctx.get()
+        if context is not None:
+            return context
+        prop = server_type.__dict__.get("request_context")
+        return prop.__get__(tr.mcp_app, server_type) if prop is not None else None
+
+    monkeypatch.setattr(tr, "_get_v2_ctx", get_context)
+    yield
+    if original_property is None and "request_context" in server_type.__dict__:
+        delattr(server_type, "request_context")
+
+
 def _read_content(result):
     """Return the first read-resource content payload (text str or raw blob bytes)."""
     assert isinstance(result, list)
@@ -230,8 +256,8 @@ async def test_rust_event_store_store_and_replay(monkeypatch):
                 {
                     "streamId": "stream-1",
                     "events": [
-                        {"eventId": "event-124", "message": {"id": 2}},
-                        {"eventId": "event-125", "message": {"id": 3}},
+                        {"eventId": "event-124", "message": {"jsonrpc": "2.0", "id": 2, "result": {}}},
+                        {"eventId": "event-125", "message": {"jsonrpc": "2.0", "id": 3, "result": {}}},
                     ],
                 }
             )
@@ -252,7 +278,7 @@ async def test_rust_event_store_store_and_replay(monkeypatch):
 
     assert event_id == "event-123"
     assert stream_id == "stream-1"
-    assert replayed == [{"id": 2}, {"id": 3}]
+    assert [event.message.id for event in replayed] == [2, 3]
     assert captured_requests[0][0] == "http://127.0.0.1:8787/_internal/event-store/store"
     assert captured_requests[0][1] == {
         "streamId": "stream-1",
@@ -345,7 +371,7 @@ async def test_rust_event_store_replay_skips_invalid_entries(monkeypatch):
             self.calls += 1
             if self.calls == 1:
                 return FakeResponse({"streamId": "", "events": []})
-            return FakeResponse({"streamId": "stream-1", "events": ["bad", {"message": {"id": 2}}]})
+            return FakeResponse({"streamId": "stream-1", "events": ["bad", {"eventId": "event-126", "message": {"jsonrpc": "2.0", "id": 2, "result": {}}}]})
 
     client = FakeClient()
     monkeypatch.setattr(tr, "_get_rust_event_store_client", AsyncMock(return_value=client))
@@ -359,7 +385,7 @@ async def test_rust_event_store_replay_skips_invalid_entries(monkeypatch):
         replayed.append(msg)
 
     assert await store.replay_events_after("event-2", collector) == "stream-1"
-    assert replayed == [{"id": 2}]
+    assert [event.message.id for event in replayed] == [2]
 
 
 @pytest.mark.asyncio
@@ -13011,7 +13037,7 @@ async def test_get_request_context_lookup_error_fallback():
 
 @pytest.mark.asyncio
 async def test_get_request_context_generic_exception_fallback(caplog):
-    """Generic exception from request_context access returns defaults and logs error."""
+    """Generic exception from the test-only context seam returns defaults."""
     # Standard
     from unittest.mock import PropertyMock
 
@@ -13030,12 +13056,12 @@ async def test_get_request_context_generic_exception_fallback(caplog):
 
     try:
         with patch.object(type(mcp_app), "request_context", new_callable=PropertyMock, side_effect=RuntimeError("Unexpected")):
-            with caplog.at_level("ERROR"):
+            with caplog.at_level("DEBUG"):
                 sid, headers, user = await _get_request_context_or_default()
                 assert sid == "default_server_id"
                 assert headers == {"x-default": "yes"}
                 assert user == {}
-                assert "Error recovering context in stateful session" in caplog.text
+                assert "Failed to read" in caplog.text
     finally:
         server_id_var.reset(s_tok)
         request_headers_var.reset(h_tok)
