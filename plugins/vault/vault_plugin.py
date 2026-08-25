@@ -237,7 +237,7 @@ class Vault(Plugin):
         """
         try:
             # First-Party
-            from mcpgateway.db import A2AAgent as DbA2AAgent, get_db  # pylint: disable=import-outside-toplevel
+            from mcpgateway.db import A2AAgent as DbA2AAgent  # pylint: disable=import-outside-toplevel
             from sqlalchemy import select  # pylint: disable=import-outside-toplevel
 
             gen = get_db()
@@ -364,7 +364,7 @@ class Vault(Plugin):
         else:
             # Try to find a key that starts with system_key (complex key format)
             for key in vault_tokens.keys():
-                parsed_system, scope, token_type, token_name = self._parse_vault_token_key(key)
+                parsed_system, _, _, _ = self._parse_vault_token_key(key)
                 if parsed_system == system_key:
                     resolved = self._resolve_token_value(vault_tokens[key], destination_url)
                     if resolved is None:
@@ -376,7 +376,7 @@ class Vault(Plugin):
 
         if token_value and token_key_used:
             # Parse the token key to determine handling
-            parsed_system, scope, token_type, token_name = self._parse_vault_token_key(token_key_used)
+            parsed_system, _, token_type, _ = self._parse_vault_token_key(token_key_used)
             # Determine how to handle the token based on token_type and AUTH_HEADER tag
             if token_type == "PAT":
                 # Handle Personal Access Token
