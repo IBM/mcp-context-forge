@@ -516,6 +516,7 @@ exempt.
 - **Conventional Commits**: `feat:`, `fix:`, `docs:`, `refactor:`, `chore:`
 - **Link issues**: `Closes #123`
 - Include tests for behavior changes
+- Every PR whose behavior can be exercised through a live gateway must include a full black-box test against a running gateway; see [`tests/live_gateway/`](tests/live_gateway/) for examples
 - Require green lint and tests before PR
 - Don't push until asked.
 
