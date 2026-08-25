@@ -21,7 +21,7 @@ from datetime import datetime, timedelta, UTC
 from typing import List, Optional, Union
 
 # Third-Party
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from fastapi.security import HTTPBearer
 from sqlalchemy.orm import Session
 
