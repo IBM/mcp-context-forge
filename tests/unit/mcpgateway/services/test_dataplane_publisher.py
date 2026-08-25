@@ -11,7 +11,6 @@ from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
-
 USER1_ID = "11111111-1111-1111-1111-111111111111"
 USER2_ID = "22222222-2222-2222-2222-222222222222"
 USER3_ID = "33333333-3333-3333-3333-333333333333"
@@ -214,6 +213,10 @@ async def test_full_payload_generation_with_mock_db():
     tool1.id = "t1"
     tool1.name = "gw1-public_tool"
     tool1.original_name = "public_tool"
+    tool1.input_schema = {
+        "type": "object",
+        "properties": {"region": {"type": "string", "x-mcp-header": "Region"}},
+    }
     tool1.owner_email = "user1@example.com"
     tool1.team_id = "team1"
     tool1.visibility = "public"
@@ -223,6 +226,7 @@ async def test_full_payload_generation_with_mock_db():
     tool2.id = "t2"
     tool2.name = "gw1-private_tool"
     tool2.original_name = "private_tool"
+    tool2.input_schema = {}
     tool2.owner_email = "user1@example.com"
     tool2.team_id = "team1"
     tool2.visibility = "private"
@@ -232,10 +236,21 @@ async def test_full_payload_generation_with_mock_db():
     tool3.id = "t3"
     tool3.name = "gw1-team2_tool"
     tool3.original_name = "team2_tool"
+    tool3.input_schema = {"type": "object", "properties": {"count": {"type": "integer"}}}
     tool3.owner_email = "user2@example.com"
     tool3.team_id = "team2"
     tool3.visibility = "team"
     tool3.enabled = True
+
+    malformed_tool = Mock()
+    malformed_tool.id = "bad-tool"
+    malformed_tool.name = "gw1-bad_tool"
+    malformed_tool.original_name = "bad_tool"
+    malformed_tool.input_schema = None
+    malformed_tool.owner_email = "user1@example.com"
+    malformed_tool.team_id = "team1"
+    malformed_tool.visibility = "private"
+    malformed_tool.enabled = True
 
     # Mock active users and user-team memberships
     mock_db.execute.return_value.all.side_effect = [
@@ -252,9 +267,9 @@ async def test_full_payload_generation_with_mock_db():
         # Resource query
         [resource1],
         # Tool query
-        [tool1, tool2, tool3],
+        [tool1, tool2, tool3, malformed_tool],
         # Tool associations
-        [("s1", "t1", "g1"), ("s1", "t2", "g1"), ("s1", "t3", "g1")],
+        [("s1", "t1", "g1"), ("s1", "t2", "g1"), ("s1", "t3", "g1"), ("s1", "bad-tool", "g1")],
         # Resource associations
         [("s1", "r1", "g1")],
         # Prompt associations
@@ -289,10 +304,16 @@ async def test_full_payload_generation_with_mock_db():
             "remove_headers": ["Cookie"],
             "capabilities": {"resources": {"subscribe": True}},
             "allowed_tool_names": ["public_tool", "private_tool"],
+            "tool_schemas": {
+                "public_tool": tool1.input_schema,
+                "private_tool": {},
+            },
             "allowed_resource_names": ["Resource 1"],
             "allowed_resource_uris": ["resource://one"],
             "allowed_prompt_names": ["Prompt 1"],
         }
+        assert "bad_tool" not in backend["allowed_tool_names"]
+        assert "bad_tool" not in backend["tool_schemas"]
 
         # Verify the gateway SELECT projection actually includes the new columns
         # (guards against getattr-on-Row silently returning None when columns are missing from SELECT)
@@ -302,6 +323,11 @@ async def test_full_payload_generation_with_mock_db():
         assert "add_headers" in selected_keys, "Gateway SELECT must include add_headers"
         assert "remove_headers" in selected_keys, "Gateway SELECT must include remove_headers"
 
+        tool_execute_call = mock_db.execute.call_args_list[6]
+        tool_stmt = tool_execute_call[0][0]
+        selected_tool_keys = {col.key for col in tool_stmt.selected_columns}
+        assert "input_schema" in selected_tool_keys, "Tool SELECT must include input_schema"
+
         # Verify user2 sees public server but not private server from user1
         user2_config = payload[USER2_ID]
         assert "s1" in user2_config["virtual_hosts"]  # public
@@ -310,6 +336,10 @@ async def test_full_payload_generation_with_mock_db():
         assert "s2" not in user2_config["virtual_hosts"]
         user2_backend = user2_config["virtual_hosts"]["s1"]["backends"]["g1"]
         assert user2_backend["allowed_tool_names"] == ["public_tool", "team2_tool"]
+        assert user2_backend["tool_schemas"] == {
+            "public_tool": tool1.input_schema,
+            "team2_tool": tool3.input_schema,
+        }
 
         # Verify active users with no team membership still get public-only config.
         user3_config = payload[USER3_ID]
@@ -317,6 +347,34 @@ async def test_full_payload_generation_with_mock_db():
         assert "s2" not in user3_config["virtual_hosts"]
         user3_backend = user3_config["virtual_hosts"]["s1"]["backends"]["g1"]
         assert user3_backend["allowed_tool_names"] == ["public_tool"]
+        assert user3_backend["tool_schemas"] == {"public_tool": tool1.input_schema}
+
+
+def test_build_user_data_excludes_non_object_tool_schema(caplog):
+    """A malformed tool is excluded without dropping valid tools from the snapshot."""
+    from unittest.mock import Mock
+
+    from mcpgateway.services.dataplane_publisher import BackendItemsByServer, DataplanePublisherService
+
+    bad_tool = Mock(id="bad-tool", original_name="bad", input_schema=None, visibility="public")
+    good_tool = Mock(id="good-tool", original_name="good", input_schema={"type": "object"}, visibility="public")
+    server = Mock(id="server", visibility="public")
+    backend_items_by_server: BackendItemsByServer = {
+        "server": {
+            "gateway": {
+                "tools": ["bad-tool", "good-tool"],
+                "resources": [],
+                "prompts": [],
+            }
+        }
+    }
+
+    result = DataplanePublisherService()._build_user_data("user@example.com", set(), False, [server], [], [], [], [bad_tool, good_tool], backend_items_by_server)
+
+    backend_items = result["servers"][0]["backend_items"]["gateway"]
+    assert backend_items["tools"] == ["good"]
+    assert backend_items["tool_schemas"] == {"good": {"type": "object"}}
+    assert "Excluding tool bad-tool" in caplog.text
 
 
 # ============================================================================
@@ -394,7 +452,7 @@ def test_create_payload_filters_empty_backends():
                 {
                     "id": "server1",
                     "backend_items": {
-                        "gateway1": {"tools": [], "resources": [], "prompts": []},
+                        "gateway1": {"tools": [], "tool_schemas": {}, "resources": [], "prompts": []},
                     },
                 }
             ],
@@ -423,7 +481,12 @@ def test_create_payload_excludes_non_streamable_gateways(transport: str):
                 {
                     "id": "server1",
                     "backend_items": {
-                        "gateway_non_streamable": {"tools": ["tool1"], "resources": [], "prompts": []},
+                        "gateway_non_streamable": {
+                            "tools": ["tool1"],
+                            "tool_schemas": {},
+                            "resources": [],
+                            "prompts": [],
+                        },
                     },
                 }
             ],
@@ -450,7 +513,7 @@ def test_create_payload_normalizes_null_passthrough_headers():
                 {
                     "id": "server1",
                     "backend_items": {
-                        "gateway1": {"tools": ["tool1"], "resources": [], "prompts": []},
+                        "gateway1": {"tools": ["tool1"], "tool_schemas": {}, "resources": [], "prompts": []},
                     },
                 }
             ],
@@ -480,7 +543,12 @@ def test_create_payload_handles_missing_references():
                 {
                     "id": "server1",
                     "backend_items": {
-                        "missing_gateway": {"tools": ["tool1"], "resources": ["missing_res"], "prompts": ["missing_prompt"]},
+                        "missing_gateway": {
+                            "tools": ["tool1"],
+                            "tool_schemas": {},
+                            "resources": ["missing_res"],
+                            "prompts": ["missing_prompt"],
+                        },
                     },
                 }
             ],
