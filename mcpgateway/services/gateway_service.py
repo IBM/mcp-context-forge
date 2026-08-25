@@ -261,6 +261,9 @@ audit_trail = get_audit_trail_service()
 GW_FAILURE_THRESHOLD = settings.unhealthy_threshold
 GW_HEALTH_CHECK_INTERVAL = settings.health_check_interval
 
+# Only delete MCP-discovered items (not user-created entries)
+MCP_SYNC_CREATED_VIA_VALUES = {"MCP", "federation", "health_check", "manual_refresh", "notification_service", "oauth", "update"}
+
 
 class GatewayError(Exception):
     """Base class for gateway-related errors.
@@ -6427,15 +6430,12 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             result["resources_updated"] = len({obj for obj in db.dirty if isinstance(obj, DbResource)} - pending_resources_before)
             result["prompts_updated"] = len({obj for obj in db.dirty if isinstance(obj, DbPrompt)} - pending_prompts_before)
 
-            # Only delete MCP-discovered items (not user-created entries)
-            # Excludes "api", "ui", None (legacy/user-created) to preserve user entries
-            mcp_created_via_values = {"MCP", "federation", "health_check", "manual_refresh", "oauth", "update"}
             reconcile_result = self._reconcile_gateway_catalog(
                 db,
                 gateway=gateway,
                 catalog_sync=catalog_sync,
                 log_context=f"gateway refresh ({created_via})",
-                stale_created_via_values=mcp_created_via_values,
+                stale_created_via_values=MCP_SYNC_CREATED_VIA_VALUES,
             )
             result["tools_removed"] = reconcile_result.tools_removed
             result["resources_removed"] = reconcile_result.resources_removed
