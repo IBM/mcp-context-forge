@@ -110,6 +110,51 @@ def tool_service(monkeypatch):
     monkeypatch.setattr("mcpgateway.services.tool_service.settings.ssrf_protection_enabled", False)
     service = ToolService()
     service._http_client = AsyncMock()
+
+    async def passthrough_pinning(prepared, *_args, **_kwargs):
+        return SimpleNamespace(endpoint_url=prepared.endpoint_url, headers=dict(prepared.headers), extensions={})
+
+    def service_http_client_is_configured():
+        post = getattr(service._http_client, "post", None)
+        if post is None:
+            return False
+        if not isinstance(post, AsyncMock):
+            return True
+        if post.side_effect is not None:
+            return True
+        return not isinstance(post.return_value, AsyncMock)
+
+    class ClientAdapter:
+        def __init__(self, client):
+            self._client = client
+
+        def __getattr__(self, name):
+            return getattr(self._client, name)
+
+        async def post(self, url, **kwargs):
+            try:
+                return await self._client.post(url, **kwargs)
+            except TypeError as exc:
+                if "extensions" not in str(exc):
+                    raise
+                kwargs.pop("extensions", None)
+                return await self._client.post(url, **kwargs)
+
+    class IsolatedClientCtx:
+        async def __aenter__(self):
+            if service_http_client_is_configured():
+                return ClientAdapter(service._http_client)
+
+            # First-Party
+            from mcpgateway.services.http_client_service import get_http_client
+
+            return ClientAdapter(await get_http_client())
+
+        async def __aexit__(self, *_exc):
+            return None
+
+    monkeypatch.setattr("mcpgateway.services.tool_service.prepare_pinned_a2a_invocation", passthrough_pinning)
+    monkeypatch.setattr("mcpgateway.services.tool_service.get_isolated_http_client", lambda **_kwargs: IsolatedClientCtx())
     return service
 
 
@@ -3281,9 +3326,41 @@ class TestInvokeA2AToolCoverage:
     """Tests for _invoke_a2a_tool (lines 4449-4510)."""
 
     @pytest.fixture
-    def tool_service(self):
+    def tool_service(self, monkeypatch):
         svc = ToolService()
         svc._event_service = AsyncMock()
+
+        async def passthrough_pinning(prepared, *_args, **_kwargs):
+            return SimpleNamespace(endpoint_url=prepared.endpoint_url, headers=dict(prepared.headers), extensions={})
+
+        class ClientAdapter:
+            def __init__(self, client):
+                self._client = client
+
+            def __getattr__(self, name):
+                return getattr(self._client, name)
+
+            async def post(self, url, **kwargs):
+                try:
+                    return await self._client.post(url, **kwargs)
+                except TypeError as exc:
+                    if "extensions" not in str(exc):
+                        raise
+                    kwargs.pop("extensions", None)
+                    return await self._client.post(url, **kwargs)
+
+        class IsolatedClientCtx:
+            async def __aenter__(self):
+                # First-Party
+                from mcpgateway.services.http_client_service import get_http_client
+
+                return ClientAdapter(await get_http_client())
+
+            async def __aexit__(self, *_exc):
+                return None
+
+        monkeypatch.setattr("mcpgateway.services.tool_service.prepare_pinned_a2a_invocation", passthrough_pinning)
+        monkeypatch.setattr("mcpgateway.services.tool_service.get_isolated_http_client", lambda **_kwargs: IsolatedClientCtx())
         return svc
 
     def _make_a2a_tool(self, agent_id="agent-1"):
@@ -3509,9 +3586,41 @@ class TestCallA2AAgentCoverage:
     """Tests for _call_a2a_agent (lines 4512-4598)."""
 
     @pytest.fixture
-    def tool_service(self):
+    def tool_service(self, monkeypatch):
         svc = ToolService()
         svc._event_service = AsyncMock()
+
+        async def passthrough_pinning(prepared, *_args, **_kwargs):
+            return SimpleNamespace(endpoint_url=prepared.endpoint_url, headers=dict(prepared.headers), extensions={})
+
+        class ClientAdapter:
+            def __init__(self, client):
+                self._client = client
+
+            def __getattr__(self, name):
+                return getattr(self._client, name)
+
+            async def post(self, url, **kwargs):
+                try:
+                    return await self._client.post(url, **kwargs)
+                except TypeError as exc:
+                    if "extensions" not in str(exc):
+                        raise
+                    kwargs.pop("extensions", None)
+                    return await self._client.post(url, **kwargs)
+
+        class IsolatedClientCtx:
+            async def __aenter__(self):
+                # First-Party
+                from mcpgateway.services.http_client_service import get_http_client
+
+                return ClientAdapter(await get_http_client())
+
+            async def __aexit__(self, *_exc):
+                return None
+
+        monkeypatch.setattr("mcpgateway.services.tool_service.prepare_pinned_a2a_invocation", passthrough_pinning)
+        monkeypatch.setattr("mcpgateway.services.tool_service.get_isolated_http_client", lambda **_kwargs: IsolatedClientCtx())
         return svc
 
     def _make_agent(self, **overrides):
@@ -3558,6 +3667,60 @@ class TestCallA2AAgentCoverage:
 
             with pytest.raises(RuntimeError, match="logger boom"):
                 await tool_service._call_a2a_agent(agent, {"query": "hello"})
+
+    @pytest.mark.asyncio
+    async def test_validation_failure_blocks_before_http(self, tool_service, monkeypatch):
+        """A2A URL policy failures stop before an outbound HTTP client is requested."""
+        agent = self._make_agent()
+        pinning = AsyncMock(side_effect=ValueError("private address"))
+        monkeypatch.setattr("mcpgateway.services.tool_service.prepare_pinned_a2a_invocation", pinning)
+
+        with patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock) as mock_get_client:
+            with pytest.raises(ToolInvocationError, match="Outbound A2A URL blocked by URL policy"):
+                await tool_service._call_a2a_agent(agent, {"query": "hello"})
+
+        pinning.assert_awaited_once()
+        mock_get_client.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_pinned_call_disables_redirects_and_preserves_tls_verification(self, tool_service, monkeypatch):
+        """Pinned A2A calls disable redirects without overriding TLS verification."""
+        agent = self._make_agent(endpoint_url="https://agent.example.com/a2a")
+        pinned = SimpleNamespace(endpoint_url="https://203.0.113.10/a2a", headers={"Host": "agent.example.com"}, extensions={"sni_hostname": "agent.example.com"})
+        monkeypatch.setattr("mcpgateway.services.tool_service.prepare_pinned_a2a_invocation", AsyncMock(return_value=pinned))
+        factory_kwargs = {}
+        post_kwargs = {}
+
+        class Client:
+            async def post(self, url, **kwargs):
+                post_kwargs["url"] = url
+                post_kwargs.update(kwargs)
+                response = MagicMock()
+                response.status_code = 200
+                response.json.return_value = {"result": "ok"}
+                return response
+
+        class IsolatedClientCtx:
+            async def __aenter__(self):
+                return Client()
+
+            async def __aexit__(self, *_exc):
+                return None
+
+        def isolated_client_factory(**kwargs):
+            factory_kwargs.update(kwargs)
+            return IsolatedClientCtx()
+
+        monkeypatch.setattr("mcpgateway.services.tool_service.get_isolated_http_client", isolated_client_factory)
+
+        result = await tool_service._call_a2a_agent(agent, {"query": "hello"})
+
+        assert result == {"result": "ok"}
+        assert factory_kwargs == {"follow_redirects": False}
+        assert "verify" not in factory_kwargs
+        assert post_kwargs["url"] == "https://203.0.113.10/a2a"
+        assert post_kwargs["headers"] == {"Host": "agent.example.com"}
+        assert post_kwargs["extensions"] == {"sni_hostname": "agent.example.com"}
 
     @pytest.mark.asyncio
     async def test_custom_agent_format(self, tool_service):
@@ -7941,6 +8104,75 @@ class TestInvokeToolA2A:
         assert result is not None
         assert result.is_error is False
         assert "Hello from A2A" in result.content[0].text
+
+    @pytest.mark.asyncio
+    async def test_a2a_jsonrpc_uses_pinned_target_and_isolated_client(self, tool_service, monkeypatch):
+        """Tool-mediated A2A invocation posts only to the pinned outbound target."""
+        tp = _make_tool_payload(
+            integration_type="A2A",
+            request_type="POST",
+            annotations={"a2a_agent_id": "agent-uuid-1"},
+        )
+        db = MagicMock()
+        a2a_agent = _make_a2a_agent()
+        a2a_agent.endpoint_url = "https://agent.example.com/a2a"
+        db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=a2a_agent)))
+
+        pinned = SimpleNamespace(endpoint_url="https://203.0.113.10/a2a", headers={"Host": "agent.example.com"}, extensions={"sni_hostname": "agent.example.com"})
+        pinning = AsyncMock(return_value=pinned)
+        factory_kwargs = {}
+        post_kwargs = {}
+
+        class Client:
+            async def post(self, url, **kwargs):
+                post_kwargs["url"] = url
+                post_kwargs.update(kwargs)
+                response = MagicMock()
+                response.status_code = 200
+                response.json.return_value = {"response": "Pinned response"}
+                response.text = '{"response":"Pinned response"}'
+                return response
+
+        class IsolatedClientCtx:
+            async def __aenter__(self):
+                return Client()
+
+            async def __aexit__(self, *_exc):
+                return None
+
+        def isolated_client_factory(**kwargs):
+            factory_kwargs.update(kwargs)
+            return IsolatedClientCtx()
+
+        monkeypatch.setattr("mcpgateway.services.tool_service.prepare_pinned_a2a_invocation", pinning)
+        monkeypatch.setattr("mcpgateway.services.tool_service.get_isolated_http_client", isolated_client_factory)
+
+        with (
+            _setup_cache_for_invoke(tp),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
+            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+        ):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+
+            result = await tool_service.invoke_tool(db, "test_tool", {"query": "What is A2A?"})
+
+        assert result is not None
+        assert result.is_error is False
+        assert "Pinned response" in result.content[0].text
+        pinning.assert_awaited_once()
+        assert factory_kwargs == {"follow_redirects": False}
+        assert "verify" not in factory_kwargs
+        assert post_kwargs["url"] == "https://203.0.113.10/a2a"
+        assert post_kwargs["headers"] == {"Host": "agent.example.com"}
+        assert post_kwargs["extensions"] == {"sni_hostname": "agent.example.com"}
 
     async def _invoke_a2a_tool_via_invoke_tool(self, tool_service, response_json):
         """Helper: invoke an A2A tool through invoke_tool with a given HTTP 200 JSON response."""

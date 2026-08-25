@@ -69,6 +69,43 @@ def bypass_uaid_security_for_tests(monkeypatch):
     monkeypatch.setattr("mcpgateway.services.a2a_service.settings.mcpgateway_a2a_default_timeout", 30)
 
 
+@pytest.fixture(autouse=True)
+def mock_local_a2a_pinning_for_existing_tests(monkeypatch):
+    """Route isolated local A2A clients through existing shared-client mocks."""
+
+    async def passthrough_pinning(prepared, *_args, **_kwargs):
+        return SimpleNamespace(endpoint_url=prepared.endpoint_url, headers=dict(prepared.headers), extensions={})
+
+    class ClientAdapter:
+        def __init__(self, client):
+            self._client = client
+
+        def __getattr__(self, name):
+            return getattr(self._client, name)
+
+        async def post(self, url, **kwargs):
+            try:
+                return await self._client.post(url, **kwargs)
+            except TypeError as exc:
+                if "extensions" not in str(exc):
+                    raise
+                kwargs.pop("extensions", None)
+                return await self._client.post(url, **kwargs)
+
+    class IsolatedClientCtx:
+        async def __aenter__(self):
+            # First-Party
+            from mcpgateway.services.http_client_service import get_http_client
+
+            return ClientAdapter(await get_http_client())
+
+        async def __aexit__(self, *_exc):
+            return None
+
+    monkeypatch.setattr("mcpgateway.services.a2a_service.prepare_pinned_a2a_invocation", passthrough_pinning)
+    monkeypatch.setattr("mcpgateway.services.a2a_service.get_isolated_http_client", lambda **_kwargs: IsolatedClientCtx())
+
+
 class TestA2AAgentService:
     """Test suite for A2A Agent Service."""
 
@@ -625,6 +662,131 @@ class TestA2AAgentService:
         mock_metrics_buffer.record_a2a_agent_metric_with_duration.assert_called_once()
         # last_interaction updated via fresh_db_session
         mock_ts_db.commit.assert_called()
+
+    @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
+    @patch("mcpgateway.services.a2a_service.fresh_db_session")
+    @patch("mcpgateway.services.a2a_service.get_for_update")
+    async def test_invoke_agent_uses_pinned_target_and_isolated_client(
+        self,
+        mock_get_for_update,
+        mock_fresh_db,
+        mock_metrics_buffer_fn,
+        service,
+        mock_db,
+        sample_db_agent,
+        monkeypatch,
+    ):
+        """Direct A2A invocation posts only to the pinned outbound target."""
+        mock_db.execute.return_value.scalar_one_or_none.return_value = sample_db_agent.id
+
+        mock_agent = MagicMock()
+        mock_agent.id = sample_db_agent.id
+        mock_agent.name = sample_db_agent.name
+        mock_agent.enabled = True
+        mock_agent.endpoint_url = "https://agent.example.com/a2a"
+        mock_agent.auth_type = None
+        mock_agent.auth_value = None
+        mock_agent.auth_query_params = None
+        mock_agent.protocol_version = sample_db_agent.protocol_version
+        mock_agent.agent_type = "generic"
+        mock_agent.visibility = "public"
+        mock_agent.team_id = None
+        mock_agent.owner_email = None
+        mock_get_for_update.return_value = mock_agent
+
+        mock_ts_db = MagicMock()
+        mock_ts_db.execute.return_value.scalar_one_or_none.return_value = sample_db_agent
+        mock_fresh_db.return_value.__enter__.return_value = mock_ts_db
+        mock_fresh_db.return_value.__exit__.return_value = None
+        mock_metrics_buffer_fn.return_value = MagicMock()
+
+        pinned = SimpleNamespace(endpoint_url="https://203.0.113.10/a2a", headers={"Host": "agent.example.com"}, extensions={"sni_hostname": "agent.example.com"})
+        pinning = AsyncMock(return_value=pinned)
+        factory_kwargs = {}
+        post_kwargs = {}
+
+        class Client:
+            async def post(self, url, **kwargs):
+                post_kwargs["url"] = url
+                post_kwargs.update(kwargs)
+                response = MagicMock()
+                response.status_code = 200
+                response.json.return_value = {"response": "Pinned response"}
+                response.text = '{"response":"Pinned response"}'
+                return response
+
+        class IsolatedClientCtx:
+            async def __aenter__(self):
+                return Client()
+
+            async def __aexit__(self, *_exc):
+                return None
+
+        def isolated_client_factory(**kwargs):
+            factory_kwargs.update(kwargs)
+            return IsolatedClientCtx()
+
+        monkeypatch.setattr("mcpgateway.services.a2a_service.prepare_pinned_a2a_invocation", pinning)
+        monkeypatch.setattr("mcpgateway.services.a2a_service.get_isolated_http_client", isolated_client_factory)
+
+        result = await service.invoke_agent(mock_db, sample_db_agent.name, {"test": "data"})
+
+        assert result["response"] == "Pinned response"
+        pinning.assert_awaited_once()
+        assert factory_kwargs == {"follow_redirects": False}
+        assert "verify" not in factory_kwargs
+        assert post_kwargs["url"] == "https://203.0.113.10/a2a"
+        assert post_kwargs["headers"] == {"Host": "agent.example.com"}
+        assert post_kwargs["extensions"] == {"sni_hostname": "agent.example.com"}
+
+    @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
+    @patch("mcpgateway.services.a2a_service.fresh_db_session")
+    @patch("mcpgateway.services.http_client_service.get_http_client", new_callable=AsyncMock)
+    @patch("mcpgateway.services.a2a_service.get_for_update")
+    async def test_invoke_agent_blocks_when_pinning_fails(
+        self,
+        mock_get_for_update,
+        mock_get_client,
+        mock_fresh_db,
+        mock_metrics_buffer_fn,
+        service,
+        mock_db,
+        sample_db_agent,
+        monkeypatch,
+    ):
+        """Invocation-time URL policy failures happen before HTTP I/O."""
+        mock_db.execute.return_value.scalar_one_or_none.return_value = sample_db_agent.id
+
+        mock_agent = MagicMock()
+        mock_agent.id = sample_db_agent.id
+        mock_agent.name = sample_db_agent.name
+        mock_agent.enabled = True
+        mock_agent.endpoint_url = sample_db_agent.endpoint_url
+        mock_agent.auth_type = None
+        mock_agent.auth_value = None
+        mock_agent.auth_query_params = None
+        mock_agent.protocol_version = sample_db_agent.protocol_version
+        mock_agent.agent_type = "generic"
+        mock_agent.visibility = "public"
+        mock_agent.team_id = None
+        mock_agent.owner_email = None
+        mock_get_for_update.return_value = mock_agent
+
+        mock_ts_db = MagicMock()
+        mock_fresh_db.return_value.__enter__.return_value = mock_ts_db
+        mock_fresh_db.return_value.__exit__.return_value = None
+        mock_metrics_buffer = MagicMock()
+        mock_metrics_buffer_fn.return_value = mock_metrics_buffer
+
+        pinning = AsyncMock(side_effect=ValueError("private address"))
+        monkeypatch.setattr("mcpgateway.services.a2a_service.prepare_pinned_a2a_invocation", pinning)
+
+        with pytest.raises(A2AAgentError, match="Outbound A2A URL blocked by URL policy"):
+            await service.invoke_agent(mock_db, sample_db_agent.name, {"test": "data"})
+
+        pinning.assert_awaited_once()
+        mock_get_client.assert_not_awaited()
+        mock_metrics_buffer.record_a2a_agent_metric_with_duration.assert_called_once()
 
     async def test_invoke_agent_disabled(self, service, mock_db, sample_db_agent):
         """Test invoking disabled agent."""
@@ -2754,8 +2916,6 @@ class TestInvokeAgentEdgeCases:
 
         with pytest.raises(A2AAgentError, match="Failed to prepare A2A invocation"):
             await service.invoke_agent(mock_db, "ag", {})
-
-
 
 
 class TestA2AInvalidationBestEffort:
@@ -5232,7 +5392,6 @@ class TestCrossGatewayRoutingCoverage:
         )
 
         assert captured_headers.get("X-Contextforge-UAID-Hop") == "2", f"local-agent outbound must stamp hop+1; headers={captured_headers!r}"
-
 
     async def test_federation_chain_increments_hop_and_rejects_at_max(self, service, mock_db, monkeypatch):
         """Three-hop chain locks in the stamp-N+1 vs reject-at-max
