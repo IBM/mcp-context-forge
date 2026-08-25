@@ -2257,10 +2257,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             # First-Party
             from mcpgateway.services.token_storage_service import TokenStorageService  # pylint: disable=import-outside-toplevel
             from mcpgateway.services.token_validation_service import validate_oauth_token_claims  # pylint: disable=import-outside-toplevel
-            from mcpgateway.db import EmailUser  # pylint: disable=import-outside-toplevel
 
             # Look up is_admin flag (safe DB query — not for scoping, only for user_context)
-            user = db.execute(select(EmailUser).where(EmailUser.email == app_user_email)).scalar_one_or_none()
+            user = db.execute(select(DbEmailUser).where(DbEmailUser.email == app_user_email)).scalar_one_or_none()
             is_admin = user.is_admin if user else False
 
             if teams is None:
