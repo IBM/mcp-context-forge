@@ -532,6 +532,7 @@ class NotificationService:
         """
 
         async def forward(method: str, params: Any = None) -> Any:
+            """Publish one server request and await its downstream response."""
             request_id = f"cf-{uuid.uuid4().hex}"
             payload = params.model_dump(by_alias=True, exclude_none=True) if hasattr(params, "model_dump") else (params or {})
             request = mcp_types.JSONRPCRequest(
@@ -571,12 +572,15 @@ class NotificationService:
                         self._pending_requests.pop(key, None)
 
         async def sampling_callback(_context: Any, params: Any) -> Any:
+            """Forward an upstream sampling request to the downstream client."""
             return await forward("sampling/createMessage", params)
 
         async def elicitation_callback(_context: Any, params: Any) -> Any:
+            """Forward an upstream elicitation request to the downstream client."""
             return await forward("elicitation/create", params)
 
         async def list_roots_callback(_context: Any) -> Any:
+            """Forward an upstream roots request to the downstream client."""
             return await forward("roots/list")
 
         return {
