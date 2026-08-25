@@ -49,6 +49,7 @@ from fastapi.security.utils import get_authorization_scheme_param
 import httpx
 import jwt
 from mcp.server.lowlevel import Server
+from mcp.shared.exceptions import MCPError
 from mcp.server.streamable_http import EventCallback, EventId, EventMessage, EventStore, StreamId
 from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
 import mcp_types as types
@@ -91,9 +92,9 @@ from mcpgateway.services.metrics import (
 )
 from mcpgateway.services.oauth_manager import OAuthEnforcementUnavailableError, OAuthRequiredError
 from mcpgateway.services.permission_service import PermissionService
-from mcpgateway.services.prompt_service import PromptService
-from mcpgateway.services.resource_service import ResourceService
-from mcpgateway.services.tool_service import ToolService
+from mcpgateway.services.prompt_service import PromptNotFoundError, PromptService
+from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService
+from mcpgateway.services.tool_service import ToolNotFoundError, ToolService
 from mcpgateway.transports.context import UserContext
 from mcpgateway.transports.redis_event_store import RedisEventStore
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access, extract_gateway_id_from_headers, GATEWAY_ID_HEADER
@@ -2082,6 +2083,9 @@ async def call_tool(
             if structured:
                 return (unstructured, structured)
             return unstructured
+    except ToolNotFoundError:
+        logger.info("Unknown tool requested: %s", name)
+        return types.CallToolResult(content=[types.TextContent(type="text", text=f"Unknown tool: {name}")], is_error=True)
     except Exception as e:
         logger.exception("Error calling tool '%s': %s", name, e)
         # Re-raise the exception so the MCP SDK can properly convert it to an error response
@@ -2470,10 +2474,11 @@ async def get_prompt(prompt_id: str, arguments: dict[str, str] | None = None) ->
         arguments (Optional[dict[str, str]]): Optional dictionary of arguments to substitute into the prompt.
 
     Returns:
-        GetPromptResult: Object containing the prompt messages and description.
-        Returns an empty list on failure or if no prompt content is found.
+        GetPromptResult: Object containing the prompt messages and description
+        (empty messages if the prompt rendered no content).
 
     Raises:
+        MCPError: INVALID_PARAMS ("Unknown prompt: ...") if the prompt does not exist.
         PermissionError: If the user context indicates insufficient permissions (e.g., missing "prompts.read" scope).
 
     Logs exceptions if any errors occur during retrieval.
@@ -2532,17 +2537,20 @@ async def get_prompt(prompt_id: str, arguments: dict[str, str] | None = None) ->
                     token_teams=token_teams,
                     _meta_data=meta_data,
                 )
-            except Exception as e:
-                logger.exception("Error getting prompt '%s': %s", prompt_id, e)
-                return []
+            except PromptNotFoundError as e:
+                logger.info("Unknown prompt requested: %s", prompt_id)
+                raise MCPError(code=types.INVALID_PARAMS, message=f"Unknown prompt: {prompt_id}") from e
             if not result or not result.messages:
                 logger.warning("No content returned by prompt: %s", prompt_id)
-                return []
+                return types.GetPromptResult(messages=[])
             message_dicts = [message.model_dump() for message in result.messages]
             return types.GetPromptResult(messages=message_dicts, description=result.description)
+    except MCPError:
+        raise
     except Exception as e:
         logger.exception("Error getting prompt '%s': %s", prompt_id, e)
-        return []
+        # Re-raise so the SDK converts it to a proper error response.
+        raise
 
 
 async def list_resources() -> List[types.Resource]:
@@ -2650,9 +2658,10 @@ async def read_resource(resource_uri: str) -> Union[str, bytes, List[Any]]:
         Union[str, bytes, List[Any]]: The resource content — bare text/bytes,
         or a list of MCP resource-contents models (with mimeType and MCP Apps
         ``_meta`` projection) for rich results.
-        Returns empty string on failure or if no content is found.
+        Returns empty string only for an existing resource with no content.
 
     Raises:
+        MCPError: INVALID_PARAMS ("Unknown resource: ...") if the resource does not exist.
         PermissionError: If the user does not have the required permissions to read resources.
 
     Logs exceptions if any errors occur during reading.
@@ -2747,8 +2756,14 @@ async def read_resource(resource_uri: str) -> Union[str, bytes, List[Any]]:
                     token_teams=token_teams,
                     meta_data=meta_data,
                 )
-            except Exception as e:
-                logger.exception("Error reading resource '%s': %s", resource_uri, e)
+            except ResourceNotFoundError as e:
+                logger.info("Unknown resource requested: %s", resource_uri)
+                raise MCPError(code=types.INVALID_PARAMS, message=f"Unknown resource: {resource_uri}") from e
+            except ValueError as e:
+                if str(e) != "Resource has no content":
+                    raise
+                # The resource cache content is empty
+                logger.warning("Resource %s has no cached content; returning empty", resource_uri)
                 return ""
 
             # Return blob content if available (binary resources)
@@ -2759,12 +2774,15 @@ async def read_resource(resource_uri: str) -> Union[str, bytes, List[Any]]:
             if result and getattr(result, "text", None):
                 return _to_mcp_resource_contents(result, fallback_uri=str(resource_uri))
 
-            # No content found
+            # No content found: an existing resource with genuinely empty
             logger.warning("No content returned by resource: %s", resource_uri)
             return ""
+    except MCPError:
+        raise
     except Exception as e:
         logger.exception("Error reading resource '%s': %s", resource_uri, e)
-        return ""
+        # Re-raise so the SDK converts it to a proper error response.
+        raise
 
 
 async def list_resource_templates() -> List[Dict[str, Any]]:
