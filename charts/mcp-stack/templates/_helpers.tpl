@@ -90,7 +90,9 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 httpGet:
   path: {{ $p.path }}
   port: {{ $p.port }}
-  {{- if $p.scheme }}scheme: {{ $p.scheme }}{{ end }}
+  {{- if $p.scheme }}
+  scheme: {{ $p.scheme }}
+  {{- end }}
 {{- else if eq $p.type "tcp" }}
 tcpSocket:
   port: {{ $p.port }}
@@ -103,4 +105,21 @@ periodSeconds:       {{ $p.periodSeconds       | default 10 }}
 timeoutSeconds:      {{ $p.timeoutSeconds      | default 1 }}
 successThreshold:    {{ $p.successThreshold    | default 1 }}
 failureThreshold:    {{ $p.failureThreshold    | default 3 }}
+{{- end }}
+
+{{- /* --------------------------------------------------------------------
+     Helper: helpers.renderProbeWithTLS
+     Wraps helpers.renderProbe, merging scheme: HTTPS when tlsEnabled=true
+     and the probe type is "http". exec and tcp probes are passed through
+     unchanged — scheme is meaningless for those types.
+     Usage:
+       {{- include "helpers.renderProbeWithTLS" (dict "probe" . "tlsEnabled" $.Values.mcpContextForge.tls.enabled "root" $) | nindent 12 }}
+     -------------------------------------------------------------------- */}}
+{{- define "helpers.renderProbeWithTLS" -}}
+{{- $p := .probe -}}
+{{- if and .tlsEnabled (eq $p.type "http") }}
+{{- include "helpers.renderProbe" (dict "probe" (merge (dict "scheme" "HTTPS") $p) "root" .root) }}
+{{- else }}
+{{- include "helpers.renderProbe" (dict "probe" $p "root" .root) }}
+{{- end }}
 {{- end }}
