@@ -15,6 +15,7 @@ from __future__ import annotations
 # Standard
 import logging
 import os
+import time
 from typing import Generator
 import uuid
 
@@ -36,11 +37,29 @@ def _make_jwt(email: str, is_admin: bool = False, teams=None) -> str:
     return make_test_jwt(email, is_admin=is_admin, teams=teams)
 
 
+def _post_with_retry(ctx: APIRequestContext, url: str, data: dict | None, ok_statuses: tuple, attempts: int = 3):
+    """POST with bounded retry for transient (5xx) failures under parallel test load.
+
+    Only retries server-side errors; 4xx responses fail immediately since
+    those indicate a real client-side problem, not contention.
+    """
+    resp = None
+    for attempt in range(attempts):
+        resp = ctx.post(url, data=data) if data is not None else ctx.post(url)
+        if resp.status in ok_statuses or resp.status < 500:
+            break
+        if attempt < attempts - 1:
+            time.sleep(0.5 * (attempt + 1))
+    return resp
+
+
 def create_test_user(admin_api: APIRequestContext, email: str) -> None:
     """Create a test user in the database. Raises on failure."""
-    resp = admin_api.post(
+    resp = _post_with_retry(
+        admin_api,
         "/auth/email/admin/users",
         data={"email": email, "password": TEST_PASSWORD, "full_name": f"Test User {email.split('@')[0]}"},
+        ok_statuses=(200, 201, 409),
     )
     assert resp.status in (200, 201, 409), f"Failed to create user {email}: {resp.status} {resp.text()}"
 
@@ -55,7 +74,7 @@ def delete_test_user(admin_api: APIRequestContext, email: str) -> None:
 
 def invite_and_accept(admin_api: APIRequestContext, playwright: Playwright, team_id: str, email: str) -> dict:
     """Invite a user to a team and accept the invitation. Returns the invitation data."""
-    inv_resp = admin_api.post(f"/teams/{team_id}/invitations", data={"email": email, "role": "member"})
+    inv_resp = _post_with_retry(admin_api, f"/teams/{team_id}/invitations", data={"email": email, "role": "member"}, ok_statuses=(200, 201))
     assert inv_resp.status in (200, 201), f"Failed to invite {email}: {inv_resp.status} {inv_resp.text()}"
     inv_data = inv_resp.json()
     invitation_token = inv_data["token"]
@@ -63,10 +82,26 @@ def invite_and_accept(admin_api: APIRequestContext, playwright: Playwright, team
     # Accept as the invited user
     user_jwt = _make_jwt(email, is_admin=False)
     user_ctx = make_playwright_api_context(playwright, BASE_URL, user_jwt)
-    accept_resp = user_ctx.post(f"/teams/invitations/{invitation_token}/accept")
+    accept_resp = _post_with_retry(user_ctx, f"/teams/invitations/{invitation_token}/accept", data=None, ok_statuses=(200,))
     user_ctx.dispose()
-    assert accept_resp.status == 200, f"Failed to accept invitation: {accept_resp.status}"
+    if accept_resp.status != 200:
+        # A 400 here can mean the invitation was already consumed: a prior request
+        # in the retry loop may have succeeded server-side while the client saw a
+        # transient error and retried against the now-already-accepted token. Treat
+        # that as success if the user actually ended up a team member.
+        already_member = accept_resp.status == 400 and _is_team_member(admin_api, team_id, email)
+        assert already_member, f"Failed to accept invitation: {accept_resp.status} {accept_resp.text()}"
     return inv_data
+
+
+def _is_team_member(admin_api: APIRequestContext, team_id: str, email: str) -> bool:
+    """Check whether email is already a member of team_id."""
+    resp = admin_api.get(f"/teams/{team_id}/members")
+    if resp.status != 200:
+        return False
+    members = resp.json()
+    member_list = members if isinstance(members, list) else members.get("members", [])
+    return any(m.get("user_email") == email for m in member_list)
 
 
 @pytest.fixture(scope="module")
