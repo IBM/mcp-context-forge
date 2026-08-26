@@ -26,7 +26,7 @@ from contextlib import asynccontextmanager
 import json
 from types import SimpleNamespace
 from typing import List
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch, PropertyMock
 
 # Third-Party
 from fastapi import HTTPException
@@ -18220,3 +18220,59 @@ class TestUnknownEntityErrors:
         monkeypatch.setattr(resource_service, "read_resource", AsyncMock(side_effect=ValueError("Resource has no content")))
 
         assert await read_resource("poc://cached/empty") == ""
+
+
+class TestProgressRelay:
+    """call_tool wires an upstream progress relay into tool invocation."""
+
+    @staticmethod
+    def _patch_db(monkeypatch):
+        """Hand the handler a throwaway DB session."""
+        db_session = MagicMock()
+
+        @asynccontextmanager
+        async def db_session_override():
+            yield db_session
+
+        monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", db_session_override)
+
+    @staticmethod
+    def _patch_invoke_tool(monkeypatch):
+        """Replace tool invocation with a spy; returns the dict its kwargs are captured into."""
+        captured = {}
+
+        async def capture_invoke_kwargs(**kwargs):
+            captured.update(kwargs)
+            return MagicMock(content=[])
+
+        monkeypatch.setattr(tool_service, "invoke_tool", AsyncMock(side_effect=capture_invoke_kwargs))
+        return captured
+
+    @pytest.mark.asyncio
+    async def test_tool_invoke_receives_progress_callback(self, monkeypatch):
+        """invoke_tool gets a callable relay; outside a live request context it is a safe no-op."""
+        self._patch_db(monkeypatch)
+        captured = self._patch_invoke_tool(monkeypatch)
+
+        result = await call_tool("any_tool", {})
+        assert result == []
+
+        relay = captured.get("progress_callback")
+        assert relay is not None
+        await relay(1.0, 2.0, "halfway")  # must not raise without a request context
+
+    @pytest.mark.asyncio
+    async def test_relay_forwards_to_downstream_session(self, monkeypatch):
+        """With a live request context, the relay hands updates to session.report_progress."""
+        self._patch_db(monkeypatch)
+        captured = self._patch_invoke_tool(monkeypatch)
+
+        downstream_ctx = MagicMock()
+        downstream_ctx.meta = None
+        downstream_ctx.session.report_progress = AsyncMock()
+
+        with patch.object(type(tr.mcp_app), "request_context", new_callable=PropertyMock, return_value=downstream_ctx):
+            await call_tool("any_tool", {})
+            await captured["progress_callback"](2.0, 8.0, "step 2 of 8")
+
+        downstream_ctx.session.report_progress.assert_awaited_once_with(2.0, 8.0, "step 2 of 8")
