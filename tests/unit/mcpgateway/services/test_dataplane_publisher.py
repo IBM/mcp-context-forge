@@ -308,9 +308,12 @@ async def test_full_payload_generation_with_mock_db():
                 "public_tool": tool1.input_schema,
                 "private_tool": {},
             },
-            "allowed_resource_names": ["Resource 1"],
             "allowed_resource_uris": ["resource://one"],
             "allowed_prompt_names": ["Prompt 1"],
+            "disable_tool_names_filtering": False,
+            "disable_prompt_names_filtering": False,
+            "disable_resource_uris_filtering": False,
+            "mcp_protocol_version": "2026-07-28",
         }
         assert "bad_tool" not in backend["allowed_tool_names"]
         assert "bad_tool" not in backend["tool_schemas"]
@@ -340,6 +343,10 @@ async def test_full_payload_generation_with_mock_db():
             "public_tool": tool1.input_schema,
             "team2_tool": tool3.input_schema,
         }
+        assert user2_backend["disable_tool_names_filtering"] is False
+        assert user2_backend["disable_prompt_names_filtering"] is False
+        assert user2_backend["disable_resource_uris_filtering"] is False
+        assert user2_backend["mcp_protocol_version"] == "2026-07-28"
 
         # Verify active users with no team membership still get public-only config.
         user3_config = payload[USER3_ID]
@@ -348,6 +355,10 @@ async def test_full_payload_generation_with_mock_db():
         user3_backend = user3_config["virtual_hosts"]["s1"]["backends"]["g1"]
         assert user3_backend["allowed_tool_names"] == ["public_tool"]
         assert user3_backend["tool_schemas"] == {"public_tool": tool1.input_schema}
+        assert user3_backend["disable_tool_names_filtering"] is False
+        assert user3_backend["disable_prompt_names_filtering"] is False
+        assert user3_backend["disable_resource_uris_filtering"] is False
+        assert user3_backend["mcp_protocol_version"] == "2026-07-28"
 
 
 def test_build_user_data_excludes_non_object_tool_schema(caplog):
@@ -530,6 +541,10 @@ def test_create_payload_normalizes_null_passthrough_headers():
     assert backend["add_headers"] == {}
     assert backend["remove_headers"] == []
     assert backend["capabilities"] == {}
+    assert backend["disable_tool_names_filtering"] is False
+    assert backend["disable_prompt_names_filtering"] is False
+    assert backend["disable_resource_uris_filtering"] is False
+    assert backend["mcp_protocol_version"] == "2026-07-28"
 
 
 def test_create_payload_handles_missing_references():

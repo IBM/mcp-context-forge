@@ -69,9 +69,12 @@ class BackendConfig(TypedDict):
     capabilities: dict[str, Any]
     allowed_tool_names: list[str]
     tool_schemas: dict[str, dict[str, Any]]
-    allowed_resource_names: list[str]
     allowed_resource_uris: list[str]
     allowed_prompt_names: list[str]
+    disable_tool_names_filtering: bool
+    disable_prompt_names_filtering: bool
+    disable_resource_uris_filtering: bool
+    mcp_protocol_version: str
 
 
 class GatewayBaseConfig(TypedDict):
@@ -287,10 +290,9 @@ class DataplanePublisherService:
                     if gateway_config is None:
                         continue
 
-                    allowed_resource_names = [resource_names_by_id[resource_id] for resource_id in backend_items["resources"] if resource_id in resource_names_by_id]
                     allowed_resource_uris = [resource_uris_by_id[resource_id] for resource_id in backend_items["resources"] if resource_id in resource_uris_by_id]
                     allowed_prompt_names = [prompt_map[prompt_id] for prompt_id in backend_items["prompts"] if prompt_id in prompt_map]
-                    if not backend_items["tools"] and not allowed_resource_names and not allowed_prompt_names:
+                    if not backend_items["tools"] and not allowed_resource_uris and not allowed_prompt_names:
                         continue
 
                     backends[gateway_id] = {
@@ -302,9 +304,12 @@ class DataplanePublisherService:
                         "capabilities": gateway_config["capabilities"],
                         "allowed_tool_names": backend_items["tools"],
                         "tool_schemas": backend_items["tool_schemas"],
-                        "allowed_resource_names": allowed_resource_names,
                         "allowed_resource_uris": allowed_resource_uris,
                         "allowed_prompt_names": allowed_prompt_names,
+                        "disable_tool_names_filtering": False,
+                        "disable_prompt_names_filtering": False,
+                        "disable_resource_uris_filtering": False,
+                        "mcp_protocol_version": "2026-07-28",
                     }
 
                 if not backends:
