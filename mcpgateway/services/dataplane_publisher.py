@@ -259,7 +259,6 @@ class DataplanePublisherService:
             gateways = user_data["gateways"]
             prompts = user_data["prompts"]
             resources = user_data["resources"]
-            resource_names_by_id = {resource["id"]: resource["name"] for resource in resources}
             resource_uris_by_id = {resource["id"]: resource["uri"] for resource in resources if resource.get("uri")}
 
             prompt_map = {prompt["id"]: prompt["name"] for prompt in prompts}
