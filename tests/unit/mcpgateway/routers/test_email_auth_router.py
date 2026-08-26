@@ -1847,6 +1847,50 @@ class TestAdminDeleteUserEdgeCases:
             assert exc.value.status_code == 500
 
 
+    @pytest.mark.asyncio
+    async def test_delete_user_orphan_value_error_returns_409(self):
+        """ValueError from orphan-owner guard → 409 with the actionable message."""
+        # First-Party
+        from mcpgateway.routers import email_auth
+
+        mock_db = MagicMock()
+        orphan_msg = "Cannot delete user x@x.com: gateway gw-1 would become orphaned and no fallback owner is available"
+
+        with patch("mcpgateway.routers.email_auth.EmailAuthService") as MockSvc:
+            MockSvc.return_value.is_last_active_admin = AsyncMock(return_value=False)
+            MockSvc.return_value.delete_user = AsyncMock(side_effect=ValueError(orphan_msg))
+
+            with pytest.raises(email_auth.HTTPException) as exc:
+                await email_auth.delete_user(
+                    "x@x.com",
+                    current_user_ctx={"db": mock_db, "email": "admin@example.com"},
+                    db=mock_db,
+                )
+
+        assert exc.value.status_code == 409
+        assert "orphaned" in exc.value.detail
+
+    @pytest.mark.asyncio
+    async def test_delete_user_not_found_value_error_returns_404(self):
+        """A missing user remains a 404 instead of being reported as a conflict."""
+        # First-Party
+        from mcpgateway.routers import email_auth
+
+        mock_db = MagicMock()
+
+        with patch("mcpgateway.routers.email_auth.EmailAuthService") as MockSvc:
+            MockSvc.return_value.is_last_active_admin = AsyncMock(return_value=False)
+            MockSvc.return_value.delete_user = AsyncMock(side_effect=ValueError("User missing@example.com not found"))
+
+            with pytest.raises(email_auth.HTTPException) as exc:
+                await email_auth.delete_user(
+                    "missing@example.com",
+                    current_user_ctx={"db": mock_db, "email": "admin@example.com"},
+                    db=mock_db,
+                )
+
+        assert exc.value.status_code == 404
+
 @pytest.mark.asyncio
 async def test_forgot_password_success_response():
     """Forgot-password returns generic success message."""
