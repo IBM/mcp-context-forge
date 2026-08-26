@@ -94,7 +94,7 @@ from mcpgateway.services.oauth_manager import OAuthEnforcementUnavailableError, 
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.prompt_service import PromptNotFoundError, PromptService
 from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService
-from mcpgateway.services.tool_service import ToolNotFoundError, ToolService
+from mcpgateway.services.tool_service import ToolInvocationError, ToolNotFoundError, ToolService
 from mcpgateway.transports.context import UserContext
 from mcpgateway.transports.redis_event_store import RedisEventStore
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access, extract_gateway_id_from_headers, GATEWAY_ID_HEADER
@@ -1759,9 +1759,6 @@ async def call_tool(
     async def _relay_progress(progress: float, total: float | None = None, message: str | None = None) -> None:
         """Forward an upstream progress update to the downstream caller.
 
-        session.report_progress is a no-op when the caller supplied no
-        progress token, so relaying unconditionally is safe.
-
         Args:
             progress: Current progress value.
             total: Optional total value.
@@ -2108,6 +2105,10 @@ async def call_tool(
     except ToolNotFoundError:
         logger.info("Unknown tool requested: %s", name)
         return types.CallToolResult(content=[types.TextContent(type="text", text=f"Unknown tool: {name}")], is_error=True)
+    except ToolInvocationError as e:
+        # covers tool timeouts
+        logger.warning("Tool invocation failed for '%s': %s", name, e)
+        return types.CallToolResult(content=[types.TextContent(type="text", text=str(e))], is_error=True)
     except Exception as e:
         logger.exception("Error calling tool '%s': %s", name, e)
         # Re-raise the exception so the MCP SDK can properly convert it to an error response
