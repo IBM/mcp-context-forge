@@ -10,7 +10,7 @@ repo_root="$(cd -- "${script_dir}/../.." && pwd)"
 suite_dir="${MCP_CONFORMANCE_SUITE_DIR:-${repo_root}/.conformance-suite}"
 conformance_port="${MCP_CONFORMANCE_PORT:-8080}"
 results_dir="${MCP_CONFORMANCE_RESULTS_DIR:-${repo_root}/conformance-results}"
-baseline_file="${MCP_CONFORMANCE_BASELINE_FILE:-${script_dir}/expected-failures-${MCP_CONFORMANCE_SPEC_VERSION}.yml}"
+baseline_file="${MCP_CONFORMANCE_BASELINE_FILE:-${script_dir}/baseline-${MCP_CONFORMANCE_SPEC_VERSION}.yml}"
 if [[ "${results_dir}" != /* ]]; then
   results_dir="${repo_root}/${results_dir}"
 fi

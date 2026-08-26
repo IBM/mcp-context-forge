@@ -810,8 +810,9 @@ clean:
 # =============================================================================
 # help: 🧪 TESTING
 # help: smoketest            - Run smoketest.py --verbose (build container, add MCP server, test endpoints)
-# help: conformance          - Build Python ContextForge and run official MCP 2025-11-25 + 2026-07-28 conformance
-# help: conformance-bless    - Run conformance and update the expected-failure baseline
+# help: conformance          - Alias for conformance-check
+# help: conformance-check    - Build Python ContextForge and run official MCP 2025-11-25 + 2026-07-28 conformance
+# help: conformance-bless    - Run conformance and update the baseline
 # help: test-mcp-protocol-e2e - MCP protocol E2E via mcp SDK client against live gateway (K=<filter> to pick one; MCP_E2E_CLIENT_TIMEOUT env to extend the 5s client timeout)
 # help: test-mcp-cli         - [DEPRECATED] Alias for test-mcp-protocol-e2e (accepts same K=<filter>)
 # help: test-bats            - Run bats tests for git tooling (tests/bash; requires bats)
@@ -855,7 +856,7 @@ clean:
 # help: query-log-analyze    - Analyze query log for N+1 patterns and slow queries
 # help: query-log-clear      - Clear database query log files
 
-.PHONY: smoketest conformance conformance-bless test-mcp-cli test-mcp-rbac test-mcp-plugin-parity test-mcp-access-matrix \
+.PHONY: smoketest conformance conformance-check conformance-bless test-mcp-cli test-mcp-rbac test-mcp-plugin-parity test-mcp-access-matrix \
 	test-mcp-session-isolation test-mcp-session-isolation-load test-e2e-sso \
 	test-live-gateway test test-verbose test-profile coverage test-docs pytest-examples \
 	test-curl htmlcov doctest doctest-verbose doctest-coverage doctest-check test-db-perf \
@@ -886,12 +887,50 @@ smoketest:
 	@$(VENV_DIR)/bin/python ./smoketest.py --verbose || { echo "❌ Smoketest failed!"; exit 1; }
 	@echo "✅ Smoketest passed!"
 
-conformance: ## Build Python ContextForge and run official MCP 2025-11-25 + 2026-07-28 conformance locally
-	@$(MAKE) docker-prod IMAGE_TAG=conformance ENABLE_RUST_BUILD=0 RUST_MCP_BUILD=0
+conformance: conformance-check
+
+conformance-check: ## Build Python ContextForge and run official MCP 2025-11-25 + 2026-07-28 conformance locally
+	@mkdir -p conformance-logs
+	@progress_enabled=false; \
+	progress_pid=""; \
+	if [ -t 1 ]; then progress_enabled=true; fi; \
+	cleanup_progress() { \
+		if [ -n "$$progress_pid" ]; then \
+			kill "$$progress_pid" 2>/dev/null || true; \
+			wait "$$progress_pid" 2>/dev/null || true; \
+			progress_pid=""; \
+		fi; \
+		if $$progress_enabled; then printf '\r\033[2K'; fi; \
+	}; \
+	trap cleanup_progress EXIT; \
+	if $$progress_enabled; then \
+		( \
+			trap 'exit 0' INT TERM; \
+			frames=('⠋' '⠙' '⠹' '⠸' '⠼' '⠴' '⠦' '⠧' '⠇' '⠏'); \
+			frame_index=0; \
+			while true; do \
+				printf '\r\033[2KConformance %s building conformance image' "$${frames[$$frame_index]}"; \
+				frame_index=$$(((frame_index + 1) % 10)); \
+				sleep 0.15; \
+			done; \
+		) & \
+		progress_pid="$$!"; \
+	fi; \
+	if $(MAKE) --no-print-directory docker-prod IMAGE_TAG=conformance ENABLE_RUST_BUILD=0 RUST_MCP_BUILD=0 > conformance-logs/build.log 2>&1; then \
+		build_status=0; \
+	else \
+		build_status=$$?; \
+	fi; \
+	cleanup_progress; \
+	trap - EXIT; \
+	if [ "$$build_status" -ne 0 ]; then \
+		echo "Conformance image build failed. See conformance-logs/build.log." >&2; \
+		exit "$$build_status"; \
+	fi
 	@CF_CONTEXTFORGE_IMAGE="$(MCP_CONFORMANCE_IMAGE)" tests/conformance/run-local.sh
 
-conformance-bless: ## Run conformance and update the expected-failure baseline
-	@MCP_CONFORMANCE_BLESS=true $(MAKE) conformance
+conformance-bless: ## Run conformance and update the baseline
+	@MCP_CONFORMANCE_BLESS=true $(MAKE) --no-print-directory conformance-check
 
 test-mcp-protocol-e2e: uv  ## MCP protocol E2E via mcp SDK client (K=<filter> to pick one)
 	@echo "🔌 Running MCP protocol E2E tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."

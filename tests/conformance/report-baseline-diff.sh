@@ -5,7 +5,7 @@ usage() {
   cat <<'EOF'
 Usage: report-baseline-diff.sh [--bless] [results-dir [baseline-file [upstream-file]]]
 
-Compare scored MCP conformance checks with the expected-failure baseline.
+Compare scored MCP conformance checks with the baseline.
 With --bless, replace the baseline with the current Python data-plane findings.
 EOF
 }
@@ -32,11 +32,11 @@ repo_root="$(cd -- "${script_dir}/../.." && pwd)"
 results_dir="${1:-${repo_root}/conformance-results}"
 suite_dir="${MCP_CONFORMANCE_SUITE_DIR:-${repo_root}/.conformance-suite}"
 spec_version="${MCP_CONFORMANCE_SPEC_VERSION:-2026-07-28}"
-baseline_file="${2:-${script_dir}/expected-failures-${spec_version}.yml}"
+baseline_file="${2:-${script_dir}/baseline-${spec_version}.yml}"
 upstream_file="${3:-${script_dir}/upstream-fixture-failures-${spec_version}.yml}"
 requirements_file="${suite_dir}/requirements/${spec_version}.yaml"
 
-for command in awk cmp cp cut find grep jq sed sort wc; do
+for command in awk cmp cp cut find grep jq sed sort tr wc; do
   if ! command -v "${command}" > /dev/null 2>&1; then
     echo "Required command not found: ${command}" >&2
     exit 2
@@ -108,7 +108,8 @@ stale_entries="${state_dir}/stale-entries.txt"
 upstream_matches="${state_dir}/upstream-matches.txt"
 passing_checks="${state_dir}/passing-checks.txt"
 skipped_checks="${state_dir}/skipped-checks.txt"
-baseline_candidate="${state_dir}/expected-failures.yml"
+check_statuses="${state_dir}/check-statuses.tsv"
+baseline_candidate="${state_dir}/baseline.yml"
 
 cleanup() {
   rm -f -- \
@@ -126,6 +127,7 @@ cleanup() {
     "${upstream_matches}" \
     "${passing_checks}" \
     "${skipped_checks}" \
+    "${check_statuses}" \
     "${baseline_candidate}"
   rmdir -- "${state_dir}"
 }
@@ -146,11 +148,27 @@ line_count() {
   wc -l < "$1" | tr -d '[:space:]'
 }
 
-print_row() {
-  local color="$1"
-  local label="$2"
-  local message="$3"
-  printf '  %b%10s%b %s\n' "${color}${bold}" "${label}" "${reset}" "${message}"
+print_result_row() {
+  local label="$1"
+  local outcome="$2"
+  local color="$3"
+  local dot_count=$((${result_status_column:-56} - ${#label}))
+
+  if [ "${dot_count}" -lt 1 ]; then
+    dot_count=1
+  fi
+  printf '%s' "${label}"
+  printf '%*s' "${dot_count}" '' | tr ' ' '.'
+  printf '%b%s%b\n' "${color}" "${outcome}" "${reset}"
+}
+
+print_separator() {
+  local width=$((${result_status_column:-56} + 8))
+  local column
+  for ((column = 0; column < width; column++)); do
+    printf '━'
+  done
+  printf '\n'
 }
 
 emit_error() {
@@ -163,7 +181,7 @@ emit_error() {
 
 write_missing_results_summary() {
   local message="$1"
-  print_row "${red}" "ERROR" "${message}"
+  printf '%bError:%b %s\n' "${red}${bold}" "${reset}" "${message}"
   emit_error "Conformance results missing" "${message}"
   if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
     printf '## MCP %s conformance\n\n❌ %s\n' "${spec_version}" "${message}" \
@@ -184,7 +202,7 @@ awk '
 read_baseline "${baseline_file}" > "${baseline_entries}"
 read_baseline "${upstream_file}" > "${upstream_entries}"
 
-printf '\n%bMCP conformance%b %b(%s)%b\n' "${bold}" "${reset}" "${dim}" "${spec_version}" "${reset}"
+printf '\n%bMCP %s Conformance — ContextForge Gateway%b\n' "${bold}" "${spec_version}" "${reset}"
 
 if [ ! -d "${results_dir}" ]; then
   write_missing_results_summary "No results directory: ${results_dir}"
@@ -258,7 +276,6 @@ awk -v upstream_file="${upstream_matches}" '
   !($1 in upstream) { print $1 }
 ' "${upstream_matches}" "${actual_keys}" > "${owned_findings}"
 
-bless_changed=false
 if ${bless}; then
   {
     # shellcheck disable=SC2016 # Backticks are literal Markdown.
@@ -274,7 +291,6 @@ if ${bless}; then
 
   if ! cmp --silent "${owned_findings}" "${baseline_entries}"; then
     cp "${baseline_candidate}" "${baseline_file}"
-    bless_changed=true
   fi
   read_baseline "${baseline_file}" > "${baseline_entries}"
 fi
@@ -340,46 +356,94 @@ unexpected_count="$(line_count "${unexpected_entries}")"
 stale_count="$(line_count "${stale_entries}")"
 upstream_count="$(line_count "${upstream_matches}")"
 
-print_row "${green}" "PASS" "${pass_count} scored checks passed"
+awk -F '\t' \
+  -v expected_file="${expected_entries}" \
+  -v unexpected_file="${unexpected_entries}" \
+  -v stale_file="${stale_entries}" \
+  -v upstream_file="${upstream_matches}" \
+  -v checks_file="${actual_checks}" \
+  '
+    function scenario(key) {
+      sub(/:.*/, "", key)
+      return key
+    }
+    FILENAME == expected_file {
+      if (index($1, ":") == 0) expected_whole[$1] = 1
+      else expected_exact[$1] = 1
+      next
+    }
+    FILENAME == unexpected_file { failed_exact[$1] = 1; next }
+    FILENAME == stale_file {
+      if (index($1, ":") == 0) stale_whole[$1] = 1
+      else stale_exact[$1] = 1
+      next
+    }
+    FILENAME == upstream_file { upstream[$1] = 1; next }
+    FILENAME == checks_file {
+      key = $1
+      status = $2
+      name = scenario(key)
+      check_id = key
+      sub(/^[^:]*:/, "", check_id)
+      label = check_id == name ? name : key
+
+      if ((key in failed_exact) || (key in stale_exact) || (name in stale_whole)) outcome = "Failed"
+      else if ((status == "FAILURE" || status == "WARNING") && ((key in expected_exact) || (name in expected_whole))) outcome = "XFail"
+      else if (key in upstream) outcome = "Upstream"
+      else if (status == "SUCCESS") outcome = "Passed"
+      else if (status == "SKIPPED") outcome = "Skipped"
+      else outcome = "Failed"
+      print key "\t" outcome "\t" label
+    }
+  ' \
+  "${expected_entries}" \
+  "${unexpected_entries}" \
+  "${stale_entries}" \
+  "${upstream_matches}" \
+  "${actual_checks}" > "${check_statuses}"
+
+check_pass_count="$(awk -F '\t' '$2 == "Passed" { count++ } END { print count + 0 }' "${check_statuses}")"
+check_xfail_count="$(awk -F '\t' '$2 == "XFail" { count++ } END { print count + 0 }' "${check_statuses}")"
+check_fail_count="$(awk -F '\t' '$2 == "Failed" { count++ } END { print count + 0 }' "${check_statuses}")"
+check_upstream_count="$(awk -F '\t' '$2 == "Upstream" { count++ } END { print count + 0 }' "${check_statuses}")"
+check_skip_count="$(awk -F '\t' '$2 == "Skipped" { count++ } END { print count + 0 }' "${check_statuses}")"
+result_status_column="$(awk -F '\t' '
+  length($3) > longest { longest = length($3) }
+  END { print (longest < 55 ? 56 : longest + 1) }
+' "${check_statuses}")"
+
+print_separator
+while IFS=$'\t' read -r _ outcome label; do
+  case "${outcome}" in
+    Passed) color="${green}" ;;
+    XFail) color="${yellow}" ;;
+    Failed) color="${red}" ;;
+    Upstream) color="${cyan}" ;;
+    Skipped) color="${dim}" ;;
+  esac
+  print_result_row "${label}" "${outcome}" "${color}"
+done < "${check_statuses}"
+print_separator
+
+printf '%s passed, %s xfailed, %s failed' \
+  "${check_pass_count}" "${check_xfail_count}" "${check_fail_count}"
+if [ "${check_upstream_count}" -gt 0 ]; then
+  printf ', %s upstream' "${check_upstream_count}"
+fi
+if [ "${check_skip_count}" -gt 0 ]; then
+  printf ', %s skipped' "${check_skip_count}"
+fi
+printf ' (%s baselined)\n' "${check_xfail_count}"
 
 while IFS= read -r key; do
   [ -n "${key}" ] || continue
-  print_row "${yellow}" "XFAIL" "${key} ${dim}(expected failure reproduced)${reset}"
-done < "${expected_entries}"
-
-while IFS= read -r key; do
-  [ -n "${key}" ] || continue
-  print_row "${cyan}" "UPSTREAM" "${key} ${dim}(ignored pinned-fixture finding)${reset}"
-done < "${upstream_matches}"
-
-while IFS= read -r key; do
-  [ -n "${key}" ] || continue
-  status="$(awk -F '\t' -v key="${key}" '$1 == key { print $2; exit }' "${actual_findings}")"
-  print_row "${red}" "FAIL" "${key} ${dim}(expected PASS, got ${status})${reset}"
   emit_error "Expected conformance pass failed" "${key}"
 done < "${unexpected_entries}"
 
 while IFS= read -r key; do
   [ -n "${key}" ] || continue
-  print_row "${red}" "XPASS" "${key} ${dim}(expected FAILURE, got PASS)${reset}"
   emit_error "Expected conformance failure passed" "${key}"
 done < "${stale_entries}"
-
-if [ "${skip_count}" -gt 0 ]; then
-  print_row "${dim}" "SKIP" "${skip_count} scored checks skipped"
-fi
-
-if ${bless}; then
-  if ${bless_changed}; then
-    print_row "${green}" "BLESS" "updated ${baseline_file}"
-  else
-    print_row "${green}" "BLESS" "${baseline_file} was already current"
-  fi
-fi
-
-printf '\n%bSummary%b: %s passed, %s expected failures, %s upstream findings ignored, %s failed, %s unexpected passes\n' \
-  "${bold}" "${reset}" \
-  "${pass_count}" "${expected_count}" "${upstream_count}" "${unexpected_count}" "${stale_count}"
 
 if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
   {
@@ -415,11 +479,11 @@ if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
 
     echo
     if ${bless}; then
-      echo "✅ Expected-failure baseline updated with ${expected_count} Python data-plane findings."
+      echo "✅ Baseline updated with ${expected_count} Python data-plane findings."
     elif [ "${unexpected_count}" -eq 0 ] && [ "${stale_count}" -eq 0 ]; then
-      echo '✅ Actual Python data-plane findings match the expected-failure baseline.'
+      echo '✅ Actual Python data-plane findings match the baseline.'
     else
-      echo '❌ Actual Python data-plane findings do not match the expected-failure baseline.'
+      echo '❌ Actual Python data-plane findings do not match the baseline.'
     fi
   } >> "${GITHUB_STEP_SUMMARY}"
 fi
