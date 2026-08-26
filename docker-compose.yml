@@ -399,6 +399,8 @@ services:
       - SSO_KEYCLOAK_ROLE_MAPPINGS=${SSO_KEYCLOAK_ROLE_MAPPINGS:-{}}
       - SSO_KEYCLOAK_DEFAULT_ROLE=${SSO_KEYCLOAK_DEFAULT_ROLE:-}
       - SSO_KEYCLOAK_RESOLVE_TEAM_SCOPE_TO_PERSONAL_TEAM=${SSO_KEYCLOAK_RESOLVE_TEAM_SCOPE_TO_PERSONAL_TEAM:-false}
+      # Accept bearer tokens from a trusted_for_api_auth SSO provider on API/MCP endpoints (issue #3567)
+      - SSO_API_TOKEN_AUTH_ENABLED=${SSO_API_TOKEN_AUTH_ENABLED:-false}
       - SSO_AUTO_CREATE_USERS=${SSO_AUTO_CREATE_USERS:-true}
       - SSO_PRESERVE_ADMIN_AUTH=${SSO_PRESERVE_ADMIN_AUTH:-true}
       # Security defaults (tokens require expiration and JTI for revocation)
