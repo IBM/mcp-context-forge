@@ -181,6 +181,42 @@ mcpContextForge:
       enabled: true             # TLS enabled by default for encrypted ingress traffic
       secretName: ""            # Name of the TLS secret (auto-generated if empty)
 
+  # ── Direct Gateway TLS ──────────────────────────────────────────────────────
+  # Enable this to terminate TLS inside the gateway pod itself (direct HTTPS).
+  # Use together with tls.enabled=true (nginx frontend) for end-to-end TLS, or
+  # standalone when there is no reverse proxy in front of the gateway.
+  #
+  # The cert and key are read from a Kubernetes TLS Secret that you pre-create:
+  #   kubectl create secret tls <secretName> --cert=tls.crt --key=tls.key
+  #
+  # Topologies:
+  #   Ingress TLS only (default):  mcpContextForge.tls.enabled=false — nginx/ingress terminates TLS
+  #   End-to-end TLS:              mcpContextForge.tls.enabled=true  — nginx AND gateway pod use TLS
+  tls:
+    enabled: false              # Set true to enable direct HTTPS on the gateway pod
+
+    # Name of a pre-existing kubernetes.io/tls Secret containing tls.crt and tls.key.
+    # The Secret must be in the same namespace as the release.
+    secretName: ""              # e.g. "my-release-gateway-tls"
+
+    # Mount path inside the container where the cert and key will be placed.
+    # Matches the paths passed to SSL env vars below.
+    mountPath: /app/certs/tls   # read-only; do not write other files here
+
+    # Path inside the container to the TLS certificate file.
+    certFile: /app/certs/tls/tls.crt
+
+    # Path inside the container to the TLS private key file.
+    keyFile: /app/certs/tls/tls.key
+
+    # Optional passphrase for an encrypted private key.
+    # Reference a Kubernetes Secret key rather than inlining the value here —
+    # plain strings end up in helm get values, kubectl get pod -o yaml, and CI logs.
+    # Example:
+    #   kubectl create secret generic my-gateway-tls-pass \
+    #     --from-literal=keyFilePassword=my-passphrase
+    keyFilePasswordSecret: {}   # e.g. { name: my-gateway-tls-pass, key: keyFilePassword }
+
   ####################################################################
   # CORE ENVIRONMENT - injected one-by-one as name/value pairs.
   # Only the DATABASE / CACHE connection points live here; everything
