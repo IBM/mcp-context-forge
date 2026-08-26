@@ -6758,6 +6758,11 @@ class ToolService(BaseService):
                         correlation_id=get_correlation_id(),
                     )
 
+                    # Final safety strip: X-Vault-Tokens must never reach the downstream A2A agent,
+                    # even if prepare_a2a_invocation added auth headers from agent config or passthrough
+                    # preserved it. This ensures the security invariant holds regardless of plugin state.
+                    prepared.headers = {hk: hv for hk, hv in prepared.headers.items() if hk.lower() != "x-vault-tokens"}
+
                     with create_child_span("tool.gateway_call", {"tool.name": name, "tool.id": tool_id, "tool.integration_type": "A2A"}):
                         # Make HTTP request with timeout enforcement
                         logger.info("Calling A2A agent '%s' at %s", a2a_agent_name, prepared.sanitized_endpoint_url)

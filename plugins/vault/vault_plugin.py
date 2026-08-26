@@ -13,7 +13,7 @@ Hook: tool_pre_invoke
 
 # Standard
 from enum import Enum
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 
 # Third-Party
 import orjson
@@ -117,6 +117,29 @@ class Vault(Plugin):
         path = (parsed.path or "").rstrip("/")
         return f"{scheme}://{netloc}{path}"
 
+    @staticmethod
+    def _sanitize_url_for_logging(url: str) -> str:
+        """Sanitize a URL for safe logging by removing credentials.
+
+        Strips userinfo (username:password), query params, and fragments to prevent
+        logging sensitive credentials that may be embedded in URLs.
+
+        Args:
+            url: URL to sanitize.
+
+        Returns:
+            Sanitized ``scheme://host[:port]/path`` string (no credentials, query, or fragment).
+        """
+        parsed = urlparse(url)
+        # Reconstruct with only scheme, netloc (without userinfo), and path
+        # Drop username:password@ from netloc if present
+        netloc = parsed.netloc
+        if "@" in netloc:
+            # Strip userinfo (everything before @)
+            netloc = netloc.split("@", 1)[1]
+
+        return urlunparse((parsed.scheme, netloc, parsed.path, "", "", ""))
+
     def _resolve_token_value(self, raw_value: object, destination_url: str | None) -> str | None:
         """Resolve the actual secret from a vault token entry, enforcing destination binding.
 
@@ -149,11 +172,15 @@ class Vault(Plugin):
                 return secret_value
 
             if not destination_url:
-                logger.warning("Vault token entry is bound to mcpServer=%s but the actual destination could not be determined", mcp_server)
+                logger.warning("Vault token entry is bound to mcpServer=%s but the actual destination could not be determined", self._sanitize_url_for_logging(str(mcp_server)))
                 return None
 
             if self._normalize_server_url(str(mcp_server)) != self._normalize_server_url(destination_url):
-                logger.warning("Vault token mcpServer binding '%s' does not match actual destination '%s'", mcp_server, destination_url)
+                logger.warning(
+                    "Vault token mcpServer binding '%s' does not match actual destination '%s'",
+                    self._sanitize_url_for_logging(str(mcp_server)),
+                    self._sanitize_url_for_logging(destination_url),
+                )
                 return None
 
             return secret_value
