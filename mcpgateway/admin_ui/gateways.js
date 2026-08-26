@@ -810,8 +810,10 @@ export const initGatewaySelect = function (
         if (selectedTeamId) {
           params.set("team_id", selectedTeamId);
         }
-        if (vpCb && vpCb.checked) {
-          params.set("include_public", "true");
+        if (vpCb) {
+          // Team filtering includes public items by default; send the
+          // unchecked state explicitly so it still narrows.
+          params.set("include_public", vpCb.checked ? "true" : "false");
         }
         const queryString = params.toString();
         const response = await fetch(
@@ -1107,8 +1109,11 @@ const reloadAssociatedItems = function () {
   let teamIdSuffix = urlTeamId
     ? `&team_id=${encodeURIComponent(urlTeamId)}`
     : "";
-  if (vpCheckbox && vpCheckbox.checked) {
-    teamIdSuffix += "&include_public=true";
+  if (vpCheckbox) {
+    // Send the unchecked state explicitly: public rows are included by default.
+    teamIdSuffix += vpCheckbox.checked
+      ? "&include_public=true"
+      : "&include_public=false";
   }
 
   // Reload tools
