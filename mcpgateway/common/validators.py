@@ -97,7 +97,10 @@ _CONTROL_CHARS_RE: Pattern[str] = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\
 _POLYGLOT_PATTERNS: List[Pattern[str]] = [
     re.compile(r"['\"];.*alert\s*\(", re.IGNORECASE),
     re.compile(r"-->\s*<[^>]+>", re.IGNORECASE),
-    re.compile(r"['\"].*//['\"]", re.IGNORECASE),
+    # `(?<!:)` excludes URL-scheme separators (`://`): legitimate quoted URLs in display
+    # text (e.g. connection-string examples "postgresql://") must not be flagged as
+    # polyglots. A bare `//` before a quote (JS line-comment polyglot) is still caught.
+    re.compile(r"['\"].*(?<!:)//['\"]", re.IGNORECASE),
     re.compile(r"<<[A-Z]+>", re.IGNORECASE),
     re.compile(r"String\.fromCharCode", re.IGNORECASE),
     re.compile(r"javascript:.*\(", re.IGNORECASE),
