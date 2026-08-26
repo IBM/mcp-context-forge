@@ -213,9 +213,15 @@ class CatalogService:
         """
         is_scoped_request = user_email is not None or token_teams is not None
 
+        # Scope is part of the cache key: cached registration state must never
+        # cross caller identities or Layer-1 team scopes. Keep ``None``
+        # distinct from an empty tuple because it represents admin bypass,
+        # while the latter is public-only access.
+        cache_token_teams = tuple(sorted(set(token_teams))) if token_teams is not None else None
+
         # Check cache first
         cache = self._get_registry_cache()
-        if cache and not is_scoped_request:
+        if cache:
             filters_hash = cache.hash_filters(
                 category=request.category,
                 auth_type=request.auth_type,
@@ -226,6 +232,8 @@ class CatalogService:
                 show_available_only=request.show_available_only,
                 offset=request.offset,
                 limit=request.limit,
+                user_email=user_email,
+                token_teams=cache_token_teams,
             )
             cached = await cache.get("catalog", filters_hash)
             if cached is not None:
@@ -333,7 +341,7 @@ class CatalogService:
         response = CatalogListResponse(servers=paginated, total=total, categories=all_categories, auth_types=all_auth_types, providers=all_providers, all_tags=all_tags)
 
         # Store in cache
-        if cache and not is_scoped_request:
+        if cache:
             try:
                 cache_data = response.model_dump(mode="json")
                 await cache.set("catalog", cache_data, filters_hash)

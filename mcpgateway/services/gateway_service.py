@@ -7816,6 +7816,7 @@ async def test_gateway_connectivity(
     # SECURITY: the authority comes from the validated URL. Dropping any caller-supplied Host
     # first also prevents a differently-cased key from being sent as a second Host header.
     headers = {key: value for key, value in (request.headers or {}).items() if key.lower() != "host"}
+    caller_supplies_accept = any(key.lower() == "accept" for key in headers)
     headers["Host"] = target["original_authority"]
 
     # Attempt to find a registered gateway matching this URL and team.
@@ -7897,9 +7898,20 @@ async def test_gateway_connectivity(
                     )
         elif gateway and gateway.auth_type in ("basic", "bearer", "authheaders") and gateway.auth_value:
             if isinstance(gateway.auth_value, dict):
-                headers.update(gateway.auth_value)
+                headers.update({key: value for key, value in gateway.auth_value.items() if not caller_supplies_accept or key.lower() != "accept"})
             elif isinstance(gateway.auth_value, str):
-                headers.update(decode_auth(gateway.auth_value))
+                headers.update({key: value for key, value in decode_auth(gateway.auth_value).items() if not caller_supplies_accept or key.lower() != "accept"})
+
+        # MCP streamable HTTP servers can require explicit event-stream support.
+        # Preserve a caller-supplied Accept value, including non-canonical casing.
+        if not caller_supplies_accept:
+            request_method = request.method.upper()
+            if request_method == "GET":
+                headers = {key: value for key, value in headers.items() if key.lower() != "accept"}
+                headers["Accept"] = "text/event-stream"
+            elif request_method == "POST":
+                headers = {key: value for key, value in headers.items() if key.lower() != "accept"}
+                headers["Accept"] = "application/json, text/event-stream"
 
         # Prepare request based on content type
         content_type = getattr(request, "content_type", "application/json")

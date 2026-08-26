@@ -673,27 +673,32 @@ async def test_get_catalog_servers_scoped_registration_state(service):
 
 
 @pytest.mark.asyncio
-async def test_get_catalog_servers_scoped_request_bypasses_shared_cache(service):
-    """Scoped catalog responses are not read from or written to the shared catalog cache."""
+async def test_get_catalog_servers_scoped_request_uses_scope_aware_cache(service):
+    """Scoped catalog responses reuse only a caller-and-scope-specific cache entry."""
     fake_catalog = {
         "catalog_servers": [
             {"id": "1", "name": "srv1", "url": "http://a", "category": "cat", "auth_type": "Open", "provider": "prov", "tags": [], "description": "desc"},
         ]
     }
     mock_cache = AsyncMock()
-    mock_cache.get = AsyncMock(return_value={"servers": [], "total": 0, "categories": [], "auth_types": [], "providers": [], "all_tags": []})
+    cached_responses = {}
+    mock_cache.get = AsyncMock(side_effect=lambda _cache_type, filters_hash: cached_responses.get(filters_hash))
     mock_cache.hash_filters = MagicMock(return_value="hash123")
-    mock_cache.set = AsyncMock()
+    mock_cache.set = AsyncMock(side_effect=lambda _cache_type, value, filters_hash: cached_responses.update({filters_hash: value}))
     with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)), patch.object(service, "_get_registry_cache", return_value=mock_cache):
         db = MagicMock()
         db.execute.return_value = [("gw-a", "http://a", True, None, None, "public", None, None, "catalog")]
         req = CatalogListRequest(offset=0, limit=10)
 
-        result = await service.get_catalog_servers(req, db, user_email="user@example.com", token_teams=[])
+        result = await service.get_catalog_servers(req, db, user_email="user@example.com", token_teams=["team-b", "team-a"])
+        cached_result = await service.get_catalog_servers(req, db, user_email="user@example.com", token_teams=["team-a", "team-b"])
 
         assert result.total == 1
-        mock_cache.get.assert_not_called()
-        mock_cache.set.assert_not_called()
+        assert cached_result.total == 1
+        assert db.execute.call_count == 1
+        mock_cache.set.assert_awaited_once()
+        assert mock_cache.hash_filters.call_args.kwargs["user_email"] == "user@example.com"
+        assert mock_cache.hash_filters.call_args.kwargs["token_teams"] == ("team-a", "team-b")
 
 
 @pytest.mark.parametrize(
