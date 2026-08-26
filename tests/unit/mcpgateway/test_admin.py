@@ -14622,6 +14622,10 @@ class TestAdminAdditionalCoverage:
         assert isinstance(response, Response)
         assert "app.log" in response.headers.get("content-disposition", "")
 
+        # Consume the streamed body to exercise the fd-backed generator itself.
+        body = b"".join([chunk async for chunk in response.body_iterator])
+        assert body == b"main"
+
         # Rejected by the pre-join input filter (".." component), before any path join.
         with pytest.raises(HTTPException) as excinfo:
             await admin_get_log_file(filename="../secret.log", user={"email": "admin@example.com", "db": mock_db})

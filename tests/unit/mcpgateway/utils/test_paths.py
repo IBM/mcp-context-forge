@@ -388,6 +388,12 @@ def test_open_confined_rejects_dotdot_escape(tmp_path: Path) -> None:
         open_confined(tmp_path, Path("../secret.txt"))
 
 
+def test_open_confined_rejects_empty_path(tmp_path: Path) -> None:
+    """An empty relative path (no components at all) is rejected before any open()."""
+    with pytest.raises(ValueError):
+        open_confined(tmp_path, Path(""))
+
+
 def test_open_confined_rejects_directory_as_final_component(tmp_path: Path) -> None:
     """The final component must be a regular file, not a directory."""
     (tmp_path / "subdir").mkdir()
