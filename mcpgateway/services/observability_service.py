@@ -1861,14 +1861,14 @@ def _execution_timeseries_postgresql(db: Session, cutoff_time: datetime, interva
 def _execution_timeseries_sqlite(db: Session, cutoff_time: datetime, interval_minutes: int) -> Dict[str, List[Any]]:
     """Count executions per time bucket using SQLite aggregation.
 
-    SQLite's ``unixepoch`` keeps the time filter indexable while moving the
+    SQLite's built-in ``strftime`` keeps the time filter indexable while moving the
     grouping work into the database, so process memory is independent of the
     number of traces in the requested window.
     """
     stats_sql = text(
         """
         SELECT
-            CAST(unixepoch(start_time) / :interval_seconds AS INTEGER) * :interval_seconds AS bucket_epoch,
+            CAST(CAST(strftime('%s', start_time) AS INTEGER) / :interval_seconds AS INTEGER) * :interval_seconds AS bucket_epoch,
             COUNT(*) AS total
         FROM observability_traces
         WHERE start_time >= :cutoff_time
@@ -1974,7 +1974,7 @@ def _latency_percentiles_sqlite(db: Session, cutoff_time: datetime, interval_min
         """
         WITH bucketed AS (
             SELECT
-                CAST(unixepoch(start_time) / :interval_seconds AS INTEGER) * :interval_seconds AS bucket_epoch,
+                CAST(CAST(strftime('%s', start_time) AS INTEGER) / :interval_seconds AS INTEGER) * :interval_seconds AS bucket_epoch,
                 duration_ms
             FROM observability_traces
             WHERE start_time >= :cutoff_time AND duration_ms IS NOT NULL

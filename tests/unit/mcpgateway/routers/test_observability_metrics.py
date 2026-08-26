@@ -23,8 +23,8 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 # First-Party
-from mcpgateway.config import settings
 from mcpgateway.cache.admin_stats_cache import AdminStatsCache
+from mcpgateway.config import settings
 from mcpgateway.db import Base, ObservabilityTrace
 from mcpgateway.middleware import rbac as rbac_module
 from mcpgateway.middleware.rbac import get_current_user_with_permissions
@@ -197,6 +197,29 @@ async def test_percentiles_linear_interpolation_and_null_exclusion(db_session, g
     assert response.p50 == [150.0]
     assert response.p95 == [195.0]
     assert response.p99 == [199.0]
+
+
+@pytest.mark.parametrize(
+    "service_method,trace_kwargs,expected_values",
+    [
+        ("get_execution_timeseries", {}, {"values": [1]}),
+        ("get_latency_percentiles", {"duration_ms": 100.0}, {"p50": [100.0], "p95": [100.0], "p99": [100.0]}),
+    ],
+)
+def test_sqlite_metric_queries_do_not_require_unixepoch(db_session, service_method, trace_kwargs, expected_values):
+    """SQLite metrics keep working when the newer unixepoch function is unavailable."""
+
+    def unavailable_unixepoch(_):
+        raise AssertionError("unixepoch must not be called")
+
+    db_session.connection().connection.create_function("unixepoch", 1, unavailable_unixepoch)
+    make_trace(db_session, offset_seconds=300, **trace_kwargs)
+
+    result = getattr(ObservabilityService(), service_method)(db_session, BASE_TIME - timedelta(hours=24), 60)
+
+    assert result["buckets"] == ["2025-01-01T12:00:00+00:00"]
+    for key, value in expected_values.items():
+        assert result[key] == value
 
 
 @pytest.mark.asyncio
