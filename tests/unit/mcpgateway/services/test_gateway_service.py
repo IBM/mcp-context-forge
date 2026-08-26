@@ -1782,6 +1782,34 @@ class TestGatewayService:
         test_db.rollback.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_update_gateway_url_credential_error_preserves_type_and_rolls_back(self, gateway_service, mock_gateway, test_db):
+        """A connection-affecting change (URL) combined with a malformed stored credential
+        must propagate GatewayCredentialError -- not be silently persisted, and not be
+        relabeled as a generic GatewayConnectionError -- so the API can return 422 for a
+        bad credential rather than a misleading 502."""
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=mock_gateway))
+        test_db.commit = Mock()
+        test_db.rollback = Mock()
+        test_db.refresh = Mock()
+        test_db.query = Mock(return_value=Mock(filter=Mock(return_value=Mock(first=Mock(return_value=None)))))
+
+        gateway_service._initialize_gateway = AsyncMock(side_effect=GatewayCredentialError("Stored credential contains invalid characters"))
+        gateway_service._notify_gateway_updated = AsyncMock()
+        url = GatewayService.normalize_url("http://example.com/bad-url")
+        gateway_update = GatewayUpdate(url=url)
+
+        mock_gateway_read = MagicMock()
+        mock_gateway_read.masked.return_value = mock_gateway_read
+
+        with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
+            with pytest.raises(GatewayCredentialError) as exc_info:
+                await gateway_service.update_gateway(test_db, 1, gateway_update)
+
+        assert not isinstance(exc_info.value, GatewayConnectionError)
+        test_db.commit.assert_not_called()
+        test_db.rollback.assert_called_once()
+
+    @pytest.mark.asyncio
     async def test_update_gateway_url_generic_exception_wraps_and_sanitizes(self, gateway_service, mock_gateway, test_db):
         """Generic Exception on re-init with connection-affecting change wraps into GatewayConnectionError.
 
@@ -1811,6 +1839,45 @@ class TestGatewayService:
         assert "secret123" not in str(exc_info.value)
         test_db.commit.assert_not_called()
         test_db.rollback.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_update_gateway_cosmetic_change_tolerates_credential_error(self, gateway_service, mock_gateway, test_db):
+        """A cosmetic-only change (visibility, no URL/auth change) whose best-effort re-init
+        hits a pre-existing malformed stored credential must still commit -- matching the
+        existing GatewayConnectionError precedent for cosmetic updates -- instead of raising."""
+        mock_gateway.visibility = "public"
+        mock_gateway.auth_type = "bearer"
+        mock_gateway.oauth_config = None
+        mock_gateway.auth_query_params = None
+        mock_gateway.slug = "test_gateway"
+        mock_gateway.tools = []
+        mock_gateway.resources = []
+        mock_gateway.prompts = []
+
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=mock_gateway))
+        test_db.commit = Mock()
+        test_db.rollback = Mock()
+        test_db.refresh = Mock()
+        mock_query = Mock()
+        mock_query.filter.return_value = mock_query
+        mock_query.first.return_value = None
+        mock_query.all.return_value = []
+        test_db.query = Mock(return_value=mock_query)
+
+        gateway_service._initialize_gateway = AsyncMock(side_effect=GatewayCredentialError("Stored credential contains invalid characters"))
+        gateway_service._notify_gateway_updated = AsyncMock()
+
+        gateway_update = GatewayUpdate(visibility="private")
+
+        mock_gateway_read = MagicMock()
+        mock_gateway_read.masked.return_value = mock_gateway_read
+
+        with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
+            await gateway_service.update_gateway(test_db, 1, gateway_update)
+
+        assert mock_gateway.visibility == "private"
+        test_db.commit.assert_called_once()
+        test_db.rollback.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_update_gateway_visibility_propagates_when_init_fails(self, gateway_service, mock_gateway, test_db):

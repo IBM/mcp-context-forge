@@ -3216,7 +3216,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         # errors so the outer handler can recognize this as a connection failure
                         # and decide (via init_affecting_changed) whether to propagate as a 502
                         # or swallow as a best-effort cosmetic update (see visibility note ~2256).
-                        if init_affecting_changed and not isinstance(init_err, GatewayConnectionError):
+                        # GatewayCredentialError is excluded from wrapping so a malformed stored
+                        # credential keeps its distinct type (422) instead of being relabeled as
+                        # a generic connection failure (502).
+                        if init_affecting_changed and not isinstance(init_err, (GatewayConnectionError, GatewayCredentialError)):
                             safe_url = sanitize_url_for_logging(gateway.url, auth_query_params_decrypted)
                             safe_msg = sanitize_exception_message(str(init_err), auth_query_params_decrypted)
                             raise GatewayConnectionError(f"Failed to initialize gateway at {safe_url}: {safe_msg}") from init_err
@@ -3255,10 +3258,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     self._active_gateways.discard(gateway.url)
                     self._active_gateways.add(gateway.url)
                     reinit_succeeded = True
-                except GatewayConnectionError as gce:
+                except (GatewayConnectionError, GatewayCredentialError) as gce:
                     if init_affecting_changed:
                         # Do NOT persist the broken update — propagate so the outer handler
-                        # rolls back (nothing committed) and the API returns 502, matching
+                        # rolls back (nothing committed) and the API returns 502/422, matching
                         # POST /gateways behavior.
                         raise
                     logger.warning("Failed to initialize updated gateway: %s", gce)
@@ -3405,7 +3408,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 error=gnfe,
             )
             raise gnfe
-        except GatewayConnectionError as gce:
+        except (GatewayConnectionError, GatewayCredentialError) as gce:
             logger.error("GatewayConnectionError during gateway update: %s", gce)
             db.rollback()
             raise
