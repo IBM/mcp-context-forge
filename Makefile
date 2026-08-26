@@ -5619,6 +5619,10 @@ docker-shell:
 # help: compose-tls-logs      - Tail logs from TLS stack
 # help: compose-test-hardened - 🔒 Test hardened runtime (read_only + cap_drop + runtime/default seccomp)
 # help: compose-tls-ps        - Show TLS stack status
+# help: compose-gateway-tls  - 🔐 Gateway-side TLS only (HTTPS:4444, no nginx TLS)
+# help: compose-tls-e2e      - 🔐 End-to-end TLS: nginx TLS + gateway TLS (HTTPS:8443 → HTTPS:4444)
+# help: compose-tls-e2e-down - Stop end-to-end TLS stack
+# help: compose-tls-e2e-logs - Tail logs from end-to-end TLS stack
 # help: compose-siem-up       - 🛡️  Start stack with local OpenSearch SIEM sink (docker-compose.siem-opensearch.yml)
 # help: compose-siem-down     - 🛑 Stop SIEM test stack and remove SIEM containers
 # help: compose-siem-logs     - 📜 Tail logs for gateway + OpenSearch SIEM services
@@ -5944,7 +5948,7 @@ compose-up-safe: compose-validate compose-up
 # ─────────────────────────────────────────────────────────────────────────────
 # TLS Profile - Zero-config HTTPS via Nginx
 # ─────────────────────────────────────────────────────────────────────────────
-.PHONY: compose-tls compose-tls-https compose-tls-down compose-tls-logs compose-tls-ps
+.PHONY: compose-tls compose-tls-https compose-tls-down compose-tls-logs compose-tls-ps compose-gateway-tls compose-tls-e2e compose-tls-e2e-down compose-tls-e2e-logs
 
 compose-tls: compose-validate
 	@echo "🔐 Starting stack with TLS enabled..."
@@ -5985,6 +5989,28 @@ compose-tls-logs:
 	$(COMPOSE_CMD) -f $(COMPOSE_FILE) --profile tls logs -f
 
 compose-tls-ps:
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Gateway TLS / End-to-End TLS (docker-compose.gateway-tls.yml override)
+# ─────────────────────────────────────────────────────────────────────────────
+
+compose-gateway-tls: compose-validate
+	@echo "🔐 Starting stack with gateway TLS enabled (HTTPS on port 4444)..."
+	@echo "   Run 'make certs' first if ./certs/ is empty."
+	IMAGE_LOCAL=$(call get_image_name) $(COMPOSE_CMD) -f $(COMPOSE_FILE) -f docker-compose.gateway-tls.yml up -d
+	@echo "✅ Gateway TLS started. Test: curl -fk https://localhost:4444/health"
+
+compose-tls-e2e: compose-validate
+	@echo "🔐 Starting end-to-end TLS (nginx HTTPS:8443 → gateway HTTPS:4444)..."
+	@echo "   Run 'make certs' first if ./certs/ is empty."
+	IMAGE_LOCAL=$(call get_image_name) $(COMPOSE_CMD) -f $(COMPOSE_FILE) -f docker-compose.gateway-tls.yml --profile tls up -d --scale nginx=0
+	@echo "✅ End-to-end TLS started. Test: curl -sk https://localhost:8443/health"
+
+compose-tls-e2e-down:
+	$(COMPOSE_CMD) -f $(COMPOSE_FILE) -f docker-compose.gateway-tls.yml --profile tls down --remove-orphans
+
+compose-tls-e2e-logs:
+	$(COMPOSE_CMD) -f $(COMPOSE_FILE) -f docker-compose.gateway-tls.yml --profile tls logs -f
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Hardened Runtime Testing - Verify security constraints work in practice
