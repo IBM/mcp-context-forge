@@ -2869,7 +2869,11 @@ class TestCachePathBranches:
         monkeypatch.setattr(settings, "auth_cache_enabled", True)
         monkeypatch.setattr(settings, "require_user_in_db", False)
 
-        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)), patch("mcpgateway.cache.auth_cache.auth_cache.get_auth_context", AsyncMock(return_value=cached_ctx)):
+        with (
+            patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)),
+            patch("mcpgateway.cache.auth_cache.auth_cache.get_auth_context", AsyncMock(return_value=cached_ctx)),
+            patch("mcpgateway.auth._is_personal_team_sync", return_value=False),
+        ):
             user = await get_current_user(credentials=credentials, request=request)
 
         assert request.state.team_id == "team-1"
@@ -3025,7 +3029,11 @@ class TestBatchedPathBranches:
         monkeypatch.setattr(settings, "auth_cache_enabled", False)
         monkeypatch.setattr(settings, "auth_cache_batch_queries", True)
 
-        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)), patch("mcpgateway.auth._get_auth_context_batched_sync", return_value=auth_ctx):
+        with (
+            patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)),
+            patch("mcpgateway.auth._get_auth_context_batched_sync", return_value=auth_ctx),
+            patch("mcpgateway.auth._is_personal_team_sync", return_value=False),
+        ):
             user = await get_current_user(credentials=credentials, request=request)
 
         assert request.state.team_id == "team-1"
@@ -3239,6 +3247,7 @@ class TestFallbackPathWithRequest:
             patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)),
             patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user),
             patch("mcpgateway.auth._get_personal_team_sync", return_value=None),
+            patch("mcpgateway.auth._is_personal_team_sync", return_value=False),
         ):
             user = await get_current_user(credentials=credentials, request=request)  # pragma: allowlist secret
 
@@ -4500,13 +4509,13 @@ class TestDeriveTokenTeamId:
         assert await derive_token_team_id([{"id": "team-shared"}], "api") == "team-shared"
 
     @pytest.mark.asyncio
-    async def test_classification_error_fails_open_and_keeps_team_id(self, monkeypatch):
-        """A classification failure (DB unavailable) keeps team_id rather than clearing it.
+    async def test_classification_error_fails_closed_and_returns_none(self, monkeypatch):
+        """A classification failure (DB unavailable) fails closed to check_any_team (None).
 
-        This is a deliberate fail-open: the classification is an RBAC-context
-        refinement, not an authn/authz gate, so a DB hiccup must not silently
-        change token scope. Matches how sibling helpers in this module (e.g.
-        resolve_trace_team_name) already treat lookup failures as best-effort.
+        Retaining team_id on an indeterminate lookup could route RBAC context
+        into a team never verified as non-personal, silently exposing that
+        team's auto-granted team_admin role. Falling back to None only
+        narrows the caller's effective permissions, never expands them.
         """
         # First-Party
         from mcpgateway.auth import derive_token_team_id
@@ -4516,7 +4525,7 @@ class TestDeriveTokenTeamId:
 
         monkeypatch.setattr("mcpgateway.auth._is_personal_team_sync", _raise)
 
-        assert await derive_token_team_id(["team-shared"], "api") == "team-shared"
+        assert await derive_token_team_id(["team-shared"], "api") is None
 
 
 # =============================================================================

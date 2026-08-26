@@ -28,7 +28,7 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
-from mcpgateway.db import EmailApiToken, EmailUser, Permissions, TokenRevocation, TokenUsageLog, utc_now
+from mcpgateway.db import EmailApiToken, EmailTeam, EmailUser, Permissions, TokenRevocation, TokenUsageLog, utc_now
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.create_jwt_token import create_jwt_token
 
@@ -466,7 +466,7 @@ class TokenCatalogService:
         # Validate team exists and user is active member
         if team_id:
             # First-Party
-            from mcpgateway.db import EmailTeam, EmailTeamMember  # pylint: disable=import-outside-toplevel
+            from mcpgateway.db import EmailTeamMember  # pylint: disable=import-outside-toplevel
 
             # Check if team exists
             team = self.db.execute(select(EmailTeam).where(EmailTeam.id == team_id)).scalar_one_or_none()
@@ -588,9 +588,6 @@ class TokenCatalogService:
             >>> asyncio.iscoroutinefunction(service.get_default_team_id)
             True
         """
-        # First-Party
-        from mcpgateway.db import EmailTeam  # pylint: disable=import-outside-toplevel
-
         try:
             return self.db.execute(
                 select(EmailTeam.id).where(
