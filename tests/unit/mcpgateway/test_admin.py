@@ -6807,7 +6807,7 @@ class TestLoggingEndpoints:
         # Mock file exists and reading
         with patch("pathlib.Path.exists", return_value=True), patch("pathlib.Path.stat") as mock_stat, patch("builtins.open", mock_open(read_data=b"test log content")):
             mock_stat.return_value.st_size = 16
-            result = await admin_get_log_file(filename=None, user={"email": "test-user", "db": mock_db})
+            result = await admin_get_log_file(request=SimpleNamespace(headers={}), filename=None, user={"email": "test-user", "db": mock_db})
 
             assert isinstance(result, Response)
             assert result.media_type == "application/octet-stream"
@@ -6823,7 +6823,7 @@ class TestLoggingEndpoints:
         mock_settings.log_file = None
 
         with pytest.raises(HTTPException) as excinfo:
-            await admin_get_log_file(filename=None, user={"email": "test-user@example.com", "db": mock_db})
+            await admin_get_log_file(request=SimpleNamespace(headers={}), filename=None, user={"email": "test-user@example.com", "db": mock_db})
 
         assert excinfo.value.status_code == 404
         assert "File logging is not enabled" in str(excinfo.value.detail)
@@ -14562,7 +14562,7 @@ class TestAdminAdditionalCoverage:
         mock_settings.log_folder = str(log_dir)
         mock_settings.log_rotation_enabled = True
 
-        result = await admin_get_log_file(filename=None, user={"email": "admin@example.com", "db": mock_db})
+        result = await admin_get_log_file(request=SimpleNamespace(headers={}), filename=None, user={"email": "admin@example.com", "db": mock_db})
 
         assert result["total"] >= 2
         types = {entry["type"] for entry in result["files"]}
@@ -14585,7 +14585,7 @@ class TestAdminAdditionalCoverage:
         monkeypatch.setattr("mcpgateway.admin.Path.glob", _boom, raising=True)
 
         with pytest.raises(HTTPException) as excinfo:
-            await admin_get_log_file(filename=None, user={"email": "admin@example.com", "db": mock_db})
+            await admin_get_log_file(request=SimpleNamespace(headers={}), filename=None, user={"email": "admin@example.com", "db": mock_db})
         assert excinfo.value.status_code == 500
 
     @patch("mcpgateway.admin.settings")
@@ -14600,7 +14600,7 @@ class TestAdminAdditionalCoverage:
         mock_settings.log_folder = str(log_dir)
         mock_settings.log_rotation_enabled = False
 
-        result = await admin_get_log_file(filename=None, user={"email": "admin@example.com", "db": mock_db})
+        result = await admin_get_log_file(request=SimpleNamespace(headers={}), filename=None, user={"email": "admin@example.com", "db": mock_db})
         types = {entry["type"] for entry in result["files"]}
         assert "main" in types
         assert "storage" in types
@@ -14618,7 +14618,7 @@ class TestAdminAdditionalCoverage:
         mock_settings.log_folder = str(log_dir)
         mock_settings.log_rotation_enabled = False
 
-        response = await admin_get_log_file(filename="app.log", user={"email": "admin@example.com", "db": mock_db})
+        response = await admin_get_log_file(request=SimpleNamespace(headers={}), filename="app.log", user={"email": "admin@example.com", "db": mock_db})
         assert isinstance(response, Response)
         assert "app.log" in response.headers.get("content-disposition", "")
 
@@ -14628,16 +14628,143 @@ class TestAdminAdditionalCoverage:
 
         # Rejected by the pre-join input filter (".." component), before any path join.
         with pytest.raises(HTTPException) as excinfo:
-            await admin_get_log_file(filename="../secret.log", user={"email": "admin@example.com", "db": mock_db})
+            await admin_get_log_file(request=SimpleNamespace(headers={}), filename="../secret.log", user={"email": "admin@example.com", "db": mock_db})
         assert excinfo.value.status_code == 400
 
         with pytest.raises(HTTPException) as excinfo:
-            await admin_get_log_file(filename="missing.log", user={"email": "admin@example.com", "db": mock_db})
+            await admin_get_log_file(request=SimpleNamespace(headers={}), filename="missing.log", user={"email": "admin@example.com", "db": mock_db})
         assert excinfo.value.status_code == 404
 
         with pytest.raises(HTTPException) as excinfo:
-            await admin_get_log_file(filename="random.txt", user={"email": "admin@example.com", "db": mock_db})
+            await admin_get_log_file(request=SimpleNamespace(headers={}), filename="random.txt", user={"email": "admin@example.com", "db": mock_db})
         assert excinfo.value.status_code == 403
+
+    @patch("mcpgateway.admin.settings")
+    async def test_admin_get_log_file_sets_cache_validator_headers(self, mock_settings, tmp_path, mock_db):
+        """A full download must carry Accept-Ranges/ETag/Last-Modified like the FileResponse it replaced."""
+        log_dir = tmp_path
+        (log_dir / "app.log").write_text("main")
+
+        mock_settings.log_to_file = True
+        mock_settings.log_file = "app.log"
+        mock_settings.log_folder = str(log_dir)
+        mock_settings.log_rotation_enabled = False
+
+        response = await admin_get_log_file(request=SimpleNamespace(headers={}), filename="app.log", user={"email": "admin@example.com", "db": mock_db})
+        assert response.status_code == 200
+        assert response.headers.get("accept-ranges") == "bytes"
+        assert response.headers.get("etag", "").startswith('"')
+        assert response.headers.get("last-modified")
+        assert response.headers.get("content-length") == "4"
+
+    @patch("mcpgateway.admin.settings")
+    async def test_admin_get_log_file_serves_single_range(self, mock_settings, tmp_path, mock_db):
+        """A Range request returns a 206 partial response with the requested byte span."""
+        log_dir = tmp_path
+        (log_dir / "app.log").write_text("0123456789")
+
+        mock_settings.log_to_file = True
+        mock_settings.log_file = "app.log"
+        mock_settings.log_folder = str(log_dir)
+        mock_settings.log_rotation_enabled = False
+
+        response = await admin_get_log_file(request=SimpleNamespace(headers={"range": "bytes=2-5"}), filename="app.log", user={"email": "admin@example.com", "db": mock_db})
+        assert response.status_code == 206
+        assert response.headers.get("content-range") == "bytes 2-5/10"
+        assert response.headers.get("content-length") == "4"
+        body = b"".join([chunk async for chunk in response.body_iterator])
+        assert body == b"2345"
+
+    @patch("mcpgateway.admin.settings")
+    async def test_admin_get_log_file_serves_suffix_range(self, mock_settings, tmp_path, mock_db):
+        """A suffix range (``bytes=-N``) returns the last N bytes of the file."""
+        log_dir = tmp_path
+        (log_dir / "app.log").write_text("0123456789")
+
+        mock_settings.log_to_file = True
+        mock_settings.log_file = "app.log"
+        mock_settings.log_folder = str(log_dir)
+        mock_settings.log_rotation_enabled = False
+
+        response = await admin_get_log_file(request=SimpleNamespace(headers={"range": "bytes=-3"}), filename="app.log", user={"email": "admin@example.com", "db": mock_db})
+        assert response.status_code == 206
+        assert response.headers.get("content-range") == "bytes 7-9/10"
+        body = b"".join([chunk async for chunk in response.body_iterator])
+        assert body == b"789"
+
+    @patch("mcpgateway.admin.settings")
+    async def test_admin_get_log_file_rejects_malformed_range(self, mock_settings, tmp_path, mock_db):
+        """A syntactically invalid Range header is rejected with 400, not silently ignored."""
+        log_dir = tmp_path
+        (log_dir / "app.log").write_text("0123456789")
+
+        mock_settings.log_to_file = True
+        mock_settings.log_file = "app.log"
+        mock_settings.log_folder = str(log_dir)
+        mock_settings.log_rotation_enabled = False
+
+        with pytest.raises(HTTPException) as excinfo:
+            await admin_get_log_file(request=SimpleNamespace(headers={"range": "not-a-range"}), filename="app.log", user={"email": "admin@example.com", "db": mock_db})
+        assert excinfo.value.status_code == 400
+
+    @patch("mcpgateway.admin.settings")
+    async def test_admin_get_log_file_rejects_unsatisfiable_range(self, mock_settings, tmp_path, mock_db):
+        """A range starting beyond EOF is rejected with 416 and a Content-Range header."""
+        log_dir = tmp_path
+        (log_dir / "app.log").write_text("0123456789")
+
+        mock_settings.log_to_file = True
+        mock_settings.log_file = "app.log"
+        mock_settings.log_folder = str(log_dir)
+        mock_settings.log_rotation_enabled = False
+
+        with pytest.raises(HTTPException) as excinfo:
+            await admin_get_log_file(request=SimpleNamespace(headers={"range": "bytes=100-200"}), filename="app.log", user={"email": "admin@example.com", "db": mock_db})
+        assert excinfo.value.status_code == 416
+        assert excinfo.value.headers.get("Content-Range") == "bytes */10"
+
+    @patch("mcpgateway.admin.settings")
+    async def test_admin_get_log_file_ignores_stale_if_range(self, mock_settings, tmp_path, mock_db):
+        """An If-Range validator that doesn't match the current ETag/Last-Modified falls back to a full 200 response."""
+        log_dir = tmp_path
+        (log_dir / "app.log").write_text("0123456789")
+
+        mock_settings.log_to_file = True
+        mock_settings.log_file = "app.log"
+        mock_settings.log_folder = str(log_dir)
+        mock_settings.log_rotation_enabled = False
+
+        response = await admin_get_log_file(
+            request=SimpleNamespace(headers={"range": "bytes=2-5", "if-range": '"stale-etag"'}), filename="app.log", user={"email": "admin@example.com", "db": mock_db}
+        )
+        assert response.status_code == 200
+        body = b"".join([chunk async for chunk in response.body_iterator])
+        assert body == b"0123456789"
+
+    @patch("mcpgateway.admin.settings")
+    async def test_admin_get_log_file_background_task_closes_fd_if_never_streamed(self, mock_settings, tmp_path, mock_db):
+        """The fd opened by open_confined() must be closed even if the StreamingResponse
+        body generator is cancelled before it is ever iterated (e.g. an immediate client
+        disconnect) — this is what the BackgroundTask fallback covers."""
+        log_dir = tmp_path
+        (log_dir / "app.log").write_text("main")
+
+        mock_settings.log_to_file = True
+        mock_settings.log_file = "app.log"
+        mock_settings.log_folder = str(log_dir)
+        mock_settings.log_rotation_enabled = False
+
+        response = await admin_get_log_file(request=SimpleNamespace(headers={}), filename="app.log", user={"email": "admin@example.com", "db": mock_db})
+
+        # Simulate Starlette cancelling the response before the generator is ever advanced:
+        # the background task is the only thing that runs.
+        assert response.background is not None
+        await response.background()
+
+        with pytest.raises(ValueError):
+            # The underlying fd is closed; reading through the (now-closed) handle raises.
+            async for _ in response.body_iterator:
+                pass
 
     @patch("mcpgateway.admin.settings")
     async def test_admin_get_log_file_rejects_sibling_prefix_directory(self, mock_settings, tmp_path, mock_db):
@@ -14662,7 +14789,7 @@ class TestAdminAdditionalCoverage:
 
         for payload in ("../logs_secret/creds.json", "sub/../../logs_secret/creds.json", "./../logs_secret/creds.json"):
             with pytest.raises(HTTPException) as excinfo:
-                await admin_get_log_file(filename=payload, user={"email": "admin@example.com", "db": mock_db})
+                await admin_get_log_file(request=SimpleNamespace(headers={}), filename=payload, user={"email": "admin@example.com", "db": mock_db})
             assert excinfo.value.status_code == 400
             assert canary not in str(excinfo.value.detail)
 
@@ -14694,7 +14821,7 @@ class TestAdminAdditionalCoverage:
         mock_settings.log_rotation_enabled = False
 
         with pytest.raises(HTTPException) as excinfo:
-            await admin_get_log_file(filename="escape.json", user={"email": "admin@example.com", "db": mock_db})
+            await admin_get_log_file(request=SimpleNamespace(headers={}), filename="escape.json", user={"email": "admin@example.com", "db": mock_db})
         assert excinfo.value.status_code == 403
 
     @patch("mcpgateway.admin.settings")
@@ -14711,7 +14838,7 @@ class TestAdminAdditionalCoverage:
 
         for payload in ("/etc/passwd", "/var/log/syslog.log", "app.log\x00.png"):
             with pytest.raises(HTTPException) as excinfo:
-                await admin_get_log_file(filename=payload, user={"email": "admin@example.com", "db": mock_db})
+                await admin_get_log_file(request=SimpleNamespace(headers={}), filename=payload, user={"email": "admin@example.com", "db": mock_db})
             assert excinfo.value.status_code == 400
 
     @patch("mcpgateway.admin.settings")
@@ -14728,7 +14855,7 @@ class TestAdminAdditionalCoverage:
 
         with patch("mcpgateway.admin.Path.resolve", side_effect=OSError("ELOOP")):
             with pytest.raises(HTTPException) as excinfo:
-                await admin_get_log_file(filename="app.log", user={"email": "admin@example.com", "db": mock_db})
+                await admin_get_log_file(request=SimpleNamespace(headers={}), filename="app.log", user={"email": "admin@example.com", "db": mock_db})
         assert excinfo.value.status_code == 400
 
     @patch("mcpgateway.admin.settings")
@@ -14744,7 +14871,7 @@ class TestAdminAdditionalCoverage:
         mock_settings.log_folder = str(log_dir)
         mock_settings.log_rotation_enabled = False
 
-        response = await admin_get_log_file(filename="archive/app.log", user={"email": "admin@example.com", "db": mock_db})
+        response = await admin_get_log_file(request=SimpleNamespace(headers={}), filename="archive/app.log", user={"email": "admin@example.com", "db": mock_db})
         assert isinstance(response, Response)
         assert "app.log" in response.headers.get("content-disposition", "")
 
@@ -14761,7 +14888,7 @@ class TestAdminAdditionalCoverage:
 
         with patch("mcpgateway.admin.open_confined", side_effect=FileNotFoundError("gone")):
             with pytest.raises(HTTPException) as excinfo:
-                await admin_get_log_file(filename="app.log", user={"email": "admin@example.com", "db": mock_db})
+                await admin_get_log_file(request=SimpleNamespace(headers={}), filename="app.log", user={"email": "admin@example.com", "db": mock_db})
         assert excinfo.value.status_code == 404
 
     @patch("mcpgateway.admin.settings")
@@ -14777,7 +14904,7 @@ class TestAdminAdditionalCoverage:
 
         with patch("mcpgateway.admin.open_confined", side_effect=RuntimeError("boom")):
             with pytest.raises(HTTPException) as excinfo:
-                await admin_get_log_file(filename="app.log", user={"email": "admin@example.com", "db": mock_db})
+                await admin_get_log_file(request=SimpleNamespace(headers={}), filename="app.log", user={"email": "admin@example.com", "db": mock_db})
         assert excinfo.value.status_code == 500
 
     @patch("mcpgateway.admin.settings")
@@ -14793,7 +14920,7 @@ class TestAdminAdditionalCoverage:
         mock_settings.log_rotation_enabled = False
 
         with pytest.raises(HTTPException) as excinfo:
-            await admin_get_log_file(filename="app.log", user={"email": "admin@example.com", "db": mock_db})
+            await admin_get_log_file(request=SimpleNamespace(headers={}), filename="app.log", user={"email": "admin@example.com", "db": mock_db})
         assert excinfo.value.status_code == 403
 
     async def test_admin_export_logs_json_csv(self, mock_db, monkeypatch):

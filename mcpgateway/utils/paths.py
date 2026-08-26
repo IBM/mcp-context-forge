@@ -30,6 +30,11 @@ from mcpgateway.config import settings
 
 logger = logging.getLogger(__name__)
 
+# ``dir_fd``/``O_NOFOLLOW``-based ``openat`` chaining (the TOCTOU-proof path in
+# ``open_confined()``) is POSIX-only: Windows' ``os.open()`` does not accept
+# ``dir_fd`` and neither ``os.O_DIRECTORY`` nor ``os.O_NOFOLLOW`` exist there.
+_SUPPORTS_CONFINED_OPENAT = hasattr(os, "O_DIRECTORY") and hasattr(os, "O_NOFOLLOW") and os.open in os.supports_dir_fd
+
 # Characters that must never appear in a root path — control chars, URL
 # scheme markers, query/fragment delimiters, and whitespace other than
 # leading/trailing (which is stripped before this check).
@@ -178,7 +183,7 @@ def is_path_within(candidate: Path, root: Path) -> bool:
 
 
 def open_confined(root: Path, relative: Path) -> "tuple[int, os.stat_result]":
-    """Open *relative* under *root* via an ``openat``/``O_NOFOLLOW`` chain, returning a live fd.
+    """Open *relative* under *root* confined to that tree, returning a live fd.
 
     A confinement check performed with ``Path.resolve()`` followed by a *separate*
     ``open()`` call (or, worse, a path handed to something like Starlette's
@@ -187,12 +192,19 @@ def open_confined(root: Path, relative: Path) -> "tuple[int, os.stat_result]":
     between the check and the actual open, causing the eventual read to follow the
     symlink to an arbitrary target.
 
-    This helper closes that window by resolving and opening each path component with
-    ``dir_fd`` relative to its already-open parent, with ``O_NOFOLLOW`` on every hop
-    (including the final component). A symlink anywhere along the chain raises
+    On POSIX (where ``os.open()`` supports ``dir_fd`` and ``O_DIRECTORY``/``O_NOFOLLOW``
+    exist), this closes that window completely by resolving and opening each path
+    component with ``dir_fd`` relative to its already-open parent, ``O_NOFOLLOW`` on
+    every hop including the final component. A symlink anywhere along the chain raises
     ``OSError`` instead of being followed, and the returned fd refers to the exact inode
     that was validated — nothing can be swapped out from under it after this call
     returns.
+
+    On platforms without that support (Windows), :func:`_open_confined_fallback` is used
+    instead: each component is checked with ``os.path.islink()`` before descending, then
+    the final component is opened by path. This still rejects symlinks but leaves a
+    narrower race between the last ``islink()`` check and the final ``open()`` — the
+    POSIX path's atomicity guarantee does not carry over.
 
     Args:
         root: Resolved, trusted directory that confines the lookup.
@@ -215,16 +227,10 @@ def open_confined(root: Path, relative: Path) -> "tuple[int, os.stat_result]":
     if not parts:
         raise ValueError("empty path")
 
-    nofollow = getattr(os, "O_NOFOLLOW", 0)
-    dir_fd = os.open(str(root), os.O_RDONLY | os.O_DIRECTORY | nofollow)
-    try:
-        for part in parts[:-1]:
-            next_fd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | nofollow, dir_fd=dir_fd)
-            os.close(dir_fd)
-            dir_fd = next_fd
-        file_fd = os.open(parts[-1], os.O_RDONLY | nofollow, dir_fd=dir_fd)
-    finally:
-        os.close(dir_fd)
+    if _SUPPORTS_CONFINED_OPENAT:
+        file_fd = _open_confined_posix(root, parts)
+    else:
+        file_fd = _open_confined_fallback(root, parts)
 
     try:
         file_stat = os.fstat(file_fd)
@@ -234,3 +240,37 @@ def open_confined(root: Path, relative: Path) -> "tuple[int, os.stat_result]":
         os.close(file_fd)
         raise
     return file_fd, file_stat
+
+
+def _open_confined_posix(root: Path, parts: "tuple[str, ...]") -> int:
+    """Open the final path component via an ``openat``/``O_NOFOLLOW`` chain. POSIX only."""
+    dir_fd = os.open(str(root), os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    try:
+        for part in parts[:-1]:
+            next_fd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=dir_fd)
+            os.close(dir_fd)
+            dir_fd = next_fd
+        return os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW, dir_fd=dir_fd)
+    finally:
+        os.close(dir_fd)
+
+
+def _open_confined_fallback(root: Path, parts: "tuple[str, ...]") -> int:
+    """Open the final path component with a per-component symlink check. Non-POSIX fallback.
+
+    Used when the platform lacks ``dir_fd``/``O_NOFOLLOW`` support (Windows). Each
+    intermediate component is required to be a real directory, not a symlink, before
+    descending into it; the final component is required not to be a symlink before it is
+    opened by path. This is a narrower guarantee than :func:`_open_confined_posix`: a
+    rename-and-symlink race between the last check and the ``open()`` call is still
+    possible, since the checks and the open are not atomic with each other.
+    """
+    current = root
+    for part in parts[:-1]:
+        current = current / part
+        if os.path.islink(current) or not current.is_dir():
+            raise OSError(f"refusing to descend through non-directory or symlink: {current}")
+    final = current / parts[-1]
+    if os.path.islink(final):
+        raise OSError(f"refusing to follow symlink: {final}")
+    return os.open(str(final), os.O_RDONLY)

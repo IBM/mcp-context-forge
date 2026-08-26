@@ -23,7 +23,9 @@ import binascii
 from collections import defaultdict
 import csv
 from datetime import datetime, timedelta, timezone
+from email.utils import formatdate
 from functools import lru_cache, wraps
+import hashlib
 import html
 import inspect
 import io
@@ -15479,6 +15481,7 @@ async def admin_stream_logs(
 @admin_router.get("/logs/file")
 @require_permission("admin.system_config", allow_admin_bypass=False)
 async def admin_get_log_file(
+    request: Request,
     filename: Optional[str] = None,
     user=Depends(get_current_user_with_permissions),  # pylint: disable=unused-argument
     _db: Session = Depends(get_db),
@@ -15486,6 +15489,7 @@ async def admin_get_log_file(
     """Download log file.
 
     Args:
+        request: Incoming request, used to read a conditional/range header for resumable downloads.
         filename: Specific log file to download (optional)
         user: Authenticated user
         _db: Database session for permission checks.
@@ -15563,18 +15567,73 @@ async def admin_get_log_file(
         quoted_name = urllib.parse.quote(file_path.name)
         content_disposition = f"attachment; filename*=utf-8''{quoted_name}" if quoted_name != file_path.name else f'attachment; filename="{file_path.name}"'
 
+        file_size = file_stat.st_size
+        last_modified = formatdate(file_stat.st_mtime, usegmt=True)
+        etag = f'"{hashlib.md5(f"{file_stat.st_mtime}-{file_size}".encode(), usedforsecurity=False).hexdigest()}"'  # nosec B324 - cache validator, not a security control
+
+        # file_fd was validated and opened by open_confined() above (see the comment on that
+        # call); wrap it in a Python file object now, outside the generator, so a single owner
+        # (this handle) exists regardless of whether the generator body ever runs. Starlette can
+        # cancel a StreamingResponse before its body generator is first iterated (e.g. the client
+        # disconnects immediately) -- in that case the generator's own `finally` never executes,
+        # so the BackgroundTask below is the fallback that guarantees the fd is closed. handle.close()
+        # is idempotent, so running both paths is safe.
+        handle = os.fdopen(file_fd, "rb")
+
+        headers = {
+            "Content-Disposition": content_disposition,
+            "Accept-Ranges": "bytes",
+            "Last-Modified": last_modified,
+            "ETag": etag,
+        }
+
+        range_header = request.headers.get("range")
+        if_range = request.headers.get("if-range")
+        start, end = 0, file_size
+        status_code = 200
+        if range_header and (if_range is None or if_range in (etag, last_modified)):
+            range_match = re.fullmatch(r"bytes=(\d*)-(\d*)", range_header.strip())
+            if not range_match or not (range_match.group(1) or range_match.group(2)):
+                handle.close()
+                raise HTTPException(400, "Malformed Range header")
+            range_start, range_end = range_match.group(1), range_match.group(2)
+            if range_start:
+                start = int(range_start)
+                end = int(range_end) + 1 if range_end else file_size
+            else:
+                # Suffix range (e.g. "bytes=-500"): last N bytes of the file.
+                start = max(file_size - int(range_end), 0)
+                end = file_size
+            if start >= file_size or start >= end:
+                handle.close()
+                raise HTTPException(416, "Requested range not satisfiable", headers={"Content-Range": f"bytes */{file_size}"})
+            end = min(end, file_size)
+            status_code = 206
+            headers["Content-Range"] = f"bytes {start}-{end - 1}/{file_size}"
+
+        headers["Content-Length"] = str(end - start)
+        handle.seek(start)
+        remaining = end - start
+
         def _iter_log_file():
-            with os.fdopen(file_fd, "rb") as handle:
-                while chunk := handle.read(chunk_size):
+            """Yield the requested byte range in chunks, closing the fd when done."""
+            nonlocal remaining
+            try:
+                while remaining > 0:
+                    chunk = handle.read(min(chunk_size, remaining))
+                    if not chunk:
+                        break
+                    remaining -= len(chunk)
                     yield chunk
+            finally:
+                handle.close()
 
         return StreamingResponse(
             _iter_log_file(),
+            status_code=status_code,
             media_type="application/octet-stream",
-            headers={
-                "Content-Disposition": content_disposition,
-                "Content-Length": str(file_stat.st_size),
-            },
+            headers=headers,
+            background=BackgroundTask(handle.close),
         )
 
     # List available log files
