@@ -46,7 +46,7 @@ from mcpgateway.services.mcp_apps import MCP_UI_EXTENSION
 from mcpgateway.transports import streamablehttp_transport as tr  # noqa: E402
 from mcpgateway.services.prompt_service import PromptNotFoundError
 from mcpgateway.services.resource_service import ResourceNotFoundError
-from mcpgateway.services.tool_service import ToolNotFoundError
+from mcpgateway.services.tool_service import ToolInvocationError, ToolNotFoundError
 from mcpgateway.transports.streamablehttp_transport import (
     _MCPGATEWAY_CONTEXT_KEY,
     call_tool,
@@ -18190,6 +18190,17 @@ class TestUnknownEntityErrors:
         assert isinstance(result, types.CallToolResult)
         assert result.is_error is True
         assert result.content[0].text == "Unknown tool: missing_tool"
+
+    @pytest.mark.asyncio
+    async def test_invocation_failure_returns_iserror_result(self, monkeypatch):
+        """ToolInvocationError (eg: timeouts) becomes an isError result carrying the reason."""
+        self._fake_db(monkeypatch)
+        monkeypatch.setattr(tool_service, "invoke_tool", AsyncMock(side_effect=ToolInvocationError("Tool invocation failed: upstream event too large")))
+
+        result = await call_tool("big_tool", {})
+        assert isinstance(result, types.CallToolResult)
+        assert result.is_error is True
+        assert result.content[0].text == "Tool invocation failed: upstream event too large"
 
     @pytest.mark.asyncio
     async def test_unknown_prompt_raises_invalid_params(self, monkeypatch):
