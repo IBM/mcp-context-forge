@@ -94,6 +94,23 @@ def on_starting(server):
     ssl_enabled = os.environ.get("SSL", "false").lower() == "true"
     ssl_key_password = os.environ.get("SSL_KEY_PASSWORD")
 
+    # If ssl_version is passed as a string (e.g. from run-gunicorn.sh CLI),
+    # convert it to the integer/constant that uvicorn/ssl expects
+    if ssl_enabled and hasattr(server, "cfg"):
+        try:
+            ssl_version = server.cfg.ssl_version
+            if isinstance(ssl_version, str):
+                import ssl as ssl_module
+                if ssl_version.isdigit():
+                    server.cfg.set("ssl_version", int(ssl_version))
+                    server.log.info(f"Converted SSL version string to integer: {ssl_version}")
+                elif hasattr(ssl_module, ssl_version):
+                    resolved_val = getattr(ssl_module, ssl_version)
+                    server.cfg.set("ssl_version", resolved_val)
+                    server.log.info(f"Resolved SSL version constant name to: {resolved_val}")
+        except Exception as e:
+            server.log.warning(f"Failed to normalize Gunicorn ssl_version setting: {e}")
+
     if ssl_enabled and ssl_key_password:
         try:
             from mcpgateway.utils.ssl_key_manager import prepare_ssl_key

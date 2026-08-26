@@ -297,6 +297,8 @@ CERT_FILE=${CERT_FILE:-certs/cert.pem}  # Path to SSL certificate file
 KEY_FILE=${KEY_FILE:-certs/key.pem}     # Path to SSL private key file
 KEY_FILE_PASSWORD=${KEY_FILE_PASSWORD:-}  # Optional passphrase for encrypted key
 CERT_PASSPHRASE=${CERT_PASSPHRASE:-}      # Alternative name for passphrase
+SSL_CIPHERS=${SSL_CIPHERS:-}              # Colon-separated OpenSSL cipher string (empty = default)
+SSL_VERSION=${SSL_VERSION:-}              # Numeric SSL version constant (empty = Gunicorn default)
 
 # Use CERT_PASSPHRASE if KEY_FILE_PASSWORD is not set (for compatibility)
 if [[ -z "${KEY_FILE_PASSWORD}" && -n "${CERT_PASSPHRASE}" ]]; then
@@ -427,6 +429,16 @@ if [[ "${SSL}" == "true" ]]; then
     else
         echo "   Passphrase: (none)"
     fi
+    if [[ -n "${SSL_CIPHERS}" ]]; then
+        echo "   Ciphers: ${SSL_CIPHERS}"
+    else
+        echo "   Ciphers: (default)"
+    fi
+    if [[ -n "${SSL_VERSION}" ]]; then
+        echo "   SSL/TLS Version: ${SSL_VERSION}"
+    else
+        echo "   SSL/TLS Version: (default)"
+    fi
 else
     echo "🔓  Running without TLS (HTTP only)"
 fi
@@ -508,8 +520,15 @@ fi
 if [[ "${SSL}" == "true" ]]; then
     cmd+=( --certfile "${CERT_FILE}" --keyfile "${KEY_FILE}" )
     # If passphrase is set, it will be available to Python via SSL_KEY_PASSWORD env var
+
     if [[ -n "${CA_CERTS}" ]]; then
         cmd+=( --ca-certs "${CA_CERTS}" --cert-reqs "${CERT_REQS}" )
+    fi
+    if [[ -n "${SSL_CIPHERS}" ]]; then
+        cmd+=( --ciphers "${SSL_CIPHERS}" )
+    fi
+    if [[ -n "${SSL_VERSION}" ]]; then
+        cmd+=( --ssl-version "${SSL_VERSION}" )
     fi
 fi
 
