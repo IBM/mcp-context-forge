@@ -204,7 +204,7 @@ from mcpgateway.utils.oauth_resource import parse_oauth_resource_form
 from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.pagination import paginate_query
 from mcpgateway.utils.passthrough_headers import PassthroughHeadersError
-from mcpgateway.utils.paths import is_path_within
+from mcpgateway.utils.paths import is_path_within, open_confined
 from mcpgateway.utils.paths import resolve_root_path as _resolve_root_path
 from mcpgateway.utils.security_cookies import clear_auth_cookie, CookieTooLargeError, set_auth_cookie
 from mcpgateway.utils.services_auth import encode_auth
@@ -15534,31 +15534,48 @@ async def admin_get_log_file(
         if not is_path_within(file_path, log_dir_resolved):
             raise HTTPException(403, _ACCESS_DENIED_MSG)
 
-        # Check if file exists
-        if not file_path.exists() or not file_path.is_file():
-            raise HTTPException(404, f"Log file not found: {filename}")
-
-        # Check if it's a log file
+        # Check if it's a log file (name check only; no filesystem access yet)
         if not (file_path.suffix in [".log", ".jsonl", ".json"] or file_path.stem.startswith(Path(settings.log_file).stem)):
             raise HTTPException(403, "Not a log file")
 
-        # Return file for download using FileResponse (streams asynchronously)
-        # Pre-stat the file to catch issues early and provide Content-Length
+        # Open the verified fd directly via an openat()/O_NOFOLLOW chain instead of
+        # handing a pathname to FileResponse, which reopens the path when it streams.
+        # A process able to write into log_dir_resolved could otherwise rename the
+        # checked file away and put a symlink in its place between the confinement
+        # check above and that later reopen (TOCTOU), causing this privileged endpoint
+        # to stream an attacker-chosen target. open_confined() resolves and opens each
+        # path component with O_NOFOLLOW relative to its already-open parent, so the fd
+        # it returns refers to exactly the inode that was validated.
         try:
-            file_stat = file_path.stat()
-            LOGGER.info(f"Serving log file download: {file_path.name} ({file_stat.st_size} bytes)")
-            return FileResponse(
-                path=file_path,
-                media_type="application/octet-stream",
-                filename=file_path.name,
-                stat_result=file_stat,
-            )
+            file_fd, file_stat = open_confined(log_dir_resolved, candidate)
         except FileNotFoundError:
-            LOGGER.error(f"Log file disappeared before streaming: {filename}")
             raise HTTPException(404, f"Log file not found: {filename}")
+        except (OSError, ValueError) as e:
+            LOGGER.warning(f"Log file access denied for {filename}: {e}")
+            raise HTTPException(403, _ACCESS_DENIED_MSG)
         except Exception as e:
-            LOGGER.error(f"Error preparing file for download: {e}")
+            LOGGER.error(f"Error opening log file for download: {e}")
             raise HTTPException(500, f"Error reading file for download: {e}")
+
+        LOGGER.info(f"Serving log file download: {file_path.name} ({file_stat.st_size} bytes)")
+
+        chunk_size = 64 * 1024
+        quoted_name = urllib.parse.quote(file_path.name)
+        content_disposition = f"attachment; filename*=utf-8''{quoted_name}" if quoted_name != file_path.name else f'attachment; filename="{file_path.name}"'
+
+        def _iter_log_file():
+            with os.fdopen(file_fd, "rb") as handle:
+                while chunk := handle.read(chunk_size):
+                    yield chunk
+
+        return StreamingResponse(
+            _iter_log_file(),
+            media_type="application/octet-stream",
+            headers={
+                "Content-Disposition": content_disposition,
+                "Content-Length": str(file_stat.st_size),
+            },
+        )
 
     # List available log files
     log_files = []

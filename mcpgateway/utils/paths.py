@@ -17,8 +17,10 @@ directly should use :func:`resolve_root_path` instead.
 
 # Standard
 import logging
+import os
 from pathlib import Path
 import re
+import stat as stat_module
 
 # Third-Party
 from fastapi import Request
@@ -173,3 +175,62 @@ def is_path_within(candidate: Path, root: Path) -> bool:
         False
     """
     return candidate == root or candidate.is_relative_to(root)
+
+
+def open_confined(root: Path, relative: Path) -> "tuple[int, os.stat_result]":
+    """Open *relative* under *root* via an ``openat``/``O_NOFOLLOW`` chain, returning a live fd.
+
+    A confinement check performed with ``Path.resolve()`` followed by a *separate*
+    ``open()`` call (or, worse, a path handed to something like Starlette's
+    ``FileResponse`` that reopens it later) is subject to a TOCTOU race: a process able
+    to write into *root* can rename the checked file away and put a symlink in its place
+    between the check and the actual open, causing the eventual read to follow the
+    symlink to an arbitrary target.
+
+    This helper closes that window by resolving and opening each path component with
+    ``dir_fd`` relative to its already-open parent, with ``O_NOFOLLOW`` on every hop
+    (including the final component). A symlink anywhere along the chain raises
+    ``OSError`` instead of being followed, and the returned fd refers to the exact inode
+    that was validated — nothing can be swapped out from under it after this call
+    returns.
+
+    Args:
+        root: Resolved, trusted directory that confines the lookup.
+        relative: Path relative to *root* to open. Must not be absolute, escape *root*
+            via ``..``, or be empty.
+
+    Returns:
+        A ``(fd, stat_result)`` tuple for the opened regular file. Callers own the fd
+        and must close it (e.g. via ``os.fdopen(fd, "rb")`` as a context manager).
+
+    Raises:
+        ValueError: *relative* is absolute, escapes *root*, is empty, or resolves to
+            something other than a regular file.
+        OSError: A path component does not exist, is a symlink, or cannot be opened
+            (including a symlink rejected by ``O_NOFOLLOW``).
+    """
+    if relative.is_absolute() or relative.drive or relative.root or ".." in relative.parts:
+        raise ValueError("path escapes confinement root")
+    parts = relative.parts
+    if not parts:
+        raise ValueError("empty path")
+
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    dir_fd = os.open(str(root), os.O_RDONLY | os.O_DIRECTORY | nofollow)
+    try:
+        for part in parts[:-1]:
+            next_fd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | nofollow, dir_fd=dir_fd)
+            os.close(dir_fd)
+            dir_fd = next_fd
+        file_fd = os.open(parts[-1], os.O_RDONLY | nofollow, dir_fd=dir_fd)
+    finally:
+        os.close(dir_fd)
+
+    try:
+        file_stat = os.fstat(file_fd)
+        if not stat_module.S_ISREG(file_stat.st_mode):
+            raise ValueError("not a regular file")
+    except BaseException:
+        os.close(file_fd)
+        raise
+    return file_fd, file_stat

@@ -14,6 +14,7 @@ that lacked the ``settings.app_root_path`` fallback.
 from __future__ import annotations
 
 # Standard
+import os
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -21,7 +22,7 @@ from unittest.mock import MagicMock
 import pytest
 
 # First-Party
-from mcpgateway.utils.paths import is_path_within, replace_api_path_alias, resolve_root_path
+from mcpgateway.utils.paths import is_path_within, open_confined, replace_api_path_alias, resolve_root_path
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -316,3 +317,80 @@ def test_is_path_within_resolves_relative_escape(tmp_path: Path) -> None:
 
     assert str(escaped).startswith(str(root)) is True
     assert is_path_within(escaped, root) is False
+
+
+# ---------------------------------------------------------------------------
+# open_confined
+# ---------------------------------------------------------------------------
+
+
+def test_open_confined_opens_regular_file(tmp_path: Path) -> None:
+    """A regular file directly under root is opened and its fd/stat returned."""
+    (tmp_path / "app.log").write_text("hello")
+
+    fd, st = open_confined(tmp_path, Path("app.log"))
+    try:
+        assert os.read(fd, 5) == b"hello"
+        assert st.st_size == 5
+    finally:
+        os.close(fd)
+
+
+def test_open_confined_opens_nested_file(tmp_path: Path) -> None:
+    """Intermediate directory components are walked via dir_fd, not string joins."""
+    (tmp_path / "archive").mkdir()
+    (tmp_path / "archive" / "app.log").write_text("rotated")
+
+    fd, st = open_confined(tmp_path, Path("archive/app.log"))
+    try:
+        assert os.read(fd, st.st_size) == b"rotated"
+    finally:
+        os.close(fd)
+
+
+def test_open_confined_rejects_missing_file(tmp_path: Path) -> None:
+    """A nonexistent file raises FileNotFoundError, not a generic OSError."""
+    with pytest.raises(FileNotFoundError):
+        open_confined(tmp_path, Path("does-not-exist.log"))
+
+
+def test_open_confined_rejects_symlinked_file(tmp_path: Path) -> None:
+    """The final component is opened with O_NOFOLLOW: a symlink is rejected even
+    when its target is inside root, closing the TOCTOU window a resolve()-then-open()
+    check leaves open (target can be swapped between the check and the reopen)."""
+    (tmp_path / "real.log").write_text("main")
+    (tmp_path / "app.log").symlink_to(tmp_path / "real.log")
+
+    with pytest.raises(OSError):
+        open_confined(tmp_path, Path("app.log"))
+
+
+def test_open_confined_rejects_symlinked_parent_dir(tmp_path: Path) -> None:
+    """A symlinked intermediate directory component is rejected too, not just the leaf."""
+    real_dir = tmp_path / "real_archive"
+    real_dir.mkdir()
+    (real_dir / "app.log").write_text("rotated")
+    (tmp_path / "archive").symlink_to(real_dir)
+
+    with pytest.raises(OSError):
+        open_confined(tmp_path, Path("archive/app.log"))
+
+
+def test_open_confined_rejects_absolute_path(tmp_path: Path) -> None:
+    """Absolute input is rejected before any filesystem access."""
+    with pytest.raises(ValueError):
+        open_confined(tmp_path, Path("/etc/passwd"))
+
+
+def test_open_confined_rejects_dotdot_escape(tmp_path: Path) -> None:
+    """A ``..`` component is rejected before any filesystem access."""
+    with pytest.raises(ValueError):
+        open_confined(tmp_path, Path("../secret.txt"))
+
+
+def test_open_confined_rejects_directory_as_final_component(tmp_path: Path) -> None:
+    """The final component must be a regular file, not a directory."""
+    (tmp_path / "subdir").mkdir()
+
+    with pytest.raises(ValueError):
+        open_confined(tmp_path, Path("subdir"))

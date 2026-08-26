@@ -14746,7 +14746,7 @@ class TestAdminAdditionalCoverage:
 
     @patch("mcpgateway.admin.settings")
     async def test_admin_get_log_file_download_stat_filenotfound(self, mock_settings, tmp_path, mock_db):
-        """Cover FileNotFoundError handling when preparing the FileResponse."""
+        """Cover FileNotFoundError handling when opening the verified fd."""
         log_dir = tmp_path
         (log_dir / "app.log").write_text("main")
 
@@ -14755,14 +14755,14 @@ class TestAdminAdditionalCoverage:
         mock_settings.log_folder = str(log_dir)
         mock_settings.log_rotation_enabled = False
 
-        with patch("mcpgateway.admin.FileResponse", side_effect=FileNotFoundError("gone")):
+        with patch("mcpgateway.admin.open_confined", side_effect=FileNotFoundError("gone")):
             with pytest.raises(HTTPException) as excinfo:
                 await admin_get_log_file(filename="app.log", user={"email": "admin@example.com", "db": mock_db})
         assert excinfo.value.status_code == 404
 
     @patch("mcpgateway.admin.settings")
     async def test_admin_get_log_file_download_stat_generic_error(self, mock_settings, tmp_path, mock_db):
-        """Cover generic exception handling when preparing the FileResponse."""
+        """Cover generic exception handling when opening the verified fd."""
         log_dir = tmp_path
         (log_dir / "app.log").write_text("main")
 
@@ -14771,10 +14771,26 @@ class TestAdminAdditionalCoverage:
         mock_settings.log_folder = str(log_dir)
         mock_settings.log_rotation_enabled = False
 
-        with patch("mcpgateway.admin.FileResponse", side_effect=RuntimeError("boom")):
+        with patch("mcpgateway.admin.open_confined", side_effect=RuntimeError("boom")):
             with pytest.raises(HTTPException) as excinfo:
                 await admin_get_log_file(filename="app.log", user={"email": "admin@example.com", "db": mock_db})
         assert excinfo.value.status_code == 500
+
+    @patch("mcpgateway.admin.settings")
+    async def test_admin_get_log_file_rejects_symlinked_file(self, mock_settings, tmp_path, mock_db):
+        """A symlink at the final path component must be rejected even when its target is inside the log dir."""
+        log_dir = tmp_path
+        (log_dir / "real.log").write_text("main")
+        (log_dir / "app.log").symlink_to(log_dir / "real.log")
+
+        mock_settings.log_to_file = True
+        mock_settings.log_file = "app.log"
+        mock_settings.log_folder = str(log_dir)
+        mock_settings.log_rotation_enabled = False
+
+        with pytest.raises(HTTPException) as excinfo:
+            await admin_get_log_file(filename="app.log", user={"email": "admin@example.com", "db": mock_db})
+        assert excinfo.value.status_code == 403
 
     async def test_admin_export_logs_json_csv(self, mock_db, monkeypatch):
         """Export logs in JSON and CSV formats."""
