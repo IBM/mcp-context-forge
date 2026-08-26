@@ -2551,6 +2551,43 @@ class TestExtractGroupsAndRoles:
         result = SSOService._extract_groups_and_roles(user_data)
         assert result == []
 
+    def test_extracts_dict_shaped_roles_claim(self):
+        """IBM account-iam buckets role names by scope: {"SERVICE": ["ServiceOwner"]}."""
+        user_data = {"roles": {"SERVICE": ["ServiceOwner"]}}
+        result = SSOService._extract_groups_and_roles(user_data)
+        assert result == ["ServiceOwner"]
+
+    def test_extracts_dict_shaped_custom_groups_claim(self):
+        user_data = {"roles": {"SERVICE": ["ServiceOwner", "ServiceUser"], "ACCOUNT": ["AccountAdmin"]}}
+        result = SSOService._extract_groups_and_roles(user_data, groups_claim="roles")
+        assert result == ["ServiceOwner", "ServiceUser", "AccountAdmin"]
+
+    def test_dict_claim_accepts_string_buckets(self):
+        user_data = {"groups": {"SERVICE": "ServiceOwner", "ACCOUNT": ["AccountAdmin"]}}
+        result = SSOService._extract_groups_and_roles(user_data)
+        assert result == ["ServiceOwner", "AccountAdmin"]
+
+    def test_dict_claim_filters_non_string_values(self):
+        user_data = {"groups": {"SERVICE": ["valid", 123, None], "OTHER": 7, "NESTED": {"deep": ["x"]}}}
+        result = SSOService._extract_groups_and_roles(user_data)
+        assert result == ["valid"]
+
+    def test_deduplicates_when_groups_claim_is_roles(self):
+        """groups_claim="roles" reads the same claim twice; names must not double."""
+        user_data = {"roles": ["ServiceOwner"]}
+        result = SSOService._extract_groups_and_roles(user_data, groups_claim="roles")
+        assert result == ["ServiceOwner"]
+
+    def test_deduplicates_names_repeated_across_dict_buckets(self):
+        user_data = {"groups": {"A": ["shared", "a-only"], "B": ["shared", "b-only"]}}
+        result = SSOService._extract_groups_and_roles(user_data)
+        assert result == ["shared", "a-only", "b-only"]
+
+    def test_ignores_unsupported_claim_types(self):
+        user_data = {"groups": 42, "roles": None}
+        result = SSOService._extract_groups_and_roles(user_data)
+        assert result == []
+
 
 class TestBuildNormalizedUserInfo:
     """Tests for the extracted _build_normalized_user_info helper."""
