@@ -4839,6 +4839,7 @@ class ToolService(BaseService):
         require_app_visible: bool = False,
         require_model_visible: bool = False,
         retry_attempt: int = 0,
+        progress_callback: Optional[Any] = None,
     ) -> ToolResult:
         """
         Invoke a registered tool and record execution metrics.
@@ -4865,6 +4866,8 @@ class ToolService(BaseService):
             require_model_visible: When True, deny execution unless the resolved tool is model-visible.
             retry_attempt: Zero-based retry counter; 0 = original call.  Incremented by the retry
                 loop and compared against ``settings.max_tool_retries``.
+            progress_callback: Optional async callable (progress, total, message) invoked for
+                each progress update the upstream server emits during the call.
 
         Returns:
             Tool invocation result.
@@ -6048,7 +6051,7 @@ class ToolService(BaseService):
                                     httpx_client_factory=get_httpx_client_factory,
                                 ) as upstream:
                                     with anyio.fail_after(effective_timeout):
-                                        tool_call_result = await upstream.session.call_tool(tool_name_original, arguments, meta=meta_data)
+                                        tool_call_result = await upstream.session.call_tool(tool_name_original, arguments, meta=meta_data, progress_callback=progress_callback)
                             else:
                                 # Fallback: per-call session. Taken when no downstream session id
                                 # is available (admin UI test-invoke, internal /rpc callers), or
@@ -6094,7 +6097,7 @@ class ToolService(BaseService):
                                             },
                                         ):
                                             with anyio.fail_after(effective_timeout):
-                                                tool_call_result = await client.call_tool(tool_name_original, arguments, meta=request_meta_data)
+                                                tool_call_result = await client.call_tool(tool_name_original, arguments, meta=request_meta_data, progress_callback=progress_callback)
                                         with create_span(
                                             "mcp.client.response",
                                             {
@@ -6235,7 +6238,7 @@ class ToolService(BaseService):
                                     httpx_client_factory=get_httpx_client_factory,
                                 ) as upstream:
                                     with anyio.fail_after(effective_timeout):
-                                        tool_call_result = await upstream.session.call_tool(tool_name_original, arguments, meta=meta_data)
+                                        tool_call_result = await upstream.session.call_tool(tool_name_original, arguments, meta=meta_data, progress_callback=progress_callback)
                             else:
                                 # Fallback: per-call session. Taken when no downstream session id
                                 # is available (admin UI test-invoke, internal /rpc callers), when
@@ -6281,7 +6284,7 @@ class ToolService(BaseService):
                                             },
                                         ):
                                             with anyio.fail_after(effective_timeout):
-                                                tool_call_result = await client.call_tool(tool_name_original, arguments, meta=request_meta_data)
+                                                tool_call_result = await client.call_tool(tool_name_original, arguments, meta=request_meta_data, progress_callback=progress_callback)
                                         with create_span(
                                             "mcp.client.response",
                                             {

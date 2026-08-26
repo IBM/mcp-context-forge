@@ -1742,6 +1742,7 @@ async def call_tool(
     server_id, request_headers, user_context = await _get_request_context_or_default()
 
     meta_data = None
+    downstream_session = None
     # Extract _meta from request context if available
     try:
         ctx = mcp_app.request_context
@@ -1749,9 +1750,29 @@ async def call_tool(
             # MCP 2.0 RequestParamsMeta is a TypedDict (no model_dump); tolerate
             # legacy model-shaped meta for tests that inject a Pydantic object.
             meta_data = dict(ctx.meta) if isinstance(ctx.meta, dict) else ctx.meta.model_dump()
+        if ctx:
+            downstream_session = getattr(ctx, "session", None)
     except LookupError:
         # request_context might not be active in some edge cases (e.g. tests)
         logger.debug("No active request context found")
+
+    async def _relay_progress(progress: float, total: float | None = None, message: str | None = None) -> None:
+        """Forward an upstream progress update to the downstream caller.
+
+        session.report_progress is a no-op when the caller supplied no
+        progress token, so relaying unconditionally is safe.
+
+        Args:
+            progress: Current progress value.
+            total: Optional total value.
+            message: Optional human-readable status message.
+        """
+        if downstream_session is None:
+            return
+        try:
+            await downstream_session.report_progress(progress, total, message)
+        except Exception as exc:  # noqa: BLE001 - progress is best-effort; never fail the call over it
+            logger.debug("Progress relay failed: %s", exc)
 
     # First-Party
     from mcpgateway.auth_context import get_scoped_visibility_from_user_context  # pylint: disable=import-outside-toplevel
@@ -1945,6 +1966,7 @@ async def call_tool(
                 server_id=server_id,
                 meta_data=meta_data,
                 require_model_visible=True,
+                progress_callback=_relay_progress,
             )
             if not result or not result.content:
                 logger.warning("No content returned by tool: %s", name)
