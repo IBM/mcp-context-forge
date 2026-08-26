@@ -66,6 +66,15 @@ from mcpgateway.config import settings
 
 logger = logging.getLogger(__name__)
 
+
+def pin_url_to_resolved_ip(url: str, resolved_ip: str) -> str:
+    """Return ``url`` with only its network location replaced by ``resolved_ip``."""
+    parsed = urlparse(url)
+    pinned_host = f"[{resolved_ip}]" if ":" in resolved_ip else resolved_ip
+    pinned_netloc = f"{pinned_host}:{parsed.port}" if parsed.port is not None else pinned_host
+    return parsed._replace(netloc=pinned_netloc).geturl()
+
+
 # ============================================================================
 # Precompiled regex patterns (compiled once at module load for performance)
 # ============================================================================

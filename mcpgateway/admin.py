@@ -110,7 +110,7 @@ from mcpgateway.db import Server as DbServer
 from mcpgateway.db import SessionLocal
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import utc_now
-from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, get_current_user_with_permissions, require_any_permission, require_permission
+from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, get_current_user_with_permissions, require_admin_permission, require_any_permission, require_permission
 from mcpgateway.routers.email_auth import create_access_token
 from mcpgateway.schemas import (
     _encode_auth_headers_list,
@@ -125,6 +125,7 @@ from mcpgateway.schemas import (
     CatalogServerRegisterResponse,
     CatalogServerStatusResponse,
     GatewayCreate,
+    GatewayOwnershipTransferRequest,
     GatewayRead,
     GatewayTestRequest,
     GatewayTestResponse,
@@ -160,7 +161,7 @@ from mcpgateway.services.a2a_agent_plugin_binding_service import A2AAgentPluginB
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
 from mcpgateway.services.argon2_service import Argon2PasswordService
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
-from mcpgateway.services.catalog_service import catalog_service
+from mcpgateway.services.catalog_service import catalog_service, CatalogRegistrationPermissionError
 from mcpgateway.services.content_security import ContentSizeError, ContentTypeError, TemplateValidationError
 from mcpgateway.services.csrf_service import get_csrf_service
 from mcpgateway.services.email_auth_service import AuthenticationError, EmailAuthService, PasswordValidationError
@@ -13117,6 +13118,44 @@ async def admin_delete_gateway_rest(
         )
 
 
+# Ownership transfer endpoint for gateways
+@admin_router.post("/gateways/{gateway_id}/transfer-ownership", response_model=GatewayRead)
+@require_admin_permission()
+async def transfer_gateway_ownership(
+    gateway_id: str,
+    transfer: GatewayOwnershipTransferRequest,
+    db: Session = Depends(get_db),
+    _user=Depends(get_current_user_with_permissions),
+) -> GatewayRead:
+    """Transfer ownership of a gateway to another user.
+
+    Args:
+        gateway_id: The ID of the gateway to transfer.
+        transfer: Transfer request with target owner email and optional team.
+        db: Database session.
+        _user: Authenticated admin user.
+
+    Returns:
+        Updated GatewayRead with new ownership.
+    """
+    actor_email = get_user_email(_user)
+    token_teams = extract_token_team_ids(_user)
+    try:
+        result = await gateway_service.transfer_gateway_ownership(
+            db=db,
+            gateway_id=gateway_id,
+            target_owner_email=transfer.target_owner_email,
+            actor_email=actor_email,
+            target_team_id=transfer.target_team_id,
+            token_teams=token_teams,
+        )
+        return result
+    except GatewayNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 # Legacy POST endpoint for backward compatibility with HTMX UI
 # OAuth callback is now handled by the dedicated OAuth router at /oauth/callback
 # This route has been removed to avoid conflicts with the complete implementation
@@ -17944,6 +17983,7 @@ async def list_catalog_servers(
 
 @admin_router.post("/mcp-registry/{server_id}/register", response_model=CatalogServerRegisterResponse)
 @require_permission("servers.create", allow_admin_bypass=False)
+@require_permission("gateways.create", allow_admin_bypass=False)
 async def register_catalog_server(
     server_id: str,
     http_request: Request,
@@ -17969,7 +18009,19 @@ async def register_catalog_server(
     if not settings.mcpgateway_catalog_enabled:
         raise HTTPException(status_code=404, detail="Catalog feature is disabled")
 
-    result = await catalog_service.register_catalog_server(catalog_id=server_id, request=request, db=db)
+    user_email, token_teams = get_scoped_resource_access_context(http_request, _user)
+
+    try:
+        result = await catalog_service.register_catalog_server(
+            catalog_id=server_id,
+            request=request,
+            db=db,
+            created_by=user_email,
+            owner_email=user_email,
+            token_teams=token_teams,
+        )
+    except CatalogRegistrationPermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
 
     # Check if this is an HTMX request
     is_htmx = http_request.headers.get("HX-Request") == "true"
@@ -18071,7 +18123,9 @@ async def check_catalog_server_status(
 
 @admin_router.post("/mcp-registry/bulk-register", response_model=CatalogBulkRegisterResponse)
 @require_permission("servers.create", allow_admin_bypass=False)
+@require_permission("gateways.create", allow_admin_bypass=False)
 async def bulk_register_catalog_servers(
+    http_request: Request,
     request: CatalogBulkRegisterRequest,
     db: Session = Depends(get_db),
     _user=Depends(get_current_user_with_permissions),
@@ -18079,6 +18133,7 @@ async def bulk_register_catalog_servers(
     """Register multiple catalog servers at once.
 
     Args:
+        http_request: FastAPI request object
         request: Bulk registration request with server IDs
         db: Database session
         _user: Authenticated user
@@ -18087,12 +18142,23 @@ async def bulk_register_catalog_servers(
         Bulk registration response with success/failure details
 
     Raises:
-        HTTPException: If the catalog feature is disabled.
+        HTTPException: If the catalog feature is disabled or scope is invalid.
     """
     if not settings.mcpgateway_catalog_enabled:
         raise HTTPException(status_code=404, detail="Catalog feature is disabled")
 
-    return await catalog_service.bulk_register_servers(request, db)
+    user_email, token_teams = get_scoped_resource_access_context(http_request, _user)
+
+    try:
+        return await catalog_service.bulk_register_servers(
+            request,
+            db,
+            created_by=user_email,
+            owner_email=user_email,
+            token_teams=token_teams,
+        )
+    except CatalogRegistrationPermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
 
 
 @admin_router.get("/mcp-registry/partial")
