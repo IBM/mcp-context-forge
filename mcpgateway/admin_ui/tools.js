@@ -1219,8 +1219,10 @@ export const initToolSelect = function (
               ? "edit-server-view-public"
               : "add-server-view-public";
           const viewPublicCb = document.getElementById(viewPublicId);
-          if (viewPublicCb && viewPublicCb.checked) {
-            params.set("include_public", "true");
+          if (viewPublicCb) {
+            // Team filtering includes public items by default; send the
+            // unchecked state explicitly so it still narrows.
+            params.set("include_public", viewPublicCb.checked ? "true" : "false");
           }
           const queryString = params.toString();
           const response = await fetch(
