@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""API tests for secure OAuth issuer metadata discovery."""
+"""Location: ./tests/unit/mcpgateway/test_oauth_metadata_discovery.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+
+API tests for secure OAuth issuer metadata discovery.
+"""
 
 # Standard
 from unittest.mock import AsyncMock, MagicMock
