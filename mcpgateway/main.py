@@ -181,7 +181,15 @@ from mcpgateway.services.content_security import ContentPatternError, ContentSiz
 from mcpgateway.services.dataplane_publisher import DataplanePublisherService
 from mcpgateway.services.email_auth_service import EmailAuthService
 from mcpgateway.services.export_service import ExportError, ExportService
-from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayCredentialError, GatewayDuplicateConflictError, GatewayError, GatewayLookupConflictError, GatewayNameConflictError, GatewayNotFoundError
+from mcpgateway.services.gateway_service import (
+    GatewayConnectionError,
+    GatewayCredentialError,
+    GatewayDuplicateConflictError,
+    GatewayError,
+    GatewayLookupConflictError,
+    GatewayNameConflictError,
+    GatewayNotFoundError,
+)
 from mcpgateway.services.import_service import ConflictStrategy, ImportConflictError
 from mcpgateway.services.import_service import ImportError as ImportServiceError
 from mcpgateway.services.import_service import ImportService, ImportValidationError
