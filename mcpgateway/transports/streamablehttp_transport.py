@@ -94,7 +94,7 @@ from mcpgateway.services.oauth_manager import OAuthEnforcementUnavailableError, 
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.prompt_service import PromptNotFoundError, PromptService
 from mcpgateway.services.resource_service import ResourceNotFoundError, ResourceService
-from mcpgateway.services.tool_service import ToolInvocationError, ToolNotFoundError, ToolService
+from mcpgateway.services.tool_service import ToolInputRequired, ToolInvocationError, ToolNotFoundError, ToolService
 from mcpgateway.transports.context import UserContext
 from mcpgateway.transports.redis_event_store import RedisEventStore
 from mcpgateway.utils.gateway_access import build_gateway_auth_headers, check_gateway_access, extract_gateway_id_from_headers, GATEWAY_ID_HEADER
@@ -1743,6 +1743,9 @@ async def call_tool(
 
     meta_data = None
     downstream_session = None
+    mrtr_allowed = False
+    inbound_input_responses = None
+    inbound_request_state = None
     # Extract _meta from request context if available
     try:
         ctx = mcp_app.request_context
@@ -1752,6 +1755,22 @@ async def call_tool(
             meta_data = dict(ctx.meta) if isinstance(ctx.meta, dict) else ctx.meta.model_dump()
         if ctx:
             downstream_session = getattr(ctx, "session", None)
+            # MRTR elicitation pass-through is modern-era only (scoping decision:
+            # legacy clients keep today's no-elicitation behavior).
+            protocol_version = getattr(ctx, "protocol_version", None)
+            mrtr_allowed = protocol_version is not None and protocol_version not in HANDSHAKE_PROTOCOL_VERSIONS
+            raw_params = getattr(ctx, "params", None) or {}
+            raw_responses = raw_params.get("inputResponses") or raw_params.get("input_responses")
+            inbound_request_state = raw_params.get("requestState") or raw_params.get("request_state")
+            if raw_responses:
+                inbound_input_responses = {}
+                for key, value in raw_responses.items():
+                    if isinstance(value, dict):
+                        try:
+                            value = types.ElicitResult.model_validate(value)
+                        except Exception:  # noqa: BLE001 - non-elicitation responses pass through raw
+                            pass
+                    inbound_input_responses[key] = value
     except LookupError:
         # request_context might not be active in some edge cases (e.g. tests)
         logger.debug("No active request context found")
@@ -1964,6 +1983,9 @@ async def call_tool(
                 meta_data=meta_data,
                 require_model_visible=True,
                 progress_callback=_relay_progress,
+                allow_input_required=mrtr_allowed,
+                input_responses=inbound_input_responses,
+                request_state=inbound_request_state,
             )
             if not result or not result.content:
                 logger.warning("No content returned by tool: %s", name)
@@ -2102,6 +2124,11 @@ async def call_tool(
             if structured:
                 return (unstructured, structured)
             return unstructured
+    except ToolInputRequired as e:
+        # 2026 MRTR: return the upstream question to the modern client, which
+        # answers and retries the call with input_responses + request_state.
+        logger.info("Input required for tool '%s'; relaying to client", name)
+        return e.result
     except ToolNotFoundError:
         logger.info("Unknown tool requested: %s", name)
         return types.CallToolResult(content=[types.TextContent(type="text", text=f"Unknown tool: {name}")], is_error=True)
@@ -3097,6 +3124,8 @@ async def _adapt_call_tool(ctx: Any, params: Any) -> "types.CallToolResult":
     token = _v2_request_ctx.set(ctx)
     try:
         result = await call_tool(params.name, params.arguments or {})
+        if isinstance(result, types.InputRequiredResult):
+            return result
         if isinstance(result, types.CallToolResult):
             return result
         if isinstance(result, tuple) and len(result) == 2:
