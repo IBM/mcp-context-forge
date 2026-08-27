@@ -1209,6 +1209,9 @@ class Settings(BaseSettings):
     # Tool Execution Cancellation
     mcpgateway_tool_cancellation_enabled: bool = Field(default=True, description="Enable gateway-authoritative tool execution cancellation with REST API endpoints")
 
+    # Tool Preview (dry-run)
+    mcpgateway_tool_preview_enabled: bool = Field(default=True, description="Enable the tool preview (dry-run) endpoint at /tools/preview/{name}")
+
     # A2A (Agent-to-Agent) Feature Flags
     mcpgateway_a2a_enabled: bool = True
     mcpgateway_a2a_max_agents: int = 100

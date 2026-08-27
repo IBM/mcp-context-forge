@@ -480,3 +480,14 @@ class TestSharedResolutionPath:
                 await service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
 
         assert mock_derive.call_count == 2, "invoke_tool and preview_tool_invocation must both call _derive_plugin_context_id"
+
+
+class TestGetDispatchableHookRefs:
+    """Direct coverage of _get_dispatchable_hook_refs's own guard clauses -- both current
+    callers (preview_tool_invocation, _build_rust_native_tool_post_invoke_retry_policy)
+    already guard against a None plugin_manager before calling it, so its own early-return
+    is otherwise unreachable through either call site."""
+
+    def test_none_plugin_manager_returns_empty_list(self):
+        service = ToolService()
+        assert service._get_dispatchable_hook_refs(None, "tool_pre_invoke", payload=Mock(), global_context=Mock()) == []
