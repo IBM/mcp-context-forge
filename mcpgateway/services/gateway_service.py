@@ -59,10 +59,11 @@ import uuid
 # Third-Party
 from filelock import FileLock, Timeout
 import httpx
-from mcp import ClientSession
+from mcp import ClientSession, MCPError
 from mcp.client.sse import sse_client
-from mcp.client.streamable_http import streamablehttp_client
-from mcp.shared.exceptions import McpError
+from mcp.client.streamable_http import streamable_http_client
+from mcp.types import REQUEST_TIMEOUT
+import httpx2
 from pydantic import ValidationError
 from sqlalchemy import and_, delete, desc, or_, select, update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
@@ -115,7 +116,7 @@ from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.base_service import BaseService
 from mcpgateway.services.encryption_service import get_encryption_service, protect_oauth_config_for_storage
 from mcpgateway.services.event_service import EventService
-from mcpgateway.services.http_client_service import get_default_verify, get_http_timeout, get_isolated_http_client
+from mcpgateway.services.http_client_service import get_default_verify, get_httpx2_timeout, get_isolated_http_client
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.mcp_apps import merge_mcp_protocol_meta, optional_extension_metadata, validate_extension_metadata, validate_ui_resource
 from mcpgateway.services.oauth_manager import OAuthManager
@@ -126,6 +127,7 @@ from mcpgateway.services.token_exchange_cache import TokenExchangeCache
 from mcpgateway.utils.admin_check import is_admin_bypass_granted
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.display_name import generate_display_name
+from mcpgateway.utils.mcp_proxy_client import mcp_proxy_client
 from mcpgateway.utils.pagination import unified_paginate
 from mcpgateway.utils.passthrough_headers import get_passthrough_headers
 from mcpgateway.utils.redis_client import get_redis_client
@@ -4721,10 +4723,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
             def get_httpx_client_factory(
                 headers: dict[str, str] | None = None,
-                timeout: httpx.Timeout | None = None,
-                auth: httpx.Auth | None = None,
-            ) -> httpx.AsyncClient:
-                """Factory function to create httpx.AsyncClient with optional CA certificate.
+                timeout: httpx2.Timeout | None = None,
+                auth: httpx2.Auth | None = None,
+            ) -> httpx2.AsyncClient:
+                """Factory function to create httpx2.AsyncClient with optional CA certificate.
 
                 Args:
                     headers: Optional headers for the client
@@ -4732,15 +4734,15 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     auth: Optional auth for the client
 
                 Returns:
-                    httpx.AsyncClient: Configured HTTPX async client
+                    httpx2.AsyncClient: Configured HTTPX async client
                 """
-                return httpx.AsyncClient(
+                return httpx2.AsyncClient(
                     verify=ssl_context if ssl_context else get_default_verify(),
                     follow_redirects=False,
                     headers=headers,
-                    timeout=timeout if timeout else get_http_timeout(),
+                    timeout=timeout if timeout else get_httpx2_timeout(),
                     auth=auth,
-                    limits=httpx.Limits(
+                    limits=httpx2.Limits(
                         max_connections=settings.httpx_max_connections,
                         max_keepalive_connections=settings.httpx_max_keepalive_connections,
                         keepalive_expiry=settings.httpx_keepalive_expiry,
@@ -4846,13 +4848,13 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         # so they don't go through the UpstreamSessionRegistry (which requires
                         # a downstream session id). A fresh per-call session suffices — the
                         # probe is cheap and verifies that an initialize round-trip works.
-                        async with streamablehttp_client(url=gateway_url, headers=headers, timeout=settings.health_check_timeout, httpx_client_factory=get_httpx_client_factory) as (
-                            read_stream,
-                            write_stream,
-                            _get_session_id,
-                        ):
-                            async with ClientSession(read_stream, write_stream) as session:
-                                response = await session.initialize()
+                        async with mcp_proxy_client(
+                            url=gateway_url,
+                            headers=headers,
+                            timeout=settings.health_check_timeout,
+                            httpx_client_factory=get_httpx_client_factory,
+                        ) as client:
+                            pass  # Client auto-initializes on first RPC call (health check only does initialize)
 
                     # Reset failure counter on any successful health check
                     self._gateway_failure_counts[gateway_id] = 0
@@ -7003,108 +7005,106 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         if validation_warnings is None:
             validation_warnings = []
 
-        # Use async with for both sse_client and ClientSession
+        # Client auto-initializes on entry; no manual initialize() needed.
         try:
-            async with sse_client(url=server_url, headers=authentication) as streams:
-                async with ClientSession(*streams) as session:
-                    # Initialize the session
-                    response = await session.initialize()
-                    capabilities = response.capabilities.model_dump(by_alias=True, exclude_none=True)
-                    logger.debug("Server capabilities: %s", capabilities)
+            async with mcp_proxy_client(url=server_url, headers=authentication, transport="sse") as client:
+                # Read negotiated capabilities from the auto-initialized session
+                capabilities = client.server_capabilities.model_dump(by_alias=True, exclude_none=True)
+                logger.debug("Server capabilities: %s", capabilities)
 
-                    response = await session.list_tools()
-                    tools = response.tools
-                    tools = [tool.model_dump(by_alias=True, exclude_none=True, exclude_unset=True) for tool in tools]
+                response = await client.list_tools()
+                tools = response.tools
+                tools = [tool.model_dump(by_alias=True, exclude_none=True, exclude_unset=True) for tool in tools]
 
-                    tools, validation_errors = self._validate_tools(tools, context="oauth")
-                    if tools:
-                        logger.info("Fetched %s tools from gateway", len(tools))
-                    # Fetch resources if supported
+                tools, validation_errors = self._validate_tools(tools, context="oauth")
+                if tools:
+                    logger.info("Fetched %s tools from gateway", len(tools))
+                # Fetch resources if supported
 
-                    logger.debug("Checking for resources support: %s", capabilities.get("resources"))
-                    resources = []
-                    if capabilities.get("resources"):
-                        try:
-                            response = await session.list_resources()
-                            raw_resources = response.resources
-                            for resource in raw_resources:
-                                resource_data = resource.model_dump(by_alias=True, exclude_none=True)
-                                merge_mcp_protocol_meta(resource_data)
-                                # Convert AnyUrl to string if present
-                                if "uri" in resource_data and hasattr(resource_data["uri"], "unicode_string"):
-                                    resource_data["uri"] = str(resource_data["uri"])
-                                # Add default content if not present (will be fetched on demand)
-                                if "content" not in resource_data:
-                                    resource_data["content"] = ""
-                                try:
-                                    resources.append(ResourceCreate.model_validate(resource_data))
-                                except Exception:
-                                    # If validation fails, create minimal resource
-                                    resources.append(
-                                        ResourceCreate(
-                                            uri=str(resource_data.get("uri", "")),
-                                            name=resource_data.get("name", ""),
-                                            description=resource_data.get("description"),
-                                            mime_type=resource_data.get("mimeType"),
-                                            uri_template=resource_data.get("uriTemplate") or None,
-                                            content="",
-                                            extension_metadata=resource_data.get("extensionMetadata"),
-                                        )
+                logger.debug("Checking for resources support: %s", capabilities.get("resources"))
+                resources = []
+                if capabilities.get("resources"):
+                    try:
+                        response = await client.list_resources()
+                        raw_resources = response.resources
+                        for resource in raw_resources:
+                            resource_data = resource.model_dump(by_alias=True, exclude_none=True)
+                            merge_mcp_protocol_meta(resource_data)
+                            # Convert AnyUrl to string if present
+                            if "uri" in resource_data and hasattr(resource_data["uri"], "unicode_string"):
+                                resource_data["uri"] = str(resource_data["uri"])
+                            # Add default content if not present (will be fetched on demand)
+                            if "content" not in resource_data:
+                                resource_data["content"] = ""
+                            try:
+                                resources.append(ResourceCreate.model_validate(resource_data))
+                            except Exception:
+                                # If validation fails, create minimal resource
+                                resources.append(
+                                    ResourceCreate(
+                                        uri=str(resource_data.get("uri", "")),
+                                        name=resource_data.get("name", ""),
+                                        description=resource_data.get("description"),
+                                        mime_type=resource_data.get("mimeType"),
+                                        uri_template=resource_data.get("uriTemplate") or None,
+                                        content="",
+                                        extension_metadata=resource_data.get("extensionMetadata"),
                                     )
-                            logger.info("Fetched %s resources from gateway", len(resources))
-                        except Exception as e:
-                            logger.warning("Failed to fetch resources: %s", e)
+                                )
+                        logger.info("Fetched %s resources from gateway", len(resources))
+                    except Exception as e:
+                        logger.warning("Failed to fetch resources: %s", e)
 
-                        # resource template URI
-                        try:
-                            response_templates = await session.list_resource_templates()
-                            raw_resources_templates = response_templates.resourceTemplates
-                            resource_templates = []
-                            for resource_template in raw_resources_templates:
-                                resource_template_data = resource_template.model_dump(by_alias=True, exclude_none=True)
-                                merge_mcp_protocol_meta(resource_template_data)
+                    # resource template URI
+                    try:
+                        response_templates = await client.list_resource_templates()
+                        raw_resources_templates = response_templates.resource_templates
+                        resource_templates = []
+                        for resource_template in raw_resources_templates:
+                            resource_template_data = resource_template.model_dump(by_alias=True, exclude_none=True)
+                            merge_mcp_protocol_meta(resource_template_data)
 
-                                if "uriTemplate" in resource_template_data:  # and hasattr(resource_template_data["uriTemplate"], "unicode_string"):
-                                    resource_template_data["uri_template"] = str(resource_template_data["uriTemplate"])
-                                    resource_template_data["uri"] = str(resource_template_data["uriTemplate"])
+                            if "uriTemplate" in resource_template_data:  # and hasattr(resource_template_data["uriTemplate"], "unicode_string"):
+                                resource_template_data["uri_template"] = str(resource_template_data["uriTemplate"])
+                                resource_template_data["uri"] = str(resource_template_data["uriTemplate"])
 
-                                if "content" not in resource_template_data:
-                                    resource_template_data["content"] = ""
+                            if "content" not in resource_template_data:
+                                resource_template_data["content"] = ""
 
-                                resources.append(ResourceCreate.model_validate(resource_template_data))
-                                resource_templates.append(ResourceCreate.model_validate(resource_template_data))
-                            logger.info("Fetched %s resource templates from gateway", len(resource_templates))
-                        except Exception as e:
-                            logger.warning("Failed to fetch resource templates: %s", e)
+                            resources.append(ResourceCreate.model_validate(resource_template_data))
+                            resource_templates.append(ResourceCreate.model_validate(resource_template_data))
+                        logger.info("Fetched %s resource templates from gateway", len(resource_templates))
+                    except Exception as e:
+                        logger.warning("Failed to fetch resource templates: %s", e)
 
-                    # Fetch prompts if supported
-                    prompts = []
-                    logger.debug("Checking for prompts support: %s", capabilities.get("prompts"))
-                    if capabilities.get("prompts"):
-                        try:
-                            response = await session.list_prompts()
-                            raw_prompts = response.prompts
-                            for prompt in raw_prompts:
-                                prompt_data = prompt.model_dump(by_alias=True, exclude_none=True)
-                                # Add default template if not present
-                                if "template" not in prompt_data:
-                                    prompt_data["template"] = ""
-                                try:
-                                    prompts.append(PromptCreate.model_validate(prompt_data))
-                                except Exception:
-                                    # If validation fails, create minimal prompt
-                                    prompts.append(
-                                        PromptCreate(
-                                            name=prompt_data.get("name", ""),
-                                            description=prompt_data.get("description"),
-                                            template=prompt_data.get("template", ""),
-                                        )
+                # Fetch prompts if supported
+                prompts = []
+                logger.debug("Checking for prompts support: %s", capabilities.get("prompts"))
+                if capabilities.get("prompts"):
+                    try:
+                        response = await client.list_prompts()
+                        raw_prompts = response.prompts
+                        for prompt in raw_prompts:
+                            prompt_data = prompt.model_dump(by_alias=True, exclude_none=True)
+                            # Add default template if not present
+                            if "template" not in prompt_data:
+                                prompt_data["template"] = ""
+                            try:
+                                prompts.append(PromptCreate.model_validate(prompt_data))
+                            except Exception:
+                                # If validation fails, create minimal prompt
+                                prompts.append(
+                                    PromptCreate(
+                                        name=prompt_data.get("name", ""),
+                                        description=prompt_data.get("description"),
+                                        template=prompt_data.get("template", ""),
                                     )
-                            logger.info("Fetched %s prompts from gateway", len(prompts))
-                        except Exception as e:
-                            logger.warning("Failed to fetch prompts: %s", e)
+                                )
+                        logger.info("Fetched %s prompts from gateway", len(prompts))
+                    except Exception as e:
+                        logger.warning("Failed to fetch prompts: %s", e)
 
-                    return capabilities, tools, resources, prompts, validation_errors
+                return capabilities, tools, resources, prompts, validation_errors
         except Exception as e:
             # Note: This function is for OAuth servers only, which don't use query param auth
             # Still sanitize in case exception contains URL with static sensitive params
@@ -7150,10 +7150,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         def get_httpx_client_factory(
             headers: dict[str, str] | None = None,
-            timeout: httpx.Timeout | None = None,
-            auth: httpx.Auth | None = None,
-        ) -> httpx.AsyncClient:
-            """Factory function to create httpx.AsyncClient with optional CA certificate.
+            timeout: httpx2.Timeout | None = None,
+            auth: httpx2.Auth | None = None,
+        ) -> httpx2.AsyncClient:
+            """Factory function to create httpx2.AsyncClient with optional CA certificate.
 
             Args:
                 headers: Optional headers for the client
@@ -7161,7 +7161,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 auth: Optional auth for the client
 
             Returns:
-                httpx.AsyncClient: Configured HTTPX async client
+                httpx2.AsyncClient: Configured HTTPX async client
             """
             if server_url and server_url.lower().startswith("http://"):
                 ctx = None
@@ -7170,122 +7170,119 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             else:
                 ctx = None
 
-            return httpx.AsyncClient(
+            return httpx2.AsyncClient(
                 verify=ctx if ctx else get_default_verify(),
                 follow_redirects=False,
                 headers=headers,
-                timeout=timeout if timeout else get_http_timeout(),
+                timeout=timeout if timeout else get_httpx2_timeout(),
                 auth=auth,
-                limits=httpx.Limits(
+                limits=httpx2.Limits(
                     max_connections=settings.httpx_max_connections,
                     max_keepalive_connections=settings.httpx_max_keepalive_connections,
                     keepalive_expiry=settings.httpx_keepalive_expiry,
                 ),
             )
 
-        # Use async with for both sse_client and ClientSession
-        async with sse_client(url=server_url, headers=authentication, httpx_client_factory=get_httpx_client_factory) as streams:
-            async with ClientSession(*streams) as session:
-                # Initialize the session
-                response = await session.initialize()
+        # Client auto-initializes on entry; no manual initialize() needed.
+        async with mcp_proxy_client(url=server_url, headers=authentication, httpx_client_factory=get_httpx_client_factory, transport="sse") as client:
+            # Read negotiated capabilities from the auto-initialized session
+            capabilities = client.server_capabilities.model_dump(by_alias=True, exclude_none=True)
+            logger.debug("Server capabilities: %s", capabilities)
 
-                capabilities = response.capabilities.model_dump(by_alias=True, exclude_none=True)
-                logger.debug("Server capabilities: %s", capabilities)
+            response = await client.list_tools()
+            tools = response.tools
+            tools = [tool.model_dump(by_alias=True, exclude_none=True, exclude_unset=True) for tool in tools]
 
-                response = await session.list_tools()
-                tools = response.tools
-                tools = [tool.model_dump(by_alias=True, exclude_none=True, exclude_unset=True) for tool in tools]
-
-                tools, validation_errors = self._validate_tools(tools)
-                if tools:
-                    logger.info("Fetched %s tools from gateway", len(tools))
-                # Fetch resources if supported
-                resources = []
-                if include_resources:
-                    logger.debug("Checking for resources support: %s", capabilities.get("resources"))
-                    if capabilities.get("resources"):
-                        try:
-                            response = await session.list_resources()
-                            raw_resources = response.resources
-                            for resource in raw_resources:
-                                resource_data = resource.model_dump(by_alias=True, exclude_none=True)
-                                merge_mcp_protocol_meta(resource_data)
-                                # Convert AnyUrl to string if present
-                                if "uri" in resource_data and hasattr(resource_data["uri"], "unicode_string"):
-                                    resource_data["uri"] = str(resource_data["uri"])
-                                # Add default content if not present (will be fetched on demand)
-                                if "content" not in resource_data:
-                                    resource_data["content"] = ""
-                                try:
-                                    resources.append(ResourceCreate.model_validate(resource_data))
-                                except Exception:
-                                    # If validation fails, create minimal resource
-                                    resources.append(
-                                        ResourceCreate(
-                                            uri=str(resource_data.get("uri", "")),
-                                            name=resource_data.get("name", ""),
-                                            description=resource_data.get("description"),
-                                            mime_type=resource_data.get("mimeType"),
-                                            uri_template=resource_data.get("uriTemplate") or None,
-                                            content="",
-                                            extension_metadata=resource_data.get("extensionMetadata"),
-                                        )
+            tools, validation_errors = self._validate_tools(tools)
+            if tools:
+                logger.info("Fetched %s tools from gateway", len(tools))
+            # Fetch resources if supported
+            resources = []
+            if include_resources:
+                logger.debug("Checking for resources support: %s", capabilities.get("resources"))
+                if capabilities.get("resources"):
+                    try:
+                        response = await client.list_resources()
+                        raw_resources = response.resources
+                        for resource in raw_resources:
+                            resource_data = resource.model_dump(by_alias=True, exclude_none=True)
+                            merge_mcp_protocol_meta(resource_data)
+                            # Convert AnyUrl to string if present
+                            if "uri" in resource_data and hasattr(resource_data["uri"], "unicode_string"):
+                                resource_data["uri"] = str(resource_data["uri"])
+                            # Add default content if not present (will be fetched on demand)
+                            if "content" not in resource_data:
+                                resource_data["content"] = ""
+                            try:
+                                resources.append(ResourceCreate.model_validate(resource_data))
+                            except Exception:
+                                # If validation fails, create minimal resource
+                                resources.append(
+                                    ResourceCreate(
+                                        uri=str(resource_data.get("uri", "")),
+                                        name=resource_data.get("name", ""),
+                                        description=resource_data.get("description"),
+                                        mime_type=resource_data.get("mimeType"),
+                                        uri_template=resource_data.get("uriTemplate") or None,
+                                        content="",
+                                        extension_metadata=resource_data.get("extensionMetadata"),
                                     )
-                            logger.info("Fetched %s resources from gateway", len(resources))
-                        except Exception as e:
-                            logger.warning("Failed to fetch resources: %s", e)
+                                )
+                        logger.info("Fetched %s resources from gateway", len(resources))
+                    except Exception as e:
+                        logger.warning("Failed to fetch resources: %s", e)
 
-                        # resource template URI
-                        try:
-                            response_templates = await session.list_resource_templates()
-                            raw_resources_templates = response_templates.resourceTemplates
-                            resource_templates = []
-                            for resource_template in raw_resources_templates:
-                                resource_template_data = resource_template.model_dump(by_alias=True, exclude_none=True)
-                                merge_mcp_protocol_meta(resource_template_data)
+                    # resource template URI
+                    try:
+                        response_templates = await client.list_resource_templates()
+                        raw_resources_templates = response_templates.resource_templates
+                        resource_templates = []
+                        for resource_template in raw_resources_templates:
+                            resource_template_data = resource_template.model_dump(by_alias=True, exclude_none=True)
+                            merge_mcp_protocol_meta(resource_template_data)
 
-                                if "uriTemplate" in resource_template_data:  # and hasattr(resource_template_data["uriTemplate"], "unicode_string"):
-                                    resource_template_data["uri_template"] = str(resource_template_data["uriTemplate"])
-                                    resource_template_data["uri"] = str(resource_template_data["uriTemplate"])
+                            if "uriTemplate" in resource_template_data:  # and hasattr(resource_template_data["uriTemplate"], "unicode_string"):
+                                resource_template_data["uri_template"] = str(resource_template_data["uriTemplate"])
+                                resource_template_data["uri"] = str(resource_template_data["uriTemplate"])
 
-                                if "content" not in resource_template_data:
-                                    resource_template_data["content"] = ""
+                            if "content" not in resource_template_data:
+                                resource_template_data["content"] = ""
 
-                                resources.append(ResourceCreate.model_validate(resource_template_data))
-                                resource_templates.append(ResourceCreate.model_validate(resource_template_data))
-                            logger.info("Fetched %s resource templates from gateway", len(raw_resources_templates))
-                        except Exception as ei:
-                            logger.warning("Failed to fetch resource templates: %s", ei)
+                            resources.append(ResourceCreate.model_validate(resource_template_data))
+                            resource_templates.append(ResourceCreate.model_validate(resource_template_data))
+                        logger.info("Fetched %s resource templates from gateway", len(raw_resources_templates))
+                    except Exception as ei:
+                        logger.warning("Failed to fetch resource templates: %s", ei)
 
-                # Fetch prompts if supported
-                prompts = []
-                if include_prompts:
-                    logger.debug("Checking for prompts support: %s", capabilities.get("prompts"))
-                    if capabilities.get("prompts"):
-                        try:
-                            response = await session.list_prompts()
-                            raw_prompts = response.prompts
-                            for prompt in raw_prompts:
-                                prompt_data = prompt.model_dump(by_alias=True, exclude_none=True)
-                                # Add default template if not present
-                                if "template" not in prompt_data:
-                                    prompt_data["template"] = ""
-                                try:
-                                    prompts.append(PromptCreate.model_validate(prompt_data))
-                                except Exception:
-                                    # If validation fails, create minimal prompt
-                                    prompts.append(
-                                        PromptCreate(
-                                            name=prompt_data.get("name", ""),
-                                            description=prompt_data.get("description"),
-                                            template=prompt_data.get("template", ""),
-                                        )
+            # Fetch prompts if supported
+            prompts = []
+            if include_prompts:
+                logger.debug("Checking for prompts support: %s", capabilities.get("prompts"))
+                if capabilities.get("prompts"):
+                    try:
+                        response = await client.list_prompts()
+                        raw_prompts = response.prompts
+                        for prompt in raw_prompts:
+                            prompt_data = prompt.model_dump(by_alias=True, exclude_none=True)
+                            # Add default template if not present
+                            if "template" not in prompt_data:
+                                prompt_data["template"] = ""
+                            try:
+                                prompts.append(PromptCreate.model_validate(prompt_data))
+                            except Exception:
+                                # If validation fails, create minimal prompt
+                                prompts.append(
+                                    PromptCreate(
+                                        name=prompt_data.get("name", ""),
+                                        description=prompt_data.get("description"),
+                                        template=prompt_data.get("template", ""),
                                     )
-                            logger.info("Fetched %s prompts from gateway", len(prompts))
-                        except Exception as e:
-                            logger.warning("Failed to fetch prompts: %s", e)
+                                )
+                        logger.info("Fetched %s prompts from gateway", len(prompts))
+                    except Exception as e:
+                        logger.warning("Failed to fetch prompts: %s", e)
 
-                return capabilities, tools, resources, prompts, validation_errors
+            return capabilities, tools, resources, prompts, validation_errors
         sanitized_url = sanitize_url_for_logging(server_url, auth_query_params)
         raise GatewayConnectionError(f"Failed to initialize gateway at {sanitized_url}: Connection could not be established")
 
@@ -7321,10 +7318,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         # Use authentication directly instead
         def get_httpx_client_factory(
             headers: dict[str, str] | None = None,
-            timeout: httpx.Timeout | None = None,
-            auth: httpx.Auth | None = None,
-        ) -> httpx.AsyncClient:
-            """Factory function to create httpx.AsyncClient with optional CA certificate.
+            timeout: httpx2.Timeout | None = None,
+            auth: httpx2.Auth | None = None,
+        ) -> httpx2.AsyncClient:
+            """Factory function to create httpx2.AsyncClient with optional CA certificate.
 
             Args:
                 headers: Optional headers for the client
@@ -7332,7 +7329,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 auth: Optional auth for the client
 
             Returns:
-                httpx.AsyncClient: Configured HTTPX async client
+                httpx2.AsyncClient: Configured HTTPX async client
             """
             if server_url and server_url.lower().startswith("http://"):
                 ctx = None
@@ -7341,113 +7338,114 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             else:
                 ctx = None
 
-            return httpx.AsyncClient(
+            return httpx2.AsyncClient(
                 verify=ctx if ctx else get_default_verify(),
                 follow_redirects=False,
                 headers=headers,
-                timeout=timeout if timeout else get_http_timeout(),
+                timeout=timeout if timeout else get_httpx2_timeout(),
                 auth=auth,
-                limits=httpx.Limits(
+                limits=httpx2.Limits(
                     max_connections=settings.httpx_max_connections,
                     max_keepalive_connections=settings.httpx_max_keepalive_connections,
                     keepalive_expiry=settings.httpx_keepalive_expiry,
                 ),
             )
 
-        async with streamablehttp_client(url=server_url, headers=authentication, httpx_client_factory=get_httpx_client_factory) as (read_stream, write_stream, _get_session_id):
-            async with ClientSession(read_stream, write_stream) as session:
-                # Initialize the session
-                response = await session.initialize()
-                capabilities = response.capabilities.model_dump(by_alias=True, exclude_none=True)
-                logger.debug("Server capabilities: %s", capabilities)
+        async with mcp_proxy_client(
+            url=server_url,
+            headers=authentication,
+            httpx_client_factory=get_httpx_client_factory,
+        ) as client:
+            # Client auto-initializes; get capabilities from the auto-initialized session
+            capabilities = client.server_capabilities.model_dump(by_alias=True, exclude_none=True)
+            logger.debug("Server capabilities: %s", capabilities)
 
-                response = await session.list_tools()
-                tools = response.tools
-                tools = [tool.model_dump(by_alias=True, exclude_none=True, exclude_unset=True) for tool in tools]
+            response = await client.list_tools()
+            tools = response.tools
+            tools = [tool.model_dump(by_alias=True, exclude_none=True, exclude_unset=True) for tool in tools]
 
-                tools, validation_errors = self._validate_tools(tools)
-                for tool in tools:
-                    tool.request_type = "STREAMABLEHTTP"
-                if tools:
-                    logger.info("Fetched %s tools from gateway", len(tools))
+            tools, validation_errors = self._validate_tools(tools)
+            for tool in tools:
+                tool.request_type = "STREAMABLEHTTP"
+            if tools:
+                logger.info("Fetched %s tools from gateway", len(tools))
 
-                # Fetch resources if supported
-                resources = []
-                if include_resources:
-                    logger.debug("Checking for resources support: %s", capabilities.get("resources"))
-                    if capabilities.get("resources"):
-                        try:
-                            response = await session.list_resources()
-                            raw_resources = response.resources
-                            for resource in raw_resources:
-                                resource_data = resource.model_dump(by_alias=True, exclude_none=True)
-                                merge_mcp_protocol_meta(resource_data)
-                                # Convert AnyUrl to string if present
-                                if "uri" in resource_data and hasattr(resource_data["uri"], "unicode_string"):
-                                    resource_data["uri"] = str(resource_data["uri"])
-                                # Add default content if not present
-                                if "content" not in resource_data:
-                                    resource_data["content"] = ""
-                                try:
-                                    resources.append(ResourceCreate.model_validate(resource_data))
-                                except Exception:
-                                    # If validation fails, create minimal resource
-                                    resources.append(
-                                        ResourceCreate(
-                                            uri=str(resource_data.get("uri", "")),
-                                            name=resource_data.get("name", ""),
-                                            description=resource_data.get("description"),
-                                            mime_type=resource_data.get("mimeType"),
-                                            uri_template=resource_data.get("uriTemplate") or None,
-                                            content="",
-                                            extension_metadata=resource_data.get("extensionMetadata"),
-                                        )
+            # Fetch resources if supported
+            resources = []
+            if include_resources:
+                logger.debug("Checking for resources support: %s", capabilities.get("resources"))
+                if capabilities.get("resources"):
+                    try:
+                        response = await client.list_resources()
+                        raw_resources = response.resources
+                        for resource in raw_resources:
+                            resource_data = resource.model_dump(by_alias=True, exclude_none=True)
+                            merge_mcp_protocol_meta(resource_data)
+                            # Convert AnyUrl to string if present
+                            if "uri" in resource_data and hasattr(resource_data["uri"], "unicode_string"):
+                                resource_data["uri"] = str(resource_data["uri"])
+                            # Add default content if not present
+                            if "content" not in resource_data:
+                                resource_data["content"] = ""
+                            try:
+                                resources.append(ResourceCreate.model_validate(resource_data))
+                            except Exception:
+                                # If validation fails, create minimal resource
+                                resources.append(
+                                    ResourceCreate(
+                                        uri=str(resource_data.get("uri", "")),
+                                        name=resource_data.get("name", ""),
+                                        description=resource_data.get("description"),
+                                        mime_type=resource_data.get("mimeType"),
+                                        uri_template=resource_data.get("uriTemplate") or None,
+                                        content="",
                                     )
-                            logger.info("Fetched %s resources from gateway", len(resources))
-                        except Exception as e:
-                            logger.warning("Failed to fetch resources: %s", e)
+                                )
+                        logger.info("Fetched %s resources from gateway", len(resources))
+                    except Exception as e:
+                        logger.warning("Failed to fetch resources: %s", e)
 
-                        # resource template URI
-                        try:
-                            response_templates = await session.list_resource_templates()
-                            raw_resources_templates = response_templates.resourceTemplates
-                            resource_templates = []
-                            for resource_template in raw_resources_templates:
-                                resource_template_data = resource_template.model_dump(by_alias=True, exclude_none=True)
-                                merge_mcp_protocol_meta(resource_template_data)
+                    # resource template URI
+                    try:
+                        response_templates = await client.list_resource_templates()
+                        raw_resources_templates = response_templates.resource_templates
+                        resource_templates = []
+                        for resource_template in raw_resources_templates:
+                            resource_template_data = resource_template.model_dump(by_alias=True, exclude_none=True)
+                            merge_mcp_protocol_meta(resource_template_data)
 
-                                if "uriTemplate" in resource_template_data:  # and hasattr(resource_template_data["uriTemplate"], "unicode_string"):
-                                    resource_template_data["uri_template"] = str(resource_template_data["uriTemplate"])
-                                    resource_template_data["uri"] = str(resource_template_data["uriTemplate"])
+                            if "uriTemplate" in resource_template_data:  # and hasattr(resource_template_data["uriTemplate"], "unicode_string"):
+                                resource_template_data["uri_template"] = str(resource_template_data["uriTemplate"])
+                                resource_template_data["uri"] = str(resource_template_data["uriTemplate"])
 
-                                if "content" not in resource_template_data:
-                                    resource_template_data["content"] = ""
+                            if "content" not in resource_template_data:
+                                resource_template_data["content"] = ""
 
-                                resources.append(ResourceCreate.model_validate(resource_template_data))
-                                resource_templates.append(ResourceCreate.model_validate(resource_template_data))
-                            logger.info("Fetched %s resource templates from gateway", len(resource_templates))
-                        except Exception as e:
-                            logger.warning("Failed to fetch resource templates: %s", e)
+                            resources.append(ResourceCreate.model_validate(resource_template_data))
+                            resource_templates.append(ResourceCreate.model_validate(resource_template_data))
+                        logger.info("Fetched %s resource templates from gateway", len(resource_templates))
+                    except Exception as e:
+                        logger.warning("Failed to fetch resource templates: %s", e)
 
-                # Fetch prompts if supported
-                prompts = []
-                if include_prompts:
-                    logger.debug("Checking for prompts support: %s", capabilities.get("prompts"))
-                    if capabilities.get("prompts"):
-                        try:
-                            response = await session.list_prompts()
-                            raw_prompts = response.prompts
-                            for prompt in raw_prompts:
-                                prompt_data = prompt.model_dump(by_alias=True, exclude_none=True)
-                                # Add default template if not present
-                                if "template" not in prompt_data:
-                                    prompt_data["template"] = ""
-                                prompts.append(PromptCreate.model_validate(prompt_data))
-                            logger.info("Fetched %s prompts from gateway", len(prompts))
-                        except Exception as e:
-                            logger.warning("Failed to fetch prompts: %s", e)
+            # Fetch prompts if supported
+            prompts = []
+            if include_prompts:
+                logger.debug("Checking for prompts support: %s", capabilities.get("prompts"))
+                if capabilities.get("prompts"):
+                    try:
+                        response = await client.list_prompts()
+                        raw_prompts = response.prompts
+                        for prompt in raw_prompts:
+                            prompt_data = prompt.model_dump(by_alias=True, exclude_none=True)
+                            # Add default template if not present
+                            if "template" not in prompt_data:
+                                prompt_data["template"] = ""
+                            prompts.append(PromptCreate.model_validate(prompt_data))
+                        logger.info("Fetched %s prompts from gateway", len(prompts))
+                    except Exception as e:
+                        logger.warning("Failed to fetch prompts: %s", e)
 
-                return capabilities, tools, resources, prompts, validation_errors
+            return capabilities, tools, resources, prompts, validation_errors
         sanitized_url = sanitize_url_for_logging(server_url, auth_query_params)
         raise GatewayConnectionError(f"Failed to initialize gateway at {sanitized_url}: Connection could not be established")
 
@@ -7462,7 +7460,7 @@ _HANDSHAKE_PROTOCOL_COPY = (
 _HANDSHAKE_INVALID_COPY = "The server's response is not valid MCP. The URL may point at a service that does not speak MCP."
 
 
-class _SniPinningTransport(httpx.AsyncHTTPTransport):
+class _SniPinningTransport(httpx2.AsyncHTTPTransport):
     """Dial a DNS-pinned address while keeping the request's hostname authority and TLS identity.
 
     The MCP SDK compares the origin it connected to against the origin the
@@ -7478,30 +7476,30 @@ class _SniPinningTransport(httpx.AsyncHTTPTransport):
         Args:
             sni_hostname: Validated hostname whose certificate must match.
             pinned_host: Address resolved at validation time, dialled instead of re-resolving.
-            **kwargs: Forwarded to ``httpx.AsyncHTTPTransport``.
+            **kwargs: Forwarded to ``httpx2.AsyncHTTPTransport``.
         """
         super().__init__(**kwargs)
         self._sni_hostname = sni_hostname
         self._pinned_host = pinned_host
 
-    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+    async def handle_async_request(self, request: httpx2.Request) -> httpx2.Response:
         """Send the request to the pinned address with TLS pinned to the validated hostname.
 
         Args:
             request: Outbound request addressed to the validated hostname.
 
         Returns:
-            httpx.Response: The upstream response.
+            httpx2.Response: The upstream response.
 
         Raises:
-            httpx.UnsupportedProtocol: If the request targets any other host.
+            httpx2.UnsupportedProtocol: If the request targets any other host.
         """
         # Compare the IDNA-encoded form: httpx decodes punycode back to Unicode on `url.host`,
         # while the validated hostname arrives punycode-encoded from the request schema.
         if request.url.raw_host.decode("ascii") != self._sni_hostname:
-            raise httpx.UnsupportedProtocol(f"Gateway test refused a request to unvalidated host {request.url.host}", request=request)
+            raise httpx2.UnsupportedProtocol(f"Gateway test refused a request to unvalidated host {request.url.host}", request=request)
         request.extensions.setdefault("sni_hostname", self._sni_hostname)
-        # httpx derived the Host header from the hostname URL at construction time; rewriting the
+        # httpx2 derived the Host header from the hostname URL at construction time; rewriting the
         # URL afterwards keeps that header while sending the bytes to the pinned address.
         request.url = request.url.copy_with(host=self._pinned_host)
         return await super().handle_async_request(request)
@@ -7698,9 +7696,13 @@ def _classify_handshake_error(root_cause: BaseException) -> tuple[str, str]:
     """
     if isinstance(root_cause, httpx.HTTPStatusError) and root_cause.response.status_code in (401, 403):
         return "auth", _HANDSHAKE_AUTH_COPY
-    if isinstance(root_cause, (httpx.RequestError, OSError)):
+    if isinstance(root_cause, (httpx.RequestError, httpx2.RequestError, OSError)):
         return "transport", _HANDSHAKE_TRANSPORT_COPY
-    if isinstance(root_cause, McpError) or (isinstance(root_cause, RuntimeError) and "protocol" in str(root_cause).lower()):
+    if isinstance(root_cause, MCPError):
+        if root_cause.code == REQUEST_TIMEOUT:
+            return "transport", _HANDSHAKE_TRANSPORT_COPY
+        return "protocol", _HANDSHAKE_PROTOCOL_COPY
+    if isinstance(root_cause, RuntimeError) and "protocol" in str(root_cause).lower():
         return "protocol", _HANDSHAKE_PROTOCOL_COPY
     return "invalid_response", _HANDSHAKE_INVALID_COPY
 
@@ -8050,9 +8052,9 @@ async def test_gateway_handshake(
 
     def get_httpx_client_factory(
         headers: Optional[Dict[str, str]] = None,
-        timeout: Optional[httpx.Timeout] = None,
-        auth: Optional[httpx.Auth] = None,
-    ) -> httpx.AsyncClient:
+        timeout: Optional[httpx2.Timeout] = None,
+        auth: Optional[httpx2.Auth] = None,
+    ) -> httpx2.AsyncClient:
         """Build the SDK's httpx client so it dials the pinned address with the gateway's TLS settings.
 
         Args:
@@ -8061,20 +8063,20 @@ async def test_gateway_handshake(
             auth: Optional auth for the client
 
         Returns:
-            httpx.AsyncClient: Configured HTTPX async client
+            httpx2.AsyncClient: Configured HTTPX2 async client
         """
         # An explicit transport is what makes address pinning possible; it also opts this client
-        # out of httpx's environment-proxy discovery, unlike the stateless discover probe.
-        return httpx.AsyncClient(
+        # out of httpx2's environment-proxy discovery, unlike the stateless discover probe.
+        return httpx2.AsyncClient(
             follow_redirects=False,
             headers=headers,
-            timeout=timeout if timeout else get_http_timeout(),
+            timeout=timeout if timeout else get_httpx2_timeout(),
             auth=auth,
             transport=_SniPinningTransport(
                 sni_hostname=validated_hostname,
                 pinned_host=target["resolved_ip"],
                 verify=handshake_verify,
-                limits=httpx.Limits(
+                limits=httpx2.Limits(
                     max_connections=settings.httpx_max_connections,
                     max_keepalive_connections=settings.httpx_max_keepalive_connections,
                     keepalive_expiry=settings.httpx_keepalive_expiry,
@@ -8196,7 +8198,7 @@ async def test_gateway_handshake(
                     try:
                         list_result = await list_call()
                         component_counts[attr] = len(getattr(list_result, attr))
-                        if getattr(list_result, "nextCursor", None):
+                        if getattr(list_result, "next_cursor", None):
                             counts_partial = True
                     except Exception as list_exc:
                         logger.debug("MCP handshake list_%s failed for %s: %s", attr, sanitize_url_for_logging(validated_base_url), list_exc)
@@ -8205,9 +8207,9 @@ async def test_gateway_handshake(
                     success=True,
                     latency_ms=_latency_ms(),
                     negotiation_path="initialize",
-                    protocol_version=str(init.protocolVersion),
-                    server_name=init.serverInfo.name,
-                    server_version=init.serverInfo.version,
+                    protocol_version=str(init.protocol_version),
+                    server_name=init.server_info.name,
+                    server_version=init.server_info.version,
                     capabilities=capabilities,
                     component_counts=component_counts or None,
                     counts_partial=counts_partial,
@@ -8226,13 +8228,15 @@ async def test_gateway_handshake(
                         async with ClientSession(read_stream, write_stream) as session:
                             return await _probe_session(session)
                 else:
-                    async with streamablehttp_client(url=hostname_url, headers=headers, timeout=settings.health_check_timeout, httpx_client_factory=get_httpx_client_factory) as (
-                        read_stream,
-                        write_stream,
-                        _get_session_id,
-                    ):
-                        async with ClientSession(read_stream, write_stream) as session:
-                            return await _probe_session(session)
+                    _hc_client = get_httpx_client_factory(
+                        headers=headers,
+                        timeout=httpx2.Timeout(settings.health_check_timeout),
+                        auth=None,
+                    )
+                    async with _hc_client:
+                        async with streamable_http_client(hostname_url, http_client=_hc_client) as (read_stream, write_stream):
+                            async with ClientSession(read_stream, write_stream) as session:
+                                return await _probe_session(session)
             except TimeoutError:
                 raise
             except Exception as e:

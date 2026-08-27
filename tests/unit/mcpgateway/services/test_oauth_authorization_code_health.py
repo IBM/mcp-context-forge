@@ -37,7 +37,7 @@ class TestAuthorizationCodeStreamableHTTP:
     """Test that 401/403 from a streamablehttp-transport authorization_code gateway
     is treated as 'reachable, unauthorized' (Issue #5237, streamablehttp path).
 
-    The MCP SDK's streamablehttp_client spawns its HTTP POST inside an anyio
+    The MCP SDK's streamable_http_client spawns its HTTP POST inside an anyio
     TaskGroup. Exceptions from the task surface at the ``async with`` boundary
     wrapped in a BaseExceptionGroup. The fix unwraps one level so the inner
     httpx.HTTPStatusError is inspected for 401/403.
@@ -102,9 +102,9 @@ class TestAuthorizationCodeStreamableHTTP:
         with (
             patch("mcpgateway.services.gateway_service.settings", MagicMock(enable_ed25519_signing=False, health_check_timeout=5)),
             patch("mcpgateway.services.gateway_service.get_isolated_http_client", return_value=_IsoClientCM()),
-            # streamablehttp_client is called directly (not via the httpx client),
+            # mcp_proxy_client is called directly (not via the httpx client),
             # so we patch it to raise the BaseExceptionGroup-wrapped 401 error.
-            patch("mcpgateway.services.gateway_service.streamablehttp_client", side_effect=wrapped_exc),
+            patch("mcpgateway.services.gateway_service.mcp_proxy_client", side_effect=wrapped_exc),
             patch("mcpgateway.services.gateway_service.fresh_db_session") as mock_fresh_db,
             patch("mcpgateway.services.gateway_service.SessionLocal", return_value=_StatusDBCM()),
             patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_tss,

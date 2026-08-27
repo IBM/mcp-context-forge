@@ -28,21 +28,50 @@ from dataclasses import dataclass, field
 from enum import Enum
 import logging
 import time
-from types import MappingProxyType
+from types import MappingProxyType, SimpleNamespace
 from typing import Any, AsyncIterator, Awaitable, Callable, Mapping, Optional, Protocol
 
 # Third-Party
 import anyio
 import httpx
-from mcp import ClientSession, McpError
+import httpx2
+from mcp import Client, ClientSession, MCPError
 from mcp.client.sse import sse_client
-from mcp.client.streamable_http import streamablehttp_client
-from mcp.shared.session import RequestResponder
-import mcp.types as mcp_types
+from mcp.client.streamable_http import streamable_http_client as _sdk_streamable_http
 
 # First-Party
+
 from mcpgateway.transports.context import request_headers_var
 from mcpgateway.utils.url_auth import sanitize_url_for_logging
+
+
+@asynccontextmanager
+async def streamable_http_client(
+    url: str,
+    *,
+    headers: Optional[dict] = None,
+    timeout: Optional[float] = None,
+    httpx_client_factory: Optional["HttpxClientFactory"] = None,
+    auth: Optional[Any] = None,
+) -> "AsyncIterator[Any]":
+    """v2 bridge: create an httpx2 client and pass it to the SDK transport.
+
+    Exposes the same keyword interface the tests patch, but implements
+    the v2 pattern (httpx2.AsyncClient → _sdk_streamable_http) so the
+    shim file is no longer needed.
+    """
+    if httpx_client_factory is not None:
+        http_client = httpx_client_factory(headers, httpx2.Timeout(timeout or 30.0), auth)
+    else:
+        http_client = httpx2.AsyncClient(
+            headers=headers or {},
+            timeout=httpx2.Timeout(timeout or 30.0),
+            follow_redirects=False,
+        )
+    async with http_client:
+        async with _sdk_streamable_http(url, http_client=http_client) as streams:
+            yield streams
+
 
 logger = logging.getLogger(__name__)
 
@@ -65,28 +94,15 @@ class TransportType(str, Enum):
 
 
 HttpxClientFactory = Callable[
-    [Optional[dict[str, str]], Optional[httpx.Timeout], Optional[httpx.Auth]],
-    httpx.AsyncClient,
+    [Optional[dict[str, str]], Optional[httpx2.Timeout], Optional[httpx2.Auth]],
+    httpx2.AsyncClient,
 ]
 
-# Type alias for the per-session message handler that the SDK ClientSession
-# calls into. Receives ServerNotification, ServerRequest responders, or Exceptions.
-MessageHandler = Callable[
-    [RequestResponder[mcp_types.ServerRequest, mcp_types.ClientResult] | mcp_types.ServerNotification | Exception],
-    Any,
-]
+MessageHandler = Callable[[Any], Any]
 
 
 class MessageHandlerFactory(Protocol):
-    """Build a per-session MCP message handler.
-
-    Optional. If absent, no handler is wired and server-initiated messages
-    will be dropped. The ``downstream_session_id`` is keyword-only so any
-    future positional additions can't accidentally shuffle existing args.
-
-    The handler closure uses ``downstream_session_id`` to forward
-    server-initiated messages to the correct GET /mcp listener.
-    """
+    """Build a per-session MCP message handler."""
 
     def __call__(
         self,
@@ -95,18 +111,27 @@ class MessageHandlerFactory(Protocol):
         *,
         downstream_session_id: str,
     ) -> MessageHandler:
-        """Build the per-session message handler. See class docstring."""
+        """Build the per-session message handler."""
+
+
+class ClientCallbacksFactoryProtocol(Protocol):
+    """Build v2 typed callbacks for server-initiated requests."""
+
+    def __call__(
+        self,
+        url: str,
+        gateway_id: Optional[str],
+        *,
+        downstream_session_id: str,
+    ) -> Mapping[str, Callable[..., Any]]:
+        """Build callback keyword arguments for ``Client``."""
 
 
 # Factory for constructing an upstream MCP session.
 #
-# Return shape is ``(ClientSession, _unused)``. The second slot is
-# vestigial — the owner task attaches ``_cf_owner_task`` and
-# ``_cf_shutdown_event`` onto the ClientSession object itself, so
-# ``_create_session()`` ignores the second return value. The shape is
-# kept stable here because fake factories in the test suite and any
-# downstream overrides mirror it. Issue #4344 tracks replacing the
-# attribute-smuggling with a typed handle and collapsing the tuple.
+# Return shape is ``(ClientSession, Any)``: the live session plus a lifecycle
+# namespace (SimpleNamespace) carrying owner_task, shutdown_event, and client.
+# Fake factories in the test suite must mirror this contract.
 #
 # Defaults to the real MCP transports; tests inject a fake so no network is
 # touched.
@@ -159,6 +184,7 @@ class SessionCreateRequest:
     httpx_client_factory: Optional[HttpxClientFactory]
     message_handler_factory: Optional[MessageHandlerFactory]
     timeout_seconds: float
+    client_callbacks_factory: Optional[ClientCallbacksFactoryProtocol] = None
 
     def __post_init__(self) -> None:
         """Validate invariants the registry relies on at creation time."""
@@ -205,13 +231,17 @@ _sdk_drift_warning_emitted = False  # pylint: disable=invalid-name
 
 
 def _mcp_transport_is_broken(session: ClientSession) -> bool:
-    """Peek at a ``ClientSession``'s internal anyio streams to detect a dead transport.
+    """Peek at a ``ClientSession``'s internal state to detect a dead transport.
 
-    Returns True only when we can positively confirm the transport is gone
-    (closed write stream, or receive channels fully drained). Returns False on
-    any ambiguity — including when SDK internals have shifted shape — so that
-    callers degrade to owner-task liveness rather than evicting a session
-    that might still be usable.
+    Client-built sessions (via ``mcp.client.Client``) carry a ``_dispatcher``
+    whose ``_closed`` / ``_running`` flags are the definitive dead signals.
+    Raw-constructed sessions (read/write streams passed directly) keep the legacy
+    ``_write_stream._closed`` / ``._state.open_receive_channels`` probe.
+
+    Returns True only when we can positively confirm the transport is gone.
+    Returns False on any ambiguity — including when SDK internals have shifted
+    shape — so that callers degrade to owner-task liveness rather than evicting
+    a session that might still be usable.
 
     Validated MCP SDK range lives in
     ``_MCP_SDK_TRANSPORT_PROBE_COMPATIBLE_VERSIONS``; bump that marker after
@@ -219,6 +249,19 @@ def _mcp_transport_is_broken(session: ClientSession) -> bool:
     """
     global _sdk_drift_warning_emitted  # pylint: disable=global-statement
     try:
+        # Dispatcher path — present on Client-built sessions (mcp.client.Client).
+        # _closed is set by send_raw_request on error; _running flips False at teardown.
+        dispatcher = getattr(session, "_dispatcher", None)
+        if dispatcher is not None:
+            if getattr(dispatcher, "_closed", False) is True:
+                return True
+            if getattr(dispatcher, "_running", True) is False:
+                # Was running, now stopped (teardown in progress/complete) → broken
+                return True
+            # Dispatcher present and healthy — never consult _write_stream
+            return False
+
+        # Legacy raw-session path: read/write streams passed directly, no _dispatcher.
         write_stream = getattr(session, "_write_stream", None)
         if write_stream is None:
             return False
@@ -316,11 +359,12 @@ def _categorize_upstream_error(exc: BaseException, auth_query_params: Optional[d
     # Categorize common failure modes to help users identify the root cause.
     # Order matters: more specific checks first (e.g., httpx.ConnectTimeout before TimeoutError).
 
-    # Check httpx-specific exception types first (these are the types actually raised by transports)
-    if isinstance(root_cause, httpx.TimeoutException):
+    # Check httpx-specific exception types first (these are the types actually raised by transports).
+    # MCP 2.x clients raise httpx2 exceptions; legacy paths may still raise httpx v0 ones.
+    if isinstance(root_cause, (httpx.TimeoutException, httpx2.TimeoutException)):
         # httpx.TimeoutException is the base for ConnectTimeout, ReadTimeout, WriteTimeout, PoolTimeout
         error_category = "timeout"
-    elif isinstance(root_cause, httpx.ConnectError):
+    elif isinstance(root_cause, (httpx.ConnectError, httpx2.ConnectError)):
         # httpx.ConnectError wraps connection failures. Real refused connections
         # produce httpx.ConnectError("All connection attempts failed") with
         # ConnectionRefusedError deeper in __context__/__cause__. Check chain first.
@@ -332,7 +376,7 @@ def _categorize_upstream_error(exc: BaseException, auth_query_params: Optional[d
             error_category = "connection_refused"
         else:
             error_category = "connection_error"
-    elif isinstance(root_cause, httpx.HTTPStatusError):
+    elif isinstance(root_cause, (httpx.HTTPStatusError, httpx2.HTTPStatusError)):
         status_code = getattr(root_cause.response, "status_code", None)
         if status_code is not None:
             if status_code == 401:
@@ -347,7 +391,7 @@ def _categorize_upstream_error(exc: BaseException, auth_query_params: Optional[d
                 error_category = "http_error"
         else:
             error_category = "http_error"
-    elif isinstance(root_cause, McpError):
+    elif isinstance(root_cause, MCPError):
         # MCP protocol-level errors (failed session.initialize(), etc.)
         error_category = "mcp_protocol_error"
     elif isinstance(root_cause, ssl.SSLError):
@@ -404,6 +448,7 @@ class UpstreamSession:
     url: str
     transport_type: TransportType
     session: ClientSession
+    client: Any | None = None
     created_at: float = field(default_factory=time.time)
     last_used: float = field(default_factory=time.time)
     use_count: int = 0
@@ -439,12 +484,15 @@ class UpstreamSession:
 
 
 async def _default_session_factory(req: SessionCreateRequest) -> tuple[ClientSession, Any]:
-    """Owner-task wrapper that builds the real transport + ClientSession.
+    """Owner-task wrapper that builds the real transport + SDK Client.
 
     Runs inside a dedicated asyncio.Task so the transport's anyio cancel scope
     is bound to that task, not to whichever request handler happens to be
     making the acquire() call. If the request task is cancelled (client
     disconnect, timeout), the upstream transport is NOT torn down with it.
+
+    The high-level ``mcp.client.Client`` owns the transport context and
+    performs the handshake inside ``__aenter__``.
     """
     if req.transport_type is TransportType.SSE:
         if req.httpx_client_factory is not None:
@@ -462,49 +510,66 @@ async def _default_session_factory(req: SessionCreateRequest) -> tuple[ClientSes
             )
     else:
         if req.httpx_client_factory is not None:
-            transport_ctx = streamablehttp_client(
+            transport_ctx = streamable_http_client(
                 url=req.url,
-                headers=req.headers,
+                headers=dict(req.headers),
                 httpx_client_factory=req.httpx_client_factory,
                 timeout=req.timeout_seconds,
             )
         else:
-            transport_ctx = streamablehttp_client(
+            transport_ctx = streamable_http_client(
                 url=req.url,
-                headers=req.headers,
+                headers=dict(req.headers),
                 timeout=req.timeout_seconds,
             )
 
     shutdown_event = asyncio.Event()
     loop = asyncio.get_running_loop()
-    ready: asyncio.Future[tuple[ClientSession, Any]] = loop.create_future()
+    ready: asyncio.Future[tuple[ClientSession, Client]] = loop.create_future()
 
     async def owner() -> None:
-        """Own the transport + ClientSession lifecycle; unblock on shutdown_event."""
+        """Own the transport and high-level Client lifecycle."""
         try:
-            async with transport_ctx as streams:
-                read_stream, write_stream = streams[0], streams[1]
-                message_handler = None
-                if req.message_handler_factory is not None:
-                    try:
-                        message_handler = req.message_handler_factory(
+            message_handler = None
+            client_callbacks: Mapping[str, Callable[..., Any]] = {}
+            if req.message_handler_factory is not None:
+                try:
+                    message_handler = req.message_handler_factory(
+                        req.url,
+                        req.gateway_id,
+                        downstream_session_id=req.downstream_session_id,
+                    )
+                except Exception as exc:  # noqa: BLE001 — handler failure is not fatal
+                    logger.warning(
+                        "Failed to build message handler for %s: %s",
+                        sanitize_url_for_logging(req.url),
+                        exc,
+                    )
+            if req.client_callbacks_factory is not None:
+                try:
+                    client_callbacks = dict(
+                        req.client_callbacks_factory(
                             req.url,
                             req.gateway_id,
                             downstream_session_id=req.downstream_session_id,
                         )
-                    except Exception as exc:  # noqa: BLE001 — handler failure is not fatal
-                        logger.warning(
-                            "Failed to build message handler for %s: %s",
-                            sanitize_url_for_logging(req.url),
-                            exc,
-                        )
-                async with ClientSession(read_stream, write_stream, message_handler=message_handler) as session:
-                    await session.initialize()
-                    if not ready.done():
-                        ready.set_result((session, transport_ctx))
-                    # Block until the registry signals shutdown; do NOT rely on
-                    # task cancellation from a request handler (see class docs).
-                    await shutdown_event.wait()
+                    )
+                except Exception as exc:  # noqa: BLE001 — callbacks are optional
+                    logger.warning(
+                        "Failed to build v2 client callbacks for %s: %s",
+                        sanitize_url_for_logging(req.url),
+                        exc,
+                    )
+            client = Client(
+                transport_ctx,
+                message_handler=message_handler,
+                cache=None,
+                **client_callbacks,
+            )
+            async with client:
+                if not ready.done():
+                    ready.set_result((client.session, client))
+                await shutdown_event.wait()
         except Exception as exc:  # noqa: BLE001 — see below
             # Broad catch on purpose: the upstream-setup path runs many
             # third-party coroutines (httpx, anyio, MCP SDK) whose exception
@@ -614,7 +679,7 @@ async def _default_session_factory(req: SessionCreateRequest) -> tuple[ClientSes
 
     success = False
     try:
-        session, transport_ctx_ref = await asyncio.wait_for(ready, timeout=req.timeout_seconds)
+        session, client = await asyncio.wait_for(ready, timeout=req.timeout_seconds)
         success = True
     except asyncio.TimeoutError as timeout_exc:
         # asyncio.wait_for timeout path: the owner task hangs (TCP accepted but
@@ -688,13 +753,7 @@ async def _default_session_factory(req: SessionCreateRequest) -> tuple[ClientSes
                         exc,
                     )
 
-    # Smuggle the owner task + shutdown event onto the ClientSession object so
-    # _create_session() (which only gets back `(session, transport_ctx)` from
-    # the factory) can recover them without a wider factory return contract.
-    # Tests that replace the factory must mirror this convention.
-    setattr(session, "_cf_owner_task", task)  # type: ignore[attr-defined]
-    setattr(session, "_cf_shutdown_event", shutdown_event)  # type: ignore[attr-defined]
-    return session, transport_ctx_ref
+    return session, SimpleNamespace(owner_task=task, shutdown_event=shutdown_event, client=client)
 
 
 class UpstreamSessionRegistry:
@@ -725,6 +784,7 @@ class UpstreamSessionRegistry:
         *,
         session_factory: Optional[SessionFactory] = None,
         message_handler_factory: Optional[MessageHandlerFactory] = None,
+        client_callbacks_factory: Optional[ClientCallbacksFactoryProtocol] = None,
         idle_validation_seconds: float = _DEFAULT_IDLE_VALIDATION_SECONDS,
         health_check_timeout_seconds: float = _DEFAULT_HEALTH_CHECK_TIMEOUT_SECONDS,
         session_create_timeout_seconds: float = _DEFAULT_SESSION_CREATE_TIMEOUT_SECONDS,
@@ -733,6 +793,7 @@ class UpstreamSessionRegistry:
         """Build a registry. ``session_factory`` is injectable for tests."""
         self._session_factory: SessionFactory = session_factory or _default_session_factory
         self._message_handler_factory = message_handler_factory
+        self._client_callbacks_factory = client_callbacks_factory
         self._idle_validation_seconds = idle_validation_seconds
         self._health_check_timeout_seconds = health_check_timeout_seconds
         self._session_create_timeout_seconds = session_create_timeout_seconds
@@ -945,27 +1006,27 @@ class UpstreamSessionRegistry:
             httpx_client_factory=httpx_client_factory,
             message_handler_factory=self._message_handler_factory,
             timeout_seconds=self._session_create_timeout_seconds,
+            client_callbacks_factory=self._client_callbacks_factory,
         )
-        session, _transport_ctx = await self._session_factory(req)
-        owner_task = getattr(session, "_cf_owner_task", None)
-        shutdown_event = getattr(session, "_cf_shutdown_event", None)
+        session, lifecycle = await self._session_factory(req)
         return UpstreamSession(
             downstream_session_id=downstream_session_id,
             gateway_id=gateway_id,
             url=url,
             transport_type=transport_type,
             session=session,
-            _owner_task=owner_task,
-            _shutdown_event=shutdown_event,
+            client=lifecycle.client,
+            _owner_task=lifecycle.owner_task,
+            _shutdown_event=lifecycle.shutdown_event,
         )
 
     async def _probe_health(self, upstream: UpstreamSession) -> bool:
         """Run the health check chain against an idle session. Returns False if all probes fail.
 
         Exception policy: we ADVANCE on ``TimeoutError`` and on
-        ``McpError(METHOD_NOT_FOUND)`` (the server chose not to implement
+        ``MCPError(METHOD_NOT_FOUND)`` (the server chose not to implement
         this probe), and we FAIL FAST on everything else transport- or
-        protocol-level (``OSError`` / anyio stream errors / other ``McpError``s)
+        protocol-level (``OSError`` / anyio stream errors / other ``MCPError``s)
         — recreating a session on "permission denied" or "request too large"
         would loop against the same failure. Genuinely unexpected exceptions
         (``AttributeError`` from SDK drift, etc.) propagate so they surface in
@@ -986,7 +1047,7 @@ class UpstreamSessionRegistry:
                         elif method == "list_resources":
                             await upstream.session.list_resources()
                     return True
-                except McpError as exc:
+                except MCPError as exc:
                     if exc.error.code == _METHOD_NOT_FOUND:
                         continue  # Server doesn't support this probe; try the next one.
                     self._metrics.health_check_failures += 1
@@ -1098,11 +1159,16 @@ class RegistryNotInitializedError(RuntimeError):
 def init_upstream_session_registry(
     *,
     message_handler_factory: Optional[MessageHandlerFactory] = None,
+    client_callbacks_factory: Optional[ClientCallbacksFactoryProtocol] = None,
     **overrides: Any,
 ) -> UpstreamSessionRegistry:
     """Install the process-wide registry. Call once at app startup."""
     global _registry
-    _registry = UpstreamSessionRegistry(message_handler_factory=message_handler_factory, **overrides)
+    _registry = UpstreamSessionRegistry(
+        message_handler_factory=message_handler_factory,
+        client_callbacks_factory=client_callbacks_factory,
+        **overrides,
+    )
     return _registry
 
 

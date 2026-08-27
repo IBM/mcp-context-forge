@@ -12,8 +12,8 @@ from typing import Callable
 
 # Third-Party
 from fastapi import Request, Response
-from mcp.shared.version import SUPPORTED_PROTOCOL_VERSIONS as MCP_SUPPORTED_PROTOCOL_VERSIONS
-from mcp.types import LATEST_PROTOCOL_VERSION
+from mcp.types.version import HANDSHAKE_PROTOCOL_VERSIONS
+from mcp.types.version import LATEST_HANDSHAKE_VERSION
 from starlette.middleware.base import BaseHTTPMiddleware
 
 # First-Party
@@ -22,10 +22,12 @@ from mcpgateway.utils.paths import replace_api_path_alias
 
 logger = logging.getLogger(__name__)
 
-# MCP protocol versions are sourced from the MCP SDK to stay aligned with schema.ts.
-SUPPORTED_PROTOCOL_VERSIONS = list(MCP_SUPPORTED_PROTOCOL_VERSIONS)
-# Default to the latest protocol for this implementation.
-DEFAULT_PROTOCOL_VERSION = LATEST_PROTOCOL_VERSION
+# Accept only initialize-handshake protocol versions on MCP endpoints.
+# SUPPORTED_PROTOCOL_VERSIONS includes modern (2026-07-28) per-request envelope
+# versions that are not valid in the MCP-Protocol-Version header negotiation.
+SUPPORTED_PROTOCOL_VERSIONS = list(HANDSHAKE_PROTOCOL_VERSIONS)
+# Default when no header is sent: most recent handshake version.
+DEFAULT_PROTOCOL_VERSION = LATEST_HANDSHAKE_VERSION
 
 
 class MCPProtocolVersionMiddleware(BaseHTTPMiddleware):

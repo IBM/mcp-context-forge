@@ -417,13 +417,13 @@ async function toolPreInvoke({ payload, context }: any) {
      ```python
      import pytest, json
      from mcp import ClientSession
-     from mcp.client.streamable_http import streamablehttp_client
+     from mcp.client.streamable_http import streamable_http_client
      from cpex.framework.models import HookType
 
      @pytest.mark.asyncio
      async def test_mcp_server_tool_pre_invoke():
-         async with (await streamablehttp_client("http://localhost:8000/mcp")) as (http, write, _):
-             async with ClientSession(http, write) as session:
+         async with streamable_http_client("http://localhost:8000/mcp") as (read_stream, write_stream):
+             async with ClientSession(read_stream, write_stream) as session:
                  await session.initialize()
                  # Minimal payload/context as JSON-serializable dicts
                  payload = {"name": "some_tool", "args": {"x": "y"}}

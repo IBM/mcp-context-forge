@@ -1579,14 +1579,25 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     await _notification_svc.initialize(gateway_service=gateway_service)
 
     def _notification_handler_factory(url: str, gateway_id, *, downstream_session_id: str):  # type: ignore[no-untyped-def]
-        """Per-session message handler that routes upstream notifications and forwards server-initiated messages to the GET /mcp listener (ADR-052)."""
+        """Build the v2 notification handler for a routed upstream session."""
         return _notification_svc.create_message_handler(
             gateway_id or url,
             url,
             downstream_session_id=downstream_session_id,
         )
 
-    init_upstream_session_registry(message_handler_factory=_notification_handler_factory)
+    def _notification_callbacks_factory(url: str, gateway_id, *, downstream_session_id: str):  # type: ignore[no-untyped-def]
+        """Build typed v2 callbacks for upstream server-initiated requests."""
+        return _notification_svc.create_client_callbacks(
+            gateway_id=gateway_id or url,
+            gateway_url=url,
+            downstream_session_id=downstream_session_id,
+        )
+
+    init_upstream_session_registry(
+        message_handler_factory=_notification_handler_factory,
+        client_callbacks_factory=_notification_callbacks_factory,
+    )
     logger.info("Upstream session registry initialized (notification fanout enabled)")
 
     # Initialize LLM chat router Redis client (only if LLM chat is enabled —

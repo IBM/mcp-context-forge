@@ -18,7 +18,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 import httpx
-from mcp.shared.exceptions import McpError
+import httpx2
+from mcp import MCPError
 from mcp.types import ErrorData
 from pydantic import ValidationError
 import pytest
@@ -668,11 +669,11 @@ async def test_handshake_discover_success(handshake_request, user_ctx, db_sessio
 
 
 def _mock_sdk_session(init_side_effect=None):
-    """Build mocked streamablehttp_client / ClientSession context managers."""
+    """Build mocked streamable_http_client / ClientSession context managers."""
     init_result = MagicMock()
-    init_result.protocolVersion = "2025-11-25"
-    init_result.serverInfo.name = "legacy-srv"
-    init_result.serverInfo.version = "2.0"
+    init_result.protocol_version = "2025-11-25"
+    init_result.server_info.name = "legacy-srv"
+    init_result.server_info.version = "2.0"
     init_result.capabilities.tools = MagicMock()
     init_result.capabilities.resources = None
     init_result.capabilities.prompts = None
@@ -681,7 +682,7 @@ def _mock_sdk_session(init_side_effect=None):
 
     tools_result = MagicMock()
     tools_result.tools = [MagicMock(), MagicMock()]
-    tools_result.nextCursor = None
+    tools_result.next_cursor = None
 
     session = MagicMock()
     session.initialize = AsyncMock(side_effect=init_side_effect, return_value=init_result) if init_side_effect else AsyncMock(return_value=init_result)
@@ -690,7 +691,7 @@ def _mock_sdk_session(init_side_effect=None):
     session.__aexit__ = AsyncMock(return_value=None)
 
     transport_cm = MagicMock()
-    transport_cm.__aenter__ = AsyncMock(return_value=(MagicMock(), MagicMock(), MagicMock()))
+    transport_cm.__aenter__ = AsyncMock(return_value=(MagicMock(), MagicMock()))
     transport_cm.__aexit__ = AsyncMock(return_value=None)
 
     return transport_cm, session
@@ -707,7 +708,7 @@ async def test_handshake_discover_fallback_to_initialize(handshake_request, user
     transport_cm, session = _mock_sdk_session()
 
     with patch("mcpgateway.services.gateway_service.ResilientHttpClient", return_value=mock_client):
-        with patch("mcpgateway.services.gateway_service.streamablehttp_client", return_value=transport_cm) as mock_streamable:
+        with patch("mcpgateway.services.gateway_service.streamable_http_client", return_value=transport_cm) as mock_streamable:
             with patch("mcpgateway.services.gateway_service.ClientSession", return_value=session):
                 result = await check_mcp_server_handshake(request=handshake_request, team_id=None, user=user_ctx, db=db_session)
 
@@ -716,15 +717,10 @@ async def test_handshake_discover_fallback_to_initialize(handshake_request, user
     assert result.protocol_version == "2025-11-25"
     assert result.server_name == "legacy-srv"
     assert result.component_counts == {"tools": 2}
-    # The SDK keeps the validated hostname; _SniPinningTransport dials the pinned address.
-    assert mock_streamable.call_args.kwargs["url"] == "http://example.com/mcp"
-
-    with patch("mcpgateway.services.gateway_service._SniPinningTransport", wraps=_SniPinningTransport) as mock_transport:
-        factory_client = mock_streamable.call_args.kwargs["httpx_client_factory"]()
-        await factory_client.aclose()
-
-    assert mock_transport.call_args.kwargs["sni_hostname"] == "example.com"
-    assert mock_transport.call_args.kwargs["pinned_host"] == "8.8.8.8"
+    # The v2 transport receives a pre-built httpx2 client positionally.
+    assert mock_streamable.call_args.args[0] == "http://example.com/mcp"
+    http_client = mock_streamable.call_args.kwargs["http_client"]
+    assert isinstance(http_client, httpx2.AsyncClient)
 
 
 @pytest.mark.asyncio
@@ -736,7 +732,7 @@ async def test_handshake_discover_401_is_auth_failure(handshake_request, user_ct
     mock_client = _mock_resilient_client(_json_response(401, {"error": "unauthorized"}))
 
     with patch("mcpgateway.services.gateway_service.ResilientHttpClient", return_value=mock_client):
-        with patch("mcpgateway.services.gateway_service.streamablehttp_client") as mock_streamable:
+        with patch("mcpgateway.services.gateway_service.streamable_http_client") as mock_streamable:
             result = await check_mcp_server_handshake(request=handshake_request, team_id=None, user=user_ctx, db=db_session)
 
     assert result.success is False
@@ -778,7 +774,7 @@ async def test_handshake_initialize_garbage_is_invalid_response(handshake_reques
     transport_cm, session = _mock_sdk_session(init_side_effect=stdlib_json.JSONDecodeError("Expecting value", "doc", 0))
 
     with patch("mcpgateway.services.gateway_service.ResilientHttpClient", return_value=mock_client):
-        with patch("mcpgateway.services.gateway_service.streamablehttp_client", return_value=transport_cm):
+        with patch("mcpgateway.services.gateway_service.streamable_http_client", return_value=transport_cm):
             with patch("mcpgateway.services.gateway_service.ClientSession", return_value=session):
                 result = await check_mcp_server_handshake(request=handshake_request, team_id=None, user=user_ctx, db=db_session)
 
@@ -854,7 +850,7 @@ async def test_handshake_cross_team_team_id_returns_403(handshake_request, db_se
         (httpx.PoolTimeout("no free connection"), ("transport", _HANDSHAKE_TRANSPORT_COPY)),
         (httpx.RemoteProtocolError("peer closed connection"), ("transport", _HANDSHAKE_TRANSPORT_COPY)),
         (OSError("network unreachable"), ("transport", _HANDSHAKE_TRANSPORT_COPY)),
-        (McpError(ErrorData(code=-32000, message="server error")), ("protocol", _HANDSHAKE_PROTOCOL_COPY)),
+        (MCPError.from_error_data(ErrorData(code=-32000, message="server error")), ("protocol", _HANDSHAKE_PROTOCOL_COPY)),
         (RuntimeError("protocol version mismatch"), ("protocol", _HANDSHAKE_PROTOCOL_COPY)),
         (RuntimeError("something else"), ("invalid_response", _HANDSHAKE_INVALID_COPY)),
         (ValueError("junk"), ("invalid_response", _HANDSHAKE_INVALID_COPY)),
@@ -1074,7 +1070,7 @@ async def test_handshake_discover_non_json_falls_back_to_initialize(handshake_re
     transport_cm, session = _mock_sdk_session()
 
     with patch("mcpgateway.services.gateway_service.ResilientHttpClient", return_value=mock_client):
-        with patch("mcpgateway.services.gateway_service.streamablehttp_client", return_value=transport_cm):
+        with patch("mcpgateway.services.gateway_service.streamable_http_client", return_value=transport_cm):
             with patch("mcpgateway.services.gateway_service.ClientSession", return_value=session):
                 result = await check_mcp_server_handshake(request=handshake_request, team_id=None, user=user_ctx, db=db_session)
 
@@ -1109,7 +1105,7 @@ async def test_handshake_initialize_list_failure_keeps_success(handshake_request
     session.list_tools = AsyncMock(side_effect=Exception("list failed"))
 
     with patch("mcpgateway.services.gateway_service.ResilientHttpClient", return_value=mock_client):
-        with patch("mcpgateway.services.gateway_service.streamablehttp_client", return_value=transport_cm):
+        with patch("mcpgateway.services.gateway_service.streamable_http_client", return_value=transport_cm):
             with patch("mcpgateway.services.gateway_service.ClientSession", return_value=session):
                 result = await check_mcp_server_handshake(request=handshake_request, team_id=None, user=user_ctx, db=db_session)
 
@@ -1146,7 +1142,7 @@ async def test_handshake_sse_gateway_uses_sse_client(handshake_request, user_ctx
     with patch("mcpgateway.services.gateway_service._SniPinningTransport", wraps=_SniPinningTransport) as mock_transport:
         factory_client = factory()
         try:
-            assert isinstance(factory_client, httpx.AsyncClient)
+            assert isinstance(factory_client, httpx2.AsyncClient)
             assert factory_client.follow_redirects is False
         finally:
             await factory_client.aclose()
@@ -1165,7 +1161,7 @@ async def test_handshake_initialize_timeout_is_transport(handshake_request, user
     transport_cm, session = _mock_sdk_session(init_side_effect=TimeoutError())
 
     with patch("mcpgateway.services.gateway_service.ResilientHttpClient", return_value=mock_client):
-        with patch("mcpgateway.services.gateway_service.streamablehttp_client", return_value=transport_cm):
+        with patch("mcpgateway.services.gateway_service.streamable_http_client", return_value=transport_cm):
             with patch("mcpgateway.services.gateway_service.ClientSession", return_value=session):
                 result = await check_mcp_server_handshake(request=handshake_request, team_id=None, user=user_ctx, db=db_session)
 
@@ -1184,7 +1180,7 @@ async def test_handshake_exception_group_unwraps_root_cause(handshake_request, u
     transport_cm, session = _mock_sdk_session(init_side_effect=ExceptionGroup("handshake failed", [httpx.ConnectError("connection refused")]))
 
     with patch("mcpgateway.services.gateway_service.ResilientHttpClient", return_value=mock_client):
-        with patch("mcpgateway.services.gateway_service.streamablehttp_client", return_value=transport_cm):
+        with patch("mcpgateway.services.gateway_service.streamable_http_client", return_value=transport_cm):
             with patch("mcpgateway.services.gateway_service.ClientSession", return_value=session):
                 result = await check_mcp_server_handshake(request=handshake_request, team_id=None, user=user_ctx, db=db_session)
 
@@ -1219,11 +1215,11 @@ async def test_handshake_initialize_paginated_counts_are_partial(handshake_reque
     transport_cm, session = _mock_sdk_session()
     tools_result = MagicMock()
     tools_result.tools = [MagicMock()]
-    tools_result.nextCursor = "page-2"
+    tools_result.next_cursor = "page-2"
     session.list_tools = AsyncMock(return_value=tools_result)
 
     with patch("mcpgateway.services.gateway_service.ResilientHttpClient", return_value=mock_client):
-        with patch("mcpgateway.services.gateway_service.streamablehttp_client", return_value=transport_cm):
+        with patch("mcpgateway.services.gateway_service.streamable_http_client", return_value=transport_cm):
             with patch("mcpgateway.services.gateway_service.ClientSession", return_value=session):
                 result = await check_mcp_server_handshake(request=handshake_request, team_id=None, user=user_ctx, db=db_session)
 
@@ -1535,9 +1531,9 @@ async def test_handshake_registered_only_allowlist_keeps_public_gateways_probeab
 async def test_sni_pinning_transport_dials_pinned_host_with_hostname_identity():
     """The transport rewrites the request onto the pinned address while keeping Host and TLS identity."""
     transport = _SniPinningTransport(sni_hostname="example.com", pinned_host="8.8.8.8")
-    request = httpx.Request("GET", "http://example.com/mcp")
+    request = httpx2.Request("GET", "http://example.com/mcp")
 
-    with patch.object(httpx.AsyncHTTPTransport, "handle_async_request", AsyncMock(return_value=httpx.Response(200))):
+    with patch.object(httpx2.AsyncHTTPTransport, "handle_async_request", AsyncMock(return_value=httpx2.Response(200))):
         await transport.handle_async_request(request)
 
     assert str(request.url) == "http://8.8.8.8/mcp"
@@ -1550,9 +1546,9 @@ async def test_sni_pinning_transport_dials_pinned_host_with_hostname_identity():
 async def test_sni_pinning_transport_refuses_unvalidated_host():
     """The transport refuses to send anywhere but the validated hostname."""
     transport = _SniPinningTransport(sni_hostname="example.com", pinned_host="8.8.8.8")
-    request = httpx.Request("GET", "http://attacker.example.net/mcp")
+    request = httpx2.Request("GET", "http://attacker.example.net/mcp")
 
-    with pytest.raises(httpx.UnsupportedProtocol):
+    with pytest.raises(httpx2.UnsupportedProtocol):
         await transport.handle_async_request(request)
 
     await transport.aclose()
@@ -1593,20 +1589,18 @@ async def test_handshake_uses_gateway_custom_ca_for_tls(user_ctx, db_session):
 
     with patch("mcpgateway.services.gateway_service.ResilientHttpClient", return_value=mock_client) as mock_resilient:
         with patch("mcpgateway.services.gateway_service.get_cached_ssl_context", return_value=ssl_context) as mock_ssl:
-            with patch("mcpgateway.services.gateway_service.streamablehttp_client", return_value=transport_cm) as mock_streamable:
+            with patch("mcpgateway.services.gateway_service.streamable_http_client", return_value=transport_cm) as mock_streamable:
                 with patch("mcpgateway.services.gateway_service.ClientSession", return_value=session):
                     result = await check_mcp_server_handshake(request=request, team_id=None, user=user_ctx, db=db_session)
 
     assert result.success is True
     mock_ssl.assert_called_once_with("ca-pem", client_cert="client-pem", client_key="key-pem")
 
-    with patch("mcpgateway.services.gateway_service._SniPinningTransport", wraps=_SniPinningTransport) as mock_transport:
-        factory_client = mock_streamable.call_args.kwargs["httpx_client_factory"]()
-        await factory_client.aclose()
-
-    assert mock_transport.call_args.kwargs["verify"] is ssl_context
-    # The stateless discover probe runs first, so it needs the same TLS settings or it fails
-    # the handshake before the SDK client is ever built.
+    assert mock_streamable.call_args.args[0] == "https://example.com/mcp"
+    http_client = mock_streamable.call_args.kwargs["http_client"]
+    assert isinstance(http_client, httpx2.AsyncClient)
+    # The stateless discover probe runs first, so it needs the same TLS settings
+    # or it fails the handshake before the SDK client is built.
     assert mock_resilient.call_args.kwargs["client_args"]["verify"] is ssl_context
 
 
@@ -1614,9 +1608,9 @@ async def test_handshake_uses_gateway_custom_ca_for_tls(user_ctx, db_session):
 async def test_sni_pinning_transport_accepts_punycode_host():
     """An internationalized hostname is matched in its IDNA-encoded form, not rejected."""
     transport = _SniPinningTransport(sni_hostname="xn--nicode-2ya.com", pinned_host="8.8.8.8")
-    request = httpx.Request("GET", "http://xn--nicode-2ya.com/mcp")
+    request = httpx2.Request("GET", "http://xn--nicode-2ya.com/mcp")
 
-    with patch.object(httpx.AsyncHTTPTransport, "handle_async_request", AsyncMock(return_value=httpx.Response(200))):
+    with patch.object(httpx2.AsyncHTTPTransport, "handle_async_request", AsyncMock(return_value=httpx2.Response(200))):
         await transport.handle_async_request(request)
 
     assert str(request.url) == "http://8.8.8.8/mcp"
@@ -1725,7 +1719,7 @@ async def test_handshake_shapeless_discover_result_falls_back_to_initialize(hand
     transport_cm, session = _mock_sdk_session()
 
     with patch("mcpgateway.services.gateway_service.ResilientHttpClient", return_value=mock_client):
-        with patch("mcpgateway.services.gateway_service.streamablehttp_client", return_value=transport_cm):
+        with patch("mcpgateway.services.gateway_service.streamable_http_client", return_value=transport_cm):
             with patch("mcpgateway.services.gateway_service.ClientSession", return_value=session):
                 result = await check_mcp_server_handshake(request=handshake_request, team_id=None, user=user_ctx, db=db_session)
 
