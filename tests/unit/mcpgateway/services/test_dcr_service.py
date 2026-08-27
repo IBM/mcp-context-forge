@@ -10,6 +10,7 @@ Tests will FAIL until implementation is complete.
 """
 
 # Standard
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
@@ -1261,6 +1262,88 @@ class TestIssuerValidation:
 
                 # Verify the stored issuer is normalized (no trailing slash)
                 assert result.issuer == "https://as-slash.example.com"
+
+
+class TestPublicMetadataDiscoverySafety:
+    """Security and concurrency coverage for public issuer discovery."""
+
+    @pytest.mark.asyncio
+    async def test_discovery_rejects_non_https_issuer(self):
+        """Discovery refuses non-HTTPS issuers after outbound validation."""
+        dcr_service = DcrService()
+
+        with patch(
+            "mcpgateway.services.dcr_service.SecurityValidator.validate_url_for_connection_pinning",
+            new=AsyncMock(return_value={"validated_url": "http://issuer.example.com"}),
+        ):
+            with pytest.raises(DcrError, match="HTTPS") as error:
+                await dcr_service.discover_as_metadata("http://issuer.example.com")
+
+        assert error.value.code == "blocked"
+
+    @pytest.mark.asyncio
+    async def test_discovery_rejects_oversized_metadata_response(self):
+        """Discovery enforces the metadata response-size limit before parsing JSON."""
+        dcr_service = DcrService()
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.headers = {"content-length": str(256 * 1024 + 1)}
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+
+        with (
+            patch.object(dcr_service, "_validate_discovery_issuer", return_value="https://issuer.example.com"),
+            patch.object(dcr_service, "_get_client", return_value=mock_client),
+        ):
+            with pytest.raises(DcrError, match="too large") as error:
+                await dcr_service.discover_as_metadata("https://issuer.example.com")
+
+        assert error.value.code == "invalid_metadata"
+
+    @pytest.mark.asyncio
+    async def test_concurrent_discovery_singleflights_per_issuer(self):
+        """Concurrent cold-cache requests share one issuer metadata fetch."""
+        # First-Party
+        from mcpgateway.services.dcr_service import _metadata_cache, _metadata_locks
+
+        _metadata_cache.clear()
+        _metadata_locks.clear()
+        dcr_service = DcrService()
+        started = asyncio.Event()
+        release = asyncio.Event()
+        metadata = {
+            "issuer": "https://issuer.example.com",
+            "authorization_endpoint": "https://issuer.example.com/authorize",
+            "token_endpoint": "https://issuer.example.com/token",
+        }
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.headers = {}
+        mock_response.content = b"{}"
+        mock_response.json = MagicMock(return_value=metadata)
+
+        async def delayed_get(*_args, **_kwargs):
+            started.set()
+            await release.wait()
+            return mock_response
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(side_effect=delayed_get)
+
+        with (
+            patch.object(dcr_service, "_validate_discovery_issuer", return_value="https://issuer.example.com"),
+            patch.object(dcr_service, "_get_client", return_value=mock_client),
+        ):
+            first = asyncio.create_task(dcr_service.discover_as_metadata("https://issuer.example.com"))
+            await started.wait()
+            second = asyncio.create_task(dcr_service.discover_as_metadata("https://issuer.example.com"))
+            await asyncio.sleep(0)
+            release.set()
+            assert await first == metadata
+            assert await second == metadata
+
+        assert mock_client.get.await_count == 1
 
 
 class TestDcrError:

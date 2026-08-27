@@ -4926,6 +4926,29 @@ class GatewayTestResponse(BaseModelWithConfigDict):
     body: Optional[Union[str, Dict[str, Any]]] = Field(None, description="Response body, can be a string or JSON object")
 
 
+class OAuthMetadataDiscoveryRequest(BaseModelWithConfigDict):
+    """Request OAuth authorization-server metadata for a supplied issuer."""
+
+    model_config = ConfigDict(str_strip_whitespace=True, extra="forbid")
+
+    issuer_url: str = Field(..., min_length=1, max_length=2048, description="HTTPS OAuth issuer URL to discover")
+
+
+class OAuthMetadataDiscoveryResponse(BaseModelWithConfigDict):
+    """Safe OAuth authorization-server metadata for registration-form autofill."""
+
+    discovered: bool = Field(..., description="Whether discovery returned valid issuer metadata")
+    authorization_url: Optional[str] = Field(None, description="Authorization endpoint from issuer metadata")
+    token_url: Optional[str] = Field(None, description="Token endpoint from issuer metadata")
+    registration_endpoint: Optional[str] = Field(None, description="Dynamic Client Registration endpoint when advertised")
+    scopes_supported: List[str] = Field(default_factory=list, description="Scopes advertised by the authorization server")
+    error: Optional[str] = Field(None, description="Safe user-facing discovery failure message")
+    error_code: Optional[Literal["not_found", "invalid_metadata", "blocked", "timeout"]] = Field(
+        None,
+        description="Structured discovery failure code",
+    )
+
+
 class GatewayHandshakeRequest(BaseModelWithConfigDict):
     """Request to run an MCP handshake test against a server URL."""
 
