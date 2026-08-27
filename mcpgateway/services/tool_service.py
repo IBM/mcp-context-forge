@@ -1004,6 +1004,23 @@ class ToolTimeoutError(ToolInvocationError):
         self.retry_delay_ms = retry_delay_ms
 
 
+class ToolInputRequired(Exception):
+    """Control-flow signal: upstream returned an InputRequiredResult (2026 MRTR).
+
+    Carries the raw result up to the transport, which returns it to the
+    modern downstream client so the client can answer and retry.
+    """
+
+    def __init__(self, result: Any):
+        """Wrap the upstream InputRequiredResult.
+
+        Args:
+            result: The InputRequiredResult received from the upstream server.
+        """
+        super().__init__("input required")
+        self.result = result
+
+
 def _coerce_retry_policy_int(raw_value: Any, *, default: int, minimum: int) -> int:
     """Normalize retry policy integer settings from plugin config."""
     if raw_value is None:
@@ -4839,7 +4856,11 @@ class ToolService(BaseService):
         require_app_visible: bool = False,
         require_model_visible: bool = False,
         retry_attempt: int = 0,
+        *,
         progress_callback: Optional[Any] = None,
+        allow_input_required: bool = False,
+        input_responses: Optional[Any] = None,
+        request_state: Optional[str] = None,
     ) -> ToolResult:
         """
         Invoke a registered tool and record execution metrics.
@@ -4868,6 +4889,10 @@ class ToolService(BaseService):
                 loop and compared against ``settings.max_tool_retries``.
             progress_callback: Optional async callable (progress, total, message) invoked for
                 each progress update the upstream server emits during the call.
+            allow_input_required: When True, an upstream InputRequiredResult (2026 MRTR)
+                is surfaced via ToolInputRequired instead of failing the call.
+            input_responses: Client answers to a prior InputRequiredResult, forwarded upstream.
+            request_state: Opaque state echoed from a prior InputRequiredResult, forwarded upstream.
 
         Returns:
             Tool invocation result.
@@ -6051,7 +6076,19 @@ class ToolService(BaseService):
                                     httpx_client_factory=get_httpx_client_factory,
                                 ) as upstream:
                                     with anyio.fail_after(effective_timeout):
-                                        tool_call_result = await upstream.session.call_tool(tool_name_original, arguments, meta=meta_data, progress_callback=progress_callback)
+                                        tool_call_result = await upstream.session.call_tool(
+                                            tool_name_original,
+                                            arguments,
+                                            meta=meta_data,
+                                            progress_callback=progress_callback,
+                                            allow_input_required=True,
+                                            input_responses=input_responses,
+                                            request_state=request_state,
+                                        )
+                                        if isinstance(tool_call_result, types.InputRequiredResult):
+                                            if allow_input_required:
+                                                raise ToolInputRequired(tool_call_result)
+                                            raise ToolInvocationError("Elicitation not supported")
                             else:
                                 # Fallback: per-call session. Taken when no downstream session id
                                 # is available (admin UI test-invoke, internal /rpc callers), or
@@ -6097,7 +6134,19 @@ class ToolService(BaseService):
                                             },
                                         ):
                                             with anyio.fail_after(effective_timeout):
-                                                tool_call_result = await client.call_tool(tool_name_original, arguments, meta=request_meta_data, progress_callback=progress_callback)
+                                                tool_call_result = await client.session.call_tool(
+                                                    tool_name_original,
+                                                    arguments,
+                                                    meta=request_meta_data,
+                                                    progress_callback=progress_callback,
+                                                    allow_input_required=True,
+                                                    input_responses=input_responses,
+                                                    request_state=request_state,
+                                                )
+                                                if isinstance(tool_call_result, types.InputRequiredResult):
+                                                    if allow_input_required:
+                                                        raise ToolInputRequired(tool_call_result)
+                                                    raise ToolInvocationError("Elicitation not supported")
                                         with create_span(
                                             "mcp.client.response",
                                             {
@@ -6155,6 +6204,9 @@ class ToolService(BaseService):
                         except asyncio.CancelledError:
                             # Cancellation must propagate; do not wrap it as a tool failure.
                             raise
+                        except ToolInputRequired:
+                            # 2026 MRTR control flow, not a failure - let the transport handle it.
+                            raise
                         except BaseException as e:
                             # Extract root cause from ExceptionGroup (Python 3.11+)
                             # MCP SDK uses TaskGroup which wraps exceptions in ExceptionGroup
@@ -6162,6 +6214,9 @@ class ToolService(BaseService):
                             if isinstance(e, BaseExceptionGroup):
                                 while isinstance(root_cause, BaseExceptionGroup) and root_cause.exceptions:
                                     root_cause = root_cause.exceptions[0]
+                            if isinstance(root_cause, ToolInputRequired):
+                                # 2026 MRTR control flow arrived wrapped in a task-group ExceptionGroup.
+                                raise root_cause
                             # Log failed MCP call (using local variables)
                             mcp_duration_ms = (time.time() - mcp_start_time) * 1000
                             # Sanitize error message to prevent URL secrets from leaking in logs
@@ -6238,7 +6293,19 @@ class ToolService(BaseService):
                                     httpx_client_factory=get_httpx_client_factory,
                                 ) as upstream:
                                     with anyio.fail_after(effective_timeout):
-                                        tool_call_result = await upstream.session.call_tool(tool_name_original, arguments, meta=meta_data, progress_callback=progress_callback)
+                                        tool_call_result = await upstream.session.call_tool(
+                                            tool_name_original,
+                                            arguments,
+                                            meta=meta_data,
+                                            progress_callback=progress_callback,
+                                            allow_input_required=True,
+                                            input_responses=input_responses,
+                                            request_state=request_state,
+                                        )
+                                        if isinstance(tool_call_result, types.InputRequiredResult):
+                                            if allow_input_required:
+                                                raise ToolInputRequired(tool_call_result)
+                                            raise ToolInvocationError("Elicitation not supported")
                             else:
                                 # Fallback: per-call session. Taken when no downstream session id
                                 # is available (admin UI test-invoke, internal /rpc callers), when
@@ -6284,7 +6351,19 @@ class ToolService(BaseService):
                                             },
                                         ):
                                             with anyio.fail_after(effective_timeout):
-                                                tool_call_result = await client.call_tool(tool_name_original, arguments, meta=request_meta_data, progress_callback=progress_callback)
+                                                tool_call_result = await client.session.call_tool(
+                                                    tool_name_original,
+                                                    arguments,
+                                                    meta=request_meta_data,
+                                                    progress_callback=progress_callback,
+                                                    allow_input_required=True,
+                                                    input_responses=input_responses,
+                                                    request_state=request_state,
+                                                )
+                                                if isinstance(tool_call_result, types.InputRequiredResult):
+                                                    if allow_input_required:
+                                                        raise ToolInputRequired(tool_call_result)
+                                                    raise ToolInvocationError("Elicitation not supported")
                                         with create_span(
                                             "mcp.client.response",
                                             {
@@ -6342,6 +6421,9 @@ class ToolService(BaseService):
                         except asyncio.CancelledError:
                             # Cancellation must propagate; do not wrap it as a tool failure.
                             raise
+                        except ToolInputRequired:
+                            # 2026 MRTR control flow, not a failure - let the transport handle it.
+                            raise
                         except BaseException as e:
                             # Extract root cause from ExceptionGroup (Python 3.11+)
                             # MCP SDK uses TaskGroup which wraps exceptions in ExceptionGroup
@@ -6349,6 +6431,9 @@ class ToolService(BaseService):
                             if isinstance(e, BaseExceptionGroup):
                                 while isinstance(root_cause, BaseExceptionGroup) and root_cause.exceptions:
                                     root_cause = root_cause.exceptions[0]
+                            if isinstance(root_cause, ToolInputRequired):
+                                # 2026 MRTR control flow arrived wrapped in a task-group ExceptionGroup.
+                                raise root_cause
                             # Log failed MCP call
                             mcp_duration_ms = (time.time() - mcp_start_time) * 1000
                             # Sanitize error message to prevent URL secrets from leaking in logs
@@ -6724,6 +6809,9 @@ class ToolService(BaseService):
             except asyncio.CancelledError:
                 # Never wrap a cancellation as a ToolInvocationError; cancellation is not a tool failure.
                 raise
+            except ToolInputRequired:
+                # 2026 MRTR control flow, not a failure - let the transport handle it.
+                raise
             except BaseException as e:
                 # Extract root cause from ExceptionGroup (Python 3.11+)
                 # MCP SDK uses TaskGroup which wraps exceptions in ExceptionGroup
@@ -6731,6 +6819,9 @@ class ToolService(BaseService):
                 if isinstance(e, BaseExceptionGroup):
                     while isinstance(root_cause, BaseExceptionGroup) and root_cause.exceptions:
                         root_cause = root_cause.exceptions[0]
+                if isinstance(root_cause, ToolInputRequired):
+                    # 2026 MRTR control flow arrived wrapped in a task-group ExceptionGroup.
+                    raise root_cause
                 error_message = str(root_cause)
                 # Set span error status
                 if span:

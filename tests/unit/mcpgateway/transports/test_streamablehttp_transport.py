@@ -46,7 +46,7 @@ from mcpgateway.services.mcp_apps import MCP_UI_EXTENSION
 from mcpgateway.transports import streamablehttp_transport as tr  # noqa: E402
 from mcpgateway.services.prompt_service import PromptNotFoundError
 from mcpgateway.services.resource_service import ResourceNotFoundError
-from mcpgateway.services.tool_service import ToolInvocationError, ToolNotFoundError
+from mcpgateway.services.tool_service import ToolInputRequired, ToolInvocationError, ToolNotFoundError
 from mcpgateway.transports.streamablehttp_transport import (
     _MCPGATEWAY_CONTEXT_KEY,
     call_tool,
@@ -18287,3 +18287,59 @@ class TestProgressRelay:
             await captured["progress_callback"](2.0, 8.0, "step 2 of 8")
 
         downstream_ctx.session.report_progress.assert_awaited_once_with(2.0, 8.0, "step 2 of 8")
+
+
+class TestMrtrElicitation:
+    """Modern-era MRTR elicitation pass-through in call_tool."""
+
+    @pytest.mark.asyncio
+    async def test_input_required_result_returned_raw(self, monkeypatch):
+        """ToolInputRequired from the service surfaces as a raw InputRequiredResult."""
+        TestProgressRelay._patch_db(monkeypatch)
+
+        question = types.InputRequiredResult(inputRequests=None, requestState="sealed-token")
+        monkeypatch.setattr(tool_service, "invoke_tool", AsyncMock(side_effect=ToolInputRequired(question)))
+
+        result = await call_tool("asking_tool", {})
+        assert result is question
+
+    @pytest.mark.asyncio
+    async def test_modern_request_forwards_answer_round(self, monkeypatch):
+        """A modern-era request's input_responses and request_state reach invoke_tool, with MRTR allowed."""
+        TestProgressRelay._patch_db(monkeypatch)
+        captured = TestProgressRelay._patch_invoke_tool(monkeypatch)
+
+        downstream_ctx = MagicMock()
+        downstream_ctx.meta = None
+        downstream_ctx.protocol_version = "2026-07-28"
+        downstream_ctx.params = {
+            "name": "asking_tool",
+            "inputResponses": {"color-q": {"action": "accept", "content": {"color": "blue"}}},
+            "requestState": "sealed-token",
+        }
+
+        with patch.object(type(tr.mcp_app), "request_context", new_callable=PropertyMock, return_value=downstream_ctx):
+            await call_tool("asking_tool", {})
+
+        assert captured["allow_input_required"] is True
+        assert captured["request_state"] == "sealed-token"
+        answer = captured["input_responses"]["color-q"]
+        assert answer.action == "accept"
+        assert answer.content == {"color": "blue"}
+
+    @pytest.mark.asyncio
+    async def test_legacy_request_does_not_allow_mrtr(self, monkeypatch):
+        """A handshake-era request leaves MRTR disallowed (scoping: legacy clients keep no-elicitation)."""
+        TestProgressRelay._patch_db(monkeypatch)
+        captured = TestProgressRelay._patch_invoke_tool(monkeypatch)
+
+        downstream_ctx = MagicMock()
+        downstream_ctx.meta = None
+        downstream_ctx.protocol_version = "2025-11-25"
+        downstream_ctx.params = {"name": "asking_tool"}
+
+        with patch.object(type(tr.mcp_app), "request_context", new_callable=PropertyMock, return_value=downstream_ctx):
+            await call_tool("asking_tool", {})
+
+        assert captured["allow_input_required"] is False
+        assert captured["input_responses"] is None

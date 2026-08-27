@@ -3126,6 +3126,7 @@ class TestToolService:
         session_mock = AsyncMock()
         session_mock.initialize = AsyncMock()
         session_mock.call_tool = AsyncMock(return_value=expected_result)
+        session_mock.session.call_tool = session_mock.call_tool
         session_mock.__aenter__ = AsyncMock(return_value=session_mock)
         session_mock.__aexit__ = AsyncMock(return_value=None)
 
@@ -3218,6 +3219,7 @@ class TestToolService:
         session_mock = AsyncMock()
         session_mock.initialize = AsyncMock()
         session_mock.call_tool = AsyncMock(return_value=expected_result)
+        session_mock.session.call_tool = session_mock.call_tool
 
         client_session_cm = AsyncMock()
         client_session_cm.__aenter__.return_value = session_mock
@@ -3301,6 +3303,7 @@ class TestToolService:
         session_mock = AsyncMock()
         session_mock.initialize = AsyncMock()
         session_mock.call_tool = AsyncMock(return_value=expected_result)
+        session_mock.session.call_tool = session_mock.call_tool
 
         @asynccontextmanager
         async def mock_proxy_client(*_args, **_kwargs):
@@ -3388,6 +3391,7 @@ class TestToolService:
         session_mock = AsyncMock()
         session_mock.initialize = AsyncMock()
         session_mock.call_tool = AsyncMock(return_value=expected_result)
+        session_mock.session.call_tool = session_mock.call_tool
 
         client_session_cm = AsyncMock()
         client_session_cm.__aenter__.return_value = session_mock
@@ -3496,6 +3500,7 @@ class TestToolService:
         expected_result = ToolResult(content=[TextContent(type="text", text="registry ok")])
         upstream_session_mock = AsyncMock()
         upstream_session_mock.call_tool = AsyncMock(return_value=expected_result)
+        upstream_session_mock.session.call_tool = upstream_session_mock.call_tool
 
         captured_registry_headers = {}
 
@@ -3604,6 +3609,7 @@ class TestToolService:
         expected = ToolResult(content=[TextContent(type="text", text="ok")])
         upstream_session_mock = AsyncMock()
         upstream_session_mock.call_tool = AsyncMock(return_value=expected)
+        upstream_session_mock.session.call_tool = upstream_session_mock.call_tool
 
         observed_keys: list[tuple[str, str]] = []
 
@@ -3714,6 +3720,7 @@ class TestToolService:
         session_mock = AsyncMock()
         session_mock.initialize = AsyncMock()
         session_mock.call_tool = AsyncMock(return_value=call_result)
+        session_mock.session.call_tool = session_mock.call_tool
 
         session_mock.__aenter__ = AsyncMock(return_value=session_mock)
         session_mock.__aexit__ = AsyncMock(return_value=None)
@@ -3797,6 +3804,7 @@ class TestToolService:
 
         session_mock = AsyncMock()
         session_mock.call_tool = AsyncMock(return_value=call_result)
+        session_mock.session.call_tool = session_mock.call_tool
         # mcp_proxy_client auto-initializes internally; the mock is used directly
         # as the async context manager yielding the client.
         session_mock.__aenter__ = AsyncMock(return_value=session_mock)
@@ -4127,6 +4135,7 @@ class TestToolService:
         session_mock = AsyncMock()
         session_mock.initialize = AsyncMock()
         session_mock.call_tool = AsyncMock(return_value=expected_result)
+        session_mock.session.call_tool = session_mock.call_tool
 
         client_session_cm = AsyncMock()
         client_session_cm.__aenter__.return_value = session_mock
@@ -4208,6 +4217,7 @@ class TestToolService:
         # Mock MCP client session (mcp_proxy_client auto-initializes)
         session_mock = AsyncMock()
         session_mock.call_tool = AsyncMock(return_value=ToolResult(content=[TextContent(type="text", text="MCP response")]))
+        session_mock.session.call_tool = session_mock.call_tool
 
         client_session_cm = AsyncMock()
         client_session_cm.__aenter__.return_value = session_mock
@@ -4728,6 +4738,7 @@ class TestToolService:
         session_mock = AsyncMock()
         session_mock.initialize = AsyncMock()
         session_mock.call_tool = AsyncMock(return_value=expected_result)
+        session_mock.session.call_tool = session_mock.call_tool
 
         client_session_cm = AsyncMock()
         client_session_cm.__aenter__.return_value = session_mock
@@ -4815,6 +4826,7 @@ class TestToolService:
         session_mock = AsyncMock()
         session_mock.initialize = AsyncMock()
         session_mock.call_tool = AsyncMock(return_value=expected_result)
+        session_mock.session.call_tool = session_mock.call_tool
 
         client_session_cm = AsyncMock()
         client_session_cm.__aenter__.return_value = session_mock
@@ -5142,6 +5154,7 @@ class TestToolService:
         session_mock = AsyncMock()
         session_mock.initialize = AsyncMock()
         session_mock.call_tool = AsyncMock(return_value=expected_result)
+        session_mock.session.call_tool = session_mock.call_tool
 
         client_session_cm = AsyncMock()
         client_session_cm.__aenter__.return_value = session_mock
@@ -8756,6 +8769,7 @@ class TestInvokeToolDirect:
 
         session_mock = AsyncMock()
         session_mock.call_tool = AsyncMock(return_value=expected_result)
+        session_mock.session.call_tool = session_mock.call_tool
 
         client_session_cm = AsyncMock()
         client_session_cm.__aenter__.return_value = session_mock
@@ -8794,6 +8808,7 @@ class TestInvokeToolDirect:
 
         session_mock = AsyncMock()
         session_mock.call_tool = AsyncMock(return_value=expected_result)
+        session_mock.session.call_tool = session_mock.call_tool
 
         @asynccontextmanager
         async def mock_streamable_client(*_args, **_kwargs):
@@ -8833,6 +8848,7 @@ class TestInvokeToolDirect:
 
         session_mock = AsyncMock()
         session_mock.call_tool = AsyncMock(return_value=expected_result)
+        session_mock.session.call_tool = session_mock.call_tool
 
         def inject_headers(headers):
             traced = dict(headers)
@@ -8971,6 +8987,7 @@ class TestInvokeToolDirect:
 
         session_mock = AsyncMock()
         session_mock.call_tool = AsyncMock(return_value=MagicMock())
+        session_mock.session.call_tool = session_mock.call_tool
 
         client_session_cm = AsyncMock()
         client_session_cm.__aenter__.return_value = session_mock
@@ -9015,6 +9032,7 @@ class TestInvokeToolDirect:
 
         session_mock = AsyncMock()
         session_mock.call_tool = AsyncMock(return_value=MagicMock())
+        session_mock.session.call_tool = session_mock.call_tool
 
         with (
             patch("mcpgateway.services.tool_service.fresh_db_session", self._make_fresh_db_session(mock_direct_gateway)),
@@ -9042,6 +9060,7 @@ class TestInvokeToolDirect:
         expected_result = MagicMock()
         session_mock = AsyncMock()
         session_mock.call_tool = AsyncMock(return_value=expected_result)
+        session_mock.session.call_tool = session_mock.call_tool
 
         client_session_cm = AsyncMock()
         client_session_cm.__aenter__.return_value = session_mock
@@ -9083,6 +9102,7 @@ class TestInvokeToolDirect:
         expected_result = MagicMock()
         session_mock = AsyncMock()
         session_mock.call_tool = AsyncMock(return_value=expected_result)
+        session_mock.session.call_tool = session_mock.call_tool
 
         @asynccontextmanager
         async def mock_streamable_client(*_args, **_kwargs):
@@ -9233,6 +9253,7 @@ class TestInvokeToolDirectProxyViaHeader:
         session_mock = AsyncMock()
         session_mock.initialize = AsyncMock()
         session_mock.call_tool = AsyncMock(return_value=expected_result)
+        session_mock.session.call_tool = session_mock.call_tool
 
         client_session_cm = AsyncMock()
         client_session_cm.__aenter__.return_value = session_mock
