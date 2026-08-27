@@ -417,7 +417,7 @@ class TestAuditMapper:
     """_audit_to_activity renders server-owned title, description and status."""
 
     def test_successful_create(self):
-        """A successful create is a success item with a humanised resource label."""
+        """A successful create against the (inert, compat-only) mcp_server key still resolves."""
         row = AuditTrail(id="1", timestamp=BASE_TIME, action="create", resource_type="mcp_server", resource_name="github", user_id="u", user_email="u@x.com", success=True, requires_review=False)
 
         item = log_search._audit_to_activity(row)
@@ -426,6 +426,16 @@ class TestAuditMapper:
         assert item.title == "MCP server created"
         assert item.description == "MCP server 'github' was created by u@x.com."
         assert item.id == "audit:1"
+
+    def test_gateway_create_is_registered(self):
+        """gateway_service.py's real write shape: resource_type='gateway', action='create_gateway'."""
+        row = AuditTrail(id="1b", timestamp=BASE_TIME, action="create_gateway", resource_type="gateway", resource_name="github", user_id="u", user_email="u@x.com", success=True, requires_review=False)
+
+        item = log_search._audit_to_activity(row)
+
+        assert item.status == "success"
+        assert item.title == "MCP server registered"
+        assert item.description == "MCP server 'github' was registered by u@x.com."
 
     def test_failed_create_carries_error_message(self):
         """A failed action is an error item whose description includes the error."""
@@ -445,8 +455,18 @@ class TestAuditMapper:
         item = log_search._audit_to_activity(row)
 
         assert item.status == "error"
-        assert item.title == "MCP server create failed"
+        assert item.title == "Failed to create MCP server"
         assert "Connection refused" in item.description
+
+    def test_failed_gateway_create_uses_infinitive_not_mangled_composite(self):
+        """A failed create_gateway must not render as 'MCP server create gateway failed'."""
+        row = AuditTrail(id="2b", timestamp=BASE_TIME, action="create_gateway", resource_type="gateway", resource_name="github", user_id="u", success=False, requires_review=False)
+
+        item = log_search._audit_to_activity(row)
+
+        assert item.status == "error"
+        assert item.title == "Failed to register MCP server"
+        assert "gateway" not in item.title.lower()
 
     def test_requires_review_is_warning(self):
         """A row flagged for review outranks the default success status."""
@@ -456,6 +476,21 @@ class TestAuditMapper:
 
         assert item.status == "warning"
 
+    def test_requires_review_outranks_state_transition(self):
+        """requires_review must win even over an offline transition."""
+        row = AuditTrail(
+            id="3b",
+            timestamp=BASE_TIME,
+            action="set_gateway_state",
+            resource_type="gateway",
+            user_id="system",
+            success=True,
+            requires_review=True,
+            new_values={"enabled": True, "reachable": False},
+        )
+
+        assert log_search._audit_to_activity(row).status == "warning"
+
     def test_read_action_is_info(self):
         """Read and execute actions are informational, not successes."""
         row = AuditTrail(id="4", timestamp=BASE_TIME, action="read", resource_type="tool", user_id="u", success=True, requires_review=False)
@@ -464,6 +499,15 @@ class TestAuditMapper:
 
         assert item.status == "info"
         assert item.title == "Tool accessed"
+
+    def test_view_prompt_details_is_info(self):
+        """view_prompt_details (a real writer action) resolves via the read family, not literal string match."""
+        row = AuditTrail(id="4b", timestamp=BASE_TIME, action="view_prompt_details", resource_type="prompt", user_id="u", success=True, requires_review=False)
+
+        item = log_search._audit_to_activity(row)
+
+        assert item.status == "info"
+        assert item.title == "Prompt viewed"
 
     def test_missing_optional_fields_become_empty_strings(self):
         """Contract fields are never null even when source columns are missing."""
@@ -476,14 +520,264 @@ class TestAuditMapper:
         assert item.description == "Tool was deleted by u."
 
     def test_unmapped_action_is_humanised(self):
-        """An action with no verb mapping loses its underscores instead of leaking them."""
-        row = AuditTrail(id="6", timestamp=BASE_TIME, action="bulk_create_tools", resource_type="tool", user_id="u", success=True, requires_review=False)
+        """A genuinely unmapped action (no recognised leading verb token) loses its underscores."""
+        row = AuditTrail(id="6", timestamp=BASE_TIME, action="something_totally_unmapped", resource_type="tool", user_id="u", success=True, requires_review=False)
 
-        assert log_search._audit_to_activity(row).title == "Tool bulk create tools"
+        assert log_search._audit_to_activity(row).title == "Tool something totally unmapped"
 
         row.success = False
 
-        assert log_search._audit_to_activity(row).title == "Tool bulk create tools failed"
+        assert log_search._audit_to_activity(row).title == "Tool something totally unmapped failed"
+
+    def test_bulk_create_tools_resolves_via_token_scan(self):
+        """bulk_create_tools (a real writer action) resolves through the verb, not the mangled fallback."""
+        row = AuditTrail(id="6b", timestamp=BASE_TIME, action="bulk_create_tools", resource_type="tool", user_id="u", success=True, requires_review=False)
+
+        assert log_search._audit_to_activity(row).title == "Tool bulk created"
+
+    def test_action_lookup_is_case_insensitive(self):
+        """log_action's own docstring documents actions as uppercase; the resolver must not depend on case."""
+        row = AuditTrail(id="6c", timestamp=BASE_TIME, action="CREATE_GATEWAY", resource_type="gateway", user_id="u", success=True, requires_review=False)
+
+        assert log_search._audit_to_activity(row).title == "MCP server registered"
+
+    def test_writer_description_is_preferred_over_synthesised_text(self):
+        """log_audit(description=...) callers (e.g. plugin marketplace views) get their own prose verbatim."""
+        row = AuditTrail(
+            id="7",
+            timestamp=BASE_TIME,
+            action="view",
+            resource_type="plugin",
+            resource_id="my-plugin",
+            user_id="u",
+            success=True,
+            requires_review=False,
+            context={"description": "Viewed plugin 'my-plugin' details in marketplace"},
+        )
+
+        item = log_search._audit_to_activity(row)
+
+        assert item.description == "Viewed plugin 'my-plugin' details in marketplace"
+
+    def test_no_writer_description_falls_back_to_synthesis(self):
+        """Rows without a writer-authored description keep the synthesised sentence."""
+        row = AuditTrail(id="7b", timestamp=BASE_TIME, action="view", resource_type="plugin", resource_id="my-plugin", user_id="u", success=True, requires_review=False)
+
+        item = log_search._audit_to_activity(row)
+
+        assert item.description == "Plugin 'my-plugin' was viewed by u."
+
+
+class TestStateTransitions:
+    """set_*_state rows render from new_values, not the literal action string."""
+
+    def test_gateway_went_offline_is_warning(self):
+        row = AuditTrail(
+            id="s1",
+            timestamp=BASE_TIME,
+            action="set_gateway_state",
+            resource_type="gateway",
+            resource_name="my-server",
+            user_id="system",
+            success=True,
+            requires_review=False,
+            new_values={"enabled": True, "reachable": False},
+            context={"action": "activate", "only_update_reachable": True},
+        )
+
+        item = log_search._audit_to_activity(row)
+
+        assert item.status == "warning"
+        assert item.title == "MCP server went offline"
+        assert item.description == "MCP server 'my-server' went offline."
+        assert " by " not in item.description
+
+    def test_gateway_came_online_is_success(self):
+        row = AuditTrail(
+            id="s2",
+            timestamp=BASE_TIME,
+            action="set_gateway_state",
+            resource_type="gateway",
+            resource_name="my-server",
+            user_id="system",
+            success=True,
+            requires_review=False,
+            new_values={"enabled": True, "reachable": True},
+        )
+
+        item = log_search._audit_to_activity(row)
+
+        assert item.status == "success"
+        assert item.title == "MCP server came online"
+
+    def test_gateway_disabled_by_admin_is_success(self):
+        row = AuditTrail(
+            id="s3",
+            timestamp=BASE_TIME,
+            action="set_gateway_state",
+            resource_type="gateway",
+            resource_name="my-server",
+            user_id="u",
+            user_email="admin@x.com",
+            success=True,
+            requires_review=False,
+            new_values={"enabled": False, "reachable": False},
+        )
+
+        item = log_search._audit_to_activity(row)
+
+        assert item.status == "success"
+        assert item.title == "MCP server disabled"
+        assert "by admin@x.com" in item.description
+
+    def test_tool_state_also_supports_reachability(self):
+        """set_tool_state carries 'reachable' too, so a tool marked unreachable also renders as offline."""
+        row = AuditTrail(
+            id="s4",
+            timestamp=BASE_TIME,
+            action="set_tool_state",
+            resource_type="tool",
+            resource_name="my-tool",
+            user_id="system",
+            success=True,
+            requires_review=False,
+            new_values={"enabled": True, "reachable": False},
+        )
+
+        item = log_search._audit_to_activity(row)
+
+        assert item.status == "warning"
+        assert item.title == "Tool went offline"
+
+    def test_prompt_state_has_no_reachable_key(self):
+        """set_prompt_state only ever carries 'enabled'; it must not require 'reachable' to render."""
+        row = AuditTrail(
+            id="s5",
+            timestamp=BASE_TIME,
+            action="set_prompt_state",
+            resource_type="prompt",
+            resource_name="my-prompt",
+            user_id="u",
+            user_email="admin@x.com",
+            success=True,
+            requires_review=False,
+            new_values={"enabled": True},
+        )
+
+        item = log_search._audit_to_activity(row)
+
+        assert item.status == "success"
+        assert item.title == "Prompt enabled"
+
+    def test_missing_new_values_falls_through_without_raising(self):
+        row = AuditTrail(id="s6", timestamp=BASE_TIME, action="set_gateway_state", resource_type="gateway", user_id="system", success=True, requires_review=False, new_values=None)
+
+        item = log_search._audit_to_activity(row)
+
+        assert item.status == "success"  # falls through to the state-action fallback override
+        assert item.title == "MCP server state updated"
+
+    def test_empty_new_values_falls_through_without_raising(self):
+        row = AuditTrail(id="s7", timestamp=BASE_TIME, action="set_gateway_state", resource_type="gateway", user_id="system", success=True, requires_review=False, new_values={})
+
+        item = log_search._audit_to_activity(row)
+
+        assert item.status == "success"
+
+    def test_failed_state_write_is_still_error(self):
+        """success=False must win over the transition branch."""
+        row = AuditTrail(
+            id="s8",
+            timestamp=BASE_TIME,
+            action="set_gateway_state",
+            resource_type="gateway",
+            resource_name="my-server",
+            user_id="system",
+            success=False,
+            requires_review=False,
+            new_values={"enabled": True, "reachable": False},
+        )
+
+        item = log_search._audit_to_activity(row)
+
+        assert item.status == "error"
+        assert item.title == "Failed to update MCP server state"
+
+
+# Every (resource_type, action) pair actually written by AuditTrailService.log_action /
+# log_audit callers as of this writing. Hardcoded rather than grep-derived on purpose: a
+# new writer action should fail this table by *absence*, forcing a conscious verb
+# decision rather than silently falling through to the mangled default. Sourced from
+# gateway_service.py, tool_service.py, prompt_service.py, resource_service.py,
+# server_service.py and admin.py's log_audit call sites.
+REAL_AUDIT_ACTIONS = [
+    ("gateway", "create_gateway"),
+    ("gateway", "update_gateway"),
+    ("gateway", "delete_gateway"),
+    ("gateway", "set_gateway_state"),
+    ("tool", "create_tool"),
+    ("tool", "update_tool"),
+    ("tool", "delete_tool"),
+    ("tool", "set_tool_state"),
+    ("tool", "bulk_create_tools"),
+    ("tool", "bulk_update_tools"),
+    ("prompt", "create_prompt"),
+    ("prompt", "update_prompt"),
+    ("prompt", "delete_prompt"),
+    ("prompt", "set_prompt_state"),
+    ("prompt", "bulk_create_prompts"),
+    ("prompt", "bulk_update_prompts"),
+    ("prompt", "view_prompt"),
+    ("prompt", "view_prompt_details"),
+    ("resource", "create_resource"),
+    ("resource", "update_resource"),
+    ("resource", "delete_resource"),
+    ("resource", "set_resource_state"),
+    ("resource", "bulk_create_resources"),
+    ("resource", "bulk_update_resources"),
+    ("server", "create_server"),
+    ("server", "update_server"),
+    ("server", "delete_server"),
+    ("server", "activate_server"),
+    ("server", "deactivate_server"),
+    ("server", "view_server"),
+    ("plugin", "view"),
+    ("plugin", "view_details"),
+]
+
+
+class TestRealActionInventoryRegressionGuard:
+    """The regression guard: every emitted (resource_type, action) pair must render cleanly.
+
+    This is the test that would have caught #6342. TestAuditMapper's original rows used
+    resource_type='mcp_server' / action='create' -- values no writer in the codebase
+    produces -- so they passed while every real gateway/tool/prompt/resource/server row
+    rendered mangled titles like 'Gateway set gateway state'.
+    """
+
+    @pytest.mark.parametrize("resource_type,action", REAL_AUDIT_ACTIONS)
+    def test_title_has_no_underscore(self, resource_type, action):
+        row = AuditTrail(id=f"{resource_type}:{action}", timestamp=BASE_TIME, action=action, resource_type=resource_type, resource_name="x", user_id="u", success=True, requires_review=False)
+
+        title = log_search._audit_to_activity(row).title
+
+        assert "_" not in title, f"title leaked an underscore: {title!r}"
+
+    @pytest.mark.parametrize("resource_type,action", REAL_AUDIT_ACTIONS)
+    def test_title_does_not_repeat_the_label(self, resource_type, action):
+        """Kills the 'Gateway set gateway state' / 'Prompt view prompt details' shape."""
+        row = AuditTrail(id=f"{resource_type}:{action}", timestamp=BASE_TIME, action=action, resource_type=resource_type, resource_name="x", user_id="u", success=True, requires_review=False)
+
+        title = log_search._audit_to_activity(row).title
+        label = log_search._RESOURCE_LABELS.get(resource_type) or resource_type
+
+        words = title.lower().split()
+        label_words = label.lower().split()
+        # The label may legitimately be the first word(s) of the title ("MCP server went
+        # offline"); it must not additionally appear again later in the title.
+        remainder = words[len(label_words) :] if words[: len(label_words)] == label_words else words
+        for w in label_words:
+            assert w not in remainder, f"title repeats the resource label: {title!r}"
 
 
 class TestSecurityMapper:
