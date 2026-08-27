@@ -112,7 +112,7 @@ redisCommander:
 minio:
   enabled: false
 
-# Enable testing profile (fast-test-server + auto-registration)
+# Enable testing profile (fast-time server + auto-registration)
 testing:
   enabled: true
   registration:
@@ -123,13 +123,6 @@ testing:
     jwt:
       secret: ""  # must be set to a strong value before deploy (run make init-secrets-patch-env)
   fastTime:
-    register:
-      enabled: true
-  fastTestServer:
-    enabled: true
-    image:
-      pullPolicy: Never
-  fastTest:
     register:
       enabled: true
   a2aEchoAgent:

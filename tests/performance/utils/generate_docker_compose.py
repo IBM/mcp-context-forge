@@ -47,7 +47,6 @@ services:
 
 {fast_time_server}
 
-{fast_test_server}
 
 {benchmark_servers}
 
@@ -134,27 +133,6 @@ FAST_TIME_SERVER_TEMPLATE = """  fast_time_server:
       retries: 3
 """
 
-FAST_TEST_SERVER_TEMPLATE = """  fast_test_server:
-    build:
-      # Context builds the renamed rust fast-time-server crate; image/service name kept as fast-test-server to avoid colliding with the Go fast_time_server.
-      context: ./mcp-servers/rust/fast-time-server
-      dockerfile: Dockerfile
-    container_name: fast_test_server
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-    environment:
-      - BIND_ADDRESS=0.0.0.0:8880
-      - RUST_LOG=info
-    ports:
-      - "8880:8880"
-    networks:
-      - mcpnet
-    healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:8880/health || exit 1"]
-      interval: 10s
-      timeout: 5s
-      retries: 3
-"""
 
 BENCHMARK_SERVER_TEMPLATE = """  benchmark_server:
     build:
@@ -254,8 +232,6 @@ class DockerComposeGenerator:
         # Generate fast-time server (Rust - always included for basic MCP testing)
         fast_time_server = FAST_TIME_SERVER_TEMPLATE
 
-        # Generate fast-test server (Rust - always included for echo/stats tools)
-        fast_test_server = FAST_TEST_SERVER_TEMPLATE
 
         # Generate benchmark servers
         benchmark_servers = ""
@@ -276,7 +252,6 @@ class DockerComposeGenerator:
             redis_service=redis_service,
             gateway_services=gateway_services,
             fast_time_server=fast_time_server,
-            fast_test_server=fast_test_server,
             benchmark_servers=benchmark_servers,
             load_balancer=load_balancer,
             redis_volume=redis_volume,

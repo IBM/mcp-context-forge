@@ -105,9 +105,9 @@ JWT_ISSUER = _cfg("JWT_ISSUER", "mcpgateway")
 ADMIN_EMAIL = _cfg("PLATFORM_ADMIN_EMAIL", "admin@example.com")
 MCP_SERVER_ID = _cfg("MCP_SERVER_ID", "")
 
-# Canonical MCP protocol version — matches tests/helpers/mcp_session.py and
-# tests/loadtest/locustfile_echo_delay.py. Kept inline so the locustfile
-# stays runnable as a standalone script (no PYTHONPATH gymnastics needed).
+# Canonical MCP protocol version — matches tests/helpers/mcp_session.py.
+# Kept inline so the locustfile stays runnable as a standalone script (no
+# PYTHONPATH gymnastics needed).
 MCP_PROTOCOL_VERSION = "2025-11-25"
 
 # Rate limit as configured in plugins/config.yaml — only used for the banner.

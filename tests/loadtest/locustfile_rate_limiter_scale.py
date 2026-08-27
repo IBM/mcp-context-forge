@@ -116,9 +116,8 @@ JWT_ISSUER = _cfg("JWT_ISSUER", "mcpgateway")
 MCP_SERVER_ID = _cfg("MCP_SERVER_ID", "")
 
 # Canonical MCP protocol version across this repo
-# (see tests/live_gateway/mcp/test_mcp_plugin_parity.py:29 and
-# tests/loadtest/locustfile_echo_delay.py:108). Used by the admin handshake
-# in _bootstrap_users and the per-user handshake in _ensure_initialized.
+# Used by the admin handshake in _bootstrap_users and the per-user handshake
+# in _ensure_initialized.
 MCP_PROTOCOL_VERSION = "2025-11-25"
 
 RL_ALGORITHM = _cfg("RL_ALGORITHM", "fixed_window")

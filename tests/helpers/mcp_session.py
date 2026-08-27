@@ -25,9 +25,8 @@ import requests
 logger = logging.getLogger(__name__)
 
 # Canonical MCP protocol version for the gateway's streamable-HTTP transport.
-# Mirrors the constant in tests/live_gateway/mcp/test_mcp_plugin_parity.py
-# and tests/loadtest/locustfile_echo_delay.py — keep these in sync if the
-# gateway's supported version changes.
+# Mirrors the constant in tests/live_gateway/mcp/test_mcp_plugin_parity.py;
+# keep these in sync if the gateway's supported version changes.
 MCP_PROTOCOL_VERSION = "2025-11-25"
 
 

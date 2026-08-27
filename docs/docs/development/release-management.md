@@ -433,7 +433,7 @@ Bring up the full stack with the testing profile and verify all services are hea
 make testing-down compose-clean testing-up
 ```
 
-This starts the gateway along with Locust, A2A echo server, fast test server, and MCP Inspector. Verify all services are healthy:
+This starts the gateway along with Locust, A2A echo server, the fast-time server, and MCP Inspector. Verify all services are healthy:
 
 ```bash
 make compose-ps
