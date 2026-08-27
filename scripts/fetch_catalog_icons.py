@@ -24,7 +24,7 @@ from urllib.parse import urljoin, urlsplit
 
 # Third-Party
 import httpx
-from PIL import Image, ImageOps
+from PIL import Image, ImageOps, PngImagePlugin
 import yaml
 
 try:
@@ -41,7 +41,9 @@ LOCAL_PREFIX = "/static/catalog-icons/"
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 MAX_REDIRECTS = 3
 ICON_SIZE = 128
+MAX_UPSCALE_FACTOR = 2.0
 NORMALIZED_ICON_MIN_EXTENT = 120
+NORMALIZED_ICON_MARKER = "contextforge_normalized"
 TIMEOUT_SECONDS = 10.0
 USER_AGENT = "ContextForge catalog icon curator/1.0"
 
@@ -174,28 +176,31 @@ def _image_to_png(body: bytes) -> bytes:
             alpha_bounds = image.getchannel("A").getbbox()
             if alpha_bounds:
                 image = image.crop(alpha_bounds)
-            if image.width >= image.height:
-                target_size = (ICON_SIZE, max(1, round(ICON_SIZE * image.height / image.width)))
-            else:
-                target_size = (max(1, round(ICON_SIZE * image.width / image.height)), ICON_SIZE)
-            image = image.resize(target_size, Image.Resampling.LANCZOS)
+            scale = min(ICON_SIZE / max(image.size), MAX_UPSCALE_FACTOR)
+            target_size = (max(1, round(image.width * scale)), max(1, round(image.height * scale)))
+            if image.size != target_size:
+                image = image.resize(target_size, Image.Resampling.LANCZOS)
             canvas = Image.new("RGBA", (ICON_SIZE, ICON_SIZE), (0, 0, 0, 0))
             offset = ((ICON_SIZE - image.width) // 2, (ICON_SIZE - image.height) // 2)
             canvas.alpha_composite(image, offset)
             output = BytesIO()
-            canvas.save(output, format="PNG", optimize=True)
+            png_info = PngImagePlugin.PngInfo()
+            png_info.add_text(NORMALIZED_ICON_MARKER, "1")
+            canvas.save(output, format="PNG", optimize=True, pnginfo=png_info)
             return output.getvalue()
     except Exception as exc:  # Pillow raises several format-specific exceptions.
         raise IconFetchError(f"Image decode failed: {exc}") from exc
 
 
 def _has_normalized_icon_bounds(body: bytes) -> bool:
-    """Return whether existing content already fills nearly one canvas dimension."""
+    """Return whether existing asset was normalized or already fills its canvas."""
     try:
         with Image.open(BytesIO(body)) as source:
             image = ImageOps.exif_transpose(source).convert("RGBA")
             if image.size != (ICON_SIZE, ICON_SIZE):
                 return False
+            if image.info.get(NORMALIZED_ICON_MARKER) == "1":
+                return True
             alpha_bounds = image.getchannel("A").getbbox()
             if alpha_bounds is None:
                 return True
@@ -331,17 +336,21 @@ def generate_icons(args: argparse.Namespace) -> int:
                 if not asset_path.exists():
                     print(f"SKIP {catalog_id}: no local asset to normalize")
                     continue
-                existing = asset_path.read_bytes()
-                if _has_normalized_icon_bounds(existing):
-                    print(f"KEEP {catalog_id}: normalized bounds")
-                else:
-                    if not args.dry_run:
-                        normalized = _image_to_png(existing)
-                        temporary = asset_path.with_suffix(".tmp")
-                        temporary.write_bytes(normalized)
-                        temporary.replace(asset_path)
-                    print(f"NORMALIZE {catalog_id}: {asset_path}")
-                logo_urls[catalog_id] = local_url
+                try:
+                    existing = asset_path.read_bytes()
+                    if _has_normalized_icon_bounds(existing):
+                        print(f"KEEP {catalog_id}: normalized bounds")
+                    else:
+                        if not args.dry_run:
+                            normalized = _image_to_png(existing)
+                            temporary = asset_path.with_suffix(".tmp")
+                            temporary.write_bytes(normalized)
+                            temporary.replace(asset_path)
+                        print(f"NORMALIZE {catalog_id}: {asset_path}")
+                    logo_urls[catalog_id] = local_url
+                except (IconFetchError, OSError, ValueError) as exc:
+                    misses.append(catalog_id)
+                    print(f"MISS {catalog_id}: {exc}")
                 continue
             if asset_path.exists() and not args.force:
                 logo_urls[catalog_id] = local_url

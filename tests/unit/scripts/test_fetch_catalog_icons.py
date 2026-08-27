@@ -70,7 +70,19 @@ def test_image_to_png_trims_transparent_padding() -> None:
 
     normalized = Image.open(BytesIO(_image_to_png(raw.getvalue())))
 
-    assert normalized.getchannel("A").getbbox() == (0, 0, 128, 128)
+    assert normalized.getchannel("A").getbbox() == (48, 48, 80, 80)
+
+
+def test_image_to_png_caps_upscale_and_marks_result() -> None:
+    source = Image.new("RGBA", (16, 8), "red")
+    raw = BytesIO()
+    source.save(raw, format="PNG")
+
+    normalized_bytes = _image_to_png(raw.getvalue())
+    normalized = Image.open(BytesIO(normalized_bytes))
+
+    assert normalized.getchannel("A").getbbox() == (48, 56, 80, 72)
+    assert _has_normalized_icon_bounds(normalized_bytes) is True
 
 
 @pytest.mark.parametrize(("extent", "expected"), [(16, False), (120, True), (128, True)])
@@ -112,6 +124,40 @@ def test_normalize_existing_does_not_fetch_missing_icons(tmp_path: Path) -> None
 
     fetch_icon.assert_not_called()
     assert (output_dir / "existing.png").read_bytes() == normalized
+
+
+def test_normalize_existing_reports_corrupt_assets_and_continues(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    catalog_path = tmp_path / "catalog.yml"
+    catalog_path.write_text(
+        "catalog_servers:\n" "  - id: corrupt\n" "    url: https://corrupt.example/mcp\n" "  - id: valid\n" "    url: https://valid.example/mcp\n",
+        encoding="utf-8",
+    )
+    output_dir = tmp_path / "icons"
+    output_dir.mkdir()
+    (output_dir / "corrupt.png").write_bytes(b"not a PNG")
+    Image.new("RGBA", (16, 16), "red").save(output_dir / "valid.png", format="PNG")
+    args = Namespace(
+        catalog=catalog_path,
+        output_dir=output_dir,
+        overrides=tmp_path / "overrides.json",
+        timeout=1.0,
+        force=False,
+        normalize_existing=True,
+        dry_run=False,
+        strict=False,
+    )
+
+    with patch("scripts.fetch_catalog_icons._fetch_icon") as fetch_icon:
+        assert generate_icons(args) == 0
+
+    output = capsys.readouterr().out
+    fetch_icon.assert_not_called()
+    assert "MISS corrupt: Image decode failed:" in output
+    assert "NORMALIZE valid:" in output
+    assert _has_normalized_icon_bounds((output_dir / "valid.png").read_bytes()) is True
+
+    args.strict = True
+    assert generate_icons(args) == 1
 
 
 def test_set_logo_urls_preserves_comments_and_updates_existing_field() -> None:
