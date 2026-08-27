@@ -165,6 +165,7 @@ class TestCreateToken:
 
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
+            mock_service.get_default_team_id = AsyncMock(return_value=None)
             mock_service.create_token = AsyncMock(return_value=(mock_token_record, "raw-token-string"))
 
             response = await create_token(request, current_user=mock_current_user, db=mock_db)
@@ -193,6 +194,7 @@ class TestCreateToken:
 
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
+            mock_service.get_default_team_id = AsyncMock(return_value=None)
             mock_service.create_token = AsyncMock(return_value=(mock_token_record, "scoped-token"))
 
             response = await create_token(request, current_user=mock_current_user, db=mock_db)
@@ -213,6 +215,7 @@ class TestCreateToken:
 
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
+            mock_service.get_default_team_id = AsyncMock(return_value=None)
             mock_service.create_token = AsyncMock(side_effect=ValueError("Token name already exists"))
 
             with pytest.raises(HTTPException) as exc_info:
@@ -234,6 +237,7 @@ class TestCreateToken:
 
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
+            mock_service.get_default_team_id = AsyncMock(return_value=None)
             mock_service.create_token = AsyncMock(return_value=(mock_token_record, "inactive-token"))
 
             response = await create_token(request, current_user=mock_current_user, db=mock_db)
@@ -263,6 +267,7 @@ class TestCreateToken:
 
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
+            mock_service.get_default_team_id = AsyncMock(return_value=None)
             mock_service.create_token = AsyncMock(side_effect=err)
 
             with pytest.raises(HTTPException) as exc_info:
@@ -284,6 +289,7 @@ class TestCreateToken:
 
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
+            mock_service.get_default_team_id = AsyncMock(return_value=None)
             mock_service.create_token = AsyncMock(side_effect=err)
 
             with pytest.raises(HTTPException) as exc_info:
@@ -304,6 +310,7 @@ class TestCreateToken:
 
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
+            mock_service.get_default_team_id = AsyncMock(return_value=None)
             mock_service.create_token = AsyncMock(side_effect=err)
 
             with pytest.raises(HTTPException):
@@ -322,6 +329,7 @@ class TestCreateToken:
 
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
+            mock_service.get_default_team_id = AsyncMock(return_value=None)
             mock_service.create_token = AsyncMock(side_effect=err)
 
             with pytest.raises(HTTPException) as exc_info:
@@ -344,6 +352,7 @@ async def test_create_token_public_validation_error(mock_db, mock_current_user):
 
     with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
         mock_service = mock_service_class.return_value
+        mock_service.get_default_team_id = AsyncMock(return_value=None)
         mock_service.create_token = AsyncMock(side_effect=PublicValidationError("Token expiration cannot exceed 365 days"))
 
         with pytest.raises(HTTPException) as exc_info:
@@ -366,6 +375,7 @@ async def test_create_team_token_public_validation_error(mock_db, mock_current_u
 
     with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
         mock_service = mock_service_class.return_value
+        mock_service.get_default_team_id = AsyncMock(return_value=None)
         mock_service.create_token = AsyncMock(side_effect=PublicValidationError("Team does not exist or user lacks access"))
 
         with pytest.raises(HTTPException) as exc_info:
@@ -383,6 +393,7 @@ class TestListTokens:
         """Test successful token listing."""
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
+            mock_service.get_default_team_id = AsyncMock(return_value=None)
             mock_service.list_user_and_team_tokens = AsyncMock(return_value=[mock_token_record])
             mock_service.count_user_and_team_tokens = AsyncMock(return_value=1)
             mock_service.get_token_revocations_batch = AsyncMock(return_value={})
@@ -406,6 +417,7 @@ class TestListTokens:
 
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
+            mock_service.get_default_team_id = AsyncMock(return_value=None)
             mock_service.list_user_and_team_tokens = AsyncMock(return_value=[mock_token_record])
             mock_service.count_user_and_team_tokens = AsyncMock(return_value=1)
             mock_service.get_token_revocations_batch = AsyncMock(return_value={"jti-123": revocation_info})
@@ -422,6 +434,7 @@ class TestListTokens:
         """Test token listing with pagination."""
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
+            mock_service.get_default_team_id = AsyncMock(return_value=None)
             mock_service.list_user_and_team_tokens = AsyncMock(return_value=[])
             mock_service.count_user_and_team_tokens = AsyncMock(return_value=0)
             mock_service.get_token_revocations_batch = AsyncMock(return_value={})
@@ -447,6 +460,7 @@ class TestGetToken:
         """Test successful token retrieval."""
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
+            mock_service.get_default_team_id = AsyncMock(return_value=None)
             mock_service.get_token = AsyncMock(return_value=mock_token_record)
 
             response = await get_token(token_id="token-123", current_user=mock_current_user, db=mock_db)
@@ -460,6 +474,7 @@ class TestGetToken:
         """Test token not found."""
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
+            mock_service.get_default_team_id = AsyncMock(return_value=None)
             mock_service.get_token = AsyncMock(return_value=None)
 
             with pytest.raises(HTTPException) as exc_info:
@@ -483,6 +498,7 @@ class TestUpdateToken:
 
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
+            mock_service.get_default_team_id = AsyncMock(return_value=None)
             mock_token_record.name = "Updated Token"
             mock_token_record.description = "Updated description"
             mock_service.update_token = AsyncMock(return_value=mock_token_record)
@@ -506,6 +522,7 @@ class TestUpdateToken:
 
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class, patch("mcpgateway.routers.tokens._get_caller_permissions", new_callable=AsyncMock) as mock_perms:
             mock_service = mock_service_class.return_value
+            mock_service.get_default_team_id = AsyncMock(return_value=None)
             mock_service.get_token = AsyncMock(return_value=mock_token_record)  # For scope containment lookup
             mock_service.update_token = AsyncMock(return_value=mock_token_record)
             mock_perms.return_value = ["tools.admin"]  # Return sufficient permissions
@@ -523,6 +540,7 @@ class TestUpdateToken:
 
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
+            mock_service.get_default_team_id = AsyncMock(return_value=None)
             mock_service.update_token = AsyncMock(return_value=None)
 
             with pytest.raises(HTTPException) as exc_info:
@@ -537,6 +555,7 @@ class TestUpdateToken:
 
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
+            mock_service.get_default_team_id = AsyncMock(return_value=None)
             mock_service.update_token = AsyncMock(side_effect=ValueError("Invalid token name"))
 
             with pytest.raises(HTTPException) as exc_info:
@@ -555,6 +574,7 @@ class TestUpdateToken:
 
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
+            mock_service.get_default_team_id = AsyncMock(return_value=None)
             mock_service.update_token = AsyncMock(return_value=mock_token_record)
 
             response = await update_token(token_id="token-123", request=request, current_user=mock_current_user, db=mock_db)
@@ -572,6 +592,7 @@ class TestUpdateToken:
 
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
+            mock_service.get_default_team_id = AsyncMock(return_value=None)
             mock_service.update_token = AsyncMock(return_value=mock_token_record)
 
             response = await update_token(token_id="token-123", request=request, current_user=mock_current_user, db=mock_db)
@@ -590,6 +611,7 @@ async def test_update_token_public_validation_error(mock_db, mock_current_user):
 
     with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
         mock_service = mock_service_class.return_value
+        mock_service.get_default_team_id = AsyncMock(return_value=None)
         mock_service.update_token = AsyncMock(side_effect=PublicValidationError("Token name exceeds maximum length"))
 
         with pytest.raises(HTTPException) as exc_info:
@@ -607,6 +629,7 @@ class TestRevokeToken:
         """Test successful token revocation."""
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
+            mock_service.get_default_team_id = AsyncMock(return_value=None)
             mock_service.revoke_token = AsyncMock(return_value=True)
 
             await revoke_token(token_id="token-123", request=None, current_user=mock_current_user, db=mock_db)
@@ -625,6 +648,7 @@ class TestRevokeToken:
 
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
+            mock_service.get_default_team_id = AsyncMock(return_value=None)
             mock_service.revoke_token = AsyncMock(return_value=True)
 
             await revoke_token(token_id="token-123", request=request, current_user=mock_current_user, db=mock_db)
@@ -641,6 +665,7 @@ class TestRevokeToken:
         """Test revoking non-existent token."""
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
+            mock_service.get_default_team_id = AsyncMock(return_value=None)
             mock_service.revoke_token = AsyncMock(return_value=False)
 
             with pytest.raises(HTTPException) as exc_info:
@@ -667,6 +692,7 @@ class TestGetTokenUsageStats:
 
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
+            mock_service.get_default_team_id = AsyncMock(return_value=None)
             mock_service.get_token = AsyncMock(return_value=mock_token_record)
             mock_service.get_token_usage_stats = AsyncMock(return_value=stats_data)
 
@@ -685,6 +711,7 @@ class TestGetTokenUsageStats:
         """Test usage stats for non-existent token."""
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
+            mock_service.get_default_team_id = AsyncMock(return_value=None)
             mock_service.get_token = AsyncMock(return_value=None)
 
             with pytest.raises(HTTPException) as exc_info:
@@ -701,6 +728,7 @@ class TestAdminEndpoints:
         """Test admin listing all tokens."""
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
+            mock_service.get_default_team_id = AsyncMock(return_value=None)
             mock_service.list_user_tokens = AsyncMock(return_value=[mock_token_record])
             mock_service.count_user_tokens = AsyncMock(return_value=1)
             mock_service.get_token_revocations_batch = AsyncMock(return_value={})
@@ -736,6 +764,7 @@ class TestAdminEndpoints:
         """Test admin revoking any token."""
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
+            mock_service.get_default_team_id = AsyncMock(return_value=None)
             mock_service.admin_revoke_token = AsyncMock(return_value=True)
 
             await admin_revoke_token(token_id="token-123", request=None, current_user=mock_admin_user, db=mock_db)
@@ -779,6 +808,7 @@ class TestAdminEndpoints:
         """Test admin revoking non-existent token."""
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
+            mock_service.get_default_team_id = AsyncMock(return_value=None)
             mock_service.admin_revoke_token = AsyncMock(return_value=False)
 
             with pytest.raises(HTTPException) as exc_info:
@@ -802,6 +832,7 @@ class TestTeamTokens:
 
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
+            mock_service.get_default_team_id = AsyncMock(return_value=None)
             mock_service.create_token = AsyncMock(return_value=(mock_token_record, "team-token-raw"))
 
             response = await create_team_token(team_id="team-456", request=request, current_user=mock_current_user, db=mock_db)
@@ -820,6 +851,7 @@ class TestTeamTokens:
 
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
+            mock_service.get_default_team_id = AsyncMock(return_value=None)
             mock_service.create_token = AsyncMock(side_effect=ValueError("User is not team owner"))
 
             with pytest.raises(HTTPException) as exc_info:
@@ -849,6 +881,7 @@ class TestTeamTokens:
 
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
+            mock_service.get_default_team_id = AsyncMock(return_value=None)
             mock_service.create_token = AsyncMock(side_effect=err)
 
             with pytest.raises(HTTPException) as exc_info:
@@ -870,6 +903,7 @@ class TestTeamTokens:
 
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
+            mock_service.get_default_team_id = AsyncMock(return_value=None)
             mock_service.create_token = AsyncMock(side_effect=err)
 
             with pytest.raises(HTTPException) as exc_info:
@@ -890,6 +924,7 @@ class TestTeamTokens:
 
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
+            mock_service.get_default_team_id = AsyncMock(return_value=None)
             mock_service.create_token = AsyncMock(side_effect=err)
 
             with pytest.raises(HTTPException):
@@ -904,6 +939,7 @@ class TestTeamTokens:
 
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
+            mock_service.get_default_team_id = AsyncMock(return_value=None)
             mock_service.list_team_tokens = AsyncMock(return_value=[mock_token_record])
             mock_service.count_team_tokens = AsyncMock(return_value=1)
             mock_service.get_token_revocations_batch = AsyncMock(return_value={})
@@ -918,6 +954,7 @@ class TestTeamTokens:
         """Test listing team tokens without ownership."""
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
+            mock_service.get_default_team_id = AsyncMock(return_value=None)
             mock_service.list_team_tokens = AsyncMock(side_effect=ValueError("User is not team member"))
 
             with pytest.raises(HTTPException) as exc_info:
@@ -935,6 +972,7 @@ async def test_list_team_tokens_public_validation_error(mock_db, mock_current_us
 
     with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
         mock_service = mock_service_class.return_value
+        mock_service.get_default_team_id = AsyncMock(return_value=None)
         mock_service.list_team_tokens = AsyncMock(side_effect=PublicValidationError("Team access revoked"))
 
         with pytest.raises(HTTPException) as exc_info:
@@ -1091,6 +1129,7 @@ class TestEdgeCases:
 
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
+            mock_service.get_default_team_id = AsyncMock(return_value=None)
             mock_service.create_token = AsyncMock(return_value=(mock_token_record, "token-with-team"))
 
             response = await create_token(request, current_user=mock_current_user, db=mock_db)
@@ -1104,6 +1143,7 @@ class TestEdgeCases:
         """Test listing tokens with no results."""
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
+            mock_service.get_default_team_id = AsyncMock(return_value=None)
             mock_service.list_user_and_team_tokens = AsyncMock(return_value=[])
             mock_service.count_user_and_team_tokens = AsyncMock(return_value=0)
             mock_service.get_token_revocations_batch = AsyncMock(return_value={})
@@ -1120,6 +1160,7 @@ class TestEdgeCases:
         """Test admin listing all tokens without email filter."""
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
+            mock_service.get_default_team_id = AsyncMock(return_value=None)
             mock_service.list_all_tokens = AsyncMock(return_value=[mock_token_record])
             mock_service.count_all_tokens = AsyncMock(return_value=1)
             mock_service.get_token_revocations_batch = AsyncMock(return_value={})
@@ -1150,6 +1191,7 @@ class TestEdgeCases:
 
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
+            mock_service.get_default_team_id = AsyncMock(return_value=None)
             mock_service.create_token = AsyncMock(return_value=(mock_token_record, "complex-token"))
 
             response = await create_token(request, current_user=mock_current_user, db=mock_db)
@@ -1187,12 +1229,225 @@ class TestEdgeCases:
 
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
+            mock_service.get_default_team_id = AsyncMock(return_value=None)
             mock_service.create_token = AsyncMock(return_value=(mock_token_record, "auto-inherit-token"))
 
             await create_token(request, current_user=single_team_user, db=mock_db)
 
             call_args = mock_service.create_token.call_args
             assert call_args[1]["team_id"] == "team-auto"
+
+    @pytest.mark.asyncio
+    async def test_create_token_multi_team_defaults_to_personal_team(self, mock_db, mock_token_record):
+        """Multi-team non-admin with no team_id defaults to their personal team (issue #5993).
+
+        Regression test for the bug: previously only single-team users
+        auto-inherited a team, so a multi-team user got team_id=None (public-only).
+        """
+        multi_team_user = {
+            "email": "multi@example.com",
+            "is_admin": False,
+            "permissions": ["tokens.create"],
+            "db": mock_db,
+            "auth_method": "jwt",
+            "token_teams": ["team-personal", "team-shared"],
+        }
+        request = MagicMock(spec=TokenCreateRequest)
+        request.name = "Multi Team Token"
+        request.description = None
+        request.scope = None
+        request.expires_in_days = 30
+        request.tags = []
+        request.team_id = None
+        request.is_active = True
+        request.user_email = None
+
+        with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
+            mock_service = mock_service_class.return_value
+            mock_service.get_default_team_id = AsyncMock(return_value="team-personal")
+            mock_service.create_token = AsyncMock(return_value=(mock_token_record, "multi-team-token"))
+
+            response = await create_token(request, current_user=multi_team_user, db=mock_db)
+
+            call_args = mock_service.create_token.call_args
+            assert call_args[1]["team_id"] == "team-personal"
+            assert response.warnings == []
+
+    @pytest.mark.asyncio
+    async def test_create_token_multi_team_no_personal_team_warns(self, mock_db, mock_token_record):
+        """Multi-team non-admin with no personal team gets team_id=None plus an explicit warning.
+
+        Covers AUTO_CREATE_PERSONAL_TEAMS=false / personal team deleted: there is no
+        single team to fall back to (two shared teams), so the token stays
+        unscoped, but the caller is told so instead of finding out silently.
+        """
+        multi_team_user = {
+            "email": "multi@example.com",
+            "is_admin": False,
+            "permissions": ["tokens.create"],
+            "db": mock_db,
+            "auth_method": "jwt",
+            "token_teams": ["team-a", "team-b"],
+        }
+        request = MagicMock(spec=TokenCreateRequest)
+        request.name = "No Personal Team Token"
+        request.description = None
+        request.scope = None
+        request.expires_in_days = 30
+        request.tags = []
+        request.team_id = None
+        request.is_active = True
+        request.user_email = None
+
+        with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
+            mock_service = mock_service_class.return_value
+            mock_service.get_default_team_id = AsyncMock(return_value=None)
+            mock_service.create_token = AsyncMock(return_value=(mock_token_record, "unscoped-token"))
+
+            response = await create_token(request, current_user=multi_team_user, db=mock_db)
+
+            call_args = mock_service.create_token.call_args
+            assert call_args[1]["team_id"] is None
+            assert len(response.warnings) == 1
+            assert "public resources only" in response.warnings[0]
+
+    @pytest.mark.asyncio
+    async def test_create_token_narrowed_session_excludes_foreign_personal_team(self, mock_db, mock_token_record):
+        """A narrowed session must not mint a token for a personal team outside its scope.
+
+        If the caller's personal team is not in their (narrowed) token_teams,
+        defaulting to it would silently widen what the new token can reach
+        beyond what the current session is allowed to see.
+        """
+        narrowed_user = {
+            "email": "multi@example.com",
+            "is_admin": False,
+            "permissions": ["tokens.create"],
+            "db": mock_db,
+            "auth_method": "jwt",
+            "token_teams": ["team-shared"],  # narrowed away from the personal team
+        }
+        request = MagicMock(spec=TokenCreateRequest)
+        request.name = "Narrowed Token"
+        request.description = None
+        request.scope = None
+        request.expires_in_days = 30
+        request.tags = []
+        request.team_id = None
+        request.is_active = True
+        request.user_email = None
+
+        with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
+            mock_service = mock_service_class.return_value
+            mock_service.get_default_team_id = AsyncMock(return_value="team-personal")
+            mock_service.create_token = AsyncMock(return_value=(mock_token_record, "narrowed-token"))
+
+            response = await create_token(request, current_user=narrowed_user, db=mock_db)
+
+            call_args = mock_service.create_token.call_args
+            # Falls back to single-team inherit, NOT the out-of-scope personal team.
+            assert call_args[1]["team_id"] == "team-shared"
+            assert response.warnings == []
+
+    @pytest.mark.asyncio
+    async def test_create_token_unrestricted_admin_stays_global(self, mock_db, mock_admin_user, mock_token_record):
+        """Un-narrowed admin with no team_id keeps team_id=None (deliberate global-scope token)."""
+        request = TokenCreateRequest(name="Admin Global Token")
+
+        with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
+            mock_service = mock_service_class.return_value
+            mock_service.get_default_team_id = AsyncMock(return_value="should-not-be-used")
+            mock_service.create_token = AsyncMock(return_value=(mock_token_record, "admin-global-token"))
+
+            response = await create_token(request, current_user=mock_admin_user, db=mock_db)
+
+            mock_service.get_default_team_id.assert_not_called()
+            call_args = mock_service.create_token.call_args
+            assert call_args[1]["team_id"] is None
+            assert response.warnings == []
+
+    @pytest.mark.asyncio
+    async def test_create_token_explicit_team_id_skips_default_lookup(self, mock_db, mock_current_user, mock_token_record):
+        """An explicit team_id in the request bypasses default-team resolution entirely."""
+        request = TokenCreateRequest(name="Explicit Team Token", team_id="team-explicit")
+
+        with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
+            mock_service = mock_service_class.return_value
+            mock_service.get_default_team_id = AsyncMock(return_value="should-not-be-used")
+            mock_service.create_token = AsyncMock(return_value=(mock_token_record, "explicit-team-token"))
+
+            response = await create_token(request, current_user=mock_current_user, db=mock_db)
+
+            mock_service.get_default_team_id.assert_not_called()
+            call_args = mock_service.create_token.call_args
+            assert call_args[1]["team_id"] == "team-explicit"
+            assert response.warnings == []
+
+    @pytest.mark.asyncio
+    async def test_create_token_caller_permissions_use_requested_team_not_default(self, mock_db, mock_token_record):
+        """The permission-containment ceiling uses the requested team_id, not the auto-defaulted one.
+
+        Regression guard for the escalation risk called out in the fix: passing
+        the *defaulted* personal team into _get_caller_permissions would pull in
+        that team's team_admin role and silently raise what scope.permissions a
+        multi-team, non-admin caller is allowed to request.
+        """
+        multi_team_user = {
+            "email": "multi@example.com",
+            "is_admin": False,
+            "permissions": ["tokens.create"],
+            "db": mock_db,
+            "auth_method": "jwt",
+            "token_teams": ["team-personal", "team-shared"],
+        }
+        request = MagicMock(spec=TokenCreateRequest)
+        request.name = "Ceiling Check Token"
+        request.description = None
+        request.scope = None
+        request.expires_in_days = 30
+        request.tags = []
+        request.team_id = None
+        request.is_active = True
+        request.user_email = None
+
+        with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
+            with patch("mcpgateway.routers.tokens._get_caller_permissions") as mock_get_perms:
+                mock_get_perms.return_value = ["tools.read"]
+                mock_service = mock_service_class.return_value
+                mock_service.get_default_team_id = AsyncMock(return_value="team-personal")
+                mock_service.create_token = AsyncMock(return_value=(mock_token_record, "ceiling-token"))
+
+                await create_token(request, current_user=multi_team_user, db=mock_db)
+
+                # team_id resolved to the personal team for storage/RBAC context...
+                create_call = mock_service.create_token.call_args
+                assert create_call[1]["team_id"] == "team-personal"
+                # ...but the permissions lookup was scoped by the *requested* team_id (None), not it.
+                mock_get_perms.assert_called_once_with(mock_db, multi_team_user, None)
+
+    @pytest.mark.asyncio
+    async def test_create_token_delegated_defaults_to_target_personal_team(self, mock_db, mock_admin_user, mock_token_record):
+        """Admin-delegated creation with no team_id defaults to the *target* user's personal team.
+
+        Without this, a token delegated to a non-admin target is public-only for
+        that target — the same silent failure as issue #5993, just via the
+        admin-delegation path instead of self-service creation.
+        """
+        target_email = "target@example.com"
+        request = TokenCreateRequest(name="Delegated Default Token", user_email=target_email)
+        mock_token_record.user_email = target_email
+
+        with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
+            mock_service = mock_service_class.return_value
+            mock_service.get_default_team_id = AsyncMock(return_value="target-personal-team")
+            mock_service.create_token = AsyncMock(return_value=(mock_token_record, "delegated-default-token"))
+
+            response = await create_token(request, current_user=mock_admin_user, db=mock_db)
+
+            mock_service.get_default_team_id.assert_called_once_with(target_email)
+            call_args = mock_service.create_token.call_args
+            assert call_args[1]["team_id"] == "target-personal-team"
+            assert response.warnings == []
 
 
 class TestAdminBypassRouterLevel:
@@ -1211,6 +1466,7 @@ class TestAdminBypassRouterLevel:
             with patch("mcpgateway.routers.tokens._get_caller_permissions") as mock_get_perms:
                 mock_get_perms.return_value = ["*"]  # Un-narrowed admin
                 mock_service = mock_service_class.return_value
+                mock_service.get_default_team_id = AsyncMock(return_value=None)
                 mock_service.create_token = AsyncMock(return_value=(mock_token_record, "admin-bypass-token"))
 
                 result = await create_team_token(team_id="team-123", request=request, current_user=mock_admin_user, db=mock_db)
@@ -1238,6 +1494,7 @@ class TestAdminBypassRouterLevel:
             with patch("mcpgateway.routers.tokens._get_caller_permissions") as mock_get_perms:
                 mock_get_perms.return_value = ["*"]
                 mock_service = mock_service_class.return_value
+                mock_service.get_default_team_id = AsyncMock(return_value=None)
                 mock_service.create_token = AsyncMock(return_value=(mock_token_record, "scoped-admin-token"))
 
                 result = await create_team_token(team_id="team-456", request=request, current_user=mock_admin_user, db=mock_db)
@@ -1259,6 +1516,7 @@ class TestAdminBypassRouterLevel:
             with patch("mcpgateway.routers.tokens._get_caller_permissions") as mock_get_perms:
                 mock_get_perms.return_value = ["*"]
                 mock_service = mock_service_class.return_value
+                mock_service.get_default_team_id = AsyncMock(return_value=None)
                 mock_service.create_token = AsyncMock(return_value=(mock_token_record, "base-endpoint-token"))
 
                 result = await create_token(request=request, current_user=mock_admin_user, db=mock_db)
@@ -1279,6 +1537,7 @@ class TestAdminBypassRouterLevel:
             with patch("mcpgateway.routers.tokens._get_caller_permissions") as mock_get_perms:
                 mock_get_perms.return_value = ["*"]
                 mock_service = mock_service_class.return_value
+                mock_service.get_default_team_id = AsyncMock(return_value=None)
                 mock_service.list_team_tokens = AsyncMock(return_value=[mock_token_record])
                 mock_service.count_team_tokens = AsyncMock(return_value=1)
                 mock_service.get_token_revocations_batch = AsyncMock(return_value={})
@@ -1311,6 +1570,7 @@ class TestAdminBypassRouterLevel:
             with patch("mcpgateway.routers.tokens._get_caller_permissions") as mock_get_perms:
                 mock_get_perms.return_value = ["tools.read"]  # NOT ["*"]
                 mock_service = mock_service_class.return_value
+                mock_service.get_default_team_id = AsyncMock(return_value=None)
                 # Service will raise ValueError for non-member
                 mock_service.create_token = AsyncMock(side_effect=ValueError("User narrowed@example.com is not an active member of team team-blocked"))
 
@@ -1352,6 +1612,7 @@ class TestAdminBypassRouterLevel:
                 # who holds the global platform_admin role.
                 mock_get_perms.return_value = ["*"]
                 mock_service = mock_service_class.return_value
+                mock_service.get_default_team_id = AsyncMock(return_value=None)
                 mock_service.create_token = AsyncMock(side_effect=ValueError("User narrowed-admin@example.com is not an active member of team team-blocked"))
 
                 with pytest.raises(HTTPException) as exc_info:

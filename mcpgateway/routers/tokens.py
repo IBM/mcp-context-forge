@@ -200,29 +200,62 @@ async def create_token(
             SecurityValidator.sanitize_log_message(target_user_email),
         )
 
-    # Auto-inherit team_id from the caller's single team when not explicitly provided.
-    # This prevents tokens from being silently scoped to public-only (team_id=None)
-    # when the user belongs to exactly one team, maintaining RBAC context at token level.
-    # Multi-team users must specify team_id explicitly to avoid ambiguity.
-    # Admins with teams=null are exempt and may still create global-scope tokens.
-    effective_team_id = request.team_id
+    service = TokenCatalogService(db)
+
+    # Resolve the team a token is scoped to when the request does not name one.
+    # A token created with team_id=None carries a `teams: null` claim, which is
+    # public-only for non-admins — it cannot see even its creator's own private
+    # resources (issue #5993).  Defaulting to the creator's personal team keeps
+    # owner access intact.  Un-narrowed admins are exempt: for them `teams: null`
+    # means admin bypass, so a global-scope token is a legitimate choice.
+    requested_team_id = request.team_id or None  # normalize "" to None
+    effective_team_id = requested_team_id
     caller_token_teams = current_user.get("token_teams")
-    # Only un-narrowed admins (token_teams=None) are exempt from auto-inheritance.
+    # Only un-narrowed admins (token_teams=None) are exempt from the default.
     # Narrowed admin sessions use the same team-scoping logic as non-admins.
     is_unrestricted_admin = current_user.get("is_admin") and caller_token_teams is None
-    if effective_team_id is None and not is_unrestricted_admin:
-        user_teams = caller_token_teams or []
-        if len(user_teams) == 1:
-            effective_team_id = user_teams[0]
-            logger.debug("Auto-inherited team_id=%s for token creation by %s", effective_team_id, current_user["email"])
+    scope_warnings: List[str] = []
 
-    service = TokenCatalogService(db)
+    if effective_team_id is None:
+        if target_user_email != caller_email:
+            # Admin-delegated creation: default to the *target* user's personal
+            # team, not the admin's.  Without this the delegated token is
+            # public-only for a non-admin recipient — the same silent failure.
+            effective_team_id = await service.get_default_team_id(target_user_email)
+            if effective_team_id:
+                logger.info("Defaulted delegated token to personal team %s for %s", effective_team_id, SecurityValidator.sanitize_log_message(target_user_email))
+        elif not is_unrestricted_admin:
+            user_teams = caller_token_teams or []
+            personal_team_id = await service.get_default_team_id(caller_email)
+            if personal_team_id and personal_team_id in user_teams:
+                # Guard on membership so a narrowed session cannot mint a token
+                # for a team it was narrowed away from.
+                effective_team_id = personal_team_id
+                logger.info("Defaulted token to personal team %s for %s", effective_team_id, SecurityValidator.sanitize_log_message(caller_email))
+            elif len(user_teams) == 1:
+                # No usable personal team (e.g. AUTO_CREATE_PERSONAL_TEAMS=false),
+                # but the caller belongs to exactly one team — inherit it.
+                effective_team_id = user_teams[0]
+                logger.info("Inherited single team %s for token creation by %s", effective_team_id, SecurityValidator.sanitize_log_message(caller_email))
+
+    if effective_team_id is None and not is_unrestricted_admin:
+        logger.warning("Token for %s could not be scoped to a team; it will see public resources only", SecurityValidator.sanitize_log_message(target_user_email))
+        scope_warnings.append(
+            "No team could be inferred for this token, so it is scoped to public resources only. "
+            "It cannot access your private resources or any team resources. Recreate it with an explicit team_id to scope it."
+        )
 
     # CRITICAL: Always fetch caller_permissions for admin bypass check.
     # The service needs this to determine if the caller is an un-narrowed admin
     # who can bypass team membership requirements, regardless of whether a custom
     # scope is provided.
-    caller_permissions = await _get_caller_permissions(db, current_user, effective_team_id)
+    #
+    # SECURITY: this deliberately uses the *requested* team, not the defaulted
+    # one.  Passing an explicit team_id makes PermissionService include that
+    # team's roles, and personal teams auto-grant team_admin — so defaulting
+    # would silently raise the ceiling that _validate_scope_containment()
+    # enforces on the requested scope.permissions.
+    caller_permissions = await _get_caller_permissions(db, current_user, requested_team_id)
     is_admin = current_user.get("is_admin", False)
 
     # Convert request to TokenScope if provided
@@ -277,6 +310,7 @@ async def create_token(
         return TokenCreateResponse(
             token=token_response,
             access_token=raw_token,
+            warnings=scope_warnings,
         )
     except PublicValidationError as e:
         logger.error("Token creation validation error: %s", SecurityValidator.sanitize_log_message(str(e)))
