@@ -158,9 +158,7 @@ class DcrService:
                 raise DcrError("OAuth issuer metadata has invalid registration_endpoint", code="invalid_metadata")
 
         scopes_supported = metadata.get("scopes_supported")
-        if scopes_supported is not None and (
-            not isinstance(scopes_supported, list) or not all(isinstance(scope, str) and scope for scope in scopes_supported)
-        ):
+        if scopes_supported is not None and (not isinstance(scopes_supported, list) or not all(isinstance(scope, str) and scope for scope in scopes_supported)):
             raise DcrError("OAuth issuer metadata has invalid scopes_supported", code="invalid_metadata")
 
     async def discover_as_metadata(self, issuer: str) -> Dict[str, Any]:
