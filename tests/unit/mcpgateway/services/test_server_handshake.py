@@ -216,6 +216,62 @@ async def test_forwarded_proxy_identity_header_is_not_overridable_by_body():
 
 
 @pytest.mark.asyncio
+async def test_body_header_override_honors_custom_auth_header_name(monkeypatch):
+    """When AUTH_HEADER_NAME is customized, a body override under that configured header name is
+    honored (not just the literal 'Authorization'), matching the nested request's own auth extraction.
+    """
+    # First-Party
+    from mcpgateway.config import settings
+
+    monkeypatch.setattr(settings, "auth_header_name", "X-MCP-Gateway-Auth")
+
+    transport_cm, session = _mock_sdk_session()
+
+    with patch("mcpgateway.main.app", MagicMock()):
+        with patch("mcpgateway.services.gateway_service.streamablehttp_client", return_value=transport_cm) as mock_streamable:
+            with patch("mcpgateway.services.gateway_service.ClientSession", return_value=session):
+                result = await run_server_handshake(
+                    "srv-1",
+                    "my-server",
+                    True,
+                    ServerHandshakeRequest(headers={"X-MCP-Gateway-Auth": "Bearer custom-header-token"}),
+                    {},
+                )
+
+    called_headers = {k.lower(): v for k, v in mock_streamable.call_args.kwargs["headers"].items()}
+    assert called_headers.get("x-mcp-gateway-auth") == "Bearer custom-header-token"
+    assert result.credential_source == "form"
+
+
+@pytest.mark.asyncio
+async def test_body_header_override_still_drops_spoofed_headers_with_custom_auth_header_name(monkeypatch):
+    """Customizing AUTH_HEADER_NAME widens the allowlist by exactly one entry -- proxy-identity and
+    other spoofed headers in a body override remain dropped.
+    """
+    # First-Party
+    from mcpgateway.config import settings
+
+    monkeypatch.setattr(settings, "auth_header_name", "X-MCP-Gateway-Auth")
+
+    transport_cm, session = _mock_sdk_session()
+
+    with patch("mcpgateway.main.app", MagicMock()):
+        with patch("mcpgateway.services.gateway_service.streamablehttp_client", return_value=transport_cm) as mock_streamable:
+            with patch("mcpgateway.services.gateway_service.ClientSession", return_value=session):
+                await run_server_handshake(
+                    "srv-1",
+                    "my-server",
+                    True,
+                    ServerHandshakeRequest(headers={"X-MCP-Gateway-Auth": "Bearer custom-header-token", "X-Authenticated-User": "spoofed@example.com"}),
+                    {},
+                )
+
+    called_headers = {k.lower(): v for k, v in mock_streamable.call_args.kwargs["headers"].items()}
+    assert called_headers.get("x-mcp-gateway-auth") == "Bearer custom-header-token"
+    assert "x-authenticated-user" not in called_headers
+
+
+@pytest.mark.asyncio
 async def test_connect_error_is_classified_as_transport_failure():
     """A connection error from the in-process transport is classified the same way as a real gateway handshake."""
     # Third-Party

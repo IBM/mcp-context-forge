@@ -1217,6 +1217,27 @@ class TestServerHandshakeEndpoint:
 
     @patch("mcpgateway.main.test_server_handshake")
     @patch("mcpgateway.main.server_service.get_server")
+    def test_handshake_forwards_bearer_under_custom_auth_header_name(self, mock_get_server, mock_handshake, test_client, mock_jwt_token, monkeypatch):
+        """When AUTH_HEADER_NAME is customized, the bearer token is forwarded under that configured
+        header name -- not hardcoded 'Authorization' -- since the nested request's own auth extraction
+        only reads the configured header.
+        """
+        # First-Party
+        from mcpgateway.schemas import GatewayHandshakeResponse
+
+        monkeypatch.setattr(settings, "auth_header_name", "X-MCP-Gateway-Auth")
+
+        mock_get_server.return_value = ServerRead(**MOCK_SERVER_READ)
+        mock_handshake.return_value = GatewayHandshakeResponse(success=True, latency_ms=1)
+
+        test_client.post("/servers/1/test-handshake", json={}, headers={"X-MCP-Gateway-Auth": f"Bearer {mock_jwt_token}"})
+
+        forwarded_headers = mock_handshake.call_args.args[4]
+        assert forwarded_headers.get("X-MCP-Gateway-Auth") == f"Bearer {mock_jwt_token}"
+        assert "Authorization" not in forwarded_headers
+
+    @patch("mcpgateway.main.test_server_handshake")
+    @patch("mcpgateway.main.server_service.get_server")
     def test_handshake_without_credentials_forwards_nothing(self, mock_get_server, mock_handshake, test_client):
         """A request with no Authorization header and no cookie forwards no credentials."""
         # First-Party

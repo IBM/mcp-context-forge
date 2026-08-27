@@ -143,6 +143,7 @@ from mcpgateway.utils.subject_token import extract_subject_jwt
 from mcpgateway.utils.token_exchange_audit import audit_token_exchange
 from mcpgateway.utils.url_auth import apply_query_param_auth, sanitize_exception_message, sanitize_url_for_logging
 from mcpgateway.utils.validate_signature import validate_signature
+from mcpgateway.utils.verify_credentials import _resolve_auth_header_name
 from mcpgateway.validation.tags import validate_tags_field
 
 
@@ -7894,11 +7895,22 @@ _HANDSHAKE_HEADER_DENYLIST: frozenset[str] = frozenset(
     }
 )
 
-# The only header an explicit body override is trusted to set: the caller is
-# supplying their own credential for their own probe, so overriding Authorization
-# is safe. Anything else -- in particular the configured trusted-proxy identity
-# header -- must never be settable from arbitrary caller-supplied JSON.
-_HANDSHAKE_FORM_HEADER_ALLOWLIST: frozenset[str] = frozenset({"authorization"})
+
+def _handshake_form_header_allowlist() -> frozenset[str]:
+    """The only header(s) an explicit body override is trusted to set.
+
+    The caller is supplying their own credential for their own probe, so
+    overriding the auth header is safe -- both the literal ``authorization``
+    and, when ``AUTH_HEADER_NAME`` is customized away from the default, the
+    configured auth header name are honored (matching the nested request's
+    own auth extraction, which reads that configured name). Anything else --
+    in particular the configured trusted-proxy identity header -- must never
+    be settable from arbitrary caller-supplied JSON.
+
+    Returns:
+        The set of lowercased header names an explicit body override may set.
+    """
+    return frozenset({"authorization", _resolve_auth_header_name(settings).lower()})
 
 
 def _is_handshake_header_denied(header_name: str, *, allow_proxy_identity: bool) -> bool:
@@ -7982,7 +7994,7 @@ async def test_server_handshake(
     # session, or hop-by-hop headers into the in-process probe (CWE-287/CWE-807).
     headers = {key: value for key, value in forwarded_headers.items() if not _is_handshake_header_denied(key, allow_proxy_identity=True)}
     credential_source: Literal["stored", "form", "none", "session"] = "session" if headers else "none"
-    form_headers = {key: value for key, value in (body.headers or {}).items() if key.lower() in _HANDSHAKE_FORM_HEADER_ALLOWLIST}
+    form_headers = {key: value for key, value in (body.headers or {}).items() if key.lower() in _handshake_form_header_allowlist()}
     if form_headers:
         overridden_keys = {key.lower() for key in form_headers}
         headers = {key: value for key, value in headers.items() if key.lower() not in overridden_keys}

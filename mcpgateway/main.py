@@ -4509,7 +4509,12 @@ async def test_server_mcp_handshake(
     if not auth_token and hasattr(request, "cookies") and request.cookies:
         auth_token = request.cookies.get("jwt_token") or request.cookies.get("access_token")
     if auth_token:
-        forwarded_headers["Authorization"] = f"Bearer {auth_token}"
+        # Forward under the *configured* auth header name -- when AUTH_HEADER_NAME is
+        # customized away from the default "Authorization", the nested request's own
+        # auth extraction (get_auth_header_value / _resolve_auth_header_name) only reads
+        # that header, so hardcoding "Authorization" here would make the probe fail auth
+        # even though the outer request succeeded.
+        forwarded_headers[_resolve_auth_header_name(settings)] = f"Bearer {auth_token}"
     elif settings.trust_proxy_auth:
         # No bearer/cookie credential: this caller may have been authenticated via the
         # configured trusted-proxy identity header instead (TRUST_PROXY_AUTH_DANGEROUSLY).

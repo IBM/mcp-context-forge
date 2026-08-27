@@ -4981,8 +4981,9 @@ class ServerHandshakeRequest(BaseModelWithConfigDict):
     headers: Optional[Dict[str, str]] = Field(
         None,
         description=(
-            "Optional header overrides for the handshake's credentials. Only 'Authorization' is honored -- "
-            "any other header (including proxy-identity, client-IP, session, or hop-by-hop headers) is ignored."
+            "Optional header overrides for the handshake's credentials. Only 'Authorization' and the "
+            "configured AUTH_HEADER_NAME (when customized) are honored -- any other header (including "
+            "proxy-identity, client-IP, session, or hop-by-hop headers) is ignored."
         ),
     )
 
