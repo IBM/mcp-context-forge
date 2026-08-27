@@ -2242,11 +2242,54 @@ async def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
     # stateful-session path, matching the primary _auth_jwt path behavior (issue #4070).
     db_user_is_admin = False
     if email:
-        # First-Party
-        from mcpgateway.utils.admin_check import is_user_admin  # pylint: disable=import-outside-toplevel
+        jti = payload.get("jti")
+        auth_cache = None
+        auth_context_resolved = False
+        platform_admin_email = getattr(settings, "platform_admin_email", "")
 
-        with SessionLocal() as db:
-            db_user_is_admin = is_user_admin(db, email)
+        if email == platform_admin_email:
+            db_user_is_admin = True
+            auth_context_resolved = True
+        elif settings.auth_cache_enabled:
+            try:
+                # First-Party
+                from mcpgateway.cache.auth_cache import CachedAuthContext, get_auth_cache  # pylint: disable=import-outside-toplevel
+
+                auth_cache = get_auth_cache()
+                cached_ctx = await auth_cache.get_auth_context(email, jti)
+                if cached_ctx is not None:
+                    cached_user = cached_ctx.user
+                    db_user_is_admin = bool(cached_user and cached_user.get("is_admin", False))
+                    auth_context_resolved = True
+                elif settings.auth_cache_batch_queries:
+                    # First-Party
+                    from mcpgateway.auth import _get_auth_context_batched_sync  # pylint: disable=import-outside-toplevel
+
+                    batched_ctx = await asyncio.to_thread(_get_auth_context_batched_sync, email, jti)
+                    batched_user = batched_ctx.get("user")
+                    db_user_is_admin = bool(batched_user and batched_user.get("is_admin", False))
+                    auth_context_resolved = True
+                    try:
+                        await auth_cache.set_auth_context(
+                            email,
+                            jti,
+                            CachedAuthContext(
+                                user=batched_user,
+                                personal_team_id=batched_ctx.get("personal_team_id"),
+                                is_token_revoked=bool(batched_ctx.get("is_token_revoked", False)),
+                            ),
+                        )
+                    except Exception as cache_set_error:
+                        logger.debug("Failed to cache stateful-session auth context for %s: %s", email, cache_set_error)
+            except Exception as cache_error:
+                logger.debug("Stateful-session auth cache lookup failed for %s: %s", email, cache_error)
+
+        if not auth_context_resolved:
+            # First-Party
+            from mcpgateway.utils.admin_check import is_user_admin  # pylint: disable=import-outside-toplevel
+
+            with SessionLocal() as db:
+                db_user_is_admin = is_user_admin(db, email)
 
     effective_is_admin = db_user_is_admin or jwt_is_admin
 

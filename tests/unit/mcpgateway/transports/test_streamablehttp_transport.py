@@ -13277,6 +13277,98 @@ async def test_normalize_jwt_payload_session_admin_no_email_no_bypass():
     assert result["is_admin"] is True
 
 
+@pytest.mark.asyncio
+async def test_normalize_jwt_payload_uses_cached_admin_status(monkeypatch):
+    from mcpgateway.cache.auth_cache import CachedAuthContext
+
+    auth_cache = MagicMock()
+    auth_cache.get_auth_context = AsyncMock(
+        return_value=CachedAuthContext(user={"email": "cached@example.com", "is_admin": True})
+    )
+    monkeypatch.setattr("mcpgateway.cache.auth_cache.get_auth_cache", lambda: auth_cache)
+    monkeypatch.setattr(tr.settings, "auth_cache_enabled", True)
+    session_factory = MagicMock()
+    monkeypatch.setattr(tr, "SessionLocal", session_factory)
+    monkeypatch.setattr(tr, "_resolve_jwt_user_email_for_streamable", AsyncMock(return_value="cached@example.com"))
+
+    with patch("mcpgateway.auth.resolve_session_teams", new_callable=AsyncMock, return_value=None):
+        result = await tr._normalize_jwt_payload({"sub": "cached@example.com", "token_use": "session", "jti": "jti-1"})
+
+    assert result["is_admin"] is True
+    session_factory.assert_not_called()
+    auth_cache.get_auth_context.assert_awaited_once_with("cached@example.com", "jti-1")
+
+
+@pytest.mark.asyncio
+async def test_normalize_jwt_payload_preserves_platform_admin_fast_path(monkeypatch):
+    auth_cache = MagicMock()
+    auth_cache.get_auth_context = AsyncMock(return_value=None)
+    auth_cache.set_auth_context = AsyncMock()
+    monkeypatch.setattr("mcpgateway.cache.auth_cache.get_auth_cache", lambda: auth_cache)
+    monkeypatch.setattr(tr.settings, "auth_cache_enabled", True)
+    monkeypatch.setattr(tr.settings, "auth_cache_batch_queries", True)
+    monkeypatch.setattr(tr.settings, "platform_admin_email", "platform@example.com")
+    monkeypatch.setattr(tr, "_resolve_jwt_user_email_for_streamable", AsyncMock(return_value="platform@example.com"))
+    monkeypatch.setattr(
+        "mcpgateway.auth._get_auth_context_batched_sync",
+        MagicMock(
+            return_value={
+                "user": None,
+                "personal_team_id": None,
+                "is_token_revoked": False,
+            }
+        ),
+    )
+    session_factory = MagicMock()
+    monkeypatch.setattr(tr, "SessionLocal", session_factory)
+
+    with patch("mcpgateway.auth.resolve_session_teams", new_callable=AsyncMock, return_value=None):
+        result = await tr._normalize_jwt_payload({"sub": "platform@example.com", "token_use": "session", "jti": "jti-3"})
+
+    assert result["is_admin"] is True
+    session_factory.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_normalize_jwt_payload_warms_cache_after_batched_miss(monkeypatch):
+    from mcpgateway.cache.auth_cache import CachedAuthContext
+
+    cached = {}
+    auth_cache = MagicMock()
+
+    async def get_auth_context(email, jti):
+        return cached.get((email, jti))
+
+    async def set_auth_context(email, jti, context):
+        cached[(email, jti)] = context
+
+    auth_cache.get_auth_context = AsyncMock(side_effect=get_auth_context)
+    auth_cache.set_auth_context = AsyncMock(side_effect=set_auth_context)
+    monkeypatch.setattr("mcpgateway.cache.auth_cache.get_auth_cache", lambda: auth_cache)
+    monkeypatch.setattr(tr.settings, "auth_cache_enabled", True)
+    monkeypatch.setattr(tr, "_resolve_jwt_user_email_for_streamable", AsyncMock(return_value="batched@example.com"))
+    batch_lookup = MagicMock(
+        return_value={
+            "user": {"email": "batched@example.com", "is_admin": True, "is_active": True},
+            "personal_team_id": None,
+            "is_token_revoked": False,
+            "team_ids": [],
+            "team_names": {},
+        }
+    )
+    monkeypatch.setattr("mcpgateway.auth._get_auth_context_batched_sync", batch_lookup)
+
+    with patch("mcpgateway.auth.resolve_session_teams", new_callable=AsyncMock, return_value=None):
+        first = await tr._normalize_jwt_payload({"sub": "batched@example.com", "token_use": "session", "jti": "jti-2"})
+        second = await tr._normalize_jwt_payload({"sub": "batched@example.com", "token_use": "session", "jti": "jti-2"})
+
+    assert first["is_admin"] is True
+    assert second["is_admin"] is True
+    batch_lookup.assert_called_once_with("batched@example.com", "jti-2")
+    auth_cache.set_auth_context.assert_awaited_once()
+    assert isinstance(cached[("batched@example.com", "jti-2")], CachedAuthContext)
+
+
 # ---------------------------------------------------------------------------
 # _resolve_jwt_user_email_for_streamable tests (issue #5215)
 #
