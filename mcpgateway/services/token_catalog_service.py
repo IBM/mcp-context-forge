@@ -28,7 +28,7 @@ from sqlalchemy.orm import Session
 # First-Party
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
-from mcpgateway.db import EmailApiToken, EmailUser, Permissions, TokenRevocation, TokenUsageLog, utc_now
+from mcpgateway.db import EmailApiToken, EmailTeam, EmailUser, Permissions, TokenRevocation, TokenUsageLog, utc_now
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.create_jwt_token import create_jwt_token
 
@@ -466,7 +466,7 @@ class TokenCatalogService:
         # Validate team exists and user is active member
         if team_id:
             # First-Party
-            from mcpgateway.db import EmailTeam, EmailTeamMember  # pylint: disable=import-outside-toplevel
+            from mcpgateway.db import EmailTeamMember  # pylint: disable=import-outside-toplevel
 
             # Check if team exists
             team = self.db.execute(select(EmailTeam).where(EmailTeam.id == team_id)).scalar_one_or_none()
@@ -563,6 +563,42 @@ class TokenCatalogService:
         token_type = f"team-scoped (team: {team_id})" if team_id else "public-only"
         logger.info("Created %s API token '%s' for user %s. Token ID: %s, Expires: %s", token_type, name, SecurityValidator.sanitize_log_message(user_email), api_token.id, expires_at or "Never")
         return api_token, raw_token
+
+    async def get_default_team_id(self, user_email: str) -> Optional[str]:
+        """Resolve the team a token should default to when none is supplied.
+
+        A token created with ``team_id=None`` carries a ``teams: null`` claim,
+        which :func:`~mcpgateway.auth_context.normalize_token_teams` maps to
+        public-only for non-admins — the credential cannot even see its own
+        creator's private resources (issue #5993). Defaulting to the creator's
+        personal team keeps owner access intact.
+
+        Args:
+            user_email: Email address of the user the token is being created for.
+
+        Returns:
+            Optional[str]: The user's active personal team ID, or ``None`` when
+            they have none (for example when ``AUTO_CREATE_PERSONAL_TEAMS`` is
+            disabled).
+
+        Examples:
+            >>> from unittest.mock import Mock
+            >>> import asyncio
+            >>> service = TokenCatalogService(Mock())
+            >>> asyncio.iscoroutinefunction(service.get_default_team_id)
+            True
+        """
+        try:
+            return self.db.execute(
+                select(EmailTeam.id).where(
+                    EmailTeam.created_by == user_email,
+                    EmailTeam.is_personal.is_(True),
+                    EmailTeam.is_active.is_(True),
+                )
+            ).scalar_one_or_none()
+        except Exception as exc:  # pragma: no cover - defensive; lookup is best-effort
+            logger.warning("Failed to resolve default team for %s: %s", SecurityValidator.sanitize_log_message(user_email), exc)
+            return None
 
     async def count_user_tokens(self, user_email: str, include_inactive: bool = False) -> int:
         """Count API tokens for a user.

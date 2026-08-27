@@ -7553,6 +7553,7 @@ class TokenCreateResponse(BaseModel):
     Attributes:
         token: Token information
         access_token: The actual token string (only returned on creation)
+        warnings: Non-fatal advisories about the created token's effective scope
 
     Examples:
         >>> from datetime import datetime
@@ -7568,10 +7569,13 @@ class TokenCreateResponse(BaseModel):
         ... )
         >>> response.access_token
         'abc123xyz'
+        >>> response.warnings
+        []
     """
 
     token: TokenResponse = Field(..., description="Token information")
     access_token: str = Field(..., description="The actual token string")
+    warnings: List[str] = Field(default_factory=list, description="Non-fatal advisories about the created token's effective scope")
 
 
 class TokenListResponse(BaseModel):
