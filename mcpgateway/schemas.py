@@ -4978,7 +4978,13 @@ class ServerHandshakeRequest(BaseModelWithConfigDict):
     an arbitrary caller-supplied URL, so no ``base_url``/``path`` fields exist here.
     """
 
-    headers: Optional[Dict[str, str]] = Field(None, description="Optional headers (e.g. Authorization) overriding the caller's own forwarded credentials")
+    headers: Optional[Dict[str, str]] = Field(
+        None,
+        description=(
+            "Optional header overrides for the handshake's credentials. Only 'Authorization' is honored -- "
+            "any other header (including proxy-identity, client-IP, session, or hop-by-hop headers) is ignored."
+        ),
+    )
 
 
 class TaggedEntity(BaseModelWithConfigDict):

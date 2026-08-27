@@ -155,6 +155,67 @@ async def test_body_header_override_ignores_host():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "forbidden_header",
+    [
+        "X-Authenticated-User",  # default settings.proxy_user_header -- trusted-proxy identity spoofing
+        "X-Forwarded-For",
+        "X-Forwarded-Host",
+        "X-Real-IP",
+        "X-ContextForge-Internal",
+        "Mcp-Session-Id",
+        "Connection",
+        "Transfer-Encoding",
+    ],
+)
+async def test_body_header_override_drops_forbidden_headers(forbidden_header):
+    """A caller-supplied proxy-identity/client-IP/session/hop-by-hop header in the body override never
+    reaches the in-process probe -- only 'Authorization' is honored from arbitrary body JSON (CWE-287/CWE-807).
+    """
+    transport_cm, session = _mock_sdk_session()
+
+    with patch("mcpgateway.main.app", MagicMock()):
+        with patch("mcpgateway.services.gateway_service.streamablehttp_client", return_value=transport_cm) as mock_streamable:
+            with patch("mcpgateway.services.gateway_service.ClientSession", return_value=session):
+                result = await run_server_handshake(
+                    "srv-1",
+                    "my-server",
+                    True,
+                    ServerHandshakeRequest(headers={forbidden_header: "spoofed-value", "Authorization": "Bearer caller-own-token"}),
+                    {},
+                )
+
+    called_headers = mock_streamable.call_args.kwargs["headers"]
+    assert forbidden_header.lower() not in {k.lower() for k in called_headers}
+    assert called_headers["Authorization"] == "Bearer caller-own-token"
+    assert result.credential_source == "form"
+
+
+@pytest.mark.asyncio
+async def test_forwarded_proxy_identity_header_is_not_overridable_by_body():
+    """Even when the caller's own forwarded credentials legitimately carry the trusted-proxy identity
+    header (TRUST_PROXY_AUTH_DANGEROUSLY), a body override cannot replace it with a different identity --
+    the override key is dropped, not merged in, so the session-derived value stands.
+    """
+    transport_cm, session = _mock_sdk_session()
+
+    with patch("mcpgateway.main.app", MagicMock()):
+        with patch("mcpgateway.services.gateway_service.streamablehttp_client", return_value=transport_cm) as mock_streamable:
+            with patch("mcpgateway.services.gateway_service.ClientSession", return_value=session):
+                result = await run_server_handshake(
+                    "srv-1",
+                    "my-server",
+                    True,
+                    ServerHandshakeRequest(headers={"X-Authenticated-User": "victim@example.com"}),
+                    {"X-Authenticated-User": "caller@example.com"},
+                )
+
+    called_headers = {k.lower(): v for k, v in mock_streamable.call_args.kwargs["headers"].items()}
+    assert called_headers.get("x-authenticated-user") == "caller@example.com"
+    assert result.credential_source == "session"
+
+
+@pytest.mark.asyncio
 async def test_connect_error_is_classified_as_transport_failure():
     """A connection error from the in-process transport is classified the same way as a real gateway handshake."""
     # Third-Party

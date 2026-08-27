@@ -7871,6 +7871,60 @@ async def _probe_mcp_session(
     )
 
 
+# Headers that must never reach the in-process handshake probe, regardless of
+# whether they arrived via the caller's own forwarded credentials or an explicit
+# body override: proxy-identity / client-IP headers a caller could otherwise use
+# to impersonate another principal or spoof their source IP against
+# TRUST_PROXY_AUTH_DANGEROUSLY or IP-scoped token checks, ContextForge-internal
+# routing headers, MCP session headers (must be derived fresh by the SDK), and
+# hop-by-hop headers that are never valid to forward manually.
+_HANDSHAKE_HEADER_DENYLIST: frozenset[str] = frozenset(
+    {
+        "host",
+        "x-real-ip",
+        "mcp-session-id",
+        "connection",
+        "keep-alive",
+        "proxy-connection",
+        "te",
+        "trailer",
+        "upgrade",
+        "content-length",
+        "transfer-encoding",
+    }
+)
+
+# The only header an explicit body override is trusted to set: the caller is
+# supplying their own credential for their own probe, so overriding Authorization
+# is safe. Anything else -- in particular the configured trusted-proxy identity
+# header -- must never be settable from arbitrary caller-supplied JSON.
+_HANDSHAKE_FORM_HEADER_ALLOWLIST: frozenset[str] = frozenset({"authorization"})
+
+
+def _is_handshake_header_denied(header_name: str, *, allow_proxy_identity: bool) -> bool:
+    """Whether a header must be dropped before it reaches the in-process handshake probe.
+
+    Args:
+        header_name: The header's name (any case).
+        allow_proxy_identity: Whether the configured trusted-proxy identity header
+            (``settings.proxy_user_header``) is allowed through. Only ``True`` for
+            headers sourced from the caller's own already-authenticated request
+            (see ``test_server_mcp_handshake`` in ``main.py``) -- never for an
+            explicit body override, which is arbitrary caller-supplied JSON.
+
+    Returns:
+        True if the header must be stripped.
+    """
+    lowered = header_name.lower()
+    if lowered in _HANDSHAKE_HEADER_DENYLIST:
+        return True
+    if lowered.startswith("x-forwarded-") or lowered.startswith("x-contextforge-"):
+        return True
+    if lowered == settings.proxy_user_header.lower():
+        return not allow_proxy_identity
+    return False
+
+
 async def test_server_handshake(
     server_id: str,
     server_name: str,
@@ -7920,12 +7974,15 @@ async def test_server_handshake(
             error=f"Virtual server '{server_name}' is disabled. Enable it before testing the connection.",
         )
 
-    # SECURITY: Host is stripped from both sources — it must be derived from the
-    # in-process target, never from caller input, the same rule test_gateway_handshake
-    # applies to gateway-test headers.
-    headers = {key: value for key, value in forwarded_headers.items() if key.lower() != "host"}
+    # SECURITY: forwarded_headers comes from the caller's own already-authenticated
+    # request (Authorization/cookie, or the configured trusted-proxy identity header
+    # -- see test_server_mcp_handshake in main.py) so it may carry that proxy header
+    # through; body.headers is arbitrary caller-supplied JSON and is restricted to a
+    # strict allowlist so it can never be used to inject proxy-identity, client-IP,
+    # session, or hop-by-hop headers into the in-process probe (CWE-287/CWE-807).
+    headers = {key: value for key, value in forwarded_headers.items() if not _is_handshake_header_denied(key, allow_proxy_identity=True)}
     credential_source: Literal["stored", "form", "none", "session"] = "session" if headers else "none"
-    form_headers = {key: value for key, value in (body.headers or {}).items() if key.lower() != "host"}
+    form_headers = {key: value for key, value in (body.headers or {}).items() if key.lower() in _HANDSHAKE_FORM_HEADER_ALLOWLIST}
     if form_headers:
         overridden_keys = {key.lower() for key in form_headers}
         headers = {key: value for key, value in headers.items() if key.lower() not in overridden_keys}

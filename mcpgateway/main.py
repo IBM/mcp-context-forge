@@ -4510,6 +4510,15 @@ async def test_server_mcp_handshake(
         auth_token = request.cookies.get("jwt_token") or request.cookies.get("access_token")
     if auth_token:
         forwarded_headers["Authorization"] = f"Bearer {auth_token}"
+    elif settings.trust_proxy_auth:
+        # No bearer/cookie credential: this caller may have been authenticated via the
+        # configured trusted-proxy identity header instead (TRUST_PROXY_AUTH_DANGEROUSLY).
+        # Forward that header's *own already-verified value from this request* -- never
+        # anything from the request body -- so the probe reflects the same identity that
+        # got the caller past auth here.
+        proxy_user = request.headers.get(settings.proxy_user_header)
+        if proxy_user:
+            forwarded_headers[settings.proxy_user_header] = proxy_user
 
     return await test_server_handshake(server.id, server.name, server.enabled, body, forwarded_headers)
 

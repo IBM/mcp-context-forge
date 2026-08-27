@@ -1235,7 +1235,11 @@ class TestServerHandshakeEndpoint:
     @patch("mcpgateway.main.test_server_handshake")
     @patch("mcpgateway.main.server_service.get_server")
     def test_handshake_header_override_reaches_service(self, mock_get_server, mock_handshake, test_client, auth_headers):
-        """An explicit ``headers`` override in the request body is passed through to the service."""
+        """An explicit ``headers`` override in the request body is passed through to the service.
+
+        The service layer (not the router) is responsible for restricting which override
+        headers are actually honored -- see test_server_handshake.py's deny-path coverage.
+        """
         # First-Party
         from mcpgateway.schemas import GatewayHandshakeResponse
 
@@ -1246,6 +1250,48 @@ class TestServerHandshakeEndpoint:
 
         body = mock_handshake.call_args.args[3]
         assert body.headers == {"X-Custom": "value"}
+
+    @patch("mcpgateway.main.test_server_handshake")
+    @patch("mcpgateway.main.server_service.get_server")
+    def test_handshake_forwards_trusted_proxy_identity_header_when_no_bearer_or_cookie(self, mock_get_server, mock_handshake, test_client, monkeypatch):
+        """With TRUST_PROXY_AUTH_DANGEROUSLY enabled and no Authorization header/cookie, the caller's own
+        already-verified trusted-proxy identity header (from this request, not the body) is forwarded under
+        the configured header name -- not hardcoded to 'Authorization'.
+        """
+        # First-Party
+        from mcpgateway.schemas import GatewayHandshakeResponse
+
+        monkeypatch.setattr(settings, "trust_proxy_auth", True)
+        monkeypatch.setattr(settings, "proxy_user_header", "X-Authenticated-User")
+
+        mock_get_server.return_value = ServerRead(**MOCK_SERVER_READ)
+        mock_handshake.return_value = GatewayHandshakeResponse(success=True, latency_ms=1)
+
+        test_client.post("/servers/1/test-handshake", json={}, headers={"X-Authenticated-User": "proxy-user@example.com"})
+
+        forwarded_headers = mock_handshake.call_args.args[4]
+        assert forwarded_headers.get("X-Authenticated-User") == "proxy-user@example.com"
+        assert "Authorization" not in forwarded_headers
+
+    @patch("mcpgateway.main.test_server_handshake")
+    @patch("mcpgateway.main.server_service.get_server")
+    def test_handshake_does_not_forward_proxy_identity_header_when_trust_proxy_auth_disabled(self, mock_get_server, mock_handshake, test_client, monkeypatch):
+        """With TRUST_PROXY_AUTH_DANGEROUSLY disabled (the default), a caller-supplied identity header is
+        never forwarded into the probe, even if it happens to match the configured header name.
+        """
+        # First-Party
+        from mcpgateway.schemas import GatewayHandshakeResponse
+
+        monkeypatch.setattr(settings, "trust_proxy_auth", False)
+        monkeypatch.setattr(settings, "proxy_user_header", "X-Authenticated-User")
+
+        mock_get_server.return_value = ServerRead(**MOCK_SERVER_READ)
+        mock_handshake.return_value = GatewayHandshakeResponse(success=True, latency_ms=1)
+
+        test_client.post("/servers/1/test-handshake", json={}, headers={"X-Authenticated-User": "spoofed@example.com"})
+
+        forwarded_headers = mock_handshake.call_args.args[4]
+        assert "X-Authenticated-User" not in forwarded_headers
 
 
 # ----------------------------------------------------- #
