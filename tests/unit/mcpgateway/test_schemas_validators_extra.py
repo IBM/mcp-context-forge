@@ -1567,3 +1567,45 @@ class TestToolNameLengthValidation:
         with pytest.raises(ValidationError) as exc_info:
             ToolCreate(name=name, inputSchema={})
         assert "Tool name exceeds MCP spec limit of 128 characters (got 129)" in str(exc_info.value)
+
+
+class TestSanitizeCredentialValue:
+    """Tests for SecurityValidator.sanitize_credential_value (invisible-Unicode credential guard)."""
+
+    def test_clean_ascii_value_passes_through_unchanged(self):
+        assert SecurityValidator.sanitize_credential_value("my-token-123") == "my-token-123"
+
+    def test_none_value_passes_through_unchanged(self):
+        assert SecurityValidator.sanitize_credential_value(None) is None
+
+    def test_empty_string_passes_through_unchanged(self):
+        assert SecurityValidator.sanitize_credential_value("") == ""
+
+    def test_strips_word_joiner(self):
+        contaminated = "A" * 48 + "⁠" + "B" * 20
+        assert SecurityValidator.sanitize_credential_value(contaminated) == "A" * 48 + "B" * 20
+
+    def test_strips_zero_width_space(self):
+        contaminated = "tok​en"
+        assert SecurityValidator.sanitize_credential_value(contaminated) == "token"
+
+    def test_strips_byte_order_mark(self):
+        contaminated = "﻿token"
+        assert SecurityValidator.sanitize_credential_value(contaminated) == "token"
+
+    def test_leaves_other_non_ascii_content_untouched(self):
+        """Non-format non-ASCII characters (accented Latin, CJK, etc.) are legitimate
+        credential/header content -- e.g. an internationalized custom header value --
+        and must not be altered or rejected, only invisible format characters are."""
+        assert SecurityValidator.sanitize_credential_value("café") == "café"
+        assert SecurityValidator.sanitize_credential_value("value-with-特殊字符") == "value-with-特殊字符"
+
+    def test_strips_format_char_while_leaving_other_non_ascii_content(self):
+        contaminated = "café" + "⁠" + "-token"
+        assert SecurityValidator.sanitize_credential_value(contaminated) == "café-token"
+
+    def test_non_str_input_passes_through_unchanged(self):
+        """Some callers pass a Pydantic SecretStr directly for auth_password; this must
+        not crash iterating over a non-str object -- only plain strings are sanitized."""
+        secret = SecretStr("password")  # pragma: allowlist secret
+        assert SecurityValidator.sanitize_credential_value(secret) is secret

@@ -470,7 +470,10 @@ def _decrypt_tool_headers_for_runtime(headers: Optional[Dict[str, Any]]) -> Dict
     """
     if not isinstance(headers, dict):
         return {}
-    return {key: _decrypt_tool_header_value(value) for key, value in headers.items()}
+    # Strip invisible Unicode format characters left over in a header value stored
+    # before this validation existed, so runtime outbound requests self-heal without
+    # requiring a manual re-save.
+    return {key: SecurityValidator.sanitize_credential_value(_decrypt_tool_header_value(value)) for key, value in headers.items()}
 
 
 #: Top-level keys that the MCP ``CallToolResult`` envelope admits (including
@@ -4550,6 +4553,10 @@ class ToolService(BaseService):
                 )
                 raise ToolInvocationError(f"Credential storage unavailable for gateway '{gateway_name}'. Tool invocation refused to protect per-user credential isolation.") from vault_err
             headers = vault_headers or (decode_auth(gateway_auth_value) if gateway_auth_value else {})
+            # Strip invisible Unicode format characters left over in a credential stored
+            # before this validation existed, so tool invocation self-heals without
+            # requiring a manual re-save.
+            headers = {k: SecurityValidator.sanitize_credential_value(v) for k, v in headers.items()}
 
         if request_headers:
             # B3: when the gateway uses token-exchange, the exchanged Authorization header
@@ -5572,6 +5579,10 @@ class ToolService(BaseService):
                             raise ToolInvocationError(f"OAuth authentication failed: {str(e)}")
                     else:
                         credentials = decode_auth(tool_auth_value) if tool_auth_value else {}
+                        # Strip invisible Unicode format characters left over in a credential
+                        # stored before this validation existed, so tool invocation self-heals
+                        # without requiring a manual re-save.
+                        credentials = {k: SecurityValidator.sanitize_credential_value(v) for k, v in credentials.items()}
                         # Filter out empty header names/values to avoid "Illegal header name" errors
                         filtered_credentials = {k: v for k, v in credentials.items() if k and v}
                         headers.update(filtered_credentials)
@@ -6015,6 +6026,10 @@ class ToolService(BaseService):
                             )
                             raise ToolInvocationError(f"Credential storage unavailable for gateway '{gateway_name}'. Tool invocation refused to protect per-user credential isolation.") from vault_err
                         headers = vault_headers or (decode_auth(gateway_auth_value) if gateway_auth_value else {})
+                        # Strip invisible Unicode format characters left over in a credential
+                        # stored before this validation existed, so tool invocation self-heals
+                        # without requiring a manual re-save.
+                        headers = {k: SecurityValidator.sanitize_credential_value(v) for k, v in headers.items()}
 
                     # Use cached passthrough headers (no DB query needed)
                     if request_headers:
