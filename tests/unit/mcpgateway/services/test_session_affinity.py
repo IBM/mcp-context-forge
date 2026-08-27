@@ -2083,6 +2083,7 @@ async def test_start_rpc_listener_dispatches_rpc_forward_and_http_forward_messag
         mock_settings.mcpgateway_session_affinity_enabled = True
         mock_settings.mcpgateway_affinity_forward_concurrency = 8
         mock_settings.mcpgateway_affinity_session_lock_timeout = 5
+        mock_settings.mcpgateway_pool_rpc_forward_timeout = 30
         # Bound the test in case of any hang.
         await asyncio.wait_for(affinity.start_rpc_listener(), timeout=3.0)
 
@@ -3657,3 +3658,87 @@ def test_on_forward_task_done_no_warning_when_no_exception():
     affinity._on_forward_task_done(task)  # pylint: disable=protected-access
 
     assert task not in affinity._forward_tasks  # pylint: disable=protected-access
+
+
+# ---------------------------------------------------------------------------
+# _dispatch_forwarded stale-envelope drop (age > mcpgateway_pool_rpc_forward_timeout)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_dispatch_forwarded_drops_stale_envelope(caplog):
+    """An envelope whose timestamp predates the forward timeout is discarded without execution."""
+    import time
+
+    # First-Party
+    from mcpgateway.services.session_affinity import SessionAffinity
+
+    affinity = SessionAffinity()
+    affinity._forward_semaphore = asyncio.Semaphore(8)  # pylint: disable=protected-access
+
+    executed: list[str] = []
+
+    async def _fake_http(request, _redis):
+        executed.append("ran")
+
+    affinity._execute_forwarded_http_request = _fake_http  # type: ignore[method-assign]
+
+    # Craft an envelope that is already well past the timeout
+    stale_request = {
+        "mcp_session_id": "sess-stale-01",
+        "timestamp": time.time() - 999.0,  # ~16 minutes ago — always stale
+    }
+
+    with (
+        patch("mcpgateway.services.session_affinity.settings") as mock_settings,
+        caplog.at_level("WARNING", logger="mcpgateway.services.session_affinity"),
+    ):
+        mock_settings.mcpgateway_pool_rpc_forward_timeout = 30
+        mock_settings.mcpgateway_affinity_session_lock_timeout = 5
+        await affinity._dispatch_forwarded(  # pylint: disable=protected-access
+            redis=MagicMock(),
+            forward_type="http_forward",
+            request=stale_request,
+            response_channel="reply-stale",
+            session_lock=None,
+        )
+
+    assert executed == [], "stale envelope must not be executed"
+    assert any("Dropping stale" in rec.getMessage() for rec in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_dispatch_forwarded_executes_fresh_envelope():
+    """An envelope whose timestamp is within the forward timeout is executed normally."""
+    import time
+
+    # First-Party
+    from mcpgateway.services.session_affinity import SessionAffinity
+
+    affinity = SessionAffinity()
+    affinity._forward_semaphore = asyncio.Semaphore(8)  # pylint: disable=protected-access
+
+    executed: list[str] = []
+
+    async def _fake_http(request, _redis):
+        executed.append("ran")
+
+    affinity._execute_forwarded_http_request = _fake_http  # type: ignore[method-assign]
+
+    fresh_request = {
+        "mcp_session_id": "sess-fresh-01",
+        "timestamp": time.time(),  # just now
+    }
+
+    with patch("mcpgateway.services.session_affinity.settings") as mock_settings:
+        mock_settings.mcpgateway_pool_rpc_forward_timeout = 30
+        mock_settings.mcpgateway_affinity_session_lock_timeout = 5
+        await affinity._dispatch_forwarded(  # pylint: disable=protected-access
+            redis=MagicMock(),
+            forward_type="http_forward",
+            request=fresh_request,
+            response_channel="reply-fresh",
+            session_lock=None,
+        )
+
+    assert executed == ["ran"], "fresh envelope must be executed"

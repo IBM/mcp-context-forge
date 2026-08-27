@@ -1060,6 +1060,10 @@ class SessionAffinity:
         executes without the ordering guarantee (logged). The lock object is
         garbage-collected once this task drops its reference.
 
+        Envelopes that have already exceeded ``mcpgateway_pool_rpc_forward_timeout``
+        since they were enqueued are dropped immediately so burst back-log does not
+        accumulate stale work that the originating caller has already given up on.
+
         Args:
             redis: Active Redis client from the listener connection.
             forward_type: ``rpc_forward`` (SSE) or ``http_forward`` (Streamable HTTP).
@@ -1067,6 +1071,25 @@ class SessionAffinity:
             response_channel: Per-request reply channel for the rpc_forward result.
             session_lock: The session's ordering lock (claimed by the listener), or None.
         """
+        # Drop envelopes that have already exceeded the forward timeout while
+        # waiting in the queue.  The originating caller will have surfaced a
+        # timeout error already, so executing the request would be wasted work
+        # and would only deepen an ongoing queue pile-up.
+        # Only applies when the envelope carries a timestamp; legacy envelopes
+        # without one are forwarded as-is.
+        envelope_ts = request.get("timestamp")
+        if envelope_ts is not None:
+            envelope_age = time.time() - envelope_ts
+            if envelope_age > settings.mcpgateway_pool_rpc_forward_timeout:
+                logger.warning(
+                    "Dropping stale %s envelope for session %s... (age %.1fs > timeout %ds)",
+                    forward_type,
+                    (request.get("mcp_session_id") or "unknown")[:8],
+                    envelope_age,
+                    settings.mcpgateway_pool_rpc_forward_timeout,
+                )
+                return
+
         try:
             if session_lock is not None:
                 acquired = False

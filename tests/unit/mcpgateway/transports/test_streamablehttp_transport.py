@@ -19069,76 +19069,199 @@ def test_validate_token_team_membership_checks_cache_and_database(monkeypatch):
     auth_cache.set_team_membership_valid_sync.assert_called_once_with("member@example.com", ["team-a"], True)
 
 # ---------------------------------------------------------------------------
-# Affinity check span attribute paths (streamablehttp_transport.py lines 4313-4314)
+# Affinity check span attribute paths (streamablehttp_transport.py lines 4312-4314)
 # ---------------------------------------------------------------------------
-# These lines run inside the `with create_span(...) as affinity_span:` block
-# when `affinity_span is not None`. We test the logic directly using a real
-# affinity_span mock so both `set_span_attribute` calls are covered.
+# Each test drives the real handler path through handle_streamable_http with a
+# stubbed pool so the production set_span_attribute calls are exercised rather
+# than a copy of the logic.
 
 
-def test_affinity_span_attribute_logic_owner_known(monkeypatch):
-    """When the span object is not None and an owner exists,
-    set_span_attribute is called with the owner value and decision='local' or 'forward'."""
-    captured = {}
+@pytest.mark.asyncio
+async def test_affinity_span_attributes_owner_is_local_worker(monkeypatch):
+    """Span attributes report the real owner id and decision='local' when the session
+    belongs to the current worker."""
+    from contextlib import asynccontextmanager, contextmanager
 
-    def _fake_set_span_attribute(span, key, value):
-        captured[key] = value
+    from mcpgateway.transports.streamablehttp_transport import SessionManagerWrapper
 
-    monkeypatch.setattr(tr, "set_span_attribute", _fake_set_span_attribute)
+    class DummySessionManager:
+        @asynccontextmanager
+        async def run(self):
+            yield self
 
-    # Simulate the in-handler code fragment:
-    from mcpgateway.services.session_affinity import WORKER_ID
+        async def handle_request(self, scope, receive, send_func):
+            await send_func({"type": "http.response.start", "status": 200, "headers": []})
+            await send_func({"type": "http.response.body", "body": b""})
 
-    affinity_span = object()  # non-None span
-    owner = WORKER_ID  # session owned by this worker → local
+    # Produce a non-None span so the `if affinity_span is not None:` guard passes.
+    _sentinel_span = object()
 
-    if affinity_span is not None:
-        tr.set_span_attribute(affinity_span, "mcp.affinity.owner", owner or "none")
-        tr.set_span_attribute(affinity_span, "mcp.affinity.decision", "forward" if (owner and owner != WORKER_ID) else "local")
+    @contextmanager
+    def _fake_create_span(name, attributes=None):
+        yield _sentinel_span
 
-    assert captured["mcp.affinity.owner"] == WORKER_ID
-    assert captured["mcp.affinity.decision"] == "local"
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: DummySessionManager())
+    monkeypatch.setattr(tr, "create_span", _fake_create_span)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
+    monkeypatch.setattr("mcpgateway.services.server_service.ServerService.entity_exists", AsyncMock(return_value=True))
 
-
-def test_affinity_span_attribute_logic_owner_different_worker(monkeypatch):
-    """When owner is a different worker, decision attribute must be 'forward'."""
-    captured = {}
-
-    def _fake_set_span_attribute(span, key, value):
-        captured[key] = value
-
-    monkeypatch.setattr(tr, "set_span_attribute", _fake_set_span_attribute)
-
-    from mcpgateway.services.session_affinity import WORKER_ID
-
-    affinity_span = object()
-    owner = "other-worker-id"
-
-    if affinity_span is not None:
-        tr.set_span_attribute(affinity_span, "mcp.affinity.owner", owner or "none")
-        tr.set_span_attribute(affinity_span, "mcp.affinity.decision", "forward" if (owner and owner != WORKER_ID) else "local")
-
-    assert captured["mcp.affinity.owner"] == "other-worker-id"
-    assert captured["mcp.affinity.decision"] == "forward"
-
-
-def test_affinity_span_attribute_logic_no_owner(monkeypatch):
-    """When owner is None (session not yet claimed), owner attribute is 'none' and decision is 'local'."""
-    captured = {}
+    captured: dict = {}
 
     def _fake_set_span_attribute(span, key, value):
         captured[key] = value
 
     monkeypatch.setattr(tr, "set_span_attribute", _fake_set_span_attribute)
 
-    from mcpgateway.services.session_affinity import WORKER_ID
+    mock_pool = MagicMock()
+    mock_pool.get_session_owner = AsyncMock(return_value="worker-abc")  # same as patched WORKER_ID
 
-    affinity_span = object()
-    owner = None
+    mock_session_class = MagicMock()
+    mock_session_class.is_valid_mcp_session_id = MagicMock(return_value=True)
 
-    if affinity_span is not None:
-        tr.set_span_attribute(affinity_span, "mcp.affinity.owner", owner or "none")
-        tr.set_span_attribute(affinity_span, "mcp.affinity.decision", "forward" if (owner and owner != WORKER_ID) else "local")
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+    scope = _make_scope("/servers/abc-123/mcp", method="POST", headers=[(b"mcp-session-id", b"sess-local-1234")])
+    send, _ = _make_send_collector()
 
-    assert captured["mcp.affinity.owner"] == "none"
-    assert captured["mcp.affinity.decision"] == "local"
+    with (
+        patch("mcpgateway.services.session_affinity.get_session_affinity", return_value=mock_pool),
+        patch("mcpgateway.services.session_affinity.WORKER_ID", "worker-abc"),
+        patch("mcpgateway.services.session_affinity.SessionAffinity", mock_session_class),
+    ):
+        await wrapper.handle_streamable_http(scope, _make_receive(b""), send)
+
+    await wrapper.shutdown()
+
+    assert captured.get("mcp.affinity.owner") == "worker-abc"
+    assert captured.get("mcp.affinity.decision") == "local"
+
+
+@pytest.mark.asyncio
+async def test_affinity_span_attributes_owner_is_different_worker(monkeypatch):
+    """Span attributes report decision='forward' when the session is owned by another worker."""
+    import orjson
+    from contextlib import asynccontextmanager, contextmanager
+
+    from mcpgateway.transports.streamablehttp_transport import SessionManagerWrapper
+
+    class DummySessionManager:
+        @asynccontextmanager
+        async def run(self):
+            yield self
+
+        async def handle_request(self, scope, receive, send_func):
+            pass  # unreachable: affinity forwards before SDK
+
+    _sentinel_span = object()
+
+    @contextmanager
+    def _fake_create_span(name, attributes=None):
+        yield _sentinel_span
+
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: DummySessionManager())
+    monkeypatch.setattr(tr, "create_span", _fake_create_span)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
+    monkeypatch.setattr("mcpgateway.services.server_service.ServerService.entity_exists", AsyncMock(return_value=True))
+
+    captured: dict = {}
+
+    def _fake_set_span_attribute(span, key, value):
+        captured[key] = value
+
+    monkeypatch.setattr(tr, "set_span_attribute", _fake_set_span_attribute)
+
+    mock_pool = MagicMock()
+    mock_pool.get_session_owner = AsyncMock(return_value="other-worker")
+    mock_pool.forward_to_owner = AsyncMock(return_value=None)
+
+    mock_session_class = MagicMock()
+    mock_session_class.is_valid_mcp_session_id = MagicMock(return_value=True)
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.content = b"{}"
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+    scope = _make_scope("/servers/abc-123/mcp", method="POST", headers=[(b"mcp-session-id", b"sess-fwd-5678")])
+    send, _ = _make_send_collector()
+    body = orjson.dumps({"jsonrpc": "2.0", "method": "tools/list", "id": 1})
+
+    with (
+        patch("mcpgateway.services.session_affinity.get_session_affinity", return_value=mock_pool),
+        patch("mcpgateway.services.session_affinity.WORKER_ID", "this-worker"),
+        patch("mcpgateway.services.session_affinity.SessionAffinity", mock_session_class),
+        patch("mcpgateway.transports.streamablehttp_transport.httpx.AsyncClient") as mock_client_cls,
+    ):
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client_cls.return_value = mock_client
+        await wrapper.handle_streamable_http(scope, _make_receive(body), send)
+
+    await wrapper.shutdown()
+
+    assert captured.get("mcp.affinity.owner") == "other-worker"
+    assert captured.get("mcp.affinity.decision") == "forward"
+
+
+@pytest.mark.asyncio
+async def test_affinity_span_attributes_no_owner(monkeypatch):
+    """Span attributes report owner='none' and decision='local' when the session is unclaimed."""
+    from contextlib import asynccontextmanager, contextmanager
+
+    from mcpgateway.transports.streamablehttp_transport import SessionManagerWrapper
+
+    class DummySessionManager:
+        @asynccontextmanager
+        async def run(self):
+            yield self
+
+        async def handle_request(self, scope, receive, send_func):
+            await send_func({"type": "http.response.start", "status": 200, "headers": []})
+            await send_func({"type": "http.response.body", "body": b""})
+
+    _sentinel_span = object()
+
+    @contextmanager
+    def _fake_create_span(name, attributes=None):
+        yield _sentinel_span
+
+    monkeypatch.setattr(tr, "StreamableHTTPSessionManager", lambda **kwargs: DummySessionManager())
+    monkeypatch.setattr(tr, "create_span", _fake_create_span)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcpgateway_session_affinity_enabled", True)
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.use_stateful_sessions", True)
+    monkeypatch.setattr("mcpgateway.services.server_service.ServerService.entity_exists", AsyncMock(return_value=True))
+
+    captured: dict = {}
+
+    def _fake_set_span_attribute(span, key, value):
+        captured[key] = value
+
+    monkeypatch.setattr(tr, "set_span_attribute", _fake_set_span_attribute)
+
+    mock_pool = MagicMock()
+    mock_pool.get_session_owner = AsyncMock(return_value=None)  # unclaimed session
+
+    mock_session_class = MagicMock()
+    mock_session_class.is_valid_mcp_session_id = MagicMock(return_value=True)
+
+    wrapper = SessionManagerWrapper()
+    await wrapper.initialize()
+    scope = _make_scope("/servers/abc-123/mcp", method="POST", headers=[(b"mcp-session-id", b"sess-none-9999")])
+    send, _ = _make_send_collector()
+
+    with (
+        patch("mcpgateway.services.session_affinity.get_session_affinity", return_value=mock_pool),
+        patch("mcpgateway.services.session_affinity.WORKER_ID", "worker-xyz"),
+        patch("mcpgateway.services.session_affinity.SessionAffinity", mock_session_class),
+    ):
+        await wrapper.handle_streamable_http(scope, _make_receive(b""), send)
+
+    await wrapper.shutdown()
+
+    assert captured.get("mcp.affinity.owner") == "none"
+    assert captured.get("mcp.affinity.decision") == "local"

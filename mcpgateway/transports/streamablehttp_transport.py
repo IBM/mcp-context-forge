@@ -4518,12 +4518,11 @@ class SessionManagerWrapper:
                 from mcpgateway.services.session_affinity import get_session_affinity, WORKER_ID  # pylint: disable=import-outside-toplevel
 
                 pool = get_session_affinity()
+                owner = await pool.get_session_owner(mcp_session_id)
                 with create_span("mcp.affinity.check", {"mcp.session_id": mcp_session_id[:8], "mcp.affinity.worker_id": WORKER_ID}) as affinity_span:
-                    owner = await pool.get_session_owner(mcp_session_id)
                     if affinity_span is not None:
                         set_span_attribute(affinity_span, "mcp.affinity.owner", owner or "none")
                         set_span_attribute(affinity_span, "mcp.affinity.decision", "forward" if (owner and owner != WORKER_ID) else "local")
-                owner = await pool.get_session_owner(mcp_session_id)
                 logger.debug("[HTTP_AFFINITY_CHECK] Worker %s | Session %s... | Owner from Redis: %s", WORKER_ID, mcp_session_id[:8], owner)
 
                 if owner and owner != WORKER_ID:
