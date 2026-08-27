@@ -6,12 +6,14 @@ This maintainer-side tool runs before release. Gateway requests never fetch
 remote icons. Remote content becomes inert, normalized PNG assets.
 """
 
+# Future
 from __future__ import annotations
 
+# Standard
 import argparse
 from dataclasses import dataclass
-from io import BytesIO
 from html.parser import HTMLParser
+from io import BytesIO
 import ipaddress
 import json
 from pathlib import Path
@@ -20,11 +22,13 @@ import socket
 from typing import Any, Iterable
 from urllib.parse import urljoin, urlsplit
 
+# Third-Party
 import httpx
 from PIL import Image, ImageOps
 import yaml
 
 try:
+    # Third-Party
     import tldextract
 except ImportError:  # pragma: no cover - installed by the maintainer dev group.
     tldextract = None  # type: ignore[assignment]
@@ -37,6 +41,7 @@ LOCAL_PREFIX = "/static/catalog-icons/"
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 MAX_REDIRECTS = 3
 ICON_SIZE = 128
+NORMALIZED_ICON_MIN_EXTENT = 120
 TIMEOUT_SECONDS = 10.0
 USER_AGENT = "ContextForge catalog icon curator/1.0"
 
@@ -162,17 +167,40 @@ def _fetch(client: httpx.Client, url: str, *, expected_image: bool = False) -> F
 
 
 def _image_to_png(body: bytes) -> bytes:
-    """Decode image and emit deterministic transparent 128x128 PNG."""
+    """Decode image, trim transparent padding, and emit a deterministic 128px PNG."""
     try:
         with Image.open(BytesIO(body)) as source:
             image = ImageOps.exif_transpose(source).convert("RGBA")
-            image.thumbnail((ICON_SIZE, ICON_SIZE), Image.Resampling.LANCZOS)
+            alpha_bounds = image.getchannel("A").getbbox()
+            if alpha_bounds:
+                image = image.crop(alpha_bounds)
+            if image.width >= image.height:
+                target_size = (ICON_SIZE, max(1, round(ICON_SIZE * image.height / image.width)))
+            else:
+                target_size = (max(1, round(ICON_SIZE * image.width / image.height)), ICON_SIZE)
+            image = image.resize(target_size, Image.Resampling.LANCZOS)
             canvas = Image.new("RGBA", (ICON_SIZE, ICON_SIZE), (0, 0, 0, 0))
             offset = ((ICON_SIZE - image.width) // 2, (ICON_SIZE - image.height) // 2)
             canvas.alpha_composite(image, offset)
             output = BytesIO()
             canvas.save(output, format="PNG", optimize=True)
             return output.getvalue()
+    except Exception as exc:  # Pillow raises several format-specific exceptions.
+        raise IconFetchError(f"Image decode failed: {exc}") from exc
+
+
+def _has_normalized_icon_bounds(body: bytes) -> bool:
+    """Return whether existing content already fills nearly one canvas dimension."""
+    try:
+        with Image.open(BytesIO(body)) as source:
+            image = ImageOps.exif_transpose(source).convert("RGBA")
+            if image.size != (ICON_SIZE, ICON_SIZE):
+                return False
+            alpha_bounds = image.getchannel("A").getbbox()
+            if alpha_bounds is None:
+                return True
+            left, top, right, bottom = alpha_bounds
+            return max(right - left, bottom - top) >= NORMALIZED_ICON_MIN_EXTENT
     except Exception as exc:  # Pillow raises several format-specific exceptions.
         raise IconFetchError(f"Image decode failed: {exc}") from exc
 
@@ -259,22 +287,14 @@ def _set_logo_urls(text: str, logo_urls: dict[str, str]) -> str:
             continue
         replacement = f'{match.group("indent")}  logo_url: "{logo_urls[catalog_id]}"\n'
         field_index = next(
-            (
-                index
-                for index in range(start + 1, end)
-                if _FIELD_RE.match(lines[index]) and _FIELD_RE.match(lines[index]).group("field") == "logo_url"
-            ),
+            (index for index in range(start + 1, end) if _FIELD_RE.match(lines[index]) and _FIELD_RE.match(lines[index]).group("field") == "logo_url"),
             None,
         )
         if field_index is not None:
             updates.append((field_index, field_index + 1, replacement))
             continue
         url_index = next(
-            (
-                index
-                for index in range(start + 1, end)
-                if _FIELD_RE.match(lines[index]) and _FIELD_RE.match(lines[index]).group("field") == "url"
-            ),
+            (index for index in range(start + 1, end) if _FIELD_RE.match(lines[index]) and _FIELD_RE.match(lines[index]).group("field") == "url"),
             None,
         )
         if url_index is None:
@@ -307,6 +327,22 @@ def generate_icons(args: argparse.Namespace) -> int:
             if catalog_id in skip_ids:
                 print(f"SKIP {catalog_id}: override list")
                 continue
+            if args.normalize_existing:
+                if not asset_path.exists():
+                    print(f"SKIP {catalog_id}: no local asset to normalize")
+                    continue
+                existing = asset_path.read_bytes()
+                if _has_normalized_icon_bounds(existing):
+                    print(f"KEEP {catalog_id}: normalized bounds")
+                else:
+                    if not args.dry_run:
+                        normalized = _image_to_png(existing)
+                        temporary = asset_path.with_suffix(".tmp")
+                        temporary.write_bytes(normalized)
+                        temporary.replace(asset_path)
+                    print(f"NORMALIZE {catalog_id}: {asset_path}")
+                logo_urls[catalog_id] = local_url
+                continue
             if asset_path.exists() and not args.force:
                 logo_urls[catalog_id] = local_url
                 print(f"KEEP {catalog_id}: {asset_path}")
@@ -337,7 +373,13 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--overrides", type=Path, default=DEFAULT_OVERRIDES)
     parser.add_argument("--timeout", type=float, default=TIMEOUT_SECONDS)
-    parser.add_argument("--force", action="store_true", help="Refresh existing assets")
+    refresh_mode = parser.add_mutually_exclusive_group()
+    refresh_mode.add_argument("--force", action="store_true", help="Refresh existing assets")
+    refresh_mode.add_argument(
+        "--normalize-existing",
+        action="store_true",
+        help="Normalize existing local assets without refetching remote icons",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Fetch and report without writing")
     parser.add_argument("--strict", action="store_true", help="Return failure when any icon is unresolved")
     return parser.parse_args()
