@@ -65,7 +65,15 @@ reuse_port = True  # Set the SO_REUSEPORT flag on the listening socket
 # the key will be decrypted by the SSL key manager before Gunicorn starts.
 # certfile = 'certs/cert.pem'
 # keyfile  = 'certs/key.pem'
-# ca-certs = '/etc/ca_bundle.crt'
+#
+# Inbound mTLS (client certificate verification) is wired the same way, via
+# run-gunicorn.sh command-line arguments driven by two environment variables:
+#   CA_CERTS  -> --ca-certs  <path>   CA bundle used to verify client certificates
+#   CERT_REQS -> --cert-reqs <0|1|2>  0=none (default), 1=optional, 2=required
+# Both are forwarded verbatim through UvicornWorker's ssl_options into uvicorn's
+# SSL context. Only the CA_CERTS bundle is trusted; the system CA store is never
+# loaded. No on_starting() handling is required - unlike passphrase-protected
+# keys, these values need no pre-processing.
 
 # Global variable to store the prepared key file path
 _prepared_key_file = None

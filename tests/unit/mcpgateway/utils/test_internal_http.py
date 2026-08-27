@@ -7,6 +7,7 @@ Unit tests for internal loopback HTTP helpers.
 """
 
 # Standard
+import ssl
 from typing import Any
 from unittest.mock import patch
 
@@ -15,7 +16,7 @@ import httpx
 import pytest
 
 # First-Party
-from mcpgateway.utils.internal_http import _is_ssl_enabled, internal_loopback_base_url, internal_loopback_verify, post_rpc_in_process
+from mcpgateway.utils.internal_http import _is_ssl_enabled, internal_loopback_base_url, internal_loopback_verify, post_rpc_in_process, reset_loopback_ssl_context
 
 
 class TestIsSSLEnabled:
@@ -103,6 +104,137 @@ class TestInternalLoopbackVerify:
         monkeypatch.delenv("SSL", raising=False)
         monkeypatch.setattr("mcpgateway.utils.internal_http.settings.port", 4444)
         assert internal_loopback_verify() is True
+
+
+@pytest.fixture(name="client_cert_pair")
+def _client_cert_pair(tmp_path):
+    """Write a throwaway self-signed cert/key pair and yield their paths."""
+    # Standard
+    import datetime
+
+    # Third-Party
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import NameOID
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "loopback-test-client")])
+    now = datetime.datetime.now(datetime.timezone.utc)
+    cert = (
+        x509.CertificateBuilder()
+        .subject_name(subject)
+        .issuer_name(subject)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - datetime.timedelta(minutes=5))
+        .not_valid_after(now + datetime.timedelta(days=1))
+        .sign(key, hashes.SHA256())
+    )
+
+    cert_path = tmp_path / "client-cert.pem"
+    key_path = tmp_path / "client-key.pem"
+    cert_path.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+    key_path.write_bytes(
+        key.private_bytes(
+            encoding=serialization.Encoding.PEM,
+            format=serialization.PrivateFormat.TraditionalOpenSSL,
+            encryption_algorithm=serialization.NoEncryption(),
+        )
+    )
+    return str(cert_path), str(key_path)
+
+
+class TestLoopbackClientCertificate:
+    """Tests for the loopback client certificate used under inbound mTLS.
+
+    Under ``CERT_REQS>=1`` the gateway requires client certificates, including
+    on its own loopback self-calls to ``/rpc``. ``verify=False`` only skips
+    validating the server, so without a client certificate those self-calls are
+    rejected at the handshake and the SSE/WebSocket transports break.
+    """
+
+    @pytest.fixture(autouse=True)
+    def _clear_cache(self):
+        reset_loopback_ssl_context()
+        yield
+        reset_loopback_ssl_context()
+
+    def test_returns_ssl_context_when_cert_configured(self, monkeypatch, client_cert_pair):
+        cert, key = client_cert_pair
+        monkeypatch.setenv("SSL", "true")
+        monkeypatch.setenv("LOOPBACK_CLIENT_CERT", cert)
+        monkeypatch.setenv("LOOPBACK_CLIENT_KEY", key)
+
+        context = internal_loopback_verify()
+
+        assert isinstance(context, ssl.SSLContext)
+
+    def test_context_preserves_existing_trust_posture(self, monkeypatch, client_cert_pair):
+        """The context must not impose new server-cert or SAN requirements."""
+        cert, key = client_cert_pair
+        monkeypatch.setenv("SSL", "true")
+        monkeypatch.setenv("LOOPBACK_CLIENT_CERT", cert)
+        monkeypatch.setenv("LOOPBACK_CLIENT_KEY", key)
+
+        context = internal_loopback_verify()
+
+        assert context.verify_mode is ssl.CERT_NONE
+        assert context.check_hostname is False
+
+    def test_context_is_cached(self, monkeypatch, client_cert_pair):
+        """Building a context parses PEM files; it must not happen per request."""
+        cert, key = client_cert_pair
+        monkeypatch.setenv("SSL", "true")
+        monkeypatch.setenv("LOOPBACK_CLIENT_CERT", cert)
+        monkeypatch.setenv("LOOPBACK_CLIENT_KEY", key)
+
+        assert internal_loopback_verify() is internal_loopback_verify()
+
+    def test_cache_rebuilds_when_configuration_changes(self, monkeypatch, client_cert_pair, tmp_path):
+        cert, key = client_cert_pair
+        monkeypatch.setenv("SSL", "true")
+        monkeypatch.setenv("LOOPBACK_CLIENT_CERT", cert)
+        monkeypatch.setenv("LOOPBACK_CLIENT_KEY", key)
+        first = internal_loopback_verify()
+
+        other_cert = tmp_path / "copy-cert.pem"
+        other_key = tmp_path / "copy-key.pem"
+        other_cert.write_bytes(open(cert, "rb").read())
+        other_key.write_bytes(open(key, "rb").read())
+        monkeypatch.setenv("LOOPBACK_CLIENT_CERT", str(other_cert))
+        monkeypatch.setenv("LOOPBACK_CLIENT_KEY", str(other_key))
+
+        assert internal_loopback_verify() is not first
+
+    def test_falls_back_to_false_when_only_cert_set(self, monkeypatch, client_cert_pair):
+        """A half-configured pair must not silently produce a context."""
+        cert, _ = client_cert_pair
+        monkeypatch.setenv("SSL", "true")
+        monkeypatch.setenv("LOOPBACK_CLIENT_CERT", cert)
+        monkeypatch.delenv("LOOPBACK_CLIENT_KEY", raising=False)
+
+        assert internal_loopback_verify() is False
+
+    def test_ignored_when_ssl_disabled(self, monkeypatch, client_cert_pair):
+        """Plain HTTP loopback never needs a client certificate."""
+        cert, key = client_cert_pair
+        monkeypatch.setenv("SSL", "false")
+        monkeypatch.setenv("LOOPBACK_CLIENT_CERT", cert)
+        monkeypatch.setenv("LOOPBACK_CLIENT_KEY", key)
+
+        assert internal_loopback_verify() is True
+
+    def test_context_is_accepted_by_httpx(self, monkeypatch, client_cert_pair):
+        """httpx must accept the returned value wherever it accepts verify."""
+        cert, key = client_cert_pair
+        monkeypatch.setenv("SSL", "true")
+        monkeypatch.setenv("LOOPBACK_CLIENT_CERT", cert)
+        monkeypatch.setenv("LOOPBACK_CLIENT_KEY", key)
+
+        client = httpx.AsyncClient(verify=internal_loopback_verify())
+
+        assert isinstance(client, httpx.AsyncClient)
 
 
 class _CapturingAsyncClient:
