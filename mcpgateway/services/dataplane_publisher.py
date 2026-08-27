@@ -71,9 +71,6 @@ class BackendConfig(TypedDict):
     tool_schemas: dict[str, dict[str, Any]]
     allowed_resource_uris: list[str]
     allowed_prompt_names: list[str]
-    disable_tool_names_filtering: bool
-    disable_prompt_names_filtering: bool
-    disable_resource_uris_filtering: bool
     mcp_protocol_version: str
 
 
@@ -305,9 +302,6 @@ class DataplanePublisherService:
                         "tool_schemas": backend_items["tool_schemas"],
                         "allowed_resource_uris": allowed_resource_uris,
                         "allowed_prompt_names": allowed_prompt_names,
-                        "disable_tool_names_filtering": False,
-                        "disable_prompt_names_filtering": False,
-                        "disable_resource_uris_filtering": False,
                         "mcp_protocol_version": "2026-07-28",
                     }
 
