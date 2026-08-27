@@ -200,11 +200,14 @@ def open_confined(root: Path, relative: Path) -> "tuple[int, os.stat_result]":
     that was validated — nothing can be swapped out from under it after this call
     returns.
 
-    On platforms without that support (Windows), :func:`_open_confined_fallback` is used
-    instead: each component is checked with ``os.path.islink()`` before descending, then
-    the final component is opened by path. This still rejects symlinks but leaves a
-    narrower race between the last ``islink()`` check and the final ``open()`` — the
-    POSIX path's atomicity guarantee does not carry over.
+    On platforms without that support (Windows lacks ``dir_fd``/``O_NOFOLLOW``), this
+    function fails closed: it raises :class:`UnsupportedPlatformError` rather than
+    falling back to a per-component ``os.path.islink()`` check. An islink-then-open
+    fallback is not atomic — a process able to write into *root* can still swap the
+    checked component for a symlink between the check and the ``open()`` call — so it
+    does not actually close the TOCTOU window this function exists to close; a caller
+    that streams the returned fd under the assumption that it is TOCTOU-safe would be
+    silently wrong on those platforms.
 
     Args:
         root: Resolved, trusted directory that confines the lookup.
@@ -220,6 +223,8 @@ def open_confined(root: Path, relative: Path) -> "tuple[int, os.stat_result]":
             something other than a regular file.
         OSError: A path component does not exist, is a symlink, or cannot be opened
             (including a symlink rejected by ``O_NOFOLLOW``).
+        UnsupportedPlatformError: The current platform lacks the ``dir_fd``/``O_NOFOLLOW``
+            support this function's TOCTOU guarantee depends on.
     """
     if relative.is_absolute() or relative.drive or relative.root or ".." in relative.parts:
         raise ValueError("path escapes confinement root")
@@ -227,10 +232,10 @@ def open_confined(root: Path, relative: Path) -> "tuple[int, os.stat_result]":
     if not parts:
         raise ValueError("empty path")
 
-    if _SUPPORTS_CONFINED_OPENAT:
-        file_fd = _open_confined_posix(root, parts)
-    else:
-        file_fd = _open_confined_fallback(root, parts)
+    if not _SUPPORTS_CONFINED_OPENAT:
+        raise UnsupportedPlatformError("this platform lacks dir_fd/O_NOFOLLOW support required for TOCTOU-safe confined opens")
+
+    file_fd = _open_confined_posix(root, parts)
 
     try:
         file_stat = os.fstat(file_fd)
@@ -255,22 +260,10 @@ def _open_confined_posix(root: Path, parts: "tuple[str, ...]") -> int:
         os.close(dir_fd)
 
 
-def _open_confined_fallback(root: Path, parts: "tuple[str, ...]") -> int:
-    """Open the final path component with a per-component symlink check. Non-POSIX fallback.
+class UnsupportedPlatformError(OSError):
+    """Raised by :func:`open_confined` on platforms without atomic no-follow traversal.
 
-    Used when the platform lacks ``dir_fd``/``O_NOFOLLOW`` support (Windows). Each
-    intermediate component is required to be a real directory, not a symlink, before
-    descending into it; the final component is required not to be a symlink before it is
-    opened by path. This is a narrower guarantee than :func:`_open_confined_posix`: a
-    rename-and-symlink race between the last check and the ``open()`` call is still
-    possible, since the checks and the open are not atomic with each other.
+    Distinguishing this from a generic :class:`OSError` lets callers surface a
+    "not supported on this platform" response instead of conflating it with an
+    access-denied outcome (a rejected symlink, a missing file, etc.).
     """
-    current = root
-    for part in parts[:-1]:
-        current = current / part
-        if os.path.islink(current) or not current.is_dir():
-            raise OSError(f"refusing to descend through non-directory or symlink: {current}")
-    final = current / parts[-1]
-    if os.path.islink(final):
-        raise OSError(f"refusing to follow symlink: {final}")
-    return os.open(str(final), os.O_RDONLY)

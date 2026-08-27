@@ -201,6 +201,7 @@ from mcpgateway.services.token_catalog_service import TokenCatalogService
 from mcpgateway.services.tool_service import ToolError, ToolLockConflictError, ToolNameConflictError, ToolNotFoundError, ToolService
 from mcpgateway.utils.create_jwt_token import create_jwt_token, get_jwt_token
 from mcpgateway.utils.error_formatter import ErrorFormatter, sanitize_validation_error_for_log
+from mcpgateway.utils.log_sanitizer import sanitize_for_log
 from mcpgateway.utils.metadata_capture import MetadataCapture
 from mcpgateway.utils.oauth_resource import parse_oauth_resource_form
 from mcpgateway.utils.orjson_response import ORJSONResponse
@@ -208,6 +209,7 @@ from mcpgateway.utils.pagination import paginate_query
 from mcpgateway.utils.passthrough_headers import PassthroughHeadersError
 from mcpgateway.utils.paths import is_path_within, open_confined
 from mcpgateway.utils.paths import resolve_root_path as _resolve_root_path
+from mcpgateway.utils.paths import UnsupportedPlatformError
 from mcpgateway.utils.security_cookies import clear_auth_cookie, CookieTooLargeError, set_auth_cookie
 from mcpgateway.utils.services_auth import encode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
@@ -15554,11 +15556,14 @@ async def admin_get_log_file(
             file_fd, file_stat = open_confined(log_dir_resolved, candidate)
         except FileNotFoundError:
             raise HTTPException(404, f"Log file not found: {filename}")
+        except UnsupportedPlatformError as e:
+            LOGGER.error("Log file download unavailable on this platform: %s", sanitize_for_log(e))
+            raise HTTPException(501, "Log file download is not supported on this platform")
         except (OSError, ValueError) as e:
-            LOGGER.warning(f"Log file access denied for {filename}: {e}")
+            LOGGER.warning("Log file access denied for %s: %s", sanitize_for_log(filename), sanitize_for_log(e))
             raise HTTPException(403, _ACCESS_DENIED_MSG)
         except Exception as e:
-            LOGGER.error(f"Error opening log file for download: {e}")
+            LOGGER.error("Error opening log file for download: %s", sanitize_for_log(e))
             raise HTTPException(500, f"Error reading file for download: {e}")
 
         LOGGER.info(f"Serving log file download: {file_path.name} ({file_stat.st_size} bytes)")
@@ -15592,24 +15597,43 @@ async def admin_get_log_file(
         start, end = 0, file_size
         status_code = 200
         if range_header and (if_range is None or if_range in (etag, last_modified)):
-            range_match = re.fullmatch(r"bytes=(\d*)-(\d*)", range_header.strip())
-            if not range_match or not (range_match.group(1) or range_match.group(2)):
+            range_spec = range_header.strip()
+            if not range_spec.startswith("bytes="):
                 handle.close()
                 raise HTTPException(400, "Malformed Range header")
-            range_start, range_end = range_match.group(1), range_match.group(2)
-            if range_start:
-                start = int(range_start)
-                end = int(range_end) + 1 if range_end else file_size
+            spec_value = range_spec[len("bytes=") :]
+            if "," in spec_value:
+                # Multiple ranges (e.g. "bytes=0-1,4-5"): multipart/byteranges responses
+                # aren't implemented here. Per RFC 7233 SS3.1, a server may ignore a Range
+                # header it can't satisfy the way the client wants and return the full
+                # entity instead of erroring, so fall through and serve start/end as set
+                # above (0, file_size) rather than rejecting the request outright.
+                pass
             else:
-                # Suffix range (e.g. "bytes=-500"): last N bytes of the file.
-                start = max(file_size - int(range_end), 0)
-                end = file_size
-            if start >= file_size or start >= end:
-                handle.close()
-                raise HTTPException(416, "Requested range not satisfiable", headers={"Content-Range": f"bytes */{file_size}"})
-            end = min(end, file_size)
-            status_code = 206
-            headers["Content-Range"] = f"bytes {start}-{end - 1}/{file_size}"
+                range_match = re.fullmatch(r"(\d*)-(\d*)", spec_value)
+                if not range_match or not (range_match.group(1) or range_match.group(2)):
+                    handle.close()
+                    raise HTTPException(400, "Malformed Range header")
+                range_start, range_end = range_match.group(1), range_match.group(2)
+                try:
+                    if range_start:
+                        start = int(range_start)
+                        end = int(range_end) + 1 if range_end else file_size
+                    else:
+                        # Suffix range (e.g. "bytes=-500"): last N bytes of the file.
+                        start = max(file_size - int(range_end), 0)
+                        end = file_size
+                except ValueError:
+                    # int() enforces sys.get_int_max_str_digits(); an oversized numeric
+                    # range value hits that limit and must not surface as a 500.
+                    handle.close()
+                    raise HTTPException(400, "Malformed Range header")
+                if start >= file_size or start >= end:
+                    handle.close()
+                    raise HTTPException(416, "Requested range not satisfiable", headers={"Content-Range": f"bytes */{file_size}"})
+                end = min(end, file_size)
+                status_code = 206
+                headers["Content-Range"] = f"bytes {start}-{end - 1}/{file_size}"
 
         headers["Content-Length"] = str(end - start)
         handle.seek(start)

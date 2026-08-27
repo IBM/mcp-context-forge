@@ -12,6 +12,7 @@ Enhanced with additional test cases for better coverage.
 # Standard
 from datetime import datetime, timedelta, timezone
 import json
+import logging
 from pathlib import Path
 import socket
 from types import SimpleNamespace
@@ -14922,6 +14923,81 @@ class TestAdminAdditionalCoverage:
         with pytest.raises(HTTPException) as excinfo:
             await admin_get_log_file(request=SimpleNamespace(headers={}), filename="app.log", user={"email": "admin@example.com", "db": mock_db})
         assert excinfo.value.status_code == 403
+
+    @patch("mcpgateway.admin.settings")
+    async def test_admin_get_log_file_unsupported_platform_returns_501(self, mock_settings, tmp_path, mock_db):
+        """A platform without dir_fd/O_NOFOLLOW support must surface as 501, not 403/500,
+        so it's distinguishable from an access-denied or unexpected-error outcome."""
+        # First-Party
+        from mcpgateway.utils.paths import UnsupportedPlatformError
+
+        log_dir = tmp_path
+        (log_dir / "app.log").write_text("main")
+
+        mock_settings.log_to_file = True
+        mock_settings.log_file = "app.log"
+        mock_settings.log_folder = str(log_dir)
+        mock_settings.log_rotation_enabled = False
+
+        with patch("mcpgateway.admin.open_confined", side_effect=UnsupportedPlatformError("no dir_fd support")):
+            with pytest.raises(HTTPException) as excinfo:
+                await admin_get_log_file(request=SimpleNamespace(headers={}), filename="app.log", user={"email": "admin@example.com", "db": mock_db})
+        assert excinfo.value.status_code == 501
+
+    @patch("mcpgateway.admin.settings")
+    async def test_admin_get_log_file_multi_range_falls_back_to_full_response(self, mock_settings, tmp_path, mock_db):
+        """A multi-range Range header (multipart/byteranges) isn't implemented; the handler
+        must serve the full entity as 200 rather than reject it with 400."""
+        log_dir = tmp_path
+        (log_dir / "app.log").write_text("0123456789")
+
+        mock_settings.log_to_file = True
+        mock_settings.log_file = "app.log"
+        mock_settings.log_folder = str(log_dir)
+        mock_settings.log_rotation_enabled = False
+
+        response = await admin_get_log_file(request=SimpleNamespace(headers={"range": "bytes=0-1,4-5"}), filename="app.log", user={"email": "admin@example.com", "db": mock_db})
+        assert response.status_code == 200
+        body = b"".join([chunk async for chunk in response.body_iterator])
+        assert body == b"0123456789"
+
+    @patch("mcpgateway.admin.settings")
+    async def test_admin_get_log_file_rejects_oversized_range_value(self, mock_settings, tmp_path, mock_db):
+        """A Range value with more digits than Python's int/str conversion limit allows
+        must be rejected with 400, not escape as an uncaught 500 with the fd left open."""
+        log_dir = tmp_path
+        (log_dir / "app.log").write_text("0123456789")
+
+        mock_settings.log_to_file = True
+        mock_settings.log_file = "app.log"
+        mock_settings.log_folder = str(log_dir)
+        mock_settings.log_rotation_enabled = False
+
+        oversized = "9" * 5000
+        with pytest.raises(HTTPException) as excinfo:
+            await admin_get_log_file(request=SimpleNamespace(headers={"range": f"bytes={oversized}-"}), filename="app.log", user={"email": "admin@example.com", "db": mock_db})
+        assert excinfo.value.status_code == 400
+
+    @patch("mcpgateway.admin.settings")
+    async def test_admin_get_log_file_access_denied_log_is_sanitized(self, mock_settings, tmp_path, mock_db, caplog):
+        """Filename and exception text logged on access-denied must have CR/LF stripped so
+        a crafted filename can't forge additional log lines."""
+        log_dir = tmp_path
+        (log_dir / "real.log").write_text("main")
+        (log_dir / "app.log").symlink_to(log_dir / "real.log")
+
+        mock_settings.log_to_file = True
+        mock_settings.log_file = "app.log"
+        mock_settings.log_folder = str(log_dir)
+        mock_settings.log_rotation_enabled = False
+
+        with caplog.at_level(logging.WARNING, logger="mcpgateway.admin"):
+            with pytest.raises(HTTPException):
+                await admin_get_log_file(request=SimpleNamespace(headers={}), filename="app.log", user={"email": "admin@example.com", "db": mock_db})
+
+        for record in caplog.records:
+            assert "\n" not in record.getMessage()
+            assert "\r" not in record.getMessage()
 
     async def test_admin_export_logs_json_csv(self, mock_db, monkeypatch):
         """Export logs in JSON and CSV formats."""

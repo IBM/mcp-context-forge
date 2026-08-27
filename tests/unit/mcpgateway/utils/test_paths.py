@@ -22,7 +22,7 @@ from unittest.mock import MagicMock
 import pytest
 
 # First-Party
-from mcpgateway.utils.paths import is_path_within, open_confined, replace_api_path_alias, resolve_root_path
+from mcpgateway.utils.paths import is_path_within, open_confined, replace_api_path_alias, resolve_root_path, UnsupportedPlatformError
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -403,62 +403,34 @@ def test_open_confined_rejects_directory_as_final_component(tmp_path: Path) -> N
 
 
 # ---------------------------------------------------------------------------
-# open_confined — non-POSIX fallback (platforms without dir_fd/O_NOFOLLOW, e.g. Windows)
+# open_confined — fails closed on platforms without dir_fd/O_NOFOLLOW (e.g. Windows)
 # ---------------------------------------------------------------------------
 
 
-def test_open_confined_dispatches_to_fallback_when_dir_fd_unsupported(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """When the platform lacks dir_fd/O_NOFOLLOW support, open_confined() must not raise
-    AttributeError from os.O_DIRECTORY/os.O_NOFOLLOW — it should use the fallback opener."""
+def test_open_confined_fails_closed_when_dir_fd_unsupported(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """When the platform lacks dir_fd/O_NOFOLLOW support, open_confined() must raise
+    UnsupportedPlatformError rather than fall back to a non-atomic islink()-then-open
+    check, which would silently reintroduce the TOCTOU race this function exists to close."""
     monkeypatch.setattr("mcpgateway.utils.paths._SUPPORTS_CONFINED_OPENAT", False)
     (tmp_path / "app.log").write_text("hello")
 
-    fd, st = open_confined(tmp_path, Path("app.log"))
-    try:
-        assert os.read(fd, 5) == b"hello"
-        assert st.st_size == 5
-    finally:
-        os.close(fd)
+    with pytest.raises(UnsupportedPlatformError):
+        open_confined(tmp_path, Path("app.log"))
 
 
-def test_open_confined_fallback_opens_nested_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Fallback opener walks intermediate directory components too."""
+def test_open_confined_unsupported_platform_error_is_an_os_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """UnsupportedPlatformError must subclass OSError so existing broad `except OSError`
+    call sites still catch it, even though admin.py distinguishes it for a 501 response."""
     monkeypatch.setattr("mcpgateway.utils.paths._SUPPORTS_CONFINED_OPENAT", False)
-    (tmp_path / "archive").mkdir()
-    (tmp_path / "archive" / "app.log").write_text("rotated")
-
-    fd, st = open_confined(tmp_path, Path("archive/app.log"))
-    try:
-        assert os.read(fd, st.st_size) == b"rotated"
-    finally:
-        os.close(fd)
-
-
-def test_open_confined_fallback_rejects_symlinked_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Fallback opener still rejects a symlink at the final component."""
-    monkeypatch.setattr("mcpgateway.utils.paths._SUPPORTS_CONFINED_OPENAT", False)
-    (tmp_path / "real.log").write_text("main")
-    (tmp_path / "app.log").symlink_to(tmp_path / "real.log")
 
     with pytest.raises(OSError):
         open_confined(tmp_path, Path("app.log"))
 
 
-def test_open_confined_fallback_rejects_symlinked_parent_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Fallback opener still rejects a symlinked intermediate directory component."""
-    monkeypatch.setattr("mcpgateway.utils.paths._SUPPORTS_CONFINED_OPENAT", False)
-    real_dir = tmp_path / "real_archive"
-    real_dir.mkdir()
-    (real_dir / "app.log").write_text("rotated")
-    (tmp_path / "archive").symlink_to(real_dir)
-
-    with pytest.raises(OSError):
-        open_confined(tmp_path, Path("archive/app.log"))
-
-
-def test_open_confined_fallback_rejects_missing_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Fallback opener raises FileNotFoundError for a nonexistent file, same as the POSIX path."""
+def test_open_confined_fails_closed_before_touching_filesystem(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The platform check fails closed even for a target that doesn't exist — callers must
+    not be able to distinguish "unsupported platform" from filesystem state via timing/errors."""
     monkeypatch.setattr("mcpgateway.utils.paths._SUPPORTS_CONFINED_OPENAT", False)
 
-    with pytest.raises(FileNotFoundError):
+    with pytest.raises(UnsupportedPlatformError):
         open_confined(tmp_path, Path("does-not-exist.log"))
