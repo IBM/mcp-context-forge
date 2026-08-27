@@ -1346,6 +1346,53 @@ class TestGatewayService:
             await gateway_service.get_gateway(test_db, 999)
 
     @pytest.mark.asyncio
+    async def test_get_gateway_impact_preview_returns_only_visible_unique_servers(self, gateway_service, test_db):
+        """Impact preview de-duplicates associations and filters hidden servers."""
+        gateway_service.get_gateway = AsyncMock(return_value=SimpleNamespace(id="gateway-1"))
+        visible_server = SimpleNamespace(id="server-1", name="Visible server")
+        hidden_server = SimpleNamespace(id="server-2", name="Hidden server")
+        test_db.execute = Mock(
+            side_effect=[
+                _make_execute_result(scalars_list=["server-1", "server-2"]),
+                _make_execute_result(scalars_list=["server-1"]),
+                _make_execute_result(scalars_list=[]),
+                _make_execute_result(scalars_list=[visible_server, hidden_server]),
+            ]
+        )
+
+        with patch("mcpgateway.services.gateway_service.server_service._check_server_access", new=AsyncMock(side_effect=[True, False])) as mock_access:
+            result = await gateway_service.get_gateway_impact_preview(test_db, "gateway-1", user_email="user@example.com", token_teams=["team-1"])
+
+        assert result.gateway_id == "gateway-1"
+        assert [(server.id, server.name) for server in result.servers] == [("server-1", "Visible server")]
+        gateway_service.get_gateway.assert_awaited_once_with(test_db, "gateway-1", user_email="user@example.com", token_teams=["team-1"])
+        assert test_db.execute.call_count == 4
+        assert mock_access.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_get_gateway_impact_preview_empty(self, gateway_service, test_db):
+        """Gateway without associated entities returns an empty preview."""
+        gateway_service.get_gateway = AsyncMock(return_value=SimpleNamespace(id="gateway-1"))
+        test_db.execute = Mock(side_effect=[_make_execute_result(), _make_execute_result(), _make_execute_result()])
+
+        result = await gateway_service.get_gateway_impact_preview(test_db, "gateway-1", user_email="user@example.com", token_teams=[])
+
+        assert result.gateway_id == "gateway-1"
+        assert result.servers == []
+        assert test_db.execute.call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_get_gateway_impact_preview_hidden_gateway_fails_closed(self, gateway_service, test_db):
+        """A hidden gateway is reported as missing without querying associations."""
+        gateway_service.get_gateway = AsyncMock(side_effect=GatewayNotFoundError("Gateway not found: hidden"))
+        test_db.execute = Mock()
+
+        with pytest.raises(GatewayNotFoundError):
+            await gateway_service.get_gateway_impact_preview(test_db, "hidden", user_email="user@example.com", token_teams=[])
+
+        test_db.execute.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_get_gateway_by_name_falls_back_after_id_miss(self, gateway_service, mock_gateway, test_db):
         """Name lookup works when identifier is not an ID."""
         mock_gateway.masked = Mock(return_value=mock_gateway)
@@ -2478,7 +2525,7 @@ class TestGatewayService:
         mock_gateway.resources = []
         mock_gateway.prompts = []
 
-        registry_cache = SimpleNamespace(invalidate_gateways=AsyncMock())
+        registry_cache = SimpleNamespace(invalidate_gateways=AsyncMock(), invalidate_catalog=AsyncMock())
         tool_lookup_cache = SimpleNamespace(invalidate_gateway=AsyncMock())
         monkeypatch.setattr(settings, "gateway_async_lifecycle_enabled", True)
         monkeypatch.setattr("mcpgateway.services.gateway_service._get_registry_cache", lambda: registry_cache)
@@ -2497,6 +2544,7 @@ class TestGatewayService:
         test_db.refresh.assert_called_once_with(mock_gateway)
         test_db.expire.assert_not_called()
         registry_cache.invalidate_gateways.assert_awaited_once()
+        registry_cache.invalidate_catalog.assert_not_awaited()
         tool_lookup_cache.invalidate_gateway.assert_awaited_once_with("gw-1")
         assert mock_gateway.status == "deleting"
         assert mock_gateway.status_message == "Gateway deletion accepted and pending cleanup"
@@ -4387,7 +4435,7 @@ def test_gateway_service_singleton_and_cache_helpers(monkeypatch):
     # First-Party
     import mcpgateway.services.gateway_service as gs
 
-    gs._gateway_service_instance = None
+    monkeypatch.setattr(gs, "_gateway_service_instance", None)
     instance = gs.gateway_service
     assert isinstance(instance, GatewayService)
     assert gs.gateway_service is instance
@@ -4400,10 +4448,11 @@ def test_gateway_service_singleton_and_cache_helpers(monkeypatch):
         invalidate_resources=AsyncMock(),
         invalidate_prompts=AsyncMock(),
         invalidate_gateways=AsyncMock(),
+        invalidate_catalog=AsyncMock(),
     )
     tool_sentinel = SimpleNamespace(invalidate_gateway=AsyncMock())
-    gs._REGISTRY_CACHE = None
-    gs._TOOL_LOOKUP_CACHE = None
+    monkeypatch.setattr(gs, "_REGISTRY_CACHE", None)
+    monkeypatch.setattr(gs, "_TOOL_LOOKUP_CACHE", None)
 
     monkeypatch.setitem(sys.modules, "mcpgateway.cache.registry_cache", SimpleNamespace(registry_cache=registry_sentinel))
     monkeypatch.setitem(sys.modules, "mcpgateway.cache.tool_lookup_cache", SimpleNamespace(tool_lookup_cache=tool_sentinel))
@@ -5942,7 +5991,7 @@ class TestDeleteGateway:
 
     @pytest.fixture
     def _mock_caches(self, monkeypatch):
-        registry_cache = SimpleNamespace(invalidate_gateways=AsyncMock())
+        registry_cache = SimpleNamespace(invalidate_gateways=AsyncMock(), invalidate_catalog=AsyncMock())
         tool_lookup_cache = SimpleNamespace(invalidate_gateway=AsyncMock())
         monkeypatch.setattr("mcpgateway.services.gateway_service._get_registry_cache", lambda: registry_cache)
         monkeypatch.setattr("mcpgateway.services.gateway_service._get_tool_lookup_cache", lambda: tool_lookup_cache)
@@ -5951,6 +6000,7 @@ class TestDeleteGateway:
 
     @pytest.mark.asyncio
     async def test_delete_gateway_success(self, gateway_service, _mock_caches):
+        registry_cache, _ = _mock_caches
         gw = MagicMock()
         gw.id = "gw-1"
         gw.name = "test-gw"
@@ -5968,6 +6018,7 @@ class TestDeleteGateway:
 
         await gateway_service.delete_gateway(db, "gw-1")
         db.commit.assert_called()
+        registry_cache.invalidate_catalog.assert_awaited_once()
         gateway_service._event_service.publish_event.assert_awaited()
 
     @pytest.mark.asyncio
@@ -9773,3 +9824,64 @@ class TestFetchToolsAfterOAuthEnforcementPoint:
 
             assert "Refusing to forward" in str(exc_info.value)
             mock_connect.assert_not_awaited()
+
+
+class TestGatewayImpactPreviewTeamResolution:
+    """Regression tests for impact-preview team-membership resolution."""
+
+    @pytest.mark.asyncio
+    async def test_resolves_fallback_teams_once(self, gateway_service, test_db):
+        """Impact preview preloads fallback team memberships once for all servers."""
+        gateway_service.get_gateway = AsyncMock(return_value=SimpleNamespace(id="gateway-1"))
+        impacted_servers = [
+            SimpleNamespace(id="server-1", name="First server"),
+            SimpleNamespace(id="server-2", name="Second server"),
+        ]
+        test_db.execute = Mock(
+            side_effect=[
+                _make_execute_result(scalars_list=["server-1", "server-2"]),
+                _make_execute_result(scalars_list=[]),
+                _make_execute_result(scalars_list=[]),
+                _make_execute_result(scalars_list=impacted_servers),
+            ]
+        )
+        team_service = MagicMock()
+        team_service.get_user_teams = AsyncMock(return_value=[SimpleNamespace(id="team-1")])
+
+        with (
+            patch("mcpgateway.services.gateway_service.is_admin_bypass_granted", return_value=False),
+            patch("mcpgateway.services.gateway_service.TeamManagementService", return_value=team_service) as mock_team_service,
+            patch("mcpgateway.services.gateway_service.server_service._check_server_access", new=AsyncMock(return_value=True)) as mock_access,
+        ):
+            result = await gateway_service.get_gateway_impact_preview(test_db, "gateway-1", user_email="user@example.com", token_teams=None)
+
+        assert len(result.servers) == 2
+        mock_team_service.assert_called_once_with(test_db)
+        team_service.get_user_teams.assert_awaited_once_with("user@example.com")
+        assert mock_access.await_count == 2
+        assert all(access_call.kwargs["resolved_team_ids"] == ["team-1"] for access_call in mock_access.await_args_list)
+
+    @pytest.mark.asyncio
+    async def test_preserves_admin_bypass(self, gateway_service, test_db):
+        """Impact preview does not replace admin bypass with resolved team memberships."""
+        gateway_service.get_gateway = AsyncMock(return_value=SimpleNamespace(id="gateway-1"))
+        impacted_server = SimpleNamespace(id="server-1", name="Team server")
+        test_db.execute = Mock(
+            side_effect=[
+                _make_execute_result(scalars_list=["server-1"]),
+                _make_execute_result(scalars_list=[]),
+                _make_execute_result(scalars_list=[]),
+                _make_execute_result(scalars_list=[impacted_server]),
+            ]
+        )
+
+        with (
+            patch("mcpgateway.services.gateway_service.is_admin_bypass_granted", return_value=True),
+            patch("mcpgateway.services.gateway_service.TeamManagementService") as mock_team_service,
+            patch("mcpgateway.services.gateway_service.server_service._check_server_access", new=AsyncMock(return_value=True)) as mock_access,
+        ):
+            result = await gateway_service.get_gateway_impact_preview(test_db, "gateway-1", user_email="admin@example.com", token_teams=None)
+
+        assert len(result.servers) == 1
+        mock_team_service.assert_not_called()
+        mock_access.assert_awaited_once_with(test_db, impacted_server, "admin@example.com", None, resolved_team_ids=None)

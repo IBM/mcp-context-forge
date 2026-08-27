@@ -47,6 +47,7 @@ import mcpgateway.db as db_mod
 from mcpgateway.plugins.violation_codes import PLUGIN_VIOLATION_CODE_MAPPING
 from mcpgateway.schemas import (
     A2AAgentAggregateMetrics,
+    GatewayImpactPreview,
     GatewayRead,
     PromptMetrics,
     PromptRead,
@@ -2186,6 +2187,30 @@ class TestGatewayEndpoints:
         assert response.status_code == 200
         assert response.json()["name"] == "test_gateway"
         mock_get.assert_called_once()
+
+    @patch("mcpgateway.main.gateway_service.get_gateway_impact_preview")
+    def test_get_gateway_impact_preview_endpoint(self, mock_preview, test_client, auth_headers):
+        """Canonical API returns visible virtual server impact data."""
+        mock_preview.return_value = GatewayImpactPreview(gateway_id="gateway-1", servers=[{"id": "server-1", "name": "Virtual server"}])
+
+        response = test_client.get("/v1/gateways/gateway-1/impact-preview", headers=auth_headers)
+
+        assert response.status_code == 200
+        assert response.json() == {"gatewayId": "gateway-1", "servers": [{"id": "server-1", "name": "Virtual server"}]}
+        mock_preview.assert_awaited_once()
+
+    @patch("mcpgateway.main.gateway_service.get_gateway_impact_preview")
+    def test_get_gateway_impact_preview_hidden_gateway_returns_404(self, mock_preview, test_client, auth_headers):
+        """Impact preview hides gateways outside the caller's Layer 1 scope."""
+        # First-Party
+        from mcpgateway.services.gateway_service import GatewayNotFoundError
+
+        mock_preview.side_effect = GatewayNotFoundError("Gateway not found: hidden")
+
+        response = test_client.get("/v1/gateways/hidden/impact-preview", headers=auth_headers)
+
+        assert response.status_code == 404
+        mock_preview.assert_awaited_once()
 
     @patch("mcpgateway.main.gateway_service.update_gateway")
     def test_update_gateway_endpoint_secondary(self, mock_update, test_client, auth_headers):

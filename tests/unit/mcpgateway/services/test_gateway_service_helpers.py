@@ -19,6 +19,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
 # First-Party
+from mcpgateway.cache.registry_cache import RegistryCache
 from mcpgateway.config import settings
 from mcpgateway.db import Base, Gateway as DbGateway
 from mcpgateway.schemas import GatewayRead
@@ -1449,7 +1450,11 @@ async def test_finalize_gateway_deletion_runs_cache_event_and_audit_finalizers(m
     service._active_gateways = {"http://example.com"}
     service._notify_gateway_deleted = AsyncMock()
 
-    registry_cache = SimpleNamespace(invalidate_gateways=AsyncMock())
+    registry_cache = RegistryCache()
+    registry_cache._get_redis_client = AsyncMock(return_value=None)
+    await registry_cache.set("catalog", [{"id": "server-1", "gateway_id": "gw-1"}], filters_hash="caller-scope")
+    registry_cache.invalidate_gateways = AsyncMock(wraps=registry_cache.invalidate_gateways)
+    registry_cache.invalidate_catalog = AsyncMock(wraps=registry_cache.invalidate_catalog)
     tool_lookup_cache = SimpleNamespace(invalidate_gateway=AsyncMock())
     stats_cache = SimpleNamespace(invalidate_tags=AsyncMock())
     audit_log = Mock()
@@ -1465,7 +1470,6 @@ async def test_finalize_gateway_deletion_runs_cache_event_and_audit_finalizers(m
     monkeypatch.setattr("mcpgateway.services.gateway_service.audit_trail.log_action", audit_log)
     monkeypatch.setattr("mcpgateway.services.gateway_service.structured_logger.log", structured_log)
 
-    db = MagicMock()
     gateway_info = {"id": "gw-1", "name": "gw-name", "url": "http://example.com"}
 
     await service._finalize_gateway_deletion(
@@ -1479,6 +1483,8 @@ async def test_finalize_gateway_deletion_runs_cache_event_and_audit_finalizers(m
 
     evict.assert_awaited_once_with("gw-1")
     registry_cache.invalidate_gateways.assert_awaited_once()
+    registry_cache.invalidate_catalog.assert_awaited_once()
+    assert await registry_cache.get("catalog", filters_hash="caller-scope") is None
     tool_lookup_cache.invalidate_gateway.assert_awaited_once_with("gw-1")
     stats_cache.invalidate_tags.assert_awaited_once()
     invalidate_passthrough.assert_called_once_with()
