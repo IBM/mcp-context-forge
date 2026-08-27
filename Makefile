@@ -1634,10 +1634,9 @@ langfuse-up:                               ## Start Langfuse LLM observability s
 	$(LANGFUSE_COMPOSE) up -d --force-recreate gateway
 	@# Nginx resolves gateway backends when it starts; recreate it after gateway churn.
 	$(LANGFUSE_COMPOSE) up -d --no-deps --force-recreate nginx
-	@# Bring up the same lightweight MCP/A2A test targets used by the live smoke
-	@# suites so Langfuse runs can generate real end-to-end tool traffic without
-	@# depending on stale registrations from the testing profile.
-	$(LANGFUSE_COMPOSE) up -d fast_test_server register_fast_test a2a_echo_agent register_a2a_echo
+	@# Bring up the Fast Time and A2A test targets used by live smoke suites
+	@# so Langfuse runs can generate real end-to-end traffic.
+	$(LANGFUSE_COMPOSE) up -d fast_time_server register_fast_time a2a_echo_agent register_a2a_echo
 	$(VERIFY_LANGFUSE_GATEWAY_EXPORT)
 	@echo "⏳ Waiting for Langfuse to be ready..."
 	@for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do \
@@ -1753,8 +1752,8 @@ langfuse-monitoring-down:                  ## Stop Langfuse + monitoring stack
 	@echo "✅ Langfuse + monitoring stack stopped."
 
 # =============================================================================
-# help: 🧪 TESTING STACK (Locust + A2A echo + fast_test_server)
-# help: testing-up            - Start testing stack (Locust + A2A echo + fast_test_server)
+# help: 🧪 TESTING STACK (Locust + A2A echo)
+# help: testing-up            - Start testing stack (Locust + A2A echo)
 # help: testing-down          - Stop testing stack
 # help: testing-status        - Show status of testing services
 # help: testing-logs          - Show testing stack logs
@@ -1766,8 +1765,8 @@ HOST_UID ?= $(shell id -u 2>/dev/null || echo 1000)
 HOST_GID ?= $(shell id -g 2>/dev/null || echo 1000)
 
 .PHONY: testing-up
-testing-up:                                ## Start testing stack (Locust + A2A echo + fast_test_server)
-	@echo "🧪 Starting testing stack (fast_test_server)..."
+testing-up:                                ## Start testing stack (Locust + Fast Time + A2A echo)
+	@echo "🧪 Starting testing stack..."
 	@echo "   🦗 Locust workers: $(TESTING_LOCUST_WORKERS) (override: TESTING_LOCUST_WORKERS=4 make testing-up)"
 	@# Fail early if port 8080 is already bound (nginx needs it)
 	@if lsof -Pi :8080 -sTCP:LISTEN >/dev/null 2>&1 || ss -tlnp 2>/dev/null | grep -q ':8080'; then \
@@ -1787,7 +1786,7 @@ testing-up:                                ## Start testing stack (Locust + A2A 
 	@echo "──────────────────────────────────────────────────────────────────────────"
 	@echo "Gateway (nginx)      http://localhost:8080         API proxy"
 	@echo "Locust Web UI        http://localhost:8089         Load testing (master+workers)"
-	@echo "Fast Test Server     http://localhost:8880         MCP benchmark target"
+	@echo "Fast Time Server     http://localhost:8888         MCP benchmark target"
 	@echo "A2A Echo Agent       http://localhost:9100         A2A protocol target"
 	@echo "MCP Inspector        http://localhost:6274         Interactive MCP client"
 	@echo "Keycloak             http://localhost:8180         SSO / OAuth 2.1 provider (realm: mcp-gateway)"
@@ -1795,7 +1794,7 @@ testing-up:                                ## Start testing stack (Locust + A2A 
 	@echo "   🔒 For DAST security scanning, also start ZAP: make testing-zap-up"
 	@echo ""
 	@echo "   📝 Auto-registered:"
-	@echo "      • MCP gateway: fast_test (from fast_test_server)"
+	@echo "      • MCP gateway: fast_time (from fast_time_server)"
 	@echo "      • A2A agent:   a2a-echo-agent"
 	@echo ""
 	@echo "   Next:"
@@ -1843,7 +1842,7 @@ testing-down:                              ## Stop testing stack
 .PHONY: testing-status
 testing-status:                            ## Show status of testing services
 	@echo "🧪 Testing stack status:"
-	@$(COMPOSE_CMD_MONITOR) ps | grep -E "(fast_test|a2a_echo_agent|locust|mcp_inspector)" || \
+	@$(COMPOSE_CMD_MONITOR) ps | grep -E "(fast_time_server|register_fast_time|a2a_echo_agent|locust|mcp_inspector)" || \
 		echo "   No testing services running. Start with 'make testing-up'"
 	@WORKERS=$$($(COMPOSE_CMD_MONITOR) ps | grep -c "locust_worker" || true); \
 		echo "   🦗 Locust workers: $$WORKERS"
