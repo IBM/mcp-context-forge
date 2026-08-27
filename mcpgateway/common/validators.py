@@ -58,6 +58,7 @@ import re
 import shlex
 import socket
 from typing import Any, Dict, Iterable, List, Optional, Pattern
+import unicodedata
 from urllib.parse import unquote, urlparse
 import uuid
 
@@ -2375,6 +2376,47 @@ class SecurityValidator:
         # Remove control characters except newlines and tabs (uses precompiled regex)
         sanitized = _CONTROL_CHARS_RE.sub("", text)
         return sanitized
+
+    @classmethod
+    def sanitize_credential_value(cls, value: Optional[str]) -> Optional[str]:
+        """Strip invisible Unicode formatting characters from a credential value.
+
+        Unicode "format" characters (category ``Cf`` -- e.g. zero-width spaces, the word
+        joiner, byte-order marks) are common copy/paste artifacts from rendered documents
+        and are never a meaningful part of a real credential. Left in place, they reach
+        the HTTP client unchanged and can trigger a bare ``UnicodeEncodeError`` when the
+        credential is used to build an outbound request header -- which surfaces as an
+        opaque connection failure far from the credential that actually caused it.
+
+        Deliberately leaves every other character untouched, including non-ASCII text:
+        header values may legitimately contain international text (e.g. a custom header
+        carrying CJK content), so only characters that can never be a meaningful part of
+        a credential are removed.
+
+        Non-``str`` input (e.g. a Pydantic ``SecretStr`` some callers pass directly) is
+        returned unchanged: this function only sanitizes plain strings, matching how it
+        was handled before this validation existed.
+
+        Args:
+            value (Optional[str]): Credential value to sanitize (token, password, header value, etc).
+
+        Returns:
+            Optional[str]: ``value`` with Unicode format characters removed, or ``value``
+                unchanged if it was empty, ``None``, or not a plain string.
+
+        Examples:
+            >>> SecurityValidator.sanitize_credential_value('my-token-123')
+            'my-token-123'
+            >>> SecurityValidator.sanitize_credential_value(None) is None
+            True
+            >>> SecurityValidator.sanitize_credential_value('tok' + '\\u2060' + 'en')
+            'token'
+            >>> SecurityValidator.sanitize_credential_value('value-with-特殊字符')
+            'value-with-特殊字符'
+        """
+        if not value or not isinstance(value, str):
+            return value
+        return "".join(c for c in value if unicodedata.category(c) != "Cf")
 
     @classmethod
     def sanitize_json_response(cls, data: Any) -> Any:

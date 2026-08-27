@@ -170,6 +170,7 @@ from mcpgateway.services.export_service import ExportError, ExportService
 from mcpgateway.services.gateway_service import (
     gateway_capability_loaders,
     GatewayConnectionError,
+    GatewayCredentialError,
     GatewayDuplicateConflictError,
     GatewayLookupConflictError,
     GatewayNameConflictError,
@@ -12906,6 +12907,8 @@ async def admin_add_gateway(
 
     except PermissionError as ex:
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=403)
+    except GatewayCredentialError as ex:
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=422)
     except GatewayConnectionError as ex:
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=502)
     except GatewayDuplicateConflictError as ex:
@@ -13047,6 +13050,8 @@ async def admin_update_gateway_rest(
     except GatewayNotFoundError as e:
         return ORJSONResponse(content={"message": str(e), "success": False}, status_code=404)
     except Exception as ex:
+        if isinstance(ex, GatewayCredentialError):
+            return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=422)
         if isinstance(ex, GatewayConnectionError):
             return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=502)
         if isinstance(ex, RuntimeError):
@@ -13319,6 +13324,8 @@ async def admin_edit_gateway(
     except HTTPException:
         raise
     except Exception as ex:
+        if isinstance(ex, GatewayCredentialError):
+            return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=422)
         if isinstance(ex, GatewayConnectionError):
             return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=502)
         if isinstance(ex, RuntimeError):
