@@ -68,6 +68,7 @@ class BackendConfig(TypedDict):
     remove_headers: list[str]
     capabilities: dict[str, Any]
     allowed_tool_names: list[str]
+    tool_name_aliases: dict[str, str]
     tool_schemas: dict[str, dict[str, Any]]
     allowed_resource_names: list[str]
     allowed_resource_uris: list[str]
@@ -106,15 +107,17 @@ class BackendItems(TypedDict):
 
 
 class PublishedBackendItems(BackendItems):
-    """User-filtered backend items enriched with tool input schemas."""
+    """User-filtered backend items enriched with tool routing metadata."""
 
+    tool_name_aliases: dict[str, str]
     tool_schemas: dict[str, dict[str, Any]]
 
 
 class ToolMetadata(TypedDict):
     """Tool fields needed to publish dataplane routing configuration."""
 
-    name: str
+    exposed_name: str
+    upstream_name: str
     input_schema: dict[str, Any]
 
 
@@ -301,6 +304,7 @@ class DataplanePublisherService:
                         "remove_headers": gateway_config["remove_headers"],
                         "capabilities": gateway_config["capabilities"],
                         "allowed_tool_names": backend_items["tools"],
+                        "tool_name_aliases": backend_items.get("tool_name_aliases", {}),
                         "tool_schemas": backend_items["tool_schemas"],
                         "allowed_resource_names": allowed_resource_names,
                         "allowed_resource_uris": allowed_resource_uris,
@@ -365,7 +369,9 @@ class DataplanePublisherService:
                         DbResource.uri_template.is_(None),
                     )
                 ).all()
-                tool_rows = db.execute(select(DbTool.id, DbTool.original_name, DbTool.input_schema, DbTool.owner_email, DbTool.team_id, DbTool.visibility).where(DbTool.enabled.is_(True))).all()
+                tool_rows = db.execute(
+                    select(DbTool.id, DbTool.__table__.c.name, DbTool.original_name, DbTool.input_schema, DbTool.owner_email, DbTool.team_id, DbTool.visibility).where(DbTool.enabled.is_(True))
+                ).all()
                 backend_items_by_server = self._get_backend_items_by_server(db)
 
                 return {
@@ -408,7 +414,8 @@ class DataplanePublisherService:
                 logger.warning("Excluding tool %s from the dataplane snapshot because its input schema is not an object", tool.id)
                 continue
             tool_by_id[tool.id] = {
-                "name": tool.original_name,
+                "exposed_name": tool.name,
+                "upstream_name": tool.original_name,
                 "input_schema": tool.input_schema,
             }
 
@@ -453,11 +460,12 @@ class DataplanePublisherService:
 
     @staticmethod
     def _filter_backend_items_for_user(backend_items_by_gateway: dict[str, BackendItems], tool_by_id: dict[str, ToolMetadata]) -> dict[str, PublishedBackendItems]:
-        """Filter backend tool IDs for one user and publish visible names with schemas."""
+        """Filter backend tool IDs and publish client-to-upstream name mappings."""
         return {
             gateway_id: {
-                "tools": [tool_by_id[tool_id]["name"] for tool_id in backend_items["tools"] if tool_id in tool_by_id],
-                "tool_schemas": {tool_by_id[tool_id]["name"]: tool_by_id[tool_id]["input_schema"] for tool_id in backend_items["tools"] if tool_id in tool_by_id},
+                "tools": [tool_by_id[tool_id]["upstream_name"] for tool_id in backend_items["tools"] if tool_id in tool_by_id],
+                "tool_name_aliases": {tool_by_id[tool_id]["exposed_name"]: tool_by_id[tool_id]["upstream_name"] for tool_id in backend_items["tools"] if tool_id in tool_by_id},
+                "tool_schemas": {tool_by_id[tool_id]["upstream_name"]: tool_by_id[tool_id]["input_schema"] for tool_id in backend_items["tools"] if tool_id in tool_by_id},
                 "resources": list(backend_items["resources"]),
                 "prompts": list(backend_items["prompts"]),
             }

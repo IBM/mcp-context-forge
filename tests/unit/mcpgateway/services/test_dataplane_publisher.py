@@ -211,8 +211,8 @@ async def test_full_payload_generation_with_mock_db():
 
     tool1 = Mock()
     tool1.id = "t1"
-    tool1.name = "gw1-public_tool"
-    tool1.original_name = "public_tool"
+    tool1.name = "gw1-admin-tools-list"
+    tool1.original_name = "admin.tools.list"
     tool1.input_schema = {
         "type": "object",
         "properties": {"region": {"type": "string", "x-mcp-header": "Region"}},
@@ -303,9 +303,13 @@ async def test_full_payload_generation_with_mock_db():
             "add_headers": {"X-Tenant": "acme"},
             "remove_headers": ["Cookie"],
             "capabilities": {"resources": {"subscribe": True}},
-            "allowed_tool_names": ["public_tool", "private_tool"],
+            "allowed_tool_names": ["admin.tools.list", "private_tool"],
+            "tool_name_aliases": {
+                "gw1-admin-tools-list": "admin.tools.list",
+                "gw1-private_tool": "private_tool",
+            },
             "tool_schemas": {
-                "public_tool": tool1.input_schema,
+                "admin.tools.list": tool1.input_schema,
                 "private_tool": {},
             },
             "allowed_resource_names": ["Resource 1"],
@@ -313,6 +317,7 @@ async def test_full_payload_generation_with_mock_db():
             "allowed_prompt_names": ["Prompt 1"],
         }
         assert "bad_tool" not in backend["allowed_tool_names"]
+        assert "gw1-bad_tool" not in backend["tool_name_aliases"]
         assert "bad_tool" not in backend["tool_schemas"]
 
         # Verify the gateway SELECT projection actually includes the new columns
@@ -326,6 +331,8 @@ async def test_full_payload_generation_with_mock_db():
         tool_execute_call = mock_db.execute.call_args_list[6]
         tool_stmt = tool_execute_call[0][0]
         selected_tool_keys = {col.key for col in tool_stmt.selected_columns}
+        assert "name" in selected_tool_keys, "Tool SELECT must include the client-visible name"
+        assert "original_name" in selected_tool_keys, "Tool SELECT must include the upstream name"
         assert "input_schema" in selected_tool_keys, "Tool SELECT must include input_schema"
 
         # Verify user2 sees public server but not private server from user1
@@ -335,9 +342,13 @@ async def test_full_payload_generation_with_mock_db():
         # is omitted from the payload (no publishable backends).
         assert "s2" not in user2_config["virtual_hosts"]
         user2_backend = user2_config["virtual_hosts"]["s1"]["backends"]["g1"]
-        assert user2_backend["allowed_tool_names"] == ["public_tool", "team2_tool"]
+        assert user2_backend["allowed_tool_names"] == ["admin.tools.list", "team2_tool"]
+        assert user2_backend["tool_name_aliases"] == {
+            "gw1-admin-tools-list": "admin.tools.list",
+            "gw1-team2_tool": "team2_tool",
+        }
         assert user2_backend["tool_schemas"] == {
-            "public_tool": tool1.input_schema,
+            "admin.tools.list": tool1.input_schema,
             "team2_tool": tool3.input_schema,
         }
 
@@ -346,8 +357,9 @@ async def test_full_payload_generation_with_mock_db():
         assert "s1" in user3_config["virtual_hosts"]
         assert "s2" not in user3_config["virtual_hosts"]
         user3_backend = user3_config["virtual_hosts"]["s1"]["backends"]["g1"]
-        assert user3_backend["allowed_tool_names"] == ["public_tool"]
-        assert user3_backend["tool_schemas"] == {"public_tool": tool1.input_schema}
+        assert user3_backend["allowed_tool_names"] == ["admin.tools.list"]
+        assert user3_backend["tool_name_aliases"] == {"gw1-admin-tools-list": "admin.tools.list"}
+        assert user3_backend["tool_schemas"] == {"admin.tools.list": tool1.input_schema}
 
 
 def test_build_user_data_excludes_non_object_tool_schema(caplog):
@@ -357,7 +369,9 @@ def test_build_user_data_excludes_non_object_tool_schema(caplog):
     from mcpgateway.services.dataplane_publisher import BackendItemsByServer, DataplanePublisherService
 
     bad_tool = Mock(id="bad-tool", original_name="bad", input_schema=None, visibility="public")
+    bad_tool.name = "gateway-bad"
     good_tool = Mock(id="good-tool", original_name="good", input_schema={"type": "object"}, visibility="public")
+    good_tool.name = "gateway-good"
     server = Mock(id="server", visibility="public")
     backend_items_by_server: BackendItemsByServer = {
         "server": {
@@ -373,6 +387,7 @@ def test_build_user_data_excludes_non_object_tool_schema(caplog):
 
     backend_items = result["servers"][0]["backend_items"]["gateway"]
     assert backend_items["tools"] == ["good"]
+    assert backend_items["tool_name_aliases"] == {"gateway-good": "good"}
     assert backend_items["tool_schemas"] == {"good": {"type": "object"}}
     assert "Excluding tool bad-tool" in caplog.text
 
