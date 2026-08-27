@@ -8647,7 +8647,7 @@ class TestAdminNonMemberTeamBanner:
 class TestSetLoggingService:
     """Test the logging service setup functionality."""
 
-    def test_set_logging_service(self):
+    def test_set_logging_service(self, monkeypatch):
         """Test setting the logging service."""
         # First-Party
         from mcpgateway.admin import set_logging_service
@@ -8657,13 +8657,20 @@ class TestSetLoggingService:
         mock_logger = MagicMock()
         mock_service.get_logger.return_value = mock_logger
 
+        # First-Party
+        from mcpgateway import admin
+
+        # admin.LOGGER/admin.logging_service are module globals; set_logging_service()
+        # reassigns them directly rather than through a fixture, so without monkeypatch
+        # restoring them, every test running later in this session would keep seeing
+        # this MagicMock logger instead of a real one.
+        monkeypatch.setattr(admin, "logging_service", admin.logging_service, raising=False)
+        monkeypatch.setattr(admin, "LOGGER", admin.LOGGER, raising=False)
+
         # Set the logging service
         set_logging_service(mock_service)
 
         # Verify global variables were updated
-        # First-Party
-        from mcpgateway import admin
-
         assert admin.logging_service == mock_service
         assert admin.LOGGER == mock_logger
         mock_service.get_logger.assert_called_with("mcpgateway.admin")
@@ -14708,6 +14715,23 @@ class TestAdminAdditionalCoverage:
             await admin_get_log_file(request=SimpleNamespace(headers={"range": "not-a-range"}), filename="app.log", user={"email": "admin@example.com", "db": mock_db})
         assert excinfo.value.status_code == 400
 
+    @pytest.mark.parametrize("unit", ["Bytes", "BYTES", "  bytes  "])
+    @patch("mcpgateway.admin.settings")
+    async def test_admin_get_log_file_range_unit_is_case_insensitive(self, mock_settings, unit, tmp_path, mock_db):
+        """The range-unit token is case-insensitive per RFC 7233; the FileResponse
+        parser this handler replaced accepted ``Bytes=``/``BYTES=`` and so must this one."""
+        log_dir = tmp_path
+        (log_dir / "app.log").write_text("0123456789")
+
+        mock_settings.log_to_file = True
+        mock_settings.log_file = "app.log"
+        mock_settings.log_folder = str(log_dir)
+        mock_settings.log_rotation_enabled = False
+
+        response = await admin_get_log_file(request=SimpleNamespace(headers={"range": f"{unit}=2-5"}), filename="app.log", user={"email": "admin@example.com", "db": mock_db})
+        assert response.status_code == 206
+        assert response.headers.get("content-range") == "bytes 2-5/10"
+
     @patch("mcpgateway.admin.settings")
     async def test_admin_get_log_file_rejects_unsatisfiable_range(self, mock_settings, tmp_path, mock_db):
         """A range starting beyond EOF is rejected with 416 and a Content-Range header."""
@@ -14981,10 +15005,17 @@ class TestAdminAdditionalCoverage:
     @patch("mcpgateway.admin.settings")
     async def test_admin_get_log_file_access_denied_log_is_sanitized(self, mock_settings, tmp_path, mock_db, caplog):
         """Filename and exception text logged on access-denied must have CR/LF stripped so
-        a crafted filename can't forge additional log lines."""
+        a crafted filename can't forge additional log lines.
+
+        The filename itself carries the CR/LF payload (a real symlink is created on disk
+        using that literal name), so this test actually exercises sanitize_for_log(): it
+        would fail if sanitization were removed, unlike asserting against a plain filename
+        that never contained a control character to begin with.
+        """
         log_dir = tmp_path
         (log_dir / "real.log").write_text("main")
-        (log_dir / "app.log").symlink_to(log_dir / "real.log")
+        crlf_name = "app.log\r\nCRITICAL:root:INJECTED-FAKE-LOG-LINE"
+        (log_dir / crlf_name).symlink_to(log_dir / "real.log")
 
         mock_settings.log_to_file = True
         mock_settings.log_file = "app.log"
@@ -14993,11 +15024,14 @@ class TestAdminAdditionalCoverage:
 
         with caplog.at_level(logging.WARNING, logger="mcpgateway.admin"):
             with pytest.raises(HTTPException):
-                await admin_get_log_file(request=SimpleNamespace(headers={}), filename="app.log", user={"email": "admin@example.com", "db": mock_db})
+                await admin_get_log_file(request=SimpleNamespace(headers={}), filename=crlf_name, user={"email": "admin@example.com", "db": mock_db})
 
+        assert caplog.records
         for record in caplog.records:
-            assert "\n" not in record.getMessage()
-            assert "\r" not in record.getMessage()
+            message = record.getMessage()
+            assert "\n" not in message
+            assert "\r" not in message
+            assert "INJECTED-FAKE-LOG-LINE" in message
 
     async def test_admin_export_logs_json_csv(self, mock_db, monkeypatch):
         """Export logs in JSON and CSV formats."""

@@ -402,6 +402,26 @@ def test_open_confined_rejects_directory_as_final_component(tmp_path: Path) -> N
         open_confined(tmp_path, Path("subdir"))
 
 
+@pytest.mark.timeout(5)
+def test_open_confined_rejects_fifo_without_blocking(tmp_path: Path) -> None:
+    """A FIFO at the final component must be rejected, not block the caller.
+
+    A plain ``O_RDONLY`` open of a FIFO blocks until a writer connects. Since
+    open_confined() runs synchronously from an async admin handler, that would hang
+    the event loop indefinitely; ``O_NONBLOCK`` on the final open must prevent it.
+    This test has no writer for the FIFO, so it would hang (and time out) if that
+    flag regressed.
+    """
+    if not hasattr(os, "mkfifo"):
+        pytest.skip("FIFOs are not supported on this platform")
+
+    fifo_path = tmp_path / "blocked.log"
+    os.mkfifo(fifo_path)
+
+    with pytest.raises(ValueError):
+        open_confined(tmp_path, Path("blocked.log"))
+
+
 # ---------------------------------------------------------------------------
 # open_confined — fails closed on platforms without dir_fd/O_NOFOLLOW (e.g. Windows)
 # ---------------------------------------------------------------------------

@@ -248,14 +248,23 @@ def open_confined(root: Path, relative: Path) -> "tuple[int, os.stat_result]":
 
 
 def _open_confined_posix(root: Path, parts: "tuple[str, ...]") -> int:
-    """Open the final path component via an ``openat``/``O_NOFOLLOW`` chain. POSIX only."""
+    """Open the final path component via an ``openat``/``O_NOFOLLOW`` chain. POSIX only.
+
+    The final component is opened with ``O_NONBLOCK`` in addition to ``O_NOFOLLOW``.
+    Without it, a FIFO planted at that path would block this call — and the calling
+    event loop, since ``open_confined()`` runs synchronously — until a writer connects,
+    since a read-only open of a FIFO blocks by default. ``O_NONBLOCK`` makes that open
+    return immediately instead, and the caller's ``fstat`` check (which requires a
+    regular file) rejects the FIFO. Regular-file opens and reads are unaffected:
+    ``O_NONBLOCK`` has no effect on them.
+    """
     dir_fd = os.open(str(root), os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
         for part in parts[:-1]:
             next_fd = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=dir_fd)
             os.close(dir_fd)
             dir_fd = next_fd
-        return os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW, dir_fd=dir_fd)
+        return os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=dir_fd)
     finally:
         os.close(dir_fd)
 

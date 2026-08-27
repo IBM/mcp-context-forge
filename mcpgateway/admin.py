@@ -15597,11 +15597,10 @@ async def admin_get_log_file(
         start, end = 0, file_size
         status_code = 200
         if range_header and (if_range is None or if_range in (etag, last_modified)):
-            range_spec = range_header.strip()
-            if not range_spec.startswith("bytes="):
+            range_unit, has_value, spec_value = range_header.strip().partition("=")
+            if not has_value or range_unit.strip().lower() != "bytes":
                 handle.close()
                 raise HTTPException(400, "Malformed Range header")
-            spec_value = range_spec[len("bytes=") :]
             if "," in spec_value:
                 # Multiple ranges (e.g. "bytes=0-1,4-5"): multipart/byteranges responses
                 # aren't implemented here. Per RFC 7233 SS3.1, a server may ignore a Range
