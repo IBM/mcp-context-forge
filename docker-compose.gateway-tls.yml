@@ -29,9 +29,18 @@ services:
       - KEY_FILE_PASSWORD=${KEY_FILE_PASSWORD:-}
     volumes:
       - ./certs:/app/certs:ro
+    ports:
+      - "${GATEWAY_TLS_PORT:-4444}:4444"
     healthcheck:
       test: ["CMD", "curl", "-fk", "https://localhost:4444/health"]
       interval: 30s
       timeout: 10s
       retries: 5
       start_period: 30s
+
+  register_fast_time:
+    environment:
+      - GATEWAY_URL=${GATEWAY_URL:-https://gateway:4444}
+      - GATEWAY_CA_CERT=${GATEWAY_CA_CERT:-/app/certs/cert.pem}
+    volumes:
+      - ./certs:/app/certs:ro

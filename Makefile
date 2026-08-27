@@ -5997,7 +5997,7 @@ compose-tls-ps:
 compose-gateway-tls: compose-validate
 	@echo "🔐 Starting stack with gateway TLS enabled (HTTPS on port 4444)..."
 	@echo "   Run 'make certs' first if ./certs/ is empty."
-	IMAGE_LOCAL=$(call get_image_name) $(COMPOSE_CMD) -f $(COMPOSE_FILE) -f docker-compose.gateway-tls.yml up -d
+	IMAGE_LOCAL=$(call get_image_name) $(COMPOSE_CMD) -f $(COMPOSE_FILE) -f docker-compose.gateway-tls.yml up -d --scale nginx=0 --scale gateway=1
 	@echo "✅ Gateway TLS started. Test: curl -fk https://localhost:4444/health"
 
 compose-tls-e2e: compose-validate
