@@ -275,12 +275,14 @@ async def test_delete_gateway_calls_registry_evict_gateway():
         patch("mcpgateway.services.gateway_service.audit_trail"),
     ):
         mock_registry_cache.return_value.invalidate_gateways = AsyncMock()
+        mock_registry_cache.return_value.invalidate_catalog = AsyncMock()
         mock_lookup_cache.return_value.invalidate_gateway = AsyncMock()
         mock_stats_cache.invalidate_tags = AsyncMock()
 
         await service.delete_gateway(test_db, "gw-to-delete")
 
     reg.evict_gateway.assert_awaited_once_with("gw-to-delete")
+    mock_registry_cache.return_value.invalidate_catalog.assert_awaited_once()
 
 
 @pytest.mark.asyncio

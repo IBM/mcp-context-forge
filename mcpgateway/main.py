@@ -145,6 +145,7 @@ from mcpgateway.schemas import (
     CursorPaginatedServersResponse,
     CursorPaginatedToolsResponse,
     GatewayCreate,
+    GatewayImpactPreview,
     GatewayRead,
     GatewayRefreshResponse,
     GatewayUpdate,
@@ -7443,6 +7444,39 @@ async def get_gateway(gateway_id: str, request: Request, db: Session = Depends(g
         gateway = await gateway_service.get_gateway(db, gateway_id, user_email=auth_user_email, token_teams=auth_token_teams)
         _enforce_scoped_resource_access(request, db, user, f"/gateways/{gateway_id}")
         return gateway
+    except GatewayLookupConflictError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+    except GatewayNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+
+@gateway_router.get("/{gateway_id}/impact-preview", response_model=GatewayImpactPreview)
+@require_permission("gateways.read")
+async def get_gateway_impact_preview(
+    gateway_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> GatewayImpactPreview:
+    """Preview visible virtual servers affected by deleting a gateway.
+
+    Args:
+        gateway_id: Gateway ID, exact name, or slug.
+        request: Incoming request used for scoped access validation.
+        db: Database session.
+        user: Authenticated user.
+
+    Returns:
+        Layer-1-scoped virtual server IDs and names.
+
+    Raises:
+        HTTPException: 404 if the gateway is missing or hidden; 409 for an ambiguous identifier.
+    """
+    try:
+        auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
+        preview = await gateway_service.get_gateway_impact_preview(db, gateway_id, user_email=auth_user_email, token_teams=auth_token_teams)
+        _enforce_scoped_resource_access(request, db, user, f"/gateways/{preview.gateway_id}")
+        return preview
     except GatewayLookupConflictError as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
     except GatewayNotFoundError as e:

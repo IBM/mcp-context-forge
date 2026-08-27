@@ -93,6 +93,7 @@ from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import PromptMetric
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import ResourceMetric, ResourceSubscription, server_prompt_association, server_resource_association, server_tool_association, SessionLocal
+from mcpgateway.db import Server as DbServer
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric
 from mcpgateway.observability import create_span, set_span_attribute, set_span_error
@@ -101,6 +102,8 @@ from mcpgateway.schemas import (
     GatewayCreate,
     GatewayHandshakeRequest,
     GatewayHandshakeResponse,
+    GatewayImpactPreview,
+    GatewayImpactServer,
     GatewayRead,
     GatewayTestRequest,
     GatewayTestResponse,
@@ -119,6 +122,7 @@ from mcpgateway.services.http_client_service import get_default_verify, get_http
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.mcp_apps import merge_mcp_protocol_meta, optional_extension_metadata, validate_extension_metadata, validate_ui_resource
 from mcpgateway.services.oauth_manager import OAuthManager
+from mcpgateway.services.server_service import server_service
 from mcpgateway.services.session_affinity import register_gateway_capabilities_for_notifications
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
@@ -3602,6 +3606,65 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
 
+    async def get_gateway_impact_preview(
+        self,
+        db: Session,
+        gateway_id: str,
+        user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
+    ) -> GatewayImpactPreview:
+        """Return visible virtual servers associated with a gateway's entities.
+
+        The gateway lookup and every returned virtual server are independently
+        checked using Layer 1 visibility. Associations through tools, resources,
+        and prompts are de-duplicated.
+
+        Args:
+            db: Database session.
+            gateway_id: Gateway ID, exact name, or slug.
+            user_email: Requesting user's email.
+            token_teams: JWT-scoped team list used for Layer 1 visibility.
+
+        Returns:
+            A gateway impact preview containing visible virtual server IDs and names.
+
+        Raises:
+            GatewayNotFoundError: If the gateway is missing or hidden from the caller.
+            GatewayLookupConflictError: If a name or slug matches multiple visible gateways.
+        """
+        gateway = await self.get_gateway(db, gateway_id, user_email=user_email, token_teams=token_teams)
+        canonical_gateway_id = str(gateway.id)
+
+        association_queries = (
+            select(server_tool_association.c.server_id).join(DbTool, server_tool_association.c.tool_id == DbTool.id).where(DbTool.gateway_id == canonical_gateway_id),
+            select(server_resource_association.c.server_id).join(DbResource, server_resource_association.c.resource_id == DbResource.id).where(DbResource.gateway_id == canonical_gateway_id),
+            select(server_prompt_association.c.server_id).join(DbPrompt, server_prompt_association.c.prompt_id == DbPrompt.id).where(DbPrompt.gateway_id == canonical_gateway_id),
+        )
+        server_ids = {str(server_id) for query in association_queries for server_id in db.execute(query).scalars().all()}
+
+        if not server_ids:
+            return GatewayImpactPreview(gateway_id=canonical_gateway_id)
+
+        impacted_servers = db.execute(select(DbServer).where(DbServer.id.in_(server_ids)).order_by(DbServer.name, DbServer.id)).scalars().all()
+        resolved_team_ids = None
+        if token_teams is None and user_email and not is_admin_bypass_granted(db, user_email, token_teams):
+            team_service = TeamManagementService(db)
+            user_teams = await team_service.get_user_teams(user_email)
+            resolved_team_ids = [team.id for team in user_teams]
+
+        visible_servers = []
+        for impacted_server in impacted_servers:
+            if await server_service._check_server_access(  # pylint: disable=protected-access
+                db,
+                impacted_server,
+                user_email,
+                token_teams,
+                resolved_team_ids=resolved_team_ids,
+            ):
+                visible_servers.append(GatewayImpactServer(id=str(impacted_server.id), name=impacted_server.name))
+
+        return GatewayImpactPreview(gateway_id=canonical_gateway_id, servers=visible_servers)
+
     async def set_gateway_state(self, db: Session, gateway_id: str, activate: bool, reachable: bool = True, only_update_reachable: bool = False, user_email: Optional[str] = None) -> GatewayRead:
         """
         Set the activation status of a gateway.
@@ -4105,6 +4168,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         cache = _get_registry_cache()
         await cache.invalidate_gateways()
+        await cache.invalidate_catalog()
         tool_lookup_cache = _get_tool_lookup_cache()
         await tool_lookup_cache.invalidate_gateway(gateway_id)
 
@@ -7752,6 +7816,7 @@ async def test_gateway_connectivity(
     # SECURITY: the authority comes from the validated URL. Dropping any caller-supplied Host
     # first also prevents a differently-cased key from being sent as a second Host header.
     headers = {key: value for key, value in (request.headers or {}).items() if key.lower() != "host"}
+    caller_supplies_accept = any(key.lower() == "accept" for key in headers)
     headers["Host"] = target["original_authority"]
 
     # Attempt to find a registered gateway matching this URL and team.
@@ -7833,9 +7898,20 @@ async def test_gateway_connectivity(
                     )
         elif gateway and gateway.auth_type in ("basic", "bearer", "authheaders") and gateway.auth_value:
             if isinstance(gateway.auth_value, dict):
-                headers.update(gateway.auth_value)
+                headers.update({key: value for key, value in gateway.auth_value.items() if not caller_supplies_accept or key.lower() != "accept"})
             elif isinstance(gateway.auth_value, str):
-                headers.update(decode_auth(gateway.auth_value))
+                headers.update({key: value for key, value in decode_auth(gateway.auth_value).items() if not caller_supplies_accept or key.lower() != "accept"})
+
+        # MCP streamable HTTP servers can require explicit event-stream support.
+        # Preserve a caller-supplied Accept value, including non-canonical casing.
+        if not caller_supplies_accept:
+            request_method = request.method.upper()
+            if request_method == "GET":
+                headers = {key: value for key, value in headers.items() if key.lower() != "accept"}
+                headers["Accept"] = "text/event-stream"
+            elif request_method == "POST":
+                headers = {key: value for key, value in headers.items() if key.lower() != "accept"}
+                headers["Accept"] = "application/json, text/event-stream"
 
         # Prepare request based on content type
         content_type = getattr(request, "content_type", "application/json")
