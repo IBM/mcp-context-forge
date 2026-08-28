@@ -26,13 +26,13 @@ pytestmark = [pytest.mark.e2e, skip_no_gateway]
             {
                 "name": "invalid-oauth-redirect",
                 "url": "https://mcp.example.com",
-                "oauth_config": {"redirect_uri_after_oauth": "/oauth-complete"},
+                "oauth_config": {"redirect_uri_after_oauth": "/oauth-complete"}, # pragma: allowlist secret
             },
         ),
         (
             "PUT",
             "/gateways/nonexistent",
-            {"oauth_config": {"redirect_uri_after_oauth": "/oauth-complete"}},
+            {"oauth_config": {"redirect_uri_after_oauth": "/oauth-complete"}}, # pragma: allowlist secret
         ),
     ],
 )
