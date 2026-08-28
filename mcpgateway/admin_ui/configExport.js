@@ -56,7 +56,7 @@ export const getCatalogUrl = function (server) {
 
 /**
  * Generate and show configuration for selected type
- * @param {string} configType - Configuration type: 'stdio', 'sse', or 'http'
+ * @param {string} configType - Configuration type: 'sse' or 'http'
  */
 export const generateAndShowConfig = async function (configType) {
   try {
@@ -97,7 +97,7 @@ export const generateAndShowConfig = async function (configType) {
 /**
  * Export server configuration in specified format
  * @param {string} serverId - The server UUID
- * @param {string} configType - Configuration type: 'stdio', 'sse', or 'http'
+ * @param {string} configType - Configuration type: 'sse' or 'http'
  */
 export const exportServerConfig = async function (serverId, configType) {
   try {
