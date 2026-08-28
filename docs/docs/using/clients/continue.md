@@ -24,7 +24,6 @@ tools you publish through **ContextForge** - no plug-in code required.
 
 1. **Install "Continue"**: `Ctrl ⇧ X` → search *Continue* → **Install**
 2. **Open config**: `Ctrl ⇧ P` → *"Continue: Open Config"*
-   → edits **`~/.continue/config.json`**
 
 ---
 
@@ -36,16 +35,18 @@ Attach Continue to a gateway over **Streamable HTTP**:
 
 ### Direct Streamable HTTP
 
-```jsonc
-// ~/.continue/config.json
+Add the gateway as an MCP server in your workspace, in
+`.continue/mcpServers/contextforge.json`:
+
+```json
 {
-  "experimental": {
-    "modelContextProtocolServer": {
-      "transport": {
-        "type": "http",
-        "url": "http://localhost:4444/servers/UUID_OF_SERVER_1/mcp/",
+  "mcpServers": {
+    "contextforge": {
+      "type": "streamable-http",
+      "url": "http://localhost:4444/servers/UUID_OF_SERVER_1/mcp/",
+      "requestOptions": {
         "headers": {
-          "Authorization": "Bearer ${env:MCP_AUTH}"
+          "Authorization": "Bearer <YOUR_AUTH_TOKEN_HERE>"
         }
       }
     }
@@ -53,10 +54,13 @@ Attach Continue to a gateway over **Streamable HTTP**:
 }
 ```
 
-*Generate a token*:
+Auth headers belong under `requestOptions.headers` — Continue does not read a top-level
+`headers` key for MCP servers.
+
+*Generate a token to paste above*:
 
 ```bash
-export MCP_AUTH=$(python3 -m mcpgateway.utils.create_jwt_token -u admin@example.com --secret my-test-key-but-now-longer-than-32-bytes)
+python3 -m mcpgateway.utils.create_jwt_token -u admin@example.com --secret my-test-key-but-now-longer-than-32-bytes
 ```
 
 
