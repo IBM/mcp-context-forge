@@ -22,7 +22,7 @@ from unittest.mock import MagicMock
 import pytest
 
 # First-Party
-from mcpgateway.utils.paths import is_path_within, open_confined, replace_api_path_alias, resolve_root_path, UnsupportedPlatformError
+from mcpgateway.utils.paths import is_path_within, open_confined, replace_api_path_alias, resolve_root_path
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -423,34 +423,56 @@ def test_open_confined_rejects_fifo_without_blocking(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# open_confined — fails closed on platforms without dir_fd/O_NOFOLLOW (e.g. Windows)
+# open_confined — fallback path used on platforms without dir_fd/O_NOFOLLOW (e.g. Windows)
 # ---------------------------------------------------------------------------
 
 
-def test_open_confined_fails_closed_when_dir_fd_unsupported(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """When the platform lacks dir_fd/O_NOFOLLOW support, open_confined() must raise
-    UnsupportedPlatformError rather than fall back to a non-atomic islink()-then-open
-    check, which would silently reintroduce the TOCTOU race this function exists to close."""
+def test_open_confined_fallback_opens_regular_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Without dir_fd/O_NOFOLLOW support, open_confined() must still succeed for a
+    legitimate file via the per-component reparse-point-checking fallback."""
     monkeypatch.setattr("mcpgateway.utils.paths._SUPPORTS_CONFINED_OPENAT", False)
     (tmp_path / "app.log").write_text("hello")
 
-    with pytest.raises(UnsupportedPlatformError):
-        open_confined(tmp_path, Path("app.log"))
+    fd, file_stat = open_confined(tmp_path, Path("app.log"))
+    try:
+        assert os.pread(fd, file_stat.st_size, 0) == b"hello"
+    finally:
+        os.close(fd)
 
 
-def test_open_confined_unsupported_platform_error_is_an_os_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """UnsupportedPlatformError must subclass OSError so existing broad `except OSError`
-    call sites still catch it, even though admin.py distinguishes it for a 501 response."""
+def test_open_confined_fallback_opens_nested_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The fallback must walk and open intermediate directory components too, not just
+    the final one."""
     monkeypatch.setattr("mcpgateway.utils.paths._SUPPORTS_CONFINED_OPENAT", False)
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "app.log").write_text("nested")
+
+    fd, file_stat = open_confined(tmp_path, Path("sub/app.log"))
+    try:
+        assert os.pread(fd, file_stat.st_size, 0) == b"nested"
+    finally:
+        os.close(fd)
+
+
+def test_open_confined_fallback_rejects_symlinked_final_component(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The fallback is not atomic, but it must still reject a symlink at the final
+    path component checked at open time."""
+    monkeypatch.setattr("mcpgateway.utils.paths._SUPPORTS_CONFINED_OPENAT", False)
+    (tmp_path / "real.log").write_text("hello")
+    (tmp_path / "app.log").symlink_to(tmp_path / "real.log")
 
     with pytest.raises(OSError):
         open_confined(tmp_path, Path("app.log"))
 
 
-def test_open_confined_fails_closed_before_touching_filesystem(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """The platform check fails closed even for a target that doesn't exist — callers must
-    not be able to distinguish "unsupported platform" from filesystem state via timing/errors."""
+def test_open_confined_fallback_rejects_symlinked_intermediate_component(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A symlinked intermediate directory component must be rejected too, not just the
+    final component."""
     monkeypatch.setattr("mcpgateway.utils.paths._SUPPORTS_CONFINED_OPENAT", False)
+    outside = tmp_path.with_name(tmp_path.name + "_outside")
+    outside.mkdir()
+    (outside / "app.log").write_text("secret")
+    (tmp_path / "sub").symlink_to(outside)
 
-    with pytest.raises(UnsupportedPlatformError):
-        open_confined(tmp_path, Path("does-not-exist.log"))
+    with pytest.raises(OSError):
+        open_confined(tmp_path, Path("sub/app.log"))

@@ -209,7 +209,6 @@ from mcpgateway.utils.pagination import paginate_query
 from mcpgateway.utils.passthrough_headers import PassthroughHeadersError
 from mcpgateway.utils.paths import is_path_within, open_confined
 from mcpgateway.utils.paths import resolve_root_path as _resolve_root_path
-from mcpgateway.utils.paths import UnsupportedPlatformError
 from mcpgateway.utils.security_cookies import clear_auth_cookie, CookieTooLargeError, set_auth_cookie
 from mcpgateway.utils.services_auth import encode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
@@ -15544,21 +15543,21 @@ async def admin_get_log_file(
         if not (file_path.suffix in [".log", ".jsonl", ".json"] or file_path.stem.startswith(Path(settings.log_file).stem)):
             raise HTTPException(403, "Not a log file")
 
-        # Open the verified fd directly via an openat()/O_NOFOLLOW chain instead of
-        # handing a pathname to FileResponse, which reopens the path when it streams.
-        # A process able to write into log_dir_resolved could otherwise rename the
-        # checked file away and put a symlink in its place between the confinement
+        # Open the verified fd directly via a component-by-component confined open
+        # instead of handing a pathname to FileResponse, which reopens the path when it
+        # streams. A process able to write into log_dir_resolved could otherwise rename
+        # the checked file away and put a symlink in its place between the confinement
         # check above and that later reopen (TOCTOU), causing this privileged endpoint
-        # to stream an attacker-chosen target. open_confined() resolves and opens each
-        # path component with O_NOFOLLOW relative to its already-open parent, so the fd
-        # it returns refers to exactly the inode that was validated.
+        # to stream an attacker-chosen target. On POSIX, open_confined() resolves and
+        # opens each path component with O_NOFOLLOW relative to its already-open
+        # parent, so the fd it returns refers to exactly the inode that was validated.
+        # On platforms without that atomic chaining (Windows), it falls back to a
+        # per-component symlink/reparse-point rejection that is not atomic but still
+        # rejects every reparse point present at check time.
         try:
             file_fd, file_stat = open_confined(log_dir_resolved, candidate)
         except FileNotFoundError:
             raise HTTPException(404, f"Log file not found: {filename}")
-        except UnsupportedPlatformError as e:
-            LOGGER.error("Log file download unavailable on this platform: %s", sanitize_for_log(e))
-            raise HTTPException(501, "Log file download is not supported on this platform")
         except (OSError, ValueError) as e:
             LOGGER.warning("Log file access denied for %s: %s", sanitize_for_log(filename), sanitize_for_log(e))
             raise HTTPException(403, _ACCESS_DENIED_MSG)

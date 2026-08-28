@@ -14949,12 +14949,9 @@ class TestAdminAdditionalCoverage:
         assert excinfo.value.status_code == 403
 
     @patch("mcpgateway.admin.settings")
-    async def test_admin_get_log_file_unsupported_platform_returns_501(self, mock_settings, tmp_path, mock_db):
-        """A platform without dir_fd/O_NOFOLLOW support must surface as 501, not 403/500,
-        so it's distinguishable from an access-denied or unexpected-error outcome."""
-        # First-Party
-        from mcpgateway.utils.paths import UnsupportedPlatformError
-
+    async def test_admin_get_log_file_falls_back_without_dir_fd_support(self, mock_settings, tmp_path, mock_db):
+        """On a platform without dir_fd/O_NOFOLLOW support (e.g. Windows), the download must
+        still succeed via the per-component reparse-point-checking fallback rather than fail."""
         log_dir = tmp_path
         (log_dir / "app.log").write_text("main")
 
@@ -14963,10 +14960,27 @@ class TestAdminAdditionalCoverage:
         mock_settings.log_folder = str(log_dir)
         mock_settings.log_rotation_enabled = False
 
-        with patch("mcpgateway.admin.open_confined", side_effect=UnsupportedPlatformError("no dir_fd support")):
+        with patch("mcpgateway.utils.paths._SUPPORTS_CONFINED_OPENAT", False):
+            response = await admin_get_log_file(request=SimpleNamespace(headers={}), filename="app.log", user={"email": "admin@example.com", "db": mock_db})
+        assert response.status_code == 200
+
+    @patch("mcpgateway.admin.settings")
+    async def test_admin_get_log_file_fallback_rejects_symlinked_file(self, mock_settings, tmp_path, mock_db):
+        """The non-atomic fallback used without dir_fd/O_NOFOLLOW support must still reject a
+        symlink at the final path component, even though the check isn't atomic with the open."""
+        log_dir = tmp_path
+        (log_dir / "real.log").write_text("main")
+        (log_dir / "app.log").symlink_to(log_dir / "real.log")
+
+        mock_settings.log_to_file = True
+        mock_settings.log_file = "app.log"
+        mock_settings.log_folder = str(log_dir)
+        mock_settings.log_rotation_enabled = False
+
+        with patch("mcpgateway.utils.paths._SUPPORTS_CONFINED_OPENAT", False):
             with pytest.raises(HTTPException) as excinfo:
                 await admin_get_log_file(request=SimpleNamespace(headers={}), filename="app.log", user={"email": "admin@example.com", "db": mock_db})
-        assert excinfo.value.status_code == 501
+        assert excinfo.value.status_code == 403
 
     @patch("mcpgateway.admin.settings")
     async def test_admin_get_log_file_multi_range_falls_back_to_full_response(self, mock_settings, tmp_path, mock_db):

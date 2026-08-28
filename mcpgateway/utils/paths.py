@@ -35,6 +35,11 @@ logger = logging.getLogger(__name__)
 # ``dir_fd`` and neither ``os.O_DIRECTORY`` nor ``os.O_NOFOLLOW`` exist there.
 _SUPPORTS_CONFINED_OPENAT = hasattr(os, "O_DIRECTORY") and hasattr(os, "O_NOFOLLOW") and os.open in os.supports_dir_fd
 
+# Windows ``FILE_ATTRIBUTE_REPARSE_POINT``: set on NTFS symlinks *and* junctions.
+# ``stat.S_ISLNK`` alone misses junctions, which Windows does not report as a
+# symlink via ``lstat()`` but does mark with this attribute bit.
+_FILE_ATTRIBUTE_REPARSE_POINT = 0x400
+
 # Characters that must never appear in a root path — control chars, URL
 # scheme markers, query/fragment delimiters, and whitespace other than
 # leading/trailing (which is stripped before this check).
@@ -201,13 +206,15 @@ def open_confined(root: Path, relative: Path) -> "tuple[int, os.stat_result]":
     returns.
 
     On platforms without that support (Windows lacks ``dir_fd``/``O_NOFOLLOW``), this
-    function fails closed: it raises :class:`UnsupportedPlatformError` rather than
-    falling back to a per-component ``os.path.islink()`` check. An islink-then-open
-    fallback is not atomic — a process able to write into *root* can still swap the
-    checked component for a symlink between the check and the ``open()`` call — so it
-    does not actually close the TOCTOU window this function exists to close; a caller
-    that streams the returned fd under the assumption that it is TOCTOU-safe would be
-    silently wrong on those platforms.
+    falls back to :func:`_open_confined_fallback`, which rejects a symlink or NTFS
+    reparse point (junction) at any path component — including the final one — before
+    it is traversed or opened. That check and the following open are two separate
+    syscalls rather than one atomic ``openat()`` chain, so it does not close the TOCTOU
+    window the POSIX path closes: a process able to write into *root* could in
+    principle swap a checked component for a symlink/junction in the gap between them.
+    It does close the gap the previous ``resolve()`` + string-prefix check left wide
+    open (no per-component check at all), and is the best guarantee available on a
+    platform without atomic no-follow traversal.
 
     Args:
         root: Resolved, trusted directory that confines the lookup.
@@ -221,10 +228,9 @@ def open_confined(root: Path, relative: Path) -> "tuple[int, os.stat_result]":
     Raises:
         ValueError: *relative* is absolute, escapes *root*, is empty, or resolves to
             something other than a regular file.
-        OSError: A path component does not exist, is a symlink, or cannot be opened
-            (including a symlink rejected by ``O_NOFOLLOW``).
-        UnsupportedPlatformError: The current platform lacks the ``dir_fd``/``O_NOFOLLOW``
-            support this function's TOCTOU guarantee depends on.
+        OSError: A path component does not exist, is a symlink/reparse point, or
+            cannot be opened (including a symlink rejected by ``O_NOFOLLOW`` on the
+            POSIX path).
     """
     if relative.is_absolute() or relative.drive or relative.root or ".." in relative.parts:
         raise ValueError("path escapes confinement root")
@@ -232,10 +238,7 @@ def open_confined(root: Path, relative: Path) -> "tuple[int, os.stat_result]":
     if not parts:
         raise ValueError("empty path")
 
-    if not _SUPPORTS_CONFINED_OPENAT:
-        raise UnsupportedPlatformError("this platform lacks dir_fd/O_NOFOLLOW support required for TOCTOU-safe confined opens")
-
-    file_fd = _open_confined_posix(root, parts)
+    file_fd = _open_confined_posix(root, parts) if _SUPPORTS_CONFINED_OPENAT else _open_confined_fallback(root, parts)
 
     try:
         file_stat = os.fstat(file_fd)
@@ -269,10 +272,26 @@ def _open_confined_posix(root: Path, parts: "tuple[str, ...]") -> int:
         os.close(dir_fd)
 
 
-class UnsupportedPlatformError(OSError):
-    """Raised by :func:`open_confined` on platforms without atomic no-follow traversal.
+def _open_confined_fallback(root: Path, parts: "tuple[str, ...]") -> int:
+    """Open the final path component with a per-component reparse-point check.
 
-    Distinguishing this from a generic :class:`OSError` lets callers surface a
-    "not supported on this platform" response instead of conflating it with an
-    access-denied outcome (a rejected symlink, a missing file, etc.).
+    Used on platforms without ``dir_fd``/``O_NOFOLLOW`` support (Windows, and any
+    other platform where ``os.open()`` cannot chain ``openat()``-style). Each
+    component, walked from *root* down, is ``lstat()``-ed and rejected if it is a
+    symlink or — on Windows, where a junction is not reported as a symlink by
+    ``lstat()`` — a reparse point, before the next component is joined onto it or the
+    final component is opened.
+
+    This is not atomic: the check and the following join/open are separate syscalls,
+    so a process able to write into *root* could still swap a checked component for a
+    symlink/junction in the gap between them (TOCTOU). It rejects every reparse point
+    that exists at the time each component is checked, which is strictly more than the
+    single post-resolve string-prefix check this replaced ever did.
     """
+    current = root
+    for part in parts:
+        current = current / part
+        component_stat = os.lstat(current)
+        if stat_module.S_ISLNK(component_stat.st_mode) or (getattr(component_stat, "st_file_attributes", 0) & _FILE_ATTRIBUTE_REPARSE_POINT):
+            raise OSError(f"path component is a symlink or reparse point: {part!r}")
+    return os.open(str(current), os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NONBLOCK", 0))
