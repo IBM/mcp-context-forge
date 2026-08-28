@@ -3327,6 +3327,7 @@ class ToolService(BaseService):
         requesting_user_is_admin: bool = False,
         requesting_user_team_roles: Optional[Dict[str, str]] = None,
         token_teams: Optional[List[str]] = None,
+        include_metrics: bool = False,
     ) -> ToolRead:
         """
         Retrieve a tool by its ID with access control.
@@ -3343,6 +3344,7 @@ class ToolService(BaseService):
                 ``[]`` means public-only scope. ``[...]`` means team-scoped.
                 This is kept separate from ``requesting_user_team_roles`` to avoid the Layer 1
                 visibility check silently widening a scoped token to full DB team membership.
+            include_metrics (bool): If True, include aggregated metrics. Defaults to False.
 
         Returns:
             ToolRead: The tool object.
@@ -3396,6 +3398,7 @@ class ToolService(BaseService):
 
         tool_read = self.convert_tool_to_read(
             tool,
+            include_metrics=include_metrics,
             requesting_user_email=requesting_user_email,
             requesting_user_is_admin=requesting_user_is_admin,
             requesting_user_team_roles=requesting_user_team_roles,

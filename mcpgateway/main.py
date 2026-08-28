@@ -5901,6 +5901,7 @@ async def get_tool(
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
     apijsonpath: Optional[str] = Query(None, max_length=1000, description="Optional JSONPath modifier as JSON string"),
+    include_metrics: bool = False,
 ) -> ToolResponse:
     """
     Retrieve a tool by ID, optionally applying a JSONPath post-filter.
@@ -5914,6 +5915,7 @@ async def get_tool(
                      Example: ?apijsonpath=%7B%22jsonpath%22%3A%22%24.name%22%7D
                      (decoded: {"jsonpath":"$.name","mapping":null})
                      Use to filter or transform the response via JSONPath expressions.
+        include_metrics: Whether to include aggregated metrics in the response.
 
     Returns:
         The raw ``ToolRead`` model **or** a JSON-transformed ``dict`` if
@@ -5937,6 +5939,7 @@ async def get_tool(
             requesting_user_is_admin=_req_is_admin,
             requesting_user_team_roles=_req_team_roles,
             token_teams=auth_token_teams,
+            include_metrics=include_metrics,
         )
         _enforce_scoped_resource_access(request, db, user, f"/tools/{tool_id}")
 

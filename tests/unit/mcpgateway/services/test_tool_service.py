@@ -1624,7 +1624,21 @@ class TestToolService:
 
         # Verify result
         assert result == tool_read
-        tool_service.convert_tool_to_read.assert_called_once_with(mock_tool, requesting_user_email=None, requesting_user_is_admin=False, requesting_user_team_roles=None)
+        tool_service.convert_tool_to_read.assert_called_once_with(
+            mock_tool, include_metrics=False, requesting_user_email=None, requesting_user_is_admin=False, requesting_user_team_roles=None
+        )
+
+    @pytest.mark.asyncio
+    async def test_get_tool_forwards_include_metrics(self, tool_service, mock_tool, test_db):
+        """get_tool should pass include_metrics through to convert_tool_to_read."""
+        test_db.get = Mock(return_value=mock_tool)
+        tool_service.convert_tool_to_read = Mock(return_value=Mock())
+
+        await tool_service.get_tool(test_db, 1, include_metrics=True)
+
+        tool_service.convert_tool_to_read.assert_called_once_with(
+            mock_tool, include_metrics=True, requesting_user_email=None, requesting_user_is_admin=False, requesting_user_team_roles=None
+        )
 
     @pytest.mark.asyncio
     async def test_get_tool_not_found(self, tool_service, test_db):
