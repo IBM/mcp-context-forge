@@ -43,7 +43,7 @@ def test_discover_metadata_returns_form_safe_values(monkeypatch, allow_gateway_c
         }
     )
     audit = MagicMock()
-    monkeypatch.setattr(DcrService, "discover_as_metadata", discover)
+    monkeypatch.setattr(DcrService, "discover_public_metadata", discover)
     monkeypatch.setattr("mcpgateway.main.get_audit_trail_service", lambda: audit)
 
     response = TestClient(app).post("/v1/gateways/discover-metadata", json={"issuer_url": "https://issuer.example.com"})
@@ -65,7 +65,7 @@ def test_discover_metadata_returns_form_safe_values(monkeypatch, allow_gateway_c
 def test_discover_metadata_returns_safe_nonblocking_failure(monkeypatch, allow_gateway_create):
     """Blocked issuer errors do not expose raw outbound-validation details."""
     audit = MagicMock()
-    monkeypatch.setattr(DcrService, "discover_as_metadata", AsyncMock(side_effect=DcrError("loopback host", code="blocked")))
+    monkeypatch.setattr(DcrService, "discover_public_metadata", AsyncMock(side_effect=DcrError("loopback host", code="blocked")))
     monkeypatch.setattr("mcpgateway.main.get_audit_trail_service", lambda: audit)
 
     response = TestClient(app).post("/v1/gateways/discover-metadata", json={"issuer_url": "https://localhost.example.com"})
@@ -96,6 +96,37 @@ def test_discover_metadata_requires_gateway_create_permission(monkeypatch):
         app.dependency_overrides.pop(get_current_user_with_permissions, None)
 
     assert response.status_code == 403
+
+
+def test_discover_metadata_requires_authentication():
+    """Unauthenticated callers cannot use the outbound discovery endpoint."""
+    response = TestClient(app).post("/v1/gateways/discover-metadata", json={"issuer_url": "https://issuer.example.com"})
+
+    assert response.status_code == 401
+
+
+@pytest.mark.parametrize("issuer", ["not-a-url", "https://issuer.example.com:invalid"])
+def test_discover_metadata_rejects_malformed_issuer_url(issuer, allow_gateway_create):
+    """Malformed input returns FastAPI validation error, never a discovery result."""
+    response = TestClient(app).post("/v1/gateways/discover-metadata", json={"issuer_url": issuer})
+
+    assert response.status_code == 422
+
+
+@pytest.mark.parametrize(
+    "issuer",
+    [
+        "https://127.0.0.1",
+        "https://169.254.1.1",
+        "https://169.254.169.254",
+    ],
+)
+def test_discover_metadata_blocks_ssrf_targets(issuer, allow_gateway_create):
+    """Real outbound policy blocks loopback, link-local, and cloud metadata IPs."""
+    response = TestClient(app).post("/v1/gateways/discover-metadata", json={"issuer_url": issuer})
+
+    assert response.status_code == 200
+    assert response.json()["errorCode"] == "blocked"
 
 
 @pytest.mark.parametrize("issuer", ["not-a-url", "https://issuer.example.com:invalid"])

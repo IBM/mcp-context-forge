@@ -7372,7 +7372,7 @@ async def discover_oauth_metadata(
     error_code: Optional[str] = None
 
     try:
-        metadata = await DcrService().discover_as_metadata(discovery_request.issuer_url)
+        metadata = await DcrService().discover_public_metadata(discovery_request.issuer_url)
         response = OAuthMetadataDiscoveryResponse(
             discovered=True,
             authorization_url=metadata.get("authorization_endpoint"),

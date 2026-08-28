@@ -16,10 +16,43 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 import httpx
+import orjson
 import pytest
 
 # First-Party
 from mcpgateway.services.dcr_service import DcrError, DcrService
+
+
+class _MockAsyncStream:
+    """Minimal async context manager for httpx streamed-response tests."""
+
+    def __init__(self, response):
+        self.response = response
+
+    async def __aenter__(self):
+        return self.response
+
+    async def __aexit__(self, *_args):
+        return False
+
+
+def _stream_response(status_code=200, headers=None, chunks=()):
+    """Build a response mock yielding chunks without buffering a full body."""
+    response = MagicMock(status_code=status_code, headers=headers or {})
+
+    async def aiter_bytes():
+        for chunk in chunks:
+            yield chunk
+
+    response.aiter_bytes = aiter_bytes
+    return response
+
+
+def _stream_client(response):
+    """Build a client mock exposing httpx's async stream context API."""
+    client = MagicMock()
+    client.stream.return_value = _MockAsyncStream(response)
+    return client
 
 
 class TestDiscoverASMetadata:
@@ -1270,6 +1303,25 @@ class TestPublicMetadataDiscoverySafety:
     """Security and concurrency coverage for public issuer discovery."""
 
     @pytest.mark.asyncio
+    async def test_standard_discovery_keeps_existing_http_issuer_compatibility(self):
+        """Existing DCR callers retain their configured non-HTTPS issuer behavior."""
+        # First-Party
+        from mcpgateway.services.dcr_service import _metadata_cache
+
+        _metadata_cache.clear()
+        dcr_service = DcrService()
+        issuer = "http://issuer.example.com"
+        response = MagicMock(status_code=200)
+        response.json.return_value = {"issuer": issuer}
+        client = AsyncMock()
+        client.get.return_value = response
+
+        with patch.object(dcr_service, "_get_client", return_value=client):
+            assert await dcr_service.discover_as_metadata(issuer) == {"issuer": issuer}
+
+        client.get.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_discovery_rejects_non_https_issuer(self):
         """Discovery refuses non-HTTPS issuers after outbound validation."""
         dcr_service = DcrService()
@@ -1279,7 +1331,7 @@ class TestPublicMetadataDiscoverySafety:
             new=AsyncMock(return_value={"validated_url": "http://issuer.example.com"}),
         ):
             with pytest.raises(DcrError, match="HTTPS") as error:
-                await dcr_service.discover_as_metadata("http://issuer.example.com")
+                await dcr_service.discover_public_metadata("http://issuer.example.com")
 
         assert error.value.code == "blocked"
 
@@ -1287,19 +1339,15 @@ class TestPublicMetadataDiscoverySafety:
     async def test_discovery_rejects_oversized_metadata_response(self):
         """Discovery enforces the metadata response-size limit before parsing JSON."""
         dcr_service = DcrService()
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.headers = {"content-length": str(256 * 1024 + 1)}
-
-        mock_client = AsyncMock()
-        mock_client.get = AsyncMock(return_value=mock_response)
+        mock_response = _stream_response(headers={"content-length": str(256 * 1024 + 1)})
+        mock_client = _stream_client(mock_response)
 
         with (
             patch.object(dcr_service, "_validate_discovery_issuer", return_value="https://issuer.example.com"),
             patch.object(dcr_service, "_get_client", return_value=mock_client),
         ):
             with pytest.raises(DcrError, match="too large") as error:
-                await dcr_service.discover_as_metadata("https://issuer.example.com")
+                await dcr_service.discover_public_metadata("https://issuer.example.com")
 
         assert error.value.code == "invalid_metadata"
 
@@ -1319,33 +1367,29 @@ class TestPublicMetadataDiscoverySafety:
             "authorization_endpoint": "https://issuer.example.com/authorize",
             "token_endpoint": "https://issuer.example.com/token",
         }
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_response.headers = {}
-        mock_response.content = b"{}"
-        mock_response.json = MagicMock(return_value=metadata)
+        mock_response = _stream_response()
 
-        async def delayed_get(*_args, **_kwargs):
+        async def delayed_aiter_bytes():
             started.set()
             await release.wait()
-            return mock_response
+            yield orjson.dumps(metadata)
 
-        mock_client = AsyncMock()
-        mock_client.get = AsyncMock(side_effect=delayed_get)
+        mock_response.aiter_bytes = delayed_aiter_bytes
+        mock_client = _stream_client(mock_response)
 
         with (
             patch.object(dcr_service, "_validate_discovery_issuer", return_value="https://issuer.example.com"),
             patch.object(dcr_service, "_get_client", return_value=mock_client),
         ):
-            first = asyncio.create_task(dcr_service.discover_as_metadata("https://issuer.example.com"))
+            first = asyncio.create_task(dcr_service.discover_public_metadata("https://issuer.example.com"))
             await started.wait()
-            second = asyncio.create_task(dcr_service.discover_as_metadata("https://issuer.example.com"))
+            second = asyncio.create_task(dcr_service.discover_public_metadata("https://issuer.example.com"))
             await asyncio.sleep(0)
             release.set()
             assert await first == metadata
             assert await second == metadata
 
-        assert mock_client.get.await_count == 1
+        assert mock_client.stream.call_count == 1
 
 
 class TestPublicMetadataDiscoveryErrorPaths:
@@ -1391,12 +1435,12 @@ class TestPublicMetadataDiscoveryErrorPaths:
     async def test_fetch_metadata_classifies_request_failures(self, request_error, expected_code):
         """Transport errors become safe, structured discovery failures."""
         dcr_service = DcrService()
-        mock_client = AsyncMock()
-        mock_client.get = AsyncMock(side_effect=request_error)
+        mock_client = MagicMock()
+        mock_client.stream.side_effect = request_error
 
         with patch.object(dcr_service, "_get_client", return_value=mock_client):
             with pytest.raises(DcrError) as error:
-                await dcr_service._fetch_metadata_document(
+                await dcr_service._fetch_public_metadata_document(
                     "https://issuer.example.com/.well-known/oauth-authorization-server",
                     "https://issuer.example.com",
                 )
@@ -1407,13 +1451,12 @@ class TestPublicMetadataDiscoveryErrorPaths:
     async def test_fetch_metadata_rejects_invalid_content_length(self):
         """Malformed declared response size is not trusted."""
         dcr_service = DcrService()
-        mock_response = MagicMock(status_code=200, headers={"content-length": "not-a-number"})
-        mock_client = AsyncMock()
-        mock_client.get = AsyncMock(return_value=mock_response)
+        mock_response = _stream_response(headers={"content-length": "not-a-number"})
+        mock_client = _stream_client(mock_response)
 
         with patch.object(dcr_service, "_get_client", return_value=mock_client):
             with pytest.raises(DcrError) as error:
-                await dcr_service._fetch_metadata_document("https://issuer.example.com/metadata", "https://issuer.example.com")
+                await dcr_service._fetch_public_metadata_document("https://issuer.example.com/metadata", "https://issuer.example.com")
 
         assert error.value.code == "invalid_metadata"
 
@@ -1421,13 +1464,12 @@ class TestPublicMetadataDiscoveryErrorPaths:
     async def test_fetch_metadata_rejects_oversized_body_without_content_length(self):
         """Body-size limit remains enforced when server omits content length."""
         dcr_service = DcrService()
-        mock_response = MagicMock(status_code=200, headers={}, content=b"x" * (256 * 1024 + 1))
-        mock_client = AsyncMock()
-        mock_client.get = AsyncMock(return_value=mock_response)
+        mock_response = _stream_response(chunks=[b"x" * (256 * 1024 + 1)])
+        mock_client = _stream_client(mock_response)
 
         with patch.object(dcr_service, "_get_client", return_value=mock_client):
             with pytest.raises(DcrError) as error:
-                await dcr_service._fetch_metadata_document("https://issuer.example.com/metadata", "https://issuer.example.com")
+                await dcr_service._fetch_public_metadata_document("https://issuer.example.com/metadata", "https://issuer.example.com")
 
         assert error.value.code == "invalid_metadata"
 
@@ -1435,14 +1477,12 @@ class TestPublicMetadataDiscoveryErrorPaths:
     async def test_fetch_metadata_rejects_invalid_json(self):
         """Metadata must be parseable JSON before any fields are used."""
         dcr_service = DcrService()
-        mock_response = MagicMock(status_code=200, headers={}, content=b"not-json")
-        mock_response.json.side_effect = ValueError("invalid JSON")
-        mock_client = AsyncMock()
-        mock_client.get = AsyncMock(return_value=mock_response)
+        mock_response = _stream_response(chunks=[b"not-json"])
+        mock_client = _stream_client(mock_response)
 
         with patch.object(dcr_service, "_get_client", return_value=mock_client):
             with pytest.raises(DcrError) as error:
-                await dcr_service._fetch_metadata_document("https://issuer.example.com/metadata", "https://issuer.example.com")
+                await dcr_service._fetch_public_metadata_document("https://issuer.example.com/metadata", "https://issuer.example.com")
 
         assert error.value.code == "invalid_metadata"
 
@@ -1450,14 +1490,12 @@ class TestPublicMetadataDiscoveryErrorPaths:
     async def test_fetch_metadata_rejects_non_object_json(self):
         """Metadata documents must be JSON objects."""
         dcr_service = DcrService()
-        mock_response = MagicMock(status_code=200, headers={}, content=b"[]")
-        mock_response.json.return_value = []
-        mock_client = AsyncMock()
-        mock_client.get = AsyncMock(return_value=mock_response)
+        mock_response = _stream_response(chunks=[b"[]"])
+        mock_client = _stream_client(mock_response)
 
         with patch.object(dcr_service, "_get_client", return_value=mock_client):
             with pytest.raises(DcrError) as error:
-                await dcr_service._fetch_metadata_document("https://issuer.example.com/metadata", "https://issuer.example.com")
+                await dcr_service._fetch_public_metadata_document("https://issuer.example.com/metadata", "https://issuer.example.com")
 
         assert error.value.code == "invalid_metadata"
 

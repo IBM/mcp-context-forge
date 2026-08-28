@@ -4933,6 +4933,19 @@ class OAuthMetadataDiscoveryRequest(BaseModelWithConfigDict):
 
     issuer_url: str = Field(..., min_length=1, max_length=2048, description="HTTPS OAuth issuer URL to discover")
 
+    @field_validator("issuer_url")
+    @classmethod
+    def validate_issuer_url_format(cls, value: str) -> str:
+        """Reject malformed issuer URLs before discovery's structured failure path."""
+        parsed = urlparse(value)
+        try:
+            port = parsed.port
+        except ValueError as exc:
+            raise ValueError("issuer_url must contain a valid URL port") from exc
+        if not parsed.scheme or not parsed.hostname or port is not None and not 0 < port <= 65535:
+            raise ValueError("issuer_url must be an absolute URL")
+        return value
+
 
 class OAuthMetadataDiscoveryResponse(BaseModelWithConfigDict):
     """Safe OAuth authorization-server metadata for registration-form autofill."""
