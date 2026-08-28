@@ -1,49 +1,65 @@
 # Claude Desktop × ContextForge
 
-[Claude Desktop](https://www.anthropic.com/index/claude-desktop) connects to remote MCP
-servers through **Custom Connectors**.
-By pointing one at your Gateway's `/mcp/` endpoint you give Claude access to every tool,
-prompt and resource registered in your Gateway.
+[Claude Desktop](https://www.anthropic.com/index/claude-desktop) launches local **stdio**
+processes for MCP servers. FastMCP's `fastmcp-remote` bridges one of those processes to your
+Gateway's Streamable HTTP endpoint, giving Claude every tool, prompt and resource registered
+in the Gateway.
 
 !!! tip "Gateway URL"
     - Direct installs (`uvx`, pip, or `docker run`): `http://localhost:4444`
     - Docker Compose (nginx proxy): `http://localhost:8080`
 
-!!! warning "`claude_desktop_config.json` is stdio-only"
-    The `claude_desktop_config.json` file launches **local subprocess** servers via
-    `command` / `args`. It cannot connect to an HTTP endpoint. Use a Custom Connector
-    for the Gateway, as described below.
+---
+
+## 📂 Where to edit the config
+
+| OS | Path |
+|----|------|
+| **macOS** | `~/Library/Application Support/Claude/claude_desktop_config.json` |
+| **Windows** | `%APPDATA%\Claude\claude_desktop_config.json` |
+| **Linux (Flatpak / AppImage)** | `$HOME/.config/Claude/claude_desktop_config.json` |
 
 ---
 
-## 🔌 Add the Gateway as a Custom Connector
+## ⚙️ Minimal JSON block
 
-1. Open **Settings** — `Ctrl+,` (or the top-left menu ▸ *File* ▸ *Settings*).
-2. Click **Connectors** in the sidebar.
-3. Click **Add** ▸ **Add custom connector**.
-4. Paste your virtual server's MCP endpoint:
+```json
+{
+  "mcpServers": {
+    "contextforge": {
+      "command": "uvx",
+      "args": [
+        "fastmcp-remote",
+        "http://localhost:4444/servers/UUID_OF_SERVER_1/mcp/",
+        "--header",
+        "Authorization: Bearer <YOUR_JWT_TOKEN>"
+      ]
+    }
+  }
+}
+```
 
-   ```text
-   http://localhost:4444/servers/UUID_OF_SERVER_1/mcp/
-   ```
+> *Use the real server ID from the Admin UI instead of `UUID_OF_SERVER_1`, and paste your
+> bearer token.*
 
-5. Click **Add** and complete the authentication prompt.
+`claude_desktop_config.json` launches subprocess servers via `command` / `args` and cannot
+dial an HTTP endpoint itself — `fastmcp-remote` speaks stdio to Claude and Streamable HTTP
+to the Gateway. Passing `--header "Authorization: ..."` selects bearer mode; use
+`--auth none` instead when the Gateway requires no authentication.
 
-> *Use the real server ID from the Admin UI instead of `UUID_OF_SERVER_1`.*
+Restart Claude Desktop after editing the file.
 
 ---
 
-## 🔑 Authentication
-
-Claude prompts for credentials when the connector is added — the Gateway's bearer token is
-supplied through that flow rather than stored in a config file.
-
-Generate a token with:
+## 🔑 Generate a token
 
 ```bash
-export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
-    --username admin@example.com --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes)
+python3 -m mcpgateway.utils.create_jwt_token \
+    --username admin@example.com --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes
 ```
+
+The `--secret` value must match the Gateway's `JWT_SECRET_KEY`, otherwise the Gateway
+rejects the token. Paste the result into the `Authorization: Bearer ...` argument above.
 
 ---
 
