@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 import pytest
 
 # First-Party
-from mcpgateway.main import app
+from mcpgateway.main import _safe_oauth_issuer_for_audit, app
 from mcpgateway.middleware.rbac import get_current_user_with_permissions
 from mcpgateway.services.dcr_service import DcrError, DcrService
 
@@ -96,3 +96,9 @@ def test_discover_metadata_requires_gateway_create_permission(monkeypatch):
         app.dependency_overrides.pop(get_current_user_with_permissions, None)
 
     assert response.status_code == 403
+
+
+@pytest.mark.parametrize("issuer", ["not-a-url", "https://issuer.example.com:invalid"])
+def test_safe_oauth_issuer_for_audit_rejects_malformed_issuer(issuer):
+    """Audit records never retain malformed issuer input."""
+    assert _safe_oauth_issuer_for_audit(issuer) == "invalid-issuer"

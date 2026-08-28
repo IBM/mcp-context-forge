@@ -11,9 +11,11 @@ Tests will FAIL until implementation is complete.
 
 # Standard
 import asyncio
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
+import httpx
 import pytest
 
 # First-Party
@@ -1344,6 +1346,135 @@ class TestPublicMetadataDiscoverySafety:
             assert await second == metadata
 
         assert mock_client.get.await_count == 1
+
+
+class TestPublicMetadataDiscoveryErrorPaths:
+    """Cover public discovery safety failures returned to callers."""
+
+    def test_expired_metadata_cache_entry_is_not_reused(self):
+        """Expired entries must not bypass fresh issuer metadata discovery."""
+        # First-Party
+        from mcpgateway.services.dcr_service import _metadata_cache
+
+        issuer = "https://issuer.example.com"
+        _metadata_cache[issuer] = {
+            "metadata": {"issuer": issuer},
+            "cached_at": datetime.now(timezone.utc) - timedelta(seconds=61),
+        }
+        try:
+            assert DcrService._get_cached_metadata(issuer, cache_ttl=60) is None
+        finally:
+            _metadata_cache.pop(issuer, None)
+
+    @pytest.mark.asyncio
+    async def test_discovery_converts_outbound_validation_failure_to_blocked(self):
+        """Raw outbound-validator errors are classified safely for callers."""
+        dcr_service = DcrService()
+
+        with patch(
+            "mcpgateway.services.dcr_service.SecurityValidator.validate_url_for_connection_pinning",
+            new=AsyncMock(side_effect=ValueError("private address")),
+        ):
+            with pytest.raises(DcrError) as error:
+                await dcr_service._validate_discovery_issuer("https://issuer.example.com")
+
+        assert error.value.code == "blocked"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("request_error", "expected_code"),
+        [
+            (httpx.TimeoutException("timeout"), "timeout"),
+            (httpx.ConnectError("connection refused"), "not_found"),
+        ],
+    )
+    async def test_fetch_metadata_classifies_request_failures(self, request_error, expected_code):
+        """Transport errors become safe, structured discovery failures."""
+        dcr_service = DcrService()
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(side_effect=request_error)
+
+        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+            with pytest.raises(DcrError) as error:
+                await dcr_service._fetch_metadata_document(
+                    "https://issuer.example.com/.well-known/oauth-authorization-server",
+                    "https://issuer.example.com",
+                )
+
+        assert error.value.code == expected_code
+
+    @pytest.mark.asyncio
+    async def test_fetch_metadata_rejects_invalid_content_length(self):
+        """Malformed declared response size is not trusted."""
+        dcr_service = DcrService()
+        mock_response = MagicMock(status_code=200, headers={"content-length": "not-a-number"})
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+
+        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+            with pytest.raises(DcrError) as error:
+                await dcr_service._fetch_metadata_document("https://issuer.example.com/metadata", "https://issuer.example.com")
+
+        assert error.value.code == "invalid_metadata"
+
+    @pytest.mark.asyncio
+    async def test_fetch_metadata_rejects_oversized_body_without_content_length(self):
+        """Body-size limit remains enforced when server omits content length."""
+        dcr_service = DcrService()
+        mock_response = MagicMock(status_code=200, headers={}, content=b"x" * (256 * 1024 + 1))
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+
+        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+            with pytest.raises(DcrError) as error:
+                await dcr_service._fetch_metadata_document("https://issuer.example.com/metadata", "https://issuer.example.com")
+
+        assert error.value.code == "invalid_metadata"
+
+    @pytest.mark.asyncio
+    async def test_fetch_metadata_rejects_invalid_json(self):
+        """Metadata must be parseable JSON before any fields are used."""
+        dcr_service = DcrService()
+        mock_response = MagicMock(status_code=200, headers={}, content=b"not-json")
+        mock_response.json.side_effect = ValueError("invalid JSON")
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+
+        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+            with pytest.raises(DcrError) as error:
+                await dcr_service._fetch_metadata_document("https://issuer.example.com/metadata", "https://issuer.example.com")
+
+        assert error.value.code == "invalid_metadata"
+
+    @pytest.mark.asyncio
+    async def test_fetch_metadata_rejects_non_object_json(self):
+        """Metadata documents must be JSON objects."""
+        dcr_service = DcrService()
+        mock_response = MagicMock(status_code=200, headers={}, content=b"[]")
+        mock_response.json.return_value = []
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+
+        with patch.object(dcr_service, "_get_client", return_value=mock_client):
+            with pytest.raises(DcrError) as error:
+                await dcr_service._fetch_metadata_document("https://issuer.example.com/metadata", "https://issuer.example.com")
+
+        assert error.value.code == "invalid_metadata"
+
+    @pytest.mark.parametrize(
+        "metadata",
+        [
+            {"authorization_endpoint": "http://issuer.example.com/authorize"},
+            {"registration_endpoint": "http://issuer.example.com/register"},
+            {"scopes_supported": ["openid", 1]},
+        ],
+    )
+    def test_metadata_shape_rejects_unsafe_public_fields(self, metadata):
+        """Only safe HTTPS endpoints and non-empty string scopes reach UI."""
+        with pytest.raises(DcrError) as error:
+            DcrService._validate_metadata_shape(metadata)
+
+        assert error.value.code == "invalid_metadata"
 
 
 class TestDcrError:
