@@ -77,7 +77,7 @@ graph TB
 | Feature | URL/Command | Actions | Expected Result | Status | Notes |
 |---------|-------------|---------|-----------------|--------|-------|
 | Set Gateway URL | `export GW_URL=http://localhost:4444` | Set base URL (can be remote) | Variable exported | ☐ | Use 8080 for docker-compose, 4444 for make serve, 8000 for make dev |
-| Install Gateway Package | `pip install mcp-contextforge-gateway` | Install the gateway package for utilities | Successfully installed | ☐ | Needed for JWT token creation and wrapper testing |
+| Install Gateway Package | `pip install mcp-contextforge-gateway` | Install the gateway package for utilities | Successfully installed | ☐ | Needed for JWT token creation |
 | Generate JWT Token | `export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token -u admin@example.com --secret my-test-key-but-now-longer-than-32-bytes)` | Generate auth token using installed package | Token generated and exported | ☐ | Default expiry 10080 (7 days) |
 | Verify Health | `curl -s $GW_URL/health` | GET request (no auth required) | `{"status":"healthy"}` | ☐ | Basic connectivity check |
 | Verify Ready | `curl -s $GW_URL/ready` | GET request (no auth required) | `{"status":"ready"}` | ☐ | Returns 503 with `{"status":"not ready","error":"..."}` when not ready |
@@ -159,7 +159,7 @@ graph TB
 
 ## 9. VS Code Integration Testing
 
-### 9.1. VS Code with MCP Wrapper (stdio)
+### 9.1. VS Code with Streamable HTTP
 
 | Feature | Configuration | Actions | Expected Result | Status | Notes |
 |---------|--------------|---------|-----------------|--------|-------|
@@ -420,9 +420,8 @@ Overall test completion: **___%** | Total Tests: **___** | Passed: **___** | Fai
 | **6** | Resource Management | | | | | | |
 | **7** | Prompt Management | | | | | | |
 | **8** | REST Tool Creation | | | | | | |
-| **9** | MCP Wrapper Testing | | | | | | |
-| **10.1** | VS Code Integration (Wrapper) | | | | | | |
-| **10.2** | VS Code Integration (Direct) | | | | | | |
+| **10.1** | VS Code Integration (Streamable HTTP) | | | | | | |
+| **10.2** | VS Code Integration (SSE) | | | | | | |
 | **11.1** | LangChain Integration | | | | | | |
 | **11.2** | CrewAI Integration | | | | | | |
 | **12** | Open Source MCP Servers | | | | | | |
