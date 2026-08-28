@@ -24,6 +24,7 @@ from scripts.fetch_catalog_icons import (
     _fetch,
     _has_normalized_icon_bounds,
     _image_to_png,
+    _parse_args,
     _registrable_domain,
     _safe_asset_id,
     _set_logo_urls,
@@ -86,6 +87,21 @@ def test_image_to_png_caps_upscale_and_marks_result() -> None:
 
     assert normalized.getchannel("A").getbbox() == (48, 56, 80, 72)
     assert _has_normalized_icon_bounds(normalized_bytes) is True
+
+
+def test_icon_normalization_rejects_empty_canvas() -> None:
+    source = Image.new("RGBA", (16, 16), (0, 0, 0, 0))
+    raw = BytesIO()
+    source.save(raw, format="PNG")
+
+    with pytest.raises(IconFetchError, match="Image has no visible pixels"):
+        _image_to_png(raw.getvalue())
+
+    source = Image.new("RGBA", (128, 128), (0, 0, 0, 0))
+    raw = BytesIO()
+    source.save(raw, format="PNG")
+    with pytest.raises(IconFetchError, match="Image has no visible pixels"):
+        _has_normalized_icon_bounds(raw.getvalue())
 
 
 @pytest.mark.parametrize(("extent", "expected"), [(16, False), (120, True), (128, True)])
@@ -267,3 +283,8 @@ def test_icon_generation_disables_environment_proxies(tmp_path: Path) -> None:
         assert generate_icons(args) == 0
 
     assert client_class.call_args.kwargs["trust_env"] is False
+
+
+def test_icon_refresh_modes_are_mutually_exclusive() -> None:
+    with pytest.raises(SystemExit):
+        _parse_args(["--force", "--normalize-existing"])

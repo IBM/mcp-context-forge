@@ -197,13 +197,14 @@ def _fetch(client: httpx.Client, url: str, *, expected_image: bool = False) -> F
 
 
 def _image_to_png(body: bytes) -> bytes:
-    """Decode image, trim transparent padding, and emit a deterministic 128px PNG."""
+    """Decode image, trim transparent padding, and emit a deterministic capped PNG."""
     try:
         with Image.open(BytesIO(body)) as source:
             image = ImageOps.exif_transpose(source).convert("RGBA")
             alpha_bounds = image.getchannel("A").getbbox()
-            if alpha_bounds:
-                image = image.crop(alpha_bounds)
+            if alpha_bounds is None:
+                raise IconFetchError("Image has no visible pixels")
+            image = image.crop(alpha_bounds)
             scale = min(ICON_SIZE / max(image.size), MAX_UPSCALE_FACTOR)
             target_size = (max(1, round(image.width * scale)), max(1, round(image.height * scale)))
             if image.size != target_size:
@@ -216,6 +217,8 @@ def _image_to_png(body: bytes) -> bytes:
             png_info.add_text(NORMALIZED_ICON_MARKER, "1")
             canvas.save(output, format="PNG", optimize=True, pnginfo=png_info)
             return output.getvalue()
+    except IconFetchError:
+        raise
     except Exception as exc:  # Pillow raises several format-specific exceptions.
         raise IconFetchError(f"Image decode failed: {exc}") from exc
 
@@ -227,13 +230,17 @@ def _has_normalized_icon_bounds(body: bytes) -> bool:
             image = ImageOps.exif_transpose(source).convert("RGBA")
             if image.size != (ICON_SIZE, ICON_SIZE):
                 return False
+            # PNG text must survive external processing to retain this fast path.
+            # Without it, the geometry fallback can apply one additional capped resize.
             if image.info.get(NORMALIZED_ICON_MARKER) == "1":
                 return True
             alpha_bounds = image.getchannel("A").getbbox()
             if alpha_bounds is None:
-                return True
+                raise IconFetchError("Image has no visible pixels")
             left, top, right, bottom = alpha_bounds
             return max(right - left, bottom - top) >= NORMALIZED_ICON_MIN_EXTENT
+    except IconFetchError:
+        raise
     except Exception as exc:  # Pillow raises several format-specific exceptions.
         raise IconFetchError(f"Image decode failed: {exc}") from exc
 
@@ -404,8 +411,10 @@ def generate_icons(args: argparse.Namespace) -> int:
     return 1 if args.strict and misses else 0
 
 
-def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__)
+def _parse_args(args: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Fetch and bundle MCP catalog icons. Normalization trims transparent padding and upscales source artwork by at most 2x.",
+    )
     parser.add_argument("--catalog", type=Path, default=DEFAULT_CATALOG)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--overrides", type=Path, default=DEFAULT_OVERRIDES)
@@ -415,11 +424,11 @@ def _parse_args() -> argparse.Namespace:
     refresh_mode.add_argument(
         "--normalize-existing",
         action="store_true",
-        help="Normalize existing local assets without refetching remote icons",
+        help="Trim and resize existing local assets up to 2x without refetching remote icons",
     )
     parser.add_argument("--dry-run", action="store_true", help="Fetch and report without writing")
     parser.add_argument("--strict", action="store_true", help="Return failure when any icon is unresolved")
-    return parser.parse_args()
+    return parser.parse_args(args)
 
 
 if __name__ == "__main__":
