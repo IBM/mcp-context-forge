@@ -2241,16 +2241,12 @@ async def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
     # This ensures SSO-provisioned platform_admins get admin bypass on the fallback
     # stateful-session path, matching the primary _auth_jwt path behavior (issue #4070).
     db_user_is_admin = False
+    auth_cache = None
+    auth_context_resolved = False
+    platform_admin_email = getattr(settings, "platform_admin_email", "")
     if email:
         jti = payload.get("jti")
-        auth_cache = None
-        auth_context_resolved = False
-        platform_admin_email = getattr(settings, "platform_admin_email", "")
-
-        if email == platform_admin_email:
-            db_user_is_admin = True
-            auth_context_resolved = True
-        elif settings.auth_cache_enabled:
+        if settings.auth_cache_enabled:
             try:
                 # First-Party
                 from mcpgateway.cache.auth_cache import CachedAuthContext, get_auth_cache  # pylint: disable=import-outside-toplevel
@@ -2258,7 +2254,13 @@ async def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
                 auth_cache = get_auth_cache()
                 cached_ctx = await auth_cache.get_auth_context(email, jti)
                 if cached_ctx is not None:
+                    if cached_ctx.is_token_revoked:
+                        raise HTTPException(status_code=HTTP_401_UNAUTHORIZED, detail="Token has been revoked")
                     cached_user = cached_ctx.user
+                    if cached_user and not cached_user.get("is_active", True):
+                        raise HTTPException(status_code=HTTP_401_UNAUTHORIZED, detail="Account disabled")
+                    if cached_user is None and settings.require_user_in_db and email != platform_admin_email:
+                        raise HTTPException(status_code=HTTP_401_UNAUTHORIZED, detail="User not found in database")
                     db_user_is_admin = bool(cached_user and cached_user.get("is_admin", False))
                     auth_context_resolved = True
                 elif settings.auth_cache_batch_queries:
@@ -2266,7 +2268,13 @@ async def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
                     from mcpgateway.auth import _get_auth_context_batched_sync  # pylint: disable=import-outside-toplevel
 
                     batched_ctx = await asyncio.to_thread(_get_auth_context_batched_sync, email, jti)
+                    if batched_ctx.get("is_token_revoked", False):
+                        raise HTTPException(status_code=HTTP_401_UNAUTHORIZED, detail="Token has been revoked")
                     batched_user = batched_ctx.get("user")
+                    if batched_user and not batched_user.get("is_active", True):
+                        raise HTTPException(status_code=HTTP_401_UNAUTHORIZED, detail="Account disabled")
+                    if batched_user is None and settings.require_user_in_db and email != platform_admin_email:
+                        raise HTTPException(status_code=HTTP_401_UNAUTHORIZED, detail="User not found in database")
                     db_user_is_admin = bool(batched_user and batched_user.get("is_admin", False))
                     auth_context_resolved = True
                     try:
@@ -2281,15 +2289,40 @@ async def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
                         )
                     except Exception as cache_set_error:
                         logger.debug("Failed to cache stateful-session auth context for %s: %s", email, cache_set_error)
+            except HTTPException:
+                raise
             except Exception as cache_error:
                 logger.debug("Stateful-session auth cache lookup failed for %s: %s", email, cache_error)
 
         if not auth_context_resolved:
             # First-Party
-            from mcpgateway.utils.admin_check import is_user_admin  # pylint: disable=import-outside-toplevel
+            from mcpgateway.auth import _check_token_revoked_sync, _get_user_by_email_sync  # pylint: disable=import-outside-toplevel
 
-            with SessionLocal() as db:
-                db_user_is_admin = is_user_admin(db, email)
+            if jti and await asyncio.to_thread(_check_token_revoked_sync, jti):
+                raise HTTPException(status_code=HTTP_401_UNAUTHORIZED, detail="Token has been revoked")
+
+            try:
+                user_record = await asyncio.to_thread(_get_user_by_email_sync, email)
+            except Exception as user_lookup_error:
+                # Preserve the primary auth path's fail-open behavior when the
+                # user status lookup is unavailable; JWT signature validation
+                # has already succeeded.  Keep the legacy admin helper as a
+                # compatibility fallback for deployments that provide it.
+                logger.warning("Stateful-session user lookup failed for %s: %s", email, user_lookup_error)
+                # First-Party
+                from mcpgateway.utils.admin_check import is_user_admin  # pylint: disable=import-outside-toplevel
+
+                with SessionLocal() as db:
+                    db_user_is_admin = is_user_admin(db, email)
+                user_record = None
+            else:
+                if user_record and not getattr(user_record, "is_active", True):
+                    raise HTTPException(status_code=HTTP_401_UNAUTHORIZED, detail="Account disabled")
+                if user_record is None and settings.require_user_in_db and email != platform_admin_email:
+                    raise HTTPException(status_code=HTTP_401_UNAUTHORIZED, detail="User not found in database")
+                db_user_is_admin = bool(user_record and getattr(user_record, "is_admin", False))
+    if email == platform_admin_email:
+        db_user_is_admin = True
 
     effective_is_admin = db_user_is_admin or jwt_is_admin
 
@@ -2306,6 +2339,35 @@ async def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
         from mcpgateway.auth import normalize_token_teams  # pylint: disable=import-outside-toplevel
 
         final_teams = normalize_token_teams(payload)
+
+    # SECURITY: API/legacy team claims must still match current active memberships.
+    if token_use != "session" and final_teams and email:
+        # First-Party
+        from mcpgateway.cache.auth_cache import get_auth_cache  # pylint: disable=import-outside-toplevel
+        from mcpgateway.db import EmailTeamMember  # pylint: disable=import-outside-toplevel
+
+        if auth_cache is None:
+            auth_cache = get_auth_cache()
+        cached_membership = auth_cache.get_team_membership_valid_sync(email, final_teams)
+        if cached_membership is False:
+            raise HTTPException(status_code=HTTP_403_FORBIDDEN, detail="Token invalid: User is no longer a member of the associated team")
+        if cached_membership is None:
+            with SessionLocal() as db:
+                memberships = (
+                    db.execute(
+                        select(EmailTeamMember.team_id).where(
+                            EmailTeamMember.team_id.in_(final_teams),
+                            EmailTeamMember.user_email == email,
+                            EmailTeamMember.is_active.is_(True),
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+            if set(final_teams) - set(memberships):
+                auth_cache.set_team_membership_valid_sync(email, final_teams, False)
+                raise HTTPException(status_code=HTTP_403_FORBIDDEN, detail="Token invalid: User is no longer a member of the associated team")
+            auth_cache.set_team_membership_valid_sync(email, final_teams, True)
 
     user_ctx: dict[str, Any] = {
         "email": email,

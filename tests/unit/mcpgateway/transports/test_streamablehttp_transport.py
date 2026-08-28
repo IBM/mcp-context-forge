@@ -12937,6 +12937,10 @@ async def test_get_request_context_fast_path_no_session_id_falls_through(monkeyp
 
     mock_auth = AsyncMock(return_value={"email": "fallback@test.com", "teams": ["t2"], "is_authenticated": True})
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.require_auth_header_first", mock_auth)
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._normalize_jwt_payload",
+        AsyncMock(return_value={"email": "fallback@test.com", "teams": ["t2"], "is_authenticated": True}),
+    )
 
     try:
         with patch.object(type(mcp_app), "request_context", new_callable=PropertyMock, return_value=mock_ctx):
@@ -13192,6 +13196,12 @@ async def test_normalize_jwt_payload_api_token(monkeypatch):
     """API token (no token_use or token_use != 'session') uses normalize_token_teams."""
     # First-Party
     from mcpgateway.transports.streamablehttp_transport import _normalize_jwt_payload
+    auth_cache = MagicMock()
+    auth_cache.get_auth_context = AsyncMock(return_value=None)
+    auth_cache.get_team_membership_valid_sync.return_value = True
+    monkeypatch.setattr("mcpgateway.cache.auth_cache.get_auth_cache", lambda: auth_cache)
+    monkeypatch.setattr(tr.settings, "auth_cache_enabled", True)
+    monkeypatch.setattr(tr.settings, "auth_cache_batch_queries", False)
 
     monkeypatch.setattr("mcpgateway.auth.normalize_token_teams", lambda payload: ["team-a"])
 
@@ -15716,6 +15726,12 @@ async def test_normalize_jwt_payload_with_scoped_permissions(monkeypatch):
     """API token with scopes.permissions should include scoped_permissions in context."""
     # First-Party
     from mcpgateway.transports.streamablehttp_transport import _normalize_jwt_payload
+    auth_cache = MagicMock()
+    auth_cache.get_auth_context = AsyncMock(return_value=None)
+    auth_cache.get_team_membership_valid_sync.return_value = True
+    monkeypatch.setattr("mcpgateway.cache.auth_cache.get_auth_cache", lambda: auth_cache)
+    monkeypatch.setattr(tr.settings, "auth_cache_enabled", True)
+    monkeypatch.setattr(tr.settings, "auth_cache_batch_queries", False)
 
     monkeypatch.setattr("mcpgateway.auth.normalize_token_teams", lambda payload: ["team-a"])
 
@@ -18100,3 +18116,109 @@ async def test_list_tools_sso_admin_gets_admin_bypass_at_service_layer(monkeypat
     await list_tools()
 
     assert called["args"] == (None, None)
+
+
+@pytest.mark.asyncio
+async def test_normalize_jwt_payload_rejects_cached_revoked_token(monkeypatch):
+    """Cached revoked tokens must not become authenticated fallback contexts."""
+    from mcpgateway.cache.auth_cache import CachedAuthContext
+
+    auth_cache = MagicMock()
+    auth_cache.get_auth_context = AsyncMock(
+        return_value=CachedAuthContext(
+            user={"email": "revoked@example.com", "is_admin": False, "is_active": True},
+            is_token_revoked=True,
+        )
+    )
+    monkeypatch.setattr("mcpgateway.cache.auth_cache.get_auth_cache", lambda: auth_cache)
+    monkeypatch.setattr(tr.settings, "auth_cache_enabled", True)
+    monkeypatch.setattr(tr.settings, "auth_cache_batch_queries", False)
+    monkeypatch.setattr(tr, "_resolve_jwt_user_email_for_streamable", AsyncMock(return_value="revoked@example.com"))
+
+    with pytest.raises(HTTPException, match="Token has been revoked"):
+        await tr._normalize_jwt_payload({"sub": "revoked@example.com", "jti": "revoked-jti", "token_use": "session"})
+
+
+@pytest.mark.asyncio
+async def test_normalize_jwt_payload_rejects_cached_inactive_user(monkeypatch):
+    """Cached inactive users must not become authenticated fallback contexts."""
+    from mcpgateway.cache.auth_cache import CachedAuthContext
+
+    auth_cache = MagicMock()
+    auth_cache.get_auth_context = AsyncMock(
+        return_value=CachedAuthContext(
+            user={"email": "disabled@example.com", "is_admin": False, "is_active": False},
+            is_token_revoked=False,
+        )
+    )
+    monkeypatch.setattr("mcpgateway.cache.auth_cache.get_auth_cache", lambda: auth_cache)
+    monkeypatch.setattr(tr.settings, "auth_cache_enabled", True)
+    monkeypatch.setattr(tr.settings, "auth_cache_batch_queries", False)
+    monkeypatch.setattr(tr, "_resolve_jwt_user_email_for_streamable", AsyncMock(return_value="disabled@example.com"))
+
+    with pytest.raises(HTTPException, match="Account disabled"):
+        await tr._normalize_jwt_payload({"sub": "disabled@example.com", "jti": "disabled-jti", "token_use": "session"})
+
+
+@pytest.mark.asyncio
+async def test_normalize_jwt_payload_rejects_cached_missing_user_when_required(monkeypatch):
+    """Strict user-in-DB mode must reject a cache hit without a user record."""
+    from mcpgateway.cache.auth_cache import CachedAuthContext
+
+    auth_cache = MagicMock()
+    auth_cache.get_auth_context = AsyncMock(return_value=CachedAuthContext(user=None, is_token_revoked=False))
+    monkeypatch.setattr("mcpgateway.cache.auth_cache.get_auth_cache", lambda: auth_cache)
+    monkeypatch.setattr(tr.settings, "auth_cache_enabled", True)
+    monkeypatch.setattr(tr.settings, "auth_cache_batch_queries", False)
+    monkeypatch.setattr(tr.settings, "require_user_in_db", True)
+    monkeypatch.setattr(tr.settings, "platform_admin_email", "admin@example.com")
+    monkeypatch.setattr(tr, "_resolve_jwt_user_email_for_streamable", AsyncMock(return_value="missing@example.com"))
+
+    with pytest.raises(HTTPException, match="User not found in database"):
+        await tr._normalize_jwt_payload({"sub": "missing@example.com", "jti": "missing-jti", "token_use": "session"})
+
+
+@pytest.mark.asyncio
+async def test_normalize_jwt_payload_rejects_batched_revoked_token(monkeypatch):
+    """Batched revoked tokens must not become authenticated fallback contexts."""
+    auth_cache = MagicMock()
+    auth_cache.get_auth_context = AsyncMock(return_value=None)
+    monkeypatch.setattr("mcpgateway.cache.auth_cache.get_auth_cache", lambda: auth_cache)
+    monkeypatch.setattr(tr.settings, "auth_cache_enabled", True)
+    monkeypatch.setattr(tr.settings, "auth_cache_batch_queries", True)
+    monkeypatch.setattr(tr, "_resolve_jwt_user_email_for_streamable", AsyncMock(return_value="batched-revoked@example.com"))
+    monkeypatch.setattr(
+        "mcpgateway.auth._get_auth_context_batched_sync",
+        MagicMock(
+            return_value={
+                "user": {"email": "batched-revoked@example.com", "is_admin": False, "is_active": True},
+                "is_token_revoked": True,
+                "team_ids": [],
+            }
+        ),
+    )
+
+    with pytest.raises(HTTPException, match="Token has been revoked"):
+        await tr._normalize_jwt_payload({"sub": "batched-revoked@example.com", "jti": "batched-jti", "token_use": "session"})
+
+
+@pytest.mark.asyncio
+async def test_normalize_jwt_payload_rejects_stale_api_token_membership(monkeypatch):
+    """API and legacy team claims must be validated against current membership."""
+    from mcpgateway.cache.auth_cache import CachedAuthContext
+
+    auth_cache = MagicMock()
+    auth_cache.get_auth_context = AsyncMock(
+        return_value=CachedAuthContext(
+            user={"email": "stale@example.com", "is_admin": False, "is_active": True},
+            is_token_revoked=False,
+        )
+    )
+    auth_cache.get_team_membership_valid_sync.return_value = False
+    monkeypatch.setattr("mcpgateway.cache.auth_cache.get_auth_cache", lambda: auth_cache)
+    monkeypatch.setattr(tr.settings, "auth_cache_enabled", True)
+    monkeypatch.setattr(tr, "_resolve_jwt_user_email_for_streamable", AsyncMock(return_value="stale@example.com"))
+    monkeypatch.setattr("mcpgateway.auth.normalize_token_teams", lambda _payload: ["team-stale"])
+
+    with pytest.raises(HTTPException, match="no longer a member"):
+        await tr._normalize_jwt_payload({"sub": "stale@example.com", "jti": "stale-jti", "token_use": "api", "teams": ["team-stale"]})
