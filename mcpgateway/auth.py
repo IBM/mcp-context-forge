@@ -63,12 +63,13 @@ wrapper or whether the helper genuinely deserves promotion to the public API.
 
 # Standard
 import asyncio
+from contextlib import nullcontext
 from datetime import datetime, timedelta, timezone
 import hashlib
 import logging
 import threading
 import time
-from typing import Any, Dict, Generator, List, Never, Optional
+from typing import Any, Callable, Dict, Generator, List, Never, Optional
 from urllib.parse import urlparse
 import uuid
 
@@ -114,6 +115,7 @@ __all__ = [
     "validate_token_user",
     "get_user_team_roles",
     "normalize_token_teams",
+    "validate_token_team_membership",
     "resolve_session_teams",
     "derive_token_team_id",
 ]
@@ -269,6 +271,65 @@ def _get_user_team_ids_sync(email: str) -> List[str]:
             .order_by(EmailTeamMember.id)  # Stable ordering: teams[0] used as Vault path key
         )
         return [row[0] for row in result.all()]
+
+
+def validate_token_team_membership(
+    user_email: str,
+    team_ids: List[str],
+    db: Optional[Session] = None,
+    *,
+    on_cache_event: Optional[Callable[[str], None]] = None,
+) -> bool:
+    """Return whether a token's claimed teams are active memberships.
+
+    The cache is checked before querying the database. A caller-provided
+    session remains caller-owned; otherwise this helper opens and closes one.
+
+    Args:
+        user_email: Email encoded in the verified token.
+        team_ids: Team IDs claimed by the token.
+        db: Optional caller-owned SQLAlchemy session.
+        on_cache_event: Optional callback receiving ``hit``, ``miss``, or
+            ``reject`` for cache instrumentation.
+
+    Returns:
+        ``True`` when the user belongs to every claimed team.
+    """
+    if not team_ids:
+        return True
+
+    # First-Party
+    from mcpgateway.cache.auth_cache import get_auth_cache  # pylint: disable=import-outside-toplevel
+    from mcpgateway.db import EmailTeamMember  # pylint: disable=import-outside-toplevel
+
+    auth_cache = get_auth_cache()
+    cached_result = auth_cache.get_team_membership_valid_sync(user_email, team_ids)
+    if cached_result is not None:
+        if on_cache_event:
+            on_cache_event("reject" if not cached_result else "hit")
+        return cached_result
+
+    if on_cache_event:
+        on_cache_event("miss")
+
+    owns_session = db is None
+    with SessionLocal() if owns_session else nullcontext(db) as session:
+        memberships = (
+            session.execute(
+                select(EmailTeamMember.team_id).where(
+                    EmailTeamMember.team_id.in_(team_ids),
+                    EmailTeamMember.user_email == user_email,
+                    EmailTeamMember.is_active.is_(True),
+                )
+            )
+            .scalars()
+            .all()
+        )
+        valid = not (set(team_ids) - set(memberships))
+        auth_cache.set_team_membership_valid_sync(user_email, team_ids, valid)
+        if owns_session:
+            session.commit()
+        return valid
 
 
 def _get_team_name_by_id_sync(team_id: Optional[str]) -> Optional[str]:

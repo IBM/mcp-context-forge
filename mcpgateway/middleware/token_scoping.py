@@ -23,7 +23,7 @@ from fastapi import HTTPException, Request, status
 from sqlalchemy import and_, func, select
 
 # First-Party
-from mcpgateway.auth import normalize_token_teams, resolve_session_teams
+from mcpgateway.auth import normalize_token_teams, resolve_session_teams, validate_token_team_membership
 from mcpgateway.auth_context import get_jwt_user_email_from_payload, resolve_jwt_user_email_from_payload
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
@@ -883,61 +883,25 @@ class TokenScopingMiddleware:
 
         # Extract team IDs from token (handles both dict and string formats)
         team_ids = [team["id"] if isinstance(team, dict) else team for team in teams]
-
-        # First-Party
-        from mcpgateway.cache.auth_cache import get_auth_cache  # pylint: disable=import-outside-toplevel
-
-        # Check cache first (synchronous in-memory lookup)
-        auth_cache = get_auth_cache()
-        cached_result = auth_cache.get_team_membership_valid_sync(user_email, team_ids)
-        if cached_result is not None:
-            if not cached_result:
-                logger.warning(f"Token invalid (cached): User {SecurityValidator.sanitize_log_message(user_email)} no longer member of teams")
-            return cached_result
-
-        # Cache miss - query database
-        # First-Party
-        from mcpgateway.db import EmailTeamMember, get_db  # pylint: disable=import-outside-toplevel
-
-        # Track if we own the session (and thus must clean it up)
+        # Keep session ownership in this middleware; the shared helper owns only
+        # membership cache/query policy.
         owns_session = db is None
         if owns_session:
+            # First-Party
+            from mcpgateway.db import get_db  # pylint: disable=import-outside-toplevel
+
             db = next(get_db())
-
         try:
-            # Single query for all teams (fixes N+1 pattern)
-            memberships = (
-                db.execute(
-                    select(EmailTeamMember.team_id).where(
-                        EmailTeamMember.team_id.in_(team_ids),
-                        EmailTeamMember.user_email == user_email,
-                        EmailTeamMember.is_active.is_(True),
-                    )
-                )
-                .scalars()
-                .all()
-            )
-
-            # Check if user is member of ALL teams in token
-            valid_team_ids = set(memberships)
-            missing_teams = set(team_ids) - valid_team_ids
-
-            if missing_teams:
-                logger.warning(f"Token invalid: User {SecurityValidator.sanitize_log_message(user_email)} no longer member of teams: {SecurityValidator.sanitize_log_message(str(missing_teams))}")
-                # Cache negative result
-                auth_cache.set_team_membership_valid_sync(user_email, team_ids, False)
-                return False
-
-            # Cache positive result
-            auth_cache.set_team_membership_valid_sync(user_email, team_ids, True)
-            return True
+            valid = validate_token_team_membership(user_email, team_ids, db=db)
         finally:
-            # Only commit/close if we created the session
             if owns_session:
                 try:
-                    db.commit()  # Commit read-only transaction to avoid implicit rollback
+                    db.commit()
                 finally:
                     db.close()
+        if not valid:
+            logger.warning(f"Token invalid: User {SecurityValidator.sanitize_log_message(user_email)} no longer member of teams")
+        return valid
 
     def _is_targeted_missing_resource_delete(self, request_path: str, method: str) -> bool:
         """Return whether request is an exact server or gateway DELETE path."""

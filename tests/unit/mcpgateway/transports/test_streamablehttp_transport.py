@@ -3084,7 +3084,7 @@ async def test_streamable_http_auth_validates_team_membership_on_cache_miss(monk
 
     with (
         patch("mcpgateway.cache.auth_cache.get_auth_cache", return_value=mock_auth_cache),
-        patch("mcpgateway.transports.streamablehttp_transport.SessionLocal", mock_session_local),
+        patch("mcpgateway.auth.SessionLocal", mock_session_local),
     ):
         result = await streamable_http_auth(scope, None, send)
 
@@ -5419,7 +5419,7 @@ async def test_streamable_http_auth_caches_positive_team_membership(monkeypatch)
 
     with (
         patch("mcpgateway.cache.auth_cache.get_auth_cache", return_value=mock_auth_cache),
-        patch("mcpgateway.transports.streamablehttp_transport.SessionLocal", mock_session_local),
+        patch("mcpgateway.auth.SessionLocal", mock_session_local),
     ):
         result = await streamable_http_auth(scope, None, send)
 
@@ -5472,7 +5472,7 @@ async def test_streamable_http_auth_db_context_manager(monkeypatch):
 
     with (
         patch("mcpgateway.cache.auth_cache.get_auth_cache", return_value=mock_auth_cache),
-        patch("mcpgateway.transports.streamablehttp_transport.SessionLocal", mock_session_local),
+        patch("mcpgateway.auth.SessionLocal", mock_session_local),
     ):
         result = await streamable_http_auth(scope, None, send)
 
@@ -13297,6 +13297,7 @@ async def test_normalize_jwt_payload_uses_cached_admin_status(monkeypatch):
     )
     monkeypatch.setattr("mcpgateway.cache.auth_cache.get_auth_cache", lambda: auth_cache)
     monkeypatch.setattr(tr.settings, "auth_cache_enabled", True)
+    monkeypatch.setattr(tr.settings, "require_user_in_db", False)
     session_factory = MagicMock()
     monkeypatch.setattr(tr, "SessionLocal", session_factory)
     monkeypatch.setattr(tr, "_resolve_jwt_user_email_for_streamable", AsyncMock(return_value="cached@example.com"))
@@ -13357,6 +13358,7 @@ async def test_normalize_jwt_payload_warms_cache_after_batched_miss(monkeypatch)
     monkeypatch.setattr("mcpgateway.cache.auth_cache.get_auth_cache", lambda: auth_cache)
     monkeypatch.setattr(tr.settings, "auth_cache_enabled", True)
     monkeypatch.setattr(tr, "_resolve_jwt_user_email_for_streamable", AsyncMock(return_value="batched@example.com"))
+    monkeypatch.setattr(tr.settings, "require_user_in_db", False)
     batch_lookup = MagicMock(
         return_value={
             "user": {"email": "batched@example.com", "is_admin": True, "is_active": True},
@@ -18217,6 +18219,7 @@ async def test_normalize_jwt_payload_rejects_stale_api_token_membership(monkeypa
     auth_cache.get_team_membership_valid_sync.return_value = False
     monkeypatch.setattr("mcpgateway.cache.auth_cache.get_auth_cache", lambda: auth_cache)
     monkeypatch.setattr(tr.settings, "auth_cache_enabled", True)
+    monkeypatch.setattr(tr.settings, "require_user_in_db", False)
     monkeypatch.setattr(tr, "_resolve_jwt_user_email_for_streamable", AsyncMock(return_value="stale@example.com"))
     monkeypatch.setattr("mcpgateway.auth.normalize_token_teams", lambda _payload: ["team-stale"])
 
@@ -18333,12 +18336,18 @@ async def test_normalize_jwt_payload_rejects_direct_missing_user_when_required(m
 
 
 def _mock_membership_session(monkeypatch, memberships):
-    """Patch the direct fallback session with deterministic team rows."""
+    """Patch membership sessions with deterministic team rows."""
     db = MagicMock()
     db.execute.return_value.scalars.return_value.all.return_value = memberships
     session = MagicMock()
     session.__enter__.return_value = db
-    monkeypatch.setattr(tr, "SessionLocal", MagicMock(return_value=session))
+    session.__exit__.return_value = False
+
+    def _get_db():
+        yield db
+
+    monkeypatch.setattr("mcpgateway.auth.SessionLocal", MagicMock(return_value=session))
+    monkeypatch.setattr("mcpgateway.db.get_db", _get_db)
 
 
 @pytest.mark.asyncio
@@ -18377,3 +18386,69 @@ async def test_normalize_jwt_payload_rejects_missing_membership_on_cache_miss(mo
         await tr._normalize_jwt_payload({"sub": "former-member@example.com", "jti": "former-member-jti", "token_use": "api", "teams": ["team-removed"]})
 
     auth_cache.set_team_membership_valid_sync.assert_called_once_with("former-member@example.com", ["team-removed"], False)
+
+@pytest.mark.asyncio
+async def test_get_request_context_propagates_normalization_http_exception(monkeypatch):
+    """Authentication failures from fallback normalization must reach the caller."""
+    from unittest.mock import PropertyMock
+
+    token = tr.server_id_var.set("default_server_id")
+    mock_request = MagicMock()
+    mock_request.url.path = "/mcp"
+    mock_request.headers = {"authorization": "Bearer token"}
+    mock_request.cookies = {}
+    mock_ctx = MagicMock()
+    mock_ctx.request = mock_request
+
+    monkeypatch.setattr(tr, "require_auth_header_first", AsyncMock(return_value={"sub": "revoked@example.com"}))
+    monkeypatch.setattr(
+        tr,
+        "_normalize_jwt_payload",
+        AsyncMock(side_effect=HTTPException(status_code=tr.HTTP_401_UNAUTHORIZED, detail="Token has been revoked")),
+    )
+
+    try:
+        with patch.object(type(tr.mcp_app), "request_context", new_callable=PropertyMock, return_value=mock_ctx):
+            with pytest.raises(HTTPException, match="Token has been revoked"):
+                await tr._get_request_context_or_default()
+    finally:
+        tr.server_id_var.reset(token)
+
+@pytest.mark.asyncio
+async def test_normalize_jwt_payload_rechecks_cached_user_in_strict_mode(monkeypatch):
+    """Strict user-in-DB mode must reject a deleted user still present in cache."""
+    from mcpgateway.cache.auth_cache import CachedAuthContext
+
+    auth_cache = MagicMock()
+    auth_cache.get_auth_context = AsyncMock(
+        return_value=CachedAuthContext(
+            user={"email": "deleted@example.com", "is_admin": False, "is_active": True},
+            is_token_revoked=False,
+        )
+    )
+    monkeypatch.setattr("mcpgateway.cache.auth_cache.get_auth_cache", lambda: auth_cache)
+    monkeypatch.setattr(tr.settings, "auth_cache_enabled", True)
+    monkeypatch.setattr(tr.settings, "auth_cache_batch_queries", False)
+    monkeypatch.setattr(tr.settings, "require_user_in_db", True)
+    monkeypatch.setattr(tr.settings, "platform_admin_email", "admin@example.com")
+    monkeypatch.setattr(tr, "_resolve_jwt_user_email_for_streamable", AsyncMock(return_value="deleted@example.com"))
+    monkeypatch.setattr("mcpgateway.auth.resolve_session_teams", AsyncMock(return_value=[]))
+    db_lookup = MagicMock(return_value=None)
+    monkeypatch.setattr("mcpgateway.auth._get_user_by_email_sync", db_lookup)
+
+    with pytest.raises(HTTPException, match="User not found in database"):
+        await tr._normalize_jwt_payload({"sub": "deleted@example.com", "jti": "deleted-jti", "token_use": "session"})
+
+    db_lookup.assert_called_once_with("deleted@example.com")
+
+def test_validate_token_team_membership_checks_cache_and_database(monkeypatch):
+    """The shared membership helper validates all claimed teams and caches the result."""
+    from mcpgateway.auth import validate_token_team_membership
+
+    auth_cache = MagicMock()
+    auth_cache.get_team_membership_valid_sync.return_value = None
+    monkeypatch.setattr("mcpgateway.cache.auth_cache.get_auth_cache", lambda: auth_cache)
+    _mock_membership_session(monkeypatch, ["team-a"])
+
+    assert validate_token_team_membership("member@example.com", ["team-a"]) is True
+    auth_cache.set_team_membership_valid_sync.assert_called_once_with("member@example.com", ["team-a"], True)

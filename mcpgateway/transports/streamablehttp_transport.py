@@ -2189,6 +2189,8 @@ async def _get_request_context_or_default() -> Tuple[str, dict[str, Any], dict[s
                 user_ctx = await _normalize_jwt_payload(raw_payload)
             else:
                 user_ctx = {}
+        except HTTPException:
+            raise
         except Exception as e:
             logger.warning("Failed to recover user context in stateful session: %s", e)
             user_ctx = {}
@@ -2198,6 +2200,8 @@ async def _get_request_context_or_default() -> Tuple[str, dict[str, Any], dict[s
     except LookupError:
         # Not in a request context
         return s_id, request_headers_var.get(), user_context_var.get()
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("Error recovering context in stateful session: %s", e)
         return s_id, request_headers_var.get(), user_context_var.get()
@@ -2261,6 +2265,15 @@ async def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
                         raise HTTPException(status_code=HTTP_401_UNAUTHORIZED, detail="Account disabled")
                     if cached_user is None and settings.require_user_in_db and email != platform_admin_email:
                         raise HTTPException(status_code=HTTP_401_UNAUTHORIZED, detail="User not found in database")
+                    if cached_user and settings.require_user_in_db:
+                        # Match the primary auth path: a cached user is not proof
+                        # that the database record still exists in strict mode.
+                        # First-Party
+                        from mcpgateway.auth import _get_user_by_email_sync  # pylint: disable=import-outside-toplevel
+
+                        db_user = await asyncio.to_thread(_get_user_by_email_sync, email)
+                        if db_user is None:
+                            raise HTTPException(status_code=HTTP_401_UNAUTHORIZED, detail="User not found in database")
                     db_user_is_admin = bool(cached_user and cached_user.get("is_admin", False))
                     auth_context_resolved = True
                 elif settings.auth_cache_batch_queries:
@@ -2343,31 +2356,10 @@ async def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
     # SECURITY: API/legacy team claims must still match current active memberships.
     if token_use != "session" and final_teams and email:
         # First-Party
-        from mcpgateway.cache.auth_cache import get_auth_cache  # pylint: disable=import-outside-toplevel
-        from mcpgateway.db import EmailTeamMember  # pylint: disable=import-outside-toplevel
+        from mcpgateway.auth import validate_token_team_membership  # pylint: disable=import-outside-toplevel
 
-        if auth_cache is None:
-            auth_cache = get_auth_cache()
-        cached_membership = auth_cache.get_team_membership_valid_sync(email, final_teams)
-        if cached_membership is False:
+        if not validate_token_team_membership(email, final_teams):
             raise HTTPException(status_code=HTTP_403_FORBIDDEN, detail="Token invalid: User is no longer a member of the associated team")
-        if cached_membership is None:
-            with SessionLocal() as db:
-                memberships = (
-                    db.execute(
-                        select(EmailTeamMember.team_id).where(
-                            EmailTeamMember.team_id.in_(final_teams),
-                            EmailTeamMember.user_email == email,
-                            EmailTeamMember.is_active.is_(True),
-                        )
-                    )
-                    .scalars()
-                    .all()
-                )
-            if set(final_teams) - set(memberships):
-                auth_cache.set_team_membership_valid_sync(email, final_teams, False)
-                raise HTTPException(status_code=HTTP_403_FORBIDDEN, detail="Token invalid: User is no longer a member of the associated team")
-            auth_cache.set_team_membership_valid_sync(email, final_teams, True)
 
     user_ctx: dict[str, Any] = {
         "email": email,
@@ -5397,48 +5389,17 @@ class _StreamableHttpAuthHandler:
             # are skipped: resolve_session_teams() already resolved teams from
             # DB/cache, so a second membership query would be redundant.
             if token_use != "session" and final_teams and len(final_teams) > 0 and user_email:  # nosec B105
-                # Import lazily to avoid circular imports
                 # First-Party
-                from mcpgateway.cache.auth_cache import get_auth_cache  # pylint: disable=import-outside-toplevel
-                from mcpgateway.db import EmailTeamMember  # pylint: disable=import-outside-toplevel
+                from mcpgateway.auth import validate_token_team_membership  # pylint: disable=import-outside-toplevel
 
-                auth_cache = get_auth_cache()
-
-                # Check cache first (60s TTL)
-                cached_result = auth_cache.get_team_membership_valid_sync(user_email, final_teams)
-                if cached_result is False:
-                    _record_mcp_auth_cache_event("team_membership_cache_reject")
-                    logger.warning("MCP auth rejected: User %s no longer member of teams (cached)", user_email)
+                valid_membership = validate_token_team_membership(
+                    user_email,
+                    final_teams,
+                    on_cache_event=lambda outcome: _record_mcp_auth_cache_event(f"team_membership_cache_{outcome}"),
+                )
+                if not valid_membership:
+                    logger.warning("MCP auth rejected: User %s no longer member of teams", user_email)
                     return await self._send_error(detail="Token invalid: User is no longer a member of the associated team", status_code=HTTP_403_FORBIDDEN)
-
-                if cached_result is None:
-                    _record_mcp_auth_cache_event("team_membership_cache_miss")
-                    # Cache miss - query database
-                    with SessionLocal() as db:
-                        memberships = (
-                            db.execute(
-                                select(EmailTeamMember.team_id).where(
-                                    EmailTeamMember.team_id.in_(final_teams),
-                                    EmailTeamMember.user_email == user_email,
-                                    EmailTeamMember.is_active.is_(True),
-                                )
-                            )
-                            .scalars()
-                            .all()
-                        )
-
-                        valid_team_ids = set(memberships)
-                        missing_teams = set(final_teams) - valid_team_ids
-
-                        if missing_teams:
-                            logger.warning("MCP auth rejected: User %s no longer member of teams: %s", user_email, missing_teams)
-                            auth_cache.set_team_membership_valid_sync(user_email, final_teams, False)
-                            return await self._send_error(detail="Token invalid: User is no longer a member of the associated team", status_code=HTTP_403_FORBIDDEN)
-
-                        # Cache positive result
-                        auth_cache.set_team_membership_valid_sync(user_email, final_teams, True)
-                else:
-                    _record_mcp_auth_cache_event("team_membership_cache_hit")
 
             auth_user_ctx: dict[str, Any] = {
                 "email": user_email,
