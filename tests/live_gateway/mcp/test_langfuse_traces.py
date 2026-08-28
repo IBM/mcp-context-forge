@@ -255,6 +255,34 @@ def test_langfuse_public_traces_endpoint_returns_trace_list():
 @skip_no_langfuse
 @skip_no_langfuse_auth
 @pytest.mark.e2e
+def test_langfuse_trace_export_eventually_contains_resource_list_trace(jwt_token: str):
+    """A raw resources/list should export a Langfuse resource-list trace."""
+    fast_time_server_id = _lookup_server_id(jwt_token, "Fast Time Server")
+    triggered_after = time.time() - 1
+    list_response = _send_jsonrpc_http(
+        jwt_token,
+        f"/servers/{fast_time_server_id}/mcp/",
+        {"jsonrpc": "2.0", "id": 2, "method": "resources/list", "params": {}},
+    )
+    assert "error" not in list_response, f"resources/list returned error: {list_response}"
+
+    trace = _wait_for_fresh_trace(
+        triggered_after,
+        lambda candidate: _is_admin_jwt_trace(candidate) and (candidate.get("name") in {"resource.list", "Resources"} or _trace_attributes(candidate).get("langfuse.trace.name") == "Resources"),
+    )
+    trace_attrs = _trace_attributes(trace)
+
+    assert trace.get("userId") == ADMIN_EMAIL
+    assert isinstance(trace.get("tags"), list)
+    assert "auth:jwt" in trace.get("tags", [])
+    assert trace_attrs.get("langfuse.user.id") == ADMIN_EMAIL
+    assert trace_attrs.get("langfuse.trace.name") == "Resources"
+
+
+@skip_no_gateway
+@skip_no_langfuse
+@skip_no_langfuse_auth
+@pytest.mark.e2e
 def test_langfuse_trace_export_eventually_contains_resource_read_trace(jwt_token: str):
     """A raw resources/read should export resource URI metadata."""
     fast_time_server_id = _lookup_server_id(jwt_token, "Fast Time Server")

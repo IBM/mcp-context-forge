@@ -504,7 +504,7 @@ Your ContextForge Gateway provides these tool categories:
 - [ ] Install mcp-cli: `pip install -e ".[cli,dev]"`
 - [ ] Install ContextForge Gateway
 - [ ] Start gateway: `make serve` (runs on localhost:4444)
-- [ ] Create `server_config.json` with correct Python path
+- [ ] Create `server_config.json` with your gateway URL and auth token
 - [ ] Generate JWT token for authentication
 - [ ] Test connection: `mcp-cli ping --server contextforge`
 - [ ] Install Ollama and pull a compatible model (recommended)
