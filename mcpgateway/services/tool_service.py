@@ -6700,8 +6700,8 @@ class ToolService(BaseService):
                         )
                         if not settings.enable_sensitive_header_passthrough:
                             headers = filter_sensitive_headers(headers)
-                    # Pass headers to plugin - respect the sensitive header passthrough setting
-                    plugin_headers = filter_sensitive_headers(headers) if not settings.enable_sensitive_header_passthrough else headers
+                    # Plugins always see filtered headers for security reasons
+                    plugin_headers = filter_sensitive_headers(headers)
 
                     # Plugin hook: tool pre-invoke for A2A
                     plugin_manager = await self._get_plugin_manager(plugin_context_id)
@@ -6757,11 +6757,6 @@ class ToolService(BaseService):
                         base_headers=headers,
                         correlation_id=get_correlation_id(),
                     )
-
-                    # Final safety strip: X-Vault-Tokens must never reach the downstream A2A agent,
-                    # even if prepare_a2a_invocation added auth headers from agent config or passthrough
-                    # preserved it. This ensures the security invariant holds regardless of plugin state.
-                    prepared.headers = {hk: hv for hk, hv in prepared.headers.items() if hk.lower() != "x-vault-tokens"}
 
                     with create_child_span("tool.gateway_call", {"tool.name": name, "tool.id": tool_id, "tool.integration_type": "A2A"}):
                         # Make HTTP request with timeout enforcement
