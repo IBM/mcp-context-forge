@@ -35,33 +35,33 @@ Attach Continue to a gateway over **Streamable HTTP**:
 
 ### Direct Streamable HTTP
 
-Add the gateway as an MCP server in your workspace, in
-`.continue/mcpServers/contextforge.json`:
+Add the gateway to `mcpServers` in `~/.continue/config.yaml`:
 
-```json
-{
-  "mcpServers": {
-    "contextforge": {
-      "type": "streamable-http",
-      "url": "http://localhost:4444/servers/UUID_OF_SERVER_1/mcp/",
-      "requestOptions": {
-        "headers": {
-          "Authorization": "Bearer <YOUR_AUTH_TOKEN_HERE>"
-        }
-      }
-    }
-  }
-}
+```yaml
+name: Main Config
+version: 1.0.0
+schema: v1
+mcpServers:
+  - name: contextforge
+    type: streamable-http
+    url: http://localhost:4444/servers/UUID_OF_SERVER_1/mcp/
+    requestOptions:
+      headers:
+        Authorization: Bearer <YOUR_AUTH_TOKEN_HERE>
 ```
 
-Auth headers belong under `requestOptions.headers` — Continue does not read a top-level
-`headers` key for MCP servers.
+`mcpServers` is a list, and auth headers belong under `requestOptions.headers` — Continue
+does not read a top-level `headers` key. Reload the window afterwards; the server appears
+under **Tools ▸ MCP Servers** in the Continue sidebar.
 
 *Generate a token to paste above*:
 
 ```bash
 python3 -m mcpgateway.utils.create_jwt_token -u admin@example.com --secret my-test-key-but-now-longer-than-32-bytes
 ```
+
+The `--secret` value must match the Gateway's `JWT_SECRET_KEY`, otherwise the Gateway
+rejects the token.
 
 
 ## 🧪 Using Gateway Tools
