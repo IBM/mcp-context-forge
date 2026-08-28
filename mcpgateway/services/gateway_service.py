@@ -4738,7 +4738,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                                 if span:
                                     set_span_attribute(span, "health.status", "unhealthy")
                                     set_span_error(span, e)
-                                await self._handle_gateway_failure(gateway)
+                                await self._handle_gateway_failure(gateway, error=e)
                                 return
                     else:
                         # Handle non-OAuth authentication (existing logic)

@@ -6390,6 +6390,9 @@ class TestCheckSingleGatewayHealth:
 
         await gateway_service._check_single_gateway_health(gw)
         gateway_service._handle_gateway_failure.assert_awaited_once()
+        _, kwargs = gateway_service._handle_gateway_failure.await_args
+        assert isinstance(kwargs.get("error"), Exception)
+        assert str(kwargs["error"]) == "Token expired"
 
     @pytest.mark.asyncio
     async def test_health_check_oauth_auth_code_no_user(self, gateway_service, monkeypatch):
