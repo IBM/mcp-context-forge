@@ -145,6 +145,7 @@ from mcpgateway.schemas import (
     CursorPaginatedServersResponse,
     CursorPaginatedToolsResponse,
     GatewayCreate,
+    GatewayHandshakeResponse,
     GatewayImpactPreview,
     GatewayRead,
     GatewayRefreshResponse,
@@ -165,6 +166,7 @@ from mcpgateway.schemas import (
     RootUpdate,
     RPCRequest,
     ServerCreate,
+    ServerHandshakeRequest,
     ServerRead,
     ServerUpdate,
     TaggedEntity,
@@ -189,6 +191,7 @@ from mcpgateway.services.gateway_service import (
     GatewayLookupConflictError,
     GatewayNameConflictError,
     GatewayNotFoundError,
+    test_server_handshake,
 )
 from mcpgateway.services.import_service import ConflictStrategy, ImportConflictError
 from mcpgateway.services.import_service import ImportError as ImportServiceError
@@ -4453,6 +4456,76 @@ async def toggle_server_status(
 
     warnings.warn("The /toggle endpoint is deprecated. Use /state instead.", DeprecationWarning, stacklevel=2)
     return await set_server_state(server_id, activate, db, user)
+
+
+@server_router.post("/{server_id}/test-handshake", response_model=GatewayHandshakeResponse)
+# allow_admin_bypass=False mirrors the analogous /gateways/test-handshake endpoint: this
+# probe makes the gateway itself act as an MCP client, so it goes through the same
+# explicit permission check platform admins get for every other action, not the bypass.
+@require_permission("servers.read", allow_admin_bypass=False)
+async def test_server_mcp_handshake(
+    server_id: str,
+    request: Request,
+    body: ServerHandshakeRequest = Body(default_factory=ServerHandshakeRequest),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> GatewayHandshakeResponse:
+    """Test whether a virtual server's own MCP endpoint speaks MCP via a protocol handshake.
+
+    Unlike ``POST /gateways/test-handshake``, the target isn't an arbitrary
+    caller-supplied URL — it's this server's own ``/servers/{server_id}/mcp``
+    transport, resolved from a server ID the caller already has read access to.
+    The handshake runs in-process (no outbound network call, no SSRF allowlist),
+    reusing the caller's own forwarded credentials by default so the result
+    reflects what that caller would actually see.
+
+    Args:
+        server_id (str): The ID of the virtual server to test.
+        request (Request): The incoming request, used for scoped access validation and to forward the caller's own credentials.
+        body (ServerHandshakeRequest): Optional header overrides for the handshake.
+        db (Session): The database session used to interact with the data store.
+        user: Authenticated user context.
+
+    Returns:
+        GatewayHandshakeResponse: The handshake outcome, including negotiation path,
+            server identity, capabilities, component counts, and failure classification.
+
+    Raises:
+        HTTPException: If the server is not found or the caller lacks visibility.
+    """
+    auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
+    try:
+        server = await server_service.get_server(db, server_id, user_email=auth_user_email, token_teams=auth_token_teams)
+    except ServerNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    _enforce_scoped_resource_access(request, db, user, f"/servers/{server_id}/test-handshake")
+
+    # Reuse the caller's own credentials for the probe (header or cookie, same precedence
+    # as get_current_user_with_permissions) rather than minting a new token or bypassing
+    # auth: the panel is testing what this caller can actually reach.
+    forwarded_headers: Dict[str, str] = {}
+    auth_header = get_auth_header_value(request.headers) or ""
+    auth_token = auth_header[7:] if auth_header.lower().startswith("bearer ") else None
+    if not auth_token and hasattr(request, "cookies") and request.cookies:
+        auth_token = request.cookies.get("jwt_token") or request.cookies.get("access_token")
+    if auth_token:
+        # Forward under the *configured* auth header name -- when AUTH_HEADER_NAME is
+        # customized away from the default "Authorization", the nested request's own
+        # auth extraction (get_auth_header_value / _resolve_auth_header_name) only reads
+        # that header, so hardcoding "Authorization" here would make the probe fail auth
+        # even though the outer request succeeded.
+        forwarded_headers[_resolve_auth_header_name(settings)] = f"Bearer {auth_token}"
+    elif settings.trust_proxy_auth:
+        # No bearer/cookie credential: this caller may have been authenticated via the
+        # configured trusted-proxy identity header instead (TRUST_PROXY_AUTH_DANGEROUSLY).
+        # Forward that header's *own already-verified value from this request* -- never
+        # anything from the request body -- so the probe reflects the same identity that
+        # got the caller past auth here.
+        proxy_user = request.headers.get(settings.proxy_user_header)
+        if proxy_user:
+            forwarded_headers[settings.proxy_user_header] = proxy_user
+
+    return await test_server_handshake(server.id, server.name, server.enabled, body, forwarded_headers)
 
 
 @server_router.delete("/{server_id}", response_model=Dict[str, str])
