@@ -715,11 +715,8 @@ mcpContextForge:
     # ─ Additional Settings (defaults from config.py) ─
     # Validation & sanitization
     EXPERIMENTAL_VALIDATE_IO: "false" # enable experimental input/output validation
-    VALIDATION_MIDDLEWARE_ENABLED: "false" # deprecated; prefer endpoint-level and protocol-specific validation
     VALIDATION_STRICT: "true" # reject requests with validation failures
     JSON_SCHEMA_VALIDATION_STRICT: "true" # reject tool registrations with invalid JSON schemas
-    SANITIZE_OUTPUT: "true" # strip control characters from responses
-    MAX_PATH_DEPTH: "10" # maximum allowed path depth
     MAX_PARAM_LENGTH: "10000" # maximum parameter length (characters)
     TOOL_DESCRIPTION_FORBIDDEN_PATTERNS_ENABLED: "true" # enable forbidden pattern checks on tool descriptions
     TOOL_DESCRIPTION_FORBIDDEN_PATTERNS: '["&&", ";", "||", "$(", "> ", "< "]' # substrings blocked in tool descriptions (JSON array)
