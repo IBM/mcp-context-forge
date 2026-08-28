@@ -1124,6 +1124,197 @@ class TestServerEndpoints:
         mock_list_prompts.assert_called_once()
 
 
+class TestServerHandshakeEndpoint:
+    """Tests for POST /servers/{server_id}/test-handshake (issue #6370).
+
+    Unlike /gateways/test-handshake, the target is the virtual server's own
+    /servers/{id}/mcp transport (derived from the ID, not a caller-supplied
+    URL), so these tests focus on: 404 for an invisible/missing server, the
+    router-level credential-forwarding logic (Authorization header vs. cookie
+    vs. neither), and that both the legacy and /v1/virtual-servers alias
+    paths reach the same handler. The handshake mechanics themselves
+    (in-process ASGI dispatch, MCP negotiation) are covered directly against
+    ``gateway_service.test_server_handshake``.
+    """
+
+    @pytest.mark.parametrize("path_prefix", SERVER_CRUD_PREFIXES)
+    @patch("mcpgateway.main.test_server_handshake")
+    @patch("mcpgateway.main.server_service.get_server")
+    def test_handshake_endpoint_success(self, mock_get_server, mock_handshake, path_prefix, test_client, auth_headers):
+        """A visible, enabled server reaches test_server_handshake and returns its result."""
+        # First-Party
+        from mcpgateway.schemas import GatewayHandshakeResponse
+
+        mock_get_server.return_value = ServerRead(**MOCK_SERVER_READ)
+        mock_handshake.return_value = GatewayHandshakeResponse(
+            success=True,
+            latency_ms=12,
+            negotiation_path="initialize",
+            protocol_version="2025-11-25",
+            server_name="test_server",
+            server_version="1.0",
+            credential_source="session",
+        )
+
+        response = test_client.post(f"{path_prefix}/1/test-handshake", json={}, headers=auth_headers)
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["negotiationPath"] == "initialize"
+        assert data["credentialSource"] == "session"
+        mock_handshake.assert_called_once()
+        call_args = mock_handshake.call_args.args
+        assert call_args[0] == MOCK_SERVER_READ["id"]
+        assert call_args[1] == MOCK_SERVER_READ["name"]
+        assert call_args[2] == MOCK_SERVER_READ["enabled"]
+
+    @patch("mcpgateway.main.server_service.get_server")
+    def test_handshake_endpoint_not_found(self, mock_get_server, test_client, auth_headers):
+        """A missing or invisible server returns 404 without attempting a handshake."""
+        # First-Party
+        from mcpgateway.services.server_service import ServerNotFoundError
+
+        mock_get_server.side_effect = ServerNotFoundError("Server not found: missing")
+
+        response = test_client.post("/servers/missing/test-handshake", json={}, headers=auth_headers)
+
+        assert response.status_code == 404
+
+    @patch("mcpgateway.main.test_server_handshake")
+    @patch("mcpgateway.main.server_service.get_server")
+    def test_handshake_falls_back_to_cookie_when_no_bearer_header(self, mock_get_server, mock_handshake, test_client):
+        """With no Authorization header, a jwt_token cookie is forwarded as the handshake's credentials."""
+        # First-Party
+        from mcpgateway.schemas import GatewayHandshakeResponse
+
+        mock_get_server.return_value = ServerRead(**MOCK_SERVER_READ)
+        mock_handshake.return_value = GatewayHandshakeResponse(success=True, latency_ms=1)
+
+        test_client.cookies.set("jwt_token", "cookie-token")
+        try:
+            test_client.post("/servers/1/test-handshake", json={})
+        finally:
+            test_client.cookies.delete("jwt_token")
+
+        forwarded_headers = mock_handshake.call_args.args[4]
+        assert forwarded_headers.get("Authorization") == "Bearer cookie-token"
+
+    @patch("mcpgateway.main.test_server_handshake")
+    @patch("mcpgateway.main.server_service.get_server")
+    def test_handshake_forwards_bearer_token(self, mock_get_server, mock_handshake, test_client, auth_headers):
+        """The caller's own bearer token is forwarded as the handshake's default credentials."""
+        # First-Party
+        from mcpgateway.schemas import GatewayHandshakeResponse
+
+        mock_get_server.return_value = ServerRead(**MOCK_SERVER_READ)
+        mock_handshake.return_value = GatewayHandshakeResponse(success=True, latency_ms=1)
+
+        test_client.post("/servers/1/test-handshake", json={}, headers=auth_headers)
+
+        forwarded_headers = mock_handshake.call_args.args[4]
+        assert forwarded_headers.get("Authorization") == auth_headers["Authorization"]
+
+    @patch("mcpgateway.main.test_server_handshake")
+    @patch("mcpgateway.main.server_service.get_server")
+    def test_handshake_forwards_bearer_under_custom_auth_header_name(self, mock_get_server, mock_handshake, test_client, mock_jwt_token, monkeypatch):
+        """When AUTH_HEADER_NAME is customized, the bearer token is forwarded under that configured
+        header name -- not hardcoded 'Authorization' -- since the nested request's own auth extraction
+        only reads the configured header.
+        """
+        # First-Party
+        from mcpgateway.schemas import GatewayHandshakeResponse
+
+        monkeypatch.setattr(settings, "auth_header_name", "X-MCP-Gateway-Auth")
+
+        mock_get_server.return_value = ServerRead(**MOCK_SERVER_READ)
+        mock_handshake.return_value = GatewayHandshakeResponse(success=True, latency_ms=1)
+
+        test_client.post("/servers/1/test-handshake", json={}, headers={"X-MCP-Gateway-Auth": f"Bearer {mock_jwt_token}"})
+
+        forwarded_headers = mock_handshake.call_args.args[4]
+        assert forwarded_headers.get("X-MCP-Gateway-Auth") == f"Bearer {mock_jwt_token}"
+        assert "Authorization" not in forwarded_headers
+
+    @patch("mcpgateway.main.test_server_handshake")
+    @patch("mcpgateway.main.server_service.get_server")
+    def test_handshake_without_credentials_forwards_nothing(self, mock_get_server, mock_handshake, test_client):
+        """A request with no Authorization header and no cookie forwards no credentials."""
+        # First-Party
+        from mcpgateway.schemas import GatewayHandshakeResponse
+
+        mock_get_server.return_value = ServerRead(**MOCK_SERVER_READ)
+        mock_handshake.return_value = GatewayHandshakeResponse(success=True, latency_ms=1)
+
+        # The test_client fixture's dependency overrides bypass auth regardless of headers,
+        # so this exercises the router's own extraction logic in isolation.
+        test_client.post("/servers/1/test-handshake", json={})
+
+        forwarded_headers = mock_handshake.call_args.args[4]
+        assert "Authorization" not in forwarded_headers
+
+    @patch("mcpgateway.main.test_server_handshake")
+    @patch("mcpgateway.main.server_service.get_server")
+    def test_handshake_header_override_reaches_service(self, mock_get_server, mock_handshake, test_client, auth_headers):
+        """An explicit ``headers`` override in the request body is passed through to the service.
+
+        The service layer (not the router) is responsible for restricting which override
+        headers are actually honored -- see test_server_handshake.py's deny-path coverage.
+        """
+        # First-Party
+        from mcpgateway.schemas import GatewayHandshakeResponse
+
+        mock_get_server.return_value = ServerRead(**MOCK_SERVER_READ)
+        mock_handshake.return_value = GatewayHandshakeResponse(success=True, latency_ms=1)
+
+        test_client.post("/servers/1/test-handshake", json={"headers": {"X-Custom": "value"}}, headers=auth_headers)
+
+        body = mock_handshake.call_args.args[3]
+        assert body.headers == {"X-Custom": "value"}
+
+    @patch("mcpgateway.main.test_server_handshake")
+    @patch("mcpgateway.main.server_service.get_server")
+    def test_handshake_forwards_trusted_proxy_identity_header_when_no_bearer_or_cookie(self, mock_get_server, mock_handshake, test_client, monkeypatch):
+        """With TRUST_PROXY_AUTH_DANGEROUSLY enabled and no Authorization header/cookie, the caller's own
+        already-verified trusted-proxy identity header (from this request, not the body) is forwarded under
+        the configured header name -- not hardcoded to 'Authorization'.
+        """
+        # First-Party
+        from mcpgateway.schemas import GatewayHandshakeResponse
+
+        monkeypatch.setattr(settings, "trust_proxy_auth", True)
+        monkeypatch.setattr(settings, "proxy_user_header", "X-Authenticated-User")
+
+        mock_get_server.return_value = ServerRead(**MOCK_SERVER_READ)
+        mock_handshake.return_value = GatewayHandshakeResponse(success=True, latency_ms=1)
+
+        test_client.post("/servers/1/test-handshake", json={}, headers={"X-Authenticated-User": "proxy-user@example.com"})
+
+        forwarded_headers = mock_handshake.call_args.args[4]
+        assert forwarded_headers.get("X-Authenticated-User") == "proxy-user@example.com"
+        assert "Authorization" not in forwarded_headers
+
+    @patch("mcpgateway.main.test_server_handshake")
+    @patch("mcpgateway.main.server_service.get_server")
+    def test_handshake_does_not_forward_proxy_identity_header_when_trust_proxy_auth_disabled(self, mock_get_server, mock_handshake, test_client, monkeypatch):
+        """With TRUST_PROXY_AUTH_DANGEROUSLY disabled (the default), a caller-supplied identity header is
+        never forwarded into the probe, even if it happens to match the configured header name.
+        """
+        # First-Party
+        from mcpgateway.schemas import GatewayHandshakeResponse
+
+        monkeypatch.setattr(settings, "trust_proxy_auth", False)
+        monkeypatch.setattr(settings, "proxy_user_header", "X-Authenticated-User")
+
+        mock_get_server.return_value = ServerRead(**MOCK_SERVER_READ)
+        mock_handshake.return_value = GatewayHandshakeResponse(success=True, latency_ms=1)
+
+        test_client.post("/servers/1/test-handshake", json={}, headers={"X-Authenticated-User": "spoofed@example.com"})
+
+        forwarded_headers = mock_handshake.call_args.args[4]
+        assert "X-Authenticated-User" not in forwarded_headers
+
+
 # ----------------------------------------------------- #
 # Tool Management Tests                                 #
 # ----------------------------------------------------- #

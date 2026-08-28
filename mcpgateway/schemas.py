@@ -4964,10 +4964,28 @@ class GatewayHandshakeResponse(BaseModelWithConfigDict):
     capabilities: Optional[Dict[str, Any]] = None
     component_counts: Optional[Dict[str, int]] = Field(None, description="Counts for tools/resources/prompts; a key is absent when the capability is not advertised")
     counts_partial: bool = Field(False, description="True when any list result had a nextCursor (counts are first-page lower bounds)")
-    credential_source: Literal["stored", "form", "none"] = "none"
+    credential_source: Literal["stored", "form", "none", "session"] = "none"
     failure_class: Optional[Literal["transport", "protocol", "auth", "invalid_response"]] = None
     error: Optional[str] = None
     raw_preview: Optional[str] = Field(None, description="Size-capped JSON preview of the final handshake payload")
+
+
+class ServerHandshakeRequest(BaseModelWithConfigDict):
+    """Request to run an MCP handshake test against a virtual server's own endpoint.
+
+    Unlike :class:`GatewayHandshakeRequest`, the target is derived from the
+    trusted, already-registered virtual server ID (path parameter) rather than
+    an arbitrary caller-supplied URL, so no ``base_url``/``path`` fields exist here.
+    """
+
+    headers: Optional[Dict[str, str]] = Field(
+        None,
+        description=(
+            "Optional header overrides for the handshake's credentials. Only 'Authorization' and the "
+            "configured AUTH_HEADER_NAME (when customized) are honored -- any other header (including "
+            "proxy-identity, client-IP, session, or hop-by-hop headers) is ignored."
+        ),
+    )
 
 
 class TaggedEntity(BaseModelWithConfigDict):
