@@ -287,11 +287,10 @@ In interactive mode, use these commands:
 
 ### Environment Variables
 
-```bash
-# ContextForge Gateway connection
-export MCP_AUTH="Bearer your-jwt-token"
-export MCP_SERVER_URL="http://localhost:4444"
+The gateway URL and auth token live in `server_config.json` — see **Configuring Your
+Server** — not in the environment. These variables configure the LLM provider only:
 
+```bash
 # LLM Provider API keys
 export OPENAI_API_KEY="sk-your-openai-key"
 export ANTHROPIC_API_KEY="sk-ant-your-anthropic-key"
