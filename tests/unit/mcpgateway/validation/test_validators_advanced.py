@@ -961,6 +961,21 @@ class TestValidatePath:
         with pytest.raises(ValueError, match="outside allowed roots"):
             SecurityValidator.validate_path("/tmp/file", allowed_roots=["/nonexistent/root"])
 
+    def test_allowed_roots_rejects_sibling_prefix_directory(self):
+        """A sibling directory sharing an allowed root's textual prefix is rejected.
+
+        ``/tmp/data_secret`` shares a string prefix with the ``/tmp/data`` root, so a
+        ``startswith`` confinement check would wrongly allow it.
+        """
+        for candidate in ("/tmp/data_secret/creds.json", "/tmp/datax", "/tmp/data-backup/file.txt"):
+            with pytest.raises(ValueError, match="outside allowed roots"):
+                SecurityValidator.validate_path(candidate, allowed_roots=["/tmp/data"])
+
+    def test_allowed_roots_permits_root_and_descendants(self):
+        """The allowed root itself and paths beneath it remain valid."""
+        assert SecurityValidator.validate_path("/tmp/data", allowed_roots=["/tmp/data"])
+        assert SecurityValidator.validate_path("/tmp/data/sub/file.txt", allowed_roots=["/tmp/data"])
+
     def test_valid_path(self):
         result = SecurityValidator.validate_path("/tmp")
         assert result  # Returns resolved path

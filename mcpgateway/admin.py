@@ -23,7 +23,9 @@ import binascii
 from collections import defaultdict
 import csv
 from datetime import datetime, timedelta, timezone
+from email.utils import formatdate
 from functools import lru_cache, wraps
+import hashlib
 import html
 import inspect
 import io
@@ -199,11 +201,13 @@ from mcpgateway.services.token_catalog_service import TokenCatalogService
 from mcpgateway.services.tool_service import ToolError, ToolLockConflictError, ToolNameConflictError, ToolNotFoundError, ToolService
 from mcpgateway.utils.create_jwt_token import create_jwt_token, get_jwt_token
 from mcpgateway.utils.error_formatter import ErrorFormatter, sanitize_validation_error_for_log
+from mcpgateway.utils.log_sanitizer import sanitize_for_log
 from mcpgateway.utils.metadata_capture import MetadataCapture
 from mcpgateway.utils.oauth_resource import parse_oauth_resource_form
 from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.pagination import paginate_query
 from mcpgateway.utils.passthrough_headers import PassthroughHeadersError
+from mcpgateway.utils.paths import is_path_within, open_confined
 from mcpgateway.utils.paths import resolve_root_path as _resolve_root_path
 from mcpgateway.utils.security_cookies import clear_auth_cookie, CookieTooLargeError, set_auth_cookie
 from mcpgateway.utils.services_auth import encode_auth
@@ -15478,6 +15482,7 @@ async def admin_stream_logs(
 @admin_router.get("/logs/file")
 @require_permission("admin.system_config", allow_admin_bypass=False)
 async def admin_get_log_file(
+    request: Request,
     filename: Optional[str] = None,
     user=Depends(get_current_user_with_permissions),  # pylint: disable=unused-argument
     _db: Session = Depends(get_db),
@@ -15485,6 +15490,7 @@ async def admin_get_log_file(
     """Download log file.
 
     Args:
+        request: Incoming request, used to read a conditional/range header for resumable downloads.
         filename: Specific log file to download (optional)
         user: Authenticated user
         _db: Database session for permission checks.
@@ -15503,43 +15509,154 @@ async def admin_get_log_file(
     log_dir = Path(settings.log_folder) if settings.log_folder else Path(".")
 
     if filename:
-        # Download specific file
-        file_path = log_dir / filename
-
-        # Security: Ensure file is within log directory
-        try:
-            file_path = file_path.resolve()
-            log_dir_resolved = log_dir.resolve()
-            if not str(file_path).startswith(str(log_dir_resolved)):
-                raise HTTPException(403, _ACCESS_DENIED_MSG)
-        except Exception:
+        # Download specific file.
+        #
+        # Security: the download is confined to LOG_FOLDER by two independent checks.
+        #
+        #   1. Reject obviously hostile input *before* joining it onto the log
+        #      directory: absolute paths and drive/UNC anchors would make ``/`` discard
+        #      log_dir entirely, ``..`` segments walk upwards, and a NUL byte can
+        #      truncate the path at the OS layer.
+        #   2. Resolve the joined path (collapsing symlinks and any remaining relative
+        #      segments) and require it to stay inside the resolved log directory.
+        #
+        # Check 2 is the real control; ``is_path_within`` compares whole path
+        # components, so a sibling directory that merely shares a textual prefix with
+        # LOG_FOLDER is rejected.
+        if "\x00" in filename:
             raise HTTPException(400, "Invalid file path")
 
-        # Check if file exists
-        if not file_path.exists() or not file_path.is_file():
-            raise HTTPException(404, f"Log file not found: {filename}")
+        candidate = Path(filename)
+        if candidate.is_absolute() or candidate.drive or candidate.root or ".." in candidate.parts:
+            raise HTTPException(400, "Invalid file path")
 
-        # Check if it's a log file
+        try:
+            file_path = (log_dir / candidate).resolve()
+            log_dir_resolved = log_dir.resolve()
+        except (OSError, ValueError, RuntimeError):
+            raise HTTPException(400, "Invalid file path")
+
+        if not is_path_within(file_path, log_dir_resolved):
+            raise HTTPException(403, _ACCESS_DENIED_MSG)
+
+        # Check if it's a log file (name check only; no filesystem access yet)
         if not (file_path.suffix in [".log", ".jsonl", ".json"] or file_path.stem.startswith(Path(settings.log_file).stem)):
             raise HTTPException(403, "Not a log file")
 
-        # Return file for download using FileResponse (streams asynchronously)
-        # Pre-stat the file to catch issues early and provide Content-Length
+        # Open the verified fd directly via a component-by-component confined open
+        # instead of handing a pathname to FileResponse, which reopens the path when it
+        # streams. A process able to write into log_dir_resolved could otherwise rename
+        # the checked file away and put a symlink in its place between the confinement
+        # check above and that later reopen (TOCTOU), causing this privileged endpoint
+        # to stream an attacker-chosen target. On POSIX, open_confined() resolves and
+        # opens each path component with O_NOFOLLOW relative to its already-open
+        # parent, so the fd it returns refers to exactly the inode that was validated.
+        # On platforms without that atomic chaining (Windows), it falls back to a
+        # per-component symlink/reparse-point rejection that is not atomic but still
+        # rejects every reparse point present at check time.
         try:
-            file_stat = file_path.stat()
-            LOGGER.info(f"Serving log file download: {file_path.name} ({file_stat.st_size} bytes)")
-            return FileResponse(
-                path=file_path,
-                media_type="application/octet-stream",
-                filename=file_path.name,
-                stat_result=file_stat,
-            )
+            file_fd, file_stat = open_confined(log_dir_resolved, candidate)
         except FileNotFoundError:
-            LOGGER.error(f"Log file disappeared before streaming: {filename}")
             raise HTTPException(404, f"Log file not found: {filename}")
+        except (OSError, ValueError) as e:
+            LOGGER.warning("Log file access denied for %s: %s", sanitize_for_log(filename), sanitize_for_log(e))
+            raise HTTPException(403, _ACCESS_DENIED_MSG)
         except Exception as e:
-            LOGGER.error(f"Error preparing file for download: {e}")
+            LOGGER.error("Error opening log file for download: %s", sanitize_for_log(e))
             raise HTTPException(500, f"Error reading file for download: {e}")
+
+        LOGGER.info(f"Serving log file download: {file_path.name} ({file_stat.st_size} bytes)")
+
+        chunk_size = 64 * 1024
+        quoted_name = urllib.parse.quote(file_path.name)
+        content_disposition = f"attachment; filename*=utf-8''{quoted_name}" if quoted_name != file_path.name else f'attachment; filename="{file_path.name}"'
+
+        file_size = file_stat.st_size
+        last_modified = formatdate(file_stat.st_mtime, usegmt=True)
+        etag = f'"{hashlib.md5(f"{file_stat.st_mtime}-{file_size}".encode(), usedforsecurity=False).hexdigest()}"'  # nosec B324 - cache validator, not a security control
+
+        # file_fd was validated and opened by open_confined() above (see the comment on that
+        # call); wrap it in a Python file object now, outside the generator, so a single owner
+        # (this handle) exists regardless of whether the generator body ever runs. Starlette can
+        # cancel a StreamingResponse before its body generator is first iterated (e.g. the client
+        # disconnects immediately) -- in that case the generator's own `finally` never executes,
+        # so the BackgroundTask below is the fallback that guarantees the fd is closed. handle.close()
+        # is idempotent, so running both paths is safe.
+        handle = os.fdopen(file_fd, "rb")
+
+        headers = {
+            "Content-Disposition": content_disposition,
+            "Accept-Ranges": "bytes",
+            "Last-Modified": last_modified,
+            "ETag": etag,
+        }
+
+        range_header = request.headers.get("range")
+        if_range = request.headers.get("if-range")
+        start, end = 0, file_size
+        status_code = 200
+        if range_header and (if_range is None or if_range in (etag, last_modified)):
+            range_unit, has_value, spec_value = range_header.strip().partition("=")
+            if not has_value or range_unit.strip().lower() != "bytes":
+                handle.close()
+                raise HTTPException(400, "Malformed Range header")
+            if "," in spec_value:
+                # Multiple ranges (e.g. "bytes=0-1,4-5"): multipart/byteranges responses
+                # aren't implemented here. Per RFC 7233 SS3.1, a server may ignore a Range
+                # header it can't satisfy the way the client wants and return the full
+                # entity instead of erroring, so fall through and serve start/end as set
+                # above (0, file_size) rather than rejecting the request outright.
+                pass
+            else:
+                range_match = re.fullmatch(r"(\d*)-(\d*)", spec_value)
+                if not range_match or not (range_match.group(1) or range_match.group(2)):
+                    handle.close()
+                    raise HTTPException(400, "Malformed Range header")
+                range_start, range_end = range_match.group(1), range_match.group(2)
+                try:
+                    if range_start:
+                        start = int(range_start)
+                        end = int(range_end) + 1 if range_end else file_size
+                    else:
+                        # Suffix range (e.g. "bytes=-500"): last N bytes of the file.
+                        start = max(file_size - int(range_end), 0)
+                        end = file_size
+                except ValueError:
+                    # int() enforces sys.get_int_max_str_digits(); an oversized numeric
+                    # range value hits that limit and must not surface as a 500.
+                    handle.close()
+                    raise HTTPException(400, "Malformed Range header")
+                if start >= file_size or start >= end:
+                    handle.close()
+                    raise HTTPException(416, "Requested range not satisfiable", headers={"Content-Range": f"bytes */{file_size}"})
+                end = min(end, file_size)
+                status_code = 206
+                headers["Content-Range"] = f"bytes {start}-{end - 1}/{file_size}"
+
+        headers["Content-Length"] = str(end - start)
+        handle.seek(start)
+        remaining = end - start
+
+        def _iter_log_file():
+            """Yield the requested byte range in chunks, closing the fd when done."""
+            nonlocal remaining
+            try:
+                while remaining > 0:
+                    chunk = handle.read(min(chunk_size, remaining))
+                    if not chunk:
+                        break
+                    remaining -= len(chunk)
+                    yield chunk
+            finally:
+                handle.close()
+
+        return StreamingResponse(
+            _iter_log_file(),
+            status_code=status_code,
+            media_type="application/octet-stream",
+            headers=headers,
+            background=BackgroundTask(handle.close),
+        )
 
     # List available log files
     log_files = []

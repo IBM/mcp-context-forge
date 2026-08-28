@@ -444,6 +444,29 @@ class TestValidationMiddleware:
             assert exc_info.value.status_code == 400
             assert "Path outside allowed roots" in exc_info.value.detail
 
+    def test_validate_resource_path_rejects_sibling_prefix_root(self):
+        """A sibling directory sharing an allowed root's textual prefix is rejected.
+
+        ``/safe_secret`` shares a string prefix with the ``/safe`` root, so a
+        ``startswith`` confinement check would wrongly allow it.
+        """
+        with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
+            mock_settings.experimental_validate_io = True
+            mock_settings.validation_strict = True
+            mock_settings.sanitize_output = False
+            mock_settings.allowed_roots = ["/safe"]
+            mock_settings.dangerous_patterns = []
+            mock_settings.max_path_depth = 100
+
+            middleware = ValidationMiddleware(app=None)
+
+            for candidate in ("/safe_secret/creds.json", "/safex", "/safe-backup/file.txt"):
+                with pytest.raises(HTTPException) as exc_info:
+                    middleware.validate_resource_path(candidate)
+
+                assert exc_info.value.status_code == 400
+                assert "Path outside allowed roots" in exc_info.value.detail
+
     def test_validate_resource_path_allowed_root_returns_resolved_path(self, tmp_path):
         """Test valid paths under allowed roots return resolved path."""
         with patch("mcpgateway.middleware.validation_middleware.settings") as mock_settings:
