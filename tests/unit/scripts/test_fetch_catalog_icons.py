@@ -10,15 +10,18 @@ Tests for offline-safe catalog icon generation helpers.
 from argparse import Namespace
 from io import BytesIO
 from pathlib import Path
+import socket
 from unittest.mock import patch
 
 # Third-Party
+import httpx
 from PIL import Image
 import pytest
 import yaml
 
 # Local
 from scripts.fetch_catalog_icons import (
+    _fetch,
     _has_normalized_icon_bounds,
     _image_to_png,
     _registrable_domain,
@@ -204,3 +207,63 @@ def test_icon_fetch_rejects_non_https_and_private_hosts() -> None:
         _validate_public_https_url("http://example.com/favicon.ico")
     with pytest.raises(IconFetchError, match="Private or special-purpose"):
         _validate_public_https_url("https://localhost/favicon.ico")
+
+
+def test_icon_fetch_pins_validated_address_and_preserves_hostname_for_tls() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, headers={"content-type": "image/png"}, content=b"png")
+
+    resolved = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443))]
+    with patch("scripts.fetch_catalog_icons.socket.getaddrinfo", return_value=resolved) as getaddrinfo:
+        with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+            result = _fetch(client, "https://catalog.example/logo.png", expected_image=True)
+
+    assert result.url == "https://catalog.example/logo.png"
+    assert len(requests) == 1
+    request = requests[0]
+    assert request.url.host == "93.184.216.34"
+    assert request.headers["host"] == "catalog.example"
+    assert request.extensions["sni_hostname"] == "catalog.example"
+    getaddrinfo.assert_called_once_with("catalog.example", 443, type=socket.SOCK_STREAM)
+
+
+def test_icon_fetch_revalidates_each_redirect_before_connecting() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(302, headers={"location": "https://internal.example/logo.png"})
+
+    def resolve(host: str, *_: object, **__: object) -> list[tuple[int, int, int, str, tuple[str, int]]]:
+        address = "93.184.216.34" if host == "catalog.example" else "127.0.0.1"
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (address, 443))]
+
+    with patch("scripts.fetch_catalog_icons.socket.getaddrinfo", side_effect=resolve):
+        with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+            with pytest.raises(IconFetchError, match="Private or special-purpose"):
+                _fetch(client, "https://catalog.example/logo.png", expected_image=True)
+
+    assert len(requests) == 1
+
+
+def test_icon_generation_disables_environment_proxies(tmp_path: Path) -> None:
+    catalog_path = tmp_path / "catalog.yml"
+    catalog_path.write_text("catalog_servers: []\n", encoding="utf-8")
+    args = Namespace(
+        catalog=catalog_path,
+        output_dir=tmp_path / "icons",
+        overrides=tmp_path / "overrides.json",
+        timeout=1.0,
+        force=False,
+        normalize_existing=False,
+        dry_run=False,
+        strict=False,
+    )
+
+    with patch("scripts.fetch_catalog_icons.httpx.Client") as client_class:
+        assert generate_icons(args) == 0
+
+    assert client_class.call_args.kwargs["trust_env"] is False

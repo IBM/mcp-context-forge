@@ -20,7 +20,7 @@ from pathlib import Path
 import re
 import socket
 from typing import Any, Iterable
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import urljoin, urlsplit, urlunsplit
 
 # Third-Party
 import httpx
@@ -75,6 +75,25 @@ class FetchResult:
     body: bytes
 
 
+@dataclass(frozen=True)
+class ValidatedDestination:
+    """An HTTPS destination whose resolved address passed network checks."""
+
+    url: str
+    hostname: str
+    host_header: str
+    address: str
+
+    @property
+    def pinned_url(self) -> str:
+        """Return URL that connects to validated address while retaining request path."""
+        parsed = urlsplit(self.url)
+        address = f"[{self.address}]" if ":" in self.address else self.address
+        port = parsed.port
+        netloc = address if port is None else f"{address}:{port}"
+        return urlunsplit((parsed.scheme, netloc, parsed.path, parsed.query, ""))
+
+
 class IconLinkParser(HTMLParser):
     """Extract candidate icon links without executing page content."""
 
@@ -115,8 +134,8 @@ def _safe_asset_id(catalog_id: str) -> str:
     return safe
 
 
-def _validate_public_https_url(url: str) -> None:
-    """Reject non-HTTPS and private-network destinations before fetching."""
+def _validate_public_https_url(url: str) -> ValidatedDestination:
+    """Validate an HTTPS URL and retain an address for the subsequent connection."""
     parsed = urlsplit(url)
     if parsed.scheme.lower() != "https" or not parsed.hostname:
         raise IconFetchError(f"Only HTTPS URLs with host are allowed: {url}")
@@ -124,14 +143,18 @@ def _validate_public_https_url(url: str) -> None:
         raise IconFetchError(f"Credentials in icon URL are not allowed: {url}")
 
     try:
-        addresses = {item[4][0] for item in socket.getaddrinfo(parsed.hostname, parsed.port or 443, type=socket.SOCK_STREAM)}
-    except OSError as exc:
+        port = parsed.port or 443
+        addresses = list(dict.fromkeys(item[4][0] for item in socket.getaddrinfo(parsed.hostname, port, type=socket.SOCK_STREAM)))
+    except (OSError, ValueError) as exc:
         raise IconFetchError(f"Could not resolve icon host {parsed.hostname}: {exc}") from exc
 
     for address in addresses:
         ip = ipaddress.ip_address(address)
-        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved or ip.is_unspecified:
+        if not ip.is_global:
             raise IconFetchError(f"Private or special-purpose icon host rejected: {parsed.hostname}")
+    if not addresses:
+        raise IconFetchError(f"Could not resolve icon host {parsed.hostname}")
+    return ValidatedDestination(url=url, hostname=parsed.hostname, host_header=parsed.netloc, address=addresses[0])
 
 
 def _read_response(response: httpx.Response) -> bytes:
@@ -148,9 +171,12 @@ def _fetch(client: httpx.Client, url: str, *, expected_image: bool = False) -> F
     """Fetch URL with bounded redirects, body size, and content checks."""
     current = url
     for _ in range(MAX_REDIRECTS + 1):
-        _validate_public_https_url(current)
+        destination = _validate_public_https_url(current)
+        request = client.build_request("GET", destination.pinned_url, headers={"host": destination.host_header})
+        request.extensions["sni_hostname"] = destination.hostname
         try:
-            with client.stream("GET", current, follow_redirects=False) as response:
+            response = client.send(request, stream=True, follow_redirects=False)
+            try:
                 if response.is_redirect:
                     location = response.headers.get("location")
                     if not location:
@@ -163,6 +189,8 @@ def _fetch(client: httpx.Client, url: str, *, expected_image: bool = False) -> F
                 if expected_image and content_type not in _IMAGE_TYPES:
                     raise IconFetchError(f"Unsupported icon content type {content_type!r}: {current}")
                 return FetchResult(url=current, content_type=content_type, body=_read_response(response))
+            finally:
+                response.close()
         except httpx.HTTPError as exc:
             raise IconFetchError(f"HTTP request failed for {current}: {exc}") from exc
     raise IconFetchError(f"Too many redirects: {url}")
@@ -323,7 +351,7 @@ def generate_icons(args: argparse.Namespace) -> int:
     logo_urls: dict[str, str] = {}
     misses: list[str] = []
 
-    with httpx.Client(headers={"user-agent": USER_AGENT}, timeout=args.timeout) as client:
+    with httpx.Client(headers={"user-agent": USER_AGENT}, timeout=args.timeout, trust_env=False) as client:
         for server in entries:
             catalog_id = str(server["id"])
             asset_name = f"{_safe_asset_id(catalog_id)}.png"
