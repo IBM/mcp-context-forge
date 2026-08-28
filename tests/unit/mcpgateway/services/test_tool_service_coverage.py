@@ -8465,6 +8465,79 @@ class TestInvokeToolA2A:
         assert captured_headers["X-Tenant-Id"] == "tenant-123"
 
     @pytest.mark.asyncio
+    async def test_a2a_final_strip_removes_vault_tokens_from_prepared_headers(self, tool_service):
+        """Final safety strip removes X-Vault-Tokens from PreparedA2AInvocation.headers before the outbound call.
+
+        prepare_a2a_invocation() is mocked to return a header set that (hypothetically) still
+        carries X-Vault-Tokens, exercising the defense-in-depth strip applied immediately after
+        it -- a case earlier strips can't cover since prepare_a2a_invocation builds its own
+        header dict independent of the caller's already-stripped `headers` argument.
+        """
+        # Third-Party
+        from cpex.framework import PluginResult
+
+        # First-Party
+        from mcpgateway.services.a2a_protocol import PreparedA2AInvocation
+
+        tp = _make_tool_payload(
+            integration_type="A2A",
+            request_type="POST",
+            annotations={"a2a_agent_id": "agent-uuid-1"},
+        )
+        db = MagicMock()
+        a2a_agent = _make_a2a_agent(agent_type="custom")
+        a2a_agent.endpoint_url = "http://a2a-agent:9000"
+        db.execute = MagicMock(return_value=MagicMock(scalar_one_or_none=MagicMock(return_value=a2a_agent)))
+
+        plugin_manager = MagicMock()
+        plugin_manager.has_hooks_for = MagicMock(return_value=False)
+        plugin_manager.invoke_hook = AsyncMock(return_value=(PluginResult(modified_payload=None, continue_processing=True), {}))
+
+        leaked_prepared = PreparedA2AInvocation(
+            endpoint_url="http://a2a-agent:9000",
+            sanitized_endpoint_url="http://a2a-agent:9000",
+            headers={"Content-Type": "application/json", "X-Vault-Tokens": '{"leak": "should-not-reach-agent"}'},
+            request_data={"query": "test"},
+            protocol_version_header="0.3",
+            uses_jsonrpc=False,
+        )
+
+        captured_headers = {}
+        mock_http_response = MagicMock()
+        mock_http_response.status_code = 200
+        mock_http_response.json = MagicMock(return_value={"response": "ok"})
+
+        async def fake_post(url, json=None, headers=None):
+            captured_headers.update(headers or {})
+            return mock_http_response
+
+        with (
+            _setup_cache_for_invoke(tp),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=plugin_manager)),
+            patch("mcpgateway.services.tool_service.prepare_a2a_invocation", return_value=leaked_prepared),
+            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
+            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
+            patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service") as mock_mbuf,
+            patch.object(tool_service, "_pydantic_tool_from_payload", return_value=MagicMock()),
+        ):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+            mock_mbuf.return_value = MagicMock()
+
+            tool_service._http_client = AsyncMock()
+            tool_service._http_client.post = fake_post
+
+            result = await tool_service.invoke_tool(db, "test_tool", {"interaction_type": "query"})
+
+        assert result is not None
+        assert "X-Vault-Tokens" not in captured_headers
+        assert captured_headers["Content-Type"] == "application/json"
+
+    @pytest.mark.asyncio
     async def test_a2a_pre_invoke_blocks_sensitive_headers_by_default(self, tool_service):
         """A2A tool invocation blocks sensitive downstream passthrough by default."""
         # Third-Party
