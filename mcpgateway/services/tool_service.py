@@ -6758,6 +6758,13 @@ class ToolService(BaseService):
                         correlation_id=get_correlation_id(),
                     )
 
+                    # Final safety strip: X-Vault-Tokens must never reach the downstream A2A agent,
+                    # even if prepare_a2a_invocation added auth headers from agent config or passthrough
+                    # preserved it. PreparedA2AInvocation is frozen, so mutate the headers dict in
+                    # place (matches the pattern in a2a_service.py) rather than rebinding the field.
+                    for existing_key in [hk for hk in prepared.headers if hk.lower() == "x-vault-tokens"]:
+                        del prepared.headers[existing_key]
+
                     with create_child_span("tool.gateway_call", {"tool.name": name, "tool.id": tool_id, "tool.integration_type": "A2A"}):
                         # Make HTTP request with timeout enforcement
                         logger.info("Calling A2A agent '%s' at %s", a2a_agent_name, prepared.sanitized_endpoint_url)
