@@ -6003,7 +6003,7 @@ compose-gateway-tls: compose-validate
 compose-tls-e2e: compose-validate
 	@echo "🔐 Starting end-to-end TLS (nginx HTTPS:8443 → gateway HTTPS:4444)..."
 	@echo "   Run 'make certs' first if ./certs/ is empty."
-	IMAGE_LOCAL=$(call get_image_name) $(COMPOSE_CMD) -f $(COMPOSE_FILE) -f docker-compose.gateway-tls.yml --profile tls up -d --scale nginx=0
+	IMAGE_LOCAL=$(call get_image_name) $(COMPOSE_CMD) -f $(COMPOSE_FILE) -f docker-compose.gateway-tls.yml --profile tls up -d --scale nginx=0 --scale gateway=1
 	@echo "✅ End-to-end TLS started. Test: curl -sk https://localhost:8443/health"
 
 compose-tls-e2e-down:

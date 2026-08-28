@@ -2451,6 +2451,8 @@ services:
     environment:
       # Set to "true" to force all HTTP requests to redirect to HTTPS
       - NGINX_FORCE_HTTPS=${NGINX_FORCE_HTTPS:-false}
+      # Backend protocol; gateway TLS override changes this to HTTPS.
+      - GATEWAY_SCHEME=${GATEWAY_SCHEME:-http}
     depends_on:
       gateway:
         condition: service_healthy

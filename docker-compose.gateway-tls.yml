@@ -38,6 +38,10 @@ services:
       retries: 5
       start_period: 30s
 
+  nginx_tls:
+    environment:
+      - GATEWAY_SCHEME=https
+
   register_fast_time:
     environment:
       - GATEWAY_URL=${GATEWAY_URL:-https://gateway:4444}
