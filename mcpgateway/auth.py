@@ -325,7 +325,7 @@ def validate_token_team_membership(
             .scalars()
             .all()
         )
-        valid = not (set(team_ids) - set(memberships))
+        valid = not set(team_ids).difference(memberships)
         auth_cache.set_team_membership_valid_sync(user_email, team_ids, valid)
         if owns_session:
             session.commit()
