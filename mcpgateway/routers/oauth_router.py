@@ -310,7 +310,9 @@ def _recover_token_teams_from_jwt(request: Request) -> tuple[list[str] | None, b
     re-derive a well-typed ``token_teams`` value and the associated admin flag.
 
     Returns:
-        Tuple of ``(token_teams, is_admin)`` if recovery succeeds, ``None`` otherwise.
+        Tuple of ``(token_teams, is_admin)`` if recovery succeeds (cached payload
+        exists, is a well-formed tuple, and contains a non-empty dict), ``None``
+        otherwise.  Empty dict payloads are treated as untrusted and fail recovery.
     """
     cached = getattr(request.state, "_jwt_verified_payload", None)
     if not (cached and isinstance(cached, tuple) and len(cached) == 2):
