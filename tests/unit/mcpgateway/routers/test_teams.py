@@ -12,12 +12,13 @@ from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
-from fastapi import HTTPException, status
+from fastapi import BackgroundTasks, HTTPException, status
 import pytest
 from sqlalchemy.orm import Session
 
 from mcpgateway.db import EmailTeam, EmailTeamInvitation, EmailTeamJoinRequest, EmailTeamMember, EmailUser
 from mcpgateway.schemas import (
+    EmailDeliveryStatus,
     EmailUserResponse,
     TeamCreateRequest,
     TeamInviteRequest,
@@ -25,7 +26,7 @@ from mcpgateway.schemas import (
     TeamMemberUpdateRequest,
     TeamUpdateRequest,
 )
-from mcpgateway.services.team_invitation_service import TeamInvitationService
+from mcpgateway.services.team_invitation_service import InvitationDeliveryResult, TeamInvitationService
 from mcpgateway.services.team_management_service import SeededInvitation, SeededMember, TeamManagementService, TeamMemberLimitExceededError, TeamSeedResult
 
 from tests.utils.rbac_mocks import patch_rbac_decorators, restore_rbac_decorators
@@ -233,7 +234,7 @@ class TestTeamsRouter:
             # Import the function to test
             from mcpgateway.routers.teams import create_team
 
-            result = await create_team(request, current_user_ctx=mock_user_context, db=mock_db)
+            result = await create_team(request, BackgroundTasks(), current_user_ctx=mock_user_context, db=mock_db)
 
             assert result.id == mock_team.id
             assert result.name == mock_team.name
@@ -249,8 +250,8 @@ class TestTeamsRouter:
             )
 
     @pytest.mark.asyncio
-    async def test_create_team_reports_seeded_members_and_invitations(self, mock_user_context, mock_team, mock_db):
-        """Seeded members are reported back so the form can confirm without re-querying."""
+    async def test_create_team_reports_seeded_members_and_invitations(self, mock_user_context, mock_team, mock_invitation, mock_db):
+        """Seeded members are reported and email delivery starts after DB close."""
         request = TeamCreateRequest(
             name="New Team",
             visibility="private",
@@ -264,16 +265,31 @@ class TestTeamsRouter:
             team=mock_team,
             members_added=[SeededMember(email="alice@example.com", role="member")],
             invitations_sent=[SeededInvitation(email="external@partner.com", role="owner", invitation_id="inv-1")],
+            invitations_to_deliver=[mock_invitation],
         )
 
-        with mock_permission_check(is_admin=False), patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+        async def deliver_after_close(*_args):
+            assert mock_db.close.called
+            return []
+
+        with (
+            mock_permission_check(is_admin=False),
+            patch("mcpgateway.routers.teams.TeamManagementService") as MockService,
+            patch("mcpgateway.routers.teams.TeamInvitationService") as MockInvitationService,
+        ):
             mock_service = AsyncMock(spec=TeamManagementService)
             mock_service.create_team_with_members = AsyncMock(return_value=seed_result)
             MockService.return_value = mock_service
+            invitation_service = AsyncMock(spec=TeamInvitationService)
+            invitation_service.deliver_invitation_emails = AsyncMock(side_effect=deliver_after_close)
+            MockInvitationService.return_value = invitation_service
 
             from mcpgateway.routers.teams import create_team
 
-            result = await create_team(request, current_user_ctx=mock_user_context, db=mock_db)
+            background_tasks = BackgroundTasks()
+            result = await create_team(request, background_tasks, current_user_ctx=mock_user_context, db=mock_db)
+            invitation_service.deliver_invitation_emails.assert_not_awaited()
+            await background_tasks()
 
             # The team fields stay at the top level, so existing clients keep working
             assert result.id == mock_team.id
@@ -282,6 +298,7 @@ class TestTeamsRouter:
             assert [(i.email, i.role, i.invitation_id) for i in result.invitations_sent] == [("external@partner.com", "owner", "inv-1")]
 
             assert mock_service.create_team_with_members.call_args.kwargs["members"] == request.members
+            invitation_service.deliver_invitation_emails.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_create_team_with_explicit_empty_members(self, mock_user_context, mock_team, mock_db):
@@ -295,7 +312,7 @@ class TestTeamsRouter:
 
             from mcpgateway.routers.teams import create_team
 
-            result = await create_team(request, current_user_ctx=mock_user_context, db=mock_db)
+            result = await create_team(request, BackgroundTasks(), current_user_ctx=mock_user_context, db=mock_db)
 
             assert result.members_added == []
             assert result.invitations_sent == []
@@ -314,7 +331,7 @@ class TestTeamsRouter:
             from mcpgateway.routers.teams import create_team
 
             with pytest.raises(HTTPException) as exc_info:
-                await create_team(request, current_user_ctx=mock_user_context, db=mock_db)
+                await create_team(request, BackgroundTasks(), current_user_ctx=mock_user_context, db=mock_db)
 
             assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
             assert "exceeding the maximum" in str(exc_info.value.detail)
@@ -338,7 +355,7 @@ class TestTeamsRouter:
             from mcpgateway.routers.teams import create_team
 
             with pytest.raises(HTTPException) as exc_info:
-                await create_team(request, current_user_ctx=mock_user_context, db=mock_db)
+                await create_team(request, BackgroundTasks(), current_user_ctx=mock_user_context, db=mock_db)
 
             assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
             assert "Service validation error" in str(exc_info.value.detail)
@@ -357,7 +374,7 @@ class TestTeamsRouter:
             from mcpgateway.routers.teams import create_team
 
             with pytest.raises(HTTPException) as exc_info:
-                await create_team(request, current_user_ctx=mock_user_context, db=mock_db)
+                await create_team(request, BackgroundTasks(), current_user_ctx=mock_user_context, db=mock_db)
 
             assert exc_info.value.status_code == status.HTTP_500_INTERNAL_SERVER_ERROR
             assert "Failed to create team" in str(exc_info.value.detail)
@@ -385,8 +402,54 @@ class TestTeamsRouter:
             assert len(result.teams) == 1
             assert result.teams[0].id == mock_team.id
             # personal_owner_email must be forwarded so an admin sees their own personal team (issue #5391)
-            mock_service.list_teams.assert_called_once_with(limit=50, offset=0, cursor=None, personal_owner_email="admin@example.com")
-            mock_service.get_teams_count.assert_called_once_with(personal_owner_email="admin@example.com")
+            mock_service.list_teams.assert_called_once_with(limit=50, offset=0, cursor=None, personal_owner_email="admin@example.com", team_ids=None)
+            mock_service.get_teams_count.assert_called_once_with(personal_owner_email="admin@example.com", team_ids=None)
+
+    @pytest.mark.asyncio
+    async def test_list_teams_scoped_admin_forwards_team_ids_to_query_and_count(self, mock_admin_context, mock_team, mock_db):
+        """A narrowed admin token scopes both the listed teams and the pagination total."""
+        scoped_context = {**mock_admin_context, "token_teams": ["team-b", {"id": "team-c"}]}
+        mock_team.id = "team-b"
+
+        with mock_permission_check(is_admin=True), patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+            mock_service = AsyncMock(spec=TeamManagementService)
+            mock_service.list_teams = AsyncMock(return_value=([mock_team], None))
+            mock_service.get_teams_count = AsyncMock(return_value=1)
+            mock_service.get_member_counts_batch_cached = AsyncMock(return_value={"team-b": 1})
+            MockService.return_value = mock_service
+
+            from mcpgateway.routers.teams import list_teams
+
+            result = await list_teams(skip=0, limit=50, cursor=None, include_pagination=False, current_user_ctx=scoped_context, db=mock_db)
+
+            assert len(result.teams) == 1
+            assert result.teams[0].id == "team-b"
+            mock_service.list_teams.assert_called_once_with(limit=50, offset=0, cursor=None, personal_owner_email="admin@example.com", team_ids=["team-b", "team-c"])
+            mock_service.get_teams_count.assert_called_once_with(personal_owner_email="admin@example.com", team_ids=["team-b", "team-c"])
+
+    @pytest.mark.asyncio
+    async def test_list_teams_public_only_admin_token_returns_no_fallback_teams(self, mock_admin_context, mock_team, mock_db):
+        """A public-only admin token falls through permission-wise but still sees zero teams."""
+        public_only_context = {**mock_admin_context, "token_teams": []}
+
+        with mock_permission_check(is_admin=False), patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+            mock_service = AsyncMock(spec=TeamManagementService)
+            mock_service.get_user_teams = AsyncMock(return_value=[mock_team])
+            mock_service.list_teams = AsyncMock()
+            mock_service.get_teams_count = AsyncMock()
+            mock_service.get_member_counts_batch_cached = AsyncMock(return_value={})
+            MockService.return_value = mock_service
+
+            from mcpgateway.routers.teams import list_teams
+
+            result = await list_teams(skip=0, limit=50, cursor=None, include_pagination=False, current_user_ctx=public_only_context, db=mock_db)
+
+            assert result.teams == []
+            assert result.total == 0
+            mock_service.get_user_teams.assert_called_once_with("admin@example.com", include_personal=True)
+            mock_service.list_teams.assert_not_called()
+            mock_service.get_teams_count.assert_not_called()
+            mock_service.get_member_counts_batch_cached.assert_called_once_with([])
 
     @pytest.mark.asyncio
     async def test_list_teams_admin_includes_own_personal_team(self, mock_admin_context, mock_team, mock_db):
@@ -413,8 +476,8 @@ class TestTeamsRouter:
             assert len(result.teams) == 1
             assert result.teams[0].id == personal_team.id
             assert result.total == 1
-            mock_service.list_teams.assert_called_once_with(limit=50, offset=0, cursor=None, personal_owner_email="admin@example.com")
-            mock_service.get_teams_count.assert_called_once_with(personal_owner_email="admin@example.com")
+            mock_service.list_teams.assert_called_once_with(limit=50, offset=0, cursor=None, personal_owner_email="admin@example.com", team_ids=None)
+            mock_service.get_teams_count.assert_called_once_with(personal_owner_email="admin@example.com", team_ids=None)
 
     @pytest.mark.asyncio
     async def test_list_teams_admin_with_cursor_pagination(self, mock_admin_context, mock_team, mock_db):
@@ -530,7 +593,7 @@ class TestTeamsRouter:
             # SSO platform_admin should see all teams (admin path)
             assert len(result.teams) == 1
             assert result.teams[0].id == mock_team.id
-            mock_service.list_teams.assert_called_once_with(limit=50, offset=0, cursor=None, personal_owner_email="sso-admin@example.com")
+            mock_service.list_teams.assert_called_once_with(limit=50, offset=0, cursor=None, personal_owner_email="sso-admin@example.com", team_ids=None)
             mock_perm_service.check_platform_admin_permission.assert_called_once_with(
                 mock_sso_platform_admin_context["email"],
                 token_teams=mock_sso_platform_admin_context.get("token_teams"),
@@ -583,8 +646,8 @@ class TestTeamsRouter:
 
             assert result.teams == []
             assert result.total == 0
-            mock_service.list_teams.assert_called_once_with(limit=50, offset=0, cursor=None, personal_owner_email="admin@example.com")
-            mock_service.get_teams_count.assert_called_once_with(personal_owner_email="admin@example.com")
+            mock_service.list_teams.assert_called_once_with(limit=50, offset=0, cursor=None, personal_owner_email="admin@example.com", team_ids=None)
+            mock_service.get_teams_count.assert_called_once_with(personal_owner_email="admin@example.com", team_ids=None)
 
     @pytest.mark.asyncio
     async def test_list_teams_sso_platform_admin_includes_own_personal_team(self, mock_sso_platform_admin_context, mock_team, mock_db):
@@ -616,8 +679,8 @@ class TestTeamsRouter:
             assert len(result.teams) == 1
             assert result.teams[0].id == personal_team.id
             # The caller's own email (not a client-supplied value) scopes the personal team.
-            mock_service.list_teams.assert_called_once_with(limit=50, offset=0, cursor=None, personal_owner_email="sso-admin@example.com")
-            mock_service.get_teams_count.assert_called_once_with(personal_owner_email="sso-admin@example.com")
+            mock_service.list_teams.assert_called_once_with(limit=50, offset=0, cursor=None, personal_owner_email="sso-admin@example.com", team_ids=None)
+            mock_service.get_teams_count.assert_called_once_with(personal_owner_email="sso-admin@example.com", team_ids=None)
 
     @pytest.mark.asyncio
     async def test_create_team_sso_platform_admin_bypass_limits(self, mock_sso_platform_admin_context, mock_team, mock_db):
@@ -645,7 +708,7 @@ class TestTeamsRouter:
 
             from mcpgateway.routers.teams import create_team
 
-            result = await create_team(request, current_user_ctx=mock_sso_platform_admin_context, db=mock_db)
+            result = await create_team(request, BackgroundTasks(), current_user_ctx=mock_sso_platform_admin_context, db=mock_db)
 
             # Should succeed despite allow_team_creation=False
             assert result.id == mock_team.id
@@ -1100,6 +1163,12 @@ class TestTeamsRouter:
 
             mock_invite_service = AsyncMock(spec=TeamInvitationService)
             mock_invite_service.create_invitation = AsyncMock(return_value=mock_invitation)
+            mock_invite_service.deliver_invitation_email = AsyncMock(
+                return_value=InvitationDeliveryResult(
+                    invitation_url=f"https://ui.example/accept-invitation/{mock_invitation.token}",
+                    status=EmailDeliveryStatus.DISABLED,
+                )
+            )
             MockInviteService.return_value = mock_invite_service
 
             from mcpgateway.routers.teams import invite_team_member
@@ -1110,6 +1179,72 @@ class TestTeamsRouter:
             assert result.email == mock_invitation.email
             assert result.role == mock_invitation.role
             assert result.team_name == mock_team.name
+            assert result.email_delivery_status == "disabled"
+            assert result.warning is None
+            assert result.invitation_url.endswith(f"/accept-invitation/{mock_invitation.token}")
+
+    @pytest.mark.asyncio
+    async def test_invite_team_member_reports_delivery_failure_after_commit(self, mock_user_context, mock_db, mock_invitation, mock_team):
+        """Committed invitation survives best-effort SMTP failure."""
+        request = TeamInviteRequest(email="invited@example.com", role="member")
+
+        with (
+            patch("mcpgateway.routers.teams.TeamManagementService") as MockTeamService,
+            patch("mcpgateway.routers.teams.TeamInvitationService") as MockInviteService,
+        ):
+            team_service = AsyncMock(spec=TeamManagementService)
+            team_service.get_user_role_in_team = AsyncMock(return_value="owner")
+            team_service.get_team_by_id = AsyncMock(return_value=mock_team)
+            MockTeamService.return_value = team_service
+            invitation_service = AsyncMock(spec=TeamInvitationService)
+            invitation_service.create_invitation = AsyncMock(return_value=mock_invitation)
+            async def deliver_after_close(**_kwargs):
+                assert mock_db.close.called
+                return InvitationDeliveryResult(
+                    invitation_url=f"https://ui.example/accept-invitation/{mock_invitation.token}",
+                    status=EmailDeliveryStatus.FAILED,
+                    warning="Invitation created, but the email could not be delivered.",
+                )
+
+            invitation_service.deliver_invitation_email = AsyncMock(side_effect=deliver_after_close)
+            MockInviteService.return_value = invitation_service
+
+            from mcpgateway.routers.teams import invite_team_member
+
+            result = await invite_team_member(mock_team.id, request, current_user=mock_user_context, db=mock_db)
+
+        assert result.email_delivery_status == "failed"
+        assert result.warning == "Invitation created, but the email could not be delivered."
+        mock_db.commit.assert_called()
+        invitation_service.deliver_invitation_email.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_invite_team_member_contains_delivery_exception_after_commit(self, mock_user_context, mock_db, mock_invitation, mock_team):
+        """Unexpected post-commit delivery error returns created invitation, not HTTP 500."""
+        request = TeamInviteRequest(email="invited@example.com", role="member")
+
+        with (
+            patch("mcpgateway.routers.teams.TeamManagementService") as MockTeamService,
+            patch("mcpgateway.routers.teams.TeamInvitationService") as MockInviteService,
+        ):
+            team_service = AsyncMock(spec=TeamManagementService)
+            team_service.get_user_role_in_team = AsyncMock(return_value="owner")
+            team_service.get_team_by_id = AsyncMock(return_value=mock_team)
+            MockTeamService.return_value = team_service
+            invitation_service = AsyncMock(spec=TeamInvitationService)
+            invitation_service.create_invitation = AsyncMock(return_value=mock_invitation)
+            invitation_service.deliver_invitation_email = AsyncMock(side_effect=RuntimeError("unexpected delivery error"))
+            MockInviteService.return_value = invitation_service
+
+            from mcpgateway.routers.teams import invite_team_member
+
+            result = await invite_team_member(mock_team.id, request, current_user=mock_user_context, db=mock_db)
+
+        assert result.id == mock_invitation.id
+        assert result.email_delivery_status == EmailDeliveryStatus.FAILED
+        assert result.warning == "Invitation created, but the email could not be delivered."
+        mock_db.commit.assert_called_once()
+        mock_db.close.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_invite_team_member_insufficient_permissions(self, mock_user_context, mock_db):
@@ -1506,7 +1641,7 @@ class TestTeamsRouter:
             from mcpgateway.routers.teams import create_team
 
             with pytest.raises(HTTPException) as exc_info:
-                await create_team(request, current_user_ctx=mock_user_context, db=mock_db)
+                await create_team(request, BackgroundTasks(), current_user_ctx=mock_user_context, db=mock_db)
 
             assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
             assert "max_members cannot exceed" in str(exc_info.value.detail)
@@ -1526,7 +1661,7 @@ class TestTeamsRouter:
 
             from mcpgateway.routers.teams import create_team
 
-            result = await create_team(request, current_user_ctx=mock_user_context, db=mock_db)
+            result = await create_team(request, BackgroundTasks(), current_user_ctx=mock_user_context, db=mock_db)
             assert result.id == mock_team.id
 
     @pytest.mark.asyncio
@@ -1543,7 +1678,7 @@ class TestTeamsRouter:
 
             from mcpgateway.routers.teams import create_team
 
-            result = await create_team(request, current_user_ctx=mock_admin_context, db=mock_db)
+            result = await create_team(request, BackgroundTasks(), current_user_ctx=mock_admin_context, db=mock_db)
             assert result.id == mock_team.id
             mock_service.create_team_with_members.assert_called_once()
 

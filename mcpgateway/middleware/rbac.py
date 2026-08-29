@@ -27,7 +27,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.db import fresh_db_session, SessionLocal
+from mcpgateway.db import fresh_db_session, Permissions, SessionLocal
 from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
 from mcpgateway.services.observability_service import current_trace_id
 from mcpgateway.services.permission_service import PermissionService
@@ -46,6 +46,93 @@ logger = logging.getLogger(__name__)
 
 # Generic 403 message — intentionally vague to avoid leaking permission names to callers
 _ACCESS_DENIED_MSG = "Access denied"
+
+# Wildcard token scope granting every permission (mirrors Permissions.ALL_PERMISSIONS in db.py,
+# duplicated here to keep this module import-light for TokenScopingMiddleware).
+_ALL_PERMISSIONS_SCOPE = "*"
+
+
+def token_scope_grants(token_scopes: Optional[List[str]], permission: str) -> bool:
+    """Check whether a token's Layer 1 scopes grant a permission.
+
+    This is the single source of truth for Layer 1 (token scope) semantics. Both the
+    ``@require_permission`` / ``@require_any_permission`` decorators and
+    ``TokenScopingMiddleware._check_permission_restrictions()`` route their membership
+    tests through it so scoping behaves identically wherever it is enforced.
+
+    Semantics:
+      * ``None`` or ``[]`` — no scope restriction. Empty permissions mean "inherit from
+        RBAC at runtime" (see ``TokenCatalogService._generate_token()``), *not* deny-all;
+        Layer 2 still gates the request.
+      * ``"*"`` — full access.
+      * ``"<category>.*"`` — grants every permission in that category, matching the
+        delegation rules in ``TokenCatalogService._validate_permission_delegation()``.
+        Note the token-creation API rejects this form (``TokenScopeRequest`` requires
+        ``resource.action``), so it is defensive rather than reachable today.
+      * ``servers.use`` — additionally granted to any token holding an MCP method
+        permission (``tools.*`` / ``resources.*`` / ``prompts.*``). Without transport
+        access those permissions are unusable, so ``_generate_token()`` injects
+        ``servers.use`` at creation time; this compensates for tokens issued before
+        that injection existed. Omitting it here would 403 such tokens on ``/sse``,
+        ``/servers/{id}/sse`` and ``/servers/{id}/message``, which the token-scoping
+        middleware admits.
+      * otherwise — exact match.
+
+    Args:
+        token_scopes: Permissions carried by the token, or None when the caller is not a
+            scoped API token (e.g. a session token).
+        permission: The permission being checked, typically ``"resource.action"``.
+
+    Returns:
+        bool: True if the token's scopes permit the operation.
+
+    Examples:
+        >>> token_scope_grants(None, "tools.read")
+        True
+        >>> token_scope_grants([], "tools.read")
+        True
+        >>> token_scope_grants(["*"], "admin.system_config")
+        True
+        >>> token_scope_grants(["tools.*"], "tools.read")
+        True
+        >>> token_scope_grants(["tools.*"], "resources.read")
+        False
+        >>> token_scope_grants(["tools.read"], "tools.read")
+        True
+        >>> token_scope_grants(["tools.read"], "a2a.read")
+        False
+
+        MCP method permissions imply transport access:
+
+        >>> token_scope_grants(["tools.execute"], "servers.use")
+        True
+        >>> token_scope_grants(["prompts.read"], "servers.use")
+        True
+        >>> token_scope_grants(["a2a.read"], "servers.use")
+        False
+    """
+    if not token_scopes:
+        # None (not a scoped token) or [] (inherit from RBAC) — no Layer 1 restriction.
+        return True
+
+    if _ALL_PERMISSIONS_SCOPE in token_scopes:
+        return True
+
+    if permission in token_scopes:
+        return True
+
+    category, separator, _ = permission.partition(".")
+    if separator and f"{category}.{_ALL_PERMISSIONS_SCOPE}" in token_scopes:
+        return True
+
+    # Transport compensation: MCP method permissions imply servers.use. Mirrors the
+    # generation-time injection in TokenCatalogService._generate_token() so tokens
+    # predating it are not denied transport access at Layer 1.
+    if permission == Permissions.SERVERS_USE:
+        return any(scope.startswith(Permissions.MCP_METHOD_PREFIXES) for scope in token_scopes)
+
+    return False
+
 
 # Bearer security scheme — uses the configured auth header (AUTH_HEADER_NAME)
 # so RBAC token extraction stays aligned with the rest of the auth flow.
@@ -432,6 +519,10 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
         request_id = getattr(request.state, "request_id", None)
         team_id = getattr(request.state, "team_id", None)
         token_teams = getattr(request.state, "token_teams", None)
+        token_scopes = getattr(request.state, "token_scopes", None)
+        # Raw JWT teams claim — unaffected by admin bypass or DB intersection.
+        # Used by OAuth token storage path selection to find the correct Vault path.
+        jwt_teams_claim = getattr(request.state, "jwt_teams_claim", None)
 
         # Read plugin context data from request.state for cross-hook context sharing
         # (set by HttpAuthMiddleware for passing contexts between different hook types)
@@ -454,6 +545,8 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
             "team_id": team_id,  # Include team_id from token
             "token_teams": token_teams,  # Include token teams for query-level scoping
             "token_use": token_use,  # Include token_use for RBAC team derivation
+            "token_scopes": token_scopes,  # Include token scopes for API token permission checking
+            "jwt_teams_claim": jwt_teams_claim,  # Raw JWT claim for OAuth Vault path selection
             "plugin_context_table": plugin_context_table,  # Plugin contexts for cross-hook sharing
             "plugin_global_context": plugin_global_context,  # Global context for consistency
         }
@@ -631,7 +724,201 @@ def _is_mutate_permission(permission: str) -> bool:
     return parts[-1] in _MUTATE_PERMISSION_ACTIONS if len(parts) >= 2 else False
 
 
-def require_permission(permission: str, resource_type: Optional[str] = None, allow_admin_bypass: bool = True):
+async def check_permission_inline(
+    user_context: dict,
+    permission: str,
+    *,
+    resource_type: Optional[str] = None,
+    team_id: Optional[str] = None,
+    check_any_team: bool = False,
+    db: Optional[Session] = None,
+    request: Optional[Request] = None,
+    allow_admin_bypass: bool = True,
+) -> bool:
+    """Check a permission without raising, for additive in-handler checks.
+
+    Shares one code path with :func:`require_permission`: plugin ``HTTP_AUTH_CHECK_PERMISSION``
+    hooks are consulted first, then the standard RBAC check. Unlike the decorator this
+    never raises for a denial — it returns ``False`` so callers can degrade a response
+    (e.g. omit a section of a feed) instead of rejecting the request.
+
+    Layer 1 (API token scopes) is enforced here, before plugin hooks and RBAC, so direct
+    callers get the same gate as the ``@require_permission`` decorator.
+
+    Args:
+        user_context: Authenticated user context dict; must contain ``email``.
+        permission: Permission string to check (e.g. ``"security:read"``).
+        resource_type: Optional resource type for resource-specific permissions.
+        team_id: Optional team scope for the check.
+        check_any_team: If True, grant when the permission holds in any of the user's teams.
+        db: Optional existing session; a fresh session is opened when omitted.
+        request: Optional request, used only to derive plugin content-type context.
+        allow_admin_bypass: If True, platform admins bypass the RBAC check.
+
+    Returns:
+        bool: True when the permission is granted, False otherwise.
+
+    Examples:
+        >>> import asyncio
+        >>> class DummyPS:
+        ...     def __init__(self, db):
+        ...         pass
+        ...     async def check_permission(self, **kwargs):
+        ...         return True
+        >>> from unittest.mock import AsyncMock, patch
+        >>> with patch('mcpgateway.plugins.get_plugin_manager', AsyncMock(return_value=None)):
+        ...     with patch('mcpgateway.middleware.rbac.PermissionService', DummyPS):
+        ...         asyncio.run(check_permission_inline({"email": "u"}, "tools.read", db=object()))
+        True
+
+        Malformed context is denied rather than raising:
+        >>> asyncio.run(check_permission_inline({}, "tools.read"))
+        False
+    """
+    if not user_context or not isinstance(user_context, dict) or "email" not in user_context:
+        return False
+
+    # SECURITY: Check API token scopes BEFORE plugin hooks and RBAC (Layer 1).
+    # A scoped API token must carry the required permission; this is independent of
+    # the RBAC role checks below (Layer 2). Session tokens and tokens whose scopes
+    # are empty ("inherit from RBAC") pass through — see token_scope_grants().
+    token_scopes = user_context.get("token_scopes")
+    if not token_scope_grants(token_scopes, permission):
+        # Log detailed info server-side but return generic error message to avoid permission disclosure
+        logger.warning(f"API token scope check failed: user={user_context['email']}, permission={permission}, token_scopes={token_scopes}")
+        return False
+
+    # First, check if any plugins want to handle permission checking
+    # Third-Party
+    from cpex.framework import HttpAuthCheckPermissionPayload, HttpHookType  # pylint: disable=import-outside-toplevel
+
+    # First-Party
+    from mcpgateway.plugins import get_plugin_manager  # pylint: disable=import-outside-toplevel
+
+    plugin_manager = await get_plugin_manager()
+    if plugin_manager and plugin_manager.has_hooks_for(HttpHookType.HTTP_AUTH_CHECK_PERMISSION):
+        # Get plugin contexts from user_context (stored in request.state by HttpAuthMiddleware)
+        # These enable cross-hook context sharing between HTTP_PRE_REQUEST and HTTP_AUTH_CHECK_PERMISSION
+        plugin_context_table = user_context.get("plugin_context_table")
+        plugin_global_context = user_context.get("plugin_global_context")
+
+        # Reuse existing global context from middleware if available for consistency
+        # Otherwise create a new one (fallback for cases where middleware didn't run)
+        if plugin_global_context:
+            global_context = plugin_global_context
+        else:
+            request_id = user_context.get("request_id") or uuid.uuid4().hex
+            content_type = request.headers.get("content-type") if request and hasattr(request, "headers") else None
+            global_context = GlobalContext(
+                request_id=request_id,
+                server_id=None,
+                tenant_id=None,
+                content_type=content_type,
+            )
+
+        # Invoke permission check hook, passing plugin contexts from HTTP_PRE_REQUEST hook
+        result, _ = await plugin_manager.invoke_hook(
+            HttpHookType.HTTP_AUTH_CHECK_PERMISSION,
+            payload=HttpAuthCheckPermissionPayload(
+                user_email=user_context["email"],
+                permission=permission,
+                resource_type=resource_type,
+                team_id=team_id,
+                is_admin=user_context.get("is_admin", False),
+                auth_method=user_context.get("auth_method"),
+                client_host=user_context.get("ip_address"),
+                user_agent=user_context.get("user_agent"),
+            ),
+            global_context=global_context,
+            local_contexts=plugin_context_table,  # Pass context table for cross-hook state
+            extensions=build_request_extensions(),
+        )
+        record_plugin_metrics(current_trace_id.get(), result.metadata)
+
+        # If a plugin made a decision, respect it
+        if result and result.modified_payload and hasattr(result.modified_payload, "granted"):
+            decision_plugin = "unknown"
+            decision_reason = getattr(result.modified_payload, "reason", None)
+            result_metadata = result.metadata if isinstance(result.metadata, dict) else {}
+            if result_metadata.get("_decision_plugin"):
+                decision_plugin = str(result_metadata["_decision_plugin"])
+            for key in ("plugin_name", "plugin", "source_plugin", "handler"):
+                if decision_plugin != "unknown":
+                    break
+                plugin_name = result_metadata.get(key)
+                if plugin_name:
+                    decision_plugin = str(plugin_name)
+
+            logger.info(
+                "Plugin permission decision: plugin=%s user=%s permission=%s granted=%s reason=%s",
+                decision_plugin,
+                user_context["email"],
+                permission,
+                result.modified_payload.granted,
+                decision_reason,
+            )
+
+            if result.modified_payload.granted:
+                if settings.plugins_can_override_rbac:
+                    logger.warning(
+                        "Plugin RBAC grant override applied: plugin=%s user=%s permission=%s reason=%s",
+                        decision_plugin,
+                        user_context["email"],
+                        permission,
+                        decision_reason,
+                    )
+                    return True
+
+                logger.info(
+                    "Plugin RBAC grant decision ignored by default policy: plugin=%s user=%s permission=%s",
+                    decision_plugin,
+                    user_context["email"],
+                    permission,
+                )
+            else:
+                logger.warning(
+                    "Permission denied by plugin: plugin=%s user=%s permission=%s reason=%s",
+                    decision_plugin,
+                    user_context["email"],
+                    permission,
+                    decision_reason,
+                )
+                return False
+
+    # No plugin handled it, fall through to standard RBAC check
+    if db:
+        permission_service = PermissionService(db)
+        granted = await permission_service.check_permission(
+            user_email=user_context["email"],
+            permission=permission,
+            resource_type=resource_type,
+            team_id=team_id,
+            token_teams=user_context.get("token_teams"),
+            ip_address=user_context.get("ip_address"),
+            user_agent=user_context.get("user_agent"),
+            allow_admin_bypass=allow_admin_bypass,
+            check_any_team=check_any_team,
+        )
+    else:
+        # Create fresh db session for permission check
+        with fresh_db_session() as fresh_db:
+            permission_service = PermissionService(fresh_db)
+            granted = await permission_service.check_permission(
+                user_email=user_context["email"],
+                permission=permission,
+                resource_type=resource_type,
+                team_id=team_id,
+                token_teams=user_context.get("token_teams"),
+                ip_address=user_context.get("ip_address"),
+                user_agent=user_context.get("user_agent"),
+                allow_admin_bypass=allow_admin_bypass,
+                check_any_team=check_any_team,
+            )
+
+    return granted
+
+
+def require_permission(permission: str, resource_type: Optional[str] = None, allow_admin_bypass: bool = True, global_only: bool = False):
     """Decorator to require specific permission for accessing an endpoint.
 
     Args:
@@ -640,6 +927,11 @@ def require_permission(permission: str, resource_type: Optional[str] = None, all
         allow_admin_bypass: If True (default), admin users bypass all permission checks.
                            If False, even admins must have explicit permissions.
                            Use False for admin UI routes to enforce granular RBAC.
+        global_only: If True, skip team derivation entirely and check only global/personal
+                     roles (team_id=None, check_any_team=False). Use for routes that manage
+                     resources with no team column, where the normal per-request team
+                     derivation (from a resource ID kwarg or "any team" aggregation) would
+                     let a team-scoped role grant access to a globally-scoped resource.
 
     Returns:
         Callable: Decorated function that enforces the permission requirement
@@ -694,141 +986,21 @@ def require_permission(permission: str, resource_type: Optional[str] = None, all
             if not user_context or not isinstance(user_context, dict) or "email" not in user_context:
                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User authentication required")
 
-            team_id, check_any_team = await _resolve_team_and_check_mode(user_context, kwargs)
-
-            # First, check if any plugins want to handle permission checking
-            # Third-Party
-            from cpex.framework import HttpAuthCheckPermissionPayload, HttpHookType  # pylint: disable=import-outside-toplevel
-
-            # First-Party
-            from mcpgateway.plugins import get_plugin_manager  # pylint: disable=import-outside-toplevel
-
-            plugin_manager = await get_plugin_manager()
-            if plugin_manager and plugin_manager.has_hooks_for(HttpHookType.HTTP_AUTH_CHECK_PERMISSION):
-                # Get plugin contexts from user_context (stored in request.state by HttpAuthMiddleware)
-                # These enable cross-hook context sharing between HTTP_PRE_REQUEST and HTTP_AUTH_CHECK_PERMISSION
-                plugin_context_table = user_context.get("plugin_context_table")
-                plugin_global_context = user_context.get("plugin_global_context")
-
-                # Reuse existing global context from middleware if available for consistency
-                # Otherwise create a new one (fallback for cases where middleware didn't run)
-                if plugin_global_context:
-                    global_context = plugin_global_context
-                else:
-                    request_id = user_context.get("request_id") or uuid.uuid4().hex
-                    request: Optional[Request] = kwargs.get("request")
-                    content_type = request.headers.get("content-type") if request and hasattr(request, "headers") else None
-                    global_context = GlobalContext(
-                        request_id=request_id,
-                        server_id=None,
-                        tenant_id=None,
-                        content_type=content_type,
-                    )
-
-                # Invoke permission check hook, passing plugin contexts from HTTP_PRE_REQUEST hook
-                result, _ = await plugin_manager.invoke_hook(
-                    HttpHookType.HTTP_AUTH_CHECK_PERMISSION,
-                    payload=HttpAuthCheckPermissionPayload(
-                        user_email=user_context["email"],
-                        permission=permission,
-                        resource_type=resource_type,
-                        team_id=team_id,
-                        is_admin=user_context.get("is_admin", False),
-                        auth_method=user_context.get("auth_method"),
-                        client_host=user_context.get("ip_address"),
-                        user_agent=user_context.get("user_agent"),
-                    ),
-                    global_context=global_context,
-                    local_contexts=plugin_context_table,  # Pass context table for cross-hook state
-                    extensions=build_request_extensions(),
-                )
-                record_plugin_metrics(current_trace_id.get(), result.metadata)
-
-                # If a plugin made a decision, respect it
-                if result and result.modified_payload and hasattr(result.modified_payload, "granted"):
-                    decision_plugin = "unknown"
-                    decision_reason = getattr(result.modified_payload, "reason", None)
-                    result_metadata = result.metadata if isinstance(result.metadata, dict) else {}
-                    if result_metadata.get("_decision_plugin"):
-                        decision_plugin = str(result_metadata["_decision_plugin"])
-                    for key in ("plugin_name", "plugin", "source_plugin", "handler"):
-                        if decision_plugin != "unknown":
-                            break
-                        plugin_name = result_metadata.get(key)
-                        if plugin_name:
-                            decision_plugin = str(plugin_name)
-
-                    logger.info(
-                        "Plugin permission decision: plugin=%s user=%s permission=%s granted=%s reason=%s",
-                        decision_plugin,
-                        user_context["email"],
-                        permission,
-                        result.modified_payload.granted,
-                        decision_reason,
-                    )
-
-                    if result.modified_payload.granted:
-                        if settings.plugins_can_override_rbac:
-                            logger.warning(
-                                "Plugin RBAC grant override applied: plugin=%s user=%s permission=%s reason=%s",
-                                decision_plugin,
-                                user_context["email"],
-                                permission,
-                                decision_reason,
-                            )
-                            return await func(*args, **kwargs)
-
-                        logger.info(
-                            "Plugin RBAC grant decision ignored by default policy: plugin=%s user=%s permission=%s",
-                            decision_plugin,
-                            user_context["email"],
-                            permission,
-                        )
-                    else:
-                        logger.warning(
-                            "Permission denied by plugin: plugin=%s user=%s permission=%s reason=%s",
-                            decision_plugin,
-                            user_context["email"],
-                            permission,
-                            decision_reason,
-                        )
-                        raise HTTPException(
-                            status_code=status.HTTP_403_FORBIDDEN,
-                            detail=_ACCESS_DENIED_MSG,
-                        )
-
-            # No plugin handled it, fall through to standard RBAC check
-            # Get db session: prefer endpoint's db param, then user_context["db"], then create fresh
-            db_session = kwargs.get("db") or user_context.get("db")
-            if db_session:
-                # Use existing session from endpoint or user_context
-                permission_service = PermissionService(db_session)
-                granted = await permission_service.check_permission(
-                    user_email=user_context["email"],
-                    permission=permission,
-                    resource_type=resource_type,
-                    team_id=team_id,
-                    token_teams=user_context.get("token_teams"),
-                    ip_address=user_context.get("ip_address"),
-                    user_agent=user_context.get("user_agent"),
-                    allow_admin_bypass=allow_admin_bypass,
-                    check_any_team=check_any_team,
-                )
+            if global_only:
+                team_id, check_any_team = None, False
             else:
-                # Create fresh db session for permission check
-                with fresh_db_session() as db:
-                    permission_service = PermissionService(db)
-                    granted = await permission_service.check_permission(
-                        user_email=user_context["email"],
-                        permission=permission,
-                        resource_type=resource_type,
-                        team_id=team_id,
-                        token_teams=user_context.get("token_teams"),
-                        ip_address=user_context.get("ip_address"),
-                        user_agent=user_context.get("user_agent"),
-                        allow_admin_bypass=allow_admin_bypass,
-                        check_any_team=check_any_team,
-                    )
+                team_id, check_any_team = await _resolve_team_and_check_mode(user_context, kwargs)
+
+            granted = await check_permission_inline(
+                user_context,
+                permission,
+                resource_type=resource_type,
+                team_id=team_id,
+                check_any_team=check_any_team,
+                db=kwargs.get("db") or user_context.get("db"),
+                request=kwargs.get("request"),
+                allow_admin_bypass=allow_admin_bypass,
+            )
 
             if not granted:
                 logger.warning(f"Permission denied: user={user_context['email']}, permission={permission}, resource_type={resource_type}")
@@ -991,6 +1163,16 @@ def require_any_permission(permissions: List[str], resource_type: Optional[str] 
             user_context = kwargs.get("user") or kwargs.get("_user") or kwargs.get("current_user") or kwargs.get("current_user_ctx")
             if not user_context or not isinstance(user_context, dict) or "email" not in user_context:
                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User authentication required")
+
+            # SECURITY: Check API token scopes BEFORE RBAC (Layer 1)
+            # A scoped API token must carry at least ONE of the required permissions; this is
+            # independent of the RBAC role checks below (Layer 2). Session tokens and tokens
+            # whose scopes are empty ("inherit from RBAC") pass through — see token_scope_grants().
+            token_scopes = user_context.get("token_scopes")
+            if permissions and not any(token_scope_grants(token_scopes, perm) for perm in permissions):
+                # Log detailed info server-side but return generic error message to avoid permission disclosure
+                logger.warning(f"API token scope check failed: user={user_context['email']}, required_any_of={permissions}, token_scopes={token_scopes}")
+                raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=_ACCESS_DENIED_MSG)
 
             team_id, check_any_team = await _resolve_team_and_check_mode(user_context, kwargs)
 

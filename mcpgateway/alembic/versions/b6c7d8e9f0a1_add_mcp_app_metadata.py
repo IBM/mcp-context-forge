@@ -24,10 +24,12 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 def _table_names(bind) -> set[str]:
+    """Return the set of table names for the given database bind."""
     return set(sa.inspect(bind).get_table_names())
 
 
 def _column_names(bind, table_name: str) -> set[str]:
+    """Return the set of column names for the given table."""
     return {column["name"] for column in sa.inspect(bind).get_columns(table_name)}
 
 

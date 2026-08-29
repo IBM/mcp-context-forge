@@ -145,6 +145,8 @@ from mcpgateway.schemas import (
     CursorPaginatedServersResponse,
     CursorPaginatedToolsResponse,
     GatewayCreate,
+    GatewayHandshakeResponse,
+    GatewayImpactPreview,
     GatewayRead,
     GatewayRefreshResponse,
     GatewayUpdate,
@@ -164,6 +166,7 @@ from mcpgateway.schemas import (
     RootUpdate,
     RPCRequest,
     ServerCreate,
+    ServerHandshakeRequest,
     ServerRead,
     ServerUpdate,
     TaggedEntity,
@@ -180,7 +183,16 @@ from mcpgateway.services.content_security import ContentPatternError, ContentSiz
 from mcpgateway.services.dataplane_publisher import DataplanePublisherService
 from mcpgateway.services.email_auth_service import EmailAuthService
 from mcpgateway.services.export_service import ExportError, ExportService
-from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayDuplicateConflictError, GatewayError, GatewayLookupConflictError, GatewayNameConflictError, GatewayNotFoundError
+from mcpgateway.services.gateway_service import (
+    GatewayConnectionError,
+    GatewayCredentialError,
+    GatewayDuplicateConflictError,
+    GatewayError,
+    GatewayLookupConflictError,
+    GatewayNameConflictError,
+    GatewayNotFoundError,
+    test_server_handshake,
+)
 from mcpgateway.services.import_service import ConflictStrategy, ImportConflictError
 from mcpgateway.services.import_service import ImportError as ImportServiceError
 from mcpgateway.services.import_service import ImportService, ImportValidationError
@@ -196,6 +208,7 @@ from mcpgateway.services.mcp_apps import (
     MCPAppsValidationError,
     serialize_resource_content_for_mcp,
 )
+from mcpgateway.services.mcp_method_registry import mcp_method_registry
 from mcpgateway.services.metrics import setup_metrics
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.prompt_service import PromptError, PromptLockConflictError, PromptNameConflictError, PromptNotFoundError
@@ -218,10 +231,11 @@ from mcpgateway.utils.csp_nonce import get_csp_nonce_from_request
 from mcpgateway.utils.error_formatter import ErrorFormatter, sanitize_validation_error_for_log, should_expose_error_details
 from mcpgateway.utils.header_filtering import filter_sensitive_headers as _filter_sensitive_headers
 from mcpgateway.utils.internal_http import internal_loopback_base_url, internal_loopback_verify
+from mcpgateway.utils.jq_runner import shutdown_jq_pool, start_jq_pool
 from mcpgateway.utils.metadata_capture import MetadataCapture
 from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.passthrough_headers import set_global_passthrough_headers
-from mcpgateway.utils.paths import resolve_root_path
+from mcpgateway.utils.paths import replace_api_path_alias, resolve_root_path
 from mcpgateway.utils.redis_client import close_redis_client, get_redis_client, is_redis_available
 from mcpgateway.utils.redis_isready import wait_for_redis_ready
 from mcpgateway.utils.retry_manager import ResilientHttpClient
@@ -470,6 +484,8 @@ def _build_internal_mcp_auth_context_for_rpc(request: Request, user: Any) -> Dic
     Returns:
         Encodable auth-context dict for ``encode_internal_mcp_auth_context``.
     """
+    # Layer-1 exception: forwards an auth context, does not derive visibility scope.
+    # Needs the raw is_admin flag.
     email, token_teams, is_admin = get_rpc_filter_context(request, user)
     # Genuine anonymous / MCP_REQUIRE_AUTH=false public-only callers have no email.
     is_authenticated = email is not None
@@ -1018,6 +1034,8 @@ async def _authorize_run_cancellation(request: Request, user, request_id: str, *
         JSONRPCError: When ``as_jsonrpc_error`` is True and cancellation is not authorized.
         HTTPException: When ``as_jsonrpc_error`` is False and cancellation is not authorized.
     """
+    # Layer-1 exception: compares requester against run owner, so it needs the raw
+    # token teams and is_admin flag rather than the normalized visibility scope.
     requester_email, requester_token_teams, requester_is_admin = get_rpc_filter_context(request, user)
     requester_teams = [] if requester_token_teams is None else list(requester_token_teams)
     run_status = await cancellation_service.get_status(request_id)
@@ -1462,6 +1480,13 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     # Initialize logging service FIRST to ensure all logging goes to dual output
     await logging_service.initialize()
     logger.info("Starting ContextForge services")
+
+    # Start the sandboxed jq worker pool before any service that might invoke
+    # tool response filters is initialised. A failure here (BrokenProcessPool,
+    # TimeoutError, or OSError from the sandbox warm-up on Linux/subprocess
+    # mode) is a hard startup failure and must propagate rather than letting
+    # the gateway boot with a broken or absent sandbox.
+    start_jq_pool()
 
     # Wait for the database to be ready, then run bootstrap (alembic + seed).
     # This used to run at module-import time, which made every test that
@@ -2030,6 +2055,9 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
 
         # Close Redis client last (after all services that use it)
         await close_redis_client()
+
+        # Shut down the sandboxed jq worker pool
+        shutdown_jq_pool()
 
         logger.info("Shutdown complete")
 
@@ -3053,12 +3081,16 @@ class AdminAuthMiddleware(BaseHTTPMiddleware):
         return await call_next(request)
 
 
+_SERVER_MCP_PATH_RE = re.compile(r"/servers/([^/]+)/mcp/?")
+
+
 class MCPPathRewriteMiddleware:
     """
     Middleware that rewrites paths ending with '/mcp' to '/mcp/', after performing authentication.
 
     - Rewrites exact '/mcp' to '/mcp/' so Starlette's mount does not emit a 307 redirect.
-    - Rewrites paths like '/servers/<server_id>/mcp' to '/mcp/'.
+    - Rewrites '/servers/<server_id>/mcp' and
+      '/v1/virtual-servers/<server_id>/mcp' to '/mcp/'.
     - Keeps ASGI ``raw_path`` aligned with rewritten paths when present.
     - Only exact '/mcp' and server-scoped MCP transport paths are rewritten.
     - Authentication is performed before any path rewriting.
@@ -3185,20 +3217,22 @@ class MCPPathRewriteMiddleware:
             >>> scope["path"]
             '/mcp/'
         """
-        # Auth check first
-        auth_ok = await streamable_http_auth(scope, receive, send)
-        if not auth_ok:
-            return
-
         original_path = scope.get("path", "")
-        scope["modified_path"] = original_path
 
         # Strip root_path prefix before pattern matching.
         # In reverse proxy deployments, scope["path"] may contain the full path
         # including the proxy prefix (e.g., "/dev/mcp-gateway/service/gateway/servers/123/mcp").
-        # We need to strip this prefix to correctly match the /servers/ pattern.
+        # We need to strip this prefix to correctly match server-scoped patterns.
         root_path = (scope.get("root_path") or settings.app_root_path or "").rstrip("/")
         app_path = _normalize_scope_path(original_path, root_path)
+        internal_app_path = replace_api_path_alias(app_path)
+
+        # Authenticate against the app-relative internal path without changing
+        # the shared ASGI scope. The original scope remains available for
+        # headers, root_path, and response URL construction.
+        auth_ok = await streamable_http_auth(scope, receive, send, request_path=internal_app_path)
+        if not auth_ok:
+            return
 
         # Update modified_path to the app-relative path (without root_path prefix).
         # This ensures streamablehttp_transport can extract server_id via regex (#4266).
@@ -3212,24 +3246,34 @@ class MCPPathRewriteMiddleware:
                 await self.application(scope, receive, send)
                 return
             if app_path.endswith("/mcp") or (app_path.endswith("/mcp/") and app_path != "/mcp/"):
-                # SECURITY: Only rewrite recognised MCP paths — /servers/{id}/mcp.
+                # SECURITY: Only rewrite recognised MCP paths — /servers/{id}/mcp
+                # and its versioned product-language alias
+                # /v1/virtual-servers/{id}/mcp.
                 # Arbitrary prefixes (e.g. /foo/mcp) must NOT be rewritten to
                 # /mcp/ as that would expose the global MCP transport under
                 # undocumented aliases, broadening the externally reachable
                 # route surface.
-                if app_path.startswith("/servers/"):
+                if internal_app_path.startswith("/servers/"):
                     # Validate that a non-empty server_id segment is present.
                     # Without this check, paths like /servers//mcp (empty ID)
                     # would be rewritten and silently fall through (#3891).
-                    _srv_match = re.match(r"/servers/([^/]+)/mcp", app_path)
-                    if not _srv_match:
-                        response = ORJSONResponse({"detail": "Invalid server identifier"}, status_code=404)
-                        await response(scope, receive, send)
-                        return
+                    _srv_match = _SERVER_MCP_PATH_RE.fullmatch(internal_app_path)
                 else:
-                    # Not a /servers/ path — do not rewrite, pass through
+                    # Not a recognised server-scoped path — do not rewrite.
                     await self.application(scope, receive, send)
                     return
+
+                if not _srv_match:
+                    response = ORJSONResponse({"detail": "Invalid server identifier"}, status_code=404)
+                    await response(scope, receive, send)
+                    return
+
+                if internal_app_path != app_path:
+                    # Downstream Python and Rust MCP transports extract the
+                    # server ID from the canonical /servers/{id}/mcp shape.
+                    # Preserve that scoped identity while rewriting the public
+                    # alias to the shared /mcp/ mount.
+                    scope["modified_path"] = internal_app_path
                 # Rewrite to /mcp/ and continue through middleware (lets CORSMiddleware handle preflight)
                 # Preserve root_path prefix when rewriting
                 self._apply_mcp_rewrite(scope, root_path)
@@ -3542,10 +3586,10 @@ protocol_router = APIRouter(prefix="/protocol", tags=["Protocol"])
 tool_router = APIRouter(prefix="/tools", tags=["Tools"])
 resource_router = APIRouter(prefix="/resources", tags=["Resources"])
 prompt_router = APIRouter(prefix="/prompts", tags=["Prompts"])
-gateway_router = APIRouter(prefix="/gateways", tags=["Gateways"])
+gateway_router = APIRouter(tags=["Gateways"])
 root_router = APIRouter(prefix="/roots", tags=["Roots"])
 utility_router = APIRouter(tags=["Utilities"])
-server_router = APIRouter(prefix="/servers", tags=["Servers"])
+server_router = APIRouter(tags=["Servers"])
 metrics_router = APIRouter(prefix="/metrics", tags=["Metrics"])
 tag_router = APIRouter(prefix="/tags", tags=["Tags"])
 export_import_router = APIRouter(tags=["Export/Import"])
@@ -4056,12 +4100,7 @@ async def handle_completion(request: Request, db: Session = Depends(get_db), use
     """
     body = await _read_request_json(request)
     logger.debug(f"User {SecurityValidator.sanitize_log_message(user['email'])} sent a completion request")
-    user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
-    # Keep user_email set for owner matching on private resources (PR #4341 / issue #4694)
-    if is_admin and token_teams is None:
-        token_teams = None  # Admin unrestricted - sees all public+team resources + own private
-    elif token_teams is None:
-        token_teams = []
+    user_email, token_teams = get_scoped_resource_access_context(request, user)
     try:
         return await completion_service.handle_completion(db, body, user_email=user_email, token_teams=token_teams)
     except CompletionError as exc:
@@ -4419,6 +4458,76 @@ async def toggle_server_status(
     return await set_server_state(server_id, activate, db, user)
 
 
+@server_router.post("/{server_id}/test-handshake", response_model=GatewayHandshakeResponse)
+# allow_admin_bypass=False mirrors the analogous /gateways/test-handshake endpoint: this
+# probe makes the gateway itself act as an MCP client, so it goes through the same
+# explicit permission check platform admins get for every other action, not the bypass.
+@require_permission("servers.read", allow_admin_bypass=False)
+async def test_server_mcp_handshake(
+    server_id: str,
+    request: Request,
+    body: ServerHandshakeRequest = Body(default_factory=ServerHandshakeRequest),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> GatewayHandshakeResponse:
+    """Test whether a virtual server's own MCP endpoint speaks MCP via a protocol handshake.
+
+    Unlike ``POST /gateways/test-handshake``, the target isn't an arbitrary
+    caller-supplied URL — it's this server's own ``/servers/{server_id}/mcp``
+    transport, resolved from a server ID the caller already has read access to.
+    The handshake runs in-process (no outbound network call, no SSRF allowlist),
+    reusing the caller's own forwarded credentials by default so the result
+    reflects what that caller would actually see.
+
+    Args:
+        server_id (str): The ID of the virtual server to test.
+        request (Request): The incoming request, used for scoped access validation and to forward the caller's own credentials.
+        body (ServerHandshakeRequest): Optional header overrides for the handshake.
+        db (Session): The database session used to interact with the data store.
+        user: Authenticated user context.
+
+    Returns:
+        GatewayHandshakeResponse: The handshake outcome, including negotiation path,
+            server identity, capabilities, component counts, and failure classification.
+
+    Raises:
+        HTTPException: If the server is not found or the caller lacks visibility.
+    """
+    auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
+    try:
+        server = await server_service.get_server(db, server_id, user_email=auth_user_email, token_teams=auth_token_teams)
+    except ServerNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    _enforce_scoped_resource_access(request, db, user, f"/servers/{server_id}/test-handshake")
+
+    # Reuse the caller's own credentials for the probe (header or cookie, same precedence
+    # as get_current_user_with_permissions) rather than minting a new token or bypassing
+    # auth: the panel is testing what this caller can actually reach.
+    forwarded_headers: Dict[str, str] = {}
+    auth_header = get_auth_header_value(request.headers) or ""
+    auth_token = auth_header[7:] if auth_header.lower().startswith("bearer ") else None
+    if not auth_token and hasattr(request, "cookies") and request.cookies:
+        auth_token = request.cookies.get("jwt_token") or request.cookies.get("access_token")
+    if auth_token:
+        # Forward under the *configured* auth header name -- when AUTH_HEADER_NAME is
+        # customized away from the default "Authorization", the nested request's own
+        # auth extraction (get_auth_header_value / _resolve_auth_header_name) only reads
+        # that header, so hardcoding "Authorization" here would make the probe fail auth
+        # even though the outer request succeeded.
+        forwarded_headers[_resolve_auth_header_name(settings)] = f"Bearer {auth_token}"
+    elif settings.trust_proxy_auth:
+        # No bearer/cookie credential: this caller may have been authenticated via the
+        # configured trusted-proxy identity header instead (TRUST_PROXY_AUTH_DANGEROUSLY).
+        # Forward that header's *own already-verified value from this request* -- never
+        # anything from the request body -- so the probe reflects the same identity that
+        # got the caller past auth here.
+        proxy_user = request.headers.get(settings.proxy_user_header)
+        if proxy_user:
+            forwarded_headers[settings.proxy_user_header] = proxy_user
+
+    return await test_server_handshake(server.id, server.name, server.enabled, body, forwarded_headers)
+
+
 @server_router.delete("/{server_id}", response_model=Dict[str, str])
 @require_permission("servers.delete")
 async def delete_server(
@@ -4585,7 +4694,12 @@ async def sse_endpoint(request: Request, server_id: str, db: Session = Depends(g
 
 @server_router.post("/{server_id}/message")
 @require_permission("servers.use")
-async def message_endpoint(request: Request, server_id: str = Depends(require_valid_server), user=Depends(get_current_user_with_permissions)):
+async def message_endpoint(
+    request: Request,
+    server_id: str,
+    _server_exists: str = Depends(require_valid_server),
+    user=Depends(get_current_user_with_permissions),
+):
     """
     Handles incoming messages for a specific server.
 
@@ -4681,16 +4795,9 @@ async def server_get_tools(
         List[ToolRead]: A list of tool records formatted with by_alias=True.
     """
     logger.debug(f"User: {safe_log_user(user)} has listed tools for the server_id: {server_id}")
-    user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
-    _req_email, _req_is_admin = user_email, is_admin
+    user_email, token_teams = get_scoped_resource_access_context(request, user)
+    _req_email, _req_is_admin = get_request_identity(request, user)
     _req_team_roles = get_user_team_roles(db, _req_email) if _req_email and not _req_is_admin else None
-    # Admin bypass - only when token has NO team restrictions (token_teams is None)
-    # If token has explicit team scope (even empty [] for public-only), respect it
-    # Keep user_email set for owner matching on private resources (PR #4341 / issue #4694)
-    if is_admin and token_teams is None:
-        token_teams = None  # Admin unrestricted - sees all public+team resources + own private
-    elif token_teams is None:
-        token_teams = []  # Non-admin without teams = public-only (secure default)
     tools = await tool_service.list_server_tools(
         db,
         server_id=server_id,
@@ -4734,14 +4841,7 @@ async def server_get_resources(
         List[ResourceRead]: A list of resource records formatted with by_alias=True.
     """
     logger.debug(f"User: {safe_log_user(user)} has listed resources for the server_id: {server_id}")
-    user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
-    # Admin bypass - only when token has NO team restrictions (token_teams is None)
-    # If token has explicit team scope (even empty [] for public-only), respect it
-    # Keep user_email set for owner matching on private resources (PR #4341 / issue #4694)
-    if is_admin and token_teams is None:
-        token_teams = None  # Admin unrestricted - sees all public+team resources + own private
-    elif token_teams is None:
-        token_teams = []  # Non-admin without teams = public-only (secure default)
+    user_email, token_teams = get_scoped_resource_access_context(request, user)
     resources = await resource_service.list_server_resources(
         db, server_id=server_id, include_inactive=include_inactive, include_metrics=include_metrics, user_email=user_email, token_teams=token_teams
     )
@@ -4777,14 +4877,7 @@ async def server_get_prompts(
         List[PromptRead]: A list of prompt records formatted with by_alias=True.
     """
     logger.debug(f"User: {safe_log_user(user)} has listed prompts for the server_id: {server_id}")
-    user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
-    # Admin bypass - only when token has NO team restrictions (token_teams is None)
-    # If token has explicit team scope (even empty [] for public-only), respect it
-    # Keep user_email set for owner matching on private resources (PR #4341 / issue #4694)
-    if is_admin and token_teams is None:
-        token_teams = None  # Admin unrestricted - sees all public+team resources + own private
-    elif token_teams is None:
-        token_teams = []  # Non-admin without teams = public-only (secure default)
+    user_email, token_teams = get_scoped_resource_access_context(request, user)
     prompts = await prompt_service.list_server_prompts(db, server_id=server_id, include_inactive=include_inactive, include_metrics=include_metrics, user_email=user_email, token_teams=token_teams)
     return [prompt.model_dump(by_alias=True) for prompt in prompts]
 
@@ -4837,15 +4930,7 @@ async def list_a2a_agents(
         raise HTTPException(status_code=503, detail="A2A service not available")
 
     # Get filtering context from token (respects token scope)
-    user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
-
-    # Admin bypass - only when token has NO team restrictions (token_teams is None)
-    # If token has explicit team scope (even for admins), respect it for least-privilege
-    # Keep user_email set for owner matching on private resources (PR #4341 / issue #4694)
-    if is_admin and token_teams is None:
-        token_teams = None  # Admin unrestricted - sees all public+team resources + own private
-    elif token_teams is None:
-        token_teams = []  # Non-admin without teams = public-only (secure default)
+    user_email, token_teams = get_scoped_resource_access_context(request, user)
 
     # Check team_id from request.state (set during auth)
     token_team_id = getattr(request.state, "team_id", None)
@@ -4909,13 +4994,7 @@ async def get_a2a_agent(
             raise HTTPException(status_code=503, detail="A2A service not available")
 
         # Get filtering context from token (respects token scope)
-        user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
-
-        # Admin bypass - only when token has NO team restrictions
-        if is_admin and token_teams is None:
-            token_teams = None  # Admin unrestricted
-        elif token_teams is None:
-            token_teams = []  # Non-admin without teams = public-only
+        user_email, token_teams = get_scoped_resource_access_context(request, user)
 
         return await a2a_service.get_agent(
             db,
@@ -5221,13 +5300,7 @@ def _extract_a2a_request_context(
         - request_headers: Dict[str, str]
     """
     # Get filtering context from token (respects token scope)
-    user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
-
-    # Admin bypass - only when token has NO team restrictions
-    if is_admin and token_teams is None:
-        token_teams = None  # Admin unrestricted
-    elif token_teams is None:
-        token_teams = []  # Non-admin without teams = public-only
+    user_email, token_teams = get_scoped_resource_access_context(request, user)
 
     # Extract user ID
     user_id = None
@@ -5661,17 +5734,9 @@ async def list_tools(
         tags_list = [tag.strip() for tag in tags.split(",") if tag.strip()]
 
     # Get filtering context from token (respects token scope)
-    user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
+    user_email, token_teams = get_scoped_resource_access_context(request, user)
     # Capture original identity for header masking (before admin bypass modifies user_email)
-    _req_email, _req_is_admin = user_email, is_admin
-
-    # Admin bypass - only when token has NO team restrictions (token_teams is None)
-    # If token has explicit team scope (even for admins), respect it for least-privilege
-    # Keep user_email set for owner matching on private resources (PR #4341 / issue #4694)
-    if is_admin and token_teams is None:
-        token_teams = None  # Admin unrestricted - sees all public+team resources + own private
-    elif token_teams is None:
-        token_teams = []  # Non-admin without teams = public-only (secure default)
+    _req_email, _req_is_admin = get_request_identity(request, user)
 
     # Check team_id from request.state (set during auth)
     token_team_id = getattr(request.state, "team_id", None)
@@ -6229,15 +6294,7 @@ async def list_resources(
         tags_list = [tag.strip() for tag in tags.split(",") if tag.strip()]
 
     # Get filtering context from token (respects token scope)
-    user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
-
-    # Admin bypass - only when token has NO team restrictions (token_teams is None)
-    # If token has explicit team scope (even for admins), respect it for least-privilege
-    # Keep user_email set for owner matching on private resources (PR #4341 / issue #4694)
-    if is_admin and token_teams is None:
-        token_teams = None  # Admin unrestricted - sees all public+team resources + own private
-    elif token_teams is None:
-        token_teams = []  # Non-admin without teams = public-only (secure default)
+    user_email, token_teams = get_scoped_resource_access_context(request, user)
 
     # Check team_id from request.state (set during auth)
     token_team_id = getattr(request.state, "team_id", None)
@@ -6801,15 +6858,7 @@ async def list_prompts(
         tags_list = [tag.strip() for tag in tags.split(",") if tag.strip()]
 
     # Get filtering context from token (respects token scope)
-    user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
-
-    # Admin bypass - only when token has NO team restrictions (token_teams is None)
-    # If token has explicit team scope (even for admins), respect it for least-privilege
-    # Keep user_email set for owner matching on private resources (PR #4341 / issue #4694)
-    if is_admin and token_teams is None:
-        token_teams = None  # Admin unrestricted - sees all public+team resources + own private
-    elif token_teams is None:
-        token_teams = []  # Non-admin without teams = public-only (secure default)
+    user_email, token_teams = get_scoped_resource_access_context(request, user)
 
     # Check team_id from request.state (set during auth)
     token_team_id = getattr(request.state, "team_id", None)
@@ -7433,6 +7482,8 @@ async def register_gateway(
     except Exception as ex:
         if isinstance(ex, PermissionError):
             return ORJSONResponse(content={"message": str(ex)}, status_code=status.HTTP_403_FORBIDDEN)
+        if isinstance(ex, GatewayCredentialError):
+            return ORJSONResponse(content={"message": str(ex)}, status_code=status.HTTP_422_UNPROCESSABLE_CONTENT)
         if isinstance(ex, GatewayConnectionError):
             return ORJSONResponse(content={"message": str(ex)}, status_code=status.HTTP_502_BAD_GATEWAY)
         if isinstance(ex, ValueError):
@@ -7476,6 +7527,39 @@ async def get_gateway(gateway_id: str, request: Request, db: Session = Depends(g
         gateway = await gateway_service.get_gateway(db, gateway_id, user_email=auth_user_email, token_teams=auth_token_teams)
         _enforce_scoped_resource_access(request, db, user, f"/gateways/{gateway_id}")
         return gateway
+    except GatewayLookupConflictError as e:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
+    except GatewayNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+
+@gateway_router.get("/{gateway_id}/impact-preview", response_model=GatewayImpactPreview)
+@require_permission("gateways.read")
+async def get_gateway_impact_preview(
+    gateway_id: str,
+    request: Request,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> GatewayImpactPreview:
+    """Preview visible virtual servers affected by deleting a gateway.
+
+    Args:
+        gateway_id: Gateway ID, exact name, or slug.
+        request: Incoming request used for scoped access validation.
+        db: Database session.
+        user: Authenticated user.
+
+    Returns:
+        Layer-1-scoped virtual server IDs and names.
+
+    Raises:
+        HTTPException: 404 if the gateway is missing or hidden; 409 for an ambiguous identifier.
+    """
+    try:
+        auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
+        preview = await gateway_service.get_gateway_impact_preview(db, gateway_id, user_email=auth_user_email, token_teams=auth_token_teams)
+        _enforce_scoped_resource_access(request, db, user, f"/gateways/{preview.gateway_id}")
+        return preview
     except GatewayLookupConflictError as e:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=str(e))
     except GatewayNotFoundError as e:
@@ -7536,6 +7620,8 @@ async def update_gateway(
             return ORJSONResponse(content={"message": str(ex)}, status_code=403)
         if isinstance(ex, GatewayNotFoundError):
             return ORJSONResponse(content={"message": "Gateway not found"}, status_code=status.HTTP_404_NOT_FOUND)
+        if isinstance(ex, GatewayCredentialError):
+            return ORJSONResponse(content={"message": str(ex)}, status_code=status.HTTP_422_UNPROCESSABLE_CONTENT)
         if isinstance(ex, GatewayConnectionError):
             return ORJSONResponse(content={"message": str(ex)}, status_code=status.HTTP_502_BAD_GATEWAY)
         if isinstance(ex, ValueError):
@@ -7650,12 +7736,18 @@ async def refresh_gateway_tools(
         _enforce_scoped_resource_access(request, db, user, f"/gateways/{gateway_id}")
 
         user_email = get_user_email(user)
+        # Build user_context for Vault token path selection on authorization_code gateways.
+        # Uses jwt_teams_claim for session tokens so admin bypass doesn't erase team scope.
+        from mcpgateway.routers.oauth_router import _build_user_context  # pylint: disable=import-outside-toplevel
+
+        user_context = _build_user_context(user)
         result = await gateway_service.refresh_gateway_manually(
             gateway_id=gateway_id,
             include_resources=include_resources,
             include_prompts=include_prompts,
             user_email=user_email,
             request_headers=dict(request.headers),
+            user_context=user_context,
         )
         return GatewayRefreshResponse(gateway_id=gateway_id, **result)
     except GatewayNotFoundError as e:
@@ -8391,12 +8483,7 @@ async def handle_internal_mcp_tools_list(request: Request):
             method="tools/list",
             server_id=server_id,
         )
-        user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
-        if is_admin and token_teams is None:
-            user_email = None
-            token_teams = None
-        elif token_teams is None:
-            token_teams = []
+        user_email, token_teams = get_scoped_resource_access_context(request, user)
 
         tools = await tool_service.list_server_mcp_tool_definitions(
             db,
@@ -8486,12 +8573,7 @@ async def handle_internal_mcp_resources_list(request: Request):
             server_id=server_id,
         )
 
-        user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
-        if is_admin and token_teams is None:
-            user_email = None
-            token_teams = None
-        elif token_teams is None:
-            token_teams = []
+        user_email, token_teams = get_scoped_resource_access_context(request, user)
 
         if server_id:
             resources = await resource_service.list_server_resources(
@@ -8601,11 +8683,7 @@ async def handle_internal_mcp_resources_read(request: Request):
                 },
             )
 
-        auth_user_email, auth_token_teams, auth_is_admin = get_rpc_filter_context(request, user)
-        if auth_is_admin and auth_token_teams is None:
-            auth_user_email = None
-        elif auth_token_teams is None:
-            auth_token_teams = []
+        auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
 
         plugin_context_table = getattr(request.state, "plugin_context_table", None)
         plugin_global_context = getattr(request.state, "plugin_global_context", None)
@@ -9062,12 +9140,7 @@ async def handle_internal_mcp_completion_complete(request: Request):
             server_id=server_id,
         )
 
-        user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
-        if is_admin and token_teams is None:
-            user_email = None
-            token_teams = None
-        elif token_teams is None:
-            token_teams = []
+        user_email, token_teams = get_scoped_resource_access_context(request, user)
 
         payload = await completion_service.handle_completion(
             db,
@@ -9289,12 +9362,7 @@ async def handle_internal_mcp_prompts_list(request: Request):
             server_id=server_id,
         )
 
-        user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
-        if is_admin and token_teams is None:
-            user_email = None
-            token_teams = None
-        elif token_teams is None:
-            token_teams = []
+        user_email, token_teams = get_scoped_resource_access_context(request, user)
 
         if server_id:
             prompts = await prompt_service.list_server_prompts(
@@ -9408,11 +9476,7 @@ async def handle_internal_mcp_prompts_get(request: Request):
                 },
             )
 
-        auth_user_email, auth_token_teams, auth_is_admin = get_rpc_filter_context(request, user)
-        if auth_is_admin and auth_token_teams is None:
-            auth_user_email = None
-        elif auth_token_teams is None:
-            auth_token_teams = []
+        auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
 
         plugin_context_table = getattr(request.state, "plugin_context_table", None)
         plugin_global_context = getattr(request.state, "plugin_global_context", None)
@@ -9729,13 +9793,7 @@ async def _authorize_internal_a2a_method(
 def _get_internal_a2a_scope_context(request: Request) -> tuple[Optional[str], Optional[List[str]]]:
     """Return scoped visibility context for trusted internal A2A requests."""
     user = _build_internal_mcp_forwarded_user(request)
-    user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
-
-    if is_admin and token_teams is None:
-        return user_email, None
-    if token_teams is None:
-        return user_email, []
-    return user_email, token_teams
+    return get_scoped_resource_access_context(request, user)
 
 
 @utility_router.post("/_internal/a2a/invoke/authz/")
@@ -10344,9 +10402,7 @@ async def _mcp_apps_initialize_authorized(request: Request, db: Session, user, s
     if not server_id:
         return True
 
-    user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
-    if not (is_admin and token_teams is None) and token_teams is None:
-        token_teams = []
+    user_email, token_teams = get_scoped_resource_access_context(request, user)
 
     try:
         await server_service.get_server(db, server_id, user_email=user_email, token_teams=token_teams)
@@ -10449,6 +10505,8 @@ async def _execute_rpc_tools_call(
     if not name:
         raise JSONRPCError(-32602, "Missing tool name in parameters", params)
 
+    # Layer-1 exception: run ownership is captured below from the raw context,
+    # before admin-bypass normalization is applied.
     auth_user_email, auth_token_teams, auth_is_admin = get_rpc_filter_context(request, user)
     run_owner_email = auth_user_email
     run_owner_team_ids = [] if auth_token_teams is None else list(auth_token_teams)
@@ -10507,6 +10565,7 @@ async def _execute_rpc_tools_call(
                     app_user_email=oauth_user_email,
                     user_email=auth_user_email,
                     token_teams=auth_token_teams,
+                    jwt_teams_claim=getattr(request.state, "jwt_teams_claim", None),
                     server_id=server_id,
                     plugin_context_table=plugin_context_table,
                     plugin_global_context=plugin_global_context,
@@ -10564,13 +10623,7 @@ async def create_mcp_app_session(request: Request, db: Session = Depends(get_db)
     server_id = body.get("serverId") or body.get("server_id") or request.headers.get("x-contextforge-server-id")
     if not server_id or not isinstance(server_id, str):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="serverId is required for MCP Apps sessions")
-    user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
-    if is_admin and token_teams is None:
-        resource_user_email = None
-    else:
-        resource_user_email = user_email
-        if token_teams is None:
-            token_teams = []
+    resource_user_email, token_teams = get_scoped_resource_access_context(request, user)
 
     try:
         await resource_service.read_resource(
@@ -10606,50 +10659,125 @@ async def create_mcp_app_session(request: Request, db: Session = Depends(get_db)
     )
 
 
-@utility_router.post("/appbridge/sessions/{app_session_id}/rpc")
-@require_permission("tools.execute")
-async def handle_mcp_app_session_rpc(app_session_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)):
-    """Execute an app-visible tool through a validated AppBridge session."""
-    if not mcp_apps_enabled():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="MCP Apps are disabled")
+def _app_bridge_request_headers(request: Request) -> Dict[str, str]:
+    """Build the header passthrough for an AppBridge call.
 
-    try:
-        body = orjson.loads(await request.body())
-    except orjson.JSONDecodeError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Parse error") from exc
-    if not isinstance(body, dict):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid request body")
+    The gateway routing header is stripped so an app cannot redirect its own
+    call to a different gateway than the one its session is bound to.
 
-    req_id = body.get("id")
-    method = body.get("method")
-    params = body.get("params") if isinstance(body.get("params"), dict) else {}
-    if method != "tools/call":
-        return {"jsonrpc": "2.0", "error": {"code": -32601, "message": f"Method not found: {method}"}, "id": req_id}
+    Args:
+        request: Incoming AppBridge RPC request.
 
-    mcp_session_id = _extract_mcp_session_id(request, body)
-    if not mcp_session_id:
-        return {"jsonrpc": "2.0", "error": {"code": -32003, "message": _ACCESS_DENIED_MSG}, "id": req_id}
-    try:
-        await _assert_session_owner_or_admin(request, user, mcp_session_id)
-    except HTTPException as exc:
-        error_code = -32002 if exc.status_code == status.HTTP_404_NOT_FOUND else -32003
-        return {"jsonrpc": "2.0", "error": {"code": error_code, "message": str(exc.detail)}, "id": req_id}
+    Returns:
+        Lowercased request headers without the gateway routing header.
+    """
+    request_headers = {k.lower(): v for k, v in request.headers.items()}
+    request_headers.pop("x-context-forge-gateway-id", None)
+    return request_headers
 
-    requester_email, requester_is_admin = get_request_identity(request, user)
-    server_id = params.get("server_id") or params.get("serverId") or body.get("serverId") or body.get("server_id") or request.headers.get("x-contextforge-server-id")
-    app_session = mcp_app_session_service.get_valid_session(
-        db,
-        app_session_id=app_session_id,
-        mcp_session_id=mcp_session_id,
-        user_email=requester_email,
-        server_id=None,
-        is_admin=requester_is_admin,
+
+def _record_app_bridge_log(app_session, params: Dict[str, Any]) -> None:
+    """Record a log notification sent by an MCP App.
+
+    The MCP Apps lifecycle terminates ``notifications/message`` at the host, so
+    the payload is recorded for observability and never proxied upstream. The
+    contents are attacker-influenced, so every field is truncated and logged as
+    data rather than interpolated into the format string.
+
+    Args:
+        app_session: The validated AppBridge session the notification arrived on.
+        params: JSON-RPC params carrying ``level``, optional ``logger`` and ``data``.
+    """
+    level = params.get("level")
+    origin_logger = params.get("logger")
+    data = params.get("data")
+    logger.info(
+        "AppBridge log notification session=%s server=%s level=%.100r logger=%.100r data=%.500r",
+        app_session.id,
+        app_session.server_id,
+        level,
+        origin_logger,
+        data,
     )
-    if app_session is None:
-        return {"jsonrpc": "2.0", "error": {"code": -32003, "message": _ACCESS_DENIED_MSG}, "id": req_id}
-    if not app_session.server_id or (server_id is not None and server_id != app_session.server_id):
-        return {"jsonrpc": "2.0", "error": {"code": -32003, "message": _ACCESS_DENIED_MSG}, "id": req_id}
 
+
+async def _handle_app_bridge_resources_read(db: Session, request: Request, app_session, params: Dict[str, Any], req_id: Any) -> Dict[str, Any]:
+    """Read a resource on behalf of an MCP App through its bound session.
+
+    The read is scoped to the server the AppBridge session is bound to and uses
+    the identity and team scoping captured when the session was created, so an
+    app cannot reach resources its originating user could not read.
+
+    Args:
+        db: Database session.
+        request: Incoming request, used for plugin context and header passthrough.
+        app_session: The validated AppBridge session.
+        params: JSON-RPC params carrying the resource ``uri``.
+        req_id: JSON-RPC request id echoed back to the caller.
+
+    Returns:
+        A JSON-RPC response dictionary with the resource contents or an error.
+    """
+    uri = params.get("uri")
+    if not uri or not isinstance(uri, str):
+        return {"jsonrpc": "2.0", "error": {"code": -32602, "message": "Missing resource URI in parameters"}, "id": req_id}
+
+    token_teams = app_session.token_teams
+    resource_user_email = None if token_teams is None else app_session.user_email
+    request_headers = _app_bridge_request_headers(request)
+
+    try:
+        result = await resource_service.read_resource(
+            db,
+            resource_uri=uri,
+            user=resource_user_email,
+            server_id=app_session.server_id,
+            token_teams=token_teams,
+            plugin_context_table=getattr(request.state, "plugin_context_table", None),
+            plugin_global_context=getattr(request.state, "plugin_global_context", None),
+            meta_data=params.get("_meta"),
+            request_headers=request_headers,
+        )
+    except (ValueError, ResourceNotFoundError) as exc:
+        logger.info("AppBridge resource read failed for %s on server %s: %s", uri, app_session.server_id, exc)
+        return {"jsonrpc": "2.0", "error": {"code": -32002, "message": f"Resource not found: {uri}"}, "id": req_id}
+    except PluginViolationError as exc:
+        error_code = -32602
+        if exc.violation and hasattr(exc.violation, "mcp_error_code") and isinstance(exc.violation.mcp_error_code, int):
+            error_code = exc.violation.mcp_error_code
+        return {"jsonrpc": "2.0", "error": {"code": error_code, "message": str(exc)}, "id": req_id}
+    except PluginError as exc:
+        error_code = -32603
+        if exc.error and hasattr(exc.error, "mcp_error_code") and isinstance(exc.error.mcp_error_code, int):
+            error_code = exc.error.mcp_error_code
+        return {"jsonrpc": "2.0", "error": {"code": error_code, "message": str(exc)}, "id": req_id}
+    except ResourceError as exc:
+        logger.info("AppBridge resource read errored for %s: %s", uri, exc)
+        return {"jsonrpc": "2.0", "error": {"code": -32000, "message": f"Resource read failed: {exc}"}, "id": req_id}
+    except Exception:
+        logger.exception("AppBridge resource read failed for %s", uri)
+        return {"jsonrpc": "2.0", "error": {"code": -32603, "message": "Internal error"}, "id": req_id}
+
+    return {"jsonrpc": "2.0", "result": {"contents": [serialize_resource_content_for_mcp(result, fallback_uri=uri)]}, "id": req_id}
+
+
+async def _handle_app_bridge_tools_call(db: Session, request: Request, app_session, params: Dict[str, Any], req_id: Any, requester_email: Optional[str]) -> Dict[str, Any]:
+    """Invoke an app-visible tool on behalf of an MCP App through its bound session.
+
+    The call is scoped to the server the AppBridge session is bound to and uses the
+    identity and team scoping captured when the session was created.
+
+    Args:
+        db: Database session.
+        request: Incoming request, used for plugin context and header passthrough.
+        app_session: The validated AppBridge session.
+        params: JSON-RPC params carrying the tool ``name`` and ``arguments``.
+        req_id: JSON-RPC request id echoed back to the caller.
+        requester_email: Email of the authenticated caller driving the app.
+
+    Returns:
+        A JSON-RPC response dictionary with the tool result or an error.
+    """
     name = params.get("name")
     if not name:
         return {"jsonrpc": "2.0", "error": {"code": -32602, "message": "Missing tool name in parameters"}, "id": req_id}
@@ -10657,8 +10785,7 @@ async def handle_mcp_app_session_rpc(app_session_id: str, request: Request, db: 
     try:
         token_teams = app_session.token_teams
         tool_user_email = None if token_teams is None else app_session.user_email
-        request_headers = {k.lower(): v for k, v in request.headers.items()}
-        request_headers.pop("x-context-forge-gateway-id", None)
+        request_headers = _app_bridge_request_headers(request)
         result = await tool_service.invoke_tool(
             db=db,
             name=name,
@@ -10667,6 +10794,7 @@ async def handle_mcp_app_session_rpc(app_session_id: str, request: Request, db: 
             app_user_email=requester_email,
             user_email=tool_user_email,
             token_teams=token_teams,
+            jwt_teams_claim=getattr(request.state, "jwt_teams_claim", None),
             server_id=app_session.server_id,
             plugin_context_table=getattr(request.state, "plugin_context_table", None),
             plugin_global_context=getattr(request.state, "plugin_global_context", None),
@@ -10697,6 +10825,86 @@ async def handle_mcp_app_session_rpc(app_session_id: str, request: Request, db: 
     except Exception:
         logger.exception("AppBridge tool call failed for %s", name)
         return {"jsonrpc": "2.0", "error": {"code": -32603, "message": "Internal error"}, "id": req_id}
+
+
+@utility_router.post("/appbridge/sessions/{app_session_id}/rpc")
+@require_permission("tools.execute")
+async def handle_mcp_app_session_rpc(app_session_id: str, request: Request, db: Session = Depends(get_db), user=Depends(get_current_user_with_permissions)):
+    """Execute an app-visible tool or standard MCP message through a validated AppBridge session."""
+    if not mcp_apps_enabled():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="MCP Apps are disabled")
+
+    try:
+        body = orjson.loads(await request.body())
+    except orjson.JSONDecodeError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Parse error") from exc
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid request body")
+
+    req_id = body.get("id")
+    method = body.get("method")
+    params = body.get("params") if isinstance(body.get("params"), dict) else {}
+    if not mcp_method_registry.is_app_bridge_method(method):
+        return {"jsonrpc": "2.0", "error": {"code": -32601, "message": f"Method not found: {method}"}, "id": req_id}
+
+    mcp_session_id = _extract_mcp_session_id(request, body)
+    if not mcp_session_id:
+        return {"jsonrpc": "2.0", "error": {"code": -32003, "message": _ACCESS_DENIED_MSG}, "id": req_id}
+    try:
+        await _assert_session_owner_or_admin(request, user, mcp_session_id)
+    except HTTPException as exc:
+        error_code = -32002 if exc.status_code == status.HTTP_404_NOT_FOUND else -32003
+        return {"jsonrpc": "2.0", "error": {"code": error_code, "message": str(exc.detail)}, "id": req_id}
+
+    requester_email, requester_is_admin = get_request_identity(request, user)
+    server_id = params.get("server_id") or params.get("serverId") or body.get("serverId") or body.get("server_id") or request.headers.get("x-contextforge-server-id")
+    app_session = mcp_app_session_service.get_valid_session(
+        db,
+        app_session_id=app_session_id,
+        mcp_session_id=mcp_session_id,
+        user_email=requester_email,
+        server_id=None,
+        is_admin=requester_is_admin,
+    )
+    if app_session is None:
+        return {"jsonrpc": "2.0", "error": {"code": -32003, "message": _ACCESS_DENIED_MSG}, "id": req_id}
+    if not app_session.server_id or (server_id is not None and server_id != app_session.server_id):
+        return {"jsonrpc": "2.0", "error": {"code": -32003, "message": _ACCESS_DENIED_MSG}, "id": req_id}
+
+    # Session ownership and server binding are enforced above for every bridge
+    # method, so the per-method handlers below inherit the same scoping.
+    if method == "ping":
+        return {"jsonrpc": "2.0", "result": {}, "id": req_id}
+
+    if method == "notifications/message":
+        if "id" in body:
+            # JSON-RPC decides notification vs request on the *presence* of the id member, not
+            # its value: "id": null still makes this a request, which must not go unanswered.
+            # The MCP Apps lifecycle defines notifications/message as terminating at the host
+            # with no reply, so the request form is rejected rather than silently acknowledged
+            # with an empty body the caller is still waiting on.
+            return {
+                "jsonrpc": "2.0",
+                "error": {"code": -32600, "message": "notifications/message must be sent as a JSON-RPC notification, without an 'id' member"},
+                "id": req_id,
+            }
+        _record_app_bridge_log(app_session, params)
+        # A JSON-RPC notification carries no id and MUST NOT receive a JSON-RPC response, so
+        # this is acknowledged at the transport level only: 202 Accepted with an empty body,
+        # matching the Streamable HTTP rule for notification-only input.
+        return Response(status_code=status.HTTP_202_ACCEPTED)
+
+    if method == "resources/read":
+        # RBAC is a layer of its own, separate from the session's token/team scoping: the
+        # endpoint decorator only proves tools.execute, which a caller can retain after
+        # resources.read has been revoked. Authorize the read per method.
+        try:
+            await _ensure_rpc_permission(user, db, "resources.read", method, request=request)
+        except JSONRPCError as exc:
+            return {"jsonrpc": "2.0", "error": exc.to_dict()["error"], "id": req_id}
+        return await _handle_app_bridge_resources_read(db, request, app_session, params, req_id)
+
+    return await _handle_app_bridge_tools_call(db, request, app_session, params, req_id, requester_email)
 
 
 @utility_router.post("/_internal/mcp/tools/call/")
@@ -10886,6 +11094,8 @@ async def handle_internal_mcp_tools_call_resolve(request: Request):
         if (get_internal_mcp_auth_context(request) or {}).get("is_authenticated", True) is True:
             await _ensure_rpc_permission(user, db, "tools.execute", "tools/call", request=request)
 
+        # Layer-1 exception: tool-execution authorization, not resource visibility.
+        # Centralizing here would widen admin execution scope to their own private tools.
         auth_user_email, auth_token_teams, auth_is_admin = get_rpc_filter_context(request, user)
         if auth_is_admin and auth_token_teams is None:
             auth_user_email = None
@@ -10903,6 +11113,7 @@ async def handle_internal_mcp_tools_call_resolve(request: Request):
             app_user_email=get_user_email(user),
             user_email=auth_user_email,
             token_teams=auth_token_teams,
+            jwt_teams_claim=getattr(request.state, "jwt_teams_claim", None),
             server_id=server_id,
             plugin_global_context=plugin_global_context,
             plugin_context_table=plugin_context_table,
@@ -11092,16 +11303,9 @@ async def _handle_tools_list_rpc(
     Raises:
         HTTPException: If permission check fails
     """
-    user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
-    _req_email, _req_is_admin = user_email, is_admin
+    user_email, token_teams = get_scoped_resource_access_context(request, user)
+    _req_email, _req_is_admin = get_request_identity(request, user)
     _req_team_roles = get_user_team_roles(db, _req_email) if _req_email and not _req_is_admin else None
-
-    # Admin bypass - only when token has NO team restrictions
-    if is_admin and token_teams is None:
-        # user_email stays as-is (not None) for owner matching (PR #4341 / issue #4694)
-        token_teams = None  # Admin unrestricted
-    elif token_teams is None:
-        token_teams = []  # Non-admin without teams = public-only (secure default)
 
     if server_id:
         tools = await tool_svc.list_server_tools(
@@ -11305,13 +11509,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             )
         elif method == "list_gateways":
             await _ensure_rpc_permission(user, db, "gateways.read", method, request=request)
-            user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
-            # Admin bypass - only when token has NO team restrictions
-            if is_admin and token_teams is None:
-                # Keep user_email set for owner matching on the admin's own private rows (PR #4341 / issue #4694)
-                token_teams = None  # Admin unrestricted
-            elif token_teams is None:
-                token_teams = []  # Non-admin without teams = public-only (secure default)
+            user_email, token_teams = get_scoped_resource_access_context(request, user)
             gateways, next_cursor = await gateway_service.list_gateways(db, include_inactive=False, user_email=user_email, token_teams=token_teams)
             db.commit()
             db.close()
@@ -11326,13 +11524,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             result = {"roots": [r.model_dump(by_alias=True, exclude_none=True) for r in roots]}
         elif method == "resources/list":
             await _ensure_rpc_permission(user, db, "resources.read", method, request=request)
-            user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
-            # Admin bypass - only when token has NO team restrictions
-            if is_admin and token_teams is None:
-                # Keep user_email set for owner matching on the admin's own private rows (PR #4341 / issue #4694)
-                token_teams = None  # Admin unrestricted
-            elif token_teams is None:
-                token_teams = []  # Non-admin without teams = public-only (secure default)
+            user_email, token_teams = get_scoped_resource_access_context(request, user)
             if server_id:
                 resources = await resource_service.list_server_resources(db, server_id, user_email=user_email, token_teams=token_teams)
                 db.commit()
@@ -11354,12 +11546,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                 raise JSONRPCError(-32602, "Missing resource URI in parameters", params)
 
             # Get authorization context (same as resources/list)
-            auth_user_email, auth_token_teams, auth_is_admin = get_rpc_filter_context(request, user)
-            if auth_is_admin and auth_token_teams is None:
-                # Keep auth_user_email set for owner matching on the admin's own private rows (PR #4341 / issue #4694)
-                pass  # auth_token_teams stays None (unrestricted)
-            elif auth_token_teams is None:
-                auth_token_teams = []  # Non-admin without teams = public-only
+            auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
 
             # Get user email for OAuth token selection
             oauth_user_email = get_user_email(user)
@@ -11423,13 +11610,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             result = {}
         elif method == "prompts/list":
             await _ensure_rpc_permission(user, db, "prompts.read", method, request=request)
-            user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
-            # Admin bypass - only when token has NO team restrictions
-            if is_admin and token_teams is None:
-                # Keep user_email set for owner matching on the admin's own private rows (PR #4341 / issue #4694)
-                token_teams = None  # Admin unrestricted
-            elif token_teams is None:
-                token_teams = []  # Non-admin without teams = public-only (secure default)
+            user_email, token_teams = get_scoped_resource_access_context(request, user)
             if server_id:
                 prompts = await prompt_service.list_server_prompts(db, server_id, cursor=cursor, user_email=user_email, token_teams=token_teams)
                 db.commit()
@@ -11451,12 +11632,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                 raise JSONRPCError(-32602, "Missing prompt name in parameters", params)
 
             # Get authorization context (same as prompts/list)
-            auth_user_email, auth_token_teams, auth_is_admin = get_rpc_filter_context(request, user)
-            if auth_is_admin and auth_token_teams is None:
-                # Keep auth_user_email set for owner matching on the admin's own private rows (PR #4341 / issue #4694)
-                pass  # auth_token_teams stays None (unrestricted)
-            elif auth_token_teams is None:
-                auth_token_teams = []  # Non-admin without teams = public-only
+            auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
 
             # Get plugin contexts from request.state for cross-hook sharing
             plugin_context_table = getattr(request.state, "plugin_context_table", None)
@@ -11657,11 +11833,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
         elif method == "completion/complete":
             await _ensure_rpc_permission(user, db, "tools.read", method, request=request)
             # MCP spec-compliant completion endpoint
-            user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
-            if is_admin and token_teams is None:
-                user_email = None
-            elif token_teams is None:
-                token_teams = []
+            user_email, token_teams = get_scoped_resource_access_context(request, user)
             try:
                 result = await completion_service.handle_completion(db, params, user_email=user_email, token_teams=token_teams)
             except CompletionError as e:
@@ -11679,9 +11851,6 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             result = {}
         elif method.startswith("extensions/") or method.startswith("io.modelcontextprotocol/"):
             # Check if this is a known MCP Apps method.
-            # First-Party
-            from mcpgateway.services.mcp_method_registry import mcp_method_registry
-
             if not mcp_method_registry.is_known_method(method):
                 raise JSONRPCError(-32601, f"Method not found: {method}", {})
             # Known MCP Apps method but not yet implemented here.
@@ -11692,6 +11861,8 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             await _ensure_rpc_permission(user, db, "tools.execute", method, request=request)
 
             # Get authorization context (same as tools/call)
+            # Layer-1 exception: tool-execution authorization, not resource visibility.
+            # Kept in sync with _execute_rpc_tools_call.
             auth_user_email, auth_token_teams, auth_is_admin = get_rpc_filter_context(request, user)
             if auth_is_admin and auth_token_teams is None:
                 auth_user_email = None
@@ -11718,6 +11889,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
                     app_user_email=oauth_user_email,
                     user_email=auth_user_email,
                     token_teams=auth_token_teams,
+                    jwt_teams_claim=getattr(request.state, "jwt_teams_claim", None),
                     server_id=server_id,
                     plugin_context_table=plugin_context_table,
                     plugin_global_context=plugin_global_context,
@@ -12403,11 +12575,7 @@ async def list_tags(
     logger.debug(f"User {safe_log_user(user)} is retrieving tags for entity types: {entity_types_list}, include_entities: {include_entities}")
 
     try:
-        user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
-        if is_admin and token_teams is None:
-            user_email = None
-        elif token_teams is None:
-            token_teams = []
+        user_email, token_teams = get_scoped_resource_access_context(request, user)
 
         tags = await tag_service.get_all_tags(
             db,
@@ -12457,11 +12625,7 @@ async def get_entities_by_tag(
     logger.debug(f"User {safe_log_user(user)} is retrieving entities for tag '{tag_name}' with entity types: {entity_types_list}")
 
     try:
-        user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
-        if is_admin and token_teams is None:
-            user_email = None
-        elif token_teams is None:
-            token_teams = []
+        user_email, token_teams = get_scoped_resource_access_context(request, user)
 
         entities = await tag_service.get_entities_by_tag(
             db,
@@ -12851,8 +13015,9 @@ app.include_router(utility_router)
 # RFC well-known endpoints (/.well-known/*)
 app.include_router(well_known_router)
 
-# Per-server well-known endpoints (/servers/{id}/.well-known/*)
+# Per-server well-known endpoints and their versioned product-language aliases.
 app.include_router(server_well_known_router, prefix="/servers")
+app.include_router(server_well_known_router, prefix="/v1/virtual-servers")
 
 # OpenAPI schema generation (/v1/tools/generate-schemas-from-openapi)
 # prefix="/v1/tools" is hardcoded in the router — not versioned via v1_router to avoid /v1/v1/tools
@@ -12867,6 +13032,22 @@ try:
     logger.info("OAuth router included")
 except ImportError:
     logger.debug("OAuth router not available")
+
+# Vault OAuth router (conditionally registered when OAUTH_TOKEN_BACKEND=vault)
+if settings.oauth_token_backend == "vault":  # nosec B105 - config discriminator, not a password
+    try:
+        # First-Party
+        from mcpgateway.routers.vault_router import vault_router  # pylint: disable=import-outside-toplevel
+
+        app.include_router(vault_router)
+        logger.info(
+            "Vault OAuth router included (oauth_token_backend=vault, vault_addr=%s)",
+            settings.vault_addr,
+        )
+    except ImportError as e:
+        logger.error("Vault OAuth router not available: %s", e)
+else:
+    logger.debug("Vault OAuth router skipped (oauth_token_backend=%s)", settings.oauth_token_backend)
 
 # A2A agent plugin bindings router
 try:

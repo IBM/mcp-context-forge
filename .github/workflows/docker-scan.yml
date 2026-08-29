@@ -32,7 +32,6 @@ on:
     paths:
       - 'Containerfile'
       - 'infra/nginx/**'
-      - 'mcp-servers/python/python_sandbox_server/**'
       - 'mcpgateway/**'
       - 'plugins/**'
       - 'pyproject.toml'
@@ -96,40 +95,6 @@ jobs:
           done
           exit "${status}"
 
-  container-smoke:
-    needs: [hadolint]
-    if: github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch'
-    name: Container Smoke (${{ matrix.name }})
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: python-sandbox
-            context: mcp-servers/python/python_sandbox_server
-            file: mcp-servers/python/python_sandbox_server/docker/Dockerfile.sandbox
-            tag: mcp-context-forge-python-sandbox:scan
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
-        with:
-          persist-credentials: false
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
-
-      - name: Build container locally
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
-        with:
-          context: ${{ matrix.context }}
-          file: ${{ matrix.file }}
-          platforms: linux/amd64
-          push: false
-          load: true
-          tags: ${{ matrix.tag }}
-
   # ---------------------------------------------------------------
   # FedRAMP compliance validation
   # ---------------------------------------------------------------
@@ -163,14 +128,12 @@ jobs:
           push: false
           load: true
           tags: ${{ env.IMAGE_NAME }}:fedramp-validate
-          # WHEELS_REF pinned to UBI_MINIMAL: this step overrides PYTHON_VERSION to
-          # 3.11, but the published amd64 wheel closure is built against the
-          # default PYTHON_VERSION (3.12, see infra/wheels/Containerfile), so its
-          # psycopg[c] wheel carries a cp312 tag that uv rejects under a 3.11 venv.
-          # Pinning here skips the hermetic closure and installs from PyPI instead.
+          # WHEELS_REF pinned to UBI_MINIMAL: installs from PyPI rather than the
+          # hermetic wheel closure (which carries cp312 wheels matching the default
+          # PYTHON_VERSION=3.12 in infra/wheels/Containerfile).
           build-args: |
             ENABLE_FIPS=true
-            PYTHON_VERSION=3.11
+            PYTHON_VERSION=3.12
             UBI_BASE=registry.access.redhat.com/ubi9/ubi:latest
             NODEJS_IMAGE=registry.access.redhat.com/ubi9/nodejs-20:latest
             UBI_MINIMAL=registry.access.redhat.com/ubi9/ubi-minimal@sha256:6ea809bdd8164f8b2b607e38f01b14c374a15bdfbc74fcd0155161512dd4e00e
@@ -309,16 +272,16 @@ jobs:
   #
   # Reports the combined result of all docker-scan jobs so branch
   # protection only needs to require "Docker Scan Complete".
-  #   - pull_request : hadolint runs; container-smoke/fedramp-compliance/scan
-  #                    are skipped (skipped counts as OK) → green if hadolint passes
+  #   - pull_request : hadolint runs; fedramp-compliance/scan are skipped
+  #                    (skipped counts as OK) → green if hadolint passes
   #   - merge_group/dispatch : the full gate runs → green only if every job passes
-#   - push (main)  : fedramp-compliance/scan re-run; container-smoke is skipped
+  #   - push (main)  : fedramp-compliance/scan re-run
   # Complemented by docker-scan-required.yml, which reports the same
   # check on PRs that touch no docker-scan paths.
   # ---------------------------------------------------------------
   docker-scan-complete:
     name: Docker Scan Complete
-    needs: [hadolint, container-smoke, fedramp-compliance, scan]
+    needs: [hadolint, fedramp-compliance, scan]
     runs-on: ubuntu-slim
     if: always()
     steps:
@@ -326,7 +289,6 @@ jobs:
         run: |
           results=(
             "${{ needs.hadolint.result }}"
-            "${{ needs.container-smoke.result }}"
             "${{ needs.fedramp-compliance.result }}"
             "${{ needs.scan.result }}"
           )

@@ -136,10 +136,10 @@ jobs:
           grep -q "Sign In - ContextForge" /tmp/testing-admin-login.html
 
           for i in {1..60}; do
-            if curl -fsS http://localhost:8880/health >/tmp/fast-test-health.json; then
+            if curl -fsS http://localhost:8888/health >/tmp/fast-time-health.json; then
               break
             fi
-            echo "Waiting for fast test server (${i}/60)"
+            echo "Waiting for fast time server (${i}/60)"
             sleep 2
           done
 
@@ -159,7 +159,7 @@ jobs:
             sleep 2
           done
 
-          curl -fsS http://localhost:8880/health | jq -e '.status == "healthy"'
+          curl -fsS http://localhost:8888/health | jq -e '.status == "healthy"'
           curl -fsS http://localhost:9100/health | jq -e '.status == "healthy"'
           curl -fsS http://localhost:8089/ > /tmp/locust.html
 
@@ -192,7 +192,7 @@ jobs:
           path: |
             /tmp/compose-health.json
             /tmp/testing-health.json
-            /tmp/fast-test-health.json
+            /tmp/fast-time-health.json
             /tmp/a2a-echo-health.json
             /tmp/admin-login.html
             /tmp/testing-admin-login.html

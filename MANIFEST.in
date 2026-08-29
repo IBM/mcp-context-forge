@@ -22,7 +22,11 @@ include *.py
 include *.md
 include *.example
 include *.properties
-include *.toml
+# Root *.toml files are listed explicitly: a blanket glob also sweeps untracked
+# local tool configs into the sdist, which breaks `make verify` (check-manifest).
+include deny.toml
+include fly.toml
+include license-policy.toml
 include *.yaml
 include *.yml
 include *.json
@@ -91,6 +95,7 @@ include mcpgateway/services/import_service.py
 # 📦 Migration scripts (v0.7.0 multitenancy migration tools)
 recursive-include scripts *.py
 recursive-include scripts *.sh
+recursive-include scripts *.json
 
 # 🧪 Testing documentation and plans
 recursive-include tests/manual *.py *.md

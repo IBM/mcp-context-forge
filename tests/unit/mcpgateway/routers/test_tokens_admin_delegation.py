@@ -128,6 +128,7 @@ class TestAdminDelegatedTokenCreation:
 
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
+            mock_service.get_default_team_id = AsyncMock(return_value=None)
             mock_service.create_token = AsyncMock(return_value=(mock_token_record, "raw-token"))
 
             response = await create_token(request, current_user=mock_regular_user, db=mock_db)
@@ -152,6 +153,7 @@ class TestAdminDelegatedTokenCreation:
 
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
+            mock_service.get_default_team_id = AsyncMock(return_value=None)
             mock_service.create_token = AsyncMock(return_value=(mock_token_record, "delegated-token"))
 
             response = await create_token(request, current_user=mock_admin_user, db=mock_db)
@@ -207,6 +209,7 @@ class TestAdminDelegatedTokenCreation:
 
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
+            mock_service.get_default_team_id = AsyncMock(return_value=None)
             mock_service.create_token = AsyncMock(return_value=(mock_token_record, "admin-self-token"))
 
             response = await create_token(request, current_user=mock_admin_user, db=mock_db)
@@ -226,6 +229,7 @@ class TestAdminDelegatedTokenCreation:
 
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
+            mock_service.get_default_team_id = AsyncMock(return_value=None)
             mock_service.create_token = AsyncMock(return_value=(mock_token_record, "narrowed-self-token"))
 
             response = await create_token(request, current_user=mock_narrowed_admin_user, db=mock_db)
@@ -247,6 +251,7 @@ class TestAdminDelegatedTokenCreation:
 
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class, patch("mcpgateway.routers.tokens.logger") as mock_logger:
             mock_service = mock_service_class.return_value
+            mock_service.get_default_team_id = AsyncMock(return_value=None)
             mock_service.create_token = AsyncMock(return_value=(mock_token_record, "audited-token"))
 
             await create_token(request, current_user=mock_admin_user, db=mock_db)
@@ -287,6 +292,7 @@ class TestAdminDelegatedTokenCreation:
 
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
+            mock_service.get_default_team_id = AsyncMock(return_value=None)
             mock_service.create_token = AsyncMock(return_value=(mock_token_record, "raw-token"))
 
             response = await create_token(request, current_user=mock_regular_user, db=mock_db)
@@ -308,6 +314,7 @@ class TestAdminDelegatedTokenCreation:
 
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
+            mock_service.get_default_team_id = AsyncMock(return_value=None)
             mock_service.create_token = AsyncMock(side_effect=ValueError("User not found: nonexistent@example.com"))
 
             with pytest.raises(HTTPException) as exc_info:
@@ -331,6 +338,7 @@ class TestAdminDelegatedTokenCreation:
 
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
+            mock_service.get_default_team_id = AsyncMock(return_value=None)
             mock_service.create_token = AsyncMock(return_value=(mock_token_record, "delegated-token"))
 
             response = await create_token(request, current_user=mock_admin_user, db=mock_db)
@@ -360,6 +368,7 @@ class TestAdminDelegatedTeamTokenCreation:
 
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class, patch("mcpgateway.routers.tokens.logger") as mock_logger:
             mock_service = mock_service_class.return_value
+            mock_service.get_default_team_id = AsyncMock(return_value=None)
             mock_service.create_token = AsyncMock(return_value=(mock_token_record, "delegated-team-token"))
 
             response = await create_team_token(team_id="team-456", request=request, current_user=mock_admin_user, db=mock_db)
@@ -418,6 +427,7 @@ class TestAdminDelegatedTeamTokenCreation:
 
         with patch("mcpgateway.routers.tokens.TokenCatalogService") as mock_service_class:
             mock_service = mock_service_class.return_value
+            mock_service.get_default_team_id = AsyncMock(return_value=None)
             mock_service.create_token = AsyncMock(return_value=(mock_token_record, "admin-self-team-token"))
 
             response = await create_team_token(team_id="team-456", request=request, current_user=mock_admin_user, db=mock_db)

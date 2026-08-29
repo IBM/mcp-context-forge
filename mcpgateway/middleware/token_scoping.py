@@ -28,9 +28,10 @@ from mcpgateway.auth_context import get_jwt_user_email_from_payload, resolve_jwt
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import Permissions
-from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG
+from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, _ALL_PERMISSIONS_SCOPE, token_scope_grants
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.orjson_response import ORJSONResponse
+from mcpgateway.utils.paths import replace_api_path_alias
 from mcpgateway.utils.verify_credentials import (
     ConfigurableHTTPBearer,
     get_auth_bearer_token_from_request,
@@ -79,9 +80,12 @@ _TARGETED_MISSING_DELETE_PATTERN = re.compile(r"^/(?:servers|gateways)/(?:[a-f0-
 # Permission map with precompiled patterns
 # Maps (HTTP method, path pattern) to required permission
 _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
+    # Plugin discovery permissions
+    ("GET", re.compile(r"^/plugins(?:$|/)"), Permissions.PLUGINS_READ),
     # Tools permissions
     ("GET", re.compile(r"^/tools(?:$|/)"), Permissions.TOOLS_READ),
     ("POST", re.compile(r"^/tools/?$"), Permissions.TOOLS_CREATE),  # Only exact /tools or /tools/
+    ("POST", re.compile(r"^/tools/preview(?:$|/)"), Permissions.TOOLS_PREVIEW),  # Must precede the /tools/[^/]+/ catch-all below (#5629)
     ("POST", re.compile(r"^/tools/[^/]+/"), Permissions.TOOLS_UPDATE),  # POST to sub-resources (state, toggle)
     ("PUT", re.compile(r"^/tools/[^/]+(?:$|/)"), Permissions.TOOLS_UPDATE),
     ("DELETE", re.compile(r"^/tools/[^/]+(?:$|/)"), Permissions.TOOLS_DELETE),
@@ -117,19 +121,46 @@ _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     ("GET", re.compile(r"^/servers/[^/]+/sse(?:$|/)"), Permissions.SERVERS_USE),  # Server SSE access endpoint
     ("GET", re.compile(r"^/servers(?:$|/)"), Permissions.SERVERS_READ),
     ("POST", re.compile(r"^/servers/?$"), Permissions.SERVERS_CREATE),  # Only exact /servers or /servers/
+    # Handshake probe against the virtual server's own MCP endpoint — read-only, symmetric
+    # with GATEWAYS_READ on the gateway test-handshake endpoint. Must precede the generic
+    # state|toggle sub-resource rule below.
+    ("POST", re.compile(r"^/servers/[^/]+/test-handshake(?:$|/)"), Permissions.SERVERS_READ),
     ("POST", re.compile(r"^/servers/[^/]+/(?:state|toggle)(?:$|/)"), Permissions.SERVERS_UPDATE),  # Server management sub-resources
     ("POST", re.compile(r"^/servers/[^/]+/message(?:$|/)"), Permissions.SERVERS_USE),  # Server message access endpoint
     ("POST", re.compile(r"^/servers/[^/]+/mcp(?:$|/)"), Permissions.SERVERS_USE),  # Server MCP access endpoint
     ("PUT", re.compile(r"^/servers/[^/]+(?:$|/)"), Permissions.SERVERS_UPDATE),
     ("DELETE", re.compile(r"^/servers/[^/]+(?:$|/)"), Permissions.SERVERS_DELETE),
     # Gateway permissions
+    # Connectivity test and handshake probe exposed through the /v1/mcp-servers product alias.
+    # They must precede the generic POST sub-resource rule below.
+    ("POST", re.compile(r"^/gateways/test(?:$|/)"), Permissions.GATEWAYS_READ),
+    ("POST", re.compile(r"^/gateways/test-handshake(?:$|/)"), Permissions.GATEWAYS_READ),
     ("GET", re.compile(r"^/gateways(?:$|/)"), Permissions.GATEWAYS_READ),
     ("POST", re.compile(r"^/gateways/?$"), Permissions.GATEWAYS_CREATE),  # Only exact /gateways or /gateways/
     ("POST", re.compile(r"^/gateways/[^/]+/"), Permissions.GATEWAYS_UPDATE),  # POST to sub-resources (state, toggle, refresh)
     ("PUT", re.compile(r"^/gateways/[^/]+(?:$|/)"), Permissions.GATEWAYS_UPDATE),
     ("DELETE", re.compile(r"^/gateways/[^/]+(?:$|/)"), Permissions.GATEWAYS_DELETE),
-    # MCP Servers REST API (v1 prefix stripped by middleware before matching)
-    ("POST", re.compile(r"^/mcp-servers/test(?:$|/)"), Permissions.GATEWAYS_READ),
+    # Vault OAuth authorize — initiates Authorization Code flow via virtual server ID.
+    # Router is registered only when OAUTH_TOKEN_BACKEND=vault (see main.py); this
+    # pattern is harmless when the router is absent (no matching route exists).
+    # The handler enforces gateway-level access via _enforce_gateway_access, so this
+    # entry adds defence-in-depth only: it ensures a server-scoped API token whose
+    # permissions list does not include gateways.read is rejected at the middleware
+    # layer rather than reaching the handler and failing there.
+    ("GET", re.compile(r"^/vault/authorize/[^/]+(?:$|/)"), Permissions.GATEWAYS_READ),
+    # OAuth DCR registered-client management (oauth_router, prefix="/oauth").
+    # Registered clients are global rows with no team column, so these map to
+    # admin-category permissions; the handlers additionally require an
+    # un-narrowed admin token (see _require_unnarrowed_admin).
+    ("GET", re.compile(r"^/oauth/registered-clients(?:$|/)"), Permissions.ADMIN_OAUTH_CLIENTS_READ),
+    ("DELETE", re.compile(r"^/oauth/registered-clients/[^/]+(?:$|/)"), Permissions.ADMIN_OAUTH_CLIENTS_DELETE),
+    # MCP registry catalog (v1 prefix stripped by middleware before matching)
+    ("GET", re.compile(r"^/catalog(?:$|/)"), Permissions.SERVERS_READ),
+    ("POST", re.compile(r"^/catalog/[^/]+/register(?:$|/)"), Permissions.SERVERS_CREATE),
+    # Observability metrics summaries (v1 prefix stripped by middleware before matching)
+    ("GET", re.compile(r"^/observability/metrics/(?:timeseries|percentiles)(?:$|/)"), Permissions.METRICS_READ),
+    # Recent activity feed (unversioned /api prefix; not subject to /v1 stripping)
+    ("GET", re.compile(r"^/api/logs/activity(?:$|/)"), Permissions.AUDIT_READ),
     # Metrics permissions
     ("GET", re.compile(r"^/metrics(?:$|/)"), Permissions.ADMIN_METRICS),
     ("POST", re.compile(r"^/metrics/reset(?:$|/)"), Permissions.ADMIN_METRICS),
@@ -142,6 +173,17 @@ _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     # Compliance reporting
     ("GET", re.compile(r"^/compliance(?:$|/)"), Permissions.ADMIN_COMPLIANCE),
     ("POST", re.compile(r"^/compliance(?:$|/)"), Permissions.ADMIN_COMPLIANCE),
+    # A2A agent API permissions (a2a_router, prefix="/a2a" — see main.py).
+    # Order matters: the first method+path match wins, so the concrete /a2a/invoke
+    # collection route is listed before the {agent_name}-scoped POST routes.
+    ("GET", re.compile(r"^/a2a(?:$|/)"), Permissions.A2A_READ),
+    ("POST", re.compile(r"^/a2a/?$"), Permissions.A2A_CREATE),
+    ("POST", re.compile(r"^/a2a/invoke/?$"), Permissions.A2A_INVOKE),
+    ("POST", re.compile(r"^/a2a/[^/]+/invoke(?:$|/)"), Permissions.A2A_INVOKE),
+    ("POST", re.compile(r"^/a2a/[^/]+/jsonrpc(?:$|/)"), Permissions.A2A_INVOKE),
+    ("POST", re.compile(r"^/a2a/[^/]+/(?:state|toggle)(?:$|/)"), Permissions.A2A_UPDATE),
+    ("PUT", re.compile(r"^/a2a/[^/]+(?:$|/)"), Permissions.A2A_UPDATE),
+    ("DELETE", re.compile(r"^/a2a/[^/]+(?:$|/)"), Permissions.A2A_DELETE),
 ]
 
 # Admin route permission map (granular by route group).
@@ -186,6 +228,7 @@ _ADMIN_PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     ("POST", re.compile(r"^/admin/gateways/?$"), Permissions.GATEWAYS_CREATE),
     ("POST", re.compile(r"^/admin/gateways/[^/]+/delete(?:$|/)"), Permissions.GATEWAYS_DELETE),
     ("POST", re.compile(r"^/admin/gateways/[^/]+/(?:edit|state)(?:$|/)"), Permissions.GATEWAYS_UPDATE),
+    ("POST", re.compile(r"^/admin/gateways/[^/]+/transfer-ownership(?:$|/)"), Permissions.GATEWAYS_UPDATE),
     ("GET", re.compile(r"^/admin/gateways(?:$|/)"), Permissions.GATEWAYS_READ),
     # Server management
     ("POST", re.compile(r"^/admin/servers/?$"), Permissions.SERVERS_CREATE),
@@ -398,6 +441,7 @@ class TokenScopingMiddleware:
         normalized = _normalize_scope_path(request_path or "/", settings.app_root_path or "")
         if not normalized.startswith("/"):
             normalized = f"/{normalized}"
+        normalized = replace_api_path_alias(normalized)
         # Strip the /v1 API version prefix so all patterns match unversioned paths.
         # This ensures scope patterns work identically for /tools and /v1/tools.
         return _strip_v1_prefix(normalized)
@@ -418,8 +462,8 @@ class TokenScopingMiddleware:
         root_path = scope.get("root_path") or settings.app_root_path or ""
         normalized = _normalize_scope_path(scope_path, root_path)
         if not normalized.startswith("/"):
-            return f"/{normalized}"
-        return normalized
+            normalized = f"/{normalized}"
+        return replace_api_path_alias(normalized)
 
     def _extract_jwt_token_from_request(self, request: Request) -> Optional[str]:
         """Extract JWT token from supported cookie names or Bearer auth header.
@@ -740,13 +784,19 @@ class TokenScopingMiddleware:
             >>> m._check_permission_restrictions('/servers/s1/tools/abc/call', 'POST', ['tools.execute'])
             True
 
+            Category wildcard covers every action in that category:
+            >>> m._check_permission_restrictions('/tools', 'POST', ['tools.*'])
+            True
+
             Missing permission denies:
             >>> m._check_permission_restrictions('/tools', 'POST', ['tools.read'])
+            False
+            >>> m._check_permission_restrictions('/tools', 'POST', ['resources.*'])
             False
         """
         request_path = self._normalize_path_for_matching(request_path)
 
-        if not permissions or "*" in permissions:
+        if not permissions or _ALL_PERMISSIONS_SCOPE in permissions:
             return True  # No restrictions or full access
 
         # Unified search (/v1/search, normalized to /search) is authenticated-only
@@ -763,29 +813,20 @@ class TokenScopingMiddleware:
         if request_path.startswith("/admin"):
             for method, path_pattern, required_permission in _ADMIN_PERMISSION_PATTERNS:
                 if request_method == method and path_pattern.match(request_path):
-                    return required_permission in permissions
+                    return token_scope_grants(permissions, required_permission)
             return False
 
-        # Check each permission mapping (uses precompiled regex patterns)
+        # Check each permission mapping (uses precompiled regex patterns).
+        # token_scope_grants() owns the servers.use transport compensation for tokens
+        # carrying MCP method permissions, so this layer and the RBAC decorators agree.
         for method, path_pattern, required_permission in _PERMISSION_PATTERNS:
             if request_method == method and path_pattern.match(request_path):
-                if required_permission in permissions:
-                    return True
-                # Runtime compensation: tokens with MCP method permissions
-                # (tools.*, resources.*, prompts.*) implicitly have transport
-                # access (servers.use) — mirrors the generation-time injection
-                # in token_catalog_service._generate_token() for pre-existing tokens.
-                if required_permission == Permissions.SERVERS_USE:
-                    if any(p.startswith(Permissions.MCP_METHOD_PREFIXES) for p in permissions):
-                        logger.debug("Runtime servers.use compensation applied for token with MCP method permissions: %s", permissions)
-                        return True
-                    return False
-                return False
+                return token_scope_grants(permissions, required_permission)
 
         # LLM proxy permissions (respect configured llm_api_prefix).
         for method, path_pattern, required_permission in _get_llm_permission_patterns(settings.llm_api_prefix):
             if request_method == method and path_pattern.match(request_path):
-                return required_permission in permissions
+                return token_scope_grants(permissions, required_permission)
 
         # Default deny for unmatched paths (requires explicit permission mapping)
         return False

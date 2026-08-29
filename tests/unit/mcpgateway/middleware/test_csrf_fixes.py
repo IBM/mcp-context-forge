@@ -17,6 +17,7 @@ Tests for the 5 issues identified in the review:
 from unittest.mock import AsyncMock, Mock, patch
 
 # Third-Party
+from pydantic import SecretStr
 import pytest
 from starlette.requests import Request
 from starlette.responses import JSONResponse
@@ -39,7 +40,7 @@ def mock_settings():
         mock.csrf_trusted_origins = []
         mock.app_domain = "http://localhost:4444"
         mock.csrf_exempt_paths = ["/health"]
-        mock.csrf_secret_key = "test-secret-key"
+        mock.csrf_secret_key = SecretStr("test-secret-key")  # pragma: allowlist secret
         mock.csrf_token_expiry = 3600
         mock.csrf_cookie_httponly = False
         mock.csrf_cookie_secure = True
@@ -59,7 +60,7 @@ async def test_form_field_parsing_urlencoded(csrf_middleware, mock_settings):
     """Test Issue #1: Parse CSRF token from application/x-www-form-urlencoded form field."""
     user_id = "test@example.com"
     session_id = "test-session-123"
-    csrf_token = generate_csrf_token(user_id, session_id, mock_settings.csrf_secret_key, mock_settings.csrf_token_expiry)
+    csrf_token = generate_csrf_token(user_id, session_id, mock_settings.csrf_secret_key.get_secret_value(), mock_settings.csrf_token_expiry)
 
     # Create mock request with form data (no header)
     mock_request = Mock(spec=Request)
@@ -92,7 +93,7 @@ async def test_form_field_parsing_multipart(csrf_middleware, mock_settings):
     """Test Issue #1: Parse CSRF token from multipart/form-data form field."""
     user_id = "test@example.com"
     session_id = "test-session-123"
-    csrf_token = generate_csrf_token(user_id, session_id, mock_settings.csrf_secret_key, mock_settings.csrf_token_expiry)
+    csrf_token = generate_csrf_token(user_id, session_id, mock_settings.csrf_secret_key.get_secret_value(), mock_settings.csrf_token_expiry)
 
     # Create mock request with multipart form data
     mock_request = Mock(spec=Request)
@@ -130,7 +131,7 @@ async def test_double_submit_cookie_validation(csrf_middleware, mock_settings):
     """Test Issue #2: Validate both cookie and header/form tokens match."""
     user_id = "test@example.com"
     session_id = "test-session-123"
-    csrf_token = generate_csrf_token(user_id, session_id, mock_settings.csrf_secret_key, mock_settings.csrf_token_expiry)
+    csrf_token = generate_csrf_token(user_id, session_id, mock_settings.csrf_secret_key.get_secret_value(), mock_settings.csrf_token_expiry)
     wrong_token = "wrong-token-value"
 
     # Create mock request with mismatched tokens
@@ -160,7 +161,7 @@ async def test_double_submit_cookie_missing(csrf_middleware, mock_settings):
     """Test Issue #2: Reject when cookie is missing."""
     user_id = "test@example.com"
     session_id = "test-session-123"
-    csrf_token = generate_csrf_token(user_id, session_id, mock_settings.csrf_secret_key, mock_settings.csrf_token_expiry)
+    csrf_token = generate_csrf_token(user_id, session_id, mock_settings.csrf_secret_key.get_secret_value(), mock_settings.csrf_token_expiry)
 
     # Create mock request with header but no cookie
     mock_request = Mock(spec=Request)
@@ -222,7 +223,7 @@ async def test_referer_check_fail_closed_missing_header(csrf_middleware, mock_se
     """Test Issue #4: Reject when Referer/Origin header is missing (fail closed)."""
     user_id = "test@example.com"
     session_id = "test-session-123"
-    csrf_token = generate_csrf_token(user_id, session_id, mock_settings.csrf_secret_key, mock_settings.csrf_token_expiry)
+    csrf_token = generate_csrf_token(user_id, session_id, mock_settings.csrf_secret_key.get_secret_value(), mock_settings.csrf_token_expiry)
 
     # Create mock request without Referer/Origin header
     mock_request = Mock(spec=Request)
@@ -251,7 +252,7 @@ async def test_referer_check_fail_closed_invalid_origin(csrf_middleware, mock_se
     """Test Issue #4: Reject when Referer/Origin is not in allowed list."""
     user_id = "test@example.com"
     session_id = "test-session-123"
-    csrf_token = generate_csrf_token(user_id, session_id, mock_settings.csrf_secret_key, mock_settings.csrf_token_expiry)
+    csrf_token = generate_csrf_token(user_id, session_id, mock_settings.csrf_secret_key.get_secret_value(), mock_settings.csrf_token_expiry)
 
     # Create mock request with invalid origin
     mock_request = Mock(spec=Request)
@@ -294,13 +295,12 @@ async def test_token_rotation_on_login():
         patch("mcpgateway.routers.auth.create_access_token") as mock_create_token,
         patch("mcpgateway.routers.auth.settings") as mock_settings,
         patch("jwt.decode") as mock_jwt_decode,
-        patch("mcpgateway.services.csrf_service.generate_csrf_token") as mock_gen_csrf,
-        patch("mcpgateway.services.csrf_service.set_csrf_cookie") as mock_set_cookie,
+        patch("mcpgateway.routers.auth.generate_csrf_token") as mock_gen_csrf,
+        patch("mcpgateway.routers.auth.set_csrf_cookie") as mock_set_cookie,
     ):
-
         # Setup mocks
         mock_settings.csrf_rotate_on_login = True
-        mock_settings.csrf_secret_key = "test-secret"
+        mock_settings.csrf_secret_key = SecretStr("test-secret")  # pragma: allowlist secret
         mock_settings.csrf_token_expiry = 3600
         mock_settings.sso_enabled = False
 

@@ -18,8 +18,8 @@ from mcpgateway.auth_context import get_scoped_resource_access_context
 from mcpgateway.config import settings
 from mcpgateway.db import get_db
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
-from mcpgateway.schemas import CatalogListRequest, CatalogListResponse
-from mcpgateway.services.catalog_service import catalog_service
+from mcpgateway.schemas import CatalogListRequest, CatalogListResponse, CatalogServerRegisterBody, CatalogServerRegisterRequest, CatalogServerRegisterResponse
+from mcpgateway.services.catalog_service import CATALOG_REGISTER_ALREADY_REGISTERED_MSG, CATALOG_REGISTER_NOT_FOUND_MSG, CatalogRegistrationPermissionError, catalog_service
 
 router = APIRouter(prefix="/catalog", tags=["Catalog"])
 
@@ -79,3 +79,77 @@ async def list_catalog_servers(
     )
 
     return await catalog_service.get_catalog_servers(catalog_request, db, user_email=user_email, token_teams=token_teams)
+
+
+# Registration bottoms out in gateway_service.register_gateway (a federated peer), so it requires
+# the same gateways.create as POST /v1/gateways in addition to the admin twin's servers.create.
+@router.post("/{catalog_id}/register", response_model=CatalogServerRegisterResponse)
+@require_permission("servers.create", allow_admin_bypass=False)
+@require_permission("gateways.create", allow_admin_bypass=False)
+async def register_catalog_server(
+    catalog_id: str,
+    request: Request,
+    body: Optional[CatalogServerRegisterBody] = None,
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> CatalogServerRegisterResponse:
+    """Register a catalog server as a gateway for the authenticated API caller.
+
+    Unknown catalog ids map to HTTP 404 and already-registered servers to HTTP 409.
+    Remaining business failures (unreachable server, auth failure) are returned as an
+    HTTP 200 envelope with ``success=False`` and a mapped message; the ``error`` field
+    is blanked because the service captures raw exception text there. The admin
+    registration endpoint keeps its 200-envelope contract unchanged.
+
+    Args:
+        catalog_id: Catalog server ID to register.
+        request: FastAPI request object.
+        body: Optional overrides (custom name, API key).
+        db: Database session.
+        user: Authenticated user.
+
+    Returns:
+        Registration result envelope.
+
+    Raises:
+        HTTPException: If the catalog feature is disabled (404), the catalog id is
+            unknown (404), or the server is already registered (409).
+    """
+    if not settings.mcpgateway_catalog_enabled:
+        raise HTTPException(status_code=404, detail="Catalog feature is disabled")
+
+    # Map body fields (including visibility/team_id) into the service request
+    service_request = (
+        CatalogServerRegisterRequest(
+            server_id=catalog_id,
+            name=body.name if body else None,
+            api_key=body.api_key if body else None,
+            visibility=body.visibility if body else None,
+            team_id=body.team_id if body else None,
+        )
+        if body
+        else None
+    )
+
+    user_email, token_teams = get_scoped_resource_access_context(request, user)
+
+    try:
+        result = await catalog_service.register_catalog_server(
+            catalog_id=catalog_id,
+            request=service_request,
+            db=db,
+            created_by=user_email,
+            owner_email=user_email,
+            token_teams=token_teams,
+        )
+    except CatalogRegistrationPermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+
+    if not result.success:
+        if result.message == CATALOG_REGISTER_NOT_FOUND_MSG:
+            raise HTTPException(status_code=404, detail="Catalog server not found")
+        if result.message == CATALOG_REGISTER_ALREADY_REGISTERED_MSG:
+            raise HTTPException(status_code=409, detail="Server already registered")
+        result.error = None
+
+    return result

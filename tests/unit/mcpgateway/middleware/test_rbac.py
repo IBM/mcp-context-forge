@@ -462,6 +462,219 @@ async def test_require_admin_permission_forwards_token_teams(monkeypatch):
 # the same has_hooks_for pattern and run reliably in parallel execution.
 
 
+class TestTokenScopeGrants:
+    """Unit coverage for the shared Layer 1 decision function."""
+
+    @pytest.mark.parametrize(
+        "token_scopes,permission,expected",
+        [
+            # No restriction: not a scoped token, or "inherit from RBAC at runtime"
+            (None, "tools.read", True),
+            ([], "tools.read", True),
+            # Full-access wildcard
+            (["*"], "tools.read", True),
+            (["*"], "admin.system_config", True),
+            # Category wildcard
+            (["tools.*"], "tools.read", True),
+            (["tools.*"], "tools.execute", True),
+            (["tools.*"], "resources.read", False),
+            (["tools.*"], "toolsomething.read", False),
+            # Exact grants
+            (["tools.read"], "tools.read", True),
+            (["tools.read"], "tools.execute", False),
+            (["tools.read", "a2a.read"], "a2a.read", True),
+            # Permissions without a category separator fall back to exact match
+            (["tools.read"], "standalone", False),
+            (["standalone"], "standalone", True),
+            # Transport compensation: MCP method permissions imply servers.use, matching
+            # the injection in TokenCatalogService._generate_token(). Without this, tokens
+            # issued before that injection 403 on /sse and /servers/{id}/message even
+            # though the token-scoping middleware admits them.
+            (["tools.execute"], "servers.use", True),
+            (["tools.read"], "servers.use", True),
+            (["resources.read"], "servers.use", True),
+            (["prompts.read"], "servers.use", True),
+            (["tools.execute", "servers.use"], "servers.use", True),
+            # Non-MCP permissions get no transport compensation
+            (["a2a.read"], "servers.use", False),
+            (["admin.user_management"], "servers.use", False),
+            # Compensation is scoped to servers.use only — it must not leak to other permissions
+            (["tools.execute"], "servers.read", False),
+            (["tools.execute"], "admin.system_config", False),
+        ],
+    )
+    def test_token_scope_grants(self, token_scopes, permission, expected):
+        assert rbac.token_scope_grants(token_scopes, permission) is expected
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("token_scopes", [["tools.execute"], ["resources.read"], ["prompts.read"]])
+    async def test_mcp_method_token_reaches_transport_endpoints(self, token_scopes):
+        """A token with MCP method permissions but no explicit servers.use must not be 403'd.
+
+        Regression guard: ``@require_permission("servers.use")`` guards /sse,
+        /servers/{id}/sse and /servers/{id}/message. TokenScopingMiddleware admits these
+        tokens via transport compensation, so Layer 1 in the decorator must agree or the
+        request is denied at Layer 1 having never reached RBAC.
+        """
+
+        async def dummy_func(user=None):
+            return "ok"
+
+        perm_service = AsyncMock()
+        perm_service.check_permission.return_value = True
+        decorated = rbac.require_permission("servers.use")(dummy_func)
+        user = {"email": "user@example.com", "db": MagicMock(), "token_scopes": token_scopes}
+
+        with patch.object(rbac, "PermissionService", return_value=perm_service):
+            assert await decorated(user=user) == "ok"
+
+        perm_service.check_permission.assert_called_once()
+
+
+class TestRequirePermissionTokenScopes:
+    """Layer 1 enforcement inside @require_permission."""
+
+    @staticmethod
+    def _decorated(permission, granted=True):
+        """Build a decorated endpoint alongside its mocked PermissionService.
+
+        Args:
+            permission: Permission required by the decorator.
+            granted: What the RBAC layer (Layer 2) should return.
+
+        Returns:
+            tuple: (decorated coroutine function, mocked permission service)
+        """
+
+        async def dummy_func(user=None):
+            return "ok"
+
+        perm_service = AsyncMock()
+        perm_service.check_permission.return_value = granted
+        return rbac.require_permission(permission)(dummy_func), perm_service
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "token_scopes",
+        [
+            ["tools.read", "tools.execute"],  # exact grant
+            ["tools.*"],  # category wildcard
+            ["*"],  # full access
+            [],  # empty == inherit from RBAC, not deny-all
+            None,  # session token
+        ],
+    )
+    async def test_layer1_allows_then_rbac_runs(self, token_scopes):
+        """Scopes that grant the permission fall through to the RBAC check."""
+        decorated, perm_service = self._decorated("tools.read")
+        user = {"email": "user@example.com", "db": MagicMock(), "token_scopes": token_scopes}
+
+        with patch.object(rbac, "PermissionService", return_value=perm_service):
+            assert await decorated(user=user) == "ok"
+
+        perm_service.check_permission.assert_called_once()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "token_scopes",
+        [
+            ["tools.read"],  # wrong action
+            ["resources.*"],  # wrong category
+            ["a2a.read", "resources.read"],  # unrelated grants
+        ],
+    )
+    async def test_layer1_denies_before_rbac(self, token_scopes):
+        """A scope miss returns 403 without ever consulting RBAC."""
+        decorated, perm_service = self._decorated("tools.execute")
+        user = {"email": "user@example.com", "db": MagicMock(), "token_scopes": token_scopes}
+
+        with patch.object(rbac, "PermissionService", return_value=perm_service):
+            with pytest.raises(HTTPException) as exc_info:
+                await decorated(user=user)
+
+        assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
+        # Generic message: a Layer 1 denial must not disclose the permission name
+        assert exc_info.value.detail == "Access denied"
+        assert "tools.execute" not in exc_info.value.detail
+        perm_service.check_permission.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_empty_scopes_still_subject_to_rbac(self):
+        """Empty scopes skip Layer 1 but Layer 2 can still deny."""
+        decorated, perm_service = self._decorated("tools.execute", granted=False)
+        user = {"email": "user@example.com", "db": MagicMock(), "token_scopes": []}
+
+        with patch.object(rbac, "PermissionService", return_value=perm_service):
+            with pytest.raises(HTTPException) as exc_info:
+                await decorated(user=user)
+
+        assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
+        perm_service.check_permission.assert_called_once()
+
+
+class TestRequireAnyPermissionTokenScopes:
+    """Layer 1 enforcement inside @require_any_permission, kept consistent with require_permission."""
+
+    @staticmethod
+    def _decorated(permissions, granted=True):
+        """Build a decorated endpoint alongside its mocked PermissionService.
+
+        Args:
+            permissions: Permissions accepted by the decorator.
+            granted: What the RBAC layer (Layer 2) should return.
+
+        Returns:
+            tuple: (decorated coroutine function, mocked permission service)
+        """
+
+        async def dummy_func(user=None):
+            return "ok"
+
+        perm_service = AsyncMock()
+        perm_service.check_permission.return_value = granted
+        return rbac.require_any_permission(permissions)(dummy_func), perm_service
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "token_scopes",
+        [
+            ["tools.read", "a2a.read"],  # holds one of the required permissions
+            ["a2a.*"],  # category wildcard covering one of them
+            ["*"],  # full access
+            [],  # empty == inherit from RBAC
+            None,  # session token
+        ],
+    )
+    async def test_layer1_allows_then_rbac_runs(self, token_scopes):
+        decorated, perm_service = self._decorated(["a2a.read", "a2a.invoke"])
+        user = {"email": "user@example.com", "db": MagicMock(), "token_scopes": token_scopes}
+
+        with patch.object(rbac, "PermissionService", return_value=perm_service):
+            assert await decorated(user=user) == "ok"
+
+        perm_service.check_permission.assert_called()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "token_scopes",
+        [
+            ["tools.read"],
+            ["resources.*"],
+        ],
+    )
+    async def test_layer1_denies_when_no_required_permission_granted(self, token_scopes):
+        decorated, perm_service = self._decorated(["a2a.read", "a2a.invoke"])
+        user = {"email": "user@example.com", "db": MagicMock(), "token_scopes": token_scopes}
+
+        with patch.object(rbac, "PermissionService", return_value=perm_service):
+            with pytest.raises(HTTPException) as exc_info:
+                await decorated(user=user)
+
+        assert exc_info.value.status_code == status.HTTP_403_FORBIDDEN
+        assert exc_info.value.detail == "Access denied"
+        perm_service.check_permission.assert_not_called()
+
+
 @pytest.mark.skip(reason="Flaky in parallel execution due to plugin manager singleton; run individually")
 @pytest.mark.asyncio
 async def test_require_permission_skips_hooks_when_has_hooks_for_false(monkeypatch):
@@ -2165,6 +2378,85 @@ class TestMultiTeamSessionTokenDerivation:
         assert mock_perm_service.check_permission.call_args.kwargs["check_any_team"] is True
 
 
+class TestGlobalOnlyPermission:
+    """Tests for require_permission(global_only=True) — used by routes managing
+    globally-scoped resources with no team column (e.g. OAuth registered-client
+    management), where the normal per-request team derivation would let a
+    team-scoped role grant access to a resource it has no business touching.
+    """
+
+    @pytest.mark.asyncio
+    async def test_global_only_ignores_derivable_resource_team(self, monkeypatch):
+        """global_only=True must not derive team_id from a resource kwarg, even
+        when _derive_team_from_resource would otherwise resolve one."""
+
+        async def dummy_func(user=None, db=None, gateway_id=None):
+            return "ok"
+
+        mock_db = MagicMock()
+        mock_user = {"email": "user@test.com", "db": mock_db, "token_use": "session"}
+        mock_perm_service = AsyncMock()
+        mock_perm_service.check_permission.return_value = True
+        monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+        with (
+            patch("mcpgateway.middleware.rbac._derive_team_from_resource", return_value="team-derived"),
+            patch("mcpgateway.plugins.get_plugin_manager", return_value=None),
+        ):
+            decorated = rbac.require_permission("admin.oauth_clients:read", global_only=True)(dummy_func)
+            result = await decorated(user=mock_user, db=mock_db, gateway_id="gateway-1")
+
+        assert result == "ok"
+        assert mock_perm_service.check_permission.call_args.kwargs["team_id"] is None
+        assert mock_perm_service.check_permission.call_args.kwargs["check_any_team"] is False
+
+    @pytest.mark.asyncio
+    async def test_global_only_ignores_user_context_team_id(self, monkeypatch):
+        """global_only=True must not use a team_id present on the user context."""
+
+        async def dummy_func(user=None, db=None):
+            return "ok"
+
+        mock_db = MagicMock()
+        mock_user = {"email": "user@test.com", "db": mock_db, "token_use": "session", "team_id": "team-1"}
+        mock_perm_service = AsyncMock()
+        mock_perm_service.check_permission.return_value = True
+        monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+        with patch("mcpgateway.plugins.get_plugin_manager", return_value=None):
+            decorated = rbac.require_permission("admin.oauth_clients:delete", global_only=True)(dummy_func)
+            result = await decorated(user=mock_user, db=mock_db)
+
+        assert result == "ok"
+        assert mock_perm_service.check_permission.call_args.kwargs["team_id"] is None
+        assert mock_perm_service.check_permission.call_args.kwargs["check_any_team"] is False
+
+    @pytest.mark.asyncio
+    async def test_global_only_false_by_default_still_aggregates(self, monkeypatch):
+        """Sanity check: omitting global_only preserves the pre-existing check_any_team
+        aggregation behavior (regression guard against changing the default)."""
+
+        async def dummy_func(user=None, db=None):
+            return "ok"
+
+        mock_db = MagicMock()
+        mock_user = {"email": "user@test.com", "db": mock_db, "token_use": "session"}
+        mock_perm_service = AsyncMock()
+        mock_perm_service.check_permission.return_value = True
+        monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+        with (
+            patch("mcpgateway.middleware.rbac._derive_team_from_resource", return_value=None),
+            patch("mcpgateway.middleware.rbac._derive_team_from_payload", new_callable=AsyncMock, return_value=None),
+            patch("mcpgateway.plugins.get_plugin_manager", return_value=None),
+        ):
+            decorated = rbac.require_permission("admin.oauth_clients:read")(dummy_func)
+            result = await decorated(user=mock_user, db=mock_db)
+
+        assert result == "ok"
+        assert mock_perm_service.check_permission.call_args.kwargs["check_any_team"] is True
+
+
 class TestMultiTeamSessionTokenDerivationAnyPermission:
     """Tests for multi-team session token team derivation in require_any_permission."""
 
@@ -2846,3 +3138,157 @@ async def test_proxy_trust_missing_header_valid_cookie_rejects():
         with pytest.raises(HTTPException) as exc:
             await rbac.get_current_user_with_permissions(mock_request, credentials=None, jwt_token=None)
     assert exc.value.status_code == status.HTTP_401_UNAUTHORIZED
+
+
+# --- check_permission_inline: non-raising permission check for additive in-handler use ---
+
+
+def _mock_plugin_manager(granted: bool, reason: str = "test"):
+    """Build a plugin manager mock whose permission hook returns a decision.
+
+    Args:
+        granted: The decision the plugin hook reports.
+        reason: Reason string attached to the decision.
+
+    Returns:
+        MagicMock: Plugin manager exposing has_hooks_for and invoke_hook.
+    """
+    mock_result = MagicMock()
+    mock_result.modified_payload.granted = granted
+    mock_result.modified_payload.reason = reason
+    mock_result.metadata = {"plugin_name": "test-plugin"}
+
+    mock_pm = MagicMock()
+    mock_pm.has_hooks_for.return_value = True
+    mock_pm.invoke_hook = AsyncMock(return_value=(mock_result, None))
+    return mock_pm
+
+
+class TestCheckPermissionInline:
+    """check_permission_inline returns a bool instead of raising on denial."""
+
+    @pytest.mark.asyncio
+    async def test_rbac_grant_returns_true(self, monkeypatch):
+        """A granted RBAC check returns True."""
+        mock_perm_service = AsyncMock()
+        mock_perm_service.check_permission.return_value = True
+        monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+        granted = await rbac.check_permission_inline({"email": "user@test.com"}, "security:read", db=MagicMock())
+
+        assert granted is True
+        mock_perm_service.check_permission.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_rbac_deny_returns_false_without_raising(self, monkeypatch):
+        """A denied RBAC check returns False rather than raising HTTPException."""
+        mock_perm_service = AsyncMock()
+        mock_perm_service.check_permission.return_value = False
+        monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+        granted = await rbac.check_permission_inline({"email": "user@test.com"}, "security:read", db=MagicMock())
+
+        assert granted is False
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("user_context", [None, {}, {"not_email": "x"}, "not-a-dict"])
+    async def test_malformed_user_context_returns_false(self, user_context, monkeypatch):
+        """Missing or malformed user context is denied without raising."""
+        mock_perm_service = AsyncMock()
+        monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+        granted = await rbac.check_permission_inline(user_context, "security:read", db=MagicMock())
+
+        assert granted is False
+        mock_perm_service.check_permission.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_uses_fresh_db_session_when_no_db_supplied(self, monkeypatch):
+        """Without a db argument the helper opens a fresh session."""
+        mock_perm_service = AsyncMock()
+        mock_perm_service.check_permission.return_value = True
+        monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+        mock_db = MagicMock()
+        with patch("mcpgateway.middleware.rbac.fresh_db_session", _make_fresh_db(mock_db)):
+            granted = await rbac.check_permission_inline({"email": "user@test.com"}, "security:read")
+
+        assert granted is True
+        mock_perm_service.check_permission.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_plugin_deny_returns_false_without_consulting_rbac(self, monkeypatch):
+        """A plugin denial short-circuits before the RBAC check runs."""
+        mock_perm_service = AsyncMock()
+        mock_perm_service.check_permission.return_value = True
+        monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+        mock_pm = _mock_plugin_manager(granted=False)
+
+        with patch("mcpgateway.plugins.get_plugin_manager", return_value=mock_pm):
+            granted = await rbac.check_permission_inline({"email": "user@test.com"}, "security:read", db=MagicMock())
+
+        assert granted is False
+        mock_perm_service.check_permission.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_plugin_grant_with_override_returns_true_without_consulting_rbac(self, monkeypatch):
+        """A plugin grant wins outright when plugins may override RBAC."""
+        mock_perm_service = AsyncMock()
+        mock_perm_service.check_permission.return_value = False
+        monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+        monkeypatch.setattr(rbac.settings, "plugins_can_override_rbac", True)
+        mock_pm = _mock_plugin_manager(granted=True)
+
+        with patch("mcpgateway.plugins.get_plugin_manager", return_value=mock_pm):
+            granted = await rbac.check_permission_inline({"email": "user@test.com"}, "security:read", db=MagicMock())
+
+        assert granted is True
+        mock_perm_service.check_permission.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_plugin_grant_without_override_falls_through_to_rbac(self, monkeypatch):
+        """By default a plugin grant is audit-only and RBAC decides."""
+        mock_perm_service = AsyncMock()
+        mock_perm_service.check_permission.return_value = False
+        monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+        monkeypatch.setattr(rbac.settings, "plugins_can_override_rbac", False)
+        mock_pm = _mock_plugin_manager(granted=True)
+
+        with patch("mcpgateway.plugins.get_plugin_manager", return_value=mock_pm):
+            granted = await rbac.check_permission_inline({"email": "user@test.com"}, "security:read", db=MagicMock())
+
+        assert granted is False
+        mock_perm_service.check_permission.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_require_permission_still_403s_on_deny(self, monkeypatch):
+        """Delegation regression: the decorator keeps raising 403 when the helper denies."""
+
+        async def dummy_func(user=None):
+            return "should-not-reach"
+
+        mock_perm_service = AsyncMock()
+        mock_perm_service.check_permission.return_value = False
+        monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+        decorated = rbac.require_permission("tools.read")(dummy_func)
+        with pytest.raises(HTTPException) as exc:
+            await decorated(user={"email": "user@test.com", "db": MagicMock()})
+
+        assert exc.value.status_code == status.HTTP_403_FORBIDDEN
+
+    @pytest.mark.asyncio
+    async def test_require_permission_still_calls_func_on_grant(self, monkeypatch):
+        """Delegation regression: the decorator keeps invoking the handler when granted."""
+
+        async def dummy_func(user=None):
+            return "reached"
+
+        mock_perm_service = AsyncMock()
+        mock_perm_service.check_permission.return_value = True
+        monkeypatch.setattr(rbac, "PermissionService", lambda db: mock_perm_service)
+
+        decorated = rbac.require_permission("tools.read")(dummy_func)
+        result = await decorated(user={"email": "user@test.com", "db": MagicMock()})
+
+        assert result == "reached"

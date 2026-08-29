@@ -1,2 +1,15 @@
 too-many-lines-threshold = 1000
 max-struct-bools = 10
+
+# `result_large_err` defaults to a 128-byte threshold and fires at >=. Both error
+# types returned across this crate measure exactly 128 bytes:
+#
+#   axum::response::Response  = 128
+#   ResolveToolsCallError     = 128  (serde_json::Value 32 + reqwest HeaderMap 96)
+#
+# Sitting precisely on the boundary, they trip the lint on newer toolchains while
+# passing on older ones, with no change to this crate. Satisfying it would mean
+# boxing the error type on ~25 signatures in the request path, adding an allocation
+# to every error return for no measurable gain. Raising the threshold keeps the
+# lint active for error types that are genuinely oversized.
+large-error-threshold = 256

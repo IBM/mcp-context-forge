@@ -30,7 +30,6 @@
 | `mcp_eval_server` | AI evaluation with LLM-as-a-judge |
 | `mcp-rss-search` | RSS feed parsing, searching, and analysis |
 | `output_schema_test_server` | Output schema validation (test fixture) |
-| `python_sandbox_server` | Sandboxed Python code execution |
 | `qr_code_server` | QR code generation and decoding |
 | `url_to_markdown_server` | URL and document to markdown conversion |
 
@@ -45,7 +44,6 @@
 | Server | Description |
 |--------|-------------|
 | `benchmark-server` | Dynamic tools, resources, and prompts for gateway scale testing |
-| `fast-test-server` | Fast testing server |
 | `filesystem-server` | Filesystem operations |
 | `slow-time-server` | Configurable latency and failure simulation for resilience testing |
 

@@ -189,7 +189,8 @@ The items below are active roadmap work or design explorations. Track status in 
 
 ### Data Protection & Secrets
 
-- 🚧 **HashiCorp Vault & external KMS** — Native secret backends for tool credentials, JWT keys, and OAuth secrets ([#542](https://github.com/IBM/mcp-context-forge/issues/542)).
+- ✅ **HashiCorp Vault OAuth token storage** — `VaultTokenBackend` stores per-user OAuth access/refresh tokens in Vault KV v2, keyed by team and gateway. Enabled via `OAUTH_TOKEN_BACKEND=vault`. Tokens are stored plain-text inside Vault (Vault's seal provides AES-256-GCM at-rest encryption); per-user per-gateway isolation is enforced via path structure `{mount}/{prefix}/{team_id}/{server_id}/{email}`. The `VaultTokenBackend` includes an optional in-memory LRU token cache (`VAULT_TOKEN_CACHE_ENABLED`, default TTL 300 s), per-key asyncio locking to prevent concurrent near-expiry refresh races against rotating-refresh-token IdPs, and a fail-closed decrypt guard that raises `OAuthError` rather than forwarding a raw ciphertext envelope to the token endpoint. The `/vault/authorize/{server_id}` endpoint provides a simplified entry point for clients that know only their virtual server ID. See `.env.example` for the full set of `VAULT_*` configuration variables.
+- 🚧 **HashiCorp Vault for tool credentials & JWT keys** — Extending Vault integration to tool credentials and JWT signing keys ([#542](https://github.com/IBM/mcp-context-forge/issues/542)).
 - 🚧 **mTLS and certificate pinning** — Stronger upstream trust requirements for MCP servers with automatic pin management ([#568](https://github.com/IBM/mcp-context-forge/issues/568)).
 - 🚧 **Data Loss Prevention (DLP)** — Inline scanning for sensitive payloads with redact-or-drop policies.
 - 🚧 **Advanced cryptography** — Evaluating TEEs, HSM-backed signing, and post-quantum algorithms for long-lived deployments.

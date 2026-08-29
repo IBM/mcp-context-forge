@@ -27,7 +27,6 @@ persistent=yes
 py-version=3.11
 recursive=no
 source-roots=
-suggestion-mode=yes
 unsafe-load-any-extension=no
 
 [BASIC]

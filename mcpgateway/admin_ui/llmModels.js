@@ -1,8 +1,8 @@
 import { AppState } from "./appState.js";
+import { getAuthHeaders } from "./auth.js";
 import { showCopyableModal } from "./modals.js";
 import { parseErrorResponse } from "./security.js";
-import { getAuthToken } from "./tokens.js";
-import { getCookie, safeGetElement, showToast } from "./utils.js";
+import { safeGetElement, showToast } from "./utils.js";
 
 // ===================================================================
 // LLM SETTINGS FUNCTIONS
@@ -10,25 +10,16 @@ import { getCookie, safeGetElement, showToast } from "./utils.js";
 
 /**
  * Build headers for state-changing LLM settings requests.
+ *
+ * Thin adapter over the shared getAuthHeaders() helper, kept so the call
+ * sites below can keep their `{ json }` option shape:
  * - Authorization is only attached when a real bearer token is available
  *   (session logins use an httponly cookie, so getAuthToken() returns "").
  * - X-CSRF-Token satisfies both CSRFMiddleware (/llm/*) and
  *   enforce_admin_csrf (/admin/llm/*), which share the same cookie/header names.
  */
 async function llmRequestHeaders({ json = true } = {}) {
-  const headers = {};
-  if (json) {
-    headers["Content-Type"] = "application/json";
-  }
-  const token = await getAuthToken();
-  if (token) {
-    headers.Authorization = `Bearer ${token}`;
-  }
-  const csrfToken = getCookie("mcpgateway_csrf_token");
-  if (csrfToken) {
-    headers["X-CSRF-Token"] = csrfToken;
-  }
-  return headers;
+  return getAuthHeaders(json);
 }
 
 /**

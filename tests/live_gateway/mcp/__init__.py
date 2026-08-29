@@ -6,7 +6,7 @@ SPDX-License-Identifier: Apache-2.0
 E2E tests requiring a live ContextForge gateway (MCP transports / observability /
 subprocess-driven flows):
 
-* `test_mcp_protocol_e2e.py` — MCP protocol via FastMCP client (any transport)
+* `test_mcp_protocol_e2e.py` — MCP protocol via the official `mcp` SDK client (any transport)
 * `test_mcp_rbac_transport.py` — RBAC + multi-transport (needs Streamable HTTP registered)
 * `test_mcp_plugin_parity.py` — Compose-backed plugin parity (needs MCP_PLUGIN_PARITY_EXPECTED_RUNTIME)
 * `test_langfuse_traces.py` — Langfuse trace export (needs gateway + Langfuse on :3100)

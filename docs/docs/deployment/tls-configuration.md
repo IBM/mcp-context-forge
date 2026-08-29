@@ -280,6 +280,127 @@ gateway:
     - KEY_FILE_PASSWORD=${KEY_FILE_PASSWORD}  # From .env file
 ```
 
+### Inbound mTLS - Client Certificate Authentication
+
+By default the gateway accepts any TLS client. Inbound mTLS makes it require callers to present a
+certificate signed by a CA you nominate, rejecting everyone else during the TLS handshake — before
+any HTTP request is processed.
+
+This is **transport-layer authentication layered in front of** the existing auth stack. It does not
+replace JWT or RBAC, and the certificate identity is not mapped to a ContextForge principal.
+
+#### Environment Variables
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `CA_CERTS` | *(unset)* | CA bundle used to verify client certificates. Unset disables inbound mTLS |
+| `CERT_REQS` | `0` | `0` = no client cert, `1` = optional, `2` = required |
+| `LOOPBACK_CLIENT_CERT` | *(unset)* | Certificate the gateway presents on its own loopback self-calls |
+| `LOOPBACK_CLIENT_KEY` | *(unset)* | Private key for `LOOPBACK_CLIENT_CERT` |
+
+All four are read only when `SSL=true`. Relative paths resolve against the repository root, not the
+current directory. Only the `CA_CERTS` bundle is trusted — the system CA store is never loaded, so
+`CERT_REQS` is rejected at startup unless `CA_CERTS` is also set.
+
+The launcher fails fast, before Gunicorn starts, on a missing or unreadable `CA_CERTS` file, on a
+`CERT_REQS` value other than `0`/`1`/`2`, and on `LOOPBACK_CLIENT_CERT` set without
+`LOOPBACK_CLIENT_KEY` (or vice versa).
+
+!!! warning "`CERT_REQS=2` locks out every certless caller"
+    That includes health probes, metrics scrapers, nginx upstreams, and your browser session to the
+    Admin UI. Roll out with `CERT_REQS=1` first and confirm what breaks. Note that `CERT_REQS=1`
+    verifies a certificate when one is offered but still admits callers that present none — it is
+    verification, not enforcement.
+
+#### Quickstart
+
+```bash
+# Generate a test client CA and client certificate in ./certs/client/
+make certs-client
+
+# Start the gateway with TLS + required client certificates
+make serve-ssl-mtls CA_CERTS=certs/client/ca-cert.pem
+```
+
+`make serve-ssl-mtls` defaults `CERT_REQS` to `2` and points the loopback variables at the pair
+`make certs-client` produced. Override any of them on the command line, e.g.
+`make serve-ssl-mtls CA_CERTS=... CERT_REQS=1`.
+
+#### Verify
+
+```bash
+# Succeeds - client presents a certificate signed by the trusted CA
+curl -sS --cacert certs/cert.pem \
+     --cert certs/client/client-cert.pem \
+     --key certs/client/client-key.pem \
+     https://localhost:4444/health
+
+# Fails at the TLS handshake - no client certificate, no HTTP response
+curl -sS --cacert certs/cert.pem https://localhost:4444/health
+```
+
+#### Why the loopback certificate is required
+
+The gateway makes real network calls to its own listener: the SSE message-dispatch path and the
+WebSocket endpoint both POST to `/rpc` over `127.0.0.1`. Those calls skip *server* certificate
+validation (the local certificate is usually self-signed) but they do not *present* a client
+certificate. Under `CERT_REQS=2` the gateway would therefore reject its own self-calls at the
+handshake, taking the SSE and WebSocket transports down. `CERT_REQS=1` still admits a certless
+caller, so the gateway's own certless self-calls succeed without a loopback certificate.
+
+Setting `LOOPBACK_CLIENT_CERT` and `LOOPBACK_CLIENT_KEY` fixes this: the loopback client presents
+that certificate while keeping the existing trust posture, so no new server-certificate or SAN
+requirement is imposed on operators who bring their own certificates. `make serve-ssl-mtls` sets
+both automatically; if you configure `CERT_REQS` by hand and omit them, the launcher prints a
+warning explaining the consequence.
+
+#### Docker Compose
+
+```yaml
+gateway:
+  environment:
+    - SSL=true
+    - CERT_FILE=/app/certs/cert.pem
+    - KEY_FILE=/app/certs/key.pem
+    - CA_CERTS=/app/certs/client/ca-cert.pem
+    - CERT_REQS=2
+    - LOOPBACK_CLIENT_CERT=/app/certs/client/client-cert.pem
+    - LOOPBACK_CLIENT_KEY=/app/certs/client/client-key.pem
+  volumes:
+    - ./certs:/app/certs:ro
+  healthcheck:
+    # The default probe presents no client certificate and will fail under mTLS.
+    test: ["CMD", "curl", "-fk",
+           "--cert", "/app/certs/client/client-cert.pem",
+           "--key", "/app/certs/client/client-key.pem",
+           "https://localhost:4444/health"]
+```
+
+The image also ships its own `HEALTHCHECK` that probes plain HTTP. Override it at the Compose layer
+as shown; it cannot be made certificate-aware from outside the image.
+
+#### Compatibility
+
+| Deployment | `CERT_REQS=1` | `CERT_REQS=2` |
+|---|---|---|
+| Gateway TLS, REST / streamable HTTP | Works (verify-if-offered) | Works |
+| Gateway TLS, SSE or WebSocket | Works | Works **only** with `LOOPBACK_CLIENT_CERT` / `LOOPBACK_CLIENT_KEY` set |
+| nginx TLS termination (Option 2) | Not applicable | Not applicable — configure mTLS on nginx |
+
+The bundled nginx TLS profile terminates TLS at nginx and proxies **plain HTTP** to the gateway, so
+gateway-side `CA_CERTS` / `CERT_REQS` have no effect there and enabling them will break the nginx
+upstream. The same applies to the optional Rust MCP runtime, whose backend URL defaults to plain
+HTTP loopback. For enforced mTLS in front of the nginx stack, configure `ssl_client_certificate` and
+`ssl_verify_client` on nginx instead.
+
+!!! note "No revocation checking"
+    Client certificates are validated against the `CA_CERTS` bundle only. No CRL or OCSP check is
+    performed, so a revoked but unexpired certificate is still accepted. Rotate the CA to revoke
+    access.
+
+The credentials from `make certs-client` are for testing. `certs/client/ca-key.pem` is a real CA
+key — use your own PKI in production.
+
 ### Mount Certificates
 
 Ensure certificates are mounted in the gateway container:
@@ -913,6 +1034,90 @@ server {
     }
 }
 ```
+
+---
+
+## Kubernetes / Helm
+
+This section covers end-to-end TLS for the **Helm chart** (`charts/mcp-stack`).
+The chart exposes two independent TLS layers:
+
+| Layer | Values key | What it secures |
+|---|---|---|
+| Ingress / nginx frontend | `mcpContextForge.ingress.tls.enabled` | Client → cluster edge |
+| Gateway pod (direct HTTPS) | `mcpContextForge.tls.enabled` | nginx → gateway pod |
+
+Enable both for a fully encrypted path; enable only the ingress layer (default) for standard deployments where nginx terminates TLS.
+
+### Prerequisites
+
+- A Kubernetes cluster with an ingress controller (nginx recommended)
+- A `kubernetes.io/tls` Secret containing your certificate and private key, created **before** the Helm release:
+
+```bash
+# From a PEM cert/key pair
+kubectl create secret tls my-release-gateway-tls \
+  --cert=tls.crt \
+  --key=tls.key \
+  --namespace=<your-namespace>
+
+# Or via cert-manager (annotate the Ingress and cert-manager creates the Secret automatically)
+```
+
+### Ingress TLS only (default topology)
+
+Nginx terminates TLS at the cluster edge; the gateway pod runs plain HTTP internally.
+No extra values are required beyond the ingress block:
+
+```yaml
+mcpContextForge:
+  ingress:
+    enabled: true
+    host: api.example.com
+    tls:
+      enabled: true
+      secretName: "my-ingress-tls-secret"   # kubernetes.io/tls Secret for nginx
+```
+
+### End-to-end TLS (nginx → HTTPS → gateway pod)
+
+Add `mcpContextForge.tls` to your values override file to also terminate TLS inside the gateway pod:
+
+```yaml
+mcpContextForge:
+  ingress:
+    enabled: true
+    host: api.example.com
+    tls:
+      enabled: true
+      secretName: "my-ingress-tls-secret"
+
+  tls:
+    enabled: true
+    secretName: "my-release-gateway-tls"   # pre-created kubernetes.io/tls Secret
+    mountPath: /app/certs/tls
+    certFile:  /app/certs/tls/tls.crt
+    keyFile:   /app/certs/tls/tls.key
+
+    # Optional: passphrase for an encrypted private key (reference a Secret, not a plain string)
+    # keyFilePasswordSecret:
+    #   name: my-gateway-tls-pass
+    #   key:  keyFilePassword
+```
+
+Apply with:
+
+```bash
+helm upgrade --install my-release charts/mcp-stack \
+  -f my-values.yaml \
+  --namespace <your-namespace>
+```
+
+### Probe scheme
+
+When `mcpContextForge.tls.enabled=true` the chart automatically switches the readiness and liveness probe scheme from `HTTP` to `HTTPS`. No manual probe override is needed.
+
+---
 
 ## Additional Resources
 

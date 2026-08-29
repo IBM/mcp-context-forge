@@ -4916,12 +4916,23 @@ class _StreamableHttpAuthHandler:
     can send error responses without threading these values through every call.
     """
 
-    __slots__ = ("scope", "receive", "send")
+    __slots__ = ("scope", "receive", "send", "request_path")
 
-    def __init__(self, scope: Any, receive: Any, send: Any) -> None:
+    def __init__(self, scope: Any, receive: Any, send: Any, *, request_path: str | None = None) -> None:
+        """Initialize the authentication handler.
+
+        Args:
+            scope: Original ASGI request scope.
+            receive: ASGI receive callable.
+            send: ASGI send callable.
+            request_path: Optional app-relative path used only for route checks.
+                The original scope remains unchanged.
+        """
         self.scope = scope
         self.receive = receive
         self.send = send
+        scope_path = scope.get("path", "")
+        self.request_path = request_path if request_path is not None else scope_path
 
     async def _send_error(self, *, detail: str, status_code: int = HTTP_401_UNAUTHORIZED, headers: dict[str, str] | None = None) -> bool:
         """Send an error response and return False (auth rejected).
@@ -4959,7 +4970,7 @@ class _StreamableHttpAuthHandler:
             True if authentication passes or is skipped.
             False if authentication fails and a 401 response is sent.
         """
-        path = self.scope.get("path", "")
+        path = self.request_path
         # Normalize trailing slash for consistent matching
         normalized = path.rstrip("/")
         # Check if this is an MCP-related path that requires authentication.
@@ -5465,7 +5476,7 @@ class _StreamableHttpAuthHandler:
             except jwt.DecodeError:
                 return OAuthAuthResult.NOT_APPLICABLE
 
-        path = self.scope.get("path", "")
+        path = self.request_path
         match = _SERVER_ID_RE.search(path)
         if not match:
             return OAuthAuthResult.NOT_APPLICABLE
@@ -5648,7 +5659,7 @@ class _StreamableHttpAuthHandler:
         return OAuthAuthResult.SUCCESS
 
 
-async def streamable_http_auth(scope: Any, receive: Any, send: Any) -> bool:
+async def streamable_http_auth(scope: Any, receive: Any, send: Any, *, request_path: str | None = None) -> bool:
     """Perform authentication check in middleware context (ASGI scope).
 
     Delegates to :class:`_StreamableHttpAuthHandler` which encapsulates the
@@ -5658,6 +5669,8 @@ async def streamable_http_auth(scope: Any, receive: Any, send: Any) -> bool:
         scope: The ASGI scope dictionary, which includes request metadata.
         receive: ASGI receive callable used to receive events.
         send: ASGI send callable used to send events (e.g. a 401 response).
+        request_path: Optional app-relative path used for authentication route
+            checks without changing ``scope["path"]``.
 
     Returns:
         bool: True if authentication passes or is skipped.
@@ -5672,6 +5685,6 @@ async def streamable_http_auth(scope: Any, receive: Any, send: Any) -> bool:
         >>> import inspect
         >>> sig = inspect.signature(streamable_http_auth)
         >>> list(sig.parameters.keys())
-        ['scope', 'receive', 'send']
+        ['scope', 'receive', 'send', 'request_path']
     """
-    return await _StreamableHttpAuthHandler(scope, receive, send).authenticate()
+    return await _StreamableHttpAuthHandler(scope, receive, send, request_path=request_path).authenticate()

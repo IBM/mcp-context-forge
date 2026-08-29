@@ -454,9 +454,11 @@
           Troubleshooting Support
         </h3>
         <p class="text-sm text-gray-600 dark:text-gray-400 mt-1">
-          Download a comprehensive diagnostics bundle for troubleshooting. All
-          sensitive data (passwords, tokens, secrets) are automatically
-          redacted.
+          Download a comprehensive diagnostics bundle for troubleshooting.
+          Configuration secrets are omitted from the settings file,
+          environment variables with credential-like names are masked,
+          and known credential patterns are redacted from included logs.
+          Review the bundle before sharing it outside your organization.
         </p>
       </div>
     </div>

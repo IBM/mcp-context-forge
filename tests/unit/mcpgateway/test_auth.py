@@ -2316,6 +2316,252 @@ class TestSetAuthMethodFromPayload:
         assert request.state.auth_method == "jwt"
 
 
+def _scope_test_user(email: str = "user@example.com", *, auth_provider: str = "api_token") -> EmailUser:
+    """Build a minimal active EmailUser for token-scope tests.
+
+    Args:
+        email: Email address for the user.
+        auth_provider: Auth provider recorded on the user row.
+
+    Returns:
+        EmailUser: Detached user instance.
+    """
+    now = datetime.now(timezone.utc)
+    return EmailUser(
+        email=email,
+        password_hash="h",
+        full_name="U",
+        is_admin=False,
+        is_active=True,
+        auth_provider=auth_provider,
+        password_change_required=False,
+        email_verified_at=now,
+        created_at=now,
+        updated_at=now,
+    )
+
+
+class TestJwtTokenScopeExtraction:
+    """Layer 1 scope extraction must run on every JWT authentication path.
+
+    ``AUTH_CACHE_ENABLED`` and ``AUTH_CACHE_BATCH_QUERIES`` both default to True, so the
+    auth-cache and batched-query paths serve most real requests. Extracting scopes only on
+    the individual-query fallback would leave enforcement dead in a default deployment.
+    Every case here is parametrized across all three paths.
+    """
+
+    AUTH_PATHS = ("cache_hit", "batched", "fallback")
+
+    @staticmethod
+    def _patches(auth_path: str, payload: dict, monkeypatch):
+        """Configure settings and return the patch stack for the requested auth path.
+
+        Args:
+            auth_path: One of "cache_hit", "batched", "fallback".
+            payload: Decoded JWT payload the token verifier should return.
+            monkeypatch: pytest monkeypatch fixture.
+
+        Returns:
+            list: Context managers to enter for this path.
+        """
+        # First-Party
+        from mcpgateway.cache.auth_cache import CachedAuthContext
+
+        monkeypatch.setattr(settings, "auth_cache_enabled", auth_path == "cache_hit")
+        monkeypatch.setattr(settings, "auth_cache_batch_queries", auth_path == "batched")
+
+        user_dict = {"email": "user@example.com", "is_admin": False, "is_active": True, "auth_provider": "api_token"}
+
+        common = [
+            patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)),
+            patch("mcpgateway.auth._check_token_revoked_sync", return_value=False),
+            patch("mcpgateway.auth._update_api_token_last_used_sync", return_value=None),
+            patch("mcpgateway.auth._is_api_token_jti_sync", return_value=True),
+            patch("mcpgateway.auth._get_personal_team_sync", return_value=None),
+            patch("mcpgateway.auth._get_user_by_email_sync", return_value=_scope_test_user()),
+        ]
+
+        if auth_path == "cache_hit":
+            mock_cache = MagicMock()
+            mock_cache.get_auth_context = AsyncMock(return_value=CachedAuthContext(user=user_dict, personal_team_id=None, is_token_revoked=False))
+            mock_cache.set_auth_context = AsyncMock()
+            mock_cache.set_user_teams = AsyncMock()
+            return common + [patch("mcpgateway.cache.auth_cache.auth_cache", mock_cache)]
+
+        if auth_path == "batched":
+            batched = {"user": user_dict, "personal_team_id": None, "is_token_revoked": False, "team_ids": [], "team_names": {}}
+            return common + [patch("mcpgateway.auth._get_auth_context_batched_sync", return_value=batched)]
+
+        return common
+
+    async def _authenticate(self, auth_path: str, payload: dict, monkeypatch):
+        """Run get_current_user through the given auth path and return the request.
+
+        Args:
+            auth_path: One of "cache_hit", "batched", "fallback".
+            payload: Decoded JWT payload the token verifier should return.
+            monkeypatch: pytest monkeypatch fixture.
+
+        Returns:
+            SimpleNamespace: The request object, with state populated by authentication.
+        """
+        # Standard
+        from contextlib import ExitStack
+
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid_jwt")  # pragma: allowlist secret
+        request = SimpleNamespace(state=SimpleNamespace())
+
+        with ExitStack() as stack:
+            for ctx in self._patches(auth_path, payload, monkeypatch):
+                stack.enter_context(ctx)
+            await get_current_user(credentials=credentials, request=request)
+
+        return request
+
+    @staticmethod
+    def _api_token_payload(scopes) -> dict:
+        """Build an API-token JWT payload carrying the given scopes claim.
+
+        Args:
+            scopes: Value for the ``scopes`` claim; use ``...`` to omit the claim entirely.
+
+        Returns:
+            dict: JWT payload.
+        """
+        payload = {
+            "sub": "user@example.com",
+            "email": "user@example.com",
+            "user": {"auth_provider": "api_token"},
+            "jti": "jti-scope-test",
+            "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp(),
+        }
+        if scopes is not ...:
+            payload["scopes"] = scopes
+        return payload
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("auth_path", AUTH_PATHS)
+    @pytest.mark.parametrize(
+        "permissions",
+        [
+            ["tools.read"],
+            ["*"],
+            ["tools.*"],
+            [],
+        ],
+    )
+    async def test_api_token_scopes_reach_request_state(self, auth_path, permissions, monkeypatch):
+        """Scopes are extracted on all three paths, for every scope shape."""
+        payload = self._api_token_payload({"permissions": permissions})
+        request = await self._authenticate(auth_path, payload, monkeypatch)
+
+        assert request.state.auth_method == "api_token"
+        assert request.state.token_scopes == permissions
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("auth_path", AUTH_PATHS)
+    async def test_legacy_api_token_scopes_reach_request_state(self, auth_path, monkeypatch):
+        """Legacy API tokens (no auth_provider, classified via JTI lookup) also get scopes."""
+        payload = self._api_token_payload({"permissions": ["tools.read"]})
+        payload["user"] = {}  # no auth_provider — forces the legacy JTI classification branch
+
+        request = await self._authenticate(auth_path, payload, monkeypatch)
+
+        assert request.state.auth_method == "api_token"
+        assert request.state.token_scopes == ["tools.read"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("auth_path", AUTH_PATHS)
+    async def test_session_token_with_scopes_is_not_scope_restricted(self, auth_path, monkeypatch):
+        """Interactive-login JWTs carry a scopes dict but must not be Layer 1 restricted.
+
+        ``email_auth.create_access_token()`` always emits a scopes claim, so structural
+        detection would wrongly classify session tokens as scoped API tokens. Classification
+        is driven by auth_provider instead.
+        """
+        payload = self._api_token_payload({"permissions": ["some.permission"]})
+        payload["user"] = {"auth_provider": "email"}
+
+        request = await self._authenticate(auth_path, payload, monkeypatch)
+
+        assert request.state.auth_method == "jwt"
+        assert getattr(request.state, "token_scopes", None) is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("auth_path", AUTH_PATHS)
+    async def test_api_token_without_scopes_claim_is_accepted(self, auth_path, monkeypatch):
+        """Legacy tokens predating the scopes claim authenticate with no Layer 1 restriction.
+
+        Absent scopes is equivalent to empty permissions ("inherit from RBAC"), not a bypass:
+        RBAC still gates every operation.
+        """
+        payload = self._api_token_payload(...)
+
+        request = await self._authenticate(auth_path, payload, monkeypatch)
+
+        assert request.state.auth_method == "api_token"
+        assert getattr(request.state, "token_scopes", None) is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("auth_path", AUTH_PATHS)
+    @pytest.mark.parametrize("scopes", ["tools.read,a2a.read", ["tools.read"], 42])
+    async def test_malformed_scopes_claim_rejected(self, auth_path, scopes, monkeypatch):
+        """A scopes claim that is not an object is rejected rather than failing open."""
+        payload = self._api_token_payload(scopes)
+
+        with pytest.raises(HTTPException) as exc_info:
+            await self._authenticate(auth_path, payload, monkeypatch)
+
+        assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
+        assert "malformed scopes" in exc_info.value.detail
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("auth_path", AUTH_PATHS)
+    async def test_malformed_permissions_claim_rejected(self, auth_path, monkeypatch):
+        """A non-list permissions claim is rejected — substring matching must never happen."""
+        payload = self._api_token_payload({"permissions": "tools.read"})
+
+        with pytest.raises(HTTPException) as exc_info:
+            await self._authenticate(auth_path, payload, monkeypatch)
+
+        assert exc_info.value.status_code == status.HTTP_401_UNAUTHORIZED
+        assert "malformed scopes" in exc_info.value.detail
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("auth_path", AUTH_PATHS)
+    async def test_null_permissions_claim_treated_as_empty(self, auth_path, monkeypatch):
+        """``permissions: null`` normalizes to [] rather than blowing up or denying all."""
+        payload = self._api_token_payload({"permissions": None})
+
+        request = await self._authenticate(auth_path, payload, monkeypatch)
+
+        assert request.state.token_scopes == []
+
+
+class TestDatabaseApiTokenScopeExtraction:
+    """Database API tokens propagate resource_scopes into request.state.token_scopes."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("resource_scopes", [["tools.read"], ["*"], []])
+    async def test_resource_scopes_reach_request_state(self, resource_scopes):
+        """A token found in EmailApiToken carries its resource_scopes forward."""
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="opaque-db-token")  # pragma: allowlist secret
+        request = SimpleNamespace(state=SimpleNamespace())
+
+        token_info = {"user_email": "user@example.com", "jti": "db-jti", "resource_scopes": resource_scopes}
+
+        with (
+            patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(side_effect=ValueError("not a jwt"))),
+            patch("mcpgateway.auth._lookup_api_token_sync", return_value=token_info),
+            patch("mcpgateway.auth._get_user_by_email_sync", return_value=_scope_test_user()),
+            patch("mcpgateway.auth._get_personal_team_sync", return_value=None),
+        ):
+            await get_current_user(credentials=credentials, request=request)
+
+        assert request.state.auth_method == "api_token"
+        assert request.state.token_scopes == resource_scopes
+
+
 class TestPluginAuthHook:
     """Tests for plugin HTTP_AUTH_RESOLVE_USER hook path."""
 
@@ -2623,7 +2869,11 @@ class TestCachePathBranches:
         monkeypatch.setattr(settings, "auth_cache_enabled", True)
         monkeypatch.setattr(settings, "require_user_in_db", False)
 
-        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)), patch("mcpgateway.cache.auth_cache.auth_cache.get_auth_context", AsyncMock(return_value=cached_ctx)):
+        with (
+            patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)),
+            patch("mcpgateway.cache.auth_cache.auth_cache.get_auth_context", AsyncMock(return_value=cached_ctx)),
+            patch("mcpgateway.auth._is_personal_team_sync", return_value=False),
+        ):
             user = await get_current_user(credentials=credentials, request=request)
 
         assert request.state.team_id == "team-1"
@@ -2779,7 +3029,11 @@ class TestBatchedPathBranches:
         monkeypatch.setattr(settings, "auth_cache_enabled", False)
         monkeypatch.setattr(settings, "auth_cache_batch_queries", True)
 
-        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)), patch("mcpgateway.auth._get_auth_context_batched_sync", return_value=auth_ctx):
+        with (
+            patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)),
+            patch("mcpgateway.auth._get_auth_context_batched_sync", return_value=auth_ctx),
+            patch("mcpgateway.auth._is_personal_team_sync", return_value=False),
+        ):
             user = await get_current_user(credentials=credentials, request=request)
 
         assert request.state.team_id == "team-1"
@@ -2993,6 +3247,7 @@ class TestFallbackPathWithRequest:
             patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)),
             patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user),
             patch("mcpgateway.auth._get_personal_team_sync", return_value=None),
+            patch("mcpgateway.auth._is_personal_team_sync", return_value=False),
         ):
             user = await get_current_user(credentials=credentials, request=request)  # pragma: allowlist secret
 
@@ -4119,6 +4374,158 @@ async def test_resolve_trace_team_name_uses_preresolved_name_before_claims(monke
     )
 
     assert resolved == "Batched Team"
+
+
+class TestIsPersonalTeamSync:
+    """Tests for the _is_personal_team_sync classification helper."""
+
+    def test_no_team_id_returns_false_without_db_call(self):
+        """A falsy team_id short-circuits to False without touching the DB."""
+        # First-Party
+        from mcpgateway.auth import _is_personal_team_sync
+
+        with patch("mcpgateway.auth.fresh_db_session") as mock_fresh_session:
+            assert _is_personal_team_sync(None) is False
+            assert _is_personal_team_sync("") is False
+            mock_fresh_session.assert_not_called()
+
+    def test_returns_true_for_personal_team(self):
+        """An active personal team row classifies as personal."""
+        # First-Party
+        from mcpgateway.auth import _is_personal_team_sync
+
+        mock_db = MagicMock()
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = True
+        mock_db.execute.return_value = mock_result
+
+        with patch("mcpgateway.auth.fresh_db_session") as mock_fresh_session:
+            mock_fresh_session.return_value.__enter__.return_value = mock_db
+            mock_fresh_session.return_value.__exit__.return_value = None
+
+            assert _is_personal_team_sync("team-personal") is True
+
+    def test_returns_false_for_non_personal_team(self):
+        """A shared (non-personal) team row classifies as not personal."""
+        # First-Party
+        from mcpgateway.auth import _is_personal_team_sync
+
+        mock_db = MagicMock()
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = False
+        mock_db.execute.return_value = mock_result
+
+        with patch("mcpgateway.auth.fresh_db_session") as mock_fresh_session:
+            mock_fresh_session.return_value.__enter__.return_value = mock_db
+            mock_fresh_session.return_value.__exit__.return_value = None
+
+            assert _is_personal_team_sync("team-shared") is False
+
+    def test_returns_false_when_team_not_found(self):
+        """A team_id with no matching active row classifies as not personal."""
+        # First-Party
+        from mcpgateway.auth import _is_personal_team_sync
+
+        mock_db = MagicMock()
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = None
+        mock_db.execute.return_value = mock_result
+
+        with patch("mcpgateway.auth.fresh_db_session") as mock_fresh_session:
+            mock_fresh_session.return_value.__enter__.return_value = mock_db
+            mock_fresh_session.return_value.__exit__.return_value = None
+
+            assert _is_personal_team_sync("team-unknown") is False
+
+
+class TestDeriveTokenTeamId:
+    """Tests for derive_token_team_id — the RBAC team-context policy point (issue #5993)."""
+
+    @pytest.mark.asyncio
+    async def test_admin_bypass_returns_none(self):
+        """teams=None (admin bypass) never derives a team context."""
+        # First-Party
+        from mcpgateway.auth import derive_token_team_id
+
+        assert await derive_token_team_id(None, "api") is None
+
+    @pytest.mark.asyncio
+    async def test_session_token_returns_none(self):
+        """Session tokens never derive a team context here — DB resolution owns that."""
+        # First-Party
+        from mcpgateway.auth import derive_token_team_id
+
+        assert await derive_token_team_id(["team-1"], "session") is None
+
+    @pytest.mark.asyncio
+    async def test_multi_team_returns_none(self):
+        """Multi-team tokens never derive a single team context."""
+        # First-Party
+        from mcpgateway.auth import derive_token_team_id
+
+        assert await derive_token_team_id(["team-1", "team-2"], "api") is None
+
+    @pytest.mark.asyncio
+    async def test_dict_entry_without_id_returns_none(self):
+        """A malformed team claim entry (dict with no id) yields no team context."""
+        # First-Party
+        from mcpgateway.auth import derive_token_team_id
+
+        assert await derive_token_team_id([{"name": "no-id-team"}], "api") is None
+
+    @pytest.mark.asyncio
+    async def test_excludes_personal_team(self, monkeypatch):
+        """A single-team token scoped to a personal team falls back to check_any_team (None).
+
+        Regression guard for the fix in issue #5993: honouring a personal team
+        here would silently grant the token's RBAC context team_admin, since
+        personal teams auto-grant that role to their creator.
+        """
+        # First-Party
+        from mcpgateway.auth import derive_token_team_id
+
+        monkeypatch.setattr("mcpgateway.auth._is_personal_team_sync", lambda team_id: True)
+
+        assert await derive_token_team_id(["team-personal"], "api") is None
+
+    @pytest.mark.asyncio
+    async def test_keeps_non_personal_single_team(self, monkeypatch):
+        """A single-team token scoped to a non-personal team keeps that team as context."""
+        # First-Party
+        from mcpgateway.auth import derive_token_team_id
+
+        monkeypatch.setattr("mcpgateway.auth._is_personal_team_sync", lambda team_id: False)
+
+        assert await derive_token_team_id(["team-shared"], "api") == "team-shared"
+
+    @pytest.mark.asyncio
+    async def test_dict_team_entry_extracts_id(self, monkeypatch):
+        """A dict-shaped team claim entry (legacy format) extracts its id."""
+        # First-Party
+        from mcpgateway.auth import derive_token_team_id
+
+        monkeypatch.setattr("mcpgateway.auth._is_personal_team_sync", lambda team_id: False)
+
+        assert await derive_token_team_id([{"id": "team-shared"}], "api") == "team-shared"
+
+    @pytest.mark.asyncio
+    async def test_classification_error_fails_closed_and_returns_none(self, monkeypatch):
+        """A classification failure (DB unavailable) fails closed to check_any_team (None).
+
+        Retaining team_id on an indeterminate lookup could route RBAC context
+        into a team never verified as non-personal, silently exposing that
+        team's auto-granted team_admin role. Falling back to None only
+        narrows the caller's effective permissions, never expands them.
+        """
+        # First-Party
+        from mcpgateway.auth import derive_token_team_id
+
+        def _raise(team_id):
+            raise RuntimeError("db unavailable")
+
+        monkeypatch.setattr("mcpgateway.auth._is_personal_team_sync", _raise)
+
+        assert await derive_token_team_id(["team-shared"], "api") is None
 
 
 # =============================================================================
