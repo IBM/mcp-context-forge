@@ -5900,6 +5900,7 @@ async def get_tool(
     request: Request,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
+    include_metrics: bool = False,
     apijsonpath: Optional[str] = Query(None, max_length=1000, description="Optional JSONPath modifier as JSON string"),
 ) -> ToolResponse:
     """
@@ -5910,6 +5911,7 @@ async def get_tool(
         request: The incoming HTTP request.
         db:     Active SQLAlchemy session (dependency).
         user:   Authenticated username (dependency).
+        include_metrics: Whether to include aggregated metrics in the response.
         apijsonpath: Optional JSON-Path modifier supplied as URL-encoded query parameter.
                      Example: ?apijsonpath=%7B%22jsonpath%22%3A%22%24.name%22%7D
                      (decoded: {"jsonpath":"$.name","mapping":null})
@@ -5937,6 +5939,7 @@ async def get_tool(
             requesting_user_is_admin=_req_is_admin,
             requesting_user_team_roles=_req_team_roles,
             token_teams=auth_token_teams,
+            include_metrics=include_metrics,
         )
         _enforce_scoped_resource_access(request, db, user, f"/tools/{tool_id}")
 
