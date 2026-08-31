@@ -87,13 +87,13 @@ Release 1.0.9 consolidates **41 PRs** focused on **inbound mTLS client certifica
 
 | PR | Description |
 |----|-------------|
-| [#6301](https://github.com/IBM/mcp-context-forge/pull/6301) | chore: remove temporary min-release-age-exclude pins from .npmrc |
-| [#6312](https://github.com/IBM/mcp-context-forge/pull/6312) | chore: bump dependency-review-action from v4.9.0 to v5.0.0 |
-| [#6319](https://github.com/IBM/mcp-context-forge/pull/6319) | chore: .env.example cleanup |
-| [#6325](https://github.com/IBM/mcp-context-forge/pull/6325) | refactor: tool invoke function refactor |
-| [#6306](https://github.com/IBM/mcp-context-forge/pull/6306) | test: add MCP Apps live stack tests to TestRawJsonRpc |
-| [#6398](https://github.com/IBM/mcp-context-forge/pull/6398) | test: fix Playwright gateway OAuth and team flakiness |
-| [#6375](https://github.com/IBM/mcp-context-forge/pull/6375) | chore: routine python/node dependency updates |
+| [#6301](https://github.com/IBM/mcp-context-forge/pull/6301) | remove temporary min-release-age-exclude pins from .npmrc |
+| [#6312](https://github.com/IBM/mcp-context-forge/pull/6312) | bump dependency-review-action from v4.9.0 to v5.0.0 |
+| [#6319](https://github.com/IBM/mcp-context-forge/pull/6319) | .env.example cleanup |
+| [#6325](https://github.com/IBM/mcp-context-forge/pull/6325) | tool invoke function refactor |
+| [#6306](https://github.com/IBM/mcp-context-forge/pull/6306) | add MCP Apps live stack tests to TestRawJsonRpc |
+| [#6398](https://github.com/IBM/mcp-context-forge/pull/6398) | fix Playwright gateway OAuth and team flakiness |
+| [#6375](https://github.com/IBM/mcp-context-forge/pull/6375) | routine python/node dependency updates |
 
 ## [1.0.8] - 2026-08-17 - Plugin Discovery, MCP Apps Bridge, Catalog Registration, and Security Hardening
 
