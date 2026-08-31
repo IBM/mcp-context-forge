@@ -1453,14 +1453,17 @@ class TestToolEndpoints:
     @patch("mcpgateway.main.tool_service.preview_tool_invocation")
     def test_preview_tool_endpoint(self, mock_preview, test_client, auth_headers):
         """POST /tools/preview/{name} returns 200 wrapping the service's dry-run envelope (#5629)."""
-        mock_preview.return_value = {
-            "validated": True,
-            "resolved_arguments": {"city": "London"},
-            "target": {"kind": "local"},
-            "annotations": {},
-            "pre_hooks_run": [],
-            "warnings": [],
-        }
+        # First-Party
+        from mcpgateway.schemas import ToolAnnotations, ToolPreviewResponse, ToolPreviewTarget
+
+        mock_preview.return_value = ToolPreviewResponse(
+            validated=True,
+            resolved_arguments={"city": "London"},
+            target=ToolPreviewTarget(kind="local"),
+            annotations=ToolAnnotations(),
+            pre_hooks_run=[],
+            warnings=[],
+        )
         response = test_client.post("/tools/preview/get_weather", json={"arguments": {"city": "London"}}, headers=auth_headers)
         assert response.status_code == 200
         body = response.json()

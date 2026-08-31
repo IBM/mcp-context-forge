@@ -7187,6 +7187,40 @@ class ToolService(BaseService):
         """
         return "preview_safe" in (hook_ref.plugin_ref.tags or [])
 
+    @staticmethod
+    def _has_elicit_hook(plugin_manager: Optional[Any], plugin_name: str) -> bool:
+        """True if ``plugin_name`` also registers the ``elicit`` hook a future cpex release adds (#5629).
+
+        A future cpex release (not yet available as of this writing; see
+        https://contextforge-org.github.io/cpex/docs/apl/elicitation/) adds an ``elicit`` hook
+        type through which a plugin drives a Dispatch/Check/Validate human-in-the-loop approval
+        flow, e.g. ``hooks: [elicit]`` with ``kind: elicitation/ciba`` in ``plugins/config.yaml``.
+        The installed cpex here (0.1.x) has no such hook type and no plugin registers one, so
+        this returns ``False`` in practice today -- expected, not a bug.
+
+        Checked by the literal future hook-type name ``"elicit"`` (not a name this project
+        invented) via ``PluginInstanceRegistry.get_plugin_hook_by_name``, so this keeps working
+        unchanged once that future cpex release ships: a plugin author who adds ``elicit`` to a
+        ``preview_safe`` plugin's ``hooks`` list today (which requires implementing an
+        ``elicit`` method on the plugin class -- cpex's ``HookRef`` construction raises
+        ``PluginError`` at registration time for a hook name with no matching method) already
+        gets this behavior for free, no mcp-context-forge change required when that future cpex
+        release lands.
+
+        Args:
+            plugin_manager: The resolved plugin manager, or None.
+            plugin_name: The plugin's name, as registered in its ``PluginConfig``.
+
+        Returns:
+            bool: True if the named plugin has an ``elicit`` hook registered.
+        """
+        if plugin_manager is None:
+            return False
+        try:
+            return plugin_manager._registry.get_plugin_hook_by_name(plugin_name, "elicit") is not None  # pylint: disable=protected-access
+        except Exception:  # pylint: disable=broad-except  # noqa: S110 - degrade to "no elicit hook known" like the other _get_dispatchable_hook_refs/_is_preview_safe helpers
+            return False
+
     async def preview_tool_invocation(
         self,
         db: Session,
@@ -7209,7 +7243,10 @@ class ToolService(BaseService):
         only when they'd also be dispatch-eligible live (see :meth:`_get_dispatchable_hook_refs`
         for the three gates applied: not statically disabled, not runtime-disabled, and matching
         ``conditions``); every other hook that clears those same three gates is reported in
-        ``warnings`` instead (see :meth:`_is_preview_safe` and plugins/AGENTS.md).
+        ``warnings`` instead (see :meth:`_is_preview_safe` and plugins/AGENTS.md). A
+        ``preview_safe`` plugin that also registers the ``elicit`` hook a future cpex release
+        adds (see :meth:`_has_elicit_hook`) is not run at all and is reported as an ``elicitation_skipped``
+        warning instead, since it may need to gather user input live.
 
         Args:
             db: Database session.
@@ -7280,6 +7317,17 @@ class ToolService(BaseService):
             skipped_refs = [ref for ref in all_refs if not self._is_preview_safe(ref)]
 
             for ref in preview_safe_refs:
+                # A plugin that also registers the `elicit` hook a future cpex release adds may
+                # need to gather user input live -- don't let it run to completion in preview (#5629).
+                if self._has_elicit_hook(plugin_manager, ref.plugin_ref.name):
+                    warnings.append(
+                        ToolPreviewWarning(
+                            code="elicitation_skipped",
+                            hook=ref.plugin_ref.name,
+                            message=f"Plugin '{ref.plugin_ref.name}' registers an elicit hook; live invocation may request user input that preview did not exercise.",
+                        )
+                    )
+                    continue
                 try:
                     await plugin_manager.invoke_hook_for_plugin(
                         name=ref.plugin_ref.name, hook_type=ToolHookType.TOOL_PRE_INVOKE, payload=payload, context=global_context, violations_as_exceptions=True
