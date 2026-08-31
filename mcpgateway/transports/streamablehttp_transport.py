@@ -2348,8 +2348,15 @@ async def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
                                 user=(
                                     {
                                         "email": getattr(user_record, "email", email),
+                                        "password_hash": getattr(user_record, "password_hash", ""),
+                                        "full_name": getattr(user_record, "full_name", None),
                                         "is_admin": bool(getattr(user_record, "is_admin", False)),
                                         "is_active": bool(getattr(user_record, "is_active", True)),
+                                        "auth_provider": getattr(user_record, "auth_provider", "local"),
+                                        "password_change_required": bool(getattr(user_record, "password_change_required", False)),
+                                        "email_verified_at": getattr(user_record, "email_verified_at", None),
+                                        "created_at": getattr(user_record, "created_at", None),
+                                        "updated_at": getattr(user_record, "updated_at", None),
                                     }
                                     if user_record is not None
                                     else None
