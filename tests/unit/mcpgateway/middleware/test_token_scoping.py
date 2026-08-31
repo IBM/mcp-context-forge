@@ -1405,29 +1405,27 @@ class TestTokenScopingMiddleware:
 
         # Valid membership case
         db = MagicMock()
+        db.__enter__ = MagicMock(return_value=db)
+        db.__exit__ = MagicMock(return_value=False)
         result_proxy = MagicMock()
         result_proxy.scalars.return_value.all.return_value = ["team-1", "team-2"]
         db.execute.return_value = result_proxy
 
-        def _get_db():
-            yield db
-
-        monkeypatch.setattr("mcpgateway.db.get_db", _get_db)
+        # validate_token_team_membership uses SessionLocal() as a context manager
+        monkeypatch.setattr("mcpgateway.auth.SessionLocal", lambda: db)
         assert middleware._check_team_membership(payload) is True
         cache.set_team_membership_valid_sync.assert_called_with("user@example.com", ["team-1", "team-2"], True)
         db.commit.assert_called_once()
-        db.close.assert_called_once()
 
         # Missing team case
         db = MagicMock()
+        db.__enter__ = MagicMock(return_value=db)
+        db.__exit__ = MagicMock(return_value=False)
         result_proxy = MagicMock()
         result_proxy.scalars.return_value.all.return_value = ["team-1"]
         db.execute.return_value = result_proxy
 
-        def _get_db_missing():
-            yield db
-
-        monkeypatch.setattr("mcpgateway.db.get_db", _get_db_missing)
+        monkeypatch.setattr("mcpgateway.auth.SessionLocal", lambda: db)
         assert middleware._check_team_membership(payload) is False
         cache.set_team_membership_valid_sync.assert_called_with("user@example.com", ["team-1", "team-2"], False)
 
