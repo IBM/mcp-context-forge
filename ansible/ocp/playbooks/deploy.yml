@@ -45,6 +45,43 @@
       ansible.builtin.include_vars:
         file: "{{ ocp_secrets }}"
         name: secret_values
+      no_log: true
+
+    # Derive the secret name from the chart's own mcp-stack.fullname helper so
+    # it always matches what Helm renders, regardless of the release name.
+    - name: Derive gateway secret name from chart template
+      ansible.builtin.command:
+        cmd: >
+          helm template {{ ocp_namespace }} {{ ocp_chart_path }}
+          -n {{ ocp_namespace }}
+          -f {{ ocp_values }}
+          -f {{ ocp_secrets }}
+          --show-only templates/secret-gateway.yaml
+      register: gateway_secret_template
+      changed_when: false
+      no_log: true
+
+    - name: Parse gateway secret name from template output
+      ansible.builtin.set_fact:
+        gateway_secret_name: >-
+          {{ (gateway_secret_template.stdout | from_yaml).metadata.name }}
+
+    - name: Expand secret dict to items (single pass)
+      ansible.builtin.set_fact:
+        gateway_secret_items: "{{ secret_values.mcpContextForge.secret | dict2items }}"
+      no_log: true
+
+    - name: Coerce secret values to strings
+      ansible.builtin.set_fact:
+        gateway_secret_data: >-
+          {{ dict(gateway_secret_items | map(attribute='key') | list
+             | zip(gateway_secret_items
+               | map(attribute='value')
+               | map('string')
+               | map('regex_replace', '^True$', 'true')
+               | map('regex_replace', '^False$', 'false')
+               | list)) }}
+      no_log: true
 
     - name: Pre-create gateway secret with Helm ownership labels
       kubernetes.core.k8s:
@@ -53,14 +90,14 @@
           apiVersion: v1
           kind: Secret
           metadata:
-            name: "{{ ocp_namespace }}-mcp-stack-gateway-secret"
+            name: "{{ gateway_secret_name }}"
             namespace: "{{ ocp_namespace }}"
             labels:
               app.kubernetes.io/managed-by: Helm
             annotations:
               meta.helm.sh/release-name: "{{ ocp_namespace }}"
               meta.helm.sh/release-namespace: "{{ ocp_namespace }}"
-          stringData: "{{ dict(secret_values.mcpContextForge.secret | dict2items | map(attribute='key') | list | zip(secret_values.mcpContextForge.secret | dict2items | map(attribute='value') | map('string') | list)) }}"
+          stringData: "{{ gateway_secret_data }}"
       no_log: true
 
     - name: Install ContextForge Helm chart
