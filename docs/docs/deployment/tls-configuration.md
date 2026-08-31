@@ -266,14 +266,40 @@ certs/
 
 ## Step 2: Configure Gateway TLS
 
-### Environment Variables
+### Activation via Override File (Recommended)
 
-Edit `docker-compose.yml` gateway service environment section:
+Do not edit `docker-compose.yml` directly. Use the provided override file instead:
+
+```bash
+# Generate certs if you haven't already
+make certs
+
+# Gateway TLS only (port 4444 serves HTTPS)
+make compose-gateway-tls
+
+# End-to-end TLS: nginx HTTPS:8443 → gateway HTTPS:4444
+make compose-tls-e2e
+```
+
+The override file (`docker-compose.gateway-tls.yml`) sets `SSL=true`, mounts `./certs:/app/certs:ro`,
+and switches the healthcheck to `https://` — no manual edits required.
+
+SSL variables can be overridden in `.env`:
+
+```bash
+SSL=true
+CERT_FILE=/app/certs/cert.pem
+KEY_FILE=/app/certs/key.pem
+KEY_FILE_PASSWORD=        # only for passphrase-protected keys
+```
+
+### Manual Configuration (Advanced)
+
+If composing the override file yourself, the gateway service needs:
 
 ```yaml
 gateway:
   environment:
-    # Enable SSL
     - SSL=true
     - CERT_FILE=/app/certs/cert.pem
     - KEY_FILE=/app/certs/key-encrypted.pem
@@ -408,32 +434,7 @@ Ensure certificates are mounted in the gateway container:
 ```yaml
 gateway:
   volumes:
-    - ./certs:/app/certs:ro   # Read-only mount
-```
-
-### HTTP Server Selection
-
-The gateway uses Gunicorn with a custom Python SSL key manager:
-
-#### Gunicorn (Default)
-```yaml
-environment:
-  # Gunicorn HTTP server (the only supported server)
-  - GUNICORN_WORKERS=4
-```
-
-Gunicorn uses a custom Python SSL key manager that:
-
-- Decrypts passphrase-protected keys at startup
-- Creates temporary unencrypted key files
-- Supports all SSL/TLS configurations
-
-### Update Healthcheck
-
-For HTTPS gateway, update the healthcheck to skip SSL verification for self-signed certificates:
-
-```yaml
-gateway:
+    - ./certs:/app/certs:ro
   healthcheck:
     test: ["CMD", "curl", "-fk", "https://localhost:4444/health"]
     interval: 30s
@@ -441,6 +442,11 @@ gateway:
     retries: 5
     start_period: 30s
 ```
+
+### HTTP Server Selection
+
+The gateway uses Gunicorn with a custom Python SSL key manager that decrypts
+passphrase-protected keys at startup and supports all SSL/TLS configurations.
 
 ### Expose Gateway Port (Optional)
 

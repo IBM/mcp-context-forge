@@ -1,0 +1,50 @@
+# docker-compose.gateway-tls.yml
+#
+# Docker Compose override for gateway-side TLS (end-to-end encryption).
+# Extends docker-compose.yml so the gateway itself serves HTTPS on port 4444.
+#
+# Usage (gateway TLS only):
+#   docker compose -f docker-compose.yml -f docker-compose.gateway-tls.yml up -d
+#   make compose-gateway-tls
+#
+# Usage (end-to-end TLS — nginx TLS + gateway TLS):
+#   docker compose -f docker-compose.yml -f docker-compose.gateway-tls.yml --profile tls up -d --scale nginx=0
+#   make compose-tls-e2e
+#
+# Prerequisites:
+#   make certs           # generate self-signed certs (or place your own in ./certs/)
+#
+# SSL vars are read from .env; defaults activate TLS when this override is applied:
+#   SSL=true
+#   CERT_FILE=/app/certs/cert.pem
+#   KEY_FILE=/app/certs/key.pem
+#   KEY_FILE_PASSWORD=       # only needed for passphrase-protected keys
+
+services:
+  gateway:
+    environment:
+      - SSL=${SSL:-true}
+      - CERT_FILE=${CERT_FILE:-/app/certs/cert.pem}
+      - KEY_FILE=${KEY_FILE:-/app/certs/key.pem}
+      - KEY_FILE_PASSWORD=${KEY_FILE_PASSWORD:-}
+    volumes:
+      - ./certs:/app/certs:ro
+    ports:
+      - "${GATEWAY_TLS_PORT:-4444}:4444"
+    healthcheck:
+      test: ["CMD", "curl", "-fk", "https://localhost:4444/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  nginx_tls:
+    environment:
+      - GATEWAY_SCHEME=https
+
+  register_fast_time:
+    environment:
+      - GATEWAY_URL=${GATEWAY_URL:-https://gateway:4444}
+      - GATEWAY_CA_CERT=${GATEWAY_CA_CERT:-/app/certs/cert.pem}
+    volumes:
+      - ./certs:/app/certs:ro

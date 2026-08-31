@@ -1579,6 +1579,7 @@ services:
     environment:
       - "JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY is not set. Run: make setup (first time) or make init-secrets-patch-env (if .env exists)}"
       - "AUTH_ENCRYPTION_SECRET=${AUTH_ENCRYPTION_SECRET:?AUTH_ENCRYPTION_SECRET is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
+      - "GATEWAY_URL=${GATEWAY_URL:-http://gateway:4444}"
 
     # This is a one-shot container that exits after registration
     restart: "no"
@@ -1592,13 +1593,24 @@ services:
 
         # Wait for gateway to be ready using Python
         python3 -c "
+        import os
+        import ssl
         import time
-        import urllib.request
         import urllib.error
+        import urllib.request
+
+        gateway_url = os.environ.get('GATEWAY_URL', 'http://gateway:4444').rstrip('/')
+        ca_cert = os.environ.get('GATEWAY_CA_CERT')
+        ssl_context = ssl.create_default_context(cafile=ca_cert) if ca_cert else None
+        if ssl_context is not None:
+            ssl_context.check_hostname = False
 
         for i in range(1, 61):
             try:
-                with urllib.request.urlopen('http://gateway:4444/health', timeout=2) as response:
+                request_kwargs = {'timeout': 2}
+                if ssl_context is not None:
+                    request_kwargs['context'] = ssl_context
+                with urllib.request.urlopen(f'{gateway_url}/health', **request_kwargs) as response:
                     if response.status == 200:
                         print('✅ gateway is healthy')
                         break
@@ -1649,24 +1661,37 @@ services:
 
         # Use Python to make HTTP requests
         python3 -c "
-        import urllib.request
-        import urllib.error
         import json
-        import sys
         import os
+        import ssl
+        import sys
         import time
+        import urllib.error
+        import urllib.request
 
         token = os.environ.get('MCPGATEWAY_BEARER_TOKEN', '')
+        gateway_url = os.environ.get('GATEWAY_URL', 'http://gateway:4444').rstrip('/')
+        ca_cert = os.environ.get('GATEWAY_CA_CERT')
+        ssl_context = ssl.create_default_context(cafile=ca_cert) if ca_cert else None
+        if ssl_context is not None:
+            ssl_context.check_hostname = False
+
+        def open_url(request, timeout):
+            request_kwargs = {'timeout': timeout}
+            if ssl_context is not None:
+                request_kwargs['context'] = ssl_context
+            return urllib.request.urlopen(request, **request_kwargs)
+
 
         def api_request(method, path, data=None):
             '''Helper to make authenticated API requests.'''
-            url = f'http://gateway:4444{path}'
+            url = f'{gateway_url}{path}'
             req = urllib.request.Request(url, method=method)
             req.add_header('Authorization', f'Bearer {token}')
             req.add_header('Content-Type', 'application/json')
             if data:
                 req.data = json.dumps(data).encode('utf-8')
-            with urllib.request.urlopen(req, timeout=60) as response:
+            with open_url(req, 60) as response:
                 return json.loads(response.read().decode('utf-8'))
 
         def api_request_with_retry(method, path, data=None, retries=30, delay=2, retry_statuses=(401, 502, 503)):
@@ -2369,7 +2394,7 @@ services:
         apt-get install -y --no-install-recommends openssl
         rm -rf /var/lib/apt/lists/*
         # Check if we have an encrypted key that needs decryption
-        if [ -f /certs/key-encrypted.pem ] && [ -n "${KEY_FILE_PASSWORD}" ]; then
+        if [ -f /certs/key-encrypted.pem ] && [ -n "$${KEY_FILE_PASSWORD}" ]; then
           # Validate: encrypted key requires matching certificate
           if [ ! -f /certs/cert.pem ]; then
             echo "❌ Found key-encrypted.pem but cert.pem is missing"
@@ -2426,6 +2451,8 @@ services:
     environment:
       # Set to "true" to force all HTTP requests to redirect to HTTPS
       - NGINX_FORCE_HTTPS=${NGINX_FORCE_HTTPS:-false}
+      # Backend protocol; gateway TLS override changes this to HTTPS.
+      - GATEWAY_SCHEME=${GATEWAY_SCHEME:-http}
     depends_on:
       gateway:
         condition: service_healthy
