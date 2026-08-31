@@ -389,11 +389,11 @@ To enforce stronger security on the gateway's direct HTTPS listener (Option 1 ar
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `SSL_CIPHERS` | (empty — Python defaults) | Colon-separated list of allowed OpenSSL cipher suites |
-| `SSL_VERSION` | (empty — Gunicorn default) | Numeric constant from Python's `ssl` module defining the protocol version |
+| `SSL_VERSION` | (empty — library default) | Minimum TLS version selector (`5` or `ssl.PROTOCOL_TLSv1_2` → TLS 1.2 minimum) |
 
 #### Recommended Production Configuration
 
-To restrict the gateway to secure modern ciphers and enforce a minimum of TLS 1.2 (or TLS 1.3 depending on Python/OpenSSL platform capabilities), configure these variables in your `.env` or `docker-compose.yml`:
+To restrict the gateway to secure modern ciphers and enforce a minimum TLS version, configure these variables in your `.env` or `docker-compose.yml`:
 
 ```yaml
 gateway:
@@ -443,11 +443,11 @@ key — use your own PKI in production.
 
     # Recommended secure cipher suites (restricts to high-strength modern ciphers)
     - SSL_CIPHERS=ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305
-    # Enforce minimum protocol version (5 maps to ssl.PROTOCOL_TLSv1_2 / TLS 1.2 minimum)
+    # Enforce a TLS 1.2 minimum (same as ssl.PROTOCOL_TLSv1_2)
     - SSL_VERSION=5
 ```
 
-These variables are directly forwarded to Gunicorn's `--ciphers` and `--ssl-version` command-line flags.
+`SSL_CIPHERS` is forwarded to Gunicorn's `--ciphers` flag. `SSL_VERSION` is also forwarded to `--ssl-version`, but Gunicorn 26 deprecates and ignores that setting, so [`ssl_context()`](mcp-context-forge/gunicorn.config.py:77) applies the effective minimum TLS version on the final `SSLContext`.
 
 ### Mount Certificates
 

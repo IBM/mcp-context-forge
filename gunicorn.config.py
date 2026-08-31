@@ -17,6 +17,7 @@ Reference: https://stackoverflow.com/questions/10855197/frequent-worker-timeout
 # Standard
 import os
 import platform
+import ssl
 
 # macOS fork safety fix: Must be set before any workers fork
 # On macOS, Objective-C is not fork-safe. When gunicorn forks workers after
@@ -27,6 +28,9 @@ if platform.system() == "Darwin":
 # First-Party
 # Import Pydantic Settings singleton
 from mcpgateway.config import settings
+
+# Third-Party
+from uvicorn.workers import UvicornWorker
 
 # import multiprocessing
 
@@ -81,6 +85,38 @@ _prepared_key_file = None
 # server hooks
 
 
+def ssl_context(conf, default_ssl_context_factory):
+    """Customize Gunicorn's SSLContext for the direct Gunicorn TLS path."""
+    context = default_ssl_context_factory()
+    ssl_version = os.environ.get("SSL_VERSION", "").strip()
+    if ssl_version:
+        try:
+            if ssl_version.isdigit():
+                protocol = int(ssl_version)
+            else:
+                protocol = getattr(ssl, ssl_version)
+            minimum_versions = {
+                ssl.PROTOCOL_TLSv1: ssl.TLSVersion.TLSv1,
+                ssl.PROTOCOL_TLSv1_1: ssl.TLSVersion.TLSv1_1,
+                ssl.PROTOCOL_TLSv1_2: ssl.TLSVersion.TLSv1_2,
+            }
+            minimum_version = minimum_versions.get(protocol)
+            if minimum_version is not None:
+                context.minimum_version = minimum_version
+        except AttributeError as exc:
+            raise RuntimeError(f"Invalid SSL_VERSION value: {ssl_version}") from exc
+    return context
+
+
+class ContextForgeUvicornWorker(UvicornWorker):
+    """Uvicorn worker that applies TLS restrictions on Uvicorn's SSLContext."""
+
+    CONFIG_KWARGS = {
+        **UvicornWorker.CONFIG_KWARGS,
+        "ssl_context_factory": staticmethod(ssl_context),
+    }
+
+
 def on_starting(server):
     """Called just before the master process is initialized.
 
@@ -93,23 +129,6 @@ def on_starting(server):
     # and a passphrase is provided
     ssl_enabled = os.environ.get("SSL", "false").lower() == "true"
     ssl_key_password = os.environ.get("SSL_KEY_PASSWORD")
-
-    # If ssl_version is passed as a string (e.g. from run-gunicorn.sh CLI),
-    # convert it to the integer/constant that uvicorn/ssl expects
-    if ssl_enabled and hasattr(server, "cfg"):
-        try:
-            ssl_version = server.cfg.ssl_version
-            if isinstance(ssl_version, str):
-                import ssl as ssl_module
-                if ssl_version.isdigit():
-                    server.cfg.set("ssl_version", int(ssl_version))
-                    server.log.info(f"Converted SSL version string to integer: {ssl_version}")
-                elif hasattr(ssl_module, ssl_version):
-                    resolved_val = getattr(ssl_module, ssl_version)
-                    server.cfg.set("ssl_version", resolved_val)
-                    server.log.info(f"Resolved SSL version constant name to: {resolved_val}")
-        except Exception as e:
-            server.log.warning(f"Failed to normalize Gunicorn ssl_version setting: {e}")
 
     if ssl_enabled and ssl_key_password:
         try:

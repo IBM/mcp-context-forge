@@ -298,7 +298,7 @@ KEY_FILE=${KEY_FILE:-certs/key.pem}     # Path to SSL private key file
 KEY_FILE_PASSWORD=${KEY_FILE_PASSWORD:-}  # Optional passphrase for encrypted key
 CERT_PASSPHRASE=${CERT_PASSPHRASE:-}      # Alternative name for passphrase
 SSL_CIPHERS=${SSL_CIPHERS:-}              # Colon-separated OpenSSL cipher string (empty = default)
-SSL_VERSION=${SSL_VERSION:-}              # Numeric SSL version constant (empty = Gunicorn default)
+SSL_VERSION=${SSL_VERSION:-}              # Minimum TLS protocol version constant/name (empty = library default)
 
 # Use CERT_PASSPHRASE if KEY_FILE_PASSWORD is not set (for compatibility)
 if [[ -z "${KEY_FILE_PASSWORD}" && -n "${CERT_PASSPHRASE}" ]]; then
@@ -469,7 +469,7 @@ echo "────────────────────────�
 cmd=(
     gunicorn
     -c gunicorn.config.py
-    --worker-class uvicorn.workers.UvicornWorker
+    --worker-class gunicorn.config.py:ContextForgeUvicornWorker
     --workers              "${GUNICORN_WORKERS}"
     --timeout              "${GUNICORN_TIMEOUT}"
     --max-requests         "${GUNICORN_MAX_REQUESTS}"
