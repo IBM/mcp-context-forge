@@ -16,10 +16,10 @@
 
 ### Overview
 
-Release 1.0.9 consolidates **35 PRs** focused on **inbound mTLS client certificate auth**, **MCP server OAuth improvements**, **tool preview and schema publishing**, **catalog gateway actions**, **TLS/SSL enhancements**, and **security hardening**:
+Release 1.0.9 consolidates **41 PRs** focused on **inbound mTLS client certificate auth**, **MCP server OAuth improvements**, **pluggable OAuth token storage**, **tool preview and schema publishing**, **catalog gateway actions**, **TLS/SSL enhancements**, and **security hardening**:
 
-- **Security & Auth** - Inbound mTLS (client certificate authentication), MCP server OAuth form quick wins (read-only redirect URI, drop password grant), session refresh and validate endpoints, default token creation to creator's personal team, and invisible Unicode stripping from stored auth credentials.
-- **API & Platform** - MCP handshake test endpoint for Test Connection and virtual servers, new tool preview permission and preview functions, tool schema publishing to dataplane, catalog gateway actions backend support, and gateway-side TLS override for end-to-end HTTPS.
+- **Security & Auth** - Inbound mTLS (client certificate authentication), pluggable OAuth token storage with HashiCorp Vault backend, MCP server OAuth form quick wins (read-only redirect URI, drop password grant), session refresh and validate endpoints, default token creation to creator's personal team, invisible Unicode stripping from stored auth credentials, and catalog registration scope enforcement.
+- **API & Platform** - MCP handshake test endpoint for Test Connection and virtual servers, new tool preview permission and preview functions, tool schema publishing to dataplane, catalog gateway actions backend support, gateway-side TLS override for end-to-end HTTPS, versioned API aliases, recent activity feed endpoint, and durable observability metrics endpoints.
 - **Operations** - Experimental UI added to compose, SSL/TLS exposed for gateway pods, TLS cipher suite exposure, automated catalog icon generation, and load test consolidation.
 - **Documentation** - Dynamic env production risk documentation for translate, live black-box test requirement policy.
 
@@ -30,6 +30,7 @@ Release 1.0.9 consolidates **35 PRs** focused on **inbound mTLS client certifica
 - **Inbound mTLS (client certificate authentication)** ([#6352](https://github.com/IBM/mcp-context-forge/pull/6352)) - Added inbound mTLS support for client certificate authentication.
 - **MCP server OAuth form quick wins** ([#6315](https://github.com/IBM/mcp-context-forge/pull/6315)) - Read-only redirect URI and dropped password grant from MCP server OAuth form.
 - **Session refresh and validate endpoints** ([#6235](https://github.com/IBM/mcp-context-forge/pull/6235)) - Added session refresh and validate endpoints.
+- **Pluggable OAuth token storage with HashiCorp Vault backend** ([#5599](https://github.com/IBM/mcp-context-forge/pull/5599)) - Pluggable OAuth token storage with HashiCorp Vault backend.
 
 #### **API & Platform**
 
@@ -38,7 +39,10 @@ Release 1.0.9 consolidates **35 PRs** focused on **inbound mTLS client certifica
 - **Tool preview functions** ([#6360](https://github.com/IBM/mcp-context-forge/pull/6360)) - Added preview functions to the tools service.
 - **Tool schema publishing to dataplane** ([#6348](https://github.com/IBM/mcp-context-forge/pull/6348)) - Publish tool schemas to the dataplane.
 - **Catalog gateway actions backend** ([#6355](https://github.com/IBM/mcp-context-forge/pull/6355)) - Support catalog gateway actions in backend.
-- **Gateway-side TLS override** ([#6422](https://github.com/IBM/mcp-context-forge/pull/6422)) - Added gateway-side TLS override for end-to-end HTTPS (closes [#6266](https://github.com/IBM/mcp-context-forge/issues/6266)).
+- **Gateway-side TLS override** ([#6422](https://github.com/IBM/mcp-context-forge/pull/6422)) - Added gateway-side TLS override for end-to-end HTTPS.
+- **Versioned API aliases** ([#6257](https://github.com/IBM/mcp-context-forge/pull/6257)) - Two new paths added as versioned API aliases.
+- **Recent activity feed endpoint** ([#6292](https://github.com/IBM/mcp-context-forge/pull/6292)) - Recent activity feed endpoint (audit + security union).
+- **Durable observability metrics endpoints** ([#6293](https://github.com/IBM/mcp-context-forge/pull/6293)) - Durable observability metrics endpoints for the home dashboard.
 
 #### **Operations & Tooling**
 
@@ -55,6 +59,7 @@ Release 1.0.9 consolidates **35 PRs** focused on **inbound mTLS client certifica
 - **Reject/strip invisible Unicode in stored auth credentials** ([#6350](https://github.com/IBM/mcp-context-forge/pull/6350)) - Gateway rejects or strips invisible Unicode in stored auth credentials.
 - **Enforce component-aware directory confinement on admin log download** ([#6393](https://github.com/IBM/mcp-context-forge/pull/6393)) - Enforced component-aware directory confinement on admin log download.
 - **Harden local A2A egress handling** ([#6399](https://github.com/IBM/mcp-context-forge/pull/6399)) - Hardened local A2A egress handling.
+- **Security hardening: catalog registration scope enforcement** ([#6247](https://github.com/IBM/mcp-context-forge/pull/6247)) - Security hardening for catalog registration scope enforcement.
 
 #### **Gateway & Platform**
 
@@ -93,6 +98,7 @@ Release 1.0.9 consolidates **35 PRs** focused on **inbound mTLS client certifica
 | [#6325](https://github.com/IBM/mcp-context-forge/pull/6325) | refactor: tool invoke function refactor |
 | [#6306](https://github.com/IBM/mcp-context-forge/pull/6306) | test: add MCP Apps live stack tests to TestRawJsonRpc |
 | [#6398](https://github.com/IBM/mcp-context-forge/pull/6398) | test: fix Playwright gateway OAuth and team flakiness |
+| [#6375](https://github.com/IBM/mcp-context-forge/pull/6375) | chore: routine python/node dependency updates |
 
 ## [1.0.8] - 2026-08-17 - Plugin Discovery, MCP Apps Bridge, Catalog Registration, and Security Hardening
 
