@@ -1,6 +1,6 @@
 # mcp-stack
 
-![Version: 1.0.0-RC-3](https://img.shields.io/badge/Version-1.0.0--RC--3-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 1.0.0-RC-3](https://img.shields.io/badge/AppVersion-1.0.0--RC--3-informational?style=flat-square)
+![Version: 1.0.8](https://img.shields.io/badge/Version-1.0.8-informational?style=flat-square) ![Type: application](https://img.shields.io/badge/Type-application-informational?style=flat-square) ![AppVersion: 1.0.8](https://img.shields.io/badge/AppVersion-1.0.8-informational?style=flat-square)
 
 A full-stack Helm chart for IBM's **Model Context Protocol (MCP) Gateway
 & Registry - Context-Forge**.  It bundles:
@@ -24,6 +24,61 @@ A full-stack Helm chart for IBM's **Model Context Protocol (MCP) Gateway
 ## Requirements
 
 Kubernetes: `>=1.21.0-0`
+
+## PgBouncer Connection Pooling
+
+PgBouncer is disabled by default. Enable it when the gateway needs to multiplex
+many client connections onto a smaller set of PostgreSQL connections:
+
+```yaml
+pgbouncer:
+  enabled: true
+  pool:
+    mode: transaction
+    maxClientConn: 3000
+    defaultPoolSize: 120
+    minPoolSize: 10
+    reservePoolSize: 25
+    reservePoolTimeout: 5
+    maxDbConnections: 200
+    maxUserConnections: 200
+    serverLifetime: 3600
+    serverIdleTimeout: 600
+```
+
+`transaction` is the recommended pool mode for ContextForge. It returns a
+PostgreSQL connection to the pool at the end of each transaction and provides
+the most effective connection reuse. Use `session` only when a client depends
+on session-scoped PostgreSQL state; it reserves a server connection for the
+whole client session and therefore reduces multiplexing. Avoid `statement` for
+normal ContextForge deployments because it does not support multi-statement
+transactions.
+
+The main pool settings are:
+
+| Setting | Purpose |
+| --- | --- |
+| `maxClientConn` | Maximum client connections accepted by PgBouncer |
+| `defaultPoolSize` | Server connections maintained per user/database pair |
+| `minPoolSize` | Minimum server connections kept ready |
+| `reservePoolSize` | Additional server connections available for bursts |
+| `reservePoolTimeout` | Seconds a client waits before the reserve pool is used |
+| `maxDbConnections` | Maximum server connections per database |
+| `maxUserConnections` | Maximum server connections per user |
+| `serverLifetime` | Maximum server connection age in seconds |
+| `serverIdleTimeout` | Seconds before an idle server connection is closed |
+
+When `pgbouncer.enabled=true`, the chart automatically points the gateway at
+the release-scoped PgBouncer service. The resulting gateway URL has this form:
+
+```text
+postgresql+psycopg://<user>:<password>@<chart-fullname>-pgbouncer:6432/<database>
+```
+
+With the default chart naming, `<chart-fullname>` is
+`<release-name>-mcp-stack`. PgBouncer can front either the chart-managed
+PostgreSQL deployment or an external PostgreSQL instance; its upstream
+connection is derived from the corresponding `postgres` values and Secret.
 
 ## SSRF and In-Cluster Tool Registration
 
