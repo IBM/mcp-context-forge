@@ -17,7 +17,6 @@ Reference: https://stackoverflow.com/questions/10855197/frequent-worker-timeout
 # Standard
 import os
 import platform
-import ssl
 
 # macOS fork safety fix: Must be set before any workers fork
 # On macOS, Objective-C is not fork-safe. When gunicorn forks workers after
@@ -28,9 +27,6 @@ if platform.system() == "Darwin":
 # First-Party
 # Import Pydantic Settings singleton
 from mcpgateway.config import settings
-
-# Third-Party
-from uvicorn.workers import UvicornWorker
 
 # import multiprocessing
 
@@ -106,10 +102,10 @@ def on_starting(server):
                 import ssl as _ssl
                 if ssl_ver.isdigit():
                     server.cfg.set("ssl_version", int(ssl_ver))
-                elif hasattr(_ssl, ssl_ver):
+                elif ssl_ver.startswith("PROTOCOL_") and hasattr(_ssl, ssl_ver):
                     server.cfg.set("ssl_version", getattr(_ssl, ssl_ver))
         except Exception as e:
-            server.log.warning(f"Failed to normalize Gunicorn ssl_version setting: {e}")
+            server.log.warning("Failed to normalize Gunicorn ssl_version setting: %s", e)
 
     if ssl_enabled and ssl_key_password:
         try:
