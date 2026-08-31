@@ -167,12 +167,16 @@ class TestPreviewToolInvocationSchemaValidation:
 class TestPreviewToolInvocationPluginHooks:
     """preview_safe-tagged TOOL_PRE_INVOKE hooks run; everything else is a warning."""
 
-    def _plugin_manager_with_refs(self, refs, invoke_side_effect=None, runtime_disabled=None):
+    def _plugin_manager_with_refs(self, refs, invoke_side_effect=None, runtime_disabled=None, elicit_plugin_names=None):
         pm = Mock()
         pm.has_hooks_for = Mock(return_value=True)
         pm._registry = Mock()
         pm._registry.get_hook_refs_for_hook = Mock(return_value=refs)
         pm._runtime_disabled = runtime_disabled if runtime_disabled is not None else set()
+        # get_plugin_hook_by_name(name, "elicit") is None unless the plugin is in
+        # elicit_plugin_names -- mirrors cpex's real registry lookup shape for _has_elicit_hook.
+        _elicit_names = elicit_plugin_names or set()
+        pm._registry.get_plugin_hook_by_name = Mock(side_effect=lambda name, hook_type: Mock() if hook_type == "elicit" and name in _elicit_names else None)
         pm.invoke_hook_for_plugin = AsyncMock(side_effect=invoke_side_effect)
         return pm
 
@@ -239,6 +243,43 @@ class TestPreviewToolInvocationPluginHooks:
         assert result.warnings == []
         pm.invoke_hook_for_plugin.assert_awaited_once()
         assert pm.invoke_hook_for_plugin.call_args.kwargs["name"] == "safe_plugin"
+
+    @pytest.mark.asyncio
+    async def test_preview_safe_plugin_with_elicit_hook_is_not_invoked(self, service, test_db):
+        """A preview_safe plugin that also registers the `elicit` hook a future cpex release
+        adds must not have its tool_pre_invoke hook run at all -- excluded from pre_hooks_run
+        and reported as elicitation_skipped instead (#5629). Checked by the literal hook-type
+        name `elicit` that future release uses (not a name this project invented) -- see
+        plugins/AGENTS.md."""
+        ref = self._hook_ref("confirmation_plugin", ["preview_safe"])
+        pm = self._plugin_manager_with_refs([ref], elicit_plugin_names={"confirmation_plugin"})
+
+        with patch.object(service, "_resolve_tool_for_invocation", AsyncMock(return_value=_resolved(_local_tool_payload()))), patch.object(
+            service, "_get_plugin_manager", AsyncMock(return_value=pm)
+        ):
+            result = await service.preview_tool_invocation(test_db, "test_tool", {"param": "value"})
+
+        assert result.pre_hooks_run == []
+        assert len(result.warnings) == 1
+        assert result.warnings[0].code == "elicitation_skipped"
+        assert result.warnings[0].hook == "confirmation_plugin"
+        pm.invoke_hook_for_plugin.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_preview_safe_plugin_without_elicit_hook_runs_normally(self, service, test_db):
+        """Sanity check for the test above: a preview_safe plugin that does NOT also register
+        `elicit` must still run and land in pre_hooks_run as before."""
+        ref = self._hook_ref("plain_plugin", ["preview_safe"])
+        pm = self._plugin_manager_with_refs([ref])  # no elicit_plugin_names
+
+        with patch.object(service, "_resolve_tool_for_invocation", AsyncMock(return_value=_resolved(_local_tool_payload()))), patch.object(
+            service, "_get_plugin_manager", AsyncMock(return_value=pm)
+        ):
+            result = await service.preview_tool_invocation(test_db, "test_tool", {"param": "value"})
+
+        assert result.pre_hooks_run == ["plain_plugin"]
+        assert result.warnings == []
+        pm.invoke_hook_for_plugin.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_global_context_server_id_matches_gateway_id_for_federated_tool(self, service, test_db):
@@ -491,3 +532,31 @@ class TestGetDispatchableHookRefs:
     def test_none_plugin_manager_returns_empty_list(self):
         service = ToolService()
         assert service._get_dispatchable_hook_refs(None, "tool_pre_invoke", payload=Mock(), global_context=Mock()) == []
+
+
+class TestHasElicitHook:
+    """Direct coverage of _has_elicit_hook -- checks the real, literal `elicit` hook-type name a
+    future cpex release uses (see plugins/AGENTS.md), not a name this project invented. No
+    plugin can register it against the installed cpex (0.1.x) today, so this returns False in
+    practice until that release ships -- expected, not a bug."""
+
+    def test_none_plugin_manager_returns_false(self):
+        assert ToolService._has_elicit_hook(None, "some_plugin") is False
+
+    def test_no_elicit_hook_registered_returns_false(self):
+        pm = Mock()
+        pm._registry.get_plugin_hook_by_name = Mock(return_value=None)
+        assert ToolService._has_elicit_hook(pm, "plain_plugin") is False
+        pm._registry.get_plugin_hook_by_name.assert_called_once_with("plain_plugin", "elicit")
+
+    def test_elicit_hook_registered_returns_true(self):
+        pm = Mock()
+        pm._registry.get_plugin_hook_by_name = Mock(return_value=Mock())  # a HookRef, once that release exists
+        assert ToolService._has_elicit_hook(pm, "confirmation_plugin") is True
+
+    def test_registry_reach_through_failure_degrades_to_false(self):
+        """If cpex's internal registry shape ever changes, this must degrade to 'no elicit hook
+        known' rather than crashing preview, matching _get_dispatchable_hook_refs's contract."""
+        pm = Mock()
+        pm._registry.get_plugin_hook_by_name = Mock(side_effect=AttributeError("shape changed"))
+        assert ToolService._has_elicit_hook(pm, "some_plugin") is False
