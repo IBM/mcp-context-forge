@@ -31,6 +31,7 @@ from mcpgateway.db import Permissions
 from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, _ALL_PERMISSIONS_SCOPE, token_scope_grants
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.orjson_response import ORJSONResponse
+from mcpgateway.utils.paths import replace_api_path_alias
 from mcpgateway.utils.verify_credentials import (
     ConfigurableHTTPBearer,
     get_auth_bearer_token_from_request,
@@ -84,6 +85,7 @@ _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     # Tools permissions
     ("GET", re.compile(r"^/tools(?:$|/)"), Permissions.TOOLS_READ),
     ("POST", re.compile(r"^/tools/?$"), Permissions.TOOLS_CREATE),  # Only exact /tools or /tools/
+    ("POST", re.compile(r"^/tools/preview(?:$|/)"), Permissions.TOOLS_PREVIEW),  # Must precede the /tools/[^/]+/ catch-all below (#5629)
     ("POST", re.compile(r"^/tools/[^/]+/"), Permissions.TOOLS_UPDATE),  # POST to sub-resources (state, toggle)
     ("PUT", re.compile(r"^/tools/[^/]+(?:$|/)"), Permissions.TOOLS_UPDATE),
     ("DELETE", re.compile(r"^/tools/[^/]+(?:$|/)"), Permissions.TOOLS_DELETE),
@@ -125,19 +127,29 @@ _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     ("PUT", re.compile(r"^/servers/[^/]+(?:$|/)"), Permissions.SERVERS_UPDATE),
     ("DELETE", re.compile(r"^/servers/[^/]+(?:$|/)"), Permissions.SERVERS_DELETE),
     # Gateway permissions
+    # Connectivity test and handshake probe exposed through the /v1/mcp-servers product alias.
+    # They must precede the generic POST sub-resource rule below.
+    ("POST", re.compile(r"^/gateways/test(?:$|/)"), Permissions.GATEWAYS_READ),
+    ("POST", re.compile(r"^/gateways/test-handshake(?:$|/)"), Permissions.GATEWAYS_READ),
     ("GET", re.compile(r"^/gateways(?:$|/)"), Permissions.GATEWAYS_READ),
     ("POST", re.compile(r"^/gateways/?$"), Permissions.GATEWAYS_CREATE),  # Only exact /gateways or /gateways/
     ("POST", re.compile(r"^/gateways/[^/]+/"), Permissions.GATEWAYS_UPDATE),  # POST to sub-resources (state, toggle, refresh)
     ("PUT", re.compile(r"^/gateways/[^/]+(?:$|/)"), Permissions.GATEWAYS_UPDATE),
     ("DELETE", re.compile(r"^/gateways/[^/]+(?:$|/)"), Permissions.GATEWAYS_DELETE),
+    # Vault OAuth authorize — initiates Authorization Code flow via virtual server ID.
+    # Router is registered only when OAUTH_TOKEN_BACKEND=vault (see main.py); this
+    # pattern is harmless when the router is absent (no matching route exists).
+    # The handler enforces gateway-level access via _enforce_gateway_access, so this
+    # entry adds defence-in-depth only: it ensures a server-scoped API token whose
+    # permissions list does not include gateways.read is rejected at the middleware
+    # layer rather than reaching the handler and failing there.
+    ("GET", re.compile(r"^/vault/authorize/[^/]+(?:$|/)"), Permissions.GATEWAYS_READ),
     # OAuth DCR registered-client management (oauth_router, prefix="/oauth").
     # Registered clients are global rows with no team column, so these map to
     # admin-category permissions; the handlers additionally require an
     # un-narrowed admin token (see _require_unnarrowed_admin).
     ("GET", re.compile(r"^/oauth/registered-clients(?:$|/)"), Permissions.ADMIN_OAUTH_CLIENTS_READ),
     ("DELETE", re.compile(r"^/oauth/registered-clients/[^/]+(?:$|/)"), Permissions.ADMIN_OAUTH_CLIENTS_DELETE),
-    # MCP Servers REST API (v1 prefix stripped by middleware before matching)
-    ("POST", re.compile(r"^/mcp-servers/test(?:$|/)"), Permissions.GATEWAYS_READ),
     # MCP registry catalog (v1 prefix stripped by middleware before matching)
     ("GET", re.compile(r"^/catalog(?:$|/)"), Permissions.SERVERS_READ),
     ("POST", re.compile(r"^/catalog/[^/]+/register(?:$|/)"), Permissions.SERVERS_CREATE),
@@ -424,6 +436,7 @@ class TokenScopingMiddleware:
         normalized = _normalize_scope_path(request_path or "/", settings.app_root_path or "")
         if not normalized.startswith("/"):
             normalized = f"/{normalized}"
+        normalized = replace_api_path_alias(normalized)
         # Strip the /v1 API version prefix so all patterns match unversioned paths.
         # This ensures scope patterns work identically for /tools and /v1/tools.
         return _strip_v1_prefix(normalized)
@@ -444,8 +457,8 @@ class TokenScopingMiddleware:
         root_path = scope.get("root_path") or settings.app_root_path or ""
         normalized = _normalize_scope_path(scope_path, root_path)
         if not normalized.startswith("/"):
-            return f"/{normalized}"
-        return normalized
+            normalized = f"/{normalized}"
+        return replace_api_path_alias(normalized)
 
     def _extract_jwt_token_from_request(self, request: Request) -> Optional[str]:
         """Extract JWT token from supported cookie names or Bearer auth header.

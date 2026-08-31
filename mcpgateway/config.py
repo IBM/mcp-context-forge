@@ -373,6 +373,23 @@ class Settings(BaseSettings):
     # Idle timeout configuration
     token_idle_timeout: int = Field(default=60, ge=5, le=1440, description="Maximum idle time in minutes before token requires refresh (5-1440).")  # 60 minutes
 
+    # Session lifecycle configuration (enforced by POST /auth/refresh; surfaced to UI clients via GET /auth/validate)
+    session_max_lifetime: int = Field(
+        default=480,
+        ge=0,
+        le=10080,
+        description="Absolute maximum session lifetime in minutes, enforced at refresh (0 disables the cap). A session cannot be extended past this age regardless of activity.",
+    )
+    session_refresh_rate_limit: int = Field(
+        default=10, ge=1, le=600, description="Maximum POST /auth/refresh requests per minute per client dimension (IP/user/team), enforced by RateLimitMiddleware."
+    )
+    session_warning_time: int = Field(default=60, ge=10, le=3600, description="Seconds before session expiry at which UI clients should warn the user (client-behavior hint).")
+    session_refresh_buffer: int = Field(default=300, ge=30, le=3600, description="Seconds before token expiry at which UI clients should silently refresh the session (client-behavior hint).")
+    session_activity_tracking: bool = Field(
+        default=True,
+        description="Whether UI clients should track user activity to drive idle detection (client-behavior hint; server-side idle enforcement is TOKEN_IDLE_TIMEOUT).",
+    )
+
     # Token blocklist cleanup
     token_blocklist_cleanup_hours: int = Field(default=24, ge=1, le=168, description="Hours to retain expired tokens in blocklist before cleanup (1-168).")
 
@@ -409,7 +426,7 @@ class Settings(BaseSettings):
             "/health",
             "/auth/login",
             "/auth/logout",
-            "/auth/refresh",
+            # /auth/refresh is NOT exempt: cookie-authenticated refresh requires a CSRF token
             "/auth/email/login",
             "/auth/email/register",
             "/auth/email/forgot-password",
@@ -640,6 +657,56 @@ class Settings(BaseSettings):
     auth_encryption_secret: SecretStr = Field(
         default=SecretStr("__REPLACE_ME__run_init-secrets_before_starting"),
         description="Encryption key for stored credentials. MUST be set explicitly in staging/production. Generate with: python -m mcpgateway.scripts.init_secrets --stdout",
+    )
+
+    # ===================================
+    # OAuth Token Storage Backend
+    # ===================================
+    # Pluggable token storage: 'database' (default) or 'vault' (HashiCorp Vault)
+
+    oauth_token_backend: str = Field(
+        default="database",
+        description="Token storage backend: 'database' or 'vault'. Unknown values raise ValueError at startup.",
+    )
+
+    # Vault Connection Settings (only used when oauth_token_backend='vault')
+    vault_addr: str = Field(
+        default="http://127.0.0.1:8200",
+        description="Vault server URL (e.g., https://vault.acme.com:8200).",
+    )
+    vault_token: Optional[SecretStr] = Field(
+        default=None,
+        description="Vault authentication token (Phase 1: static token; Phase 2: AppRole). Required when oauth_token_backend='vault'.",
+    )
+    vault_namespace: str = Field(
+        default="",
+        description="Vault namespace (Enterprise only; leave empty for CE).",
+    )
+    vault_kv_mount: str = Field(
+        default="secret",
+        description="Vault KV v2 mount path.",
+    )
+    vault_kv_path_prefix: str = Field(
+        default="contextforge/oauth",
+        description="Path prefix within KV mount. Full path: {mount}/data/{prefix}/{team_id}/{server_id}/{email}",
+    )
+    vault_tls_verify: bool = Field(
+        default=True,
+        description="Verify Vault TLS certificate (set false for local dev only).",
+    )
+
+    # Vault Token Cache (optional, Vault backend only)
+    vault_token_cache_enabled: bool = Field(
+        default=False,
+        description="Enable in-memory token cache to reduce Vault API calls. Reduces read latency from ~25ms to ~0.5ms on cache hits.",
+    )
+    vault_token_cache_ttl: int = Field(
+        default=300,
+        description="Cache TTL in seconds. Tokens may be stale within this window if rotated externally.",
+    )
+    vault_token_cache_max_size: int = Field(
+        default=10000,
+        description="Max cached entries before LRU eviction. Each entry ≈ 1 KB → 10 MB at default size.",
     )
 
     # Query Parameter Authentication (INSECURE - disabled by default)

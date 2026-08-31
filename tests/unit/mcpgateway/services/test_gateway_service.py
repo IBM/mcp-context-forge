@@ -4814,8 +4814,9 @@ async def test_fetch_tools_after_oauth_missing_user_email(gateway_service, monke
     db.execute.return_value = result
 
     class DummyTokenStorage:
-        def __init__(self, _db):
+        def __init__(self, _db, user_context=None):
             self.db = _db
+            self.user_context = user_context
 
     monkeypatch.setattr("mcpgateway.services.token_storage_service.TokenStorageService", DummyTokenStorage)
 
@@ -4837,8 +4838,9 @@ async def test_fetch_tools_after_oauth_unsupported_transport(gateway_service, mo
     db.execute.return_value = result
 
     class DummyTokenStorage:
-        def __init__(self, _db):
+        def __init__(self, _db, user_context=None):
             self.db = _db
+            self.user_context = user_context
 
         async def get_user_token(self, _gateway_id, _email):
             return "token"
@@ -4861,17 +4863,31 @@ async def test_fetch_tools_after_oauth_streamablehttp(gateway_service, monkeypat
     gateway.prompts = []
 
     db = MagicMock()
-    result = MagicMock()
-    result.scalar_one_or_none.return_value = gateway
-    db.execute.return_value = result
+    # Mock EmailUser and EmailTeamMember queries for user_context building
+    mock_user = MagicMock()
+    mock_user.is_admin = False
+    mock_team_member = MagicMock()
+    mock_team_member.team_id = "team-123"
+
+    # Create separate result mocks for different query types
+    gateway_result = MagicMock()
+    gateway_result.scalar_one_or_none.return_value = gateway
+    team_result = MagicMock()
+    team_result.scalars.return_value.all.return_value = [mock_team_member]
+    user_result = MagicMock()
+    user_result.scalar_one_or_none.return_value = mock_user
+
+    # Return appropriate mock based on query order
+    db.execute.side_effect = [gateway_result, team_result, user_result]
     db.add_all = Mock()
     db.flush = Mock()
     db.commit = Mock()
     db.expire = Mock()
 
     class DummyTokenStorage:
-        def __init__(self, _db):
+        def __init__(self, _db, user_context=None):
             self.db = _db
+            self.user_context = user_context
 
         async def get_user_token(self, _gateway_id, _email):
             return "token"
@@ -4915,17 +4931,43 @@ async def test_fetch_tools_after_oauth_cleanup_and_adds_items(gateway_service, m
     gateway.last_seen = None
 
     db = MagicMock()
-    result = MagicMock()
-    result.scalar_one_or_none.return_value = gateway
-    db.execute.return_value = result
+    # Mock EmailUser and EmailTeamMember queries for user_context building
+    mock_user = MagicMock()
+    mock_user.is_admin = False
+    mock_team_member = MagicMock()
+    mock_team_member.team_id = "team-123"
+
+    # Create separate result mocks for different query types
+    gateway_result = MagicMock()
+    gateway_result.scalar_one_or_none.return_value = gateway
+    team_result = MagicMock()
+    team_result.scalars.return_value.all.return_value = [mock_team_member]
+    user_result = MagicMock()
+    user_result.scalar_one_or_none.return_value = mock_user
+
+    # Set up side effect for specific queries, then default to Mock() for delete operations
+    execute_calls = [gateway_result, team_result, user_result]
+    call_count = [0]
+
+    def mock_execute(*args, **kwargs):
+        if call_count[0] < len(execute_calls):
+            result = execute_calls[call_count[0]]
+            call_count[0] += 1
+            return result
+        # Return a generic mock for delete operations
+        return MagicMock()
+
+    db.execute.side_effect = mock_execute
     db.add_all = Mock()
     db.flush = Mock()
     db.commit = Mock()
     db.expire = Mock()
+    db.rollback = Mock()
 
     class DummyTokenStorage:
-        def __init__(self, _db):
+        def __init__(self, _db, user_context=None):
             self.db = _db
+            self.user_context = user_context
 
         async def get_user_token(self, _gateway_id, _email):
             return "Z0FBQUFBQmTOKEN"
@@ -9486,6 +9528,22 @@ class TestFetchToolsAfterOAuthEnforcementPoint:
         return gateway
 
     @staticmethod
+    def _mock_db_with_user_and_gateway(gateway: MagicMock) -> MagicMock:
+        """Create a mock DB that returns both the gateway and a user."""
+        db = MagicMock()
+        mock_user = MagicMock()
+        mock_user.is_admin = False
+
+        # First call returns gateway, second call returns user
+        gateway_result = MagicMock()
+        gateway_result.scalar_one_or_none.return_value = gateway
+        user_result = MagicMock()
+        user_result.scalar_one_or_none.return_value = mock_user
+
+        db.execute.side_effect = [gateway_result, user_result]
+        return db
+
+    @staticmethod
     def _mock_storage(access_token: str, learned_aud=None, learned_iss=None) -> MagicMock:
         storage = MagicMock()
         storage.get_user_token = AsyncMock(return_value=access_token)
@@ -9496,8 +9554,7 @@ class TestFetchToolsAfterOAuthEnforcementPoint:
     async def test_advisory_mismatch_forwards_token(self):
         """No configured resource + no learned aud + mismatched aud + setting off → advisory, tokens forwarded."""
         gateway = self._mock_gateway({"grant_type": "authorization_code"})
-        db = MagicMock()
-        db.execute.return_value.scalar_one_or_none.return_value = gateway
+        db = self._mock_db_with_user_and_gateway(gateway)
         access_token = self._make_jwt({"aud": "unrelated-audience"})
 
         with patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_storage_cls, \
@@ -9518,8 +9575,7 @@ class TestFetchToolsAfterOAuthEnforcementPoint:
     async def test_blocking_mismatch_with_configured_resource_refuses(self):
         """Configured resource + mismatched aud → blocking, raises GatewayConnectionError."""
         gateway = self._mock_gateway({"grant_type": "authorization_code", "resource": "https://api.example.com"})
-        db = MagicMock()
-        db.execute.return_value.scalar_one_or_none.return_value = gateway
+        db = self._mock_db_with_user_and_gateway(gateway)
         access_token = self._make_jwt({"aud": "wrong-audience"})
 
         with patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_storage_cls, \
@@ -9538,8 +9594,7 @@ class TestFetchToolsAfterOAuthEnforcementPoint:
     async def test_setting_enabled_makes_auto_derived_mismatch_blocking(self):
         """OAUTH_REQUIRE_CONFIGURED_RESOURCE=true → auto-derived mismatch also blocks."""
         gateway = self._mock_gateway({"grant_type": "authorization_code"})
-        db = MagicMock()
-        db.execute.return_value.scalar_one_or_none.return_value = gateway
+        db = self._mock_db_with_user_and_gateway(gateway)
         access_token = self._make_jwt({"aud": "unrelated-audience"})
 
         with patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_storage_cls, \
@@ -9559,8 +9614,7 @@ class TestFetchToolsAfterOAuthEnforcementPoint:
     async def test_matching_audience_does_not_block(self):
         """Well-formed matching aud (admin-configured resource) → no blocking, tokens forwarded."""
         gateway = self._mock_gateway({"grant_type": "authorization_code", "resource": "https://api.example.com"})
-        db = MagicMock()
-        db.execute.return_value.scalar_one_or_none.return_value = gateway
+        db = self._mock_db_with_user_and_gateway(gateway)
         access_token = self._make_jwt({"aud": "https://api.example.com"})
 
         with patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_storage_cls, \
@@ -9579,8 +9633,7 @@ class TestFetchToolsAfterOAuthEnforcementPoint:
     async def test_per_user_learned_aud_matches_forwards_token(self):
         """User's own learned_aud matches token aud → no blocking, tokens forwarded (per-user path)."""
         gateway = self._mock_gateway({"grant_type": "authorization_code"})
-        db = MagicMock()
-        db.execute.return_value.scalar_one_or_none.return_value = gateway
+        db = self._mock_db_with_user_and_gateway(gateway)
         access_token = self._make_jwt({"aud": "opaque-tenant-a-id"})
 
         with patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_storage_cls, \
@@ -9599,8 +9652,7 @@ class TestFetchToolsAfterOAuthEnforcementPoint:
     async def test_per_user_learned_aud_mismatch_blocks(self):
         """User's own learned_aud is authoritative → mismatched token aud blocks."""
         gateway = self._mock_gateway({"grant_type": "authorization_code"})
-        db = MagicMock()
-        db.execute.return_value.scalar_one_or_none.return_value = gateway
+        db = self._mock_db_with_user_and_gateway(gateway)
         access_token = self._make_jwt({"aud": "tenant-b-id"})
 
         with patch("mcpgateway.services.token_storage_service.TokenStorageService") as mock_storage_cls, \
@@ -9618,8 +9670,7 @@ class TestFetchToolsAfterOAuthEnforcementPoint:
     async def test_configured_resource_beats_learned_aud(self):
         """Admin-configured resource wins over per-user learned_aud in precedence."""
         gateway = self._mock_gateway({"grant_type": "authorization_code", "resource": "https://api.example.com"})
-        db = MagicMock()
-        db.execute.return_value.scalar_one_or_none.return_value = gateway
+        db = self._mock_db_with_user_and_gateway(gateway)
         # Token matches learned_aud but NOT the admin-configured resource.
         access_token = self._make_jwt({"aud": "opaque-tenant-a-id"})
 
