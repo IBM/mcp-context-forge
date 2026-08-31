@@ -883,22 +883,7 @@ class TokenScopingMiddleware:
 
         # Extract team IDs from token (handles both dict and string formats)
         team_ids = [team["id"] if isinstance(team, dict) else team for team in teams]
-        # Keep session ownership in this middleware; the shared helper owns only
-        # membership cache/query policy.
-        owns_session = db is None
-        if owns_session:
-            # First-Party
-            from mcpgateway.db import get_db  # pylint: disable=import-outside-toplevel
-
-            db = next(get_db())
-        try:
-            valid = validate_token_team_membership(user_email, team_ids, db=db)
-        finally:
-            if owns_session:
-                try:
-                    db.commit()
-                finally:
-                    db.close()
+        valid = validate_token_team_membership(user_email, team_ids, db=db)
         if not valid:
             logger.warning(f"Token invalid: User {SecurityValidator.sanitize_log_message(user_email)} no longer member of teams")
         return valid

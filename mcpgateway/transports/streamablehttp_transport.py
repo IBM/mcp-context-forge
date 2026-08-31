@@ -2334,6 +2334,32 @@ async def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
                 if user_record is None and settings.require_user_in_db and email != platform_admin_email:
                     raise HTTPException(status_code=HTTP_401_UNAUTHORIZED, detail="User not found in database")
                 db_user_is_admin = bool(user_record and getattr(user_record, "is_admin", False))
+                # Warm the auth cache so subsequent requests on this stateful
+                # session avoid the DB round-trip (mirrors primary path at 5328+).
+                if auth_cache is not None:
+                    try:
+                        # First-Party
+                        from mcpgateway.cache.auth_cache import CachedAuthContext  # pylint: disable=import-outside-toplevel
+
+                        await auth_cache.set_auth_context(
+                            email,
+                            jti,
+                            CachedAuthContext(
+                                user=(
+                                    {
+                                        "email": getattr(user_record, "email", email),
+                                        "is_admin": bool(getattr(user_record, "is_admin", False)),
+                                        "is_active": bool(getattr(user_record, "is_active", True)),
+                                    }
+                                    if user_record is not None
+                                    else None
+                                ),
+                                personal_team_id=None,
+                                is_token_revoked=False,
+                            ),
+                        )
+                    except Exception as cache_set_error:
+                        logger.debug("Failed to cache stateful-session auth context for %s: %s", email, cache_set_error)
     if email == platform_admin_email:
         db_user_is_admin = True
 
