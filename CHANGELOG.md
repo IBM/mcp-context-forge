@@ -51,7 +51,7 @@ Release 1.0.9 consolidates **35 PRs** focused on **inbound mTLS client certifica
 
 #### **Security & Auth**
 
-- **Default token creation to creator's personal team** ([#6354](https://github.com/IBM/mcp-context-forge/pull/6354)) - Token creation now defaults to the creator's personal team ([#5993](https://github.com/IBM/mcp-context-forge/issues/5993)).
+- **Default token creation to creator's personal team** ([#6354](https://github.com/IBM/mcp-context-forge/pull/6354)) - Token creation now defaults to the creator's personal team.
 - **Reject/strip invisible Unicode in stored auth credentials** ([#6350](https://github.com/IBM/mcp-context-forge/pull/6350)) - Gateway rejects or strips invisible Unicode in stored auth credentials.
 - **Enforce component-aware directory confinement on admin log download** ([#6393](https://github.com/IBM/mcp-context-forge/pull/6393)) - Enforced component-aware directory confinement on admin log download.
 - **Harden local A2A egress handling** ([#6399](https://github.com/IBM/mcp-context-forge/pull/6399)) - Hardened local A2A egress handling.
