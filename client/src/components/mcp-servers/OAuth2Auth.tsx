@@ -96,8 +96,7 @@ export function OAuth2Auth({
           htmlFor="oauth-issuer-url"
           className="inline-flex items-center gap-0.5 text-sm font-medium text-neutral-900 dark:text-neutral-100"
         >
-          Issuer URL<span className="text-red-500">*</span>
-          <span className="sr-only">(required)</span>
+          Issuer URL
         </label>
         <Input
           id="oauth-issuer-url"
@@ -235,8 +234,7 @@ export function OAuth2Auth({
           htmlFor="oauth-token-url"
           className="inline-flex items-center gap-0.5 text-sm font-medium text-neutral-900 dark:text-neutral-100"
         >
-          Token URL<span className="text-red-500">*</span>
-          <span className="sr-only">(required)</span>
+          Token URL
         </label>
         <Input
           id="oauth-token-url"

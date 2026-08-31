@@ -51,6 +51,13 @@ describe("OAuth2Auth", () => {
     expect(screen.queryByLabelText(/Password/i)).not.toBeInTheDocument();
   });
 
+  it("should mark issuer and token URLs as optional", () => {
+    render(<OAuth2Auth {...defaultProps} />);
+
+    expect(screen.getByLabelText("Issuer URL")).toBeInTheDocument();
+    expect(screen.getByLabelText("Token URL")).toBeInTheDocument();
+  });
+
   it("should render authorization_code fields", () => {
     render(<OAuth2Auth {...defaultProps} grantType="authorization_code" />);
 
