@@ -1,0 +1,613 @@
+# A2A (Agent-to-Agent) Integration
+
+ContextForge supports A2A (Agent-to-Agent) integration, allowing you to register external AI agents and expose them as MCP tools for seamless integration with other agents and MCP clients.
+
+## Overview
+
+A2A integration enables you to:
+
+- **Register external AI agents** (OpenAI, Anthropic, custom agents)
+- **Expose agents as MCP tools** for universal discovery and access
+- **Support multiple protocols** (JSONRPC, custom formats)
+- **Manage agent lifecycle** through admin UI and APIs
+- **Monitor performance** with comprehensive metrics
+- **Configure authentication** with various auth methods
+
+## Quick Start
+
+!!! tip "Base URL"
+    - Direct installs (`uvx`, pip, or `docker run`): `http://localhost:4444`
+    - Docker Compose (nginx proxy): `http://localhost:8080`
+
+### 1. Enable A2A Features
+
+```bash
+# In your .env file or environment variables
+MCPGATEWAY_A2A_ENABLED=true
+MCPGATEWAY_A2A_METRICS_ENABLED=true
+```
+
+### 2. Register an A2A Agent
+
+**Via Admin UI:**
+
+1. Go to `http://localhost:4444/admin`
+2. Click the "A2A Agents" tab
+3. Fill out the "Add New A2A Agent" form
+4. Click "Add A2A Agent"
+
+**Via REST API:**
+```bash
+curl -X POST "http://localhost:4444/a2a" \
+  -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "hello_world_agent",
+    "endpoint_url": "http://localhost:9999/",
+    "agent_type": "jsonrpc",
+    "description": "External AI agent for hello world functionality",
+    "passthrough_headers": ["Authorization", "X-Tenant-Id"],
+    "auth_type": "api_key",
+    "auth_value": "your-api-key",
+    "tags": ["ai", "hello-world"]
+  }'
+```
+
+Optional request fields:
+
+| Field | Description | Example |
+| --- | --- | --- |
+| `passthrough_headers` | Header names allowed to pass from the incoming request to this A2A agent. Unset (`null`) and empty (`[]`) both block request-header forwarding. `TOOL_PRE_INVOKE` plugin payloads receive only the non-sensitive subset. | `["Authorization", "X-Tenant-Id"]` |
+
+### 3. Test the Agent
+
+**Via Admin UI:**
+
+- Click the blue "Test" button next to your agent
+- See real-time test results
+
+**Via API:**
+```bash
+curl -X POST "http://localhost:4444/a2a/hello_world_agent/invoke" \
+  -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "parameters": {
+      "message": {
+        "messageId": "test-123",
+        "role": "user",
+        "parts": [{"type": "text", "text": "Hello!"}]
+      }
+    },
+    "interaction_type": "test"
+  }'
+```
+
+### 4. Create Virtual Server with A2A Agent
+
+```bash
+curl -X POST "http://localhost:4444/servers" \
+  -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "AI Assistant Server",
+    "description": "Virtual server with AI agents",
+    "associated_a2a_agents": ["agent-id-from-step-2"]
+  }'
+```
+
+### 5. Use Agent via MCP Protocol
+
+```bash
+# A2A agents are now available as MCP tools
+curl -X POST "http://localhost:4444/rpc" \
+  -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+      "name": "a2a_hello_world_agent",
+      "arguments": {
+        "method": "message/send",
+        "params": {"message": {"messageId": "test", "role": "user", "parts": [{"type": "text", "text": "Hi!"}]}}
+      }
+    },
+    "id": 1
+  }'
+```
+
+## A2A Invocation Methods
+
+ContextForge provides multiple ways to invoke A2A agents depending on your use case:
+
+### Method 1: Envelope Format (`/invoke`)
+
+The standard invocation endpoint accepts ContextForge's envelope format. The gateway converts your parameters to JSON-RPC when forwarding to the agent:
+
+```bash
+curl -X POST "http://localhost:4444/a2a/{agent_name}/invoke" \
+  -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "parameters": {
+      "query": "Hello!"
+    },
+    "interaction_type": "query"
+  }'
+```
+
+For A2A protocol agents expecting message format:
+
+```bash
+curl -X POST "http://localhost:4444/a2a/{agent_name}/invoke" \
+  -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "parameters": {
+      "message": {
+        "messageId": "msg-123",
+        "role": "ROLE_USER",
+        "parts": [{"text": "Hello!"}]
+      }
+    },
+    "interaction_type": "query"
+  }'
+```
+
+**Use when:**
+- You need to specify interaction type explicitly
+- You're using ContextForge-specific features
+- Your client is already integrated with ContextForge
+
+**Note:** The `parameters` field contains agent-specific data, not JSON-RPC format. ContextForge handles the JSON-RPC conversion internally.
+
+### Method 2: JSON-RPC Passthrough (`/jsonrpc`) ⭐ NEW
+
+The passthrough endpoint accepts **raw A2A JSON-RPC** requests without envelope wrapping. This enables standard A2A SDKs (like Google ADK `RemoteA2aAgent`) to work without custom adapters:
+
+```bash
+curl -X POST "http://localhost:4444/a2a/{agent_name}/jsonrpc" \
+  -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "method": "SendMessage",
+    "params": {
+      "message": {
+        "messageId": "msg-123",
+        "role": "ROLE_USER",
+        "parts": [{"text": "Hello!"}]
+      }
+    },
+    "id": 1
+  }'
+```
+
+**Success response:**
+```json
+{
+  "jsonrpc": "2.0",
+  "result": {
+    "id": "task-456",
+    "contextId": "ctx-789",
+    "status": {
+      "state": "TASK_STATE_WORKING",
+      "message": "Processing..."
+    }
+  },
+  "id": 1
+}
+```
+
+**Error response example:**
+
+When an agent is not found or an error occurs, the response follows JSON-RPC error format:
+
+```bash
+# Request to nonexistent agent
+curl -X POST "http://localhost:4444/a2a/nonexistent-agent/jsonrpc" \
+  -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "method": "SendMessage",
+    "params": {"query": "Hello"},
+    "id": 1
+  }'
+```
+
+```json
+{
+  "jsonrpc": "2.0",
+  "error": {
+    "code": -32001,
+    "message": "A2A Agent not found with name: nonexistent-agent"
+  },
+  "id": 1
+}
+```
+
+Common error codes:
+- `-32001`: Agent not found
+- `-32603`: Agent execution error (internal error or forwarded from backend agent)
+- `-32600`: Invalid JSON-RPC request format
+- `-32700`: Parse error
+
+**Use when:**
+- Using standard A2A SDKs (Google ADK, etc.)
+- Building agent-to-agent federation
+- Need transparent proxy behavior
+- Want SDK compatibility without custom code
+
+**Supported A2A Methods:**
+- `SendMessage` - Send a message to the agent
+- `GetTask` - Retrieve task status
+- `ListTasks` - List all tasks
+- `CancelTask` - Cancel a running task
+- `SubscribeToTask` - Subscribe to task updates
+- `GetExtendedAgentCard` - Get agent capabilities
+
+**Features:**
+- ✅ Full RBAC and token scoping
+- ✅ Cross-gateway authentication forwarding
+- ✅ Observability (traces, metrics, logs)
+- ✅ Rate limiting and governance
+- ✅ UAID federation support
+- ✅ Plugin hooks (pre/post invoke)
+
+**Python SDK Example:**
+
+```python
+# Generic Python example - works with any A2A SDK or direct HTTP calls
+import requests
+
+# Send message to agent via JSON-RPC passthrough
+response = requests.post(
+    "http://localhost:4444/a2a/my-agent/jsonrpc",
+    headers={
+        "Authorization": "Bearer your-token",
+        "Content-Type": "application/json"
+    },
+    json={
+        "jsonrpc": "2.0",
+        "method": "SendMessage",
+        "params": {
+            "message": {
+                "messageId": "msg-001",
+                "role": "ROLE_USER",
+                "parts": [{"text": "What is the weather?"}]
+            }
+        },
+        "id": 1
+    }
+)
+
+result = response.json()
+print(result["result"])
+```
+
+**Note:** Standard A2A SDKs can point to the `/jsonrpc` endpoint directly.
+
+### Method 3: MCP Tool Bridge
+
+A2A agents are automatically exposed as MCP tools, allowing MCP clients to discover and invoke them:
+
+```bash
+curl -X POST "http://localhost:4444/rpc" \
+  -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+      "name": "a2a-working-a2a-agent1",
+      "arguments": {
+        "method": "SendMessage",
+        "params": {
+          "message": {
+            "messageId": "msg-001",
+            "role": "ROLE_USER",
+            "parts": [{"text": "What is the weather?"}]
+          }
+        }
+      }
+    },
+    "id": 1
+  }'
+```
+
+**Use when:**
+- Integrating with MCP clients (Claude Desktop, Cline, etc.)
+- Need tool discovery via `tools/list`
+- Want unified interface for both MCP and A2A tools
+
+## Agent Types
+
+### Generic/JSONRPC Agents
+For agents that expect standard JSONRPC format:
+```json
+{
+  "agent_type": "jsonrpc",
+  "endpoint_url": "http://your-agent/",
+  "protocol_version": "1.0"
+}
+```
+
+### OpenAI-compatible Agents
+```json
+{
+  "agent_type": "openai",
+  "endpoint_url": "https://api.openai.com/v1/chat/completions",
+  "auth_type": "api_key",
+  "auth_value": "your-openai-api-key"
+}
+```
+
+### Anthropic-compatible Agents
+```json
+{
+  "agent_type": "anthropic",
+  "endpoint_url": "https://api.anthropic.com/v1/messages",
+  "auth_type": "api_key",
+  "auth_value": "your-anthropic-api-key"
+}
+```
+
+### Custom Agents
+```json
+{
+  "agent_type": "custom",
+  "endpoint_url": "https://your-custom-agent.com/api",
+  "auth_type": "bearer",
+  "auth_value": "your-token",
+  "capabilities": {"streaming": true, "functions": false},
+  "config": {"max_tokens": 1000, "temperature": 0.7}
+}
+```
+
+## Authentication Methods
+
+| Auth Type | Description | Example |
+|-----------|-------------|---------|
+| `api_key` | API key in Authorization header | `Authorization: Bearer your-key` |
+| `bearer` | Bearer token authentication | `Authorization: Bearer your-token` |
+| `oauth` | OAuth 2.0 flow (stored tokens) | Handled automatically |
+| `none` | No authentication required | - |
+
+When `auth_type` is `api_key`, the configured API key is sent as the outbound `Authorization` header. If a base or passthrough request header also contains `Authorization`, the configured A2A agent API key takes precedence for the outbound agent call.
+
+## Protocol Detection
+
+The gateway automatically detects agent protocols:
+
+- **JSONRPC Format**: For `agent_type: "jsonrpc"` or URLs ending with `/`
+- **Custom A2A Format**: For other agent types
+
+## Monitoring and Metrics
+
+A2A agents provide comprehensive metrics:
+
+- **Execution Count**: Total number of invocations
+- **Success Rate**: Percentage of successful calls
+- **Response Times**: Min/max/average response times
+- **Last Interaction**: Timestamp of most recent call
+- **Error Tracking**: Failed call details and error messages
+
+## Lifecycle Management
+
+### Agent-Tool State Cascade
+
+When an A2A agent is registered, a corresponding MCP tool is automatically created (with `integration_type: "A2A"`). The agent and its tool share a linked lifecycle:
+
+- **Deactivating an agent** automatically deactivates its associated tool, removing it from virtual server tool listings. (Invocation of disabled A2A tools was already rejected; this fix ensures the tool's own `enabled` flag stays in sync so it no longer *appears* as available.)
+- **Reactivating an agent** automatically reactivates its associated tool, restoring it to virtual server tool listings.
+
+This mirrors how MCP server (gateway) deactivation cascades to all child tools, prompts, and resources. Since each A2A agent creates a single tool, the cascade updates exactly one tool record.
+
+!!! note
+    If the tool is already in the desired state (e.g., already disabled when the agent is deactivated), no redundant database update occurs.
+
+## Virtual Server Integration
+
+Associate A2A agents with virtual servers to:
+
+- **Organize agents** by purpose or team
+- **Control access** via server-specific endpoints
+- **Group capabilities** for specific use cases
+- **Enable MCP discovery** for client tools
+
+## Configuration
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `MCPGATEWAY_A2A_ENABLED` | Master toggle for A2A features | `true` |
+| `MCPGATEWAY_A2A_MAX_AGENTS` | Maximum agents allowed | `100` |
+| `MCPGATEWAY_A2A_DEFAULT_TIMEOUT` | HTTP timeout (seconds) | `30` |
+| `MCPGATEWAY_A2A_MAX_RETRIES` | Retry attempts | `3` |
+| `MCPGATEWAY_A2A_METRICS_ENABLED` | Enable metrics collection | `true` |
+
+## Required Permissions
+
+Every A2A endpoint is guarded by both layers of the security model: a token scope check
+(Layer 1) followed by an RBAC check (Layer 2). A caller needs the permission below granted
+by *both* — an API token scoped to `tools.read` cannot reach `/a2a` even if its user holds
+the `a2a.read` role.
+
+| Endpoint | Method | Permission |
+|----------|--------|------------|
+| `/a2a` | GET | `a2a.read` |
+| `/a2a/{agent_id}` | GET | `a2a.read` |
+| `/a2a` | POST | `a2a.create` |
+| `/a2a/{agent_id}` | PUT | `a2a.update` |
+| `/a2a/{agent_id}/state` | POST | `a2a.update` |
+| `/a2a/{agent_id}/toggle` | POST | `a2a.update` (deprecated, use `/state`) |
+| `/a2a/{agent_id}` | DELETE | `a2a.delete` |
+| `/a2a/invoke` | POST | `a2a.invoke` |
+| `/a2a/{agent_name}/invoke` | POST | `a2a.invoke` |
+| `/a2a/{agent_name}/jsonrpc` | POST | `a2a.invoke` |
+
+A token whose scopes are empty inherits its permissions from RBAC at runtime rather than
+being denied — see [Token Scope Semantics](../../manage/rbac.md#token-scope-semantics).
+
+## Security Considerations
+
+- **Encrypted Storage**: Agent credentials are encrypted in the database
+- **Rate Limiting**: Configurable limits on agent invocations
+- **Access Control**: Full authentication and authorization
+- **Audit Logging**: All agent interactions are logged
+- **Network Security**: HTTPS support and SSL verification
+
+## Local Testing
+
+### Demo A2A Agent
+
+The repository includes a demo A2A agent with calculator and weather tools for local testing.
+
+#### Prerequisites
+
+Before running the demo agent, ensure the following configuration:
+
+1. **Allow localhost in .env** (required for local agent registration)
+
+  ```bash
+  SSRF_ALLOW_LOCALHOST=true
+  ```
+
+  Restart ContextForge after adding this. The default blocks loopback addresses as an SSRF safeguard. This is intentional for production, but must be opted into locally.
+
+2. **Pass an admin identity at runtime**
+
+  The script creates a JWT signed with your instance's secret. The token identity must resolve to a user in the
+  database. The helper commands below pass your `PLATFORM_ADMIN_EMAIL` as a legacy email subject; service-issued tokens
+  now use opaque UUID subjects for token-catalog API tokens platform-wide and carry the human email in signed metadata
+  such as `user.email`. See the "Running the Demo" section below for the actual commands.
+
+#### Running the Demo
+
+```bash
+# Terminal 1: Start ContextForge
+make dev
+
+# Terminal 2: Start the demo agent (auto-registers with ContextForge)
+# Override the admin email if it differs from the default:
+#   export PLATFORM_ADMIN_EMAIL=you@example.com
+uv run python scripts/demo_a2a_agent.py
+
+# Optional: Generate a token for the curl test commands below
+export TOKEN=$(python -m mcpgateway.utils.create_jwt_token \
+  --username "admin@example.com" --exp 60)
+```
+
+Note: The script reads `JWT_SECRET_KEY` and `PLATFORM_ADMIN_EMAIL` from environment variables (defaults: `my-test-key…` and `admin@example.com`).
+
+The demo agent supports these query formats:
+
+| Query | Example | Response |
+|-------|---------|----------|
+| Calculator | `calc: 7*8+2` | `58` |
+| Weather | `weather: Dallas` | `The weather in Dallas is sunny, 25C` |
+
+**Test via Admin UI:**
+
+1. Go to `http://localhost:8000/admin`
+2. Click the "A2A Agents" tab
+3. Add a new agent "demo-calculator-agent" with Endpoint URL of http://localhost:9100/run
+4. In "demo-calculator-agent" click on **Test**
+5. Enter a query like `calc: 100/4+25` in the modal
+6. Click **Run Test** to see the result
+
+**Test via API:**
+
+```bash
+# Get a token
+export TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
+  --username admin@example.com --exp 60)
+
+curl -X POST "http://localhost:8000/a2a/demo-calculator-agent/invoke" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"parameters": {"query": "calc: 15*4+10"}}'
+```
+
+### A2A SDK HelloWorld Sample
+
+Test with the official A2A Python SDK sample:
+
+```bash
+# Clone and run the HelloWorld agent
+git clone https://github.com/google/a2a-samples.git
+cd a2a-samples/samples/python/agents/helloworld
+uv run python __main__.py  # Starts on port 9999
+
+# Register with ContextForge (in another terminal)
+export TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
+  --username admin@example.com --exp 60 --secret my-test-key-but-now-longer-than-32-bytes)
+
+curl -X POST "http://localhost:8000/a2a" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "agent": {
+      "name": "Hello World Agent",
+      "endpoint_url": "http://localhost:9999/",
+      "agent_type": "jsonrpc",
+      "description": "Official A2A SDK HelloWorld sample"
+    },
+    "visibility": "public"
+  }'
+```
+
+### Admin UI Query Input
+
+The Admin UI test button opens a modal where you can enter custom queries:
+
+1. **Open Modal**: Click the blue **Test** button next to any A2A agent
+2. **Enter Query**: Type your query in the textarea (e.g., `calc: 5*10+2`)
+3. **Run Test**: Click **Run Test** to send the query to the agent
+4. **View Response**: The agent's response appears in the modal
+
+This allows testing A2A agents with real user queries instead of hardcoded test messages.
+
+### Testing via MCP Tools
+
+A2A agents are automatically exposed as MCP tools. After registration, invoke them via the MCP protocol:
+
+```bash
+curl -X POST "http://localhost:8000/rpc" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "jsonrpc": "2.0",
+    "method": "tools/call",
+    "params": {
+      "name": "a2a_demo-calculator-agent",
+      "arguments": {"query": "calc: 99+1"}
+    },
+    "id": 1
+  }'
+```
+
+## Troubleshooting
+
+### Agent Not Responding
+1. Check agent status in Admin UI (should be "Active" and "Reachable")
+2. Verify endpoint URL is correct and accessible
+3. Test authentication credentials
+4. Check agent logs for protocol format issues
+
+### Protocol Format Issues
+1. Verify agent expects JSONRPC format vs custom format
+2. Check required fields in agent's API documentation
+3. Use Admin UI test button to validate communication
+4. Review gateway logs for request/response details
+
+### Authentication Problems
+1. Verify auth_type matches agent's expected authentication
+2. Check auth_value is correct and not expired
+3. Test direct agent communication outside gateway
+4. Review agent's authentication documentation
+
+---
+
+For more information on ContextForge features and configuration, see the [main documentation](../../overview/index.md).

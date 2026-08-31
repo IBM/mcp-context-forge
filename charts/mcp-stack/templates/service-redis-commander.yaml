@@ -1,0 +1,22 @@
+{{- /*
+Redis-Commander Service
+*/ -}}
+{{- if and .Values.redisCommander.enabled (or .Values.redis.enabled .Values.redis.external.enabled) }}
+apiVersion: v1
+kind: Service
+metadata:
+  # <release>-mcp-stack-redis-commander
+  name: {{ include "mcp-stack.fullname" . }}-redis-commander
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app: redis-commander
+spec:
+  type: {{ .Values.redisCommander.service.type }}  # ClusterIP / NodePort / LoadBalancer
+  selector:
+    app: redis-commander
+    release: {{ .Release.Name }}
+  ports:
+    - name: http
+      port: {{ .Values.redisCommander.service.port }}   # external service port (8081 by default)
+      targetPort: http                                  # containerPort named "http" in the Deployment
+{{- end }}

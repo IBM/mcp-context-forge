@@ -1,0 +1,39 @@
+<!-- htmlhint doctype-first:false -->
+<!-- agent selector items for infinite scroll -->
+{% for agent in data %}
+{% set agent_label = agent.displayName or agent.originalName or agent.name or agent.id %}
+<label
+  class="flex items-center space-x-3 text-gray-700 dark:text-gray-300 mb-2 cursor-pointer hover:bg-purple-50 dark:hover:bg-purple-900 rounded-md p-1 agent-item"
+  data-agent-id="{{ agent.id }}"
+>
+  <input
+    type="checkbox"
+    name="associatedagents"
+    value="{{ agent.id }}"
+    data-agent-name="{{ agent_label }}"
+    class="agent-checkbox form-checkbox h-5 w-5 text-purple-600 dark:bg-gray-800 dark:border-gray-600"
+    data-auto-check="true"
+  />
+  <span class="select-none">{{ agent_label }}</span>
+</label>
+{% endfor %}
+
+{% if pagination.has_next %}
+<!-- Infinite scroll trigger element -->
+<div
+  id="agents-scroll-trigger-{{ pagination.page }}"
+  hx-get="{{ root_path }}/admin/a2a/partial?page={{ pagination.page + 1 }}&per_page={{ pagination.per_page }}&render=selector{% if gateway_id %}&gateway_id={{ gateway_id }}{% endif %}"
+  hx-trigger="intersect once"
+  hx-swap="outerHTML"
+  class="text-center py-2 text-xs text-gray-500 dark:text-gray-400"
+>
+  <span class="inline-block">
+    <svg class="animate-spin h-4 w-4 text-purple-600 dark:text-purple-400 inline-block" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+      <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+      <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+    </svg>
+    Loading more agents...
+  </span>
+</div>
+
+{% endif %}

@@ -1,0 +1,1261 @@
+# -*- coding: utf-8 -*-
+"""Location: ./tests/playwright/pages/gateways_page.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+
+Gateways page object for MCP Server & Federated Gateway management.
+"""
+
+# Standard
+import logging
+import re
+
+# Third-Party
+from playwright.sync_api import Error as PlaywrightError
+from playwright.sync_api import expect, Locator
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
+# Local
+from .base_page import BasePage
+
+logger = logging.getLogger(__name__)
+
+
+class GatewaysPage(BasePage):
+    """Page object for MCP Servers & Federated Gateways (MCP Registry) management.
+
+    This page manages external MCP Servers (SSE/HTTP) registration to retrieve
+    their tools/resources/prompts.
+    """
+
+    # ==================== Panel Elements ====================
+
+    @property
+    def gateways_panel(self) -> Locator:
+        """Gateways panel container."""
+        return self.page.locator("#gateways-panel")
+
+    @property
+    def panel_title(self) -> Locator:
+        """Panel title 'MCP Servers & Federated Gateways'."""
+        return self.gateways_panel.locator("h2:has-text('MCP Servers & Federated Gateways')")
+
+    # ==================== Search and Filter Elements ====================
+
+    @property
+    def search_input(self) -> Locator:
+        """Gateway search input."""
+        return self.page.locator("#gateways-search-input")
+
+    @property
+    def clear_search_btn(self) -> Locator:
+        """Clear search button."""
+        return self.page.locator("#gateways-clear-search")
+
+    @property
+    def show_inactive_checkbox(self) -> Locator:
+        """Show inactive gateways checkbox."""
+        return self.page.locator("#show-inactive-gateways")
+
+    @property
+    def tag_filter_input(self) -> Locator:
+        """Hidden tag filter input."""
+        return self.page.locator("#gateways-tag-filter")
+
+    # ==================== Gateway Table Elements ====================
+
+    @property
+    def gateways_table(self) -> Locator:
+        """Gateways table."""
+        return self.page.locator("#gateways-table")
+
+    @property
+    def gateways_table_body(self) -> Locator:
+        """Gateways table body."""
+        return self.page.locator("#gateways-table-body")
+
+    @property
+    def gateway_rows(self) -> Locator:
+        """All gateway table rows."""
+        return self.gateways_table_body.locator("tr")
+
+    @property
+    def loading_indicator(self) -> Locator:
+        """HTMX loading indicator."""
+        return self.page.locator("#gateways-loading")
+
+    # ==================== Gateway Form Elements ====================
+
+    @property
+    def add_gateway_form(self) -> Locator:
+        """Add gateway form."""
+        return self.page.locator("#add-gateway-form")
+
+    @property
+    def gateway_name_input(self) -> Locator:
+        """MCP Server name input field."""
+        return self.add_gateway_form.locator("#mcp-server-name")
+
+    @property
+    def gateway_url_input(self) -> Locator:
+        """MCP Server URL input field."""
+        return self.add_gateway_form.locator("#mcp-server-url")
+
+    @property
+    def gateway_description_input(self) -> Locator:
+        """Gateway description textarea."""
+        return self.add_gateway_form.locator('[name="description"]')
+
+    @property
+    def gateway_tags_input(self) -> Locator:
+        """Gateway tags input field."""
+        return self.add_gateway_form.locator('[name="tags"]')
+
+    @property
+    def transport_select(self) -> Locator:
+        """Transport type select (SSE/STREAMABLEHTTP)."""
+        return self.add_gateway_form.locator('[name="transport"]')
+
+    @property
+    def auth_type_select(self) -> Locator:
+        """Authentication type select field."""
+        return self.add_gateway_form.locator("#auth-type-gw")
+
+    @property
+    def add_gateway_btn(self) -> Locator:
+        """Add gateway submit button."""
+        return self.add_gateway_form.locator('button[type="submit"]:has-text("Add Gateway")')
+
+    # ==================== Visibility Radio Buttons ====================
+
+    @property
+    def visibility_public_radio(self) -> Locator:
+        """Public visibility radio button."""
+        return self.add_gateway_form.locator('[name="visibility"][value="public"]')
+
+    @property
+    def visibility_team_radio(self) -> Locator:
+        """Team visibility radio button."""
+        return self.add_gateway_form.locator('[name="visibility"][value="team"]')
+
+    @property
+    def visibility_private_radio(self) -> Locator:
+        """Private visibility radio button."""
+        return self.add_gateway_form.locator('[name="visibility"][value="private"]')
+
+    # ==================== Authentication Fields ====================
+
+    @property
+    def auth_basic_fields(self) -> Locator:
+        """Basic auth fields container."""
+        return self.page.locator("#auth-basic-fields-gw")
+
+    @property
+    def auth_username_input(self) -> Locator:
+        """Basic auth username input."""
+        return self.add_gateway_form.locator('[name="auth_username"]')
+
+    @property
+    def auth_password_input(self) -> Locator:
+        """Basic auth password input."""
+        return self.page.locator("#auth-password-gw")
+
+    @property
+    def auth_bearer_fields(self) -> Locator:
+        """Bearer token fields container."""
+        return self.page.locator("#auth-bearer-fields-gw")
+
+    @property
+    def auth_token_input(self) -> Locator:
+        """Bearer token input."""
+        return self.page.locator("#auth-token-gw")
+
+    @property
+    def auth_headers_fields(self) -> Locator:
+        """Custom headers fields container."""
+        return self.page.locator("#auth-headers-fields-gw")
+
+    @property
+    def add_header_btn(self) -> Locator:
+        """Add Header button inside the custom headers section."""
+        return self.auth_headers_fields.get_by_role("button", name="Add Header")
+
+    @property
+    def auth_headers_json_input(self) -> Locator:
+        """Hidden JSON input that stores the serialised header list."""
+        return self.page.locator("#auth-headers-json-gw")
+
+    def add_auth_header(self, key: str, value: str) -> None:
+        """Click Add Header, type key and value into the new row.
+
+        Args:
+            key: Header name (e.g. ``X-API-Key``).
+            value: Header value.
+        """
+        self.add_header_btn.click()
+        # The last header row just appended
+        last_row = self.page.locator("#auth-headers-container-gw > div").last
+        last_row.locator(".auth-header-key").fill(key)
+        last_row.locator(".auth-header-value").fill(value)
+
+    def get_auth_headers_json(self) -> str:
+        """Return the current value of the hidden auth-headers JSON input."""
+        return self.auth_headers_json_input.input_value()
+
+    @property
+    def auth_query_param_fields(self) -> Locator:
+        """Query parameter auth fields container."""
+        return self.page.locator("#auth-query_param-fields-gw")
+
+    @property
+    def auth_query_param_key_input(self) -> Locator:
+        """Query parameter key input."""
+        return self.add_gateway_form.locator('[name="auth_query_param_key"]')
+
+    @property
+    def auth_query_param_value_input(self) -> Locator:
+        """Query parameter value input."""
+        return self.page.locator("#auth-query-param-value-gw")
+
+    # ==================== OAuth Configuration Elements ====================
+
+    @property
+    def oauth_fields(self) -> Locator:
+        """OAuth configuration fields container."""
+        return self.page.locator("#auth-oauth-fields-gw")
+
+    @property
+    def oauth_grant_type_select(self) -> Locator:
+        """OAuth grant type select."""
+        return self.page.locator("#oauth-grant-type-gw")
+
+    @property
+    def oauth_issuer_input(self) -> Locator:
+        """OAuth issuer URL input."""
+        return self.add_gateway_form.locator('[name="oauth_issuer"]')
+
+    @property
+    def oauth_client_id_input(self) -> Locator:
+        """OAuth client ID input."""
+        return self.add_gateway_form.locator('[name="oauth_client_id"]')
+
+    @property
+    def oauth_client_secret_input(self) -> Locator:
+        """OAuth client secret input."""
+        return self.add_gateway_form.locator('[name="oauth_client_secret"]')
+
+    @property
+    def oauth_username_input(self) -> Locator:
+        """OAuth username input (for password grant)."""
+        return self.page.locator("#oauth-username-gw")
+
+    @property
+    def oauth_password_input(self) -> Locator:
+        """OAuth password input (for password grant)."""
+        return self.page.locator("#oauth-password-gw")
+
+    @property
+    def oauth_token_url_input(self) -> Locator:
+        """OAuth token URL input."""
+        return self.add_gateway_form.locator('[name="oauth_token_url"]')
+
+    @property
+    def oauth_authorization_url_input(self) -> Locator:
+        """OAuth authorization URL input."""
+        return self.add_gateway_form.locator('[name="oauth_authorization_url"]')
+
+    @property
+    def oauth_redirect_uri_input(self) -> Locator:
+        """OAuth redirect URI input."""
+        return self.add_gateway_form.locator('[name="oauth_redirect_uri"]')
+
+    @property
+    def oauth_scopes_input(self) -> Locator:
+        """OAuth scopes input."""
+        return self.add_gateway_form.locator('[name="oauth_scopes"]')
+
+    @property
+    def oauth_store_tokens_checkbox(self) -> Locator:
+        """OAuth store tokens checkbox."""
+        return self.add_gateway_form.locator('[name="oauth_store_tokens"]')
+
+    @property
+    def oauth_auto_refresh_checkbox(self) -> Locator:
+        """OAuth auto refresh checkbox."""
+        return self.add_gateway_form.locator('[name="oauth_auto_refresh"]')
+
+    # ==================== Additional Form Elements ====================
+
+    @property
+    def one_time_auth_checkbox(self) -> Locator:
+        """One-time authentication checkbox."""
+        return self.page.locator("#single-use-auth-gw")
+
+    @property
+    def passthrough_headers_input(self) -> Locator:
+        """Passthrough headers input."""
+        return self.add_gateway_form.locator('[name="passthrough_headers"]')
+
+    @property
+    def ca_certificate_upload_input(self) -> Locator:
+        """CA certificate file upload input."""
+        return self.page.locator("#upload-ca-certificate")
+
+    @property
+    def ca_certificate_drop_zone(self) -> Locator:
+        """CA certificate drag-and-drop zone."""
+        return self.page.locator("#ca-certificate-upload-drop-zone")
+
+    @property
+    def status_message(self) -> Locator:
+        """Status message display area."""
+        return self.page.locator("#status-gateways")
+
+    # ==================== Pagination Elements ====================
+
+    @property
+    def pagination_controls(self) -> Locator:
+        """Pagination controls container."""
+        return self.page.locator("#gateways-pagination-controls")
+
+    # ==================== High-Level Navigation Methods ====================
+
+    def navigate_to_gateways_tab(self) -> None:
+        """Navigate to Gateways tab and wait for the table to finish loading."""
+        self.sidebar.click_gateways_tab()
+        self.wait_for_gateways_table_loaded()
+
+    # ==================== High-Level Gateway Operations ====================
+
+    def wait_for_gateways_table_loaded(self, timeout: int = 30000) -> None:
+        """Wait for gateways table to be loaded and ready.
+
+        Handles the Alpine.js + HTMX loading sequence where x-init sets
+        the hx-get attribute before HTMX fires the load trigger and
+        swaps in the table content via outerHTML.
+
+        Args:
+            timeout: Maximum time to wait in milliseconds
+        """
+        self.page.wait_for_selector("#gateways-panel:not(.hidden)", timeout=timeout)
+        try:
+            self.wait_for_attached(self.gateways_table_body, timeout=timeout)
+        except AssertionError:
+            # Alpine.js x-init / HTMX load race: reload to re-run the sequence
+            self.page.reload(wait_until="domcontentloaded")
+            self.navigate_to_gateways_tab()
+            self.page.wait_for_selector("#gateways-panel:not(.hidden)", timeout=timeout)
+            self.wait_for_attached(self.gateways_table_body, timeout=timeout)
+
+    def create_gateway(self, gateway_data: dict) -> None:
+        """Create a new MCP Server gateway by filling and submitting the form.
+
+        Args:
+            gateway_data: Dictionary containing gateway configuration with keys:
+                - name: MCP Server name (required)
+                - url: MCP Server URL (required)
+                - description: Gateway description (optional)
+                - tags: Comma-separated tags (optional)
+                - transport: Transport type - "SSE" or "STREAMABLEHTTP" (default: "SSE")
+                - visibility: Visibility setting - "public", "team", or "private" (default: "public")
+                - auth_type: Authentication type (optional)
+        """
+        self.fill_locator(self.gateway_name_input, gateway_data["name"])
+        self.fill_locator(self.gateway_url_input, gateway_data["url"])
+
+        if gateway_data.get("description"):
+            self.fill_locator(self.gateway_description_input, gateway_data["description"])
+        if gateway_data.get("tags"):
+            self.fill_locator(self.gateway_tags_input, gateway_data["tags"])
+
+        # Set transport type
+        transport = gateway_data.get("transport", "SSE")
+        self.transport_select.select_option(transport)
+
+        # Set visibility
+        visibility = gateway_data.get("visibility", "public")
+        if visibility == "team":
+            self.click_locator(self.visibility_team_radio)
+        elif visibility == "private":
+            self.click_locator(self.visibility_private_radio)
+        else:
+            self.click_locator(self.visibility_public_radio)
+
+        # Set auth type if provided
+        if gateway_data.get("auth_type"):
+            self.auth_type_select.select_option(gateway_data["auth_type"])
+
+        self.click_locator(self.add_gateway_btn)
+
+    def fill_gateway_form(self, name: str, url: str, description: str = "", tags: str = "", transport: str = "SSE") -> None:
+        """Fill the add gateway form with provided data (without submitting).
+
+        Args:
+            name: MCP Server name
+            url: MCP Server URL
+            description: Gateway description (optional)
+            tags: Comma-separated tags (optional)
+            transport: Transport type (default: "SSE")
+        """
+        self.fill_locator(self.gateway_name_input, name)
+        self.fill_locator(self.gateway_url_input, url)
+        if description:
+            self.fill_locator(self.gateway_description_input, description)
+        if tags:
+            self.fill_locator(self.gateway_tags_input, tags)
+        self.transport_select.select_option(transport)
+
+    def submit_gateway_form(self) -> None:
+        """Submit the add gateway form."""
+        self.click_locator(self.add_gateway_btn)
+
+    def search_gateways(self, query: str) -> None:
+        """Search for gateways using the search input.
+
+        Search is server-side via HTMX with a debounce. Avoid Playwright
+        ``networkidle`` because the admin UI can keep long-lived requests open.
+        Wait for table/indicator state instead.
+
+        Args:
+            query: Search query string
+        """
+        if query == "":
+            self.clear_search()
+            return
+
+        # Searches are debounced in admin.js (250ms) and search inputs are
+        # occasionally re-initialized on tab switches (cloned/replaced). That
+        # can create a short window where filling doesn't trigger a request.
+        self.search_input.fill(query)
+
+        try:
+            self.page.wait_for_selector("#gateways-loading.htmx-request", timeout=5000)
+        except PlaywrightTimeoutError:
+            # Fallback: explicitly trigger the server-side reload.
+            self.page.evaluate(
+                "(q) => { const el = document.getElementById('gateways-search-input'); if (el) { el.value = q; } if (window.loadSearchablePanel) { window.loadSearchablePanel('gateways'); } }",
+                query,
+            )
+            try:
+                self.page.wait_for_selector("#gateways-loading.htmx-request", timeout=5000)
+            except PlaywrightTimeoutError:
+                pass
+
+        self.page.wait_for_function(
+            "() => !document.querySelector('#gateways-loading.htmx-request')",
+            timeout=15000,
+        )
+        try:
+            self.page.wait_for_selector(
+                "#gateways-table-body",
+                state="attached",
+                timeout=15000,
+            )
+        except PlaywrightTimeoutError:
+            # Recovery path: if the partial response did not restore the table
+            # structure, hard-reload and reopen gateways.
+            self.page.reload(wait_until="domcontentloaded")
+            self.navigate_to_gateways_tab()
+            self.wait_for_gateways_table_loaded()
+            return
+
+        # In some environments the clear action can leave the table in a stale
+        # empty state (e.g., after a zero-result search). Recover by reloading
+        # and re-opening the gateways tab so subsequent assertions see the
+        # canonical gateway list.
+        if self.get_gateway_count() == 0:
+            # Clear URL search params before reloading so the x-init HTMX load
+            # does not re-apply the search term and leave the table empty again.
+            self.page.evaluate("window.history.replaceState({}, '', window.location.pathname + window.location.hash)")
+            self.page.reload(wait_until="domcontentloaded")
+            self.navigate_to_gateways_tab()
+            self.wait_for_gateways_table_loaded()
+
+    def clear_search(self) -> None:
+        """Clear the gateway search by clicking the dedicated clear button.
+
+        Drains any in-flight HTMX requests first, then uses expect_response to
+        capture the HTMX GET response triggered by Admin.clearSearch so we know
+        the outerHTML swap has completed before returning.
+        """
+        # Drain any in-flight HTMX load so a stale response can't race with
+        # the clear request and overwrite the table back to 0 rows.
+        self.page.wait_for_function(
+            "() => !document.querySelector('#gateways-loading.htmx-request')",
+            timeout=15000,
+        )
+
+        # Click the button inside expect_response so we reliably capture the
+        # HTMX GET request that Admin.clearSearch triggers via htmx.ajax.
+        try:
+            with self.page.expect_response(
+                lambda r: "/admin/gateways/partial" in r.url and r.request.method == "GET",
+                timeout=15000,
+            ):
+                self.click_locator(self.clear_search_btn)
+        except PlaywrightTimeoutError:
+            # Fallback: indicator-based wait if the response wasn't captured.
+            try:
+                self.page.wait_for_selector("#gateways-loading.htmx-request", timeout=3000)
+            except PlaywrightTimeoutError:
+                pass
+
+        # expect_response resolves when the network response is received, but HTMX
+        # processes the response and does the outerHTML swap asynchronously. Wait for
+        # the loading indicator to clear, which confirms the swap has completed.
+        try:
+            self.page.wait_for_selector("#gateways-loading.htmx-request", timeout=2000)
+        except PlaywrightTimeoutError:
+            pass  # Request may have already finished before we checked
+        self.page.wait_for_function(
+            "() => !document.querySelector('#gateways-loading.htmx-request')",
+            timeout=15000,
+        )
+        try:
+            # Wait for the new #gateways-table-body to be attached after the swap.
+            self.page.wait_for_selector("#gateways-table-body", state="attached", timeout=15000)
+        except PlaywrightTimeoutError:
+            # Zero-result states or partial-swap races can leave the canonical
+            # table structure missing after a clear. Recover by reopening the
+            # gateways tab from a fresh admin navigation.
+            self.page.goto("/admin#gateways", wait_until="domcontentloaded")
+            if "/admin/login" in self.page.url:
+                return
+            self.navigate_to_gateways_tab()
+            self.wait_for_gateways_table_loaded()
+
+    def toggle_show_inactive(self, show: bool = True) -> None:
+        """Toggle the show inactive gateways checkbox.
+
+        Args:
+            show: True to show inactive gateways, False to hide them
+        """
+        self.page.wait_for_selector("#gateways-panel:not(.hidden)", timeout=15000)
+        is_checked = self.show_inactive_checkbox.is_checked()
+        if (show and not is_checked) or (not show and is_checked):
+            self.click_locator(self.show_inactive_checkbox)
+            # Wait for the HTMX table swap triggered by the checkbox
+            self.page.wait_for_function(
+                "() => !document.querySelector('#gateways-loading.htmx-request')",
+                timeout=15000,
+            )
+            self.page.wait_for_selector("#gateways-table-body", state="attached", timeout=15000)
+
+    def get_gateway_row(self, gateway_index: int) -> Locator:
+        """Get a specific gateway row by index.
+
+        Args:
+            gateway_index: Index of the gateway row
+
+        Returns:
+            Locator for the gateway row
+        """
+        return self.gateway_rows.nth(gateway_index)
+
+    def get_gateway_row_by_name(self, gateway_name: str) -> Locator:
+        """Get a gateway row by its name.
+
+        Args:
+            gateway_name: Name of the gateway
+
+        Returns:
+            Locator for the gateway row
+        """
+        return self.gateways_table_body.locator(f'tr:has-text("{gateway_name}")')
+
+    def gateway_exists(self, gateway_name: str) -> bool:
+        """Check if a gateway with the given name exists in the table.
+
+        Args:
+            gateway_name: The name of the gateway to check
+
+        Returns:
+            True if gateway exists, False otherwise
+        """
+        # Wait for table body to be stable (no pending HTMX requests)
+        self.page.wait_for_function(
+            "() => !document.querySelector('#gateways-loading.htmx-request')",
+            timeout=5000,
+        )
+        # Use more specific selector to avoid strict mode violations
+        return self.gateways_table_body.locator(f'tr:has-text("{gateway_name}")').count() > 0
+
+    def get_gateway_count(self) -> int:
+        """Get number of gateways displayed.
+
+        Returns:
+            Number of visible gateway rows
+        """
+        self.page.wait_for_selector("#gateways-table-body", state="attached")
+        # Use more specific selector to count only actual gateway rows (not pagination or other elements)
+        return self.page.locator('#gateways-table-body tr[id*="gateway-row"]').count()
+
+    # ==================== Gateway Row Actions ====================
+
+    def _open_action_dropdown(self, gateway_row: Locator) -> None:
+        """Open the three-dot actions dropdown for a gateway row.
+
+        PR #3802 moved all action buttons inside an Alpine.js-controlled
+        dropdown (menuOpen: false by default). This helper clicks the trigger
+        and waits for the menu to become visible before callers attempt to
+        click individual menu items.
+
+        Args:
+            gateway_row: Playwright Locator for the <tr> row element
+        """
+        gateway_row.scroll_into_view_if_needed()
+        trigger = gateway_row.locator("button[aria-expanded]")
+        trigger.click()
+        gateway_row.locator('[role="menu"]').wait_for(state="visible", timeout=5000)
+
+    def click_test_button(self, gateway_index: int = 0) -> None:
+        """Click the Test button for a gateway.
+
+        Args:
+            gateway_index: Index of the gateway row (default: 0 for first gateway)
+        """
+        gateway_row = self.gateway_rows.nth(gateway_index)
+        self._open_action_dropdown(gateway_row)
+        test_btn = gateway_row.locator('button[role="menuitem"]:has-text("Test")')
+        self.click_locator(test_btn)
+
+    def click_view_button(self, gateway_index: int = 0) -> None:
+        """Click the View button for a gateway.
+
+        Args:
+            gateway_index: Index of the gateway row (default: 0 for first gateway)
+        """
+        gateway_row = self.gateway_rows.nth(gateway_index)
+        self._open_action_dropdown(gateway_row)
+        view_btn = gateway_row.locator('button[role="menuitem"]:has-text("View")')
+        self.click_locator(view_btn)
+
+    def click_edit_button(self, gateway_index: int = 0) -> None:
+        """Click the Edit button for a gateway.
+
+        Args:
+            gateway_index: Index of the gateway row (default: 0 for first gateway)
+        """
+        gateway_row = self.gateway_rows.nth(gateway_index)
+        self._open_action_dropdown(gateway_row)
+        edit_btn = gateway_row.locator('button[role="menuitem"]:has-text("Edit")')
+        self.click_locator(edit_btn)
+
+    def click_deactivate_button(self, gateway_index: int = 0) -> None:
+        """Click the Deactivate button for a gateway.
+
+        Args:
+            gateway_index: Index of the gateway row (default: 0 for first gateway)
+        """
+        gateway_row = self.gateway_rows.nth(gateway_index)
+        self._open_action_dropdown(gateway_row)
+        deactivate_btn = gateway_row.locator('button[role="menuitem"]:has-text("Deactivate")')
+        self.click_locator(deactivate_btn)
+
+    def click_activate_button(self, gateway_index: int = 0) -> None:
+        """Click the Activate button for a gateway.
+
+        Args:
+            gateway_index: Index of the gateway row (default: 0 for first gateway)
+        """
+        gateway_row = self.gateway_rows.nth(gateway_index)
+        self._open_action_dropdown(gateway_row)
+        activate_btn = gateway_row.locator('button[role="menuitem"]:text-is("Activate")')
+        self.click_locator(activate_btn)
+
+    def _click_delete_and_wait(self, delete_btn, confirm: bool = True) -> None:
+        """Click a delete button, handle the confirmation dialog, and wait for the table refresh.
+
+        The gateway delete form uses handleSubmitWithConfirmation (one dialog) which calls
+        handleToggleSubmit. That handler POSTs via fetch(redirect:'manual') then refreshes
+        the table with htmx.ajax — no page navigation occurs.
+
+        Sets ``self.last_delete_status`` to the HTTP status code of the DELETE response
+        (or None when confirm=False / on exception).
+
+        Args:
+            delete_btn: Locator for the delete button to click
+            confirm: Whether to accept or dismiss the dialog
+        """
+        self.last_delete_status: int | None = None
+
+        def _handle_dialog(dialog):
+            if confirm:
+                dialog.accept()
+            else:
+                dialog.dismiss()
+
+        self.page.on("dialog", _handle_dialog)
+
+        try:
+            if confirm:
+                with self.page.expect_response(
+                    lambda r: "/delete" in r.url and r.request.method == "POST",
+                    timeout=30000,
+                ) as del_resp:
+                    delete_btn.click(force=True)
+                self.last_delete_status = del_resp.value.status
+                self.page.wait_for_selector("#gateways-table-body", state="attached", timeout=15000)
+            else:
+                delete_btn.click(force=True)
+                self.page.wait_for_selector("#gateways-table-body", state="attached", timeout=10000)
+        finally:
+            self.page.remove_listener("dialog", _handle_dialog)
+
+    def delete_gateway(self, gateway_index: int = 0, confirm: bool = True) -> None:
+        """Delete a gateway with optional confirmation.
+
+        Args:
+            gateway_index: Index of the gateway row (default: 0 for first gateway)
+            confirm: Whether to confirm the deletion dialog (default: True)
+        """
+        gateway_row = self.gateway_rows.nth(gateway_index)
+        self._open_action_dropdown(gateway_row)
+        delete_btn = gateway_row.locator('form[action*="/delete"] button[type="submit"]:has-text("Delete")')
+        self._click_delete_and_wait(delete_btn, confirm)
+
+    def delete_gateway_by_name(self, gateway_name: str, confirm: bool = True) -> bool:
+        """Delete a gateway by locating the matching row and clicking its delete button.
+
+        Unlike delete_gateway(index), this method targets the specific row by name,
+        avoiding the issue where client-side search filtering hides rows via CSS
+        but gateway_rows.nth(0) still returns the first DOM row (possibly hidden).
+
+        Retries on detached-element errors caused by HTMX table swaps.
+
+        Args:
+            gateway_name: Name of the gateway to delete
+            confirm: Whether to confirm the deletion dialog (default: True)
+
+        Returns:
+            True if gateway was found and deleted, False if not found
+        """
+        if not self.gateway_exists(gateway_name):
+            return False
+
+        for attempt in range(3):
+            try:
+                gateway_row = self.get_gateway_row_by_name(gateway_name)
+                gateway_row.first.wait_for(state="attached", timeout=5000)
+                self._open_action_dropdown(gateway_row.first)
+                delete_btn = gateway_row.first.locator('form[action*="/delete"] button[type="submit"]:has-text("Delete")')
+                self._click_delete_and_wait(delete_btn, confirm)
+                return True
+            except PlaywrightError as exc:
+                if "not attached to the DOM" in str(exc) and attempt < 2:
+                    self.page.wait_for_timeout(500)
+                    continue
+                raise
+
+        return False
+
+    def delete_gateway_by_url(self, gateway_url: str, confirm: bool = True) -> bool:
+        """Delete ALL gateways with the specified URL.
+
+        Since the system prevents duplicate URLs, this method will delete all
+        gateways that match the URL (there might be multiple from failed test runs).
+
+        Args:
+            gateway_url: URL of the gateway(s) to delete
+            confirm: Whether to confirm the deletion dialog (default: True)
+
+        Returns:
+            True if at least one gateway was found and deleted, False if none found
+        """
+        deleted_any = False
+
+        # Keep deleting until no more gateways with this URL exist
+        while True:
+            if "/admin/login" in self.page.url:
+                return deleted_any
+
+            # Search for the gateway by URL
+            self.search_gateways(gateway_url)
+            self.page.wait_for_timeout(500)
+
+            # Check if any gateway with this URL exists
+            gateway_row = self.gateways_table_body.locator(f'tr:has-text("{gateway_url}")')
+            if gateway_row.count() == 0:
+                if not deleted_any:
+                    logger.info("No gateway found with URL '%s' - nothing to delete", gateway_url)
+                self.clear_search()
+                return deleted_any
+
+            # Get gateway name for logging
+            try:
+                gateway_name = gateway_row.first.locator("td").nth(2).text_content().strip()
+            except Exception:
+                gateway_name = "Unknown"
+
+            # Get the delete button and use shared delete+navigation helper
+            try:
+                self._open_action_dropdown(gateway_row.first)
+                delete_btn = gateway_row.first.locator('form[action*="/delete"] button[type="submit"]:has-text("Delete")')
+                self._click_delete_and_wait(delete_btn, confirm)
+
+                logger.info("Deleted gateway '%s' with URL '%s'", gateway_name, gateway_url)
+                deleted_any = True
+
+                # Delete submissions already navigate back through the admin UI.
+                # Avoid reloading the current POST result page; instead try a
+                # direct return to the gateways tab and stop if auth/session
+                # state has already moved us elsewhere after a successful
+                # delete.
+                try:
+                    self.page.goto("/admin#gateways", wait_until="domcontentloaded")
+                    if "/admin/login" in self.page.url:
+                        return deleted_any
+                    self.navigate_to_gateways_tab()
+                    self.wait_for_gateways_table_loaded()
+                except (PlaywrightTimeoutError, AssertionError):
+                    # If we can't reload cleanly, just return — the delete succeeded
+                    return deleted_any
+
+            except Exception as e:
+                logger.warning("Could not delete gateway '%s' with URL '%s': %s", gateway_name, gateway_url, e)
+                try:
+                    self.clear_search()
+                except Exception:
+                    pass
+                return deleted_any
+
+    # ==================== Authentication Configuration Methods ====================
+
+    def configure_basic_auth(self, username: str, password: str) -> None:
+        """Configure basic authentication.
+
+        Args:
+            username: Basic auth username
+            password: Basic auth password
+        """
+        self.auth_type_select.select_option("basic")
+        self.wait_for_visible(self.auth_basic_fields)
+        self.fill_locator(self.auth_username_input, username)
+        self.fill_locator(self.auth_password_input, password)
+
+    def configure_bearer_auth(self, token: str) -> None:
+        """Configure bearer token authentication.
+
+        Args:
+            token: Bearer token
+        """
+        self.auth_type_select.select_option("bearer")
+        self.wait_for_visible(self.auth_bearer_fields)
+        self.fill_locator(self.auth_token_input, token)
+
+    def configure_query_param_auth(self, param_key: str, param_value: str) -> None:
+        """Configure query parameter authentication.
+
+        Args:
+            param_key: Query parameter name
+            param_value: Query parameter value (API key)
+        """
+        self.auth_type_select.select_option("query_param")
+        self.wait_for_visible(self.auth_query_param_fields)
+        self.fill_locator(self.auth_query_param_key_input, param_key)
+        self.fill_locator(self.auth_query_param_value_input, param_value)
+
+    def configure_oauth(
+        self, grant_type: str, issuer: str, client_id: str = "", client_secret: str = "", scopes: str = "openid profile email", token_url: str = "", authorization_url: str = "", redirect_uri: str = ""
+    ) -> None:
+        """Configure OAuth 2.0 authentication.
+
+        Args:
+            grant_type: OAuth grant type - "authorization_code", "client_credentials", or "password"
+            issuer: OAuth issuer URL (required)
+            client_id: OAuth client ID (optional for DCR)
+            client_secret: OAuth client secret (optional for DCR)
+            scopes: Space-separated OAuth scopes (default: "openid profile email")
+            token_url: OAuth token endpoint URL (optional)
+            authorization_url: OAuth authorization endpoint URL (optional, for authorization_code)
+            redirect_uri: OAuth redirect URI (optional, for authorization_code)
+        """
+        self.auth_type_select.select_option("oauth")
+        self.wait_for_visible(self.oauth_fields)
+
+        self.oauth_grant_type_select.select_option(grant_type)
+        self.fill_locator(self.oauth_issuer_input, issuer)
+
+        if client_id:
+            self.fill_locator(self.oauth_client_id_input, client_id)
+        if client_secret:
+            self.fill_locator(self.oauth_client_secret_input, client_secret)
+        if scopes:
+            self.fill_locator(self.oauth_scopes_input, scopes)
+        if token_url:
+            self.fill_locator(self.oauth_token_url_input, token_url)
+        if authorization_url:
+            self.fill_locator(self.oauth_authorization_url_input, authorization_url)
+        if redirect_uri:
+            self.fill_locator(self.oauth_redirect_uri_input, redirect_uri)
+
+    def set_transport_http_bypass(self) -> None:
+        """Override the add-gateway form transport to 'HTTP' to bypass the SSE/StreamableHTTP
+        connection check in _initialize_gateway.
+
+        'HTTP' is a valid TransportType enum value that is not handled by the
+        if/elif transport chain in _initialize_gateway, so the backend returns
+        empty capabilities immediately without attempting any external connection.
+        This allows tests that care about auth configuration (not reachability) to
+        complete without a live gateway.
+        """
+        self.page.evaluate("""() => {
+                const form = document.getElementById('add-gateway-form');
+                if (!form) return;
+                const select = form.querySelector('select[name="transport"]');
+                if (!select) return;
+                if (!select.querySelector('option[value="HTTP"]')) {
+                    const opt = document.createElement('option');
+                    opt.value = 'HTTP';
+                    opt.text = 'HTTP';
+                    select.appendChild(opt);
+                }
+                select.value = 'HTTP';
+            }""")
+
+    def toggle_one_time_auth(self, enable: bool = True) -> None:
+        """Toggle one-time authentication checkbox.
+
+        Args:
+            enable: True to enable one-time auth, False to disable
+        """
+        is_checked = self.one_time_auth_checkbox.is_checked()
+        if (enable and not is_checked) or (not enable and is_checked):
+            self.click_locator(self.one_time_auth_checkbox)
+
+    # ==================== Verification Methods ====================
+
+    def wait_for_gateway_visible(self, gateway_name: str, timeout: int = 30000) -> None:
+        """Wait for a gateway to be visible in the table.
+
+        Args:
+            gateway_name: The name of the gateway
+            timeout: Maximum time to wait in milliseconds
+        """
+        self.page.wait_for_selector(f"text={gateway_name}", timeout=timeout)
+        expect(self.page.locator(f"text={gateway_name}")).to_be_visible()
+
+    def wait_for_gateway_hidden(self, gateway_name: str) -> None:
+        """Wait for a gateway to be hidden from the table.
+
+        Args:
+            gateway_name: The name of the gateway
+        """
+        expect(self.page.locator(f"text={gateway_name}")).to_be_hidden()
+
+    def verify_gateway_status(self, gateway_index: int, expected_status: str) -> None:
+        """Verify the status of a gateway.
+
+        Args:
+            gateway_index: Index of the gateway row
+            expected_status: Expected status text (e.g., "Active", "Inactive")
+        """
+        gateway_row = self.gateway_rows.nth(gateway_index)
+        status_badge = gateway_row.locator(f'span:has-text("{expected_status}")')
+        expect(status_badge).to_be_visible()
+
+    def verify_gateway_visibility(self, gateway_index: int, expected_visibility: str) -> None:
+        """Verify the visibility setting of a gateway.
+
+        Args:
+            gateway_index: Index of the gateway row
+            expected_visibility: Expected visibility (e.g., "🌍 Public", "👥 Team", "🔒 Private")
+        """
+        gateway_row = self.gateway_rows.nth(gateway_index)
+        visibility_badge = gateway_row.locator(f'span:has-text("{expected_visibility}")')
+        expect(visibility_badge).to_be_visible()
+
+    # ==================== Test Gateway Modal Elements ====================
+
+    @property
+    def test_modal(self) -> Locator:
+        """Test Gateway Connectivity modal container."""
+        return self.page.locator("#gateway-test-modal")
+
+    @property
+    def test_modal_title(self) -> Locator:
+        """Test modal heading."""
+        return self.test_modal.locator("h2")
+
+    @property
+    def test_modal_url_input(self) -> Locator:
+        """Server URL input in test modal."""
+        return self.page.locator("#gateway-test-url")
+
+    @property
+    def test_modal_method_select(self) -> Locator:
+        """HTTP method select in test modal."""
+        return self.page.locator("#gateway-test-method")
+
+    @property
+    def test_modal_path_input(self) -> Locator:
+        """Path input in test modal."""
+        return self.page.locator("#gateway-test-path")
+
+    @property
+    def test_modal_content_type_select(self) -> Locator:
+        """Content-Type select in test modal."""
+        return self.page.locator("#gateway-test-content-type")
+
+    @property
+    def test_modal_submit_btn(self) -> Locator:
+        """Test submit button in test modal."""
+        return self.page.locator("#gateway-test-submit")
+
+    @property
+    def test_modal_close_btn(self) -> Locator:
+        """Close button in test modal."""
+        return self.page.locator("#gateway-test-close")
+
+    @property
+    def test_modal_response(self) -> Locator:
+        """Response display area in test modal."""
+        return self.page.locator("#gateway-test-response")
+
+    @property
+    def test_modal_result(self) -> Locator:
+        """Result container (hidden until test runs) in test modal."""
+        return self.page.locator("#gateway-test-result")
+
+    @property
+    def test_modal_response_json(self) -> Locator:
+        """Response JSON display area in test modal."""
+        return self.page.locator("#gateway-test-response-json")
+
+    # ==================== View Gateway Modal Elements ====================
+
+    @property
+    def view_modal(self) -> Locator:
+        """View Gateway Details modal container."""
+        return self.page.locator("#gateway-modal")
+
+    @property
+    def view_modal_title(self) -> Locator:
+        """View modal heading."""
+        return self.view_modal.locator("h3")
+
+    @property
+    def view_modal_details(self) -> Locator:
+        """View modal details container."""
+        return self.page.locator("#gateway-details")
+
+    @property
+    def view_modal_close_btn(self) -> Locator:
+        """Close button in view modal."""
+        return self.view_modal.locator('button:has-text("Close")')
+
+    # ==================== Edit Gateway Modal Elements ====================
+
+    @property
+    def edit_modal(self) -> Locator:
+        """Edit Gateway modal container."""
+        return self.page.locator("#gateway-edit-modal")
+
+    @property
+    def edit_modal_title(self) -> Locator:
+        """Edit modal heading."""
+        return self.edit_modal.locator("h3")
+
+    @property
+    def edit_modal_name_input(self) -> Locator:
+        """Name input in edit modal."""
+        return self.page.locator("#edit-gateway-name")
+
+    @property
+    def edit_modal_url_input(self) -> Locator:
+        """URL input in edit modal."""
+        return self.page.locator("#edit-gateway-url")
+
+    @property
+    def edit_modal_description_input(self) -> Locator:
+        """Description textarea in edit modal."""
+        return self.edit_modal.locator('[name="description"]')
+
+    @property
+    def edit_modal_tags_input(self) -> Locator:
+        """Tags input in edit modal."""
+        return self.edit_modal.locator('[name="tags"]')
+
+    @property
+    def edit_modal_transport_select(self) -> Locator:
+        """Transport type select in edit modal."""
+        return self.edit_modal.locator('[name="transport"]')
+
+    @property
+    def edit_modal_auth_type_select(self) -> Locator:
+        """Auth type select in edit modal."""
+        return self.page.locator("#auth-type-gw-edit")
+
+    @property
+    def edit_modal_visibility_public(self) -> Locator:
+        """Public visibility radio in edit modal."""
+        return self.page.locator("#edit-gateway-visibility-public")
+
+    @property
+    def edit_modal_visibility_team(self) -> Locator:
+        """Team visibility radio in edit modal."""
+        return self.page.locator("#edit-gateway-visibility-team")
+
+    @property
+    def edit_modal_visibility_private(self) -> Locator:
+        """Private visibility radio in edit modal."""
+        return self.page.locator("#edit-gateway-visibility-private")
+
+    @property
+    def edit_modal_one_time_auth(self) -> Locator:
+        """One-time auth checkbox in edit modal."""
+        return self.page.locator("#single-use-auth-gw-edit")
+
+    @property
+    def edit_modal_passthrough_headers(self) -> Locator:
+        """Passthrough headers input in edit modal."""
+        return self.page.locator("#edit-gateway-passthrough-headers")
+
+    @property
+    def edit_modal_cancel_btn(self) -> Locator:
+        """Cancel button in edit modal."""
+        return self.edit_modal.locator('button:has-text("Cancel")')
+
+    @property
+    def edit_modal_save_btn(self) -> Locator:
+        """Save Changes button in edit modal."""
+        return self.edit_modal.locator('button:has-text("Save Changes")')
+
+    # ==================== Edit Modal Auth Fields ====================
+
+    @property
+    def edit_auth_basic_fields(self) -> Locator:
+        """Basic auth fields in edit modal."""
+        return self.page.locator("#auth-basic-fields-gw-edit")
+
+    @property
+    def edit_auth_bearer_fields(self) -> Locator:
+        """Bearer token fields in edit modal."""
+        return self.page.locator("#auth-bearer-fields-gw-edit")
+
+    @property
+    def edit_auth_headers_fields(self) -> Locator:
+        """Custom headers fields in edit modal."""
+        return self.page.locator("#auth-headers-fields-gw-edit")
+
+    @property
+    def edit_oauth_fields(self) -> Locator:
+        """OAuth fields in edit modal."""
+        return self.page.locator("#auth-oauth-fields-gw-edit")
+
+    @property
+    def edit_auth_query_param_fields(self) -> Locator:
+        """Query param fields in edit modal."""
+        return self.page.locator("#auth-query_param-fields-gw-edit")
+
+    # ==================== Pagination Elements ====================
+
+    @property
+    def per_page_select(self) -> Locator:
+        """Per-page items select in pagination."""
+        return self.pagination_controls.locator("select")
+
+    @property
+    def pagination_info(self) -> Locator:
+        """Pagination info text (e.g. 'Showing 1 - 10 of 25 items')."""
+        return self.pagination_controls.locator('[class*="text-sm"]').first
+
+    # ==================== OAuth Conditional Fields ====================
+
+    @property
+    def oauth_authorization_code_fields(self) -> Locator:
+        """Container for authorization_code-specific fields (auth URL, redirect URI, token mgmt)."""
+        return self.page.locator("#oauth-authcode-fields-gw")
+
+    @property
+    def oauth_password_fields(self) -> Locator:
+        """Container for password grant-specific fields (username, password)."""
+        return self.page.locator("#oauth-password-fields-gw")
+
+    # ==================== Modal Helper Methods ====================
+
+    def _click_and_wait_for_gateway_fetch(self, button: Locator, modal_id: str) -> None:
+        """Click a button that triggers an async gateway API fetch, then wait for the modal.
+
+        viewGateway() and editGateway() both fetch /admin/gateways/{id} before
+        opening their respective modals.  If the API returns an error (e.g., RBAC
+        403), the JS catch block shows an error toast but never calls openModal(),
+        so waiting for the modal selector would hang until timeout.  This method
+        intercepts the API response and raises early.
+        """
+        with self.page.expect_response(
+            lambda resp: (
+                re.search(r"/admin/gateways/[0-9a-fA-F-]", resp.url) is not None
+                and "/partial" not in resp.url
+                and "/search" not in resp.url
+                and resp.request.method == "GET"
+            ),
+            timeout=30000,
+        ) as response_info:
+            self.click_locator(button)
+        response = response_info.value
+        if response.status >= 400:
+            raise AssertionError(f"Gateway API fetch failed with HTTP {response.status} for {response.url}")
+        # API succeeded — wait for the JS to open the modal
+        self.page.wait_for_selector(f"#{modal_id}:not(.hidden)", state="visible", timeout=30000)
+
+    def open_test_modal(self, gateway_index: int = 0) -> None:
+        """Click Test on a gateway row and wait for the test modal to appear."""
+        self.click_test_button(gateway_index)
+        self.page.wait_for_selector("#gateway-test-modal", state="visible", timeout=10000)
+
+    def close_test_modal(self) -> None:
+        """Close the test modal."""
+        self.test_modal_close_btn.click()
+        self.page.wait_for_selector("#gateway-test-modal", state="hidden", timeout=5000)
+
+    def open_view_modal(self, gateway_index: int = 0) -> None:
+        """Click View on a gateway row and wait for the view modal to appear.
+
+        Retries the click once if the modal doesn't appear, to handle cases
+        where HTMX table swap hasn't yet reconnected event listeners.
+        """
+        self.page.wait_for_selector('#gateways-table-body tr[id*="gateway-row"]', state="attached", timeout=15000)
+        self.page.wait_for_function("typeof window.Admin?.viewGateway === 'function'", timeout=10000)
+
+        gateway_row = self.gateway_rows.nth(gateway_index)
+        self._open_action_dropdown(gateway_row)
+        view_btn = gateway_row.locator('button[role="menuitem"]:has-text("View")')
+        try:
+            self._click_and_wait_for_gateway_fetch(view_btn, "gateway-modal")
+        except PlaywrightTimeoutError:
+            # Retry once: table may have been swapped by HTMX
+            self._open_action_dropdown(gateway_row)
+            view_btn = gateway_row.locator('button[role="menuitem"]:has-text("View")')
+            self._click_and_wait_for_gateway_fetch(view_btn, "gateway-modal")
+
+    def close_view_modal(self) -> None:
+        """Close the view modal."""
+        self.view_modal_close_btn.click()
+        self.page.wait_for_selector("#gateway-modal", state="hidden", timeout=5000)
+
+    def open_edit_modal(self, gateway_index: int = 0) -> None:
+        """Click Edit on a gateway row and wait for the edit modal to appear.
+
+        Retries the click once if the modal doesn't appear, to handle cases
+        where HTMX table swap hasn't yet reconnected event listeners.
+        """
+        # Ensure gateway rows are present and JS handlers are ready
+        self.page.wait_for_selector('#gateways-table-body tr[id*="gateway-row"]', state="attached", timeout=15000)
+        self.page.wait_for_function("typeof window.Admin?.viewGateway === 'function'", timeout=10000)
+
+        gateway_row = self.gateway_rows.nth(gateway_index)
+        self._open_action_dropdown(gateway_row)
+        edit_btn = gateway_row.locator('button[role="menuitem"]:has-text("Edit")')
+        try:
+            self._click_and_wait_for_gateway_fetch(edit_btn, "gateway-edit-modal")
+        except PlaywrightTimeoutError:
+            # Retry once: table may have been swapped by HTMX after our first click
+            self._open_action_dropdown(gateway_row)
+            edit_btn = gateway_row.locator('button[role="menuitem"]:has-text("Edit")')
+            self._click_and_wait_for_gateway_fetch(edit_btn, "gateway-edit-modal")
+
+    def close_edit_modal(self) -> None:
+        """Close the edit modal via Cancel."""
+        self.edit_modal_cancel_btn.click()
+        self.page.wait_for_selector("#gateway-edit-modal", state="hidden", timeout=5000)

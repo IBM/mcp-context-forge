@@ -1,0 +1,40 @@
+# plugins/config.yaml - Main plugin configuration file
+plugins:
+  - name: "DenyListPlugin"
+    kind: "external"
+    mcp:
+      proto: STREAMABLEHTTP
+      url: http://127.0.0.1:3000/mcp
+      # tls:
+      #   ca_bundle: /app/certs/plugins/ca.crt
+      #   client_cert: /app/certs/plugins/gateway-client.pem
+
+  - name: "OPAPluginFilter"
+    kind: "external"
+    priority: 10 # adjust the priority
+    mcp:
+      proto: STREAMABLEHTTP
+      url: http://127.0.0.1:8000/mcp
+      # tls:
+      #   verify: true
+
+  - name: "LLMGuardPlugin"
+    kind: "external"
+    priority: 20 # adjust the priority
+    mcp:
+      proto: STREAMABLEHTTP
+      url: http://127.0.0.1:8001/mcp
+
+# Plugin directories to scan
+plugin_dirs:
+  - "plugins/native"      # Built-in plugins
+  - "plugins/custom"      # Custom organization plugins
+  - "/etc/mcpgateway/plugins"  # System-wide plugins
+
+# Global plugin settings
+plugin_settings:
+  parallel_execution_within_band: true
+  plugin_timeout: 30
+  fail_on_plugin_error: false
+  enable_plugin_api: true
+  plugin_health_check_interval: 60

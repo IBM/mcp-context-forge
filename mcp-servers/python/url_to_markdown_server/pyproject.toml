@@ -1,0 +1,83 @@
+[project]
+name = "url-to-markdown-server"
+version = "2.1.0"
+description = "MCP server for retrieving web content and files, converting them to markdown"
+authors = [
+  { name = "Mihai Criveti", email = "noreply@example.com" }
+]
+license = { text = "Apache-2.0" }
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastmcp>=3.4.4",
+    "httpcore>=1.0.5",
+    "httpx>=0.28.1",
+    "pydantic>=2.13.4",
+    "typing-extensions>=4.16.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "black>=26.5.1",
+    "mypy>=2.3.0",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.16.0",
+]
+html = [
+    "beautifulsoup4>=4.15.0",
+    "html2text>=2025.4.15",
+    "lxml>=6.1.1",
+    "markdownify>=1.2.3",
+    "readability-lxml>=0.8.4.1",
+]
+documents = [
+    "openpyxl>=3.1.5",
+    "PyMuPDF>=1.28.0",
+    "python-docx>=1.2.0",
+    "python-pptx>=1.0.2",
+]
+full = [
+    "beautifulsoup4>=4.15.0",
+    "chardet>=7.4.3",
+    "html2text>=2025.4.15",
+    "lxml>=6.1.1",
+    "markdownify>=1.2.3",
+    "openpyxl>=3.1.5",
+    "Pillow>=12.3.0",
+    "PyMuPDF>=1.28.0",
+    "python-docx>=1.2.0",
+    "python-pptx>=1.0.2",
+    "readability-lxml>=0.8.4.1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/url_to_markdown_server"]
+
+[project.scripts]
+url-to-markdown-server = "url_to_markdown_server.server_fastmcp:main"
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+select = ["E", "W", "F", "B", "I", "N", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "--cov=url_to_markdown_server --cov-report=term-missing"

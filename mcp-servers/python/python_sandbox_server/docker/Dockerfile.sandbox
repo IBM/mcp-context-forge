@@ -1,0 +1,32 @@
+# Dockerfile for Python sandbox execution environment
+# This creates a minimal, secure Python environment for code execution
+
+FROM python:3.11-slim-bookworm AS base
+
+# Install minimal Python packages for sandbox
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ca-certificates && \
+    rm -rf /var/lib/apt/lists/* && \
+    python -m pip install --no-cache-dir \
+    numpy \
+    pandas \
+    matplotlib \
+    requests \
+    && rm -rf /root/.cache
+
+# Create non-root user for security
+RUN groupadd --gid 1001 sandbox && \
+    useradd --uid 1001 --gid 1001 --create-home --shell /usr/sbin/nologin sandbox
+
+# Create minimal directory structure
+RUN mkdir -p /app /tmp/sandbox && \
+    chown -R sandbox:sandbox /app /tmp/sandbox
+
+# Switch to non-root user
+USER sandbox
+
+# Set working directory
+WORKDIR /app
+
+# Default command to execute Python code from /tmp/code.py
+CMD ["python", "/tmp/code.py"]

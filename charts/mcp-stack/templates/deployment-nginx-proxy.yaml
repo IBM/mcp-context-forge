@@ -1,0 +1,94 @@
+{{- if .Values.nginxProxy.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mcp-stack.fullname" . }}-nginx
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app: {{ include "mcp-stack.fullname" . }}-nginx
+spec:
+  replicas: {{ .Values.nginxProxy.replicaCount | default 1 }}
+  selector:
+    matchLabels:
+      app: {{ include "mcp-stack.fullname" . }}-nginx
+  template:
+    metadata:
+      labels:
+        app: {{ include "mcp-stack.fullname" . }}-nginx
+    spec:
+      {{- if .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range .Values.global.imagePullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
+      serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
+      {{- end }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
+      {{- if .Values.nginxProxy.sysctls }}
+      securityContext:
+        sysctls:
+          {{- range .Values.nginxProxy.sysctls }}
+          {{- $parts := splitList "=" . }}
+          - name: {{ index $parts 0 | quote }}
+            value: {{ index $parts 1 | quote }}
+          {{- end }}
+      {{- end }}
+      containers:
+        - name: nginx
+          image: "{{ .Values.nginxProxy.image.repository }}:{{ .Values.nginxProxy.image.tag }}"
+          imagePullPolicy: {{ .Values.nginxProxy.image.pullPolicy }}
+          {{- if .Values.nginxProxy.command }}
+          command: {{ .Values.nginxProxy.command | toJson }}
+          {{- end }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.nginxProxy.containerPort | default 80 }}
+            {{- if .Values.nginxProxy.tls.enabled }}
+            - name: https
+              containerPort: {{ .Values.nginxProxy.tls.containerPort | default 8443 }}
+            {{- end }}
+
+          {{- with .Values.nginxProxy.probes.readiness }}
+          readinessProbe:
+{{- include "helpers.renderProbe" (dict "probe" . "root" $) | nindent 12 }}
+          {{- end }}
+
+          {{- with .Values.nginxProxy.probes.liveness }}
+          livenessProbe:
+{{- include "helpers.renderProbe" (dict "probe" . "root" $) | nindent 12 }}
+          {{- end }}
+
+          resources:
+{{- toYaml .Values.nginxProxy.resources | nindent 12 }}
+
+          volumeMounts:
+            - name: nginx-config
+              mountPath: /etc/nginx/nginx.conf
+              subPath: nginx.conf
+            - name: nginx-cache
+              mountPath: /var/cache/nginx
+            {{- if .Values.nginxProxy.tls.enabled }}
+            - name: nginx-tls
+              mountPath: /etc/nginx/tls
+              readOnly: true
+            {{- end }}
+
+      volumes:
+        - name: nginx-config
+          configMap:
+            name: {{ include "mcp-stack.fullname" . }}-nginx-config
+        - name: nginx-cache
+          {{- if .Values.nginxProxy.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ include "mcp-stack.fullname" . }}-nginx-cache
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        {{- if .Values.nginxProxy.tls.enabled }}
+        - name: nginx-tls
+          secret:
+            secretName: {{ include "mcp-stack.fullname" . }}-nginx-tls
+        {{- end }}
+{{- end }}

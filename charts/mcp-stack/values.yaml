@@ -1,0 +1,2140 @@
+########################################################################
+# GLOBAL SETTINGS
+# These are applied across the entire Helm release.
+########################################################################
+global:
+  imagePullSecrets: []          # e.g. ["ghcr-creds"] for a private registry
+  nameOverride: ""              # short name applied to all resources (optional)
+  fullnameOverride: ""          # fully-qualified name override (optional)
+
+########################################################################
+# SERVICE ACCOUNT
+# Configure ServiceAccount for all pods in the release.
+# Note: All pods (gateway, postgres, redis, minio, etc.) share the same
+# ServiceAccount. For fine-grained IAM control, deploy components in
+# separate releases or use Kustomize overlays.
+########################################################################
+serviceAccount:
+  # -- Create a ServiceAccount for all pods in this release
+  create: false
+  # -- ServiceAccount name. If empty and create=true, uses release fullname. If create=false, uses this name or "default"
+  name: ""
+  # -- Annotations for the ServiceAccount (e.g., AWS IRSA, GCP Workload Identity)
+  # @default -- `{}`
+  annotations: {}
+    # eks.amazonaws.com/role-arn: arn:aws:iam::123456789:role/my-role
+    # iam.gke.io/gcp-service-account: my-sa@project.iam.gserviceaccount.com
+  # -- Mount the ServiceAccount token in pods (applies at PodSpec level in chart templates)
+  automountServiceAccountToken: false
+
+########################################################################
+# NETWORK POLICIES
+# Conservative, ingress-focused micro-segmentation for in-cluster data
+# services. Disable globally if your CNI does not enforce NetworkPolicy
+# or if you need to troubleshoot connectivity.
+########################################################################
+networkPolicies:
+  enabled: true
+
+  postgres:
+    enabled: true
+    allowPgBouncer: true
+    allowPgAdmin: true
+    allowMigrationJob: true
+    allowUpgradeJobs: true
+    allowMonitoringExporter: true
+
+  redis:
+    enabled: true
+    allowRedisCommander: true
+    allowMonitoringExporter: true
+
+  pgbouncer:
+    enabled: true
+    allowPgAdmin: true
+    allowMonitoringExporter: true
+
+  minio:
+    enabled: true
+    allowUpgradeJobs: true
+
+########################################################################
+# MCP CONTEXT-FORGE (Gateway / API tier)
+########################################################################
+mcpContextForge:
+  # --- Specific plugin file ----#
+  pluginConfig:
+    enabled: false
+    plugins: |
+      # plugin file
+
+  replicaCount: 2                           # horizontal scaling for the gateway
+
+  # --- HORIZONTAL POD AUTOSCALER --------------------------------------
+  # * Percentages compare live usage with the container *request* values
+  #   (limits are ignored by the HPA).
+  # * If both CPU and memory targets are set, crossing either threshold
+  #   triggers a scale event.
+  # --------------------------------------------------------------------
+  hpa:
+    enabled: true                           # Set to false to keep a fixed replica count
+    minReplicas: 2                          # Never scale below this
+    maxReplicas: 10                         # Never scale above this
+    targetCPUUtilizationPercentage: 90      # Scale up when avg CPU > 90 % of *request*
+    targetMemoryUtilizationPercentage: 90   # Scale up when avg memory > 90 % of *request*
+
+  image:
+    repository: ghcr.io/ibm/mcp-context-forge
+    tag: "v1.0.6"                # PRODUCTION: pin a specific immutable tag (e.g. "v1.0.0")
+    pullPolicy: Always          # Always pull to ensure latest security patches
+
+  # Service that fronts the gateway
+  service:
+    type: ClusterIP
+    port: 80                    # external port → containerPort below
+    annotations: {}             # Service annotations (e.g., for AWS NLB configuration)
+
+  containerPort: 4444           # port the app listens on inside the pod
+
+  # Metrics configuration
+  # The /metrics/prometheus endpoint requires JWT authentication.
+  # Create a Secret with a service JWT for Prometheus scraping:
+  #   kubectl create secret generic mcpgateway-metrics-token \
+  #     --from-literal=token="$(python -m mcpgateway.utils.create_jwt_token \
+  #       --username prometheus@monitoring --exp 0 --secret $JWT_SECRET_KEY)"
+  metrics:
+    enabled: true
+    port: 8000
+    serviceMonitor:
+      enabled: true
+    # metricsToken: Uncomment and configure to enable authenticated scraping.
+    #   secretName: mcpgateway-metrics-token
+    #   key: token
+    metricsToken: {}
+    customLabels: {}
+
+  # Health & readiness probes
+  probes:
+    startup:
+      # Uncomment to enable sleep startup probe; useful for long-running initializations
+      type: exec
+      command: ["sh", "-c", "sleep 10"]
+      timeoutSeconds: 15      # must exceed the 10-second sleep
+      periodSeconds: 5
+      failureThreshold: 1
+
+    readiness:
+      type: http
+      path: /ready
+      port: 4444
+      initialDelaySeconds: 30 # wait longer before first readiness check under high-load start
+      periodSeconds: 15       # reduce probe pressure during benchmark spikes
+      timeoutSeconds: 70      # tolerate slow responses during heavy load
+      successThreshold: 1     # one success flips it back to healthy
+      failureThreshold: 8     # require sustained readiness failures before removing pod
+
+    liveness:
+      type: http
+      path: /health
+      port: 4444
+      initialDelaySeconds: 120 # avoid restarts while app is recovering from heavy queue buildup
+      periodSeconds: 30
+      timeoutSeconds: 70
+      successThreshold: 1
+      failureThreshold: 10
+
+  # Kubernetes resource requests / limits
+  resources:
+    limits:
+      cpu: "2"
+      memory: 2Gi
+    requests:
+      cpu: 500m
+      memory: 768Mi
+  # Pod security context - controls UID/GID for the container
+  # Default values align with the container image (UID 10001, GID 10001)
+  podSecurityContext:
+    runAsUser: 10001
+    runAsGroup: 10001
+    fsGroup: 10001
+    runAsNonRoot: true
+
+  # Container security context - additional security constraints
+  containerSecurityContext:
+    allowPrivilegeEscalation: false
+    capabilities:
+      drop:
+        - ALL
+    readOnlyRootFilesystem: true
+
+  # Optional ingress for HTTP traffic
+  ingress:
+    enabled: true
+    className: nginx
+    host: gateway.local         # CHANGE to your FQDN (e.g. api.example.com)
+    path: /
+    pathType: Prefix
+    annotations: {}             # Custom ingress annotations; merged on top of secure nginx TLS defaults when TLS is enabled
+      # nginx.ingress.kubernetes.io/rewrite-target: /
+      # cert-manager.io/cluster-issuer: letsencrypt-prod
+    tls:
+      enabled: true             # TLS enabled by default for encrypted ingress traffic
+      secretName: ""            # Name of the TLS secret (auto-generated if empty)
+
+  ####################################################################
+  # CORE ENVIRONMENT - injected one-by-one as name/value pairs.
+  # Only the DATABASE / CACHE connection points live here; everything
+  # else goes into the ConfigMap or Secret blocks below.
+  ####################################################################
+  env:
+    host: 0.0.0.0               # bind address inside the container
+
+    postgres:
+      # host is auto-generated as <release>-mcp-stack-postgres
+      # host: postgres          # uncomment to override the generated name
+      port: 5432
+      db: postgresdb
+      userKey: POSTGRES_USER    # key in the secret that stores the username
+      passwordKey: POSTGRES_PASSWORD
+
+    redis:
+      # host is auto-generated as <release>-mcp-stack-redis
+      # set to override the generated name or point at external Redis
+      host: ""
+      port: 6379
+
+  ####################################################################
+  # PLAIN-TEXT (NON-SECRET) SETTINGS
+  # Rendered into a ConfigMap; readable by anyone with GET access.
+  ####################################################################
+  config:
+    # ─ Gunicorn settings ─
+    GUNICORN_WORKERS: "2"               # fixed worker count to avoid oversubscription in constrained clusters
+    GUNICORN_TIMEOUT: "600"             # worker timeout in seconds
+    GUNICORN_MAX_REQUESTS: "100000"     # max requests per worker before restart
+    GUNICORN_MAX_REQUESTS_JITTER: "100" # random jitter to avoid thundering herd
+    GUNICORN_PRELOAD_APP: "true"        # preload app code before forking workers
+    GUNICORN_DEV_MODE: "false"          # developer mode with hot reload (not for production)
+    DISABLE_ACCESS_LOG: "true"          # disable access logging for performance
+
+    # ─ Basic application info ─
+    APP_NAME: ContextForge            # public-facing name of the gateway
+    HOST: 0.0.0.0                    # address the server binds to
+    PORT: "4444"                     # internal container port
+    APP_ROOT_PATH: ""                # e.g. "/gateway" when deploying under sub-path
+    CLIENT_MODE: "false"             # gateway-as-client mode (true/false)
+
+    # ─ Connection pooling ─
+    # With PgBouncer enabled: smaller pools (PgBouncer handles connection multiplexing)
+    # Without PgBouncer: increase to DB_POOL_SIZE=50, DB_MAX_OVERFLOW=100
+    DB_POOL_SIZE: "15"               # size of SQLAlchemy connection pool
+    DB_MAX_OVERFLOW: "30"            # extra connections allowed beyond pool size
+    DB_POOL_TIMEOUT: "30"            # seconds to wait for a connection
+    DB_POOL_RECYCLE: "3600"          # recycle connections after N seconds
+
+    # ─ Cache behaviour ─
+    CACHE_TYPE: redis                # Backend cache driver (redis, memory, database)
+                                     # Required for multi-worker session affinity
+    CACHE_PREFIX: "mcpgw:"           # Prefix applied to every cache key
+    SESSION_TTL: "3600"              # TTL (s) for user sessions
+    MESSAGE_TTL: "600"               # TTL (s) for ephemeral messages (completions)
+
+    # ─ Connection retry settings (exponential backoff with jitter) ─
+    REDIS_MAX_RETRIES: "30"          # Maximum retries for Redis cold start (exponential backoff)
+    REDIS_RETRY_INTERVAL_MS: "2000"  # Base interval between Redis retries (ms, doubles each attempt)
+    REDIS_MAX_BACKOFF_SECONDS: "30"  # Max backoff cap in seconds (jitter ±25% applied after)
+    DB_MAX_RETRIES: "30"             # Maximum retries for DB cold start (exponential backoff)
+    DB_RETRY_INTERVAL_MS: "2000"     # Base interval between DB retries (ms, doubles each attempt)
+    DB_MAX_BACKOFF_SECONDS: "30"     # Max backoff cap in seconds (jitter ±25% applied after)
+
+    # ─ Redis connection pool (performance-tuned) ─
+    REDIS_MAX_CONNECTIONS: "50"      # Pool size per worker
+    REDIS_SOCKET_TIMEOUT: "2.0"      # Read/write timeout (seconds)
+    REDIS_SOCKET_CONNECT_TIMEOUT: "2.0"  # Connection timeout (seconds)
+    REDIS_RETRY_ON_TIMEOUT: "true"   # Retry commands on timeout
+    REDIS_HEALTH_CHECK_INTERVAL: "30"  # Health check interval (seconds, 0=disabled)
+    REDIS_DECODE_RESPONSES: "true"   # Return strings instead of bytes
+
+    # ─ Redis leader election (multi-node) ─
+    REDIS_LEADER_TTL: "15"           # Leader TTL (seconds)
+    REDIS_LEADER_KEY: "gateway_service_leader"  # Leader key name
+    REDIS_LEADER_HEARTBEAT_INTERVAL: "5"  # Heartbeat interval (seconds)
+
+    # ─ Auth Cache (reduces DB queries per auth from 3-4 to 0-1) ─
+    AUTH_CACHE_ENABLED: "true"       # Enable auth data caching (user, team, revocation)
+    AUTH_CACHE_USER_TTL: "60"        # User data cache TTL (seconds)
+    AUTH_CACHE_REVOCATION_TTL: "30"  # Token revocation cache TTL (seconds, security-critical)
+    AUTH_CACHE_TEAM_TTL: "60"        # Team membership cache TTL (seconds)
+    AUTH_CACHE_ROLE_TTL: "60"        # User role in team cache TTL (seconds)
+    AUTH_CACHE_TEAMS_ENABLED: "true" # Enable user teams list caching (reduces get_user_teams queries)
+    AUTH_CACHE_TEAMS_TTL: "60"       # User teams list cache TTL (seconds)
+    AUTH_CACHE_BATCH_QUERIES: "true" # Batch auth DB queries into single call
+
+    # ─ Rate Limiter Redis (Optional) ─
+    # Dedicated Redis instance for rate limiting to prevent contention with main Redis
+    # When unset, rate limiting uses REDIS_URL (backward compatible)
+    # Must start with redis:// or rediss:// (validated at startup)
+    # Example: RATELIMITER_REDIS_URL: "redis://rate-limiter-redis:6379/0"
+    RATELIMITER_REDIS_URL: ""
+    RATELIMITER_REDIS_MAX_CONNECTIONS: "50"
+    RATELIMITER_REDIS_SOCKET_TIMEOUT: "2.0"
+    RATELIMITER_REDIS_SOCKET_CONNECT_TIMEOUT: "2.0"
+    RATELIMITER_REDIS_SSL: "false"
+    RATELIMITER_REDIS_SSL_CA_CERTS: /certs/ca.crt
+    RATELIMITER_REDIS_SSL_CERTFILE: /certs/client.crt
+    RATELIMITER_REDIS_SSL_KEYFILE: /certs/client.key
+    RATELIMITER_REDIS_SSL_CHECK_HOSTNAME: "true"
+
+
+    # ─ Registry Cache (reduces DB queries for list endpoints) ─
+    REGISTRY_CACHE_ENABLED: "true"     # Enable registry list caching
+    REGISTRY_CACHE_TOOLS_TTL: "20"     # Tools list cache TTL (seconds)
+    REGISTRY_CACHE_PROMPTS_TTL: "15"   # Prompts list cache TTL (seconds)
+    REGISTRY_CACHE_RESOURCES_TTL: "15" # Resources list cache TTL (seconds)
+    REGISTRY_CACHE_AGENTS_TTL: "20"    # A2A agents list cache TTL (seconds)
+    REGISTRY_CACHE_SERVERS_TTL: "20"   # Servers list cache TTL (seconds)
+    REGISTRY_CACHE_GATEWAYS_TTL: "20"  # Gateways list cache TTL (seconds)
+    REGISTRY_CACHE_CATALOG_TTL: "300" # Catalog servers cache TTL (seconds, longer since external)
+
+    # ─ Tool Lookup Cache (reduces DB queries in invoke_tool) ─
+    TOOL_LOOKUP_CACHE_ENABLED: "true"           # Enable tool lookup caching
+    TOOL_LOOKUP_CACHE_TTL_SECONDS: "60"         # Cache TTL (seconds)
+    TOOL_LOOKUP_CACHE_NEGATIVE_TTL_SECONDS: "10" # Negative cache TTL (seconds)
+    TOOL_LOOKUP_CACHE_L1_MAXSIZE: "10000"       # In-memory L1 cache size
+    TOOL_LOOKUP_CACHE_L2_ENABLED: "true"        # Enable Redis L2 cache when CACHE_TYPE=redis
+
+    # ─ Admin Stats Cache (reduces aggregate queries for dashboard) ─
+    ADMIN_STATS_CACHE_ENABLED: "true"  # Enable admin stats caching
+    ADMIN_STATS_CACHE_SYSTEM_TTL: "60" # System stats cache TTL (seconds)
+    ADMIN_STATS_CACHE_OBSERVABILITY_TTL: "30" # Observability stats cache TTL (seconds)
+    ADMIN_STATS_CACHE_TAGS_TTL: "120"  # Tags listing cache TTL (seconds)
+    ADMIN_STATS_CACHE_PLUGINS_TTL: "120"  # Plugin stats cache TTL (seconds)
+    ADMIN_STATS_CACHE_PERFORMANCE_TTL: "60"  # Performance aggregates cache TTL (seconds)
+
+    # Team member count cache (reduces N+1 queries in admin UI)
+    TEAM_MEMBER_COUNT_CACHE_ENABLED: "true"  # Enable team member count caching
+    TEAM_MEMBER_COUNT_CACHE_TTL: "300"       # Cache TTL in seconds (30-3600)
+
+    # Metrics aggregation cache (reduces full table scans, see #1906)
+    METRICS_CACHE_ENABLED: "true"            # Enable metrics query caching
+    METRICS_CACHE_TTL_SECONDS: "60"          # Cache TTL in seconds (1-300)
+
+    # ─ Protocol & feature toggles ─
+    PROTOCOL_VERSION: 2025-06-18
+    MCPGATEWAY_UI_ENABLED: "true"    # toggle Admin UI
+    MCPGATEWAY_UI_AIRGAPPED: "false"  # serve vendored CSS/JS files locally (air-gapped mode)
+    MCPGATEWAY_ADMIN_API_ENABLED: "true" # toggle Admin API endpoints
+    ALLOW_PUBLIC_VISIBILITY: "true"   # set false to block public visibility on all entities
+    MCPGATEWAY_BULK_IMPORT_ENABLED: "true" # toggle bulk import endpoint
+    MCPGATEWAY_BULK_IMPORT_MAX_TOOLS: "200" # maximum tools per bulk import
+    MCPGATEWAY_BULK_IMPORT_RATE_LIMIT: "10" # requests per minute for bulk import
+
+    # ─ A2A (Agent-to-Agent) Features ─
+    MCPGATEWAY_A2A_ENABLED: "true"      # enable A2A agent features
+    MCPGATEWAY_A2A_MAX_AGENTS: "100"    # maximum number of A2A agents allowed
+    MCPGATEWAY_A2A_DEFAULT_TIMEOUT: "30" # default timeout for A2A HTTP requests
+    MCPGATEWAY_A2A_MAX_RETRIES: "3"     # maximum retry attempts for A2A calls
+    MCPGATEWAY_A2A_METRICS_ENABLED: "true" # enable A2A agent metrics collection
+
+    # ─ Direct Proxy (disabled) ─
+    MCPGATEWAY_DIRECT_PROXY_ENABLED: "false"  # enable direct_proxy gateway mode
+    # MCPGATEWAY_DIRECT_PROXY_TIMEOUT: "30"
+
+    # ─ MCP Server Catalog Configuration ─
+    MCPGATEWAY_CATALOG_ENABLED: "true"  # enable MCP server catalog feature
+    MCPGATEWAY_CATALOG_FILE: "mcp-catalog.yml" # path to catalog configuration file
+    MCPGATEWAY_CATALOG_AUTO_HEALTH_CHECK: "true" # automatically health check catalog servers
+    MCPGATEWAY_CATALOG_CACHE_TTL: "3600" # catalog cache TTL in seconds
+    MCPGATEWAY_CATALOG_PAGE_SIZE: "100" # number of catalog servers per page
+
+    # ─ UI Configuration ─
+    MCPGATEWAY_UI_TOOL_TEST_TIMEOUT: "60000" # tool test timeout in milliseconds for the admin UI
+    MCPGATEWAY_UI_EMBEDDED: "false"          # embedded UI mode (hides logout + team selector by default)
+    MCPGATEWAY_UI_HIDE_SECTIONS: '["roots"]'  # hide roots section (feature disabled by default)
+    MCPGATEWAY_UI_HIDE_HEADER_ITEMS: ""      # CSV/JSON list of header items to hide (e.g. logout,team_selector)
+    MCPGATEWAY_UI_HIDE_SECTIONS_ADMIN: ""    # CSV/JSON list of UI sections to hide for admin users (empty = admins see all)
+    MCPGATEWAY_UI_HIDE_HEADER_ITEMS_ADMIN: "" # CSV/JSON list of header items to hide for admin users
+
+    # ─ Feature Flags (disabled by default for production) ─
+    TOOLOPS_ENABLED: "false"            # enable ToolOps feature
+    MCPGATEWAY_STDIO_TRANSPORT_ENABLED: "false" # DANGER: enables stdio process execution; only for trusted environments
+    PLUGINS_CAN_OVERRIDE_RBAC: "false"  # allow plugins to bypass built-in RBAC (audit-only when false)
+
+    # ─ LLM Chat Feature ─
+    LLMCHAT_ENABLED: "false"            # disabled by default; enable only if LLM providers are configured
+
+    # ─ Roots (disabled by default) ─
+    DEFAULT_ROOTS: "[]"                 # no default roots (feature disabled)
+    ALLOWED_ROOTS: "[]"                 # no allowed root paths
+
+    # ─ Security & CORS ─
+    ENVIRONMENT: production          # deployment environment (development/staging/production)
+    APP_DOMAIN: https://gateway.local       # domain for CORS origins (CHANGE to your FQDN)
+    CORS_ENABLED: "true"             # enable CORS processing in gateway
+    CORS_ALLOW_CREDENTIALS: "true"   # allow credentials in CORS requests
+    ALLOWED_ORIGINS: '["https://gateway.local"]' # JSON list of allowed CORS origins (CHANGE to match APP_DOMAIN)
+    SKIP_SSL_VERIFY: "false"         # skip TLS certificate verification on upstream calls
+
+    # ─ Security Headers ─
+    SECURITY_HEADERS_ENABLED: "true" # enable security headers middleware
+    X_FRAME_OPTIONS: DENY            # X-Frame-Options header value
+    X_CONTENT_TYPE_OPTIONS_ENABLED: "true" # enable X-Content-Type-Options
+    X_XSS_PROTECTION_ENABLED: "true" # enable X-XSS-Protection
+    X_DOWNLOAD_OPTIONS_ENABLED: "true" # enable X-Download-Options
+    HSTS_ENABLED: "true"             # enable HSTS header
+    HSTS_MAX_AGE: "31536000"         # HSTS max age in seconds (1 year)
+    HSTS_INCLUDE_SUBDOMAINS: "true"  # include subdomains in HSTS
+    REMOVE_SERVER_HEADERS: "true"    # remove server identification headers
+
+    # ─ Cookie Security ─
+    SECURE_COOKIES: "true"           # force secure cookie flags
+    COOKIE_SAMESITE: lax             # cookie SameSite attribute
+
+    # ─ Query Parameter Authentication (INSECURE) ─
+    # WARNING: API keys in URLs may appear in proxy logs, browser history, server logs.
+    # See CWE-598. Only use when upstream MCP server (e.g., Tavily) requires it.
+    INSECURE_ALLOW_QUERYPARAM_AUTH: "false"  # query param auth disabled (CWE-598)
+    # INSECURE_QUERYPARAM_AUTH_ALLOWED_HOSTS: "[]"  # only relevant when enabled
+
+    # ─ Identity Propagation ─
+    # Forward end-user identity (email, groups, roles) to upstream MCP servers.
+    # Supports HTTP headers (X-Forwarded-User-*) and MCP _meta field propagation.
+    # Can be overridden per-gateway via the identity_propagation JSON field.
+    IDENTITY_PROPAGATION_ENABLED: "false"      # master switch for identity propagation
+    IDENTITY_PROPAGATION_MODE: "both"          # headers, meta, or both
+    IDENTITY_PROPAGATION_HEADERS_PREFIX: "X-Forwarded-User" # prefix for identity HTTP headers
+    # IDENTITY_SENSITIVE_ATTRIBUTES: '["password_hash","internal_id","ssn"]' # attributes to strip
+    # IDENTITY_SIGN_CLAIMS: "false"            # HMAC-sign propagated claims for upstream verification
+    # IDENTITY_CLAIMS_SECRET: ""               # signing secret (uses JWT_SECRET_KEY if unset)
+
+    # ─ SSRF Protection (Server-Side Request Forgery) ─
+    # Prevents gateway from accessing internal resources or cloud metadata services.
+    # Default: strict mode (external endpoints only).
+    # Cloud metadata endpoints (169.254.169.254, etc.) are ALWAYS blocked by default.
+    # Helm testing registration uses private in-cluster Service DNS names by default:
+    #   fast-time: http://<release>-mcp-fast-time-server:80/http
+    #   fast-test: http://<release>-fast-test-server:8880/mcp
+    # With strict defaults, those targets are rejected with HTTP 422 during gateway registration.
+    SSRF_PROTECTION_ENABLED: "true"            # master switch for SSRF protection
+    SSRF_ALLOW_LOCALHOST: "false"              # block localhost/loopback by default
+    SSRF_ALLOW_PRIVATE_NETWORKS: "false"       # block RFC 1918 private IPs by default
+    SSRF_ALLOWED_NETWORKS: "[]"                # optional CIDR allowlist when private networks are blocked
+    SSRF_DNS_FAIL_CLOSED: "true"               # reject on DNS failure by default
+    # SSRF_BLOCKED_NETWORKS: '["169.254.169.254/32","169.254.169.123/32","fd00::1/128","169.254.0.0/16","fe80::/10"]'
+    # SSRF_BLOCKED_HOSTS: '["metadata.google.internal","metadata.internal"]'
+    # For controlled internal access:
+    # SSRF_ALLOW_LOCALHOST: "false"
+    # SSRF_ALLOW_PRIVATE_NETWORKS: "false"
+    # SSRF_DNS_FAIL_CLOSED: "true"
+    # SSRF_ALLOWED_NETWORKS: '["10.20.0.0/16"]'
+    # For local benchmark/testing profiles (broadest allowance):
+    # SSRF_ALLOW_PRIVATE_NETWORKS: "true"
+    # For safer Kubernetes setup, keep private networks blocked and allow only Service CIDRs:
+    # SSRF_ALLOW_PRIVATE_NETWORKS: "false"
+    # SSRF_ALLOWED_NETWORKS: '["10.96.0.0/12"]' # example only, adjust to your cluster CIDR
+
+    # ─ Content Security - Size Limits ─
+    # Maximum content sizes (bytes) to prevent DoS via oversized uploads.
+    # Exceeding these returns HTTP 413 Payload Too Large.
+    CONTENT_MAX_RESOURCE_SIZE: "102400"        # 100KB default (min 1KB, max 10MB)
+    CONTENT_MAX_PROMPT_SIZE: "10240"           # 10KB default (min 512B, max 1MB)
+
+    # ─ Logging ─
+    LOG_LEVEL: INFO                  # DEBUG, INFO, WARNING, ERROR, CRITICAL
+    LOG_FORMAT: json                 # json or text format
+    LOG_TO_FILE: "false"             # file logging disabled (stdout/stderr in containers)
+    LOG_REQUESTS: "false"            # request payload logging (enable for debugging)
+    LOG_BUFFER_SIZE_MB: "1.0"        # size of in-memory log buffer (MB)
+    # Uncomment when enabling LOG_TO_FILE:
+    # LOG_FILE: ""
+    # LOG_FOLDER: ""
+    # LOG_FILEMODE: "a+"
+    # LOG_ROTATION_ENABLED: "false"
+    # LOG_MAX_SIZE_MB: "1"
+    # LOG_BACKUP_COUNT: "5"
+    # Uncomment when enabling LOG_REQUESTS:
+    # LOG_DETAILED_MAX_BODY_SIZE: "16384"
+    # LOG_DETAILED_SKIP_ENDPOINTS: ""
+    # LOG_DETAILED_SAMPLE_RATE: "1.0"
+    # LOG_RESOLVE_USER_IDENTITY: "false"
+
+    # ─ Audit Trail ─
+    # Logs all CRUD operations on resources for compliance (SOC2, HIPAA, etc.)
+    # WARNING: Causes a DB write on EVERY API request - disable for load testing!
+    AUDIT_TRAIL_ENABLED: "false"     # enable audit trail logging (default: false for performance)
+    # Permission audit logging (RBAC checks)
+    # WARNING: Writes a DB row per permission check - disable for load testing!
+    PERMISSION_AUDIT_ENABLED: "false"
+
+    # ─ Execution Metrics Recording ─
+    # Controls tool/resource/prompt/server/A2A execution metrics (one DB row per operation).
+    # Disable if using external observability (ELK, Datadog, Splunk) to reduce DB I/O.
+    DB_METRICS_RECORDING_ENABLED: "true"
+
+    # ─ Metrics Buffer ─
+    # Batches metric writes to reduce DB pressure under high load
+    METRICS_BUFFER_ENABLED: "true"   # enable buffered metrics writes
+    METRICS_BUFFER_FLUSH_INTERVAL: "60" # seconds between flushes (5-300)
+    METRICS_BUFFER_MAX_SIZE: "1000"  # max entries before forced flush (100-10000)
+
+    # ─ Metrics Cleanup ─
+    # Automatically deletes old metrics to prevent unbounded table growth
+    METRICS_CLEANUP_ENABLED: "true"  # enable automatic cleanup
+    METRICS_RETENTION_DAYS: "7"      # days to retain raw metrics when rollup disabled (1-365)
+    METRICS_CLEANUP_INTERVAL_HOURS: "1" # hours between cleanup runs (1-168)
+    METRICS_CLEANUP_BATCH_SIZE: "10000" # batch size for deletion (100-100000)
+
+    # ─ Metrics Rollup ─
+    # Aggregates raw metrics into hourly summaries for efficient historical queries
+    METRICS_ROLLUP_ENABLED: "true"   # enable hourly rollup
+    METRICS_ROLLUP_INTERVAL_HOURS: "1" # hours between rollup runs (1-24)
+    METRICS_ROLLUP_RETENTION_DAYS: "365" # days to retain rollup data (30-3650)
+    METRICS_ROLLUP_LATE_DATA_HOURS: "1" # hours to re-process for late-arriving data (1-48)
+    METRICS_DELETE_RAW_AFTER_ROLLUP: "true" # delete raw metrics after hourly rollup exists
+    METRICS_DELETE_RAW_AFTER_ROLLUP_HOURS: "1" # hours to retain raw when rollup exists (1-8760)
+    USE_POSTGRESDB_PERCENTILES: "true" # use PostgreSQL-native percentile_cont for p50/p95/p99
+    YIELD_BATCH_SIZE: "1000" # rows per batch when streaming rollup queries (100-10000)
+
+    # ─ Transports ─
+    TRANSPORT_TYPE: all              # valid: http, sse, streamablehttp, all (WS/stdio gated by their own flags)
+    MCPGATEWAY_WS_RELAY_ENABLED: "false" # /ws JSON-RPC relay (disabled)
+    MCPGATEWAY_REVERSE_PROXY_ENABLED: "false" # /reverse-proxy/* endpoints (disabled)
+    SSE_SEND_TIMEOUT: "30.0"         # ASGI send timeout (seconds), 0=disabled
+    SSE_KEEPALIVE_ENABLED: "true"    # enable SSE keepalive events
+    SSE_KEEPALIVE_INTERVAL: "30"     # seconds between keepalive events
+    SSE_RAPID_YIELD_WINDOW_MS: "1000" # time window for rapid yield detection
+    SSE_RAPID_YIELD_MAX: "50"        # max yields per window before disconnect (0=disabled)
+    # WEBSOCKET_PING_INTERVAL: "30"  # only relevant when WS relay enabled
+    # SSE_RETRY_TIMEOUT: "5000"      # client-side retry hint (milliseconds)
+
+    # ─ Streaming sessions ─
+    USE_STATEFUL_SESSIONS: "false"   # true = use event store; false = stateless
+    JSON_RESPONSE_ENABLED: "true"    # default to JSON; false for SSE stream
+
+    # ─ Multi-Worker Session Affinity (disabled) ─
+    # Requires: CACHE_TYPE=redis, USE_STATEFUL_SESSIONS=true
+    MCPGATEWAY_SESSION_AFFINITY_ENABLED: "false"
+    # Uncomment when enabling:
+    # MCPGATEWAY_SESSION_AFFINITY_TTL: "300"
+    # MCPGATEWAY_SESSION_AFFINITY_MAX_SESSIONS: "1"
+    # MCPGATEWAY_POOL_RPC_FORWARD_TIMEOUT: "30"
+
+    # ─ Gateway/Server Connection Timeout ─
+    FEDERATION_TIMEOUT: "120"        # HTTP timeout (seconds) for gateway and MCP server requests
+
+    # ─ Resource cache ─
+    RESOURCE_CACHE_SIZE: "1000"      # max resources kept in memory cache
+    RESOURCE_CACHE_TTL: "3600"       # TTL (s) for resources in cache
+    MAX_RESOURCE_SIZE: "10485760"    # max allowed resource size in bytes (10 MB)
+
+    # ─ Tool limits ─
+    TOOL_TIMEOUT: "60"               # seconds per tool execution
+    MAX_TOOL_RETRIES: "3"            # retries for failed tool runs
+    TOOL_RATE_LIMIT: "100"           # invocations per minute cap
+    TOOL_CONCURRENT_LIMIT: "10"      # concurrent tool executions
+    GATEWAY_TOOL_NAME_SEPARATOR: "-" # separator for gateway tool routing
+
+    # ─ Prompt cache ─
+    PROMPT_CACHE_SIZE: "100"         # number of prompt templates to cache
+    MAX_PROMPT_SIZE: "102400"        # max template size in bytes
+    PROMPT_RENDER_TIMEOUT: "10"      # seconds to render a template
+
+    # ─ Health checks ─
+    HEALTH_CHECK_INTERVAL: "60"      # seconds between peer health checks
+    HEALTH_CHECK_TIMEOUT: "5"        # request timeout per health check
+    GATEWAY_HEALTH_CHECK_TIMEOUT: "5.0" # per-check timeout to bound total time of one gateway health check
+    UNHEALTHY_THRESHOLD: "3"         # failed checks before peer marked unhealthy
+    GATEWAY_VALIDATION_TIMEOUT: "5"  # gateway URL validation timeout (seconds)
+    MAX_CONCURRENT_HEALTH_CHECKS: "10" # maximum concurrent health checks per worker
+    AUTO_REFRESH_SERVERS: "false"      # automatic tools/prompts/resources refresh from the mcp servers during gateway health checks
+    FILELOCK_NAME: gateway_healthcheck_init.lock # lock file used at start-up
+
+    # ─ MCP Session Pool (disabled) ─
+    # Reduces per-request overhead from ~20ms to ~1-2ms. Enable after testing.
+    MCP_SESSION_POOL_ENABLED: "false"
+    # Uncomment when enabling (see config.py for full settings):
+    # MCP_SESSION_POOL_MAX_PER_KEY: "10"
+    # MCP_SESSION_POOL_TTL: "300.0"
+    # MCP_SESSION_POOL_TRANSPORT_TIMEOUT: "30.0"
+    # MCP_SESSION_POOL_CIRCUIT_BREAKER_THRESHOLD: "5"
+
+    # ─ CPU Spin Loop Mitigation (Issue #2360, anyio#695) ─
+    # See docs/docs/operations/cpu-spin-loop-mitigation.md
+    # Layer 1 (SSE_SEND_TIMEOUT, SSE_RAPID_YIELD_*) is in Transports above.
+    MCP_SESSION_POOL_CLEANUP_TIMEOUT: "5.0"   # Layer 2: session cleanup timeout
+    SSE_TASK_GROUP_CLEANUP_TIMEOUT: "5.0"     # Layer 2: SSE task group timeout
+    ANYIO_CANCEL_DELIVERY_PATCH_ENABLED: "false" # Layer 3 (EXPERIMENTAL): anyio monkey-patch
+    # ANYIO_CANCEL_DELIVERY_MAX_ITERATIONS: "100"  # only relevant when patch enabled
+
+    # ─ Development toggles ─
+    DEV_MODE: "false"                # enable dev-mode features
+    RELOAD: "false"                  # auto-reload code on changes
+    TEMPLATES_AUTO_RELOAD: "false"   # auto-reload Jinja2 templates (disable for production perf)
+    DEBUG: "false"                   # verbose debug traces
+
+    # ─ HTTP Retry Configuration ─
+    RETRY_MAX_ATTEMPTS: "3"          # maximum retry attempts for HTTP requests
+    RETRY_BASE_DELAY: "1.0"          # base delay between retries (seconds)
+    RETRY_MAX_DELAY: "60"            # maximum delay between retries (seconds)
+    RETRY_JITTER_MAX: "0.5"          # maximum jitter fraction of base delay
+
+    # ─ HTTPX Client Connection Pool ─
+    # Shared HTTP client for all outbound requests (federation, health checks,
+    # A2A, SSO, catalog). Provides ~20x better performance than per-request clients.
+    HTTPX_MAX_CONNECTIONS: "200"           # total connections in pool (10-1000)
+    HTTPX_MAX_KEEPALIVE_CONNECTIONS: "100" # keepalive connections (1-500)
+    HTTPX_KEEPALIVE_EXPIRY: "30.0"         # idle connection expiry in seconds (5.0-300.0)
+    HTTPX_CONNECT_TIMEOUT: "5.0"           # TCP connection timeout in seconds (1.0-60.0)
+    HTTPX_READ_TIMEOUT: "120.0"            # response read timeout in seconds (high for slow tools)
+    HTTPX_WRITE_TIMEOUT: "30.0"            # request write timeout in seconds (1.0-600.0)
+    HTTPX_POOL_TIMEOUT: "10.0"             # wait for available connection in seconds (1.0-120.0)
+    HTTPX_HTTP2_ENABLED: "false"           # HTTP/2 support (requires server support)
+    HTTPX_ADMIN_READ_TIMEOUT: "30.0"       # Admin UI/health check timeout in seconds
+
+    # ─ Well-Known URI Configuration ─
+    WELL_KNOWN_ENABLED: "true"       # enable well-known URI endpoints
+    WELL_KNOWN_ROBOTS_TXT: |
+      User-agent: *
+      Disallow: /
+
+      # ContextForge is a private API gateway
+      # Public crawling is disabled by default
+    WELL_KNOWN_SECURITY_TXT_ENABLED: "false" # enable security.txt endpoint (RFC 9116)
+    # WELL_KNOWN_SECURITY_TXT: ""    # populate content when enabling
+    # WELL_KNOWN_CUSTOM_FILES: "{}"  # additional custom well-known files (JSON)
+    WELL_KNOWN_CACHE_MAX_AGE: "3600" # cache control for well-known files (seconds)
+
+    # ─ Plugin Configuration (disabled) ─
+    PLUGINS_ENABLED: "true"          # enable the plugin framework
+    # Uncomment when enabling plugins:
+    PLUGINS_PLUGIN_TIMEOUT: "30"
+    PLUGINS_LOG_LEVEL: "INFO"
+    # PLUGINS_SKIP_SSL_VERIFY: "false"
+    # See config.py for full PLUGINS_CLIENT_MTLS_*, PLUGINS_SERVER_SSL_*, PLUGINS_HTTPX_* settings
+
+    # ─ OpenTelemetry Observability ─
+    # Disabled by default. To enable, set OTEL_ENABLE_OBSERVABILITY=true,
+    # configure an endpoint in the secret section, and set OTEL_TRACES_EXPORTER.
+    OTEL_ENABLE_OBSERVABILITY: "false" # master switch for observability
+    OTEL_TRACES_EXPORTER: "none"      # no exporter configured; set to otlp/jaeger/zipkin when enabling
+    OTEL_SERVICE_NAME: "mcp-gateway"  # service name for traces
+    # Uncomment when enabling OTEL:
+    # OTEL_EXPORTER_OTLP_PROTOCOL: "grpc"
+    # OTEL_EXPORTER_OTLP_INSECURE: "false"
+    # OTEL_EMIT_LANGFUSE_ATTRIBUTES: ""     # empty = auto-enable only for Langfuse OTLP endpoints
+    # OTEL_CAPTURE_IDENTITY_ATTRIBUTES: ""  # empty = follow Langfuse attribute policy
+    # OTEL_COPY_RESOURCE_ATTRS_TO_SPANS: "false"
+    # OTEL_REDACT_FIELDS: "password,secret,token,api_key,authorization,credential,auth_value,access_token,refresh_token,auth_token,client_secret,cookie,set-cookie,private_key"
+    # OTEL_MAX_TRACE_PAYLOAD_SIZE: "32768"
+    # OTEL_CAPTURE_INPUT_SPANS: ""          # comma-separated allowlist, e.g. tool.invoke,prompt.render
+    # OTEL_CAPTURE_OUTPUT_SPANS: ""         # comma-separated allowlist, leave empty to disable output capture
+    # OTEL_BSP_MAX_QUEUE_SIZE: "2048"
+    # OTEL_BSP_MAX_EXPORT_BATCH_SIZE: "512"
+    # OTEL_BSP_SCHEDULE_DELAY: "5000"
+
+    # ─ Internal Observability & Tracing ─
+    OBSERVABILITY_ENABLED: "false"               # enable internal observability tracing and metrics
+    # Uncomment when enabling observability:
+    # OBSERVABILITY_TRACE_HTTP_REQUESTS: "true"
+    # OBSERVABILITY_TRACE_RETENTION_DAYS: "7"
+    # OBSERVABILITY_MAX_TRACES: "100000"
+    # OBSERVABILITY_SAMPLE_RATE: "1.0"
+    # OBSERVABILITY_INCLUDE_PATHS: '["^/rpc/?$", "^/sse$", "^/message$", "^/mcp(?:/|$)", "^/servers/[^/]+/mcp/?$", "^/servers/[^/]+/sse$", "^/servers/[^/]+/message$", "^/a2a(?:/|$)"]'
+    # OBSERVABILITY_EXCLUDE_PATHS: '["/health", "/healthz", "/ready", "/metrics", "/static/.*"]'
+    # OBSERVABILITY_METRICS_ENABLED: "true"
+    # OBSERVABILITY_EVENTS_ENABLED: "true"
+
+    # ─ Prometheus Metrics ─
+    ENABLE_METRICS: "true"                       # enable Prometheus metrics instrumentation
+    METRICS_NAMESPACE: "default"                 # Prometheus metrics namespace (prefix for all metric names)
+    # METRICS_EXCLUDED_HANDLERS: ""
+    # METRICS_SUBSYSTEM: ""
+    # METRICS_CUSTOM_LABELS: ""
+
+    # ─ Header Passthrough (disabled by default — security implications) ─
+    ENABLE_HEADER_PASSTHROUGH: "false" # enable HTTP header passthrough
+    ENABLE_OVERWRITE_BASE_HEADERS: "false" # enable overwriting of base headers
+    # Uncomment when enabling header passthrough:
+    # DEFAULT_PASSTHROUGH_HEADERS: '["X-Tenant-Id", "X-Trace-Id"]'
+    # PASSTHROUGH_HEADERS_SOURCE: "db"
+    GLOBAL_CONFIG_CACHE_TTL: "60" # in-memory cache TTL for GlobalConfig (seconds, 5-3600)
+
+    # ─ Advanced Validation Configuration ─
+    # Secure defaults are set in config.py. Override via extraEnv only if needed.
+    # See mcpgateway/config.py for VALIDATION_* pattern and limit defaults.
+    VALIDATION_MAX_REQUESTS_PER_MINUTE: "60" # rate limiting: max requests per minute
+
+    # ─ Pagination Configuration ─
+    PAGINATION_DEFAULT_PAGE_SIZE: "50" # default number of items per page for paginated endpoints
+    PAGINATION_MAX_PAGE_SIZE: "500" # maximum allowed items per page (prevents abuse)
+    PAGINATION_MIN_PAGE_SIZE: "1" # minimum items per page
+    PAGINATION_CURSOR_THRESHOLD: "10000" # threshold for switching from offset to cursor-based pagination
+    PAGINATION_CURSOR_ENABLED: "true" # enable cursor-based pagination globally
+    PAGINATION_DEFAULT_SORT_FIELD: "created_at" # default sort field for paginated queries
+    PAGINATION_DEFAULT_SORT_ORDER: "desc" # default sort order for paginated queries (asc/desc)
+    PAGINATION_MAX_OFFSET: "100000" # maximum offset allowed for offset-based pagination
+    PAGINATION_COUNT_CACHE_TTL: "300" # cache pagination counts for performance (seconds)
+    PAGINATION_INCLUDE_LINKS: "true" # enable pagination links in API responses
+    PAGINATION_BASE_URL: "" # base URL for pagination links (defaults to request URL if empty)
+
+    # ─ Additional Settings (defaults from config.py) ─
+    # Validation & sanitization
+    EXPERIMENTAL_VALIDATE_IO: "false" # enable experimental input/output validation
+    VALIDATION_MIDDLEWARE_ENABLED: "false" # deprecated; prefer endpoint-level and protocol-specific validation
+    VALIDATION_STRICT: "true" # reject requests with validation failures
+    JSON_SCHEMA_VALIDATION_STRICT: "true" # reject tool registrations with invalid JSON schemas
+    SANITIZE_OUTPUT: "true" # strip control characters from responses
+    MAX_PATH_DEPTH: "10" # maximum allowed path depth
+    MAX_PARAM_LENGTH: "10000" # maximum parameter length (characters)
+    TOOL_DESCRIPTION_FORBIDDEN_PATTERNS_ENABLED: "true" # enable forbidden pattern checks on tool descriptions
+    TOOL_DESCRIPTION_FORBIDDEN_PATTERNS: '["&&", ";", "||", "$(", "> ", "< "]' # substrings blocked in tool descriptions (JSON array)
+    DANGEROUS_PATTERNS: '["[;&|`$(){}\\[\\]<>]", "\\.\\.[\\\\/]", "[\\x00-\\x1f\\x7f-\\x9f]"]' # dangerous input patterns (JSON array)
+    ALLOWED_MIME_TYPES: '["text/plain","text/markdown","text/html","application/json","application/xml","image/png","image/jpeg","image/gif"]' # allowed MIME types (JSON array)
+
+    # Compression
+    COMPRESSION_ENABLED: "true" # enable response compression
+    COMPRESSION_MINIMUM_SIZE: "500" # minimum response size to compress (bytes)
+    COMPRESSION_GZIP_LEVEL: "6" # gzip compression level (1-9)
+    COMPRESSION_BROTLI_QUALITY: "4" # brotli quality (0-11)
+    COMPRESSION_ZSTD_LEVEL: "3" # zstd level (1-22)
+
+    # Correlation IDs
+    CORRELATION_ID_ENABLED: "true" # enable correlation IDs
+    CORRELATION_ID_HEADER: X-Correlation-ID # header name to read
+    CORRELATION_ID_PRESERVE: "true" # preserve incoming header
+    CORRELATION_ID_RESPONSE_HEADER: "true" # emit correlation ID in response
+
+    # Startup / refresh behavior
+    SLUG_REFRESH_BATCH_SIZE: "1000" # batch size for slug refresh at startup
+    GATEWAY_AUTO_REFRESH_INTERVAL: "300" # seconds between gateway/tool refresh checks
+    GATEWAY_MAX_REDIRECTS: "5" # max redirects for upstream calls
+
+    # Session polling backoff (CACHE_TYPE=database)
+    POLL_INTERVAL: "1.0" # base poll interval (seconds)
+    MAX_INTERVAL: "5.0" # max backoff interval (seconds)
+    BACKOFF_FACTOR: "1.5" # backoff multiplier
+
+    # A2A stats cache
+    A2A_STATS_CACHE_TTL: "30" # A2A stats cache TTL in seconds
+
+    # Database advanced settings
+    DB_POOL_CLASS: "auto" # pool class: auto, null, queue
+    DB_POOL_PRE_PING: "auto" # pre-ping setting: auto, true, false
+    DB_PREPARE_THRESHOLD: "5" # psycopg server-side prepare threshold
+
+    # Redis parser
+    REDIS_PARSER: "auto" # redis parser: auto, hiredis, python
+
+    # DB query logging omitted (dev/debug tooling; enable via extraEnv if needed)
+
+    # LLM Chat session storage (only relevant when LLMCHAT_ENABLED=true)
+    # LLMCHAT_SESSION_TTL: "300"
+    # LLMCHAT_SESSION_LOCK_TTL: "30"
+    # LLMCHAT_SESSION_LOCK_RETRIES: "10"
+    # LLMCHAT_SESSION_LOCK_WAIT: "0.2"
+    # LLMCHAT_CHAT_HISTORY_TTL: "3600"
+    # LLMCHAT_CHAT_HISTORY_MAX_MESSAGES: "50"
+
+    # Elicitation support
+    MCPGATEWAY_ELICITATION_ENABLED: "true" # enable elicitation
+    MCPGATEWAY_ELICITATION_TIMEOUT: "60" # elicitation timeout (seconds)
+    MCPGATEWAY_ELICITATION_MAX_CONCURRENT: "100" # max concurrent elicitations
+
+    # Tool cancellation
+    MCPGATEWAY_TOOL_CANCELLATION_ENABLED: "true" # enable tool cancellation
+
+    # gRPC support (experimental — disabled by default)
+    MCPGATEWAY_GRPC_ENABLED: "false" # enable gRPC
+    # Uncomment when enabling gRPC:
+    # MCPGATEWAY_GRPC_TIMEOUT: "30"
+    # MCPGATEWAY_GRPC_MAX_MESSAGE_SIZE: "4194304"
+    # MCPGATEWAY_GRPC_REFLECTION_ENABLED: "false"  # keep false in production (exposes service definitions)
+    # MCPGATEWAY_GRPC_TLS_ENABLED: "false"
+
+    # Performance tracking (internal thresholds — config.py defaults are fine)
+    PERFORMANCE_TRACKING_ENABLED: "false" # enable performance tracking
+
+    # Performance monitoring (net/host — disabled by default)
+    MCPGATEWAY_PERFORMANCE_TRACKING: "false" # enable gateway performance monitoring UI tab
+    # Uncomment when enabling:
+    # MCPGATEWAY_PERFORMANCE_COLLECTION_INTERVAL: "10"
+    # MCPGATEWAY_PERFORMANCE_MAX_SNAPSHOTS: "10000"
+    # MCPGATEWAY_PERFORMANCE_RETENTION_DAYS: "90"
+    # MCPGATEWAY_PERFORMANCE_RETENTION_HOURS: "24"
+    # MCPGATEWAY_PERFORMANCE_DISTRIBUTED: "false"
+    # MCPGATEWAY_PERFORMANCE_NET_CONNECTIONS_ENABLED: "true"
+    # MCPGATEWAY_PERFORMANCE_NET_CONNECTIONS_CACHE_TTL: "15"
+
+    # Metrics aggregation
+    METRICS_AGGREGATION_ENABLED: "true" # enable log aggregation
+    METRICS_AGGREGATION_AUTO_START: "false" # auto-start aggregation loop
+    METRICS_AGGREGATION_BACKFILL_HOURS: "6" # startup backfill window
+    METRICS_AGGREGATION_WINDOW_MINUTES: "5" # aggregation window (minutes)
+
+    # Security logging (disabled by default — enable for compliance)
+    SECURITY_LOGGING_ENABLED: "false" # enable security event logging
+    # Uncomment when enabling:
+    # SECURITY_LOGGING_LEVEL: "failures_only"  # all, failures_only, high_severity
+    # SECURITY_FAILED_AUTH_THRESHOLD: "5"
+    # SECURITY_THREAT_SCORE_ALERT: "0.7"
+    # SECURITY_RATE_LIMIT_WINDOW_MINUTES: "5"
+
+    # Structured logging
+    STRUCTURED_LOGGING_ENABLED: "true" # enable structured logging
+    STRUCTURED_LOGGING_DATABASE_ENABLED: "false" # persist structured logs to DB (impacts performance)
+
+    # External log sinks (all disabled by default)
+    STRUCTURED_LOGGING_EXTERNAL_ENABLED: "false"
+    SYSLOG_ENABLED: "false"
+    ELASTICSEARCH_ENABLED: "false"
+    WEBHOOK_LOGGING_ENABLED: "false"
+    # Uncomment and configure when enabling an external sink:
+    # SYSLOG_HOST: ""
+    # SYSLOG_PORT: "514"
+    # ELASTICSEARCH_URL: ""
+    # ELASTICSEARCH_INDEX_PREFIX: "mcpgateway-logs"
+    # WEBHOOK_LOGGING_URLS: "[]"
+
+    # Log search
+    LOG_RETENTION_DAYS: "30" # retention in days
+    LOG_SEARCH_MAX_RESULTS: "1000" # max results per search
+
+  ####################################################################
+  # SENSITIVE SETTINGS
+  # Rendered into an Opaque Secret.  NO $(VAR) expansion here.
+  # DATABASE_URL & REDIS_URL are declared inside the Deployment
+  # so their placeholders resolve at runtime. Override them if needed.
+  ####################################################################
+  secret:
+    # ─ Admin & auth ─
+    BASIC_AUTH_USER: admin                 # username for basic-auth (when enabled)
+    BASIC_AUTH_PASSWORD: changeme          # password for basic-auth (CHANGE IN PROD!)
+    API_ALLOW_BASIC_AUTH: "false"          # SECURITY: disabled by default - use JWT instead
+    AUTH_REQUIRED: "true"                  # enforce authentication globally (true/false)
+    MCP_REQUIRE_AUTH: "true"               # require auth for /mcp endpoints (recommended secure default)
+    #checkov:skip=CKV_SECRET_6:JWT example jwt
+    JWT_SECRET_KEY: my-test-key-but-now-longer-than-32-bytes            # secret key used to sign JWT tokens
+    JWT_ALGORITHM: HS256                   # signing algorithm for JWT tokens
+    JWT_AUDIENCE: mcpgateway-api           # JWT audience claim for token validation
+    JWT_ISSUER: mcpgateway                 # JWT issuer claim for token validation
+    TOKEN_EXPIRY: "1440"                   # JWT validity (minutes); max allowed: 1440 = 24 hours
+    REQUIRE_TOKEN_EXPIRATION: "true"       # require all JWT tokens to have expiration claims
+    REQUIRE_JTI: "true"                    # require JTI (JWT ID) claim for revocation support
+    REQUIRE_USER_IN_DB: "false"            # require all users to exist in database (disables platform admin bootstrap)
+    AUTH_ENCRYPTION_SECRET: my-test-salt   # passphrase to derive AES key for secure storage
+    ALLOW_UNAUTHENTICATED_ADMIN: "false"  # DANGER: grants admin to unauthenticated requests when AUTH_REQUIRED=false
+    TRUST_PROXY_AUTH_DANGEROUSLY: "false" # DANGER: trusts proxy identity headers without JWT verification
+    PUBLIC_REGISTRATION_ENABLED: "false"  # disable public self-registration (admin must create accounts)
+
+    # ─ Email-Based Authentication ─
+    EMAIL_AUTH_ENABLED: "true"             # enable email-based authentication system
+    PROTECT_ALL_ADMINS: "true"             # allow active admin accounts to bypass login lockout
+    PLATFORM_ADMIN_EMAIL: admin@example.com # email for bootstrap platform admin user
+    PLATFORM_ADMIN_PASSWORD: changeme     # password for bootstrap platform admin user
+    PLATFORM_ADMIN_FULL_NAME: Platform Administrator # full name for bootstrap platform admin
+    DEFAULT_USER_PASSWORD: changeme       # default password for new users (bootstrap)
+
+    # ─ Password Hashing & Security ─
+    ARGON2ID_TIME_COST: "3"                # Argon2id time cost (iterations)
+    ARGON2ID_MEMORY_COST: "65536"          # Argon2id memory cost in KiB
+    ARGON2ID_PARALLELISM: "1"              # Argon2id parallelism (threads)
+    PASSWORD_MIN_LENGTH: "8"               # minimum password length
+    PASSWORD_REQUIRE_UPPERCASE: "true"     # require uppercase letters in passwords
+    PASSWORD_REQUIRE_LOWERCASE: "true"     # require lowercase letters in passwords
+    PASSWORD_REQUIRE_NUMBERS: "false"      # require numbers in passwords
+    PASSWORD_REQUIRE_SPECIAL: "true"       # require special characters in passwords
+    PASSWORD_CHANGE_ENFORCEMENT_ENABLED: "true" # enable password change enforcement checks
+    ADMIN_REQUIRE_PASSWORD_CHANGE_ON_BOOTSTRAP: "true" # force admin to change password after bootstrap
+    DETECT_DEFAULT_PASSWORD_ON_LOGIN: "true" # detect default passwords on login
+    REQUIRE_PASSWORD_CHANGE_FOR_DEFAULT_PASSWORD: "true" # require change for default password
+    PASSWORD_POLICY_ENABLED: "true"         # enable password policy enforcement
+    PASSWORD_PREVENT_REUSE: "true"          # prevent reuse of recent passwords
+    PASSWORD_MAX_AGE_DAYS: "90"             # maximum password age in days
+    MAX_FAILED_LOGIN_ATTEMPTS: "5"         # maximum failed login attempts before lockout
+    ACCOUNT_LOCKOUT_DURATION_MINUTES: "30" # account lockout duration in minutes
+    FAILED_LOGIN_MIN_RESPONSE_MS: "250"    # minimum response time for failed logins (timing side-channel mitigation)
+    ACCOUNT_LOCKOUT_NOTIFICATION_ENABLED: "true" # send lockout notification emails
+    PASSWORD_RESET_ENABLED: "true"          # master switch for forgot/reset password flow
+    PASSWORD_RESET_TOKEN_EXPIRY_MINUTES: "60" # reset token validity window in minutes
+    PASSWORD_RESET_RATE_LIMIT: "5"          # max reset requests per email within rate window
+    PASSWORD_RESET_RATE_WINDOW_MINUTES: "15" # reset request rate-limit window in minutes
+    PASSWORD_RESET_INVALIDATE_SESSIONS: "true" # invalidate active sessions after reset
+    PASSWORD_RESET_MIN_RESPONSE_MS: "250"   # minimum forgot-password response duration
+    SMTP_ENABLED: "false"                   # SMTP disabled (no email notifications)
+    # Uncomment when enabling SMTP:
+    # SMTP_HOST: ""
+    # SMTP_PORT: "587"
+    # SMTP_USER: ""
+    # SMTP_PASSWORD: ""
+    # SMTP_FROM_EMAIL: ""
+    # SMTP_FROM_NAME: "ContextForge"
+    # SMTP_USE_TLS: "true"
+    # SMTP_USE_SSL: "false"
+    # SMTP_TIMEOUT_SECONDS: "15"
+    MIN_PASSWORD_LENGTH: "12"              # minimum password length for validation
+    MIN_SECRET_LENGTH: "32"                # minimum secret key length for validation
+    REQUIRE_STRONG_SECRETS: "true"         # enforce strong secrets (reject weak JWT/encryption keys)
+
+    # ─ MCP Client Authentication ─
+    MCP_CLIENT_AUTH_ENABLED: "true"        # enable JWT authentication for MCP client operations
+    TRUST_PROXY_AUTH: "false"              # trust proxy authentication headers
+    PROXY_USER_HEADER: X-Authenticated-User # header containing authenticated username from proxy
+
+    # ─ API Token Tracking ─
+    TOKEN_USAGE_LOGGING_ENABLED: "true"    # track API token usage (compliance/SOC2)
+    TOKEN_LAST_USED_UPDATE_INTERVAL_MINUTES: "5" # rate-limit last_used DB writes (minutes)
+
+    # ─ SSRF Blocklists (always enforced regardless of SSRF_ALLOW_* toggles) ─
+    SSRF_BLOCKED_NETWORKS: '["169.254.169.254/32","169.254.169.123/32","fd00::1/128","169.254.0.0/16","fe80::/10"]'
+    SSRF_BLOCKED_HOSTS: '["metadata.google.internal","metadata.internal"]'
+
+    # ─ OAuth Configuration ─
+    OAUTH_REQUEST_TIMEOUT: "30"            # OAuth request timeout in seconds
+    OAUTH_MAX_RETRIES: "3"                 # maximum retries for OAuth token requests
+
+    # ─ OAuth Dynamic Client Registration (DCR) & PKCE ─
+    DCR_ENABLED: "true"                    # enable Dynamic Client Registration (RFC 7591)
+    DCR_AUTO_REGISTER_ON_MISSING_CREDENTIALS: "true" # auto-register when gateway has issuer but no client_id
+    DCR_DEFAULT_SCOPES: '["mcp:read"]'     # default OAuth scopes to request during DCR (JSON array)
+    DCR_ALLOWED_ISSUERS: "[]"              # allowlist of trusted issuer URLs for DCR (empty = allow any)
+    DCR_TOKEN_ENDPOINT_AUTH_METHOD: "client_secret_basic" # token endpoint auth method for DCR
+    DCR_METADATA_CACHE_TTL: "3600"         # AS metadata cache TTL in seconds (RFC 8414 discovery)
+    DCR_CLIENT_NAME_TEMPLATE: "ContextForge ({gateway_name})" # template for client_name in DCR requests
+    DCR_REQUEST_REFRESH_TOKEN_WHEN_UNSUPPORTED: "false" # request refresh_token when AS omits grant_types_supported
+    OAUTH_DISCOVERY_ENABLED: "true"        # enable AS metadata discovery (RFC 8414)
+    OAUTH_PREFERRED_CODE_CHALLENGE_METHOD: "S256" # PKCE code challenge method (S256 or plain)
+
+    # ─ JWT Configuration (Advanced) ─
+    JWT_AUDIENCE_VERIFICATION: "true"      # JWT audience verification (disable for DCR)
+    JWT_ISSUER_VERIFICATION: "true"        # JWT issuer verification (disable if needed)
+    JWT_PRIVATE_KEY_PATH: ""               # path to JWT private key file (RSA/ECDSA algorithms)
+    JWT_PUBLIC_KEY_PATH: ""                # path to JWT public key file (RSA/ECDSA algorithms)
+    EMBED_ENVIRONMENT_IN_TOKENS: "false"   # embed env claim in gateway-issued JWTs
+    VALIDATE_TOKEN_ENVIRONMENT: "false"    # reject tokens with mismatched env claim
+
+    # ─ SSO (Single Sign-On) — all providers disabled ─
+    SSO_ENABLED: "false"                   # master switch for Single Sign-On
+    # Common SSO settings (uncomment when enabling any provider):
+    # SSO_AUTO_CREATE_USERS: "true"
+    # SSO_TRUSTED_DOMAINS: "[]"
+    # SSO_PRESERVE_ADMIN_AUTH: "true"
+    # SSO_REQUIRE_ADMIN_APPROVAL: "false"
+    # SSO_AUTO_ADMIN_DOMAINS: "[]"
+    # SSO_ISSUERS: "[]"
+    # Individual SSO providers — enable one and populate credentials:
+    SSO_GITHUB_ENABLED: "false"
+    SSO_GOOGLE_ENABLED: "false"
+    SSO_IBM_VERIFY_ENABLED: "false"
+    SSO_OKTA_ENABLED: "false"
+    SSO_KEYCLOAK_ENABLED: "false"
+    SSO_ENTRA_ENABLED: "false"
+    SSO_GENERIC_ENABLED: "false"
+    SSO_ADFS_ENABLED: "false"
+    # See .env.example for full SSO_*_CLIENT_ID, SSO_*_CLIENT_SECRET, etc.
+
+    # ─ Default Role Configuration ─
+    DEFAULT_ADMIN_ROLE: platform_admin     # global role assigned to admin users
+    DEFAULT_USER_ROLE: platform_viewer     # global role assigned to non-admin users
+    DEFAULT_TEAM_OWNER_ROLE: team_admin    # team-scoped role assigned to team owners
+    DEFAULT_TEAM_MEMBER_ROLE: viewer       # team-scoped role assigned to team members
+
+    # ─ Personal Teams Configuration ─
+    AUTO_CREATE_PERSONAL_TEAMS: "true"     # enable automatic personal team creation for new users
+    PERSONAL_TEAM_PREFIX: ""               # personal team naming prefix (e.g. "personal" for email-based slugs)
+    MAX_TEAMS_PER_USER: "50"               # maximum number of teams a user can belong to
+    MAX_MEMBERS_PER_TEAM: "100"            # maximum number of members per team
+    INVITATION_EXPIRY_DAYS: "7"            # number of days before team invitations expire
+    REQUIRE_EMAIL_VERIFICATION_FOR_INVITES: "true" # require email verification for team invitations
+    ALLOW_TEAM_CREATION: "true"              # allow users to create organizational teams (admins always can)
+    ALLOW_TEAM_JOIN_REQUESTS: "true"         # allow users to request to join public teams
+    ALLOW_TEAM_INVITATIONS: "true"           # allow team owners to send invitations
+
+    # ─ Ed25519 Certificate Signing (disabled by default) ─
+    ENABLE_ED25519_SIGNING: "false"        # enable Ed25519 signing for certificates
+    # Uncomment and populate when enabling:
+    # ED25519_PRIVATE_KEY: ""
+    # ED25519_PUBLIC_KEY: ""
+    # PREV_ED25519_PRIVATE_KEY: ""
+    # PREV_ED25519_PUBLIC_KEY: ""
+
+    # ─ OpenTelemetry Endpoints (configure when OTEL_ENABLE_OBSERVABILITY=true) ─
+    # OTEL_EXPORTER_OTLP_ENDPOINT: ""       # e.g., http://otel-collector:4317
+    # OTEL_EXPORTER_OTLP_HEADERS: ""        # comma-separated key=value
+    # LANGFUSE_OTEL_ENDPOINT: ""            # e.g., https://cloud.langfuse.com/api/public/otel/v1/traces
+    # LANGFUSE_PUBLIC_KEY: ""               # Langfuse project public key for derived OTLP auth
+    # LANGFUSE_SECRET_KEY: ""               # Langfuse project secret key for derived OTLP auth
+    # LANGFUSE_OTEL_AUTH: ""                # optional base64(pk:sk) override; not needed when keys are set
+    # OTEL_EXPORTER_JAEGER_ENDPOINT: ""
+    # OTEL_EXPORTER_JAEGER_USER: ""
+    # OTEL_EXPORTER_JAEGER_PASSWORD: ""
+    # OTEL_EXPORTER_ZIPKIN_ENDPOINT: ""
+    # OTEL_RESOURCE_ATTRIBUTES: ""
+
+    # ─ Documentation & UI Settings (Sensitive) ─
+    DOCS_ALLOW_BASIC_AUTH: "false"         # allow basic auth for docs endpoints
+
+    # (derived URLs are defined in deployment-mcp.yaml)
+
+    # ─ Optional database / redis overrides ─
+    # DATABASE_URL: "postgresql+psycopg://admin:s3cr3t@db.acme.com:5432/prod" # override the auto-generated URL
+    # REDIS_URL:    "redis://cache.acme.com:6379/0"                   # override the auto-generated URL
+
+    # - Bootstrap additional system roles -
+    MCPGATEWAY_BOOTSTRAP_ROLES_IN_DB_ENABLED: "false" # Enable Bootstrap additional system roles feature
+    MCPGATEWAY_BOOTSTRAP_ROLES_IN_DB_FILE: "additional_roles_in_db.json" # Create and populate this file as given in the .env.example to add additional roles
+
+
+  ####################################################################
+  # envFrom is managed by the chart (gateway secret + configmap).
+  # Use extraEnvFrom to add additional sources.
+  ####################################################################
+
+  ## -- Additional environment variables from secrets or configmaps
+  ## Example:
+  ##   extraEnvFrom:
+  ##     - secretRef:
+  ##         name: my-secret
+  extraEnvFrom: []
+
+  ## -- Additional environment variables to inject directly
+  ## Example:
+  ##   extraEnv:
+  ##     - name: MY_VAR
+  ##       value: my-value
+  ##     - name: SECRET_VAR
+  ##       valueFrom:
+  ##         secretKeyRef:
+  ##           name: my-secret
+  ##           key: secret-key
+  extraEnv: []
+
+########################################################################
+# DATABASE MIGRATION (Alembic)
+# Runs as a Job before mcpgateway deployment
+########################################################################
+migration:
+  enabled: true                             # Set to false to skip migrations
+  hookPhase: "post-install,pre-upgrade"     # Helm hook phase. Use "pre-install,pre-upgrade" when Postgres is externally managed and already running.
+  hostKey: ""                               # Secret key for migration DB host. Empty = use postgres.external.hostKey. Set to "host" to bypass PgBouncer.
+  portKey: ""                               # Secret key for migration DB port. Empty = use postgres.external.portKey. Set to "port" to bypass PgBouncer.
+
+  # Job configuration
+  restartPolicy: Never                      # Job should not restart on failure
+  backoffLimit: 3                           # Retry up to 3 times before giving up
+  activeDeadlineSeconds: 600                # Kill job after 10 minutes
+  ttlSecondsAfterFinished: 300              # Clean up completed job after 5 minutes
+
+  # Use same image as mcpgateway
+  image:
+    repository: ghcr.io/ibm/mcp-context-forge
+    tag: "v1.0.6"                            # Should match mcpContextForge.image.tag
+    pullPolicy: Always                      # Always pull to ensure latest security patches
+
+  # Resource limits for the migration job
+  resources:
+    limits:
+      cpu: 500m
+      memory: 1Gi
+    requests:
+      cpu: 250m
+      memory: 512Mi
+
+  # Migration command configuration
+  command:
+    waitForDb: "python3 /app/mcpgateway/utils/db_isready.py --max-tries 30 --interval 2 --timeout 5"
+    migrate: "python3 -m mcpgateway.bootstrap_db"
+
+########################################################################
+# POSTGRES DATABASE
+########################################################################
+postgres:
+  enabled: true
+
+  image:
+    repository: postgres
+    tag: "17"
+    pullPolicy: Always
+
+  service:
+    type: ClusterIP
+    port: 5432
+
+  # PersistentVolumeClaim for data durability - uses dynamic provisioning
+  persistence:
+    enabled: true
+    storageClassName: ""         # Use empty string for default StorageClass
+                                # Production examples:
+                                #   AWS EKS: "gp3", "gp2", "io1", "io2"
+                                #   GKE: "standard", "ssd", "premium-rw"
+                                #   Azure AKS: "default", "managed-premium", "azurefile"
+                                #   Bare Metal: "local-path", "nfs-client"
+    useReadWriteOncePod: true    # Prefer strict single-pod mount semantics when supported by your CSI/storage class
+                                 # Set false to fall back to accessModes below on clusters/storage classes without RWOP support
+    accessModes: [ReadWriteOnce]
+    size: 5Gi
+    reclaimPolicy: Retain        # Retain prevents data loss when PVC is deleted (manual cleanup required after uninstall)
+    annotations: {}              # Optional annotations for backup tools
+      # backup.velero.io/backup-volumes: "postgres-data"
+      # backup.policy/schedule: "daily"
+
+  # Leave blank to autogenerate <release>-mcp-stack-postgres-secret.
+  existingSecret: ""
+
+  credentials:                  # used only when existingSecret is blank
+    database: postgresdb
+    user: admin
+    password: test123           # CHANGE ME in production!
+
+  # ─── Resource limits & requests ───
+  resources:
+    limits:
+      cpu: "2"            # 2 cores hard cap
+      memory: 2Gi
+    requests:
+      cpu: 500m           # guaranteed half-core
+      memory: 512Mi
+
+  # Graceful shutdown helps prevent WAL/checkpoint corruption on restart.
+  terminationGracePeriodSeconds: 120
+  lifecycle:
+    preStop:
+      enabled: true       # Run pg_ctl stop before SIGKILL during pod termination
+
+  # ─── Health & readiness probes ───
+
+  # ─── External Database Configuration ───
+  # If enabled, uses these connection details instead of the internal postgres pod.
+  # Can map keys from an existingSecret (e.g. created by CloudNativePG).
+  external:
+    enabled: false
+    # Secret name containing connection details
+    existingSecret: ""
+
+    # Connection details.
+    # If *Key is provided and existingSecret is set, the value is pulled from the secret.
+    # Otherwise, the direct value (host, port, etc.) is used.
+    host: ""
+    hostKey: "host"
+
+    port: 5432
+    portKey: "port"
+
+    database: ""
+    databaseKey: "dbname"
+
+    user: ""
+    userKey: "user"
+
+    password: ""
+    passwordKey: "password"
+  probes:
+    readiness:
+      type: exec
+      command: ["/bin/sh", "-c", "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB"]
+      initialDelaySeconds: 15
+      periodSeconds: 15
+      timeoutSeconds: 10
+      successThreshold: 1
+      failureThreshold: 6
+
+    liveness:
+      type: exec
+      command: ["/bin/sh", "-c", "pg_isready -U $POSTGRES_USER -d $POSTGRES_DB"]
+      initialDelaySeconds: 10
+      periodSeconds: 20
+      timeoutSeconds: 10
+      successThreshold: 1
+      failureThreshold: 8
+
+  # ─── PostgreSQL Upgrade Configuration ───
+  upgrade:
+    enabled: false              # Set to true to enable the upgrade process
+    targetVersion: "18"         # Target PostgreSQL version (e.g., "18")
+    backupCompleted: false      # Set to true after successful backup (to prevent re-running backup job)
+
+########################################################################
+# PGBOUNCER - Connection Pooler for PostgreSQL
+# Reduces connection overhead, improves throughput under high concurrency.
+########################################################################
+pgbouncer:
+  enabled: false                     # Set to true to route DB traffic through PgBouncer
+
+  image:
+    repository: edoburu/pgbouncer
+    tag: latest
+    pullPolicy: Always
+
+  service:
+    type: ClusterIP
+    port: 6432                       # PgBouncer listens on 6432
+
+  # Pool configuration
+  pool:
+    mode: transaction                # transaction (recommended), session, or statement
+    maxClientConn: 3000              # Max connections from application
+    defaultPoolSize: 120             # Connections per user/database pair
+    minPoolSize: 10                  # Minimum connections to keep open
+    reservePoolSize: 25              # Extra connections for burst traffic
+    reservePoolTimeout: 5            # Seconds before using reserve pool
+    maxDbConnections: 200            # Max connections to PostgreSQL per database
+    maxUserConnections: 200          # Max connections per user
+    serverLifetime: 3600             # Max age of server connection (seconds)
+    serverIdleTimeout: 600           # Close idle server connections after (seconds)
+
+  # Authentication
+  authType: scram-sha-256            # Match PostgreSQL auth method
+
+  # Resource limits
+  resources:
+    limits:
+      cpu: "1"
+      memory: 256Mi
+    requests:
+      cpu: 250m
+      memory: 128Mi
+
+  # Health probes
+  probes:
+    readiness:
+      type: exec
+      command: ["pg_isready", "-h", "localhost", "-p", "6432"]
+      initialDelaySeconds: 10
+      periodSeconds: 10
+      timeoutSeconds: 5
+      successThreshold: 1
+      failureThreshold: 3
+
+    liveness:
+      type: exec
+      command: ["pg_isready", "-h", "localhost", "-p", "6432"]
+      initialDelaySeconds: 10
+      periodSeconds: 15
+      timeoutSeconds: 5
+      successThreshold: 1
+      failureThreshold: 5
+
+########################################################################
+# REDIS CACHE
+########################################################################
+redis:
+  enabled: true
+  # Note: if redis.external.enabled=true, in-cluster Redis resources are skipped.
+
+  image:
+    repository: redis
+    tag: "8.0.0"
+    pullPolicy: Always
+
+  service:
+    type: ClusterIP
+    port: 6379
+
+  # ─── External Redis Configuration ───
+  # If enabled, skips the in-cluster Redis deployment and uses these settings.
+  external:
+    enabled: false
+    # Secret containing REDIS_URL (recommended for auth)
+    existingSecret: ""
+    urlKey: "REDIS_URL"
+    # Direct Redis URL override (if not using existingSecret)
+    url: ""
+    # Optional host/port if building REDIS_URL automatically
+    host: ""
+    port: 6379
+    db: 0
+
+  # ─── Authentication ───
+  auth:
+    enabled: true
+    # Use an existing secret for Redis password (optional)
+    existingSecret: ""
+    passwordKey: "REDIS_PASSWORD"
+    #checkov:skip=CKV_SECRET_6:Redis example pass
+    password: "change-me-redis"      # CHANGE ME in production!
+  # Transport recommendation:
+  # For production, prefer TLS (for example rediss:// via redis.external.url
+  # or a managed Redis endpoint with TLS enabled).
+
+  # ─── Resource limits & requests ───
+  resources:
+    limits:
+      cpu: "1"          # cap at 1 core, 1 GiB
+      memory: 1Gi
+    requests:
+      cpu: 250m         # reserve 0.25 core, 256 MiB
+      memory: 256Mi
+
+  # ─── Health & readiness probes ───
+  probes:
+    readiness:
+      type: exec
+      command:
+        - sh
+        - -c
+        - |
+          if [ -n "${REDIS_PASSWORD:-}" ]; then
+            redis-cli --no-auth-warning -a "${REDIS_PASSWORD}" PING
+          else
+            redis-cli PING
+          fi
+      initialDelaySeconds: 10
+      periodSeconds: 15
+      timeoutSeconds: 5
+      successThreshold: 1
+      failureThreshold: 6
+
+    liveness:
+      type: exec
+      command:
+        - sh
+        - -c
+        - |
+          if [ -n "${REDIS_PASSWORD:-}" ]; then
+            redis-cli --no-auth-warning -a "${REDIS_PASSWORD}" PING
+          else
+            redis-cli PING
+          fi
+      initialDelaySeconds: 5
+      periodSeconds: 20
+      timeoutSeconds: 5
+      successThreshold: 1
+      failureThreshold: 8
+
+  # ─── Persistence configuration ───
+  persistence:
+    enabled: false               # Set to true to enable Redis persistence
+    storageClassName: ""         # Use empty string for default StorageClass
+                                # Production examples:
+                                #   AWS EKS: "gp3", "gp2", "io1", "io2"
+                                #   GKE: "standard", "ssd", "premium-rw"
+                                #   Azure AKS: "default", "managed-premium", "azurefile"
+                                #   Bare Metal: "local-path", "nfs-client"
+    volumeName: ""               # Pin to a specific PV by name (optional). When set, the PVC binds to that PV.
+    accessModes: [ReadWriteOnce]
+    size: 1Gi
+    reclaimPolicy: Retain        # Retain prevents data loss when PVC is deleted (manual cleanup required after uninstall)
+    annotations: {}              # Optional annotations for backup tools
+      # backup.velero.io/backup-volumes: "redis-data"
+      # backup.policy/schedule: "daily"
+
+  # ─── Redis server configuration ───
+  maxclients: 15000             # Maximum client connections
+                                # Formula: replicas × workers × REDIS_MAX_CONNECTIONS × 1.2
+                                # Example: 10 × 24 × 50 × 1.2 = 14400 → 15000
+
+########################################################################
+# PGADMIN - Web UI for Postgres
+########################################################################
+pgadmin:
+  enabled: false                    # Hardened default: enable only for temporary admin workflows
+
+  image:
+    repository: dpage/pgadmin4
+    tag: latest
+    pullPolicy: Always
+
+  service:
+    type: ClusterIP
+    port: 80
+
+  # Use existing Secret for PgAdmin credentials (optional)
+  existingSecret: ""
+  passwordKey: "PGADMIN_DEFAULT_PASSWORD"
+
+  env:
+    email: admin@example.com
+    password: admin123           # CHANGE ME in production!
+
+  # ─── Resource limits & requests ───
+  resources:
+    limits:
+      cpu: 200m          # cap at 0.2 core, 256 MiB
+      memory: 256Mi
+    requests:
+      cpu: 100m          # reserve 0.1 core, 128 MiB
+      memory: 128Mi
+
+  # ─── Health & readiness probes ───
+  probes:
+    readiness:
+      type: http
+      path: /misc/ping      # lightweight endpoint
+      port: 80
+      initialDelaySeconds: 60     # pgAdmin needs more time to initialize
+      periodSeconds: 10
+      timeoutSeconds: 5           # increased timeout
+      successThreshold: 1
+      failureThreshold: 5         # more tolerance for failures
+
+    liveness:
+      type: http
+      path: /misc/ping
+      port: 80
+      initialDelaySeconds: 90     # even longer for liveness
+      periodSeconds: 20           # check less frequently
+      timeoutSeconds: 5           # increased timeout
+      successThreshold: 1
+      failureThreshold: 3         # less aggressive killing
+
+########################################################################
+# REDIS-COMMANDER - Web UI for Redis
+########################################################################
+redisCommander:
+  enabled: false                    # Hardened default: enable only for temporary troubleshooting
+
+  image:
+    repository: rediscommander/redis-commander
+    tag: latest
+    pullPolicy: Always
+
+  service:
+    type: ClusterIP
+    port: 8081
+
+  # ─── Resource limits & requests ───
+  resources:
+    limits:
+      cpu: 100m          # cap at 0.1 core, 256 MiB
+      memory: 256Mi
+    requests:
+      cpu: 50m           # reserve 0.05 core, 128 MiB
+      memory: 128Mi
+
+  # ─── Health & readiness probes ───
+  probes:
+    readiness:
+      type: http
+      path: /              # root returns 200 OK
+      port: 8081
+      initialDelaySeconds: 15
+      periodSeconds: 10
+      timeoutSeconds: 2
+      successThreshold: 1
+      failureThreshold: 3
+
+    liveness:
+      type: http
+      path: /
+      port: 8081
+      initialDelaySeconds: 10
+      periodSeconds: 15
+      timeoutSeconds: 2
+      successThreshold: 1
+      failureThreshold: 5
+
+########################################################################
+# MINIO - S3 Compatible Object Storage
+########################################################################
+minio:
+  enabled: false # Enable only when needed for PostgreSQL major upgrade backup/restore flow
+
+  image:
+    repository: minio/minio
+    tag: "RELEASE.2025-09-07T16-13-09Z-cpuv1" # Use a specific stable tag
+    pullPolicy: Always
+
+  # Credentials for the MinIO root user
+  # It's recommended to use existingSecret in production
+  existingSecret: ""
+  credentials:
+    rootUser: minioadmin
+    #checkov:skip=CKV_SECRET_6:Example password
+    rootPassword: minioadminchangeme # CHANGE IN PRODUCTION!
+
+  service:
+    type: ClusterIP
+    apiPort: 9000 # S3 API
+    consolePort: 9001 # Web UI
+
+  # PersistentVolumeClaim for data durability
+  persistence:
+    enabled: true
+    storageClassName: "" # Use default StorageClass
+    accessModes: [ReadWriteOnce]
+    size: 10Gi
+    reclaimPolicy: Retain
+
+  # Resource limits & requests
+  resources:
+    limits:
+      cpu: 500m
+      memory: 1Gi
+    requests:
+      cpu: 100m
+      memory: 256Mi
+
+########################################################################
+# MCP-FAST-TIME-SERVER - optional high-performance time server for MCP (Rust)
+# Provides a fast implementation including SSE and Streamable HTTP
+########################################################################
+mcpFastTimeServer:
+  enabled: true            # switch to true to deploy
+  replicaCount: 2
+  image:
+    repository: ghcr.io/ibm/fast-time-server
+    tag: "0.8.0"
+    pullPolicy: Always
+  port: 8080
+  # Docker Compose parity flags (optional override)
+  command: []
+  args:
+    - -transport=dual
+    - -listen=0.0.0.0
+    - -port=8080
+    - -log-level=info
+
+  # Ingress example (leave as-is if you already have it)
+  ingress:
+    enabled: true
+    className: nginx
+    host: gateway.local
+    path: /fast-time
+    pathType: Prefix
+    servicePort: 80
+    annotations: {}
+    tls:
+      enabled: true
+      secretName: ""
+
+  # ─── Health & readiness probes ───
+  probes:
+    readiness:
+      type: http
+      path: /health
+      port: 8080
+      initialDelaySeconds: 3
+      periodSeconds: 15
+      timeoutSeconds: 10
+      successThreshold: 1
+      failureThreshold: 6
+
+    liveness:
+      type: http
+      path: /health
+      port: 8080
+      initialDelaySeconds: 3
+      periodSeconds: 20
+      timeoutSeconds: 10
+      successThreshold: 1
+      failureThreshold: 8
+
+  # Tiny Go process with a small runtime footprint
+  resources:
+    limits:
+      cpu: 50m           # ~5 % of a core
+      memory: 64Mi
+    requests:
+      cpu: 25m
+      memory: 10Mi
+
+########################################################################
+# COMPOSE PARITY - Optional docker-compose profile components
+# All sections below are disabled by default and can be enabled selectively.
+########################################################################
+
+########################################################################
+# NGINX PROXY - Reverse proxy / cache layer in front of the gateway
+########################################################################
+nginxProxy:
+  enabled: false
+
+  image:
+    repository: mcpgateway/nginx-cache
+    tag: latest
+    pullPolicy: Always
+
+  service:
+    type: ClusterIP
+    port: 80
+
+  # Nginx cache persistence
+  persistence:
+    enabled: true
+    storageClassName: ""
+    accessModes: [ReadWriteOnce]
+    size: 2Gi
+
+  # Optional sysctls applied to the nginx pod
+  sysctls:
+    - net.ipv4.tcp_fin_timeout=15
+    - net.ipv4.ip_local_port_range=1024 65535
+
+  resources:
+    limits:
+      cpu: "4"
+      memory: 1Gi
+    requests:
+      cpu: "2"
+      memory: 512Mi
+
+  probes:
+    readiness:
+      type: http
+      path: /health
+      port: 80
+      initialDelaySeconds: 10
+      periodSeconds: 30
+      timeoutSeconds: 5
+      successThreshold: 1
+      failureThreshold: 3
+    liveness:
+      type: http
+      path: /health
+      port: 80
+      initialDelaySeconds: 10
+      periodSeconds: 30
+      timeoutSeconds: 5
+      successThreshold: 1
+      failureThreshold: 3
+
+  config:
+    workerConnections: 8192
+    keepaliveTimeout: 65
+    clientMaxBodySize: 25m
+    proxyReadTimeout: 300s
+    proxySendTimeout: 300s
+    sendTimeout: 300s
+
+    cache:
+      enabled: true
+      path: /var/cache/nginx
+      maxSize: 1g
+      inactive: 10m
+
+  # TLS settings — disabled by default. When enabled, NGINX serves an
+  # additional HTTPS listener on tls.containerPort (e.g. for fronting
+  # by an external TLS-terminating proxy).
+  tls:
+    enabled: false
+    containerPort: 8443
+
+########################################################################
+# ROUTE - external access via a Route resource
+# Only rendered when route.enabled: true.
+########################################################################
+route:
+  enabled: false
+  host: ""                       # Auto-generated by the cluster Route controller if empty
+  annotations: {}
+  tls:
+    termination: edge            # edge | passthrough | reencrypt
+    insecureEdgeTerminationPolicy: Redirect
+    certificate: ""              # Optional custom TLS cert
+    key: ""                      # Optional custom TLS key
+    caCertificate: ""            # Optional CA cert
+    destinationCACertificate: "" # Required for reencrypt if backend uses a self-signed cert
+
+########################################################################
+# MONITORING STACK - Prometheus/Grafana/Loki/Tempo + exporters
+########################################################################
+monitoring:
+  enabled: false
+
+  postgresExporter:
+    enabled: true
+    image:
+      repository: quay.io/prometheuscommunity/postgres-exporter
+      tag: latest
+      pullPolicy: Always
+    service:
+      type: ClusterIP
+      port: 9187
+    resources:
+      limits:
+        cpu: 200m
+        memory: 256Mi
+      requests:
+        cpu: 50m
+        memory: 64Mi
+
+  redisExporter:
+    enabled: true
+    image:
+      repository: oliver006/redis_exporter
+      tag: latest
+      pullPolicy: Always
+    service:
+      type: ClusterIP
+      port: 9121
+    resources:
+      limits:
+        cpu: 200m
+        memory: 256Mi
+      requests:
+        cpu: 50m
+        memory: 64Mi
+
+  pgbouncerExporter:
+    enabled: true
+    image:
+      repository: prometheuscommunity/pgbouncer-exporter
+      tag: latest
+      pullPolicy: Always
+    service:
+      type: ClusterIP
+      port: 9127
+    resources:
+      limits:
+        cpu: 200m
+        memory: 256Mi
+      requests:
+        cpu: 50m
+        memory: 64Mi
+
+  nginxExporter:
+    enabled: true
+    image:
+      repository: nginx/nginx-prometheus-exporter
+      tag: latest
+      pullPolicy: Always
+    service:
+      type: ClusterIP
+      port: 9113
+    # If empty, chart auto-targets in-cluster nginx proxy service
+    scrapeUri: ""
+    resources:
+      limits:
+        cpu: 200m
+        memory: 128Mi
+      requests:
+        cpu: 50m
+        memory: 64Mi
+
+  cadvisor:
+    enabled: true
+    image:
+      repository: gcr.io/cadvisor/cadvisor
+      tag: latest
+      pullPolicy: Always
+    service:
+      type: ClusterIP
+      port: 8080
+    privileged: true
+    resources:
+      limits:
+        cpu: 500m
+        memory: 512Mi
+      requests:
+        cpu: 100m
+        memory: 128Mi
+
+  prometheus:
+    enabled: true
+    image:
+      repository: prom/prometheus
+      tag: latest
+      pullPolicy: Always
+    service:
+      type: ClusterIP
+      port: 9090
+    retention: 7d
+    persistence:
+      enabled: true
+      storageClassName: ""
+      accessModes: [ReadWriteOnce]
+      size: 8Gi
+    resources:
+      limits:
+        cpu: 1
+        memory: 1Gi
+      requests:
+        cpu: 200m
+        memory: 256Mi
+
+  loki:
+    enabled: true
+    image:
+      repository: grafana/loki
+      tag: latest
+      pullPolicy: Always
+    service:
+      type: ClusterIP
+      port: 3100
+    persistence:
+      enabled: true
+      storageClassName: ""
+      accessModes: [ReadWriteOnce]
+      size: 8Gi
+    resources:
+      limits:
+        cpu: 1
+        memory: 1Gi
+      requests:
+        cpu: 100m
+        memory: 256Mi
+
+  tempo:
+    enabled: true
+    image:
+      repository: grafana/tempo
+      tag: latest
+      pullPolicy: Always
+    service:
+      type: ClusterIP
+      queryPort: 3200
+      grpcPort: 4317
+      httpPort: 4318
+    persistence:
+      enabled: true
+      storageClassName: ""
+      accessModes: [ReadWriteOnce]
+      size: 8Gi
+    resources:
+      limits:
+        cpu: 1
+        memory: 1Gi
+      requests:
+        cpu: 100m
+        memory: 256Mi
+
+  promtail:
+    enabled: true
+    image:
+      repository: grafana/promtail
+      tag: latest
+      pullPolicy: Always
+    resources:
+      limits:
+        cpu: 500m
+        memory: 512Mi
+      requests:
+        cpu: 100m
+        memory: 128Mi
+
+  grafana:
+    enabled: true
+    image:
+      repository: grafana/grafana
+      tag: latest
+      pullPolicy: Always
+    service:
+      type: ClusterIP
+      port: 3000
+    adminPassword: changeme
+    allowSignUp: false
+    persistence:
+      enabled: true
+      storageClassName: ""
+      accessModes: [ReadWriteOnce]
+      size: 5Gi
+    resources:
+      limits:
+        cpu: 1
+        memory: 1Gi
+      requests:
+        cpu: 100m
+        memory: 256Mi
+
+########################################################################
+# TESTING PROFILE - fast-test server, A2A echo agent, locust, auto-register
+########################################################################
+testing:
+  enabled: false
+
+  registration:
+    enabled: true
+    image:
+      repository: mcpgateway/mcpgateway
+      tag: latest
+      pullPolicy: Always
+    backoffLimit: 2
+    activeDeadlineSeconds: 600
+    restartPolicy: Never
+    jwt:
+      username: admin@example.com
+      expirationMinutes: 10080
+      secret: my-test-key-but-now-longer-than-32-bytes  # pragma: allowlist secret
+
+  fastTime:
+    register:
+      enabled: false
+      # Uses in-cluster Service URL: http://<release>-mcp-fast-time-server:80/http
+      # Requires SSRF_ALLOW_PRIVATE_NETWORKS=true OR SSRF_ALLOWED_NETWORKS to include cluster CIDR.
+      gatewayName: fast_time
+      gatewayPath: /http
+      transport: STREAMABLEHTTP
+      createVirtualServer: true
+      virtualServerId: 9779b6698cbd4b4995ee04a4fab38737
+      virtualServerName: Fast Time Server
+      virtualServerDescription: Virtual server exposing Fast Time MCP tools/resources/prompts
+
+  fastTestServer:
+    enabled: true
+    image:
+      repository: mcpgateway/fast-test-server
+      tag: latest
+      pullPolicy: Always
+    service:
+      type: ClusterIP
+      port: 8880
+    env:
+      BIND_ADDRESS: 0.0.0.0:8880
+      RUST_LOG: info
+    resources:
+      limits:
+        cpu: "2"
+        memory: 1Gi
+      requests:
+        cpu: 500m
+        memory: 128Mi
+    probes:
+      readiness:
+        type: http
+        path: /health
+        port: 8880
+        initialDelaySeconds: 10
+        periodSeconds: 30
+        timeoutSeconds: 5
+        successThreshold: 1
+        failureThreshold: 3
+      liveness:
+        type: http
+        path: /health
+        port: 8880
+        initialDelaySeconds: 10
+        periodSeconds: 30
+        timeoutSeconds: 5
+        successThreshold: 1
+        failureThreshold: 3
+
+  fastTest:
+    register:
+      enabled: true
+      # Uses in-cluster Service URL: http://<release>-fast-test-server:8880/mcp
+      # Requires SSRF_ALLOW_PRIVATE_NETWORKS=true OR SSRF_ALLOWED_NETWORKS to include cluster CIDR.
+      gatewayName: fast_test
+      gatewayPath: /mcp
+      transport: STREAMABLEHTTP
+
+  a2aEchoAgent:
+    enabled: true
+    image:
+      repository: mcpgateway/a2a-echo-agent
+      tag: latest
+      pullPolicy: Always
+    service:
+      type: ClusterIP
+      port: 9100
+    env:
+      A2A_ECHO_ADDR: 0.0.0.0:9100
+      A2A_ECHO_NAME: a2a-echo-agent
+      A2A_ECHO_LOG_LEVEL: info
+    resources:
+      limits:
+        cpu: "1"
+        memory: 256Mi
+      requests:
+        cpu: 250m
+        memory: 64Mi
+    probes:
+      readiness:
+        type: http
+        path: /health
+        port: 9100
+        initialDelaySeconds: 10
+        periodSeconds: 30
+        timeoutSeconds: 5
+        successThreshold: 1
+        failureThreshold: 3
+      liveness:
+        type: http
+        path: /health
+        port: 9100
+        initialDelaySeconds: 10
+        periodSeconds: 30
+        timeoutSeconds: 5
+        successThreshold: 1
+        failureThreshold: 3
+
+  a2a:
+    register:
+      enabled: true
+      name: a2a-echo-agent
+      description: Lightweight A2A echo agent for Kubernetes testing
+      endpointPath: /
+      protocolVersion: 0.3.0
+      visibility: public
+
+  locust:
+    enabled: true
+    image:
+      repository: locustio/locust
+      tag: latest
+      pullPolicy: Always
+    service:
+      type: ClusterIP
+      port: 8089
+    mode: master
+    users: 100
+    spawnRate: 10
+    runTime: 5m
+    expectWorkers: 1
+    host: ""
+    mcpServerID: ""              # Set to virtual server UUID for MCP protocol benchmarks
+    worker:
+      enabled: true
+      replicaCount: 1
+    script:
+      existingConfigMap: ""
+      file: ""                   # Path to a locustfile inside the chart (e.g. tests/my-locustfile.py)
+      key: locustfile.py
+      inline: |
+        from locust import HttpUser, between, task
+
+        class MCPGatewaySmokeUser(HttpUser):
+            wait_time = between(1, 3)
+
+            @task(3)
+            def health(self):
+                self.client.get("/health", name="GET /health")
+
+            @task(2)
+            def ready(self):
+                self.client.get("/ready", name="GET /ready")
+
+            @task(1)
+            def version(self):
+                self.client.get("/version", name="GET /version")
+
+    resources:
+      limits:
+        cpu: "2"
+        memory: 1Gi
+      requests:
+        cpu: 500m
+        memory: 128Mi
+
+########################################################################
+# BENCHMARK PROFILE - benchmark MCP server + auto registration
+########################################################################
+benchmark:
+  enabled: false
+
+  server:
+    enabled: true
+    image:
+      repository: mcpgateway/benchmark-server
+      tag: latest
+      pullPolicy: Always
+    service:
+      type: ClusterIP
+      startPort: 9000
+      serverCount: 10
+    transport: http
+    tools: 50
+    resources: 20
+    prompts: 10
+    resourcesLimits:
+      limits:
+        cpu: "2"
+        memory: 1Gi
+      requests:
+        cpu: 500m
+        memory: 256Mi
+
+  register:
+    enabled: true
+    gatewayPrefix: benchmark-
+    transport: STREAMABLEHTTP
+    startPort: 9000
+    serverCount: 10
+
+########################################################################
+# TLS PROFILE - TLS-enabled nginx frontend and cert management
+########################################################################
+tls:
+  enabled: false
+
+  forceHttps: false
+
+  image:
+    repository: mcpgateway/nginx-cache
+    tag: latest
+    pullPolicy: Always
+
+  service:
+    type: ClusterIP
+    httpPort: 80
+    httpsPort: 443
+
+  persistence:
+    enabled: true
+    storageClassName: ""
+    accessModes: [ReadWriteOnce]
+    size: 2Gi
+
+  resources:
+    limits:
+      cpu: "4"
+      memory: 1Gi
+    requests:
+      cpu: "2"
+      memory: 512Mi
+
+  probes:
+    readiness:
+      type: http
+      path: /health
+      port: 80
+      initialDelaySeconds: 10
+      periodSeconds: 30
+      timeoutSeconds: 5
+      successThreshold: 1
+      failureThreshold: 3
+    liveness:
+      type: http
+      path: /health
+      port: 80
+      initialDelaySeconds: 10
+      periodSeconds: 30
+      timeoutSeconds: 5
+      successThreshold: 1
+      failureThreshold: 3
+
+  sysctls:
+    - net.ipv4.tcp_fin_timeout=15
+    - net.ipv4.ip_local_port_range=1024 65535
+
+  certificate:
+    existingSecret: ""
+    certKey: tls.crt
+    privateKeyKey: tls.key
+    selfSigned:
+      enabled: true
+      commonName: localhost
+      dnsNames:
+        - localhost
+        - gateway
+        - nginx
+      ipAddresses:
+        - 127.0.0.1
+      durationDays: 365
+
+########################################################################
+# INSPECTOR PROFILE - MCP Inspector client UI
+########################################################################
+inspector:
+  enabled: false
+
+  image:
+    repository: ghcr.io/modelcontextprotocol/inspector
+    tag: latest
+    pullPolicy: Always
+
+  service:
+    type: ClusterIP
+    uiPort: 6274
+    apiPort: 6277
+
+  env:
+    HOST: 0.0.0.0
+    MCP_AUTO_OPEN_ENABLED: "false"
+    DANGEROUSLY_OMIT_AUTH: "true"
+
+  resources:
+    limits:
+      cpu: "1"
+      memory: 512Mi
+    requests:
+      cpu: 250m
+      memory: 128Mi

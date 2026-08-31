@@ -1,0 +1,20 @@
+# Virtual environment
+.venv/
+.venv
+
+# uv lock file
+uv.lock
+
+# Coverage data
+.coverage
+.coverage.*
+htmlcov/
+
+# Build artifacts
+*.egg-info/
+dist/
+build/
+
+# Python cache
+__pycache__/
+*.py[cod]

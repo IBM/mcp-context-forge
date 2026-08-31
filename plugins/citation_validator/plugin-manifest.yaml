@@ -1,0 +1,15 @@
+description: "Validates citations/links by checking reachability and optional content keywords."
+author: "ContextForge"
+version: "0.1.0"
+tags: ["validation", "links", "citation"]
+available_hooks:
+  - "resource_post_fetch"
+  - "tool_post_invoke"
+default_config:
+  fetch_timeout: 6.0
+  require_200: true
+  content_keywords: []
+  max_links: 20
+  block_on_all_fail: false
+  block_on_any_fail: false
+  user_agent: "MCP-Context-Forge/1.0 CitationValidator"

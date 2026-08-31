@@ -1,0 +1,402 @@
+# -*- coding: utf-8 -*-
+"""Location: ./tests/unit/mcpgateway/services/test_audit_trail_service.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+
+Tests for audit_trail_service.
+"""
+
+# Standard
+from unittest.mock import MagicMock
+
+# First-Party
+from mcpgateway.services import audit_trail_service as svc
+
+
+class DummyResult:
+    def __init__(self, items):
+        self._items = items
+
+    def scalars(self):
+        return self
+
+    def all(self):
+        return self._items
+
+
+class DummySession:
+    def __init__(self, fail_add: bool = False):
+        self.fail_add = fail_add
+        self.committed = False
+        self.rolled_back = False
+        self.closed = False
+        self.added = []
+
+    def add(self, obj):
+        if self.fail_add:
+            raise RuntimeError("db add failed")
+        self.added.append(obj)
+
+    def commit(self):
+        self.committed = True
+
+    def refresh(self, _obj):
+        return None
+
+    def rollback(self):
+        self.rolled_back = True
+
+    def close(self):
+        self.closed = True
+
+    def execute(self, _query):
+        return DummyResult([MagicMock(id="1")])
+
+
+def test_log_action_disabled_returns_none(monkeypatch):
+    monkeypatch.setattr(svc.settings, "audit_trail_enabled", False)
+    service = svc.AuditTrailService()
+    result = service.log_action(
+        action="CREATE",
+        resource_type="tool",
+        resource_id="tool-1",
+        user_id="user-1",
+    )
+    assert result is None
+
+
+def test_log_action_disabled_still_emits_siem(monkeypatch):
+    monkeypatch.setattr(svc.settings, "audit_trail_enabled", False)
+    monkeypatch.setattr(svc.settings, "siem_export_enabled", True)
+    mock_siem = MagicMock()
+    mock_siem.submit_event.return_value = True
+    monkeypatch.setattr(svc, "get_siem_export_service", lambda: mock_siem)
+
+    service = svc.AuditTrailService()
+    result = service.log_action(
+        action="CREATE",
+        resource_type="tool",
+        resource_id="tool-1",
+        user_id="user-1",
+    )
+
+    assert result is None
+    mock_siem.submit_event.assert_called_once()
+
+
+def test_emit_audit_event_to_siem_sets_high_and_description_details(monkeypatch):
+    monkeypatch.setattr(svc.settings, "siem_export_enabled", True)
+    mock_siem = MagicMock()
+    mock_siem.enabled = True
+    mock_siem.destinations = {}
+    mock_siem.submit_event.return_value = True
+    monkeypatch.setattr(svc, "get_siem_export_service", lambda: mock_siem)
+
+    service = svc.AuditTrailService()
+    service._emit_audit_event_to_siem(
+        action="DELETE",
+        resource_type="tool",
+        resource_id="tool-1",
+        resource_name="tool-name",
+        user_id="user-1",
+        user_email="user@example.com",
+        client_ip="1.2.3.4",
+        user_agent="pytest",
+        success=False,
+        data_classification=None,
+        requires_review=False,
+        error_message="forbidden",
+        context=None,
+        correlation_id="corr-1",
+    )
+
+    event_payload = mock_siem.submit_event.call_args.kwargs["event"]
+    assert event_payload["severity"] == "HIGH"
+    assert "(tool-name)" in event_payload["description"]
+    assert event_payload["description"].endswith(": forbidden")
+
+
+def test_emit_audit_event_to_siem_sets_medium_for_review(monkeypatch):
+    monkeypatch.setattr(svc.settings, "siem_export_enabled", True)
+    mock_siem = MagicMock()
+    mock_siem.enabled = True
+    mock_siem.destinations = {}
+    mock_siem.submit_event.return_value = True
+    monkeypatch.setattr(svc, "get_siem_export_service", lambda: mock_siem)
+
+    service = svc.AuditTrailService()
+    service._emit_audit_event_to_siem(
+        action="UPDATE",
+        resource_type="token",
+        resource_id="tok-1",
+        resource_name=None,
+        user_id="user-1",
+        user_email=None,
+        client_ip=None,
+        user_agent=None,
+        success=True,
+        data_classification=svc.DataClassification.CONFIDENTIAL.value,
+        requires_review=True,
+        error_message=None,
+        context={},
+        correlation_id="corr-2",
+    )
+
+    event_payload = mock_siem.submit_event.call_args.kwargs["event"]
+    assert event_payload["severity"] == "MEDIUM"
+
+
+def test_log_action_builds_context_and_requires_review(monkeypatch):
+    monkeypatch.setattr(svc.settings, "audit_trail_enabled", True)
+    dummy_session = DummySession()
+    monkeypatch.setattr(svc, "SessionLocal", lambda: dummy_session)
+
+    captured = {}
+
+    def _fake_audit(**kwargs):
+        captured.update(kwargs)
+        return MagicMock()
+
+    monkeypatch.setattr(svc, "AuditTrail", _fake_audit)
+
+    service = svc.AuditTrailService()
+    result = service.log_action(
+        action="UPDATE",
+        resource_type="tool",
+        resource_id="tool-1",
+        user_id="user-1",
+        details={"d": 1},
+        metadata={"m": 2},
+        data_classification=svc.DataClassification.CONFIDENTIAL.value,
+    )
+
+    assert result is not None
+    assert captured["context"]["details"] == {"d": 1}
+    assert captured["context"]["metadata"] == {"m": 2}
+    assert captured["requires_review"] is True
+    assert dummy_session.committed is True
+
+
+def test_log_action_exception_rolls_back(monkeypatch):
+    monkeypatch.setattr(svc.settings, "audit_trail_enabled", True)
+    dummy_session = DummySession(fail_add=True)
+    monkeypatch.setattr(svc, "SessionLocal", lambda: dummy_session)
+    monkeypatch.setattr(svc, "AuditTrail", lambda **_kwargs: MagicMock())
+
+    service = svc.AuditTrailService()
+    result = service.log_action(
+        action="CREATE",
+        resource_type="tool",
+        resource_id="tool-1",
+        user_id="user-1",
+    )
+    assert result is None
+    assert dummy_session.rolled_back is True
+
+
+def test_log_crud_operation_changes(monkeypatch):
+    service = svc.AuditTrailService()
+    captured = {}
+
+    def _fake_log_action(**kwargs):
+        captured.update(kwargs)
+        return MagicMock()
+
+    monkeypatch.setattr(service, "log_action", _fake_log_action)
+    service.log_crud_operation(
+        operation="UPDATE",
+        resource_type="tool",
+        resource_id="tool-1",
+        user_id="user-1",
+        old_values={"a": 1, "b": 2},
+        new_values={"a": 1, "b": 3},
+    )
+
+    assert captured["changes"] == {"b": {"old": 2, "new": 3}}
+    assert captured["data_classification"] == svc.DataClassification.INTERNAL.value
+
+
+def test_log_data_access_requires_review(monkeypatch):
+    service = svc.AuditTrailService()
+    captured = {}
+
+    def _fake_log_action(**kwargs):
+        captured.update(kwargs)
+        return MagicMock()
+
+    monkeypatch.setattr(service, "log_action", _fake_log_action)
+    service.log_data_access(
+        resource_type="token",
+        resource_id="tok-1",
+        user_id="user-1",
+        data_classification=svc.DataClassification.CONFIDENTIAL.value,
+    )
+
+    assert captured["requires_review"] is True
+    assert captured["action"] == "READ"
+
+
+def test_get_audit_trail_commits_and_returns(monkeypatch):
+    monkeypatch.setattr(svc.settings, "audit_trail_enabled", True)
+    dummy_session = DummySession()
+    monkeypatch.setattr(svc, "SessionLocal", lambda: dummy_session)
+
+    service = svc.AuditTrailService()
+    result = service.get_audit_trail(resource_type="tool", limit=1)
+    assert len(result) == 1
+    assert dummy_session.committed is True
+    assert dummy_session.closed is True
+
+
+def test_determine_requires_review_respects_explicit_param():
+    service = svc.AuditTrailService()
+    assert service._determine_requires_review(action="CREATE", data_classification=None, requires_review_param=True) is True
+    assert service._determine_requires_review(action="CREATE", data_classification=None, requires_review_param=False) is False
+
+
+def test_determine_requires_review_flags_review_required_actions():
+    service = svc.AuditTrailService()
+    assert service._determine_requires_review(action="delete_tool", data_classification=None, requires_review_param=None) is True
+
+
+def test_log_crud_operation_confidential_resource_requires_review(monkeypatch):
+    service = svc.AuditTrailService()
+    captured = {}
+
+    def _fake_log_action(**kwargs):
+        captured.update(kwargs)
+        return MagicMock()
+
+    monkeypatch.setattr(service, "log_action", _fake_log_action)
+    service.log_crud_operation(
+        operation="CREATE",
+        resource_type="token",
+        resource_id="tok-1",
+        user_id="user-1",
+    )
+
+    assert captured["data_classification"] == svc.DataClassification.CONFIDENTIAL.value
+    assert captured["requires_review"] is True
+
+
+def test_log_crud_operation_delete_tool_requires_review(monkeypatch):
+    service = svc.AuditTrailService()
+    captured = {}
+
+    def _fake_log_action(**kwargs):
+        captured.update(kwargs)
+        return MagicMock()
+
+    monkeypatch.setattr(service, "log_action", _fake_log_action)
+    service.log_crud_operation(
+        operation="DELETE",
+        resource_type="tool",
+        resource_id="tool-1",
+        user_id="user-1",
+    )
+
+    assert captured["requires_review"] is True
+
+
+def test_log_audit_builds_context_from_description(monkeypatch):
+    service = svc.AuditTrailService()
+    captured = {}
+
+    def _fake_log_action(**kwargs):
+        captured.update(kwargs)
+        return MagicMock()
+
+    monkeypatch.setattr(service, "log_action", _fake_log_action)
+    service.log_audit(
+        user_id="user-1",
+        resource_type="tool",
+        resource_id="tool-1",
+        action="EXECUTE",
+        description="ran tool",
+    )
+
+    assert captured["context"]["description"] == "ran tool"
+
+
+def test_log_action_identity_context_exception_is_swallowed(monkeypatch):
+    """If user_identity_var.get() raises, the exception is logged at DEBUG and log_action completes normally."""
+    monkeypatch.setattr(svc.settings, "audit_trail_enabled", True)
+    dummy_session = DummySession()
+    monkeypatch.setattr(svc, "SessionLocal", lambda: dummy_session)
+    monkeypatch.setattr(svc, "AuditTrail", lambda **_kwargs: MagicMock())
+
+    mock_var = MagicMock()
+    mock_var.get.side_effect = RuntimeError("context var unavailable")
+
+    monkeypatch.setattr("mcpgateway.transports.context.user_identity_var", mock_var)
+    service = svc.AuditTrailService()
+    result = service.log_action(
+        action="CREATE",
+        resource_type="tool",
+        resource_id="tool-1",
+        user_id="user-1",
+    )
+
+    assert result is not None
+    assert dummy_session.committed is True
+
+
+def test_get_audit_trail_applies_filters(monkeypatch):
+    monkeypatch.setattr(svc.settings, "audit_trail_enabled", True)
+    dummy_session = DummySession()
+    monkeypatch.setattr(svc, "SessionLocal", lambda: dummy_session)
+
+    service = svc.AuditTrailService()
+    now = svc.datetime.now(svc.timezone.utc)
+    result = service.get_audit_trail(
+        resource_type="tool",
+        resource_id="tool-1",
+        user_id="user-1",
+        action="UPDATE",
+        start_time=now,
+        end_time=now,
+        limit=1,
+        offset=0,
+    )
+    assert len(result) == 1
+
+
+def test_log_action_user_identity_extraction_exception_logs_debug(monkeypatch, caplog):
+    """Test that exceptions during user identity extraction are logged with correct parameters."""
+    import logging
+    from unittest.mock import patch
+
+    monkeypatch.setattr(svc.settings, "audit_trail_enabled", True)
+    dummy_session = DummySession()
+    monkeypatch.setattr(svc, "SessionLocal", lambda: dummy_session)
+    monkeypatch.setattr(svc, "AuditTrail", lambda **_kwargs: MagicMock())
+
+    service = svc.AuditTrailService()
+
+    # Mock the user_identity_var at the import location to raise an exception
+    mock_identity_var = MagicMock()
+    mock_identity_var.get.side_effect = RuntimeError("Identity extraction failed")
+
+    # Patch the module where user_identity_var is imported from
+    with patch("mcpgateway.transports.context.user_identity_var", mock_identity_var):
+        # Capture logs at DEBUG level
+        with caplog.at_level(logging.DEBUG):
+            result = service.log_action(
+                action="CREATE",
+                resource_type="tool",
+                resource_id="tool-1",
+                user_id="user-1",
+            )
+
+        # Verify the audit entry was still created despite the exception
+        assert result is not None
+        assert dummy_session.committed is True
+
+        # Verify the debug log was called with correct parameters
+        debug_records = [r for r in caplog.records if r.levelname == "DEBUG" and "Failed to extract user identity context for audit trail" in r.message]
+        assert len(debug_records) == 1
+        record = debug_records[0]
+        assert hasattr(record, "error")
+        assert record.error == "Identity extraction failed"
+        assert hasattr(record, "correlation_id")
+        assert record.correlation_id is not None  # correlation_id is auto-generated

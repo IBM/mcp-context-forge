@@ -1,0 +1,1403 @@
+# -*- coding: utf-8 -*-
+"""Location: ./mcpgateway/version.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+
+version.py - diagnostics endpoint (HTML + JSON)
+A FastAPI router that mounts at /version and returns either:
+- JSON - machine-readable diagnostics payload
+- HTML - a lightweight dashboard when the client requests text/html or ?format=html
+
+Features:
+- Cross-platform system metrics (Windows/macOS/Linux), with fallbacks where APIs are unavailable
+- Optional dependencies: psutil (for richer metrics) and redis.asyncio (for Redis health); omitted gracefully if absent
+- Authentication enforcement via `require_auth`; unauthenticated browsers see login form, API clients get JSON 401
+- Redacted environment variables, sanitized DB/Redis URLs
+
+The module provides comprehensive system diagnostics including application info,
+platform details, database and Redis connectivity, system metrics, and environment
+variables (with secrets redacted).
+
+Environment variables containing the following patterns are automatically redacted:
+- Keywords: SECRET, TOKEN, PASS, KEY
+- Specific vars: BASIC_AUTH_USER, DATABASE_URL, REDIS_URL
+
+Examples:
+    >>> from mcpgateway.version import _is_secret, _sanitize_url, START_TIME, HOSTNAME
+    >>> _is_secret("DATABASE_PASSWORD")
+    True
+    >>> _is_secret("BASIC_AUTH_USER")
+    True
+    >>> _is_secret("HOSTNAME")
+    False
+    >>> _sanitize_url("redis://user:xxxxx@localhost:6379/0")  # pragma: allowlist secret
+    'redis://user@localhost:6379/0'
+    >>> _sanitize_url("postgresql://admin:xxxxx@db.example.com/mydb")  # pragma: allowlist secret
+    'postgresql://admin@db.example.com/mydb'
+    >>> _sanitize_url("https://example.com/path")
+    'https://example.com/path'
+    >>> isinstance(START_TIME, float)
+    True
+    >>> START_TIME > 0
+    True
+    >>> isinstance(HOSTNAME, str)
+    True
+    >>> len(HOSTNAME) > 0
+    True
+"""
+
+# Future
+from __future__ import annotations
+
+# Standard
+import asyncio
+from datetime import datetime, timezone
+import importlib.util
+import os
+import platform
+import socket
+import time
+from typing import Any, Dict, Optional
+from urllib.parse import urlsplit, urlunsplit
+
+# Third-Party
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import HTMLResponse, Response
+from fastapi.templating import Jinja2Templates
+from jinja2 import Environment, FileSystemLoader
+import orjson
+from sqlalchemy import text
+
+# First-Party
+from mcpgateway.auth import normalize_token_teams
+from mcpgateway.config import settings
+from mcpgateway.db import engine
+from mcpgateway.utils.orjson_response import ORJSONResponse
+from mcpgateway.utils.redis_client import get_redis_client, is_redis_available
+from mcpgateway.utils.verify_credentials import require_admin_auth
+
+# Optional runtime dependencies
+try:
+    # Third-Party
+    import psutil  # optional for enhanced metrics
+except ImportError:
+    psutil = None  # type: ignore
+
+try:
+    REDIS_AVAILABLE = importlib.util.find_spec("redis.asyncio") is not None
+except (ModuleNotFoundError, AttributeError) as e:
+    # ModuleNotFoundError: redis package not installed
+    # AttributeError: 'redis' exists but isn't a proper package (e.g., shadowed by a file)
+    # Standard
+    import logging
+
+    logging.getLogger(__name__).warning(f"Redis module check failed ({type(e).__name__}: {e}), Redis support disabled")
+    REDIS_AVAILABLE = False
+
+# Globals
+
+START_TIME = time.time()
+HOSTNAME = socket.gethostname()
+LOGIN_PATH = "/login"
+router = APIRouter(tags=["meta"])
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    """Read a boolean environment variable using common truthy spellings.
+
+    Args:
+        name: Environment variable name.
+        default: Default value used when the variable is unset.
+
+    Returns:
+        Parsed boolean value.
+    """
+    value = os.getenv(name)
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _rust_build_included() -> bool:
+    """Return whether the current image includes Rust MCP artifacts.
+
+    Returns:
+        ``True`` when the current image contains the Rust MCP binaries/plugins.
+    """
+    return _env_flag("CONTEXTFORGE_ENABLE_RUST_BUILD", default=False)
+
+
+def _rust_runtime_managed() -> bool:
+    """Return whether the gateway expects to manage the Rust MCP sidecar locally.
+
+    Returns:
+        ``True`` when the gateway should launch and supervise the Rust sidecar.
+    """
+    return _env_flag("EXPERIMENTAL_RUST_MCP_RUNTIME_MANAGED", default=True)
+
+
+def _runtime_override_mode(runtime: str) -> Optional[str]:
+    """Return the active override for ``runtime`` (``shadow`` or ``edge``) when one is set.
+
+    Args:
+        runtime: Runtime kind (``"mcp"`` or ``"a2a"``).
+
+    Returns:
+        ``"shadow"`` or ``"edge"`` when an admin override is in effect, else ``None``.
+    """
+    # First-Party
+    from mcpgateway.runtime_state import get_runtime_state  # pylint: disable=import-outside-toplevel
+
+    return get_runtime_state().override_mode(runtime)
+
+
+def _boot_mcp_transport_mount() -> str:
+    """Return the transport mount selected by boot-time settings (no override applied).
+
+    Returns:
+        ``"rust"`` when boot settings select Rust ingress, otherwise ``"python"``.
+    """
+    return "rust" if bool(settings.experimental_rust_mcp_runtime_enabled and settings.experimental_rust_mcp_session_auth_reuse_enabled) else "python"
+
+
+def _boot_mcp_runtime_mode() -> str:
+    """Return the boot-time runtime mode label derived from settings.
+
+    Returns:
+        One of ``"off"``, ``"shadow"``, ``"edge"``, or ``"full"``.
+    """
+    if not settings.experimental_rust_mcp_runtime_enabled:
+        return "off"
+    if not settings.experimental_rust_mcp_session_auth_reuse_enabled:
+        return "shadow"
+    if (
+        settings.experimental_rust_mcp_session_core_enabled
+        and settings.experimental_rust_mcp_event_store_enabled
+        and settings.experimental_rust_mcp_resume_core_enabled
+        and settings.experimental_rust_mcp_live_stream_core_enabled
+        and settings.experimental_rust_mcp_affinity_core_enabled
+    ):
+        return "full"
+    return "edge"
+
+
+def _current_mcp_transport_mount() -> str:
+    """Return which public ``/mcp`` transport is currently mounted.
+
+    Returns:
+        Runtime label identifying the currently mounted public MCP transport.
+    """
+    return "rust" if _should_mount_public_rust_transport() else "python"
+
+
+def _should_mount_public_rust_transport() -> bool:
+    """Return whether public ``/mcp`` should be served directly by Rust.
+
+    Returns:
+        ``True`` only when the Rust runtime is enabled and Rust can safely own
+        steady-state public MCP session traffic.
+
+    **Safety invariant (must remain invariant under runtime override):**
+    Rust public ingress requires BOTH ``experimental_rust_mcp_runtime_enabled``
+    AND ``experimental_rust_mcp_session_auth_reuse_enabled``. The
+    session-auth-reuse flag is what makes Rust's handling of public MCP
+    session traffic safe (dedicated isolation coverage lives in
+    ``crates/mcp_runtime/TESTING-DESIGN.md``). A runtime override can toggle
+    between the two modes the invariant permits (``shadow`` forces Python;
+    ``edge`` matches the default), but it cannot loosen the invariant — an
+    override to ``edge`` on a deployment that did not opt into
+    session-auth-reuse at boot stays on Python.
+    """
+    rust_safe_for_public = bool(settings.experimental_rust_mcp_runtime_enabled and settings.experimental_rust_mcp_session_auth_reuse_enabled)
+    override = _runtime_override_mode("mcp")
+    if override == "shadow":
+        return False
+    # override == "edge" or override is None (default): both honor the
+    # safety invariant. This means a boot=shadow deployment with an
+    # admin-issued override=edge still returns False here (the router
+    # rejects such a PATCH with 409 at the API boundary — this is the
+    # belt to the router's braces).
+    return rust_safe_for_public
+
+
+def _should_use_rust_public_session_stack() -> bool:
+    """Return whether Rust should own the effective public MCP session stack.
+
+    Returns:
+        ``True`` only when the public MCP transport and session semantics should
+        stay on the Rust-backed path.
+    """
+    return _should_mount_public_rust_transport()
+
+
+def _current_mcp_runtime_mode() -> str:
+    """Return the current MCP runtime mode label used for health and UI surfaces.
+
+    Returns:
+        Human-readable runtime mode label for diagnostics and UI reporting.
+    """
+    if settings.experimental_rust_mcp_runtime_enabled:
+        return "rust-managed" if _rust_runtime_managed() else "rust-external"
+    if _rust_build_included():
+        return "python-rust-built-disabled"
+    return "python"
+
+
+def _current_mcp_session_core_mode() -> str:
+    """Return which runtime currently owns MCP session metadata.
+
+    Returns:
+        ``"rust"`` when the Rust session core is enabled, otherwise ``"python"``.
+    """
+    if _should_use_rust_public_session_stack() and settings.experimental_rust_mcp_session_core_enabled:
+        return "rust"
+    return "python"
+
+
+def _current_mcp_event_store_mode() -> str:
+    """Return which runtime currently owns MCP resumable event-store semantics.
+
+    Returns:
+        ``"rust"`` when the Rust event store is enabled, otherwise ``"python"``.
+    """
+    if _should_use_rust_public_session_stack() and settings.experimental_rust_mcp_event_store_enabled:
+        return "rust"
+    return "python"
+
+
+def _current_mcp_resume_core_mode() -> str:
+    """Return which runtime currently owns public MCP replay/resume behavior.
+
+    Returns:
+        ``"rust"`` when Rust owns replay/resume, otherwise ``"python"``.
+    """
+    if (
+        _should_use_rust_public_session_stack()
+        and settings.experimental_rust_mcp_session_core_enabled
+        and settings.experimental_rust_mcp_event_store_enabled
+        and settings.experimental_rust_mcp_resume_core_enabled
+    ):
+        return "rust"
+    return "python"
+
+
+def _current_mcp_live_stream_core_mode() -> str:
+    """Return which runtime currently owns non-resume public GET ``/mcp`` SSE behavior.
+
+    Returns:
+        ``"rust"`` when Rust owns live GET ``/mcp`` streaming, otherwise ``"python"``.
+    """
+    if _should_use_rust_public_session_stack() and settings.experimental_rust_mcp_live_stream_core_enabled:
+        return "rust"
+    return "python"
+
+
+def _current_mcp_affinity_core_mode() -> str:
+    """Return which runtime currently owns MCP multi-worker session-affinity forwarding.
+
+    Returns:
+        ``"rust"`` when Rust owns session-affinity forwarding, otherwise ``"python"``.
+    """
+    if _should_use_rust_public_session_stack() and settings.experimental_rust_mcp_affinity_core_enabled:
+        return "rust"
+    return "python"
+
+
+def _current_mcp_session_auth_reuse_mode() -> str:
+    """Return which runtime currently owns MCP session-bound auth-context reuse.
+
+    Returns:
+        ``"rust"`` when Rust session auth reuse is enabled, otherwise ``"python"``.
+    """
+    return "rust" if _should_mount_public_rust_transport() else "python"
+
+
+def _mcp_runtime_status_payload() -> Dict[str, Any]:
+    """Return MCP runtime diagnostics for health, UI, and version surfaces.
+
+    Returns:
+        Diagnostic payload describing the active MCP runtime configuration.
+    """
+    # First-Party
+    from mcpgateway.runtime_state import get_runtime_state  # pylint: disable=import-outside-toplevel
+
+    state = get_runtime_state()
+    mcp_override = state.override_mode("mcp")
+    payload: Dict[str, Any] = {
+        "mode": _current_mcp_runtime_mode(),
+        "mounted": _current_mcp_transport_mount(),
+        "boot_mode": _boot_mcp_runtime_mode(),
+        "boot_mounted": _boot_mcp_transport_mount(),
+        "effective_mode": mcp_override or _boot_mcp_runtime_mode(),
+        "override_active": mcp_override is not None,
+        "override_version": state.version("mcp"),
+        "cluster_propagation": str(state.cluster_propagation),
+        "boot_reconcile_status": str(state.boot_reconcile_status("mcp")),
+        "pod_id": state.pod_id,
+        "rust_build_included": _rust_build_included(),
+        "rust_runtime_enabled": settings.experimental_rust_mcp_runtime_enabled,
+        "session_core_mode": _current_mcp_session_core_mode(),
+        "event_store_mode": _current_mcp_event_store_mode(),
+        "resume_core_mode": _current_mcp_resume_core_mode(),
+        "live_stream_core_mode": _current_mcp_live_stream_core_mode(),
+        "affinity_core_mode": _current_mcp_affinity_core_mode(),
+        "session_auth_reuse_mode": _current_mcp_session_auth_reuse_mode(),
+        "rust_session_core_enabled": bool(_should_use_rust_public_session_stack() and settings.experimental_rust_mcp_session_core_enabled),
+        "rust_event_store_enabled": bool(_should_use_rust_public_session_stack() and settings.experimental_rust_mcp_event_store_enabled),
+        "rust_resume_core_enabled": bool(
+            _should_use_rust_public_session_stack()
+            and settings.experimental_rust_mcp_session_core_enabled
+            and settings.experimental_rust_mcp_event_store_enabled
+            and settings.experimental_rust_mcp_resume_core_enabled
+        ),
+        "rust_live_stream_core_enabled": bool(_should_use_rust_public_session_stack() and settings.experimental_rust_mcp_live_stream_core_enabled),
+        "rust_affinity_core_enabled": bool(_should_use_rust_public_session_stack() and settings.experimental_rust_mcp_affinity_core_enabled),
+        "rust_session_auth_reuse_enabled": bool(settings.experimental_rust_mcp_runtime_enabled and settings.experimental_rust_mcp_session_auth_reuse_enabled),
+    }
+
+    if settings.experimental_rust_mcp_runtime_enabled:
+        payload["rust_runtime_managed"] = _rust_runtime_managed()
+        if settings.experimental_rust_mcp_runtime_uds:
+            payload["sidecar_transport"] = "uds"
+            payload["sidecar_target"] = settings.experimental_rust_mcp_runtime_uds
+        else:
+            payload["sidecar_transport"] = "http"
+            payload["sidecar_target"] = settings.experimental_rust_mcp_runtime_url
+
+    last_change = state.last_change("mcp")
+    if last_change is not None:
+        payload["last_change"] = {
+            "version": last_change.version,
+            "mode": last_change.mode,
+            "initiator_user": last_change.initiator_user,
+            "initiator_pod": last_change.initiator_pod,
+            "timestamp": last_change.timestamp,
+        }
+
+    return payload
+
+
+def _deployment_allows_override_mode(runtime, mode):
+    """Return a ``MoveCompatibility`` for whether ``mode`` can take effect on this deployment.
+
+    Single source of truth shared by the admin router (which translates the
+    rejection reason into a 409 detail string) and the coordinator (which
+    surfaces the rejection reason via ``BootReconcileStatus``). Two concerns
+    compose:
+
+    1. **Is there a mechanism that could honor the override?** For MCP, an
+       override is observed only by the ``MCPIngressMount`` mounted for
+       ``boot=shadow`` and ``boot=edge``. ``boot=off`` has no Rust sidecar
+       (``NO_DISPATCHER``); ``boot=full`` mounts a plain Rust proxy with no
+       dispatcher (``BOOT_FULL_STRANDS``). For A2A, overrides are observed
+       per-invocation, requiring the A2A runtime to be enabled at boot —
+       ``boot=off`` returns ``NO_DISPATCHER``.
+    2. **Does the target mode satisfy the safety invariant?** An ``edge``
+       override additionally requires the session-auth-reuse (MCP) or
+       delegate-enabled (A2A) flag; without it, routing public traffic to
+       Rust would be unsafe. Failure surfaces as ``EDGE_NEEDS_SAFETY_FLAG``.
+
+    Args:
+        runtime: ``RuntimeKind`` (or its string value) being evaluated.
+        mode: ``OverrideMode`` (or its string value) being requested.
+
+    Returns:
+        A ``MoveCompatibility`` member; ``OK`` when the override can both
+        be observed and safely honored, otherwise the structured rejection
+        reason.
+    """
+    # First-Party: lazy to avoid the version <-> runtime_state import cycle.
+    # First-Party
+    from mcpgateway.runtime_state import (  # pylint: disable=import-outside-toplevel
+        _coerce_mode,
+        _coerce_runtime,
+        MoveCompatibility,
+        OverrideMode,
+        RuntimeKind,
+    )
+
+    kind = _coerce_runtime(runtime)
+    target = _coerce_mode(mode)
+
+    if kind == RuntimeKind.MCP:
+        if not settings.experimental_rust_mcp_runtime_enabled:
+            return MoveCompatibility.NO_DISPATCHER
+        is_full_boot = bool(
+            settings.experimental_rust_mcp_session_auth_reuse_enabled
+            and settings.experimental_rust_mcp_session_core_enabled
+            and settings.experimental_rust_mcp_event_store_enabled
+            and settings.experimental_rust_mcp_resume_core_enabled
+            and settings.experimental_rust_mcp_live_stream_core_enabled
+            and settings.experimental_rust_mcp_affinity_core_enabled
+        )
+        if is_full_boot:
+            return MoveCompatibility.BOOT_FULL_STRANDS
+        if target == OverrideMode.SHADOW:
+            return MoveCompatibility.OK
+        # target == OverrideMode.EDGE
+        if not settings.experimental_rust_mcp_session_auth_reuse_enabled:
+            return MoveCompatibility.EDGE_NEEDS_SAFETY_FLAG
+        return MoveCompatibility.OK
+
+    # A2A runtime removed - always return NO_DISPATCHER for A2A
+    if kind == RuntimeKind.A2A:
+        return MoveCompatibility.NO_DISPATCHER
+
+    return MoveCompatibility.NO_DISPATCHER  # pragma: no cover — _coerce_runtime rejects unknown kinds upstream
+
+
+def deployment_allows_override_mode(runtime, mode):
+    """Public wrapper for ``_deployment_allows_override_mode``.
+
+    Args:
+        runtime: ``RuntimeKind`` or string runtime kind.
+        mode: ``OverrideMode`` or string target mode.
+
+    Returns:
+        A ``MoveCompatibility`` member.
+    """
+    return _deployment_allows_override_mode(runtime, mode)
+
+
+def rust_build_included() -> bool:
+    """Return whether the current image includes Rust MCP artifacts.
+
+    Returns:
+        ``True`` when the current image contains the Rust MCP binaries/plugins.
+    """
+    return _rust_build_included()
+
+
+def rust_runtime_managed() -> bool:
+    """Return whether the gateway expects to manage the Rust MCP sidecar locally.
+
+    Returns:
+        ``True`` when the gateway should launch and supervise the Rust sidecar.
+    """
+    return _rust_runtime_managed()
+
+
+def current_mcp_transport_mount() -> str:
+    """Return which public ``/mcp`` transport is currently mounted.
+
+    Returns:
+        Runtime label identifying the currently mounted public MCP transport.
+    """
+    return _current_mcp_transport_mount()
+
+
+def boot_mcp_runtime_mode() -> str:
+    """Return the boot-time runtime mode label derived from settings.
+
+    Returns:
+        One of ``"off"``, ``"shadow"``, ``"edge"``, or ``"full"``.
+    """
+    return _boot_mcp_runtime_mode()
+
+
+def boot_mcp_transport_mount() -> str:
+    """Return the transport mount selected by boot-time settings (no override applied).
+
+    Returns:
+        ``"rust"`` when boot settings select Rust ingress, otherwise ``"python"``.
+    """
+    return _boot_mcp_transport_mount()
+
+
+def should_mount_public_rust_transport() -> bool:
+    """Return whether public ``/mcp`` should be served directly by Rust.
+
+    Returns:
+        ``True`` only when the Rust runtime is enabled and Rust can safely own
+        steady-state public MCP session traffic.
+    """
+    return _should_mount_public_rust_transport()
+
+
+def should_use_rust_public_session_stack() -> bool:
+    """Return whether Rust should own the effective public MCP session stack.
+
+    Returns:
+        ``True`` only when the public MCP transport and session semantics should
+        stay on the Rust-backed path.
+    """
+    return _should_use_rust_public_session_stack()
+
+
+def current_mcp_runtime_mode() -> str:
+    """Return the current MCP runtime mode label used for health and UI surfaces.
+
+    Returns:
+        Human-readable runtime mode label for diagnostics and UI reporting.
+    """
+    return _current_mcp_runtime_mode()
+
+
+def current_mcp_session_core_mode() -> str:
+    """Return which runtime currently owns MCP session metadata.
+
+    Returns:
+        ``"rust"`` when the Rust session core is enabled, otherwise ``"python"``.
+    """
+    return _current_mcp_session_core_mode()
+
+
+def current_mcp_event_store_mode() -> str:
+    """Return which runtime currently owns MCP resumable event-store semantics.
+
+    Returns:
+        ``"rust"`` when the Rust event store is enabled, otherwise ``"python"``.
+    """
+    return _current_mcp_event_store_mode()
+
+
+def current_mcp_resume_core_mode() -> str:
+    """Return which runtime currently owns public MCP replay/resume behavior.
+
+    Returns:
+        ``"rust"`` when Rust owns replay/resume, otherwise ``"python"``.
+    """
+    return _current_mcp_resume_core_mode()
+
+
+def current_mcp_live_stream_core_mode() -> str:
+    """Return which runtime currently owns non-resume public GET ``/mcp`` SSE behavior.
+
+    Returns:
+        ``"rust"`` when Rust owns live GET ``/mcp`` streaming, otherwise ``"python"``.
+    """
+    return _current_mcp_live_stream_core_mode()
+
+
+def current_mcp_affinity_core_mode() -> str:
+    """Return which runtime currently owns MCP multi-worker session-affinity forwarding.
+
+    Returns:
+        ``"rust"`` when Rust owns session-affinity forwarding, otherwise ``"python"``.
+    """
+    return _current_mcp_affinity_core_mode()
+
+
+def current_mcp_session_auth_reuse_mode() -> str:
+    """Return which runtime currently owns MCP session-bound auth-context reuse.
+
+    Returns:
+        ``"rust"`` when Rust session auth reuse is enabled, otherwise ``"python"``.
+    """
+    return _current_mcp_session_auth_reuse_mode()
+
+
+def mcp_runtime_status_payload() -> Dict[str, Any]:
+    """Return MCP runtime diagnostics for health, UI, and version surfaces.
+
+    Returns:
+        Diagnostic payload describing the active MCP runtime configuration.
+    """
+    return _mcp_runtime_status_payload()
+
+
+def _is_secret(key: str) -> bool:
+    """Identify if an environment variable key likely represents a secret.
+
+    Checks if the given environment variable name contains common secret-related
+    keywords or matches specific patterns to prevent accidental exposure of
+    sensitive information in diagnostics.
+
+    Args:
+        key (str): The environment variable name to check.
+
+    Returns:
+        bool: True if the key contains secret-looking keywords or matches
+            known secret patterns, False otherwise.
+
+    Examples:
+        >>> _is_secret("DATABASE_PASSWORD")
+        True
+        >>> _is_secret("API_KEY")
+        True
+        >>> _is_secret("SECRET_TOKEN")
+        True
+        >>> _is_secret("PASS_PHRASE")
+        True
+        >>> # Specific ContextForge secrets
+        >>> _is_secret("BASIC_AUTH_USER")
+        True
+        >>> _is_secret("BASIC_AUTH_PASSWORD")
+        True
+        >>> _is_secret("JWT_SECRET_KEY")
+        True
+        >>> _is_secret("AUTH_ENCRYPTION_SECRET")
+        True
+        >>> _is_secret("DATABASE_URL")
+        True
+        >>> _is_secret("REDIS_URL")
+        True
+        >>> # Non-secrets
+        >>> _is_secret("HOSTNAME")
+        False
+        >>> _is_secret("PORT")
+        False
+        >>> _is_secret("DEBUG")
+        False
+        >>> _is_secret("APP_NAME")
+        False
+        >>> # Case insensitive check
+        >>> _is_secret("database_password")
+        True
+        >>> _is_secret("MySecretKey")
+        True
+        >>> _is_secret("basic_auth_user")
+        True
+        >>> _is_secret("redis_url")
+        True
+    """
+    key_upper = key.upper()
+
+    # Check for common secret keywords
+    if any(tok in key_upper for tok in ("SECRET", "TOKEN", "PASS", "KEY")):
+        return True
+
+    # Check for specific secret environment variables
+    secret_vars = {"BASIC_AUTH_USER", "DATABASE_URL", "REDIS_URL"}
+
+    return key_upper in secret_vars
+
+
+_PUBLIC_ENV_PREFIXES = ("MCPGATEWAY_", "MCP_")
+_PUBLIC_ENV_ALLOWLIST = frozenset(
+    {
+        "PORT",
+        "HOST",
+        "RELOAD",
+        "LOG_LEVEL",
+        "LOG_TO_FILE",
+        "PLUGINS_ENABLED",
+        "OBSERVABILITY_ENABLED",
+        "AUTH_REQUIRED",
+        "ALLOWED_ORIGINS",
+    }
+)
+
+
+def _public_env() -> Dict[str, str]:
+    """Collect application-specific environment variables for diagnostics.
+
+    Only returns variables with ``MCPGATEWAY_`` or ``MCP_`` prefixes, plus a
+    curated allowlist of safe operational variables.  Secrets are still excluded
+    via :func:`_is_secret`.
+
+    Returns:
+        Dict[str, str]: A map of environment variable names to values.
+
+    Examples:
+        >>> import os
+        >>> original_env = dict(os.environ)
+        >>> os.environ.clear()
+        >>> os.environ.update({
+        ...     "HOME": "/home/user",
+        ...     "PATH": "/usr/bin:/bin",
+        ...     "PORT": "8080",
+        ...     "HOST": "0.0.0.0",
+        ...     "MCPGATEWAY_UI_ENABLED": "true",
+        ...     "MCP_REQUIRE_AUTH": "true",
+        ...     "DATABASE_PASSWORD": "xxxxx",  # pragma: allowlist secret
+        ...     "JWT_SECRET_KEY": "xxxxx",
+        ...     "DATABASE_URL": "postgresql://user:xxxxx@localhost/db",  # pragma: allowlist secret
+        ... })
+        >>>
+        >>> result = _public_env()
+        >>> # App-prefixed vars included
+        >>> "MCPGATEWAY_UI_ENABLED" in result
+        True
+        >>> "MCP_REQUIRE_AUTH" in result
+        True
+        >>> # Allowlisted vars included
+        >>> "PORT" in result
+        True
+        >>> "HOST" in result
+        True
+        >>> # System vars excluded
+        >>> "HOME" in result
+        False
+        >>> "PATH" in result
+        False
+        >>> # Secrets still excluded
+        >>> "DATABASE_PASSWORD" in result
+        False
+        >>> "JWT_SECRET_KEY" in result
+        False
+        >>> "DATABASE_URL" in result
+        False
+        >>>
+        >>> os.environ.clear()
+        >>> os.environ.update(original_env)
+    """
+    return {k: v for k, v in os.environ.items() if not _is_secret(k) and (k.upper().startswith(_PUBLIC_ENV_PREFIXES) or k.upper() in _PUBLIC_ENV_ALLOWLIST)}
+
+
+def _sanitize_url(url: Optional[str]) -> Optional[str]:
+    """Redact credentials from a URL for safe display.
+
+    Removes password component from URLs while preserving username and other
+    components. Useful for displaying connection strings in logs or diagnostics
+    without exposing sensitive credentials.
+
+    Args:
+        url (Optional[str]): The URL to sanitize, may be None.
+
+    Returns:
+        Optional[str]: The sanitized URL with password removed, or None if input was None.
+
+    Examples:
+        >>> _sanitize_url(None)
+
+        >>> _sanitize_url("")
+
+        >>> # Basic URL without credentials
+        >>> _sanitize_url("http://localhost:8080/path")
+        'http://localhost:8080/path'
+
+        >>> # URL with username and password
+        >>> _sanitize_url("postgresql://user:xxxxx@localhost:5432/db")  # pragma: allowlist secret
+        'postgresql://user@localhost:5432/db'
+
+        >>> # Redis URL with auth
+        >>> _sanitize_url("redis://admin:xxxxx@redis.example.com:6379/0")  # pragma: allowlist secret
+        'redis://admin@redis.example.com:6379/0'
+
+        >>> # URL with only password (no username)
+        >>> _sanitize_url("redis://:xxxxx@localhost:6379")
+        'redis://localhost:6379'
+
+    """
+    if not url:
+        return None
+    parts = urlsplit(url)
+    if parts.password:
+        # Only include username@ if username exists
+        if parts.username:
+            netloc = f"{parts.username}@{parts.hostname}{':' + str(parts.port) if parts.port else ''}"
+        else:
+            netloc = f"{parts.hostname}{':' + str(parts.port) if parts.port else ''}"
+        parts = parts._replace(netloc=netloc)
+    result = urlunsplit(parts)
+    return result if isinstance(result, str) else str(result)
+
+
+def _database_version() -> tuple[str, bool]:
+    """Query the database server version.
+
+    Attempts to connect to the configured database and retrieve its version string.
+    Uses dialect-specific queries for accurate version information.
+
+    Returns:
+        tuple[str, bool]: A tuple containing:
+            - str: Version string on success, or error message on failure
+            - bool: True if database is reachable, False otherwise
+
+    Examples:
+        >>> from unittest.mock import Mock, patch, MagicMock
+        >>>
+        >>> # Test successful SQLite connection
+        >>> mock_engine = Mock()
+        >>> mock_engine.dialect.name = "sqlite"
+        >>> mock_conn = Mock()
+        >>> mock_result = Mock()
+        >>> mock_result.scalar.return_value = "3.39.2"
+        >>> mock_conn.execute.return_value = mock_result
+        >>> mock_conn.__enter__ = Mock(return_value=mock_conn)
+        >>> mock_conn.__exit__ = Mock(return_value=None)
+        >>> mock_engine.connect.return_value = mock_conn
+        >>>
+        >>> with patch('mcpgateway.version.engine', mock_engine):
+        ...     version, reachable = _database_version()
+        >>> version
+        '3.39.2'
+        >>> reachable
+        True
+
+        >>> # Test PostgreSQL
+        >>> mock_engine.dialect.name = "postgresql"
+        >>> mock_result.scalar.return_value = "14.5"
+        >>> with patch('mcpgateway.version.engine', mock_engine):
+        ...     version, reachable = _database_version()
+        >>> version
+        '14.5'
+        >>> reachable
+        True
+
+        >>> # Test connection failure
+        >>> mock_engine.connect.side_effect = Exception("Connection refused")
+        >>> with patch('mcpgateway.version.engine', mock_engine):
+        ...     version, reachable = _database_version()
+        >>> version
+        'Connection refused'
+        >>> reachable
+        False
+    """
+    dialect = engine.dialect.name
+    stmts = {
+        "sqlite": "SELECT sqlite_version();",
+        "postgresql": "SELECT current_setting('server_version');",
+    }
+    stmt = stmts.get(dialect, "XXSELECT version();XX")
+    try:
+        with engine.connect() as conn:
+            ver = conn.execute(text(stmt)).scalar()
+            return str(ver), True
+    except Exception as exc:
+        return str(exc), False
+
+
+def _system_metrics() -> Dict[str, Any]:
+    """Gather system-wide and per-process metrics using psutil.
+
+    Collects comprehensive system and process metrics with graceful fallbacks
+    when psutil is not installed or certain APIs are unavailable (e.g., on Windows).
+
+    Returns:
+        Dict[str, Any]: A dictionary containing system and process metrics including:
+            - boot_time (str): ISO-formatted system boot time.
+            - cpu_percent (float): Total CPU utilization percentage.
+            - cpu_count (int): Number of logical CPU cores.
+            - cpu_freq_mhz (float | None): Current CPU frequency in MHz (if available).
+            - load_avg (Tuple[float | None, float | None, float | None]): System load average over 1, 5, and 15 minutes,
+            or (None, None, None) if unsupported.
+            - mem_total_mb (float): Total physical memory in MB.
+            - mem_used_mb (float): Used physical memory in MB.
+            - swap_total_mb (float): Total swap memory in MB.
+            - swap_used_mb (float): Used swap memory in MB.
+            - disk_total_gb (float): Total size of the root partition in GB.
+            - disk_used_gb (float): Used space on the root partition in GB.
+            - process (Dict[str, Any]): Dictionary containing metrics for the current process:
+                - pid (int): Current process ID.
+                - threads (int): Number of active threads.
+                - rss_mb (float): Resident Set Size memory usage in MB.
+                - vms_mb (float): Virtual Memory Size usage in MB.
+                - open_fds (int | None): Number of open file descriptors, or None if unsupported.
+                - proc_cpu_percent (float): CPU utilization percentage for the current process.
+
+        Returns empty dict if psutil is not installed.
+
+    Examples:
+        >>> from unittest.mock import Mock, patch
+        >>>
+        >>> # Test without psutil
+        >>> with patch('mcpgateway.version.psutil', None):
+        ...     metrics = _system_metrics()
+        >>> metrics
+        {}
+
+        >>> # Test with mocked psutil
+        >>> mock_psutil = Mock()
+        >>> mock_vm = Mock(total=8589934592, used=4294967296)  # 8GB total, 4GB used
+        >>> mock_swap = Mock(total=2147483648, used=1073741824)  # 2GB total, 1GB used
+        >>> mock_freq = Mock(current=2400.0)
+        >>> mock_disk = Mock(total=107374182400, used=53687091200)  # 100GB total, 50GB used
+        >>> mock_mem_info = Mock(rss=104857600, vms=209715200)  # 100MB RSS, 200MB VMS
+        >>> mock_process = Mock()
+        >>> mock_process.memory_info.return_value = mock_mem_info
+        >>> mock_process.num_fds.return_value = 42
+        >>> mock_process.cpu_percent.return_value = 25.5
+        >>> mock_process.num_threads.return_value = 4
+        >>> mock_process.pid = 1234
+        >>>
+        >>> mock_psutil.virtual_memory.return_value = mock_vm
+        >>> mock_psutil.swap_memory.return_value = mock_swap
+        >>> mock_psutil.cpu_freq.return_value = mock_freq
+        >>> mock_psutil.cpu_percent.return_value = 45.2
+        >>> mock_psutil.cpu_count.return_value = 8
+        >>> mock_psutil.Process.return_value = mock_process
+        >>> mock_psutil.disk_usage.return_value = mock_disk
+        >>> mock_psutil.boot_time.return_value = 1640995200.0  # 2022-01-01 00:00:00 UTC
+        >>>
+        >>> with patch('mcpgateway.version.psutil', mock_psutil):
+        ...     with patch('os.getloadavg', return_value=(1.5, 2.0, 1.75)):
+        ...         with patch('os.name', 'posix'):
+        ...             metrics = _system_metrics()
+        >>>
+        >>> metrics['cpu_percent']
+        45.2
+        >>> metrics['cpu_count']
+        8
+        >>> metrics['cpu_freq_mhz']
+        2400
+        >>> metrics['load_avg']
+        (1.5, 2.0, 1.75)
+        >>> metrics['mem_total_mb']
+        8192
+        >>> metrics['mem_used_mb']
+        4096
+        >>> metrics['process']['pid']
+        1234
+        >>> metrics['process']['threads']
+        4
+        >>> metrics['process']['rss_mb']
+        100.0
+        >>> metrics['process']['open_fds']
+        42
+    """
+    if not psutil:
+        return {}
+
+    # System memory and swap
+    vm = psutil.virtual_memory()
+    swap = psutil.swap_memory()
+
+    # Load average (Unix); on Windows returns (None, None, None)
+    try:
+        load = tuple(round(x, 2) for x in os.getloadavg())
+    except (AttributeError, OSError):
+        load = (None, None, None)
+
+    # CPU metrics
+    freq = psutil.cpu_freq()
+    cpu_pct = psutil.cpu_percent(interval=0.3)
+    cpu_count = psutil.cpu_count(logical=True)
+
+    # Process metrics
+    proc: "psutil.Process" = psutil.Process()
+    try:
+        open_fds = proc.num_fds()
+    except Exception:
+        open_fds = None
+    proc_cpu_pct = proc.cpu_percent(interval=0.1)
+    memory_info = getattr(proc, "memory_info")()
+    rss_mb = round(memory_info.rss / 1_048_576, 2)
+    vms_mb = round(memory_info.vms / 1_048_576, 2)
+    threads = proc.num_threads()
+    pid = proc.pid
+
+    # Disk usage for root partition (ensure str on Windows)
+    root = os.getenv("SystemDrive", "C:\\") if os.name == "nt" else "/"
+    disk = psutil.disk_usage(str(root))
+    disk_total_gb = round(disk.total / 1_073_741_824, 2)
+    disk_used_gb = round(disk.used / 1_073_741_824, 2)
+
+    return {
+        "boot_time": datetime.fromtimestamp(psutil.boot_time()).isoformat(),
+        "cpu_percent": cpu_pct,
+        "cpu_count": cpu_count,
+        "cpu_freq_mhz": round(freq.current) if freq else None,
+        "load_avg": load,
+        "mem_total_mb": round(vm.total / 1_048_576),
+        "mem_used_mb": round(vm.used / 1_048_576),
+        "swap_total_mb": round(swap.total / 1_048_576),
+        "swap_used_mb": round(swap.used / 1_048_576),
+        "disk_total_gb": disk_total_gb,
+        "disk_used_gb": disk_used_gb,
+        "process": {
+            "pid": pid,
+            "threads": threads,
+            "rss_mb": rss_mb,
+            "vms_mb": vms_mb,
+            "open_fds": open_fds,
+            "proc_cpu_percent": proc_cpu_pct,
+        },
+    }
+
+
+def _build_payload(
+    redis_version: Optional[str],
+    redis_ok: bool,
+) -> Dict[str, Any]:
+    """Build the complete diagnostics payload.
+
+    Assembles all diagnostic information into a structured dictionary suitable
+    for JSON serialization or HTML rendering.
+
+    Args:
+        redis_version (Optional[str]): Redis version string or error message.
+        redis_ok (bool): Whether Redis is reachable and operational.
+
+    Returns:
+        Dict[str, Any]: Complete diagnostics payload containing timestamp, host info,
+            application details, platform info, database and Redis status, settings,
+            environment variables, and system metrics.
+    """
+    # First-Party
+    from mcpgateway import __version__  # pylint: disable=import-outside-toplevel
+
+    db_ver, db_ok = _database_version()
+    return {
+        "timestamp": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        "host": HOSTNAME,
+        "uptime_seconds": int(time.time() - START_TIME),
+        "app": {
+            "name": settings.app_name,
+            "version": __version__,
+            "mcp_protocol_version": settings.protocol_version,
+        },
+        "platform": {
+            "python": platform.python_version(),
+            "fastapi": __import__("fastapi").__version__,
+            "sqlalchemy": __import__("sqlalchemy").__version__,
+            "os": f"{platform.system()} {platform.release()} ({platform.machine()})",
+        },
+        "database": {
+            "dialect": engine.dialect.name,
+            "url": _sanitize_url(settings.database_url),
+            "reachable": db_ok,
+            "server_version": db_ver,
+        },
+        "redis": {
+            "available": REDIS_AVAILABLE,
+            "url": _sanitize_url(settings.redis_url),
+            "reachable": redis_ok,
+            "server_version": redis_version,
+        },
+        "settings": {
+            "cache_type": settings.cache_type,
+            "mcpgateway_ui_enabled": getattr(settings, "mcpgateway_ui_enabled", None),
+            "mcpgateway_admin_api_enabled": getattr(settings, "mcpgateway_admin_api_enabled", None),
+            "metrics_retention_days": getattr(settings, "metrics_retention_days", 30),
+            "metrics_rollup_retention_days": getattr(settings, "metrics_rollup_retention_days", 365),
+            "metrics_cleanup_enabled": getattr(settings, "metrics_cleanup_enabled", True),
+            "metrics_rollup_enabled": getattr(settings, "metrics_rollup_enabled", True),
+        },
+        "mcp_runtime": _mcp_runtime_status_payload(),
+        "env": _public_env(),
+        "system": _system_metrics(),
+    }
+
+
+def _html_table(obj: Dict[str, Any]) -> str:
+    """Render a dict as an HTML table.
+
+    Converts a dictionary into an HTML table with keys as headers and values
+    as cells. Non-string values are JSON-serialized for display.
+
+    Args:
+        obj (Dict[str, Any]): The dictionary to render as a table.
+
+    Returns:
+        str: HTML table markup string.
+
+    Examples:
+        >>> # Simple string values
+        >>> html = _html_table({"name": "test", "version": "1.0"})
+        >>> '<table>' in html
+        True
+        >>> '<tr><th>name</th><td>test</td></tr>' in html
+        True
+        >>> '<tr><th>version</th><td>1.0</td></tr>' in html
+        True
+
+        >>> # Complex values get JSON serialized
+        >>> html = _html_table({"count": 42, "active": True, "items": ["a", "b"]})
+        >>> '<th>count</th><td>42</td>' in html
+        True
+        >>> '<th>active</th><td>true</td>' in html
+        True
+        >>> '<th>items</th><td>["a","b"]</td>' in html
+        True
+
+        >>> # Empty dict
+        >>> _html_table({})
+        '<table></table>'
+    """
+    rows = "".join(f"<tr><th>{k}</th><td>{orjson.dumps(v, default=str).decode() if not isinstance(v, str) else v}</td></tr>" for k, v in obj.items())
+    return f"<table>{rows}</table>"
+
+
+def _render_html(payload: Dict[str, Any]) -> str:
+    """Render the full diagnostics payload as HTML.
+
+    Creates a complete HTML page with styled tables displaying all diagnostic
+    information in a user-friendly format.
+
+    Args:
+        payload (Dict[str, Any]): The complete diagnostics data structure.
+
+    Returns:
+        str: Complete HTML page as a string.
+
+    Examples:
+        >>> payload = {
+        ...     "timestamp": "2024-01-01T00:00:00Z",
+        ...     "host": "test-server",
+        ...     "uptime_seconds": 3600,
+        ...     "app": {"name": "TestApp", "version": "1.0"},
+        ...     "platform": {"python": "3.9.0"},
+        ...     "database": {"dialect": "sqlite", "reachable": True},
+        ...     "redis": {"available": False},
+        ...     "settings": {"cache_type": "memory"},
+        ...     "mcp_runtime": {"mode": "python", "mounted": "python"},
+        ...     "a2a_runtime": {"mode": "python", "invoke_mode": "python"},
+        ...     "system": {"cpu_count": 4},
+        ...     "env": {"PATH": "/usr/bin"}
+        ... }
+        >>>
+        >>> html = _render_html(payload)
+        >>> '<!doctype html>' in html
+        True
+        >>> '<h1>ContextForge diagnostics</h1>' in html
+        True
+        >>> 'test-server' in html
+        True
+        >>> '3600s' in html
+        True
+        >>> '<h2>App</h2>' in html
+        True
+        >>> '<h2>Database</h2>' in html
+        True
+        >>> '<h2>MCP Runtime</h2>' in html
+        True
+        >>> '<style>' in html
+        True
+        >>> 'border-collapse:collapse' in html
+        True
+    """
+    style = (
+        "<style>"
+        "body{font-family:system-ui,sans-serif;margin:2rem;}"
+        "table{border-collapse:collapse;width:100%;margin-bottom:1rem;}"
+        "th,td{border:1px solid #ccc;padding:.5rem;text-align:left;}"
+        "th{background:#f7f7f7;width:25%;}"
+        "</style>"
+    )
+    header = f"<h1>ContextForge diagnostics</h1><p>Generated {payload['timestamp']} - Host {payload['host']} - Uptime {payload['uptime_seconds']}s</p>"
+    sections = ""
+    for title, key in (
+        ("App", "app"),
+        ("Platform", "platform"),
+        ("Database", "database"),
+        ("Redis", "redis"),
+        ("Settings", "settings"),
+        ("MCP Runtime", "mcp_runtime"),
+        ("System", "system"),
+    ):
+        sections += f"<h2>{title}</h2>{_html_table(payload[key])}"
+    env_section = f"<h2>Environment</h2>{_html_table(payload['env'])}"
+    return f"<!doctype html><html><head><meta charset='utf-8'>{style}</head><body>{header}{sections}{env_section}</body></html>"
+
+
+def _login_html(next_url: str) -> str:
+    """Render the login form HTML for unauthenticated browsers.
+
+    Creates a simple login form that posts credentials and redirects back
+    to the requested URL after successful authentication.
+
+    Args:
+        next_url (str): The URL to redirect to after successful login.
+
+    Returns:
+        str: HTML string containing the complete login page.
+
+    Examples:
+        >>> html = _login_html("/version?format=html")
+        >>> '<!doctype html>' in html
+        True
+        >>> '<h2>Please log in</h2>' in html
+        True
+        >>> 'action="/login"' in html
+        True
+        >>> 'name="next" value="/version?format=html"' in html
+        True
+        >>> 'type="text" name="username"' in html
+        True
+        >>> 'type="password" name="password"' in html
+        True
+        >>> 'autocomplete="username"' in html
+        True
+        >>> 'autocomplete="current-password"' in html
+        True
+        >>> '<button type="submit">Login</button>' in html
+        True
+    """
+    return f"""<!doctype html>
+<html><head><meta charset='utf-8'><title>Login - ContextForge</title>
+<style>
+body{{font-family:system-ui,sans-serif;margin:2rem;}}
+form{{max-width:320px;margin:auto;}}
+label{{display:block;margin:.5rem 0;}}
+input{{width:100%;padding:.5rem;}}
+button{{margin-top:1rem;padding:.5rem 1rem;}}
+</style></head>
+<body>
+  <h2>Please log in</h2>
+  <form action="{LOGIN_PATH}" method="post">
+    <input type="hidden" name="next" value="{next_url}">
+    <label>Username<input type="text" name="username" autocomplete="username"></label>
+    <label>Password<input type="password" name="password" autocomplete="current-password"></label>
+    <button type="submit">Login</button>
+  </form>
+</body></html>"""
+
+
+def _has_version_admin_access(user: Any) -> bool:
+    """Return True when diagnostics access is permitted for the authenticated user.
+
+    Admin diagnostics access requires unrestricted admin scope when the caller is a JWT payload.
+    When ``require_admin_auth`` is the upstream dependency it returns a plain email string
+    after having already verified admin status, so strings are accepted as authorized.
+
+    Args:
+        user: Authenticated user payload from the auth dependency.
+
+    Returns:
+        bool: ``True`` when unrestricted admin diagnostics access is allowed.
+    """
+    if isinstance(user, str):
+        # require_admin_auth already verified admin status and returns the email string
+        return True
+    if not isinstance(user, dict):
+        return False
+
+    is_admin = bool(user.get("is_admin", False))
+    if not is_admin:
+        nested_user = user.get("user", {})
+        if isinstance(nested_user, dict):
+            is_admin = bool(nested_user.get("is_admin", False))
+    if not is_admin:
+        return False
+
+    return normalize_token_teams(user) is None
+
+
+# Endpoint
+@router.get("/version", summary="Diagnostics (admin only)")
+async def version_endpoint(
+    request: Request,
+    fmt: Optional[str] = None,
+    partial: Optional[bool] = False,
+    _user=Depends(require_admin_auth),
+) -> Response:
+    """Serve diagnostics as JSON, full HTML, or partial HTML.
+
+    Main endpoint that gathers all diagnostic information and returns it in the
+    requested format. Requires admin authentication.
+
+    The endpoint supports three output formats:
+    - JSON (default): Machine-readable diagnostic data
+    - Full HTML: Complete HTML page with styled tables
+    - Partial HTML: HTML fragment for embedding (when partial=True)
+
+    Args:
+        request (Request): The incoming FastAPI request object.
+        fmt (Optional[str]): Query parameter to force format ('html' for HTML output).
+        partial (Optional[bool]): Query parameter to request partial HTML fragment.
+        _user: Injected authenticated admin user from require_admin_auth dependency.
+
+    Returns:
+        Response: JSONResponse with diagnostic data, or HTMLResponse with formatted page.
+
+    Raises:
+        HTTPException: If the caller does not have required admin diagnostics access.
+
+    Examples:
+        >>> import asyncio
+        >>> from unittest.mock import Mock, AsyncMock, patch
+        >>> from fastapi import Request
+        >>> from fastapi.responses import JSONResponse, HTMLResponse
+        >>>
+        >>> # Create mock request
+        >>> mock_request = Mock(spec=Request)
+        >>> mock_request.headers = {"accept": "application/json"}
+        >>>
+        >>> admin_user = {"email": "admin@example.com", "is_admin": True, "teams": None}
+        >>>
+        >>> # Test JSON response (default)
+        >>> async def test_json():
+        ...     with patch('mcpgateway.version.REDIS_AVAILABLE', False):
+        ...         with patch('mcpgateway.version._build_payload') as mock_build:
+        ...             mock_build.return_value = {"test": "data"}
+        ...             response = await version_endpoint(mock_request, fmt=None, partial=False, _user=admin_user)
+        ...             return response
+        >>>
+        >>> response = asyncio.run(test_json())
+        >>> isinstance(response, JSONResponse)
+        True
+
+        >>> # Test HTML response with fmt parameter
+        >>> async def test_html_fmt():
+        ...     with patch('mcpgateway.version.REDIS_AVAILABLE', False):
+        ...         with patch('mcpgateway.version._build_payload') as mock_build:
+        ...             with patch('mcpgateway.version._render_html') as mock_render:
+        ...                 mock_build.return_value = {"test": "data"}
+        ...                 mock_render.return_value = "<html>test</html>"
+        ...                 response = await version_endpoint(mock_request, fmt="html", partial=False, _user=admin_user)
+        ...                 return response
+        >>>
+        >>> response = asyncio.run(test_html_fmt())
+        >>> isinstance(response, HTMLResponse)
+        True
+
+        >>> # Test with Redis available (using is_redis_available and get_redis_client)
+        >>> async def test_with_redis():
+        ...     from mcpgateway.utils.redis_client import _reset_client
+        ...     _reset_client()  # Reset shared client state for clean test
+        ...     mock_redis = AsyncMock()
+        ...     mock_redis.info = AsyncMock(return_value={"redis_version": "7.0.5"})
+        ...
+        ...     async def mock_get_redis_client():
+        ...         return mock_redis
+        ...
+        ...     async def mock_is_redis_available():
+        ...         return True
+        ...
+        ...     with patch('mcpgateway.version.REDIS_AVAILABLE', True):
+        ...         with patch('mcpgateway.version.settings') as mock_settings:
+        ...             mock_settings.cache_type = "redis"
+        ...             mock_settings.redis_url = "redis://localhost:6379"
+        ...             with patch('mcpgateway.version.is_redis_available', mock_is_redis_available):
+        ...                 with patch('mcpgateway.version.get_redis_client', mock_get_redis_client):
+        ...                     with patch('mcpgateway.version._build_payload') as mock_build:
+        ...                         mock_build.return_value = {"redis": {"version": "7.0.5"}}
+        ...                         response = await version_endpoint(mock_request, _user=admin_user)
+        ...                         # Verify Redis info was retrieved
+        ...                         mock_redis.info.assert_called_once()
+        ...                         # Verify payload was built with Redis info
+        ...                         mock_build.assert_called_once_with("7.0.5", True)
+        ...                         _reset_client()  # Clean up after test
+        ...                         return response
+        >>>
+        >>> response = asyncio.run(test_with_redis())
+        >>> isinstance(response, JSONResponse)
+        True
+    """
+    if not _has_version_admin_access(_user):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin permissions required")
+
+    # Redis health check - use shared client from factory
+    redis_ok = False
+    redis_version: Optional[str] = None
+    if REDIS_AVAILABLE and settings.cache_type.lower() == "redis" and settings.redis_url:
+        try:
+            # Use centralized availability check
+            redis_ok = await is_redis_available()
+            if redis_ok:
+                client = await get_redis_client()
+                if client:
+                    info = await asyncio.wait_for(client.info(), timeout=3.0)
+                    redis_version = info.get("redis_version", "unknown")
+                else:
+                    redis_version = "Client not available"
+            else:
+                redis_version = "Not reachable"
+        except Exception as exc:
+            redis_ok = False
+            redis_version = str(exc)
+
+    payload = _build_payload(redis_version, redis_ok)
+    if partial:
+        # Return partial HTML fragment for HTMX embedding
+        templates = getattr(request.app.state, "templates", None)
+        if templates is None:
+            # First-Party
+            from mcpgateway.utils.csp_nonce import get_csp_nonce_from_request
+
+            jinja_env = Environment(
+                loader=FileSystemLoader(str(settings.templates_dir)),
+                autoescape=True,
+                auto_reload=settings.templates_auto_reload,
+            )
+
+            # Register csp_nonce global for CSP nonce support in templates
+            jinja_env.globals["csp_nonce"] = get_csp_nonce_from_request
+            templates = Jinja2Templates(env=jinja_env)
+        return templates.TemplateResponse(request, "version_info_partial.html", {"request": request, "payload": payload})
+    wants_html = fmt == "html" or "text/html" in request.headers.get("accept", "")
+    if wants_html:
+        return HTMLResponse(_render_html(payload))
+    return ORJSONResponse(payload)

@@ -1,0 +1,16 @@
+{{- if and .Values.postgres.enabled (not .Values.postgres.external.enabled) }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "mcp-stack.fullname" . }}-postgres
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.postgres.service.type }}
+  ports:
+    - name: postgres
+      port: {{ .Values.postgres.service.port }}
+      targetPort: {{ .Values.postgres.service.targetPort | default .Values.postgres.service.port }}
+  selector:
+    app: {{ include "mcp-stack.fullname" . }}-postgres
+{{- end }}

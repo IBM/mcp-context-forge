@@ -1,0 +1,241 @@
+# -*- coding: utf-8 -*-
+"""Location: ./tests/playwright/test_api_integration.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+
+Module Description.
+Module documentation...
+"""
+
+# Standard
+import uuid
+
+# Third-Party
+from playwright.sync_api import APIRequestContext, expect, Locator, Page
+import pytest
+
+
+@pytest.fixture
+def json_param_tool(api_request_context: APIRequestContext):
+    """Create a REST tool with an object-type parameter via API, clean up after.
+
+    Yields the tool name so tests can locate it in the UI by name.
+    """
+    tool_name = f"test-json-tool-{uuid.uuid4().hex[:8]}"
+    payload = {
+        "tool": {
+            "name": tool_name,
+            "url": "https://httpbin.org/post",
+            "integration_type": "REST",
+            "request_type": "POST",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "config": {
+                        "type": "object",
+                        "description": "Configuration object",
+                    }
+                },
+                "required": ["config"],
+            },
+        }
+    }
+    resp = api_request_context.post("/tools/", data=payload)
+    if resp.status in (401, 403):
+        pytest.skip(f"Auth required to create test tool (HTTP {resp.status})")
+    assert resp.ok, f"Failed to create test tool: {resp.text()}"
+    tool_id = resp.json()["id"]
+
+    yield tool_name
+
+    api_request_context.delete(f"/tools/{tool_id}")
+
+
+def _close_and_reopen_test_modal(page: Page, tool_id: str) -> None:
+    """Close the tool test modal and reopen it via Admin.testTool(), waiting for form fields.
+
+    The testTool() JS function has a 2000ms debounce (enhancedDebounceDelay)
+    that rejects rapid re-clicks, so we must wait for that to expire before
+    reopening.  Uses page.evaluate instead of clicking the hidden overflow-menu
+    button to avoid HTMX detachment races.
+    """
+    import json
+
+    close_btn = page.locator("#tool-test-modal button:has-text('Close')")
+    close_btn.click()
+    expect(page.locator("#tool-test-modal")).to_be_hidden(timeout=5000)
+    # Wait for testTool() 2000ms debounce to expire before re-invoking
+    page.wait_for_timeout(2500)
+    page.evaluate(f"Admin.testTool({json.dumps(tool_id)})")
+    expect(page.locator("#tool-test-modal")).to_be_visible(timeout=10000)
+    page.wait_for_selector("#tool-test-form-fields", state="visible", timeout=10000)
+
+
+def _fill_and_submit_expecting_error(page: Page, value: str) -> None:
+    """Fill the first textarea with value, submit, and assert an error toast appears."""
+    page.locator("#tool-test-form-fields textarea").first.fill(value)
+    page.click('button:has-text("Run Tool")')
+    error_toast = page.locator("div.fixed.bg-red-600")
+    expect(error_toast).to_be_visible(timeout=5000)
+    # Wait for the 5s auto-dismiss so it won't bleed into the next assertion
+    expect(error_toast).to_be_hidden(timeout=10000)
+
+
+class TestAPIIntegration:
+    """API integration tests for MCP protocol and REST endpoints.
+
+    Examples:
+        pytest tests/playwright/test_api_integration.py
+    """
+
+    def test_should_handle_mcp_protocol_requests(self, page: Page, admin_page):
+        """Test MCP tool test modal via UI.
+
+        Verifies the tool test flow: click Test on a tool row, modal opens
+        with dynamically generated form fields, click Run Tool, result area
+        displays output.
+        """
+        # admin_page fixture ensures login; use raw page for operations
+        page.click('[data-testid="tools-tab"]')
+        page.wait_for_selector("#tools-panel:not(.hidden)")
+
+        # Wait for tools table to load
+        try:
+            page.wait_for_selector("#tools-table-body tr", timeout=10000)
+        except Exception:
+            pytest.skip("No tools available to test MCP protocol requests")
+
+        first_tool = page.locator("#tools-table-body tr").first
+        test_btn = first_tool.locator('button:has-text("Test")')
+        if test_btn.count() == 0:
+            pytest.skip("No Test button available on first tool")
+        # Row actions live inside an Alpine overflow menu — open the ⋮ trigger first.
+        first_tool.locator("button[aria-expanded]").click()
+        first_tool.locator('[role="menu"]').wait_for(state="visible", timeout=5000)
+        test_btn.click()
+
+        # Wait for tool test modal and dynamic form field generation
+        expect(page.locator("#tool-test-modal")).to_be_visible(timeout=10000)
+        # The form fields div may exist but be empty (hidden) if the tool has no input schema.
+        # Wait for it to appear in the DOM, then check if it has any content.
+        page.wait_for_selector("#tool-test-form-fields", state="attached", timeout=10000)
+        page.wait_for_timeout(500)
+
+        # Fill any dynamically generated form fields (schema-based)
+        form_fields = page.locator("#tool-test-form-fields input")
+        textareas = page.locator("#tool-test-form-fields textarea")
+        total_fields = form_fields.count() + textareas.count()
+        if total_fields == 0:
+            pytest.skip("First tool has no input schema — cannot test MCP protocol requests")
+
+        for i in range(form_fields.count()):
+            field = form_fields.nth(i)
+            if field.input_value() == "":
+                field.fill("test")
+        for i in range(textareas.count()):
+            field = textareas.nth(i)
+            if field.input_value() == "":
+                field.fill("{}")
+
+        # Click Run Tool and verify result area becomes populated
+        page.click('button:has-text("Run Tool")')
+        page.wait_for_selector("#tool-test-result", timeout=30000)
+        expect(page.locator("#tool-test-result")).to_be_visible()
+
+    def test_should_handle_object_parameter_validation(self, page: Page, admin_page, json_param_tool: str):
+        """Test object parameter validation in tool test modal.
+
+        Verifies that object-type parameters using textarea fields properly
+        validate JSON input and reject invalid formats (malformed JSON,
+        arrays, strings, and null).
+
+        Uses the json_param_tool fixture to guarantee a tool with an object
+        parameter exists before the test runs.
+        """
+        import json
+
+        page.click('[data-testid="tools-tab"]')
+        page.wait_for_selector("#tools-panel:not(.hidden)")
+        # The admin_page fixture only waits for domcontentloaded; the tools table's
+        # hx-trigger="load" initial HTMX request may still be in-flight.  Both the
+        # initial load and the search target #tools-table with outerHTML swap, so if
+        # the search fires before the initial load completes there is no #tools-table-body
+        # for HTMX to target — the swap goes nowhere and the table stays empty.
+        # Waiting for #tools-table-body to be attached (= initial load done) first
+        # eliminates this race entirely, for both fresh-page and pre-loaded cases.
+        page.wait_for_selector("#tools-table-body", state="attached", timeout=15000)
+
+        # Search for the fixture-created tool.  Wrap fill in expect_response so we
+        # explicitly wait for the HTMX partial response — and any synchronous
+        # history.replaceState fired by updatePanelSearchStateInUrl before the request —
+        # to fully settle before calling page.evaluate(), preventing "execution context
+        # was destroyed" errors from navigation events racing with evaluate.
+        search_input = page.locator("#tools-search-input")
+        search_input.wait_for(state="visible", timeout=10000)
+        with page.expect_response(
+            lambda r: "/admin/tools/partial" in r.url and r.request.method == "GET",
+            timeout=10000,
+        ):
+            search_input.fill(json_param_tool)
+            search_input.press("Enter")
+
+        tool_row = page.locator(f'#tools-table-body tr:has-text("{json_param_tool}")')
+        tool_row.wait_for(state="visible", timeout=10000)
+        # Row actions live inside an Alpine overflow menu — open the ⋮ trigger first.
+        tool_row.locator("button[aria-expanded]").click()
+        tool_row.locator('[role="menu"]').wait_for(state="visible", timeout=5000)
+
+        # The expect_response above guarantees the search HTMX response has settled and
+        # no swap is in-flight, so clicking the Test button directly is safe (no DOM
+        # detachment risk).  Using evaluate("Admin.testTool(...)") is avoided here
+        # because testTool is async: awaiting it inside page.evaluate() while a fetch
+        # is in-flight can race with a navigation and produce "execution context
+        # was destroyed" errors.  Direct click fires the async function without blocking.
+        test_btn = tool_row.locator('button:has-text("Test")')
+        # get_attribute reads the DOM directly without a JS evaluate call.
+        tool_id = test_btn.get_attribute("data-test-tool-id")
+        test_btn.click()
+
+        expect(page.locator("#tool-test-modal")).to_be_visible(timeout=10000)
+        page.wait_for_selector("#tool-test-form-fields", state="visible", timeout=10000)
+
+        # Fixture guarantees an object-type textarea exists
+        textareas = page.locator("#tool-test-form-fields textarea")
+        expect(textareas.first).to_be_visible(timeout=5000)
+
+        # Test valid JSON object — intercept request to verify parsed payload
+        textareas.first.fill('{"key": "value", "number": 42}')
+        with page.expect_request(lambda req: "/rpc" in req.url and req.method == "POST") as req_info:
+            page.click('button:has-text("Run Tool")')
+        payload = req_info.value.post_data_json
+        args = payload.get("params", {}).get("arguments", {})
+        assert "config" in args, f"RPC params.arguments missing 'config' key; got keys: {list(args.keys())}"
+        assert isinstance(args["config"], dict), "config should be a parsed dict, not a string"
+        assert args["config"] == {"key": "value", "number": 42}
+        page.wait_for_selector("#tool-test-result", timeout=30000)
+        expect(page.locator("#tool-test-result")).to_be_visible()
+
+        # Test invalid inputs — each should show an error toast
+        invalid_cases = [
+            '{"invalid": json}',  # malformed JSON
+            "[1, 2, 3]",  # array (not object)
+            '"just a string"',  # string primitive
+            "null",  # null (typeof null === "object" in JS)
+        ]
+        for invalid_value in invalid_cases:
+            _close_and_reopen_test_modal(page, tool_id)
+            _fill_and_submit_expecting_error(page, invalid_value)
+
+    def test_mcp_initialize_endpoint(self, page: Page, api_request_context: APIRequestContext, admin_page):
+        """Test MCP initialize endpoint directly via APIRequestContext."""
+        cookies = page.context.cookies()
+        jwt_cookie = next((c for c in cookies if c["name"] == "jwt_token"), None)
+        assert jwt_cookie is not None
+        response = api_request_context.post(
+            "/protocol/initialize",
+            headers={"Authorization": f"Bearer {jwt_cookie['value']}"},
+            data={"protocolVersion": "2024-11-05", "capabilities": {}, "clientInfo": {"name": "test-client", "version": "1.0.0"}},
+        )
+        assert response.ok
+        data = response.json()
+        assert "protocolVersion" in data

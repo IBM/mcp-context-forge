@@ -1,0 +1,1267 @@
+# -*- coding: utf-8 -*-
+"""Location: ./tests/unit/mcpgateway/utils/test_sso_bootstrap.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+
+Test SSO bootstrap async functionality.
+"""
+
+# Standard
+import logging
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
+
+# Third-Party
+import pytest
+
+
+class DummySecret:
+    def __init__(self, value: str):
+        self._value = value
+
+    def get_secret_value(self) -> str:
+        return self._value
+
+
+def test_get_predefined_sso_providers_multiple(monkeypatch):
+    """Ensure get_predefined_sso_providers builds provider configs across branches."""
+    # First-Party
+    from mcpgateway.utils.sso_bootstrap import get_predefined_sso_providers
+
+    secret = DummySecret("secret-value")
+    cfg = SimpleNamespace(
+        sso_github_enabled=True,
+        sso_github_client_id="gh-client",
+        sso_github_client_secret=secret,
+        sso_google_enabled=True,
+        sso_google_client_id="g-client",
+        sso_google_client_secret=secret,
+        sso_ibm_verify_enabled=True,
+        sso_ibm_verify_client_id="ibm-client",
+        sso_ibm_verify_client_secret=secret,
+        sso_ibm_verify_issuer="https://tenant.verify.ibm.com",
+        sso_okta_enabled=True,
+        sso_okta_client_id="okta-client",
+        sso_okta_client_secret=secret,
+        sso_okta_issuer="https://company.okta.com",
+        sso_okta_scope="openid profile email groups",
+        okta_group_mapping='{"Engineering": "team-uuid-1"}',
+        sso_entra_enabled=True,
+        sso_entra_client_id="entra-client",
+        sso_entra_client_secret=secret,
+        sso_entra_tenant_id="tenant-id",
+        sso_entra_groups_claim="groups",
+        sso_entra_role_mappings={"admin": "Admin"},
+        sso_entra_graph_api_enabled=False,
+        sso_entra_graph_api_timeout=42,
+        sso_entra_graph_api_max_groups=777,
+        sso_keycloak_enabled=True,
+        sso_keycloak_base_url="https://keycloak.example.com",
+        sso_keycloak_public_base_url="https://login.example.com",
+        sso_keycloak_client_id="kc-client",
+        sso_keycloak_client_secret=secret,
+        sso_keycloak_realm="master",
+        sso_keycloak_map_realm_roles=True,
+        sso_keycloak_map_client_roles=False,
+        sso_keycloak_username_claim="preferred_username",
+        sso_keycloak_email_claim="email",
+        sso_keycloak_groups_claim="groups",
+        sso_keycloak_role_mappings={"gateway-admin": "platform_admin"},
+        sso_keycloak_default_role="viewer",
+        sso_keycloak_resolve_team_scope_to_personal_team=True,
+        sso_adfs_enabled=False,
+        sso_generic_enabled=True,
+        sso_generic_provider_id="authentik",
+        sso_generic_display_name=None,
+        sso_generic_client_id="generic-client",
+        sso_generic_client_secret=secret,
+        sso_generic_authorization_url="https://auth.example.com/authorize",
+        sso_generic_token_url="https://auth.example.com/token",
+        sso_generic_userinfo_url="https://auth.example.com/userinfo",
+        sso_generic_issuer="https://auth.example.com",
+        sso_generic_jwks_uri=None,
+        sso_generic_scope="openid profile email",
+        sso_generic_groups_claim="groups",
+        sso_generic_admin_groups=[],
+        sso_generic_role_mappings={"cf-platform-admin": "platform_admin", "cf-dev": "developer"},
+        sso_generic_default_role="platform_viewer",
+        sso_generic_sync_roles_on_login=True,
+        sso_trusted_domains=["example.com"],
+        sso_auto_create_users=True,
+    )
+
+    monkeypatch.setattr("mcpgateway.utils.sso_bootstrap.settings", cfg)
+    monkeypatch.setattr(
+        "mcpgateway.utils.keycloak_discovery.discover_keycloak_endpoints_sync",
+        lambda *args, **kwargs: {
+            "authorization_url": f"{args[0]}/auth",
+            "token_url": f"{args[0]}/token",
+            "userinfo_url": f"{args[0]}/userinfo",
+            "issuer": f"{args[0]}/realms/{args[1]}",
+            "jwks_uri": f"{args[0]}/jwks",
+        },
+    )
+
+    providers = get_predefined_sso_providers()
+    provider_ids = {provider["id"] for provider in providers}
+
+    assert {"github", "google", "ibm_verify", "okta", "entra", "keycloak", "authentik"} <= provider_ids
+
+    okta_provider = next(provider for provider in providers if provider["id"] == "okta")
+    assert okta_provider["scope"] == "openid profile email groups"
+    assert okta_provider["team_mapping"] == {"Engineering": "team-uuid-1"}
+
+    entra_provider = next(provider for provider in providers if provider["id"] == "entra")
+    entra_metadata = entra_provider["provider_metadata"]
+    assert entra_provider["scope"] == "openid profile email User.Read"
+    assert entra_metadata["graph_api_enabled"] is False
+    assert entra_metadata["graph_api_timeout"] == 42
+    assert entra_metadata["graph_api_max_groups"] == 777
+
+    keycloak_provider = next(provider for provider in providers if provider["id"] == "keycloak")
+    assert keycloak_provider["jwks_uri"] == "https://keycloak.example.com/jwks"
+
+    # Generic OIDC provider_metadata must be populated (gap 1 fix)
+    generic_provider = next(provider for provider in providers if provider["id"] == "authentik")
+    assert "provider_metadata" in generic_provider, "Generic OIDC provider must include provider_metadata"
+    generic_meta = generic_provider["provider_metadata"]
+    assert generic_meta["groups_claim"] == "groups"
+    assert generic_meta["role_mappings"] == {"cf-platform-admin": "platform_admin", "cf-dev": "developer"}
+    assert generic_meta["default_role"] == "platform_viewer"
+
+
+def test_get_predefined_sso_providers_generic_oidc_provider_metadata(monkeypatch):
+    """Generic OIDC bootstrap populates provider_metadata with group/role config (gap 1 fix).
+
+    Verifies that groups_claim, role_mappings, and default_role are written into
+    provider_metadata so that _map_groups_to_roles() does not exit early.
+    """
+    # First-Party
+    from mcpgateway.utils.sso_bootstrap import get_predefined_sso_providers
+
+    secret = DummySecret("secret-value")
+    cfg = SimpleNamespace(
+        sso_github_enabled=False,
+        sso_google_enabled=False,
+        sso_ibm_verify_enabled=False,
+        sso_okta_enabled=False,
+        sso_entra_enabled=False,
+        sso_keycloak_enabled=False,
+        sso_adfs_enabled=False,
+        sso_generic_enabled=True,
+        sso_generic_provider_id="authentik",
+        sso_generic_display_name="Authentik",
+        sso_generic_client_id="authentik-client",
+        sso_generic_client_secret=secret,
+        sso_generic_authorization_url="https://authentik.example.com/application/o/authorize/",
+        sso_generic_token_url="https://authentik.example.com/application/o/token/",
+        sso_generic_userinfo_url="https://authentik.example.com/application/o/userinfo/",
+        sso_generic_issuer="https://authentik.example.com/application/o/myapp/",
+        sso_generic_jwks_uri="https://authentik.example.com/application/o/myapp/jwks/",
+        sso_generic_scope="openid profile email",
+        sso_generic_groups_claim="groups",
+        sso_generic_role_mappings={"cf-platform-admin": "platform_admin"},
+        sso_generic_default_role="platform_viewer",
+        sso_trusted_domains=[],
+        sso_auto_create_users=True,
+    )
+    monkeypatch.setattr("mcpgateway.utils.sso_bootstrap.settings", cfg)
+
+    providers = get_predefined_sso_providers()
+    assert len(providers) == 1
+    provider = providers[0]
+
+    assert provider["id"] == "authentik"
+    assert "provider_metadata" in provider
+
+    meta = provider["provider_metadata"]
+    assert meta["groups_claim"] == "groups"
+    assert meta["role_mappings"] == {"cf-platform-admin": "platform_admin"}
+    assert meta["default_role"] == "platform_viewer"
+    # jwks_uri should be hoisted to top-level too
+    assert provider.get("jwks_uri") == "https://authentik.example.com/application/o/myapp/jwks/"
+
+
+def test_get_predefined_sso_providers_generic_oidc_empty_role_mappings(monkeypatch):
+    """Generic OIDC bootstrap writes provider_metadata even when role_mappings is empty."""
+    # First-Party
+    from mcpgateway.utils.sso_bootstrap import get_predefined_sso_providers
+
+    secret = DummySecret("secret-value")
+    cfg = SimpleNamespace(
+        sso_github_enabled=False,
+        sso_google_enabled=False,
+        sso_ibm_verify_enabled=False,
+        sso_okta_enabled=False,
+        sso_entra_enabled=False,
+        sso_keycloak_enabled=False,
+        sso_adfs_enabled=False,
+        sso_generic_enabled=True,
+        sso_generic_provider_id="auth0",
+        sso_generic_display_name=None,
+        sso_generic_client_id="auth0-client",
+        sso_generic_client_secret=secret,
+        sso_generic_authorization_url="https://example.auth0.com/authorize",
+        sso_generic_token_url="https://example.auth0.com/oauth/token",
+        sso_generic_userinfo_url="https://example.auth0.com/userinfo",
+        sso_generic_issuer="https://example.auth0.com/",
+        sso_generic_jwks_uri=None,
+        sso_generic_scope="openid profile email",
+        sso_generic_groups_claim="groups",
+        sso_generic_role_mappings={},
+        sso_generic_default_role=None,
+        sso_trusted_domains=[],
+        sso_auto_create_users=True,
+    )
+    monkeypatch.setattr("mcpgateway.utils.sso_bootstrap.settings", cfg)
+
+    providers = get_predefined_sso_providers()
+    provider = providers[0]
+
+    assert "provider_metadata" in provider
+    meta = provider["provider_metadata"]
+    assert meta["role_mappings"] == {}
+    assert meta["default_role"] is None
+
+
+def test_get_predefined_sso_providers_adfs_enabled(monkeypatch):
+    """Test ADFS provider configuration when enabled."""
+    # First-Party
+    from mcpgateway.utils.sso_bootstrap import get_predefined_sso_providers
+
+    secret = DummySecret("secret-value")
+    cfg = SimpleNamespace(
+        sso_github_enabled=False,
+        sso_google_enabled=False,
+        sso_ibm_verify_enabled=False,
+        sso_okta_enabled=False,
+        sso_entra_enabled=False,
+        sso_keycloak_enabled=False,
+        sso_adfs_enabled=True,
+        sso_adfs_client_id="adfs-client",
+        sso_adfs_client_secret=secret,
+        sso_adfs_authorization_url="https://adfs.example.com/authorize",
+        sso_adfs_token_url="https://adfs.example.com/token",
+        sso_adfs_userinfo_url="https://adfs.example.com/userinfo",
+        sso_adfs_issuer="https://adfs.example.com",
+        sso_adfs_scope="openid profile email",
+        sso_adfs_display_name="ADFS Login",
+        sso_adfs_default_email_domain="example.com",
+        sso_generic_enabled=False,
+        sso_trusted_domains=["example.com"],
+        sso_auto_create_users=True,
+    )
+
+    monkeypatch.setattr("mcpgateway.utils.sso_bootstrap.settings", cfg)
+
+    providers = get_predefined_sso_providers()
+
+    assert len(providers) == 1
+    adfs_provider = providers[0]
+    assert adfs_provider["id"] == "adfs"
+    assert adfs_provider["display_name"] == "ADFS Login"
+    # ADFS provider includes default_email_domain in provider_metadata if configured
+    if "provider_metadata" in adfs_provider and adfs_provider["provider_metadata"]:
+        assert adfs_provider["provider_metadata"].get("default_email_domain") == "example.com"
+
+
+def test_get_predefined_sso_providers_keycloak_discovery_none_logs_error(monkeypatch, caplog):
+    """Keycloak bootstrap should log an error when discovery returns no endpoints."""
+    # First-Party
+    from mcpgateway.utils.sso_bootstrap import get_predefined_sso_providers
+
+    cfg = SimpleNamespace(
+        sso_github_enabled=False,
+        sso_github_client_id=None,
+        sso_github_client_secret=None,
+        sso_google_enabled=False,
+        sso_google_client_id=None,
+        sso_google_client_secret=None,
+        sso_ibm_verify_enabled=False,
+        sso_ibm_verify_client_id=None,
+        sso_ibm_verify_client_secret=None,
+        sso_ibm_verify_issuer=None,
+        sso_okta_enabled=False,
+        sso_okta_client_id=None,
+        sso_okta_client_secret=None,
+        sso_okta_issuer=None,
+        sso_entra_enabled=False,
+        sso_entra_client_id=None,
+        sso_entra_client_secret=None,
+        sso_entra_tenant_id=None,
+        sso_entra_groups_claim=None,
+        sso_entra_role_mappings={},
+        sso_keycloak_enabled=True,
+        sso_keycloak_base_url="https://keycloak.example.com",
+        sso_keycloak_client_id="kc-client",
+        sso_keycloak_client_secret=None,
+        sso_keycloak_realm="master",
+        sso_keycloak_map_realm_roles=False,
+        sso_keycloak_map_client_roles=False,
+        sso_keycloak_username_claim="preferred_username",
+        sso_keycloak_email_claim="email",
+        sso_keycloak_groups_claim="groups",
+        sso_adfs_enabled=False,
+        sso_generic_enabled=False,
+        sso_generic_provider_id=None,
+        sso_generic_display_name=None,
+        sso_generic_client_id=None,
+        sso_generic_client_secret=None,
+        sso_generic_authorization_url=None,
+        sso_generic_token_url=None,
+        sso_generic_userinfo_url=None,
+        sso_generic_issuer=None,
+        sso_generic_scope=None,
+        sso_trusted_domains=[],
+        sso_auto_create_users=True,
+    )
+
+    monkeypatch.setattr("mcpgateway.utils.sso_bootstrap.settings", cfg)
+    monkeypatch.setattr("mcpgateway.utils.keycloak_discovery.discover_keycloak_endpoints_sync", lambda *_args, **_kwargs: None)
+
+    with caplog.at_level(logging.ERROR, logger="mcpgateway.utils.sso_bootstrap"):
+        providers = get_predefined_sso_providers()
+
+    assert providers == []
+    assert any("Failed to discover Keycloak endpoints" in record.message for record in caplog.records)
+
+
+def test_get_predefined_sso_providers_keycloak_discovery_exception_logs_error(monkeypatch, caplog):
+    """Keycloak bootstrap should log errors when discovery raises."""
+    # First-Party
+    from mcpgateway.utils.sso_bootstrap import get_predefined_sso_providers
+
+    cfg = SimpleNamespace(
+        sso_github_enabled=False,
+        sso_github_client_id=None,
+        sso_github_client_secret=None,
+        sso_google_enabled=False,
+        sso_google_client_id=None,
+        sso_google_client_secret=None,
+        sso_ibm_verify_enabled=False,
+        sso_ibm_verify_client_id=None,
+        sso_ibm_verify_client_secret=None,
+        sso_ibm_verify_issuer=None,
+        sso_okta_enabled=False,
+        sso_okta_client_id=None,
+        sso_okta_client_secret=None,
+        sso_okta_issuer=None,
+        sso_entra_enabled=False,
+        sso_entra_client_id=None,
+        sso_entra_client_secret=None,
+        sso_entra_tenant_id=None,
+        sso_entra_groups_claim=None,
+        sso_entra_role_mappings={},
+        sso_keycloak_enabled=True,
+        sso_keycloak_base_url="https://keycloak.example.com",
+        sso_keycloak_client_id="kc-client",
+        sso_keycloak_client_secret=None,
+        sso_keycloak_realm="master",
+        sso_keycloak_map_realm_roles=False,
+        sso_keycloak_map_client_roles=False,
+        sso_keycloak_username_claim="preferred_username",
+        sso_keycloak_email_claim="email",
+        sso_keycloak_groups_claim="groups",
+        sso_adfs_enabled=False,
+        sso_generic_enabled=False,
+        sso_generic_provider_id=None,
+        sso_generic_display_name=None,
+        sso_generic_client_id=None,
+        sso_generic_client_secret=None,
+        sso_generic_authorization_url=None,
+        sso_generic_token_url=None,
+        sso_generic_userinfo_url=None,
+        sso_generic_issuer=None,
+        sso_generic_scope=None,
+        sso_trusted_domains=[],
+        sso_auto_create_users=True,
+    )
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("discovery failed")
+
+    monkeypatch.setattr("mcpgateway.utils.sso_bootstrap.settings", cfg)
+    monkeypatch.setattr("mcpgateway.utils.keycloak_discovery.discover_keycloak_endpoints_sync", boom)
+
+    with caplog.at_level(logging.ERROR, logger="mcpgateway.utils.sso_bootstrap"):
+        providers = get_predefined_sso_providers()
+
+    assert providers == []
+    assert any("Error bootstrapping Keycloak provider" in record.message for record in caplog.records)
+
+
+def test_get_predefined_sso_providers_skips_keycloak_when_disabled(monkeypatch):
+    """Cover the branch where Keycloak auto-discovery is disabled and generic OIDC is used."""
+    # First-Party
+    from mcpgateway.utils.sso_bootstrap import get_predefined_sso_providers
+
+    secret = DummySecret("secret-value")
+    cfg = SimpleNamespace(
+        sso_github_enabled=False,
+        sso_github_client_id=None,
+        sso_github_client_secret=None,
+        sso_google_enabled=False,
+        sso_google_client_id=None,
+        sso_google_client_secret=None,
+        sso_ibm_verify_enabled=False,
+        sso_ibm_verify_client_id=None,
+        sso_ibm_verify_client_secret=None,
+        sso_ibm_verify_issuer=None,
+        sso_okta_enabled=False,
+        sso_okta_client_id=None,
+        sso_okta_client_secret=None,
+        sso_okta_issuer=None,
+        sso_entra_enabled=False,
+        sso_entra_client_id=None,
+        sso_entra_client_secret=None,
+        sso_entra_tenant_id=None,
+        sso_entra_groups_claim=None,
+        sso_entra_role_mappings={},
+        sso_keycloak_enabled=False,
+        sso_keycloak_base_url="https://keycloak.example.com",
+        sso_keycloak_client_id="kc-client",
+        sso_keycloak_client_secret=None,
+        sso_keycloak_realm="master",
+        sso_keycloak_map_realm_roles=False,
+        sso_keycloak_map_client_roles=False,
+        sso_keycloak_username_claim="preferred_username",
+        sso_keycloak_email_claim="email",
+        sso_keycloak_groups_claim="groups",
+        sso_adfs_enabled=False,
+        sso_generic_enabled=True,
+        sso_generic_provider_id="auth0",
+        sso_generic_display_name="Auth0",
+        sso_generic_client_id="generic-client",
+        sso_generic_client_secret=secret,
+        sso_generic_authorization_url="https://auth.example.com/authorize",
+        sso_generic_token_url="https://auth.example.com/token",
+        sso_generic_userinfo_url="https://auth.example.com/userinfo",
+        sso_generic_issuer="https://auth.example.com",
+        sso_generic_jwks_uri=None,
+        sso_generic_scope="openid profile email",
+        sso_generic_groups_claim="groups",
+        sso_generic_admin_groups=[],
+        sso_generic_role_mappings={},
+        sso_generic_default_role=None,
+        sso_generic_sync_roles_on_login=True,
+        sso_trusted_domains=[],
+        sso_auto_create_users=True,
+    )
+
+    monkeypatch.setattr("mcpgateway.utils.sso_bootstrap.settings", cfg)
+    providers = get_predefined_sso_providers()
+    provider_ids = {provider["id"] for provider in providers}
+
+    assert "keycloak" not in provider_ids
+    assert "auth0" in provider_ids
+
+
+class TestSSOBootstrapAsync:
+    """Test async SSO bootstrap functionality."""
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_creates_provider_with_await(self):
+        """Test that bootstrap_sso_providers awaits create_provider."""
+        # First-Party
+        from mcpgateway.utils.sso_bootstrap import bootstrap_sso_providers
+
+        mock_db = MagicMock()
+        mock_sso_service = MagicMock()
+        mock_sso_service.get_provider.return_value = None
+        mock_sso_service.get_provider_by_name.return_value = None
+        mock_sso_service.create_provider = AsyncMock()
+
+        provider_config = {
+            "id": "test-provider",
+            "name": "test",
+            "display_name": "Test Provider",
+            "provider_type": "oauth2",
+            "client_id": "test-client",
+            "client_secret": "test-secret",  # pragma: allowlist secret
+            "authorization_url": "https://auth.example.com/authorize",
+            "token_url": "https://auth.example.com/token",
+            "userinfo_url": "https://auth.example.com/userinfo",
+            "scope": "openid email",
+        }
+
+        with patch("mcpgateway.utils.sso_bootstrap.settings") as mock_settings:
+            mock_settings.sso_enabled = True
+
+            with patch("mcpgateway.utils.sso_bootstrap.get_predefined_sso_providers", return_value=[provider_config]):
+                # Patch at the source module since it's imported inside the function
+                with patch("mcpgateway.db.get_db", return_value=iter([mock_db])):
+                    with patch("mcpgateway.services.sso_service.SSOService", return_value=mock_sso_service):
+                        await bootstrap_sso_providers()
+
+                        # Verify create_provider was awaited
+                        mock_sso_service.create_provider.assert_called_once_with(provider_config)
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_updates_provider_with_await(self):
+        """Test that bootstrap_sso_providers awaits update_provider."""
+        # First-Party
+        from mcpgateway.utils.sso_bootstrap import bootstrap_sso_providers
+
+        mock_db = MagicMock()
+        mock_existing_provider = MagicMock()
+        mock_existing_provider.id = "existing-provider"
+        mock_existing_provider.display_name = "Existing Provider"
+        mock_existing_provider.provider_metadata = None
+
+        mock_sso_service = MagicMock()
+        mock_sso_service.get_provider.return_value = mock_existing_provider
+        mock_sso_service.get_provider_by_name.return_value = None
+        mock_sso_service.update_provider = AsyncMock(return_value=mock_existing_provider)
+
+        provider_config = {
+            "id": "existing-provider",
+            "name": "existing",
+            "display_name": "Updated Provider",
+            "provider_type": "oauth2",
+            "client_id": "updated-client",
+            "client_secret": "updated-secret",  # pragma: allowlist secret
+            "authorization_url": "https://auth.example.com/authorize",
+            "token_url": "https://auth.example.com/token",
+            "userinfo_url": "https://auth.example.com/userinfo",
+            "scope": "openid email",
+        }
+
+        with patch("mcpgateway.utils.sso_bootstrap.settings") as mock_settings:
+            mock_settings.sso_enabled = True
+
+            with patch("mcpgateway.utils.sso_bootstrap.get_predefined_sso_providers", return_value=[provider_config]):
+                # Patch at the source module since it's imported inside the function
+                with patch("mcpgateway.db.get_db", return_value=iter([mock_db])):
+                    with patch("mcpgateway.services.sso_service.SSOService", return_value=mock_sso_service):
+                        await bootstrap_sso_providers()
+
+                        # Verify update_provider was awaited
+                        mock_sso_service.update_provider.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_merges_provider_metadata(self):
+        """Env metadata should be merged with DB metadata (DB values win)."""
+        # First-Party
+        from mcpgateway.utils.sso_bootstrap import bootstrap_sso_providers
+
+        mock_db = MagicMock()
+        mock_existing_provider = MagicMock()
+        mock_existing_provider.id = "existing-provider"
+        mock_existing_provider.display_name = "Existing Provider"
+        mock_existing_provider.provider_metadata = {"groups_claim": "custom", "sync_roles": False}
+
+        mock_sso_service = MagicMock()
+        mock_sso_service.get_provider.return_value = mock_existing_provider
+        mock_sso_service.get_provider_by_name.return_value = None
+        mock_sso_service.update_provider = AsyncMock(return_value=True)
+
+        provider_config = {
+            "id": "existing-provider",
+            "name": "existing",
+            "display_name": "Updated Provider",
+            "provider_type": "oidc",
+            "client_id": "updated-client",
+            "client_secret": "updated-secret",  # pragma: allowlist secret
+            "authorization_url": "https://auth.example.com/authorize",
+            "token_url": "https://auth.example.com/token",
+            "userinfo_url": "https://auth.example.com/userinfo",
+            "scope": "openid email",
+            "provider_metadata": {"groups_claim": "groups", "new_setting": "value"},
+        }
+
+        with patch("mcpgateway.utils.sso_bootstrap.settings") as mock_settings:
+            mock_settings.sso_enabled = True
+
+            with patch("mcpgateway.utils.sso_bootstrap.get_predefined_sso_providers", return_value=[provider_config]):
+                with patch("mcpgateway.db.get_db", return_value=iter([mock_db])):
+                    with patch("mcpgateway.services.sso_service.SSOService", return_value=mock_sso_service):
+                        await bootstrap_sso_providers()
+
+        _provider_id, merged_config = mock_sso_service.update_provider.call_args[0]
+        assert merged_config["provider_metadata"] == {"groups_claim": "custom", "new_setting": "value", "sync_roles": False}
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_prints_unchanged_provider(self, capsys):
+        """When update_provider returns falsy, bootstrap should print 'unchanged'."""
+        # First-Party
+        from mcpgateway.utils.sso_bootstrap import bootstrap_sso_providers
+
+        mock_db = MagicMock()
+        mock_existing_provider = MagicMock()
+        mock_existing_provider.id = "existing-provider"
+        mock_existing_provider.display_name = "Existing Provider"
+        mock_existing_provider.provider_metadata = None
+
+        mock_sso_service = MagicMock()
+        mock_sso_service.get_provider.return_value = mock_existing_provider
+        mock_sso_service.get_provider_by_name.return_value = None
+        mock_sso_service.update_provider = AsyncMock(return_value=False)
+
+        provider_config = {"id": "existing-provider", "name": "existing", "display_name": "Existing Provider"}
+
+        with patch("mcpgateway.utils.sso_bootstrap.settings") as mock_settings:
+            mock_settings.sso_enabled = True
+
+            with patch("mcpgateway.utils.sso_bootstrap.get_predefined_sso_providers", return_value=[provider_config]):
+                with patch("mcpgateway.db.get_db", return_value=iter([mock_db])):
+                    with patch("mcpgateway.services.sso_service.SSOService", return_value=mock_sso_service):
+                        await bootstrap_sso_providers()
+
+        captured = capsys.readouterr().out
+        assert "SSO provider unchanged" in captured
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_rolls_back_and_prints_on_exception(self, capsys):
+        """Exceptions should trigger rollback + failure message, then commit/close in finally."""
+        # First-Party
+        from mcpgateway.utils.sso_bootstrap import bootstrap_sso_providers
+
+        mock_db = MagicMock()
+        mock_sso_service = MagicMock()
+        mock_sso_service.get_provider.return_value = None
+        mock_sso_service.get_provider_by_name.return_value = None
+        mock_sso_service.create_provider = AsyncMock(side_effect=RuntimeError("boom"))
+
+        provider_config = {"id": "test-provider", "name": "test", "display_name": "Test Provider"}
+
+        with patch("mcpgateway.utils.sso_bootstrap.settings") as mock_settings:
+            mock_settings.sso_enabled = True
+
+            with patch("mcpgateway.utils.sso_bootstrap.get_predefined_sso_providers", return_value=[provider_config]):
+                with patch("mcpgateway.db.get_db", return_value=iter([mock_db])):
+                    with patch("mcpgateway.services.sso_service.SSOService", return_value=mock_sso_service):
+                        await bootstrap_sso_providers()
+
+        assert mock_db.rollback.called
+        captured = capsys.readouterr().out
+        assert "Failed to bootstrap SSO providers" in captured
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_skips_when_sso_disabled(self):
+        """Test that bootstrap_sso_providers returns early when SSO is disabled."""
+        # First-Party
+        from mcpgateway.utils.sso_bootstrap import bootstrap_sso_providers
+
+        with patch("mcpgateway.utils.sso_bootstrap.settings") as mock_settings:
+            mock_settings.sso_enabled = False
+
+            with patch("mcpgateway.utils.sso_bootstrap.get_predefined_sso_providers") as mock_get_providers:
+                await bootstrap_sso_providers()
+
+                # Should not call get_predefined_sso_providers when SSO is disabled
+                mock_get_providers.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_skips_when_no_providers(self):
+        """Test that bootstrap_sso_providers handles empty provider list correctly."""
+        # First-Party
+        from mcpgateway.utils.sso_bootstrap import bootstrap_sso_providers
+
+        with patch("mcpgateway.utils.sso_bootstrap.settings") as mock_settings:
+            mock_settings.sso_enabled = True
+            mock_settings.sso_auto_disable_unconfigured_providers = False
+
+            with patch("mcpgateway.utils.sso_bootstrap.get_predefined_sso_providers", return_value=[]):
+                # Patch at the source module since it's imported inside the function
+                with patch("mcpgateway.db.get_db") as mock_get_db:
+                    # Mock the DB session
+                    mock_db = MagicMock()
+                    mock_get_db.return_value = iter([mock_db])
+
+                    # Mock SSOService at the services module level
+                    with patch("mcpgateway.services.sso_service.SSOService") as mock_sso_service:
+                        mock_service_instance = MagicMock()
+                        mock_service_instance.list_all_providers.return_value = []
+                        mock_sso_service.return_value = mock_service_instance
+
+                        await bootstrap_sso_providers()
+
+                        # Should get DB session but not create any providers
+                        mock_get_db.assert_called_once()
+                        # list_all_providers is always called once, for the trusted_for_api_auth
+                        # confused-deputy audience-misconfiguration warning (independent of the
+                        # sso_auto_disable_unconfigured_providers flag).
+                        mock_service_instance.list_all_providers.assert_called_once()
+                        mock_service_instance.create_provider.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_auto_disables_unconfigured_providers(self):
+        """Test that bootstrap disables DB providers not in env config when flag is enabled."""
+        # First-Party
+        from mcpgateway.utils.sso_bootstrap import bootstrap_sso_providers
+
+        with patch("mcpgateway.utils.sso_bootstrap.settings") as mock_settings:
+            mock_settings.sso_enabled = True
+            mock_settings.sso_auto_disable_unconfigured_providers = True
+
+            with patch("mcpgateway.utils.sso_bootstrap.get_predefined_sso_providers", return_value=[]):
+                with patch("mcpgateway.db.get_db") as mock_get_db:
+                    mock_db = MagicMock()
+                    mock_get_db.return_value = iter([mock_db])
+
+                    with patch("mcpgateway.services.sso_service.SSOService") as mock_sso_service:
+                        # Simulate a provider in DB that is NOT in env config
+                        stale_provider = SimpleNamespace(id="old-provider", display_name="Old Provider", is_enabled=True)
+                        mock_service_instance = MagicMock()
+                        mock_service_instance.list_all_providers.return_value = [stale_provider]
+                        mock_service_instance.update_provider = AsyncMock()
+                        mock_sso_service.return_value = mock_service_instance
+
+                        await bootstrap_sso_providers()
+
+                        # Called once for the auto-disable pass and once more for the
+                        # trusted_for_api_auth confused-deputy audience warning.
+                        assert mock_service_instance.list_all_providers.call_count == 2
+                        mock_service_instance.update_provider.assert_called_once_with("old-provider", {"is_enabled": False})
+
+
+def test_generic_oidc_includes_jwks_uri_when_configured(monkeypatch):
+    """Generic OIDC provider should include jwks_uri when configured."""
+    # First-Party
+    from mcpgateway.utils.sso_bootstrap import get_predefined_sso_providers
+
+    secret = DummySecret("secret-value")
+    cfg = SimpleNamespace(
+        sso_github_enabled=False,
+        sso_github_client_id=None,
+        sso_github_client_secret=None,
+        sso_google_enabled=False,
+        sso_google_client_id=None,
+        sso_google_client_secret=None,
+        sso_ibm_verify_enabled=False,
+        sso_ibm_verify_client_id=None,
+        sso_ibm_verify_client_secret=None,
+        sso_ibm_verify_issuer=None,
+        sso_okta_enabled=False,
+        sso_okta_client_id=None,
+        sso_okta_client_secret=None,
+        sso_okta_issuer=None,
+        sso_entra_enabled=False,
+        sso_entra_client_id=None,
+        sso_entra_client_secret=None,
+        sso_entra_tenant_id=None,
+        sso_entra_groups_claim=None,
+        sso_entra_role_mappings={},
+        sso_keycloak_enabled=False,
+        sso_keycloak_base_url=None,
+        sso_keycloak_client_id=None,
+        sso_adfs_enabled=False,
+        sso_generic_enabled=True,
+        sso_generic_provider_id="keycloak",
+        sso_generic_display_name="Keycloak",
+        sso_generic_client_id="kc-client",
+        sso_generic_client_secret=secret,
+        sso_generic_authorization_url="https://keycloak.example.com/auth",
+        sso_generic_token_url="https://keycloak.example.com/token",
+        sso_generic_userinfo_url="https://keycloak.example.com/userinfo",
+        sso_generic_issuer="https://keycloak.example.com",
+        sso_generic_jwks_uri="https://keycloak.example.com/certs",
+        sso_generic_scope="openid profile email",
+        sso_generic_groups_claim="groups",
+        sso_generic_admin_groups=[],
+        sso_generic_role_mappings={},
+        sso_generic_default_role=None,
+        sso_generic_sync_roles_on_login=True,
+        sso_trusted_domains=[],
+        sso_auto_create_users=True,
+    )
+
+    monkeypatch.setattr("mcpgateway.utils.sso_bootstrap.settings", cfg)
+    providers = get_predefined_sso_providers()
+
+    assert len(providers) == 1
+    assert providers[0]["id"] == "keycloak"
+    assert providers[0]["jwks_uri"] == "https://keycloak.example.com/certs"
+
+
+def test_generic_oidc_omits_jwks_uri_when_not_configured(monkeypatch):
+    """Generic OIDC provider should not include jwks_uri when not configured."""
+    # First-Party
+    from mcpgateway.utils.sso_bootstrap import get_predefined_sso_providers
+
+    secret = DummySecret("secret-value")
+    cfg = SimpleNamespace(
+        sso_github_enabled=False,
+        sso_github_client_id=None,
+        sso_github_client_secret=None,
+        sso_google_enabled=False,
+        sso_google_client_id=None,
+        sso_google_client_secret=None,
+        sso_ibm_verify_enabled=False,
+        sso_ibm_verify_client_id=None,
+        sso_ibm_verify_client_secret=None,
+        sso_ibm_verify_issuer=None,
+        sso_okta_enabled=False,
+        sso_okta_client_id=None,
+        sso_okta_client_secret=None,
+        sso_okta_issuer=None,
+        sso_entra_enabled=False,
+        sso_entra_client_id=None,
+        sso_entra_client_secret=None,
+        sso_entra_tenant_id=None,
+        sso_entra_groups_claim=None,
+        sso_entra_role_mappings={},
+        sso_keycloak_enabled=False,
+        sso_keycloak_base_url=None,
+        sso_keycloak_client_id=None,
+        sso_adfs_enabled=False,
+        sso_generic_enabled=True,
+        sso_generic_provider_id="auth0",
+        sso_generic_display_name="Auth0",
+        sso_generic_client_id="a0-client",
+        sso_generic_client_secret=secret,
+        sso_generic_authorization_url="https://auth0.example.com/authorize",
+        sso_generic_token_url="https://auth0.example.com/token",
+        sso_generic_userinfo_url="https://auth0.example.com/userinfo",
+        sso_generic_issuer="https://auth0.example.com",
+        sso_generic_jwks_uri=None,
+        sso_generic_scope="openid profile email",
+        sso_generic_groups_claim="groups",
+        sso_generic_admin_groups=[],
+        sso_generic_role_mappings={},
+        sso_generic_default_role=None,
+        sso_generic_sync_roles_on_login=True,
+        sso_trusted_domains=[],
+        sso_auto_create_users=True,
+    )
+
+    monkeypatch.setattr("mcpgateway.utils.sso_bootstrap.settings", cfg)
+    providers = get_predefined_sso_providers()
+
+    assert len(providers) == 1
+    assert providers[0]["id"] == "auth0"
+    assert "jwks_uri" not in providers[0]
+
+
+class TestSSOProviderModel:
+    """Tests for SSOProvider model accepting jwks_uri."""
+
+    def test_sso_provider_accepts_jwks_uri(self):
+        """SSOProvider constructor should accept jwks_uri as a valid column."""
+        # First-Party
+        from mcpgateway.db import SSOProvider
+
+        provider = SSOProvider(
+            id="test",
+            name="test",
+            display_name="Test",
+            provider_type="oidc",
+            client_id="cid",
+            client_secret_encrypted="encrypted",
+            authorization_url="https://example.com/auth",
+            token_url="https://example.com/token",
+            userinfo_url="https://example.com/userinfo",
+            scope="openid",
+            jwks_uri="https://example.com/certs",
+        )
+        assert provider.jwks_uri == "https://example.com/certs"
+
+    def test_sso_provider_jwks_uri_defaults_to_none(self):
+        """SSOProvider should have jwks_uri=None by default."""
+        # First-Party
+        from mcpgateway.db import SSOProvider
+
+        provider = SSOProvider(
+            id="test",
+            name="test",
+            display_name="Test",
+            provider_type="oidc",
+            client_id="cid",
+            client_secret_encrypted="encrypted",
+            authorization_url="https://example.com/auth",
+            token_url="https://example.com/token",
+            userinfo_url="https://example.com/userinfo",
+            scope="openid",
+        )
+        assert provider.jwks_uri is None
+
+
+class TestCreateProviderDefensive:
+    """Tests for create_provider filtering unknown keys."""
+
+    @pytest.mark.asyncio
+    async def test_create_provider_ignores_unknown_keys(self):
+        """create_provider should ignore unknown keys instead of raising TypeError."""
+        # First-Party
+        from mcpgateway.services.sso_service import SSOService
+
+        mock_db = MagicMock()
+        service = SSOService(mock_db)
+        service._encrypt_secret = AsyncMock(side_effect=lambda s: "ENC(" + s + ")")
+
+        data = {
+            "id": "test",
+            "name": "test",
+            "display_name": "Test Provider",
+            "provider_type": "oidc",
+            "client_id": "cid",
+            "client_secret": "secret",
+            "authorization_url": "https://example.com/auth",
+            "token_url": "https://example.com/token",
+            "userinfo_url": "https://example.com/userinfo",
+            "scope": "openid",
+            "completely_unknown_field": "should_be_ignored",
+        }
+
+        # Should NOT raise TypeError
+        provider = await service.create_provider(data)
+        assert provider.id == "test"
+        assert not hasattr(provider, "completely_unknown_field") or provider.completely_unknown_field is None
+
+    @pytest.mark.asyncio
+    async def test_create_provider_accepts_jwks_uri(self):
+        """create_provider should accept jwks_uri as a valid field."""
+        # First-Party
+        from mcpgateway.services.sso_service import SSOService
+
+        mock_db = MagicMock()
+        service = SSOService(mock_db)
+        service._encrypt_secret = AsyncMock(side_effect=lambda s: "ENC(" + s + ")")
+
+        data = {
+            "id": "keycloak",
+            "name": "keycloak",
+            "display_name": "Keycloak",
+            "provider_type": "oidc",
+            "client_id": "cid",
+            "client_secret": "secret",
+            "authorization_url": "https://keycloak.example.com/auth",
+            "token_url": "https://keycloak.example.com/token",
+            "userinfo_url": "https://keycloak.example.com/userinfo",
+            "issuer": "https://keycloak.example.com",
+            "jwks_uri": "https://keycloak.example.com/certs",
+            "scope": "openid profile email",
+        }
+
+        provider = await service.create_provider(data)
+        assert provider.id == "keycloak"
+        assert provider.jwks_uri == "https://keycloak.example.com/certs"
+
+
+class TestAttemptToBootstrapSSOProviders:
+    """Test the main.py wrapper for SSO bootstrap."""
+
+    @pytest.mark.asyncio
+    async def test_attempt_bootstrap_awaits_bootstrap_sso_providers(self):
+        """Test that attempt_to_bootstrap_sso_providers awaits bootstrap_sso_providers."""
+        # First-Party
+        from mcpgateway.main import attempt_to_bootstrap_sso_providers
+
+        # Patch where it's imported inside the function
+        with patch("mcpgateway.utils.sso_bootstrap.bootstrap_sso_providers", new_callable=AsyncMock) as mock_bootstrap:
+            await attempt_to_bootstrap_sso_providers()
+
+            mock_bootstrap.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_attempt_bootstrap_handles_exceptions(self):
+        """Test that attempt_to_bootstrap_sso_providers handles exceptions gracefully."""
+        # First-Party
+        from mcpgateway.main import attempt_to_bootstrap_sso_providers
+
+        # Patch where it's imported inside the function
+        with patch("mcpgateway.utils.sso_bootstrap.bootstrap_sso_providers", new_callable=AsyncMock) as mock_bootstrap:
+            mock_bootstrap.side_effect = Exception("Bootstrap failed")
+
+            # Should not raise, just log warning
+            await attempt_to_bootstrap_sso_providers()
+
+            mock_bootstrap.assert_awaited_once()
+
+
+def test_okta_default_scope_without_group_mapping(monkeypatch):
+    """Okta should use default scope and empty team_mapping when env vars are not set."""
+    # First-Party
+    from mcpgateway.utils.sso_bootstrap import get_predefined_sso_providers
+
+    secret = DummySecret("secret-value")
+    cfg = SimpleNamespace(
+        sso_github_enabled=False,
+        sso_github_client_id=None,
+        sso_github_client_secret=None,
+        sso_google_enabled=False,
+        sso_google_client_id=None,
+        sso_google_client_secret=None,
+        sso_ibm_verify_enabled=False,
+        sso_ibm_verify_client_id=None,
+        sso_ibm_verify_client_secret=None,
+        sso_ibm_verify_issuer=None,
+        sso_okta_enabled=True,
+        sso_okta_client_id="okta-client",
+        sso_okta_client_secret=secret,
+        sso_okta_issuer="https://company.okta.com",
+        sso_okta_scope="openid profile email",
+        okta_group_mapping=None,
+        sso_entra_enabled=False,
+        sso_entra_client_id=None,
+        sso_entra_client_secret=None,
+        sso_entra_tenant_id=None,
+        sso_keycloak_enabled=False,
+        sso_keycloak_base_url=None,
+        sso_keycloak_client_id=None,
+        sso_adfs_enabled=False,
+        sso_generic_enabled=False,
+        sso_generic_provider_id=None,
+        sso_generic_client_id=None,
+        sso_trusted_domains=[],
+        sso_auto_create_users=True,
+    )
+
+    monkeypatch.setattr("mcpgateway.utils.sso_bootstrap.settings", cfg)
+    providers = get_predefined_sso_providers()
+
+    assert len(providers) == 1
+    okta = providers[0]
+    assert okta["id"] == "okta"
+    assert okta["scope"] == "openid profile email"
+    assert okta["team_mapping"] == {}
+
+
+def test_okta_invalid_group_mapping_json_uses_empty(monkeypatch, caplog):
+    """Invalid OKTA_GROUP_MAPPING JSON should log warning and use empty mapping."""
+    # First-Party
+    from mcpgateway.utils.sso_bootstrap import get_predefined_sso_providers
+
+    secret = DummySecret("secret-value")
+    cfg = SimpleNamespace(
+        sso_github_enabled=False,
+        sso_github_client_id=None,
+        sso_github_client_secret=None,
+        sso_google_enabled=False,
+        sso_google_client_id=None,
+        sso_google_client_secret=None,
+        sso_ibm_verify_enabled=False,
+        sso_ibm_verify_client_id=None,
+        sso_ibm_verify_client_secret=None,
+        sso_ibm_verify_issuer=None,
+        sso_okta_enabled=True,
+        sso_okta_client_id="okta-client",
+        sso_okta_client_secret=secret,
+        sso_okta_issuer="https://company.okta.com",
+        sso_okta_scope="openid profile email groups",
+        okta_group_mapping="not-valid-json{",
+        sso_entra_enabled=False,
+        sso_entra_client_id=None,
+        sso_entra_client_secret=None,
+        sso_entra_tenant_id=None,
+        sso_keycloak_enabled=False,
+        sso_keycloak_base_url=None,
+        sso_keycloak_client_id=None,
+        sso_adfs_enabled=False,
+        sso_generic_enabled=False,
+        sso_generic_provider_id=None,
+        sso_generic_client_id=None,
+        sso_trusted_domains=[],
+        sso_auto_create_users=True,
+    )
+
+    monkeypatch.setattr("mcpgateway.utils.sso_bootstrap.settings", cfg)
+    with caplog.at_level(logging.WARNING, logger="mcpgateway.utils.sso_bootstrap"):
+        providers = get_predefined_sso_providers()
+
+    assert len(providers) == 1
+    assert providers[0]["team_mapping"] == {}
+    assert any("Failed to parse OKTA_GROUP_MAPPING" in record.message for record in caplog.records)
+
+
+class TestBootstrapPreservesDBValues:
+    """Tests for bootstrap preserving DB scope and team_mapping."""
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_preserves_db_scope(self):
+        """DB scope should be preserved when env provides only the default."""
+        # First-Party
+        from mcpgateway.utils.sso_bootstrap import bootstrap_sso_providers
+
+        mock_db = MagicMock()
+        mock_existing_provider = MagicMock()
+        mock_existing_provider.id = "okta"
+        mock_existing_provider.display_name = "Okta"
+        mock_existing_provider.provider_metadata = None
+        mock_existing_provider.scope = "openid profile email groups"
+        mock_existing_provider.team_mapping = None
+
+        mock_sso_service = MagicMock()
+        mock_sso_service.get_provider.return_value = mock_existing_provider
+        mock_sso_service.get_provider_by_name.return_value = None
+        mock_sso_service.update_provider = AsyncMock(return_value=True)
+
+        provider_config = {
+            "id": "okta",
+            "name": "okta",
+            "display_name": "Okta",
+            "scope": "openid profile email",
+            "team_mapping": {},
+        }
+
+        with patch("mcpgateway.utils.sso_bootstrap.settings") as mock_settings:
+            mock_settings.sso_enabled = True
+
+            with patch("mcpgateway.utils.sso_bootstrap.get_predefined_sso_providers", return_value=[provider_config]):
+                with patch("mcpgateway.db.get_db", return_value=iter([mock_db])):
+                    with patch("mcpgateway.services.sso_service.SSOService", return_value=mock_sso_service):
+                        await bootstrap_sso_providers()
+
+        _provider_id, merged_config = mock_sso_service.update_provider.call_args[0]
+        assert merged_config["scope"] == "openid profile email groups"
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_preserves_db_team_mapping(self):
+        """DB team_mapping should be preserved when env provides empty mapping."""
+        # First-Party
+        from mcpgateway.utils.sso_bootstrap import bootstrap_sso_providers
+
+        mock_db = MagicMock()
+        mock_existing_provider = MagicMock()
+        mock_existing_provider.id = "okta"
+        mock_existing_provider.display_name = "Okta"
+        mock_existing_provider.provider_metadata = None
+        mock_existing_provider.scope = "openid profile email"
+        mock_existing_provider.team_mapping = {"Engineering": "team-uuid-1"}
+
+        mock_sso_service = MagicMock()
+        mock_sso_service.get_provider.return_value = mock_existing_provider
+        mock_sso_service.get_provider_by_name.return_value = None
+        mock_sso_service.update_provider = AsyncMock(return_value=True)
+
+        provider_config = {
+            "id": "okta",
+            "name": "okta",
+            "display_name": "Okta",
+            "scope": "openid profile email",
+            "team_mapping": {},
+        }
+
+        with patch("mcpgateway.utils.sso_bootstrap.settings") as mock_settings:
+            mock_settings.sso_enabled = True
+
+            with patch("mcpgateway.utils.sso_bootstrap.get_predefined_sso_providers", return_value=[provider_config]):
+                with patch("mcpgateway.db.get_db", return_value=iter([mock_db])):
+                    with patch("mcpgateway.services.sso_service.SSOService", return_value=mock_sso_service):
+                        await bootstrap_sso_providers()
+
+        _provider_id, merged_config = mock_sso_service.update_provider.call_args[0]
+        assert merged_config["team_mapping"] == {"Engineering": "team-uuid-1"}
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_env_team_mapping_overrides_when_nonempty(self):
+        """Env team_mapping should take precedence when it is non-empty."""
+        # First-Party
+        from mcpgateway.utils.sso_bootstrap import bootstrap_sso_providers
+
+        mock_db = MagicMock()
+        mock_existing_provider = MagicMock()
+        mock_existing_provider.id = "okta"
+        mock_existing_provider.display_name = "Okta"
+        mock_existing_provider.provider_metadata = None
+        mock_existing_provider.scope = "openid profile email"
+        mock_existing_provider.team_mapping = {"OldGroup": "old-uuid"}
+
+        mock_sso_service = MagicMock()
+        mock_sso_service.get_provider.return_value = mock_existing_provider
+        mock_sso_service.get_provider_by_name.return_value = None
+        mock_sso_service.update_provider = AsyncMock(return_value=True)
+
+        provider_config = {
+            "id": "okta",
+            "name": "okta",
+            "display_name": "Okta",
+            "scope": "openid profile email",
+            "team_mapping": {"NewGroup": "new-uuid"},
+        }
+
+        with patch("mcpgateway.utils.sso_bootstrap.settings") as mock_settings:
+            mock_settings.sso_enabled = True
+
+            with patch("mcpgateway.utils.sso_bootstrap.get_predefined_sso_providers", return_value=[provider_config]):
+                with patch("mcpgateway.db.get_db", return_value=iter([mock_db])):
+                    with patch("mcpgateway.services.sso_service.SSOService", return_value=mock_sso_service):
+                        await bootstrap_sso_providers()
+
+        _provider_id, merged_config = mock_sso_service.update_provider.call_args[0]
+        assert merged_config["team_mapping"] == {"NewGroup": "new-uuid"}
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_custom_env_scope_overrides_db(self):
+        """A non-default env scope should override a custom DB scope."""
+        # First-Party
+        from mcpgateway.utils.sso_bootstrap import bootstrap_sso_providers
+
+        mock_db = MagicMock()
+        mock_existing_provider = MagicMock()
+        mock_existing_provider.id = "okta"
+        mock_existing_provider.display_name = "Okta"
+        mock_existing_provider.provider_metadata = None
+        mock_existing_provider.scope = "openid profile email groups"
+        mock_existing_provider.team_mapping = None
+
+        mock_sso_service = MagicMock()
+        mock_sso_service.get_provider.return_value = mock_existing_provider
+        mock_sso_service.get_provider_by_name.return_value = None
+        mock_sso_service.update_provider = AsyncMock(return_value=True)
+
+        provider_config = {
+            "id": "okta",
+            "name": "okta",
+            "display_name": "Okta",
+            "scope": "openid profile email groups offline_access",
+            "team_mapping": {},
+        }
+
+        with patch("mcpgateway.utils.sso_bootstrap.settings") as mock_settings:
+            mock_settings.sso_enabled = True
+
+            with patch("mcpgateway.utils.sso_bootstrap.get_predefined_sso_providers", return_value=[provider_config]):
+                with patch("mcpgateway.db.get_db", return_value=iter([mock_db])):
+                    with patch("mcpgateway.services.sso_service.SSOService", return_value=mock_sso_service):
+                        await bootstrap_sso_providers()
+
+        _provider_id, merged_config = mock_sso_service.update_provider.call_args[0]
+        assert merged_config["scope"] == "openid profile email groups offline_access"
+
+
+def test_okta_non_dict_group_mapping_uses_empty(monkeypatch, caplog):
+    """OKTA_GROUP_MAPPING with valid JSON but non-dict type should warn and use empty mapping."""
+    # First-Party
+    from mcpgateway.utils.sso_bootstrap import get_predefined_sso_providers
+
+    secret = DummySecret("secret-value")
+    cfg = SimpleNamespace(
+        sso_github_enabled=False,
+        sso_github_client_id=None,
+        sso_github_client_secret=None,
+        sso_google_enabled=False,
+        sso_google_client_id=None,
+        sso_google_client_secret=None,
+        sso_ibm_verify_enabled=False,
+        sso_ibm_verify_client_id=None,
+        sso_ibm_verify_client_secret=None,
+        sso_ibm_verify_issuer=None,
+        sso_okta_enabled=True,
+        sso_okta_client_id="okta-client",
+        sso_okta_client_secret=secret,
+        sso_okta_issuer="https://company.okta.com",
+        sso_okta_scope="openid profile email",
+        okta_group_mapping='["not", "a", "dict"]',
+        sso_entra_enabled=False,
+        sso_entra_client_id=None,
+        sso_entra_client_secret=None,
+        sso_entra_tenant_id=None,
+        sso_keycloak_enabled=False,
+        sso_keycloak_base_url=None,
+        sso_keycloak_client_id=None,
+        sso_adfs_enabled=False,
+        sso_generic_enabled=False,
+        sso_generic_provider_id=None,
+        sso_generic_client_id=None,
+        sso_trusted_domains=[],
+        sso_auto_create_users=True,
+    )
+
+    monkeypatch.setattr("mcpgateway.utils.sso_bootstrap.settings", cfg)
+    with caplog.at_level(logging.WARNING, logger="mcpgateway.utils.sso_bootstrap"):
+        providers = get_predefined_sso_providers()
+
+    assert len(providers) == 1
+    assert providers[0]["team_mapping"] == {}
+    assert any("must be a JSON object" in record.message for record in caplog.records)

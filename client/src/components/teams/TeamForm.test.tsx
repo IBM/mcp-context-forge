@@ -1,0 +1,256 @@
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { http, HttpResponse } from "msw";
+import { server } from "@/test/mocks/server";
+import { I18nProvider } from "@/i18n";
+import { AuthProvider } from "@/auth/AuthContext";
+import type { Team } from "@/types/team";
+import { TeamForm } from "./TeamForm";
+
+const makeTeam = (overrides: Partial<Team> = {}): Team => ({
+  id: "team-9",
+  name: "Platform",
+  slug: "platform",
+  description: "Platform team",
+  created_by: "admin@example.com",
+  is_personal: false,
+  visibility: "public",
+  max_members: 50,
+  member_count: 4,
+  created_at: "2026-01-01T00:00:00Z",
+  updated_at: "2026-01-01T00:00:00Z",
+  is_active: true,
+  ...overrides,
+});
+
+function renderForm(props: Partial<React.ComponentProps<typeof TeamForm>> = {}) {
+  return render(
+    <AuthProvider>
+      <I18nProvider>
+        <TeamForm isOpen={true} onToggle={vi.fn()} onSuccess={vi.fn()} {...props} />
+      </I18nProvider>
+    </AuthProvider>,
+  );
+}
+
+describe("TeamForm", () => {
+  beforeEach(() => {
+    server.resetHandlers();
+    server.use(
+      http.get("*/auth/email/admin/users", () => HttpResponse.json({ users: [] })),
+      http.post("*/teams", () =>
+        HttpResponse.json({ id: "team-1", name: "Engineering" }, { status: 201 }),
+      ),
+    );
+  });
+
+  describe("Rendering", () => {
+    it("renders the heading, name field, and action buttons", () => {
+      renderForm();
+      expect(screen.getByRole("heading", { name: /create team/i })).toBeInTheDocument();
+      expect(screen.getByPlaceholderText(/add team name/i)).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /^create team$/i })).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: /^cancel$/i })).toBeInTheDocument();
+    });
+
+    it("gives the description field an accessible name without a visible label", () => {
+      renderForm();
+      // aria-label provides the accessible name; no visible "Description" text is rendered.
+      expect(screen.getByRole("textbox", { name: /description/i })).toBeInTheDocument();
+      expect(screen.queryByText("Description")).not.toBeInTheDocument();
+    });
+
+    it("returns null when isOpen is false", () => {
+      const { container } = renderForm({ isOpen: false });
+      expect(container.firstChild).toBeNull();
+    });
+  });
+
+  describe("Cancel", () => {
+    it("calls onToggle when Cancel is clicked", async () => {
+      const onToggle = vi.fn();
+      const user = userEvent.setup();
+      renderForm({ onToggle });
+
+      await user.click(screen.getByRole("button", { name: /^cancel$/i }));
+      expect(onToggle).toHaveBeenCalledOnce();
+    });
+  });
+
+  describe("Submit", () => {
+    it("disables submit until a name is entered", async () => {
+      const user = userEvent.setup();
+      renderForm();
+
+      const submit = screen.getByRole("button", { name: /^create team$/i });
+      expect(submit).toBeDisabled();
+
+      await user.type(screen.getByPlaceholderText(/add team name/i), "Engineering");
+      expect(submit).toBeEnabled();
+    });
+
+    it("creates the team and calls onSuccess then onToggle", async () => {
+      const onSuccess = vi.fn();
+      const onToggle = vi.fn();
+      const user = userEvent.setup();
+      renderForm({ onSuccess, onToggle });
+
+      await user.type(screen.getByPlaceholderText(/add team name/i), "Engineering");
+      await user.click(screen.getByRole("button", { name: /^create team$/i }));
+
+      await waitFor(() => expect(onSuccess).toHaveBeenCalledOnce());
+      expect(onToggle).toHaveBeenCalledOnce();
+    });
+
+    it("shows an error and does not close when creation fails", async () => {
+      server.use(
+        http.post("*/teams", () =>
+          HttpResponse.json({ detail: "Team already exists" }, { status: 409 }),
+        ),
+      );
+      const onSuccess = vi.fn();
+      const user = userEvent.setup();
+      renderForm({ onSuccess });
+
+      await user.type(screen.getByPlaceholderText(/add team name/i), "Engineering");
+      await user.click(screen.getByRole("button", { name: /^create team$/i }));
+
+      await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/already exists/i));
+      expect(onSuccess).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("Field interactions", () => {
+    it("edits the description and toggles visibility", async () => {
+      const user = userEvent.setup();
+      renderForm();
+
+      const description = screen.getByRole("textbox", { name: /description/i });
+      await user.type(description, "The best team");
+      expect(description).toHaveValue("The best team");
+
+      // Private is the default and shows the lock hint.
+      expect(screen.getByRole("radio", { name: /private/i })).toBeChecked();
+      const publicRadio = screen.getByRole("radio", { name: /public/i });
+      await user.click(publicRadio);
+      expect(publicRadio).toBeChecked();
+    });
+  });
+
+  describe("Members", () => {
+    it("selects a member from the directory and changes their role", async () => {
+      server.use(
+        http.get("*/auth/email/admin/users", () =>
+          HttpResponse.json({ users: [{ email: "alice@example.com", full_name: "Alice" }] }),
+        ),
+      );
+      const user = userEvent.setup();
+      renderForm();
+
+      // Pick a member via the combobox (fires the member-email change handler).
+      const memberInput = screen.getByPlaceholderText(/name or email/i);
+      await user.click(memberInput);
+      await user.keyboard("alice");
+      await user.click(await screen.findByRole("option", { name: /alice/i }));
+
+      await waitFor(() => {
+        expect(memberInput).toHaveValue("Alice (alice@example.com)");
+      });
+
+      // Change the role from member -> owner (fires the role change handler).
+      // The member row's role Select is the first select-trigger in the form.
+      const roleTrigger = document.querySelectorAll<HTMLElement>('[data-slot="select-trigger"]')[0];
+      expect(roleTrigger).toHaveTextContent("member");
+
+      await user.click(roleTrigger);
+      const ownerOption = await screen.findByRole("option", { name: /^owner$/i });
+      await user.click(ownerOption);
+
+      await waitFor(() => {
+        expect(roleTrigger).toHaveTextContent("owner");
+      });
+    });
+
+    it("adds and removes member rows", async () => {
+      const user = userEvent.setup();
+      renderForm();
+
+      // Starts with one member row -> one Remove button.
+      expect(screen.getAllByRole("button", { name: /remove/i })).toHaveLength(1);
+
+      await user.click(screen.getByRole("button", { name: /add team member/i }));
+      expect(screen.getAllByRole("button", { name: /remove/i })).toHaveLength(2);
+
+      await user.click(screen.getAllByRole("button", { name: /remove/i })[0]);
+      expect(screen.getAllByRole("button", { name: /remove/i })).toHaveLength(1);
+    });
+  });
+
+  describe("Edit mode", () => {
+    it("pre-fills the team details and swaps to edit labels", () => {
+      renderForm({ team: makeTeam() });
+
+      expect(screen.getByRole("heading", { name: /edit team/i })).toBeInTheDocument();
+      expect(screen.getByPlaceholderText(/add team name/i)).toHaveValue("Platform");
+      expect(screen.getByRole("textbox", { name: /description/i })).toHaveValue("Platform team");
+      expect(screen.getByRole("radio", { name: /public/i })).toBeChecked();
+      expect(screen.getByRole("button", { name: /^save changes$/i })).toBeInTheDocument();
+    });
+
+    it("hides member management when editing", () => {
+      renderForm({ team: makeTeam() });
+
+      expect(screen.queryByRole("button", { name: /add team member/i })).not.toBeInTheDocument();
+      expect(screen.queryByPlaceholderText(/name or email/i)).not.toBeInTheDocument();
+    });
+
+    it("shows an off-list max_members value in the selector instead of rendering blank", () => {
+      renderForm({ team: makeTeam({ max_members: 75 }) });
+
+      // The trigger reflects the team's custom cap via the injected option.
+      expect(screen.getByRole("combobox", { name: /maximum members/i })).toHaveTextContent("75");
+    });
+
+    it("PUTs the update and calls onSuccess then onToggle", async () => {
+      let capturedBody: unknown;
+      server.use(
+        http.put("*/teams/team-9", async ({ request }) => {
+          capturedBody = await request.json();
+          return HttpResponse.json({ id: "team-9", name: "Platform Renamed" });
+        }),
+      );
+      const onSuccess = vi.fn();
+      const onToggle = vi.fn();
+      const user = userEvent.setup();
+      renderForm({ team: makeTeam(), onSuccess, onToggle });
+
+      const nameInput = screen.getByPlaceholderText(/add team name/i);
+      await user.clear(nameInput);
+      await user.type(nameInput, "Platform Renamed");
+      await user.click(screen.getByRole("button", { name: /^save changes$/i }));
+
+      await waitFor(() => expect(onSuccess).toHaveBeenCalledOnce());
+      expect(onToggle).toHaveBeenCalledOnce();
+      expect(capturedBody).toMatchObject({ name: "Platform Renamed", visibility: "public" });
+    });
+
+    it("shows an error and does not close when the update fails", async () => {
+      server.use(
+        http.put("*/teams/team-9", () =>
+          HttpResponse.json({ detail: "Access denied" }, { status: 403 }),
+        ),
+      );
+      const onSuccess = vi.fn();
+      const user = userEvent.setup();
+      renderForm({ team: makeTeam(), onSuccess });
+
+      await user.click(screen.getByRole("button", { name: /^save changes$/i }));
+
+      // A 403 is sanitized to a friendly, non-leaky message rather than echoing
+      // the raw backend detail.
+      await waitFor(() => expect(screen.getByRole("alert")).toHaveTextContent(/permission/i));
+      expect(onSuccess).not.toHaveBeenCalled();
+    });
+  });
+});

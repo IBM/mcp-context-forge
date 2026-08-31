@@ -1,0 +1,47 @@
+###############################################################################
+#  NETWORKS + VOLUMES - declared first so they can be referenced later
+###############################################################################
+networks:
+  mcpnet:               # Single user-defined bridge network keeps traffic private
+    driver: bridge
+
+volumes:                # Named volumes survive podman-compose down/up
+  redisinsight_data:
+
+services:
+  redis:
+    container_name: redis
+    image: redis:latest
+    restart: always    # expose only if you want host access
+    networks: [mcpnet]
+
+  llmguardplugin:
+    container_name: llmguardplugin
+    image: mcpgateway/llmguardplugin:latest # Use the local latest image. Run `make docker-prod` to build it.
+    restart: always
+    env_file:
+      - .env
+    ports:
+      - "8001:8001"                 # HTTP (or HTTPS if SSL=true is set)
+    networks: [mcpnet]
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    depends_on:
+      redis:
+        condition: service_started
+
+  llmguardplugin-testing:
+    container_name: llmguardplugin-testing
+    image: mcpgateway/llmguardplugin-testing:latest  # Use the local latest image. Run `make docker-prod` to build it.
+    env_file:
+      - .env
+    ports:
+      - "8005:8005"                 # HTTP (or HTTPS if SSL=true is set)
+    networks: [mcpnet]
+    environment:
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+    depends_on:
+      redis:
+        condition: service_started

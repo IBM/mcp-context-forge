@@ -1,0 +1,133 @@
+# Production load profile - Production-scale testing
+# Target: 160K users, 1.6M teams, 16M resources
+# Generation time: <30 minutes
+
+profile:
+  name: production
+  description: "Production-scale load test (160K users, 1.6M teams)"
+  version: 1.0
+
+global:
+  random_seed: 42
+  batch_size: 1000
+  progress_bar: true
+  parallel: true
+  workers: 8
+  email_domain: "loadtest.example.com"
+  output_report: "reports/production_load_report.json"
+  log_level: INFO
+
+database:
+  pool_size: 20
+  max_overflow: 40
+  pool_timeout: 30
+  echo: false
+
+scale:
+  # Users
+  users: 160000
+  users_active_percent: 80
+  users_admin_percent: 1
+
+  # Teams
+  personal_teams_per_user: 1
+  additional_teams_per_user: 10
+  teams_private_percent: 60
+  teams_public_percent: 40
+
+  # Team membership
+  members_per_team_min: 1
+  members_per_team_max: 100
+  members_per_team_distribution: "power_law"
+
+  # Invitations
+  invitations_per_team_avg: 5
+  invitations_accepted_percent: 70
+
+  # Join requests
+  join_requests_per_team_avg: 3
+  join_requests_approved_percent: 60
+
+  # API Tokens
+  tokens_per_user_min: 1
+  tokens_per_user_max: 10
+  tokens_per_user_avg: 5
+  tokens_active_percent: 90
+
+  # Gateways
+  gateways: 10000
+  tools_per_gateway_min: 10
+  tools_per_gateway_max: 100
+  tools_per_gateway_avg: 50
+  tools_enabled_percent: 95
+
+  # Resources
+  resources_per_user_min: 10
+  resources_per_user_max: 200
+  resources_per_user_avg: 100
+
+  # Prompts
+  prompts_per_user_min: 10
+  prompts_per_user_max: 200
+  prompts_per_user_avg: 100
+
+  # Virtual Servers
+  servers_per_user_min: 1
+  servers_per_user_max: 20
+  servers_per_user_avg: 10
+
+  # A2A Agents
+  a2a_agents: 10000
+  a2a_agents_per_server_min: 0
+  a2a_agents_per_server_max: 5
+  a2a_agents_enabled_percent: 90
+
+distributions:
+  team_size: "power_law"
+  resource_access: "zipf"
+  prompt_access: "zipf"
+  tool_invocation: "zipf"
+  temporal: "exponential_decay"
+
+temporal:
+  start_date: "2023-01-01"
+  end_date: "2025-10-12"
+  recent_data_percent: 80
+  historical_data_percent: 20
+
+realism:
+  use_faker: true
+  faker_locale: "en_US"
+  name_length_min: 5
+  name_length_max: 50
+  description_length_min: 50
+  description_length_max: 500
+
+performance:
+  batch_size: 1000
+  commit_frequency: 10000
+  disable_indexes: false
+  analyze_after_load: true
+
+generation_order:
+  - users
+  - teams
+  - team_members
+  - tokens
+  - gateways
+  - tools
+  - resources
+  - prompts
+  - servers
+
+validation:
+  enabled: true
+  checks:
+    - foreign_keys
+    - required_fields
+    - email_formats
+
+reporting:
+  enabled: true
+  format: json
+  output_file: "reports/production_load_report.json"

@@ -1,0 +1,42 @@
+# SPARC Static Validator Plugin manifest
+# Plugin metadata and default configuration
+
+description: "SPARC static validation for tool call arguments using JSON Schema validation from Agent Lifecycle Toolkit (ALTK). Validates types, required parameters, enums, and constraints with possible corrections."
+author: "Osher Elhadad"
+version: "0.1.0"
+
+available_hooks:
+  - "tool_pre_invoke"
+
+default_configs:
+  # Whether to block tool execution when validation fails
+  block_on_violation: true
+
+  # Whether to attempt automatic type conversion (e.g., "123" -> 123)
+  enable_type_correction: true
+
+  # Whether to automatically apply corrections to the payload
+  auto_apply_corrections: false
+
+  # Whether to include corrections in response metadata
+  include_correction_in_response: true
+
+  # Whether to log when corrections are available or applied
+  log_corrections: true
+
+  # Optional per-tool schemas (overrides tool metadata)
+  tool_schemas: {}
+
+# Requirements
+requirements:
+  - "agent-lifecycle-toolkit>=0.10.0"
+
+# Tags for discovery
+tags:
+  - "validation"
+  - "sparc"
+  - "altk"
+  - "static"
+  - "schema"
+  - "type-checking"
+  - "tool-call"

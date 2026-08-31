@@ -1,0 +1,176 @@
+<!-- htmlhint doctype-first:false -->
+<table id="agents-table" class="min-w-full divide-y divide-gray-200">
+  <thead class="bg-gray-50 dark:bg-gray-700">
+    <tr>
+      <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Actions</th>
+      <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-12">S. No.</th>
+      <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-24">Agent ID</th>
+      <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider w-20">ID Type</th>
+      <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Name</th>
+      <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Description</th>
+      <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Endpoint</th>
+      <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Tags</th>
+      <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Type</th>
+      <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Status</th>
+      <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Reachability</th>
+      <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Owner</th>
+      <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Team</th>
+      <th class="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-300 uppercase tracking-wider">Visibility</th>
+    </tr>
+  </thead>
+  <tbody id="agents-table-body" class="bg-white divide-y divide-gray-200 dark:bg-gray-900 dark:divide-gray-700">
+    {% for agent in data %}
+    {% set agent_label = agent.name or agent.id %}
+    {% set can_modify = is_admin or agent.ownerEmail == current_user_email or (agent.visibility == 'team' and agent.teamId and user_team_roles.get(agent.teamId|string) == 'owner') %}
+      <tr data-enabled="{{ agent.enabled|lower }}" data-owner-email="{{ agent.ownerEmail }}" data-team-id="{{ agent.teamId or '' }}" data-visibility="{{ agent.visibility }}">
+        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
+      <div class="relative"
+           x-data="overflowMenu('agents-table-wrapper')"
+               @click.away="menuOpen = false"
+               @keydown.escape="closeMenu()">
+            <button
+              type="button"
+              x-ref="trigger"
+              @click="menuOpen ? (menuOpen = false) : openMenu()"
+              class="p-1.5 rounded-md text-gray-500 hover:text-gray-700 hover:bg-gray-100 dark:text-gray-400 dark:hover:text-gray-200 dark:hover:bg-gray-700 transition-colors"
+              :aria-expanded="menuOpen"
+              aria-haspopup="menu"
+              aria-label="Actions"
+              x-tooltip="'Actions'"
+            >
+              <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 20 20">
+                <path d="M6 10a2 2 0 11-4 0 2 2 0 014 0zm6 0a2 2 0 11-4 0 2 2 0 014 0zm6 0a2 2 0 11-4 0 2 2 0 014 0z"/>
+              </svg>
+            </button>
+            <!-- Dropdown menu (fixed-positioned to escape overflow/scroll containers) -->
+            <div
+              x-ref="menu"
+              x-cloak
+              x-show="menuOpen"
+              x-transition:enter="transition ease-out duration-100"
+              x-transition:enter-start="opacity-0 scale-95"
+              x-transition:enter-end="opacity-100 scale-100"
+              x-transition:leave="transition ease-in duration-75"
+              x-transition:leave-start="opacity-100 scale-100"
+              x-transition:leave-end="opacity-0 scale-95"
+              class="fixed w-44 bg-white dark:bg-gray-800 rounded-lg shadow-xl border border-gray-200 dark:border-gray-700 z-50 py-1"
+              :style="{ top: menuTop + 'px', left: menuLeft + 'px', display: menuOpen ? 'block' : 'none' }"
+              role="menu"
+              aria-orientation="vertical"
+              @click="menuOpen = false"
+              @keydown.arrow-down.prevent="navigate(1)"
+              @keydown.arrow-up.prevent="navigate(-1)"
+            >
+              <button
+                type="button"
+                role="menuitem"
+                tabindex="0"
+                @click="dispatch('testA2AAgent', {{ agent.id|tojson_attr }}, {{ agent.name|tojson_attr }}, {{ agent.endpointUrl|tojson_attr }})"
+                class="w-full flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
+                x-tooltip="'💡Test this agent with sample arguments'"
+              >Test</button>
+              <button
+                type="button"
+                role="menuitem"
+                tabindex="0"
+                @click="dispatch('viewA2AAgent', {{ agent.id|tojson_attr }})"
+                class="w-full flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
+              >View</button>
+              {% if can_modify %}
+              <button
+                type="button"
+                role="menuitem"
+                tabindex="0"
+                @click="dispatch('editA2AAgent', {{ agent.id|tojson_attr }})"
+                class="w-full flex items-center px-4 py-2 text-sm text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
+              >Edit</button>
+              <hr class="border-gray-200 dark:border-gray-600 my-1">
+              <form method="POST" action="{{ root_path }}/admin/a2a/{{ agent.id }}/state" class="contents" @submit="menuOpen = false" data-action-submit="handleToggleSubmit" data-arg0="a2a-agents">
+                <input type="hidden" name="activate" value="{{ 'false' if agent.enabled else 'true' }}" />
+                <button
+                  type="submit"
+                  role="menuitem"
+                  tabindex="0"
+                  class="w-full flex items-center px-4 py-2 text-sm {% if agent.enabled %}text-yellow-600 dark:text-yellow-400{% else %}text-green-600 dark:text-green-400{% endif %} hover:bg-gray-100 dark:hover:bg-gray-700"
+                >{% if agent.enabled %}Deactivate{% else %}Activate{% endif %}</button>
+              </form>
+              <form method="POST" action="{{ root_path }}/admin/a2a/{{ agent.id }}/delete" class="contents" @submit="menuOpen = false" data-action-submit="handleDeleteSubmit" data-arg0="agent" data-arg1="{{ agent_label|tojson_attr }}" data-arg2="a2a-agents">
+                <button
+                  type="submit"
+                  role="menuitem"
+                  tabindex="0"
+                  class="w-full flex items-center px-4 py-2 text-sm text-red-600 dark:text-red-400 hover:bg-gray-100 dark:hover:bg-gray-700"
+                >Delete</button>
+              </form>
+              {% endif %}
+            </div>
+          </div>
+        </td>
+        <td class="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-700 dark:text-gray-300 w-12">{{ (pagination.page - 1) * pagination.per_page + loop.index }}</td>
+        <td class="px-6 py-4 whitespace-normal break-all text-sm font-medium text-gray-900 dark:text-gray-300 max-w-32">{{ agent.id }}</td>
+        <td class="px-6 py-4 whitespace-nowrap text-sm">
+          {% if agent.uaid %}
+            <span class="inline-flex items-center px-2 py-1 text-xs font-semibold rounded-full bg-indigo-100 text-indigo-800 dark:bg-indigo-900 dark:text-indigo-200"
+                  title="Universal Agent ID - Cross-gateway routing enabled">
+              UAID
+            </span>
+          {% else %}
+            <span class="inline-flex items-center px-2 py-1 text-xs font-semibold rounded-full bg-gray-100 text-gray-800 dark:bg-gray-700 dark:text-gray-300"
+                  title="Standard UUID">
+              UUID
+            </span>
+          {% endif %}
+        </td>
+        <td class="px-6 py-4 whitespace-nowrap">
+          <div class="text-sm font-medium text-gray-900 dark:text-gray-200">{{ agent.name }}</div>
+        </td>
+        <td class="px-6 py-4 whitespace-normal break-words text-sm text-gray-600 dark:text-gray-400">{{ (agent.description if agent.description else '') | decode_html }}</td>
+        <td class="px-6 py-4 whitespace-normal break-all text-sm text-gray-600 dark:text-gray-400 max-w-xs">{{ agent.endpointUrl }}</td>
+        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">
+          {% if agent.tags %}
+            {% for tag in agent.tags %}
+            <span class="inline-flex items-center px-2 py-1 rounded text-xs bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300 mr-1" data-tag="{% if tag is mapping %}{{ tag.id }}{% else %}{{ tag }}{% endif %}">
+              {% if tag is mapping %}{{ tag.id }}{% else %}{{ tag }}{% endif %}
+            </span>
+            {% endfor %}
+          {% endif %}
+        </td>
+        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">{{ agent.agentType }}</td>
+        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">
+          <div class="flex flex-col gap-1">
+            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium {% if agent.enabled %}bg-green-100 text-green-800{% else %}bg-red-100 text-red-800{% endif %}">{% if agent.enabled %}Active{% else %}Inactive{% endif %}</span>
+          </div>
+        </td>
+        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">
+          <div class="flex flex-col gap-1">
+            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium {% if agent.reachable %}bg-green-100 text-green-800{% else %}bg-yellow-100 text-yellow-800{% endif %}">{% if agent.reachable %}Reachable{% else %}Unreachable{% endif %}</span>
+          </div>
+        </td>
+        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">{{ agent.ownerEmail }}</td>
+        <td class="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">{{ agent.team }}</td>
+        <td class="px-6 py-4 whitespace-nowrap">
+          {% if agent.visibility == 'private' %}
+          <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-800">Private</span>
+          {% elif agent.visibility == 'team' %}
+          <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800">Team</span>
+          {% elif agent.visibility == 'public' %}
+          <span class="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-800">Public</span>
+          {% else %}
+          <span class="text-gray-500 dark:text-gray-300 text-xs">N/A</span>
+          {% endif %}
+        </td>
+      </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+<!-- Out-of-band swap for pagination controls -->
+<div id="agents-pagination-controls" hx-swap-oob="true">
+  {% set base_url = root_path + '/admin/a2a/partial' %}
+  {% set hx_target = '#agents-table' %}
+  {% set hx_swap = 'outerHTML' %}
+  {% set hx_indicator = '#agents-loading' %}
+  {% set table_name = 'agents' %}
+  {% set query_params = query_params if query_params is defined else {'include_inactive': include_inactive} %}
+  {% include 'pagination_controls.html' %}
+</div>

@@ -1,0 +1,1134 @@
+# -*- coding: utf-8 -*-
+"""Location: ./tests/unit/mcpgateway/middleware/test_csrf_middleware.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+
+Integration tests for CSRF middleware.
+
+Tests cover request validation, token checking, exempt paths, and referer validation.
+"""
+
+# Standard
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
+
+# Third-Party
+import pytest
+from starlette.requests import Request
+from starlette.responses import Response
+
+# First-Party
+from mcpgateway.middleware.csrf_middleware import CSRFMiddleware
+from mcpgateway.services.csrf_service import CSRFService
+
+
+@pytest.mark.asyncio
+async def test_get_request_passes_without_token():
+    """Test that GET requests pass without CSRF token."""
+    middleware = CSRFMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok", status_code=200))
+
+    request = MagicMock(spec=Request)
+    request.method = "GET"
+    request.url.path = "/api/data"
+    request.headers = {}
+
+    with patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings:
+        mock_settings.csrf_enabled = True
+        mock_settings.csrf_exempt_paths = []
+
+        response = await middleware.dispatch(request, call_next)
+
+    assert response.status_code == 200
+    call_next.assert_awaited_once_with(request)
+
+
+@pytest.mark.asyncio
+async def test_head_request_passes_without_token():
+    """Test that HEAD requests pass without CSRF token."""
+    middleware = CSRFMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok", status_code=200))
+
+    request = MagicMock(spec=Request)
+    request.method = "HEAD"
+    request.url.path = "/api/data"
+    request.headers = {}
+
+    with patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings:
+        mock_settings.csrf_enabled = True
+        mock_settings.csrf_exempt_paths = []
+
+        response = await middleware.dispatch(request, call_next)
+
+    assert response.status_code == 200
+    call_next.assert_awaited_once_with(request)
+
+
+@pytest.mark.asyncio
+async def test_post_without_token_returns_403():
+    """Test that POST without CSRF token returns 403 with CSRF_TOKEN_INVALID."""
+    middleware = CSRFMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok", status_code=200))
+
+    request = MagicMock(spec=Request)
+    request.method = "POST"
+    request.url.path = "/api/data"
+    request.headers = {}
+
+    with patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings:
+        mock_settings.csrf_enabled = True
+        mock_settings.csrf_exempt_paths = []
+        mock_settings.csrf_token_name = "X-CSRF-Token"
+
+        response = await middleware.dispatch(request, call_next)
+
+    assert response.status_code == 403
+    assert response.body == b'{"detail":"CSRF validation failed","code":"CSRF_TOKEN_INVALID"}'
+    call_next.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_post_with_invalid_token_returns_403():
+    """Test that POST with invalid CSRF token returns 403 with CSRF_TOKEN_INVALID."""
+    middleware = CSRFMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok", status_code=200))
+
+    request = MagicMock(spec=Request)
+    request.method = "POST"
+    request.url.path = "/api/data"
+    request.headers = {"X-CSRF-Token": "invalid_token"}
+    request.state = MagicMock()
+    request.state.user = MagicMock(email="user@example.com")
+    request.state.jti = "session123"
+    request.cookies = {"jwt_token": "jwt_cookie_token", "session_id": "session123", "csrf_token": "invalid_token"}
+
+    mock_csrf_service = MagicMock()
+    mock_csrf_service.validate_csrf_token.return_value = False
+
+    with patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings, patch("mcpgateway.middleware.csrf_middleware.get_csrf_service", return_value=mock_csrf_service):
+        mock_settings.csrf_enabled = True
+        mock_settings.csrf_exempt_paths = []
+        mock_settings.csrf_token_name = "X-CSRF-Token"
+        mock_settings.csrf_check_referer = False
+        mock_settings.csrf_cookie_name = "mcpgateway_csrf_token"
+
+        response = await middleware.dispatch(request, call_next)
+
+    assert response.status_code == 403
+    assert response.body == b'{"detail":"CSRF validation failed","code":"CSRF_TOKEN_INVALID"}'
+    call_next.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_post_with_missing_cookie_returns_403():
+    """Test that POST with no CSRF cookie returns 403."""
+    middleware = CSRFMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok", status_code=200))
+
+    request = MagicMock(spec=Request)
+    request.method = "POST"
+    request.url.path = "/api/data"
+    request.headers = {"X-CSRF-Token": "valid_token"}
+    request.state = MagicMock()
+    request.state.user = MagicMock(email="user@example.com")
+    request.state.jti = "session123"
+    request.cookies = {"jwt_token": "jwt_cookie_token", "session_id": "session123"}
+
+    with patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings:
+        mock_settings.csrf_enabled = True
+        mock_settings.csrf_exempt_paths = []
+        mock_settings.csrf_token_name = "X-CSRF-Token"
+        mock_settings.csrf_check_referer = False
+        mock_settings.csrf_cookie_name = "mcpgateway_csrf_token"
+
+        response = await middleware.dispatch(request, call_next)
+
+    assert response.status_code == 403
+    assert response.body == b'{"detail":"CSRF validation failed","code":"CSRF_TOKEN_INVALID"}'
+    call_next.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_post_with_mismatched_cookie_returns_403():
+    """Test that POST with mismatched CSRF cookie returns 403."""
+    middleware = CSRFMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok", status_code=200))
+
+    request = MagicMock(spec=Request)
+    request.method = "POST"
+    request.url.path = "/api/data"
+    request.headers = {"X-CSRF-Token": "valid_token"}
+    request.state = MagicMock()
+    request.state.user = MagicMock(email="user@example.com")
+    request.state.jti = "session123"
+    request.cookies = {"jwt_token": "jwt_cookie_token", "session_id": "session123", "csrf_token": "different_token"}
+
+    mock_csrf_service = MagicMock()
+
+    with patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings, patch("mcpgateway.middleware.csrf_middleware.get_csrf_service", return_value=mock_csrf_service):
+        mock_settings.csrf_enabled = True
+        mock_settings.csrf_exempt_paths = []
+        mock_settings.csrf_token_name = "X-CSRF-Token"
+        mock_settings.csrf_check_referer = False
+        mock_settings.csrf_cookie_name = "mcpgateway_csrf_token"
+
+        response = await middleware.dispatch(request, call_next)
+
+    assert response.status_code == 403
+    assert response.body == b'{"detail":"CSRF validation failed","code":"CSRF_TOKEN_INVALID"}'
+    call_next.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_post_with_valid_token_succeeds():
+    """Test that POST with valid CSRF token succeeds."""
+    middleware = CSRFMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok", status_code=200))
+
+    request = MagicMock(spec=Request)
+    request.method = "POST"
+    request.url.path = "/api/data"
+    request.headers = {"X-CSRF-Token": "valid_token"}
+    request.state = MagicMock()
+    request.state.user = MagicMock(email="user@example.com")
+    request.state.jti = "session123"
+    request.cookies = {"jwt_token": "jwt_cookie_token", "session_id": "session123", "csrf_token": "valid_token"}
+
+    mock_csrf_service = MagicMock()
+    mock_csrf_service.validate_csrf_token.return_value = True
+
+    with patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings, patch("mcpgateway.middleware.csrf_middleware.get_csrf_service", return_value=mock_csrf_service):
+        mock_settings.csrf_enabled = True
+        mock_settings.csrf_exempt_paths = []
+        mock_settings.csrf_token_name = "X-CSRF-Token"
+        mock_settings.csrf_check_referer = False
+        mock_settings.csrf_cookie_name = "mcpgateway_csrf_token"
+
+        response = await middleware.dispatch(request, call_next)
+
+    assert response.status_code == 200
+    call_next.assert_awaited_once_with(request)
+
+
+@pytest.mark.asyncio
+async def test_exempt_path_passes_without_token():
+    """Test that requests to exempt paths pass without CSRF token."""
+    middleware = CSRFMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok", status_code=200))
+
+    request = MagicMock(spec=Request)
+    request.method = "POST"
+    request.url.path = "/auth/login"
+    request.headers = {}
+
+    with patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings:
+        mock_settings.csrf_enabled = True
+        mock_settings.csrf_exempt_paths = ["/auth/login", "/auth/register"]
+
+        response = await middleware.dispatch(request, call_next)
+
+    assert response.status_code == 200
+    call_next.assert_awaited_once_with(request)
+
+
+@pytest.mark.asyncio
+async def test_internal_mcp_dispatch_is_csrf_exempt_by_default():
+    """``/_internal/mcp/*`` is CSRF-exempt by default (loopback-only, HMAC-gated).
+
+    The affinity dispatch posts to the trusted-internal endpoint, which must not
+    require a CSRF token. Without the exemption, custom AUTH_HEADER_NAME
+    deployments (whose bearer the CSRF short-circuit can't find) would 403 on the
+    inner dispatch.
+    """
+    # First-Party
+    from mcpgateway.config import settings as real_settings
+
+    # The shipped default must cover the internal MCP dispatch prefix.
+    assert "/_internal/mcp/" in real_settings.csrf_exempt_paths
+
+    middleware = CSRFMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok", status_code=200))
+
+    request = MagicMock(spec=Request)
+    request.method = "POST"
+    request.url.path = "/_internal/mcp/rpc"
+    request.headers = {}  # no CSRF token, no bearer
+
+    with patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings:
+        mock_settings.csrf_enabled = True
+        mock_settings.csrf_exempt_paths = real_settings.csrf_exempt_paths
+
+        response = await middleware.dispatch(request, call_next)
+
+    assert response.status_code == 200
+    call_next.assert_awaited_once_with(request)
+
+
+@pytest.mark.asyncio
+async def test_bearer_token_request_passes_without_csrf():
+    """Test that requests with Authorization: Bearer header pass without CSRF token."""
+    middleware = CSRFMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok", status_code=200))
+
+    request = MagicMock(spec=Request)
+    request.method = "POST"
+    request.url.path = "/api/data"
+    request.headers = {"authorization": "Bearer abc123token"}
+
+    with patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings:
+        mock_settings.csrf_enabled = True
+        mock_settings.csrf_exempt_paths = []
+
+        response = await middleware.dispatch(request, call_next)
+
+    assert response.status_code == 200
+    call_next.assert_awaited_once_with(request)
+
+
+@pytest.mark.asyncio
+async def test_unauthenticated_post_falls_through_to_auth_layer():
+    """Test that a POST with no Authorization header and no auth cookie falls through.
+
+    Regression test for issue #5743: a request with no credentials at all has
+    nothing for CSRF to protect, so the middleware must let it reach the auth
+    layer (which correctly returns 401) instead of returning a misleading
+    403 CSRF_TOKEN_INVALID.
+    """
+    middleware = CSRFMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok", status_code=200))
+
+    request = MagicMock(spec=Request)
+    request.method = "POST"
+    request.url.path = "/api/data"
+    request.headers = {}
+    request.cookies = {}  # real empty dict: a MagicMock's .cookies.get(...) would be truthy and mask the fall-through
+
+    with patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings:
+        mock_settings.csrf_enabled = True
+        mock_settings.auth_required = True
+        mock_settings.csrf_exempt_paths = []
+        mock_settings.csrf_token_name = "X-CSRF-Token"
+
+        response = await middleware.dispatch(request, call_next)
+
+    assert response.status_code == 200
+    call_next.assert_awaited_once_with(request)
+
+
+@pytest.mark.asyncio
+async def test_non_bearer_auth_header_without_cookie_still_returns_403():
+    """Test that a non-bearer Authorization header with no auth cookie still requires CSRF.
+
+    Guards the tighter `not auth_header` fall-through guard (issue #5743) against
+    regressing to a looser "no bearer token" check: `_extract_bearer_token`
+    returns None for a non-bearer scheme too, so a request presenting *some*
+    credential (even a malformed/non-bearer one) must still go through CSRF
+    validation and not be treated as credential-less.
+    """
+    middleware = CSRFMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok", status_code=200))
+
+    request = MagicMock(spec=Request)
+    request.method = "POST"
+    request.url.path = "/api/data"
+    request.headers = {"authorization": "Basic dXNlcjpwYXNz"}
+    request.cookies = {}
+
+    with patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings:
+        mock_settings.csrf_enabled = True
+        mock_settings.auth_required = True
+        mock_settings.csrf_exempt_paths = []
+        mock_settings.csrf_token_name = "X-CSRF-Token"
+
+        response = await middleware.dispatch(request, call_next)
+
+    assert response.status_code == 403
+    assert response.body == b'{"detail":"CSRF validation failed","code":"CSRF_TOKEN_INVALID"}'
+    call_next.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_proxy_header_identity_still_requires_csrf():
+    """Test that trusted-proxy-header identity is not treated as credential-less.
+
+    Deny-path regression test for issue #5743 follow-up: under
+    MCP_CLIENT_AUTH_ENABLED=false + TRUST_PROXY_AUTH(_DANGEROUSLY)=true, identity
+    comes from the proxy header (e.g. X-Authenticated-User), backed by the
+    proxy's own ambient session cookie. The request has no Authorization header
+    and no jwt_token/access_token cookie, but it must NOT fall through the
+    no-credentials guard — otherwise a cross-site POST that triggers the proxy
+    to inject the header would run with CSRF protection bypassed.
+    """
+    middleware = CSRFMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok", status_code=200))
+
+    request = MagicMock(spec=Request)
+    request.method = "POST"
+    request.url.path = "/api/data"
+    request.headers = {"X-Authenticated-User": "victim@example.com"}
+    request.cookies = {}
+
+    with patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings, patch(
+        "mcpgateway.middleware.csrf_middleware.is_proxy_auth_trust_active", return_value=True
+    ):
+        mock_settings.csrf_enabled = True
+        mock_settings.auth_required = True
+        mock_settings.csrf_exempt_paths = []
+        mock_settings.csrf_token_name = "X-CSRF-Token"
+        mock_settings.proxy_user_header = "X-Authenticated-User"
+
+        response = await middleware.dispatch(request, call_next)
+
+    assert response.status_code == 403
+    assert response.body == b'{"detail":"CSRF validation failed","code":"CSRF_TOKEN_INVALID"}'
+    call_next.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_proxy_header_present_but_trust_inactive_falls_through():
+    """Test that a stray proxy-user header is ignored when proxy trust is not active.
+
+    Positive control for the fix above: when `is_proxy_auth_trust_active()` is
+    False (the default; e.g. MCP client auth still enabled), the presence of an
+    X-Authenticated-User header must not itself block the credential-less
+    fall-through, since the header carries no authority in that configuration.
+    """
+    middleware = CSRFMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok", status_code=200))
+
+    request = MagicMock(spec=Request)
+    request.method = "POST"
+    request.url.path = "/api/data"
+    request.headers = {"X-Authenticated-User": "someone@example.com"}
+    request.cookies = {}
+
+    with patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings, patch(
+        "mcpgateway.middleware.csrf_middleware.is_proxy_auth_trust_active", return_value=False
+    ):
+        mock_settings.csrf_enabled = True
+        mock_settings.auth_required = True
+        mock_settings.csrf_exempt_paths = []
+        mock_settings.csrf_token_name = "X-CSRF-Token"
+        mock_settings.proxy_user_header = "X-Authenticated-User"
+
+        response = await middleware.dispatch(request, call_next)
+
+    assert response.status_code == 200
+    call_next.assert_awaited_once_with(request)
+
+
+@pytest.mark.asyncio
+async def test_csrf_disabled_allows_all_requests():
+    """Test that CSRF_ENABLED=False allows all requests through."""
+    middleware = CSRFMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok", status_code=200))
+
+    request = MagicMock(spec=Request)
+    request.method = "POST"
+    request.url.path = "/api/data"
+    request.headers = {}
+
+    with patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings:
+        mock_settings.csrf_enabled = False
+
+        response = await middleware.dispatch(request, call_next)
+
+    assert response.status_code == 200
+    call_next.assert_awaited_once_with(request)
+
+
+@pytest.mark.asyncio
+async def test_referer_matches_trusted_origin_passes():
+    """Test that request with matching referer passes."""
+    middleware = CSRFMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok", status_code=200))
+
+    request = MagicMock(spec=Request)
+    request.method = "POST"
+    request.url.path = "/api/data"
+    request.headers = {"X-CSRF-Token": "valid_token", "referer": "https://example.com/page"}
+    request.state = MagicMock()
+    request.state.user = MagicMock(email="user@example.com")
+    request.state.jti = "session123"
+    request.cookies = {"jwt_token": "jwt_cookie_token", "session_id": "session123", "csrf_token": "valid_token"}
+
+    mock_csrf_service = MagicMock()
+    mock_csrf_service.validate_csrf_token.return_value = True
+
+    with patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings, patch("mcpgateway.middleware.csrf_middleware.get_csrf_service", return_value=mock_csrf_service):
+        mock_settings.csrf_enabled = True
+        mock_settings.csrf_exempt_paths = []
+        mock_settings.csrf_token_name = "X-CSRF-Token"
+        mock_settings.csrf_check_referer = True
+        mock_settings.app_domain = "https://example.com"
+        mock_settings.csrf_trusted_origins = set()
+        mock_settings.csrf_cookie_name = "csrf_token"
+
+        response = await middleware.dispatch(request, call_next)
+
+    assert response.status_code == 200
+    call_next.assert_awaited_once_with(request)
+
+
+@pytest.mark.asyncio
+async def test_referer_wrong_domain_returns_403():
+    """Test that request with wrong referer domain returns 403."""
+    middleware = CSRFMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok", status_code=200))
+
+    request = MagicMock(spec=Request)
+    request.method = "POST"
+    request.url.path = "/api/data"
+    request.headers = {"X-CSRF-Token": "valid_token", "referer": "https://evil.com/page"}
+    request.state = MagicMock()
+    request.state.user = MagicMock(email="user@example.com")
+    request.state.jti = "session123"
+    request.cookies = {"jwt_token": "jwt_cookie_token", "session_id": "session123", "csrf_token": "valid_token"}
+
+    mock_csrf_service = MagicMock()
+    mock_csrf_service.validate_csrf_token.return_value = True
+
+    with patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings, patch("mcpgateway.middleware.csrf_middleware.get_csrf_service", return_value=mock_csrf_service):
+        mock_settings.csrf_enabled = True
+        mock_settings.csrf_exempt_paths = []
+        mock_settings.csrf_token_name = "X-CSRF-Token"
+        mock_settings.csrf_check_referer = True
+        mock_settings.app_domain = "https://example.com"
+        mock_settings.csrf_trusted_origins = set()
+        mock_settings.csrf_cookie_name = "csrf_token"
+
+        response = await middleware.dispatch(request, call_next)
+
+    assert response.status_code == 403
+    assert b"CSRF_TOKEN_INVALID" in response.body
+    call_next.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_referer_absent_passes():
+    """Test that request without referer header passes (do NOT block on absence)."""
+    middleware = CSRFMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok", status_code=200))
+
+    request = MagicMock(spec=Request)
+    request.method = "POST"
+    request.url.path = "/api/data"
+    request.headers = {"X-CSRF-Token": "valid_token"}
+    request.state = MagicMock()
+    request.state.user = MagicMock(email="user@example.com")
+    request.state.jti = "session123"
+    request.cookies = {"jwt_token": "jwt_cookie_token", "session_id": "session123", "csrf_token": "valid_token"}
+
+    mock_csrf_service = MagicMock()
+    mock_csrf_service.validate_csrf_token.return_value = True
+
+    with patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings, patch("mcpgateway.middleware.csrf_middleware.get_csrf_service", return_value=mock_csrf_service):
+        mock_settings.csrf_enabled = True
+        mock_settings.csrf_exempt_paths = []
+        mock_settings.csrf_token_name = "X-CSRF-Token"
+        mock_settings.csrf_check_referer = True
+        mock_settings.app_domain = "https://example.com"
+        mock_settings.csrf_trusted_origins = set()
+        mock_settings.csrf_cookie_name = "csrf_token"
+
+        response = await middleware.dispatch(request, call_next)
+
+    # Middleware fails closed when referer/origin header is absent
+    assert response.status_code == 403
+    assert b"CSRF_TOKEN_INVALID" in response.body
+    call_next.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_no_user_context_returns_403():
+    """Test that request without user context returns 403.
+
+    Carries a jwt_token cookie (so step 4b's no-credentials fall-through does not
+    apply -- see issue #5743) whose value is garbage, so the JWT-fallback
+    verification in step 6 fails and leaves no usable user/session, landing on
+    the "no user context" 403 branch exactly as before.
+    """
+    middleware = CSRFMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok", status_code=200))
+
+    request = MagicMock(spec=Request)
+    request.method = "POST"
+    request.url.path = "/api/data"
+    request.headers = {"X-CSRF-Token": "some_token"}
+    request.state = MagicMock()
+    request.state.user = None  # No user context
+    request.state.jti = None
+    request.cookies = {"jwt_token": "not.a.valid.jwt"}  # present so step 4b doesn't fall through; fails JWT verification
+
+    with (
+        patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings,
+        patch("mcpgateway.middleware.csrf_middleware.verify_jwt_token_cached", AsyncMock(side_effect=Exception("invalid token"))),
+    ):
+        mock_settings.csrf_enabled = True
+        mock_settings.csrf_exempt_paths = []
+        mock_settings.csrf_token_name = "X-CSRF-Token"
+
+        response = await middleware.dispatch(request, call_next)
+
+    assert response.status_code == 403
+    assert response.body == b'{"detail":"CSRF validation failed","code":"CSRF_TOKEN_INVALID"}'
+    call_next.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_put_request_requires_csrf_token():
+    """Test that PUT requests require CSRF token."""
+    middleware = CSRFMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok", status_code=200))
+
+    request = MagicMock(spec=Request)
+    request.method = "PUT"
+    request.url.path = "/api/data/123"
+    request.headers = {}
+
+    with patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings:
+        mock_settings.csrf_enabled = True
+        mock_settings.csrf_exempt_paths = []
+        mock_settings.csrf_token_name = "X-CSRF-Token"
+
+        response = await middleware.dispatch(request, call_next)
+
+    assert response.status_code == 403
+    assert response.body == b'{"detail":"CSRF validation failed","code":"CSRF_TOKEN_INVALID"}'
+
+
+@pytest.mark.asyncio
+async def test_delete_request_requires_csrf_token():
+    """Test that DELETE requests require CSRF token."""
+    middleware = CSRFMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok", status_code=200))
+
+    request = MagicMock(spec=Request)
+    request.method = "DELETE"
+    request.url.path = "/api/data/123"
+    request.headers = {}
+
+    with patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings:
+        mock_settings.csrf_enabled = True
+        mock_settings.csrf_exempt_paths = []
+        mock_settings.csrf_token_name = "X-CSRF-Token"
+
+        response = await middleware.dispatch(request, call_next)
+
+    assert response.status_code == 403
+    assert response.body == b'{"detail":"CSRF validation failed","code":"CSRF_TOKEN_INVALID"}'
+
+
+@pytest.mark.asyncio
+async def test_patch_request_requires_csrf_token():
+    """Test that PATCH requests require CSRF token."""
+    middleware = CSRFMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok", status_code=200))
+
+    request = MagicMock(spec=Request)
+    request.method = "PATCH"
+    request.url.path = "/api/data/123"
+    request.headers = {}
+
+    with patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings:
+        mock_settings.csrf_enabled = True
+        mock_settings.csrf_exempt_paths = []
+        mock_settings.csrf_token_name = "X-CSRF-Token"
+
+        response = await middleware.dispatch(request, call_next)
+
+    assert response.status_code == 403
+    assert response.body == b'{"detail":"CSRF validation failed","code":"CSRF_TOKEN_INVALID"}'
+
+
+@pytest.mark.asyncio
+async def test_options_request_passes_without_token():
+    """Test that OPTIONS requests pass without CSRF token."""
+    middleware = CSRFMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok", status_code=200))
+
+    request = MagicMock(spec=Request)
+    request.method = "OPTIONS"
+    request.url.path = "/api/data"
+    request.headers = {}
+
+    with patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings:
+        mock_settings.csrf_enabled = True
+        mock_settings.csrf_exempt_paths = []
+
+        response = await middleware.dispatch(request, call_next)
+
+    assert response.status_code == 200
+    call_next.assert_awaited_once_with(request)
+
+
+@pytest.mark.asyncio
+async def test_session_id_from_header():
+    """Test that session_id can be extracted from X-Session-ID header."""
+    middleware = CSRFMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok", status_code=200))
+
+    request = MagicMock(spec=Request)
+    request.method = "POST"
+    request.url.path = "/api/data"
+    request.headers = {
+        "X-CSRF-Token": "valid_token",
+    }
+    request.state = MagicMock()
+    request.state.user = MagicMock(email="user@example.com")
+    request.state.jti = "header_session_123"
+    request.cookies = {"jwt_token": "jwt_cookie_token", "csrf_token": "valid_token"}
+
+    mock_csrf_service = MagicMock()
+    mock_csrf_service.validate_csrf_token.return_value = True
+
+    with patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings, patch("mcpgateway.middleware.csrf_middleware.get_csrf_service", return_value=mock_csrf_service):
+        mock_settings.csrf_enabled = True
+        mock_settings.csrf_exempt_paths = []
+        mock_settings.csrf_token_name = "X-CSRF-Token"
+        mock_settings.csrf_check_referer = False
+        mock_settings.csrf_cookie_name = "csrf_token"
+
+        response = await middleware.dispatch(request, call_next)
+
+    assert response.status_code == 200
+    # Verify session_id from JWT context was used
+    mock_csrf_service.validate_csrf_token.assert_called_once_with("valid_token", "user@example.com", "header_session_123")
+
+
+@pytest.mark.asyncio
+async def test_fallback_jwt_uuid_sub_uses_signed_email():
+    """CSRF JWT fallback should bind UUID-sub tokens to signed user.email."""
+    middleware = CSRFMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok", status_code=200))
+
+    request = MagicMock(spec=Request)
+    request.method = "POST"
+    request.url.path = "/api/data"
+    request.headers = {"X-CSRF-Token": "valid_token"}
+    request.state = SimpleNamespace()
+    request.cookies = {"csrf_token": "valid_token", "jwt_token": "jwt-token"}
+
+    payload = {"sub": "11111111-1111-1111-1111-111111111111", "user": {"email": "user@example.com"}, "jti": "session123"}
+    mock_csrf_service = MagicMock()
+    mock_csrf_service.validate_csrf_token.return_value = True
+
+    with (
+        patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings,
+        patch("mcpgateway.middleware.csrf_middleware.get_csrf_service", return_value=mock_csrf_service),
+        patch("mcpgateway.middleware.csrf_middleware.verify_jwt_token_cached", AsyncMock(return_value=payload)),
+    ):
+        mock_settings.csrf_enabled = True
+        mock_settings.auth_required = True
+        mock_settings.csrf_exempt_paths = []
+        mock_settings.csrf_token_name = "X-CSRF-Token"
+        mock_settings.csrf_check_referer = False
+        mock_settings.csrf_cookie_name = "csrf_token"
+
+        response = await middleware.dispatch(request, call_next)
+
+    assert response.status_code == 200
+    mock_csrf_service.validate_csrf_token.assert_called_once_with("valid_token", "user@example.com", "session123")
+
+
+@pytest.mark.asyncio
+async def test_origin_header_used_when_referer_absent():
+    """Test that Origin header is used when Referer is absent."""
+    middleware = CSRFMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok", status_code=200))
+
+    request = MagicMock(spec=Request)
+    request.method = "POST"
+    request.url.path = "/api/data"
+    request.headers = {"X-CSRF-Token": "valid_token", "origin": "https://example.com"}
+    request.state = MagicMock()
+    request.state.user = MagicMock(email="user@example.com")
+    request.state.jti = "session123"
+    request.cookies = {"jwt_token": "jwt_cookie_token", "session_id": "session123", "csrf_token": "valid_token"}
+
+    mock_csrf_service = MagicMock()
+    mock_csrf_service.validate_csrf_token.return_value = True
+
+    with patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings, patch("mcpgateway.middleware.csrf_middleware.get_csrf_service", return_value=mock_csrf_service):
+        mock_settings.csrf_enabled = True
+        mock_settings.csrf_exempt_paths = []
+        mock_settings.csrf_token_name = "X-CSRF-Token"
+        mock_settings.csrf_check_referer = True
+        mock_settings.app_domain = "https://example.com"
+        mock_settings.csrf_trusted_origins = set()
+        mock_settings.csrf_cookie_name = "csrf_token"
+
+        response = await middleware.dispatch(request, call_next)
+
+    assert response.status_code == 200
+    call_next.assert_awaited_once_with(request)
+
+
+@pytest.mark.asyncio
+async def test_trusted_origins_accepted():
+    """Test that requests from trusted origins are accepted."""
+    middleware = CSRFMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok", status_code=200))
+
+    request = MagicMock(spec=Request)
+    request.method = "POST"
+    request.url.path = "/api/data"
+    request.headers = {"X-CSRF-Token": "valid_token", "referer": "https://trusted.com/page"}
+    request.state = MagicMock()
+    request.state.user = MagicMock(email="user@example.com")
+    request.state.jti = "session123"
+    request.cookies = {"jwt_token": "jwt_cookie_token", "session_id": "session123", "csrf_token": "valid_token"}
+
+    mock_csrf_service = MagicMock()
+    mock_csrf_service.validate_csrf_token.return_value = True
+
+    with patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings, patch("mcpgateway.middleware.csrf_middleware.get_csrf_service", return_value=mock_csrf_service):
+        mock_settings.csrf_enabled = True
+        mock_settings.csrf_exempt_paths = []
+        mock_settings.csrf_token_name = "X-CSRF-Token"
+        mock_settings.csrf_check_referer = True
+        mock_settings.app_domain = "https://example.com"
+        mock_settings.csrf_trusted_origins = {"https://trusted.com"}
+        mock_settings.csrf_cookie_name = "csrf_token"
+
+        response = await middleware.dispatch(request, call_next)
+
+    assert response.status_code == 200
+    call_next.assert_awaited_once_with(request)
+
+
+@pytest.mark.asyncio
+async def test_csrf_fallback_jwt_context_from_cookie_succeeds():
+    """When request.state context is missing, middleware can derive user/jti from verified JWT cookie."""
+    middleware = CSRFMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok", status_code=200))
+
+    request = MagicMock(spec=Request)
+    request.method = "POST"
+    request.url.path = "/admin/change-password-required"
+    request.headers = {"X-CSRF-Token": "valid_token"}
+    request.state = MagicMock()
+    request.state.user = None
+    request.state.jti = None
+    request.cookies = {"jwt_token": "jwt_cookie_token", "csrf_token": "valid_token"}
+
+    mock_csrf_service = MagicMock()
+    mock_csrf_service.validate_csrf_token.return_value = True
+
+    with (
+        patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings,
+        patch("mcpgateway.middleware.csrf_middleware.get_csrf_service", return_value=mock_csrf_service),
+        patch(
+            "mcpgateway.middleware.csrf_middleware.verify_jwt_token_cached",
+            AsyncMock(return_value={"sub": "admin@example.com", "jti": "session-jti-1"}),
+        ),
+    ):
+        mock_settings.csrf_enabled = True
+        mock_settings.auth_required = True
+        mock_settings.csrf_exempt_paths = []
+        mock_settings.csrf_token_name = "X-CSRF-Token"
+        mock_settings.csrf_cookie_name = "csrf_token"
+        mock_settings.csrf_check_referer = False
+
+        response = await middleware.dispatch(request, call_next)
+
+    assert response.status_code == 200
+    mock_csrf_service.validate_csrf_token.assert_called_once_with("valid_token", "admin@example.com", "session-jti-1")
+    call_next.assert_awaited_once_with(request)
+
+
+@pytest.mark.asyncio
+async def test_admin_random_csrf_token_fails_hmac_validation():
+    """Regression: old random admin CSRF cookies are not accepted by global middleware."""
+    middleware = CSRFMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok", status_code=200))
+    csrf_service = CSRFService(secret="test-csrf-secret", expiry=3600)  # pragma: allowlist secret
+
+    request = MagicMock(spec=Request)
+    request.method = "POST"
+    request.url.path = "/prompts/prompt-1"
+    request.headers = {"X-CSRF-Token": "a" * 64}
+    request.state = MagicMock()
+    request.state.user = None
+    request.state.jti = None
+    request.cookies = {"jwt_token": "admin-session-jwt", "mcpgateway_csrf_token": "a" * 64}
+
+    with (
+        patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings,
+        patch("mcpgateway.middleware.csrf_middleware.get_csrf_service", return_value=csrf_service),
+        patch(
+            "mcpgateway.middleware.csrf_middleware.verify_jwt_token_cached",
+            AsyncMock(return_value={"sub": "admin@example.com", "jti": "session-jti-1"}),
+        ),
+    ):
+        mock_settings.csrf_enabled = True
+        mock_settings.auth_required = True
+        mock_settings.csrf_exempt_paths = []
+        mock_settings.csrf_token_name = "X-CSRF-Token"
+        mock_settings.csrf_cookie_name = "mcpgateway_csrf_token"
+        mock_settings.csrf_check_referer = False
+
+        response = await middleware.dispatch(request, call_next)
+
+    assert response.status_code == 403
+    assert response.body == b'{"detail":"CSRF validation failed","code":"CSRF_TOKEN_INVALID"}'
+    call_next.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_admin_bound_csrf_token_from_page_load_passes_hmac_validation():
+    """Token issued for the JWT sub/jti pair on /admin page load passes middleware."""
+    middleware = CSRFMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok", status_code=200))
+    csrf_service = CSRFService(secret="test-csrf-secret", expiry=3600)  # pragma: allowlist secret
+    csrf_token = csrf_service.generate_csrf_token("admin@example.com", "session-jti-1")
+
+    request = MagicMock(spec=Request)
+    request.method = "POST"
+    request.url.path = "/prompts/prompt-1"
+    request.headers = {"X-CSRF-Token": csrf_token}
+    request.state = MagicMock()
+    request.state.user = None
+    request.state.jti = None
+    request.cookies = {"jwt_token": "admin-session-jwt", "mcpgateway_csrf_token": csrf_token}
+
+    with (
+        patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings,
+        patch("mcpgateway.middleware.csrf_middleware.get_csrf_service", return_value=csrf_service),
+        patch(
+            "mcpgateway.middleware.csrf_middleware.verify_jwt_token_cached",
+            AsyncMock(return_value={"sub": "admin@example.com", "jti": "session-jti-1"}),
+        ),
+    ):
+        mock_settings.csrf_enabled = True
+        mock_settings.auth_required = True
+        mock_settings.csrf_exempt_paths = []
+        mock_settings.csrf_token_name = "X-CSRF-Token"
+        mock_settings.csrf_cookie_name = "mcpgateway_csrf_token"
+        mock_settings.csrf_check_referer = False
+
+        response = await middleware.dispatch(request, call_next)
+
+    assert response.status_code == 200
+    call_next.assert_awaited_once_with(request)
+
+
+@pytest.mark.asyncio
+async def test_two_windows_old_token_returns_403():
+    """A CSRF token generated two expiry windows ago is rejected end-to-end.
+
+    validate_csrf_token() accepts the current window and the one immediately
+    before it (see mcpgateway/services/csrf_service.py), so a token that is
+    two windows old must fail with the same 403 CSRF_TOKEN_INVALID response
+    used for any other invalid token. Uses deterministic, mid-window
+    timestamps (rather than offsets from "now") so the window distance
+    between generation and validation is unambiguous.
+    """
+    middleware = CSRFMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok", status_code=200))
+    csrf_service = CSRFService(secret="test-csrf-secret", expiry=3600)  # pragma: allowlist secret
+
+    expiry = 3600
+    generation_time = expiry * 10 + expiry // 2  # mid-window, deterministic
+
+    with patch("time.time", return_value=float(generation_time)):
+        csrf_token = csrf_service.generate_csrf_token("admin@example.com", "session-jti-1")
+
+    request = MagicMock(spec=Request)
+    request.method = "POST"
+    request.url.path = "/prompts/prompt-1"
+    request.headers = {"X-CSRF-Token": csrf_token}
+    request.state = MagicMock()
+    request.state.user = None
+    request.state.jti = None
+    request.cookies = {"jwt_token": "admin-session-jwt", "mcpgateway_csrf_token": csrf_token}
+
+    with (
+        patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings,
+        patch("mcpgateway.middleware.csrf_middleware.get_csrf_service", return_value=csrf_service),
+        patch(
+            "mcpgateway.middleware.csrf_middleware.verify_jwt_token_cached",
+            AsyncMock(return_value={"sub": "admin@example.com", "jti": "session-jti-1"}),
+        ),
+        patch("time.time", return_value=float(generation_time + 2 * expiry)),
+    ):
+        mock_settings.csrf_enabled = True
+        mock_settings.auth_required = True
+        mock_settings.csrf_exempt_paths = []
+        mock_settings.csrf_token_name = "X-CSRF-Token"
+        mock_settings.csrf_cookie_name = "mcpgateway_csrf_token"
+        mock_settings.csrf_check_referer = False
+
+        response = await middleware.dispatch(request, call_next)
+
+    assert response.status_code == 403
+    assert response.body == b'{"detail":"CSRF validation failed","code":"CSRF_TOKEN_INVALID"}'
+    call_next.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_csrf_fallback_jwt_verification_failure_returns_403():
+    """Missing state context plus invalid JWT should fail closed."""
+    middleware = CSRFMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok", status_code=200))
+
+    request = MagicMock(spec=Request)
+    request.method = "POST"
+    request.url.path = "/admin/change-password-required"
+    request.headers = {"X-CSRF-Token": "valid_token"}
+    request.state = MagicMock()
+    request.state.user = None
+    request.state.jti = None
+    request.cookies = {"jwt_token": "bad_jwt_token", "csrf_token": "valid_token"}
+
+    with (
+        patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings,
+        patch("mcpgateway.middleware.csrf_middleware.verify_jwt_token_cached", AsyncMock(side_effect=Exception("invalid token"))),
+    ):
+        mock_settings.csrf_enabled = True
+        mock_settings.auth_required = True
+        mock_settings.csrf_exempt_paths = []
+        mock_settings.csrf_token_name = "X-CSRF-Token"
+        mock_settings.csrf_cookie_name = "csrf_token"
+        mock_settings.csrf_check_referer = False
+
+        response = await middleware.dispatch(request, call_next)
+
+    assert response.status_code == 403
+    assert response.body == b'{"detail":"CSRF validation failed","code":"CSRF_TOKEN_INVALID"}'
+    call_next.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_csrf_form_post_without_header_is_rejected_without_consuming_body():
+    """Form posts must use the CSRF header so middleware does not consume bodies."""
+    middleware = CSRFMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok", status_code=200))
+
+    request = MagicMock(spec=Request)
+    request.method = "POST"
+    request.url.path = "/admin/change-password-required"
+    request.headers = {"content-type": "application/x-www-form-urlencoded"}
+    request.body = AsyncMock(return_value=b"csrf_token=valid_token&current_password=a&new_password=b&confirm_password=b")
+    request.state = MagicMock()
+    request.state.user = None
+    request.state.jti = None
+    request.cookies = {"jwt_token": "jwt_cookie_token", "csrf_token": "valid_token"}
+
+    mock_csrf_service = MagicMock()
+    mock_csrf_service.validate_csrf_token.return_value = True
+
+    with (
+        patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings,
+        patch("mcpgateway.middleware.csrf_middleware.get_csrf_service", return_value=mock_csrf_service),
+        patch(
+            "mcpgateway.middleware.csrf_middleware.verify_jwt_token_cached",
+            AsyncMock(return_value={"sub": "admin@example.com", "jti": "session-jti-2"}),
+        ),
+    ):
+        mock_settings.csrf_enabled = True
+        mock_settings.auth_required = True
+        mock_settings.csrf_exempt_paths = []
+        mock_settings.csrf_token_name = "X-CSRF-Token"
+        mock_settings.csrf_cookie_name = "csrf_token"
+        mock_settings.csrf_check_referer = False
+
+        response = await middleware.dispatch(request, call_next)
+
+    assert response.status_code == 403
+    request.body.assert_not_awaited()
+    mock_csrf_service.validate_csrf_token.assert_not_called()
+    call_next.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/api/metrics/cleanup",
+        "/api/metrics/rollup",
+        "/toolops/validation/generate_testcases",
+        "/toolops/enrichment/enrich_tool",
+        "/toolops/validation/execute_tool_nl_testcases",
+        "/tokens",
+        "/tokens/",
+        "/teams/123/join",
+        "/teams/456/join-requests/789/approve",
+        "/llmchat/connect",
+        "/llmchat/disconnect",
+        "/api/logs/search",
+    ],
+)
+async def test_post_to_issue_5151_exempt_paths_passes_without_csrf_token(path):
+    """Paths added for issue #5151 must pass CSRF middleware without a CSRF token."""
+    middleware = CSRFMiddleware(app=AsyncMock())
+    call_next = AsyncMock(return_value=Response("ok", status_code=200))
+
+    request = MagicMock(spec=Request)
+    request.method = "POST"
+    request.url.path = path
+    request.headers = {}
+
+    with patch("mcpgateway.middleware.csrf_middleware.settings") as mock_settings:
+        mock_settings.csrf_enabled = True
+        mock_settings.auth_required = True
+        mock_settings.csrf_exempt_paths = [
+            "/health",
+            "/auth/login",
+            "/auth/logout",
+            "/auth/refresh",
+            "/auth/email/login",
+            "/auth/email/register",
+            "/auth/email/forgot-password",
+            "/auth/email/reset-password",
+            "/admin",
+            "/admin/login",
+            "/admin/forgot-password",
+            "/admin/reset-password",
+            "/oauth/fetch-tools",
+            "/docs",
+            "/redoc",
+            "/openapi.json",
+            "/metrics",
+            "/mcp/",
+            "/sse",
+            "/message",
+            "/rpc",
+            "/api/metrics/",
+            "/toolops/",
+            "/tokens",
+            "/teams/",
+            "/llmchat/",
+            "/api/logs/",
+        ]
+
+        response = await middleware.dispatch(request, call_next)
+
+    assert response.status_code == 200, f"Expected 200 for {path}, got {response.status_code}"
+    call_next.assert_awaited_once_with(request)
+
+
+def test_csrf_exempt_paths_default_contains_issue_5151_paths():
+    """config.py default_factory must include all paths added for issue #5151.
+
+    Tests the default_factory directly (not a Settings() instance) so the
+    assertion is not affected by CSRF_EXEMPT_PATHS env var overrides.
+    """
+    from mcpgateway.config import Settings
+
+    defaults = Settings.model_fields["csrf_exempt_paths"].default_factory()
+    required = ["/api/metrics/", "/toolops/", "/tokens", "/teams/", "/llmchat/", "/api/logs/"]
+    missing = [p for p in required if p not in defaults]
+    assert not missing, f"csrf_exempt_paths default_factory missing: {missing}"
+
+
+def test_csrf_exempt_paths_default_contains_admin_subpaths():
+    """config.py default_factory must include /admin/login etc — regression for env drift.
+
+    Tests the default_factory directly so env var overrides don't mask gaps.
+    """
+    from mcpgateway.config import Settings
+
+    defaults = Settings.model_fields["csrf_exempt_paths"].default_factory()
+    for path in ["/admin/login", "/admin/forgot-password", "/admin/reset-password", "/rpc"]:
+        assert path in defaults, f"Expected '{path}' in csrf_exempt_paths default_factory, got: {defaults}"

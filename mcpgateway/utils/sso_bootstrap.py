@@ -1,0 +1,467 @@
+# -*- coding: utf-8 -*-
+"""Location: ./mcpgateway/utils/sso_bootstrap.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+
+Bootstrap SSO providers with predefined configurations.
+"""
+
+# Future
+from __future__ import annotations
+
+# Standard
+import json
+import logging
+from typing import Any, Dict, List
+
+# First-Party
+from mcpgateway.config import settings
+from mcpgateway.services.sso_service import ADFS_PROVIDER_ID
+
+logger = logging.getLogger(__name__)
+
+
+def get_predefined_sso_providers() -> List[Dict]:
+    """Get list of predefined SSO providers based on environment configuration.
+
+    Returns:
+        List of SSO provider configurations ready for database storage.
+
+    Examples:
+        Default (no providers configured):
+        >>> providers = get_predefined_sso_providers()
+        >>> isinstance(providers, list)
+        True
+
+        Patch configuration to include GitHub provider:
+        >>> from types import SimpleNamespace
+        >>> from unittest.mock import patch
+        >>> cfg = SimpleNamespace(
+        ...     sso_github_enabled=True,
+        ...     sso_github_client_id='id',
+        ...     sso_github_client_secret='sec',  # pragma: allowlist secret
+        ...     sso_trusted_domains=[],
+        ...     sso_auto_create_users=True,
+        ...     sso_google_enabled=False,
+        ...     sso_ibm_verify_enabled=False,
+        ...     sso_okta_enabled=False,
+        ...     sso_entra_enabled=False,
+        ... )
+        >>> with patch('mcpgateway.utils.sso_bootstrap.settings', cfg):
+        ...     result = get_predefined_sso_providers()
+        >>> isinstance(result, list)
+        True
+
+        Patch configuration to include Google provider:
+        >>> cfg = SimpleNamespace(
+        ...     sso_github_enabled=False, sso_github_client_id=None, sso_github_client_secret=None,
+        ...     sso_trusted_domains=[], sso_auto_create_users=True,
+        ...     sso_google_enabled=True, sso_google_client_id='gid', sso_google_client_secret='gsec',  # pragma: allowlist secret
+        ...     sso_ibm_verify_enabled=False, sso_okta_enabled=False, sso_entra_enabled=False
+        ... )
+        >>> with patch('mcpgateway.utils.sso_bootstrap.settings', cfg):
+        ...     result = get_predefined_sso_providers()
+        >>> isinstance(result, list)
+        True
+
+        Patch configuration to include Okta provider:
+        >>> cfg = SimpleNamespace(
+        ...     sso_github_enabled=False, sso_github_client_id=None, sso_github_client_secret=None,
+        ...     sso_trusted_domains=[], sso_auto_create_users=True,
+        ...     sso_google_enabled=False, sso_okta_enabled=True, sso_okta_client_id='ok', sso_okta_client_secret='os', sso_okta_issuer='https://company.okta.com',  # pragma: allowlist secret
+        ...     sso_ibm_verify_enabled=False, sso_entra_enabled=False
+        ... )
+        >>> with patch('mcpgateway.utils.sso_bootstrap.settings', cfg):
+        ...     result = get_predefined_sso_providers()
+        >>> isinstance(result, list)
+        True
+
+        Patch configuration to include Microsoft Entra ID provider:
+        >>> cfg = SimpleNamespace(
+        ...     sso_github_enabled=False, sso_github_client_id=None, sso_github_client_secret=None,
+        ...     sso_trusted_domains=[], sso_auto_create_users=True,
+        ...     sso_google_enabled=False, sso_okta_enabled=False,
+        ...     sso_ibm_verify_enabled=False, sso_entra_enabled=True, sso_entra_client_id='entra_client', sso_entra_client_secret='entra_secret', sso_entra_tenant_id='tenant-id-123',  # pragma: allowlist secret
+        ...     sso_generic_enabled=False
+        ... )
+        >>> with patch('mcpgateway.utils.sso_bootstrap.settings', cfg):
+        ...     result = get_predefined_sso_providers()
+        >>> isinstance(result, list)
+        True
+
+        Patch configuration to include Generic OIDC provider:
+        >>> cfg = SimpleNamespace(
+        ...     sso_github_enabled=False, sso_github_client_id=None, sso_github_client_secret=None,
+        ...     sso_trusted_domains=[], sso_auto_create_users=True,
+        ...     sso_google_enabled=False, sso_okta_enabled=False, sso_ibm_verify_enabled=False, sso_entra_enabled=False,
+        ...     sso_generic_enabled=True, sso_generic_provider_id='keycloak', sso_generic_display_name='Keycloak',
+        ...     sso_generic_client_id='kc_client', sso_generic_client_secret='kc_secret',  # pragma: allowlist secret
+        ...     sso_generic_authorization_url='https://keycloak.company.com/auth/realms/master/protocol/openid-connect/auth',
+        ...     sso_generic_token_url='https://keycloak.company.com/auth/realms/master/protocol/openid-connect/token',
+        ...     sso_generic_userinfo_url='https://keycloak.company.com/auth/realms/master/protocol/openid-connect/userinfo',
+        ...     sso_generic_issuer='https://keycloak.company.com/auth/realms/master',
+        ...     sso_generic_jwks_uri='https://keycloak.company.com/auth/realms/master/protocol/openid-connect/certs',
+        ...     sso_generic_scope='openid profile email'
+        ... )
+        >>> with patch('mcpgateway.utils.sso_bootstrap.settings', cfg):
+        ...     result = get_predefined_sso_providers()
+        >>> isinstance(result, list)
+        True
+    """
+    providers = []
+
+    # GitHub OAuth Provider
+    if settings.sso_github_enabled and settings.sso_github_client_id:
+        providers.append(
+            {
+                "id": "github",
+                "name": "github",
+                "display_name": "GitHub",
+                "provider_type": "oauth2",
+                "client_id": settings.sso_github_client_id,
+                "client_secret": settings.sso_github_client_secret.get_secret_value() if settings.sso_github_client_secret else "",
+                "authorization_url": "https://github.com/login/oauth/authorize",
+                "token_url": "https://github.com/login/oauth/access_token",  # nosec B105 - public OAuth endpoint
+                "userinfo_url": "https://api.github.com/user",
+                "scope": "user:email",
+                "trusted_domains": settings.sso_trusted_domains,
+                "auto_create_users": settings.sso_auto_create_users,
+                "team_mapping": {},
+            }
+        )
+
+    # Google OAuth Provider
+    if settings.sso_google_enabled and settings.sso_google_client_id:
+        providers.append(
+            {
+                "id": "google",
+                "name": "google",
+                "display_name": "Google",
+                "provider_type": "oidc",
+                "client_id": settings.sso_google_client_id,
+                "client_secret": settings.sso_google_client_secret.get_secret_value() if settings.sso_google_client_secret else "",
+                "authorization_url": "https://accounts.google.com/o/oauth2/auth",
+                "token_url": "https://oauth2.googleapis.com/token",  # nosec B105 - public OAuth endpoint
+                "userinfo_url": "https://openidconnect.googleapis.com/v1/userinfo",
+                "issuer": "https://accounts.google.com",
+                "scope": "openid profile email",
+                "trusted_domains": settings.sso_trusted_domains,
+                "auto_create_users": settings.sso_auto_create_users,
+                "team_mapping": {},
+            }
+        )
+
+    # IBM Security Verify Provider
+    if settings.sso_ibm_verify_enabled and settings.sso_ibm_verify_client_id:
+        base_url = settings.sso_ibm_verify_issuer or "https://tenant.verify.ibm.com"
+        providers.append(
+            {
+                "id": "ibm_verify",
+                "name": "ibm_verify",
+                "display_name": "IBM Security Verify",
+                "provider_type": "oidc",
+                "client_id": settings.sso_ibm_verify_client_id,
+                "client_secret": settings.sso_ibm_verify_client_secret.get_secret_value() if settings.sso_ibm_verify_client_secret else "",
+                "authorization_url": f"{base_url}/oidc/endpoint/default/authorize",
+                "token_url": f"{base_url}/oidc/endpoint/default/token",
+                "userinfo_url": f"{base_url}/oidc/endpoint/default/userinfo",
+                "issuer": f"{base_url}/oidc/endpoint/default",
+                "scope": "openid profile email",
+                "trusted_domains": settings.sso_trusted_domains,
+                "auto_create_users": settings.sso_auto_create_users,
+                "team_mapping": {},
+            }
+        )
+
+    # Okta Provider
+    if settings.sso_okta_enabled and settings.sso_okta_client_id:
+        base_url = settings.sso_okta_issuer or "https://company.okta.com"
+        okta_team_mapping: Dict[str, Any] = {}
+        if settings.okta_group_mapping:
+            try:
+                parsed = json.loads(settings.okta_group_mapping)
+                if isinstance(parsed, dict):
+                    okta_team_mapping = parsed
+                else:
+                    logger.warning("OKTA_GROUP_MAPPING must be a JSON object (got %s); using empty team mapping", type(parsed).__name__)
+            except (json.JSONDecodeError, TypeError):
+                logger.warning("Failed to parse OKTA_GROUP_MAPPING as JSON; using empty team mapping")
+        providers.append(
+            {
+                "id": "okta",
+                "name": "okta",
+                "display_name": "Okta",
+                "provider_type": "oidc",
+                "client_id": settings.sso_okta_client_id,
+                "client_secret": settings.sso_okta_client_secret.get_secret_value() if settings.sso_okta_client_secret else "",
+                "authorization_url": f"{base_url}/oauth2/default/v1/authorize",
+                "token_url": f"{base_url}/oauth2/default/v1/token",
+                "userinfo_url": f"{base_url}/oauth2/default/v1/userinfo",
+                "issuer": f"{base_url}/oauth2/default",
+                "scope": settings.sso_okta_scope,
+                "trusted_domains": settings.sso_trusted_domains,
+                "auto_create_users": settings.sso_auto_create_users,
+                "team_mapping": okta_team_mapping,
+            }
+        )
+
+    # Microsoft Entra ID Provider
+    if settings.sso_entra_enabled and settings.sso_entra_client_id and settings.sso_entra_tenant_id:
+        tenant_id = settings.sso_entra_tenant_id
+        base_url = f"https://login.microsoftonline.com/{tenant_id}"
+        providers.append(
+            {
+                "id": "entra",
+                "name": "entra",
+                "display_name": "Microsoft Entra ID",
+                "provider_type": "oidc",
+                "client_id": settings.sso_entra_client_id,
+                "client_secret": settings.sso_entra_client_secret.get_secret_value() if settings.sso_entra_client_secret else "",
+                "authorization_url": f"{base_url}/oauth2/v2.0/authorize",
+                "token_url": f"{base_url}/oauth2/v2.0/token",
+                "userinfo_url": "https://graph.microsoft.com/oidc/userinfo",
+                "issuer": f"{base_url}/v2.0",
+                "scope": "openid profile email User.Read",
+                "trusted_domains": settings.sso_trusted_domains,
+                "auto_create_users": settings.sso_auto_create_users,
+                "team_mapping": {},
+                "provider_metadata": {
+                    "groups_claim": settings.sso_entra_groups_claim,
+                    "role_mappings": settings.sso_entra_role_mappings,
+                    "graph_api_enabled": settings.sso_entra_graph_api_enabled,
+                    "graph_api_timeout": settings.sso_entra_graph_api_timeout,
+                    "graph_api_max_groups": settings.sso_entra_graph_api_max_groups,
+                },
+            }
+        )
+
+    # Keycloak OIDC Provider with Auto-Discovery
+    if settings.sso_keycloak_enabled and settings.sso_keycloak_base_url and settings.sso_keycloak_client_id:
+        try:
+            # First-Party
+            from mcpgateway.utils.keycloak_discovery import discover_keycloak_endpoints_sync
+
+            endpoints = discover_keycloak_endpoints_sync(
+                settings.sso_keycloak_base_url,
+                settings.sso_keycloak_realm,
+                public_base_url=getattr(settings, "sso_keycloak_public_base_url", None),
+            )
+
+            if endpoints:
+                providers.append(
+                    {
+                        "id": "keycloak",
+                        "name": "keycloak",
+                        "display_name": f"Keycloak ({settings.sso_keycloak_realm})",
+                        "provider_type": "oidc",
+                        "client_id": settings.sso_keycloak_client_id,
+                        "client_secret": settings.sso_keycloak_client_secret.get_secret_value() if settings.sso_keycloak_client_secret else "",
+                        "authorization_url": endpoints["authorization_url"],
+                        "token_url": endpoints["token_url"],
+                        "userinfo_url": endpoints["userinfo_url"],
+                        "issuer": endpoints["issuer"],
+                        "jwks_uri": endpoints.get("jwks_uri"),
+                        "scope": "openid profile email",
+                        "trusted_domains": settings.sso_trusted_domains,
+                        "auto_create_users": settings.sso_auto_create_users,
+                        "team_mapping": {},
+                        "provider_metadata": {
+                            "realm": settings.sso_keycloak_realm,
+                            "base_url": settings.sso_keycloak_base_url,
+                            "public_base_url": getattr(settings, "sso_keycloak_public_base_url", None),
+                            "map_realm_roles": settings.sso_keycloak_map_realm_roles,
+                            "map_client_roles": settings.sso_keycloak_map_client_roles,
+                            "username_claim": settings.sso_keycloak_username_claim,
+                            "email_claim": settings.sso_keycloak_email_claim,
+                            "groups_claim": settings.sso_keycloak_groups_claim,
+                            "jwks_uri": endpoints.get("jwks_uri"),
+                            "role_mappings": getattr(settings, "sso_keycloak_role_mappings", {}),
+                            "default_role": getattr(settings, "sso_keycloak_default_role", None),
+                            "resolve_team_scope_to_personal_team": getattr(settings, "sso_keycloak_resolve_team_scope_to_personal_team", False),
+                        },
+                    }
+                )
+            else:
+                logger.error(f"Failed to discover Keycloak endpoints for realm '{settings.sso_keycloak_realm}' at {settings.sso_keycloak_base_url}")
+        except Exception as e:
+            logger.error(f"Error bootstrapping Keycloak provider: {type(e).__name__}: {e}", exc_info=True)
+
+    # ADFS Provider
+    if settings.sso_adfs_enabled and settings.sso_adfs_client_id and settings.sso_adfs_authorization_url and settings.sso_adfs_token_url:
+        display_name = settings.sso_adfs_display_name or "ADFS Login"
+
+        # ADFS uses OIDC but doesn't support GET on userinfo endpoint;
+        # user info is extracted from the ID token instead.
+        providers.append(
+            {
+                "id": ADFS_PROVIDER_ID,
+                "name": ADFS_PROVIDER_ID,
+                "display_name": display_name,
+                "provider_type": "oidc",
+                "client_id": settings.sso_adfs_client_id,
+                "client_secret": settings.sso_adfs_client_secret.get_secret_value() if settings.sso_adfs_client_secret else "",
+                "authorization_url": settings.sso_adfs_authorization_url,
+                "token_url": settings.sso_adfs_token_url,
+                "userinfo_url": settings.sso_adfs_token_url,  # Placeholder — not used for ADFS
+                "issuer": settings.sso_adfs_issuer,
+                "scope": settings.sso_adfs_scope or "openid profile email",
+                "trusted_domains": settings.sso_trusted_domains,
+                "auto_create_users": settings.sso_auto_create_users,
+                "team_mapping": {},
+            }
+        )
+
+    # Generic OIDC Provider (Keycloak, Auth0, Authentik, etc.)
+    if settings.sso_generic_enabled and settings.sso_generic_client_id and settings.sso_generic_provider_id:
+        provider_id = settings.sso_generic_provider_id
+        display_name = settings.sso_generic_display_name or provider_id.title()
+
+        provider_config = {
+            "id": provider_id,
+            "name": provider_id,
+            "display_name": display_name,
+            "provider_type": "oidc",
+            "client_id": settings.sso_generic_client_id,
+            "client_secret": settings.sso_generic_client_secret.get_secret_value() if settings.sso_generic_client_secret else "",
+            "authorization_url": settings.sso_generic_authorization_url,
+            "token_url": settings.sso_generic_token_url,
+            "userinfo_url": settings.sso_generic_userinfo_url,
+            "issuer": settings.sso_generic_issuer,
+            "scope": settings.sso_generic_scope,
+            "trusted_domains": settings.sso_trusted_domains,
+            "auto_create_users": settings.sso_auto_create_users,
+            "team_mapping": {},
+            "provider_metadata": {
+                "groups_claim": settings.sso_generic_groups_claim,
+                "admin_groups": getattr(settings, "sso_generic_admin_groups", []),
+                "role_mappings": settings.sso_generic_role_mappings,
+                "default_role": settings.sso_generic_default_role,
+                "sync_roles": getattr(settings, "sso_generic_sync_roles_on_login", True),
+            },
+        }
+        if settings.sso_generic_jwks_uri:
+            provider_config["jwks_uri"] = settings.sso_generic_jwks_uri
+        providers.append(provider_config)
+
+    return providers
+
+
+async def bootstrap_sso_providers() -> None:
+    """Bootstrap SSO providers from environment configuration.
+
+    This function should be called during application startup to
+    automatically configure SSO providers based on environment variables.
+
+    Examples:
+        >>> # This would typically be called during app startup
+        >>> import asyncio
+        >>> asyncio.run(bootstrap_sso_providers())  # doctest: +SKIP
+    """
+    if not settings.sso_enabled:
+        return
+
+    # First-Party
+    from mcpgateway.db import get_db
+    from mcpgateway.services.sso_service import SSOService
+
+    providers = get_predefined_sso_providers()
+
+    db = next(get_db())
+    try:
+        sso_service = SSOService(db)
+
+        # Get list of provider IDs from environment config
+        configured_provider_ids = {p["id"] for p in providers}
+
+        # Disable providers not in environment config (if feature flag is enabled).
+        # Controlled by SSO_AUTO_DISABLE_UNCONFIGURED_PROVIDERS (default: false)
+        # to preserve backward compatibility with manually configured providers.
+        if settings.sso_auto_disable_unconfigured_providers:
+            for existing_provider in sso_service.list_all_providers():
+                if existing_provider.id not in configured_provider_ids and existing_provider.is_enabled:
+                    await sso_service.update_provider(existing_provider.id, {"is_enabled": False})
+                    print(f"🔒 Disabled SSO provider (not in config): {existing_provider.display_name} (ID: {existing_provider.id})")
+
+        for provider_config in providers:
+            # Ensure provider is enabled
+            provider_config["is_enabled"] = True
+            # Check if provider already exists by ID or name (both have unique constraints)
+            existing_by_id = sso_service.get_provider(provider_config["id"])
+            existing_by_name = sso_service.get_provider_by_name(provider_config["name"])
+
+            if not existing_by_id and not existing_by_name:
+                await sso_service.create_provider(provider_config)
+                print(f"✅ Created SSO provider: {provider_config['display_name']}")
+            else:
+                # Update existing provider with current configuration
+                existing_provider = existing_by_id or existing_by_name
+
+                # Smart merge for provider_metadata (see ADR-0003 for rationale):
+                # - Env config provides DEFAULTS for keys not in DB
+                # - DB values are PRESERVED (Admin API changes survive restarts)
+                # - New env keys introduced in upgrades APPLY automatically
+                #
+                # Trade-off: To change a key that exists in DB, use Admin API or reset provider.
+                # This prevents env config from unexpectedly overriding intentional Admin API changes.
+                #
+                # Example:
+                #   env:  {"groups_claim": "groups", "new_setting": "value"}
+                #   db:   {"groups_claim": "custom", "sync_roles": false}
+                #   result: {"groups_claim": "custom", "new_setting": "value", "sync_roles": false}
+                if "provider_metadata" in provider_config and existing_provider.provider_metadata:
+                    env_metadata = provider_config["provider_metadata"] or {}
+                    db_metadata = existing_provider.provider_metadata or {}
+                    # Env provides base, DB values override (preserving Admin API changes)
+                    merged_metadata = {**env_metadata, **db_metadata}
+                    provider_config["provider_metadata"] = merged_metadata
+
+                # Preserve DB scope when env provides only the default value;
+                # an explicit non-default env scope takes precedence over DB.
+                if existing_provider.scope and existing_provider.scope != "openid profile email" and provider_config.get("scope") == "openid profile email":
+                    provider_config["scope"] = existing_provider.scope
+
+                # Preserve DB team_mapping if env provides empty mapping
+                if existing_provider.team_mapping and not provider_config.get("team_mapping"):
+                    provider_config["team_mapping"] = existing_provider.team_mapping
+
+                updated = await sso_service.update_provider(existing_provider.id, provider_config)
+                if updated:
+                    print(f"🔄 Updated SSO provider: {provider_config['display_name']} (ID: {existing_provider.id})")
+                else:
+                    print(f"ℹ️  SSO provider unchanged: {existing_provider.display_name} (ID: {existing_provider.id})")
+
+        # Fail closed on providers trusted for API auth without a configured audience.
+        # Without an audience restriction, any token issued by this provider's issuer
+        # for any relying party would be accepted (confused-deputy risk), so this is
+        # not merely logged -- the unsafe trust grant is revoked at startup.
+        for provider in sso_service.list_all_providers():
+            if getattr(provider, "trusted_for_api_auth", False) and not (getattr(provider, "api_audience", None) or "").strip():
+                logger.error(
+                    "SSO provider '%s' (%s) is trusted_for_api_auth=True but has no api_audience configured. "
+                    "This allows confused-deputy token acceptance from any relying party of this issuer. "
+                    "Disabling trusted_for_api_auth for this provider until api_audience is set.",
+                    provider.id,
+                    provider.display_name,
+                )
+                provider.trusted_for_api_auth = False
+                db.add(provider)
+        db.flush()
+
+    except Exception as e:
+        db.rollback()  # Rollback on error
+        print(f"❌ Failed to bootstrap SSO providers: {e}")
+    finally:
+        # Ensure close() always runs even if commit() fails
+        # Without this nested try/finally, a commit() failure would skip close(),
+        # leaving the connection in "idle in transaction" state
+        try:
+            db.commit()  # Commit transaction to avoid implicit rollback
+        finally:
+            db.close()
+
+
+if __name__ == "__main__":
+    # Standard
+    import asyncio
+
+    asyncio.run(bootstrap_sso_providers())

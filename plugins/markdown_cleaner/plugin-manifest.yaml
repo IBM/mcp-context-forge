@@ -1,0 +1,7 @@
+description: "Normalize and tidy Markdown in prompts/resources"
+author: "Mihai Criveti"
+version: "0.1.0"
+available_hooks:
+  - "prompt_post_fetch"
+  - "resource_post_fetch"
+default_configs: {}

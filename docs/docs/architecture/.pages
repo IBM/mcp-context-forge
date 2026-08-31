@@ -1,0 +1,19 @@
+nav:
+  - Overview: index.md
+  - Interactive Explorer: explorer.md
+  - Roadmap: roadmap.md
+  - Performance Architecture: performance-architecture.md
+  - Rust MCP Runtime: rust-mcp-runtime.md
+  - MCP Apps: mcp-apps.md
+  - Modular Runtime Architecture: modular-design.md
+  - Modular Runtime Specification: modular-runtime
+  - Security Features: security-features.md
+  - Middleware Ordering: middleware-ordering.md
+  - Plugin Framework: plugins.md
+  - Export-Import Architecture: export-import-architecture.md
+  - OpenTelemetry Integration: observability-otel.md
+  - Multitenancy: multitenancy.md
+  - OAuth: oauth-design.md
+  - OAuth UI: oauth-authorization-code-ui-design.md
+  - Session-Affinity Candidate Solutions: session-affinity-alternatives.md
+  - Decision Records: adr

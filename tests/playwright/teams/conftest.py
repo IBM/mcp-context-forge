@@ -1,0 +1,111 @@
+# -*- coding: utf-8 -*-
+# Copyright (c) 2025 ContextForge Contributors.
+# SPDX-License-Identifier: Apache-2.0
+
+"""Location: ./tests/playwright/teams/conftest.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+
+Shared fixtures for team collaboration E2E tests.
+"""
+
+# Future
+from __future__ import annotations
+
+# Standard
+import logging
+import os
+from typing import Generator
+import uuid
+
+# Third-Party
+from playwright.sync_api import APIRequestContext, Playwright
+import pytest
+
+# Local
+from tests.helpers.auth import make_playwright_api_context, make_test_jwt
+
+logger = logging.getLogger(__name__)
+
+BASE_URL = os.getenv("TEST_BASE_URL", "http://localhost:8080")
+TEST_PASSWORD = "SecureP@ssw0rd!Test2026"  # pragma: allowlist secret
+
+
+def _make_jwt(email: str, is_admin: bool = False, teams=None) -> str:
+    """Create a JWT token for testing."""
+    return make_test_jwt(email, is_admin=is_admin, teams=teams)
+
+
+def create_test_user(admin_api: APIRequestContext, email: str) -> None:
+    """Create a test user in the database. Raises on failure."""
+    resp = admin_api.post(
+        "/auth/email/admin/users",
+        data={"email": email, "password": TEST_PASSWORD, "full_name": f"Test User {email.split('@')[0]}"},
+    )
+    assert resp.status in (200, 201, 409), f"Failed to create user {email}: {resp.status} {resp.text()}"
+
+
+def delete_test_user(admin_api: APIRequestContext, email: str) -> None:
+    """Delete a test user (best-effort, may fail if user has team memberships)."""
+    try:
+        admin_api.delete(f"/auth/email/admin/users/{email}")
+    except Exception:
+        pass
+
+
+def invite_and_accept(admin_api: APIRequestContext, playwright: Playwright, team_id: str, email: str) -> dict:
+    """Invite a user to a team and accept the invitation. Returns the invitation data."""
+    inv_resp = admin_api.post(f"/teams/{team_id}/invitations", data={"email": email, "role": "member"})
+    assert inv_resp.status in (200, 201), f"Failed to invite {email}: {inv_resp.status} {inv_resp.text()}"
+    inv_data = inv_resp.json()
+    invitation_token = inv_data["token"]
+
+    # Accept as the invited user
+    user_jwt = _make_jwt(email, is_admin=False)
+    user_ctx = make_playwright_api_context(playwright, BASE_URL, user_jwt)
+    accept_resp = user_ctx.post(f"/teams/invitations/{invitation_token}/accept")
+    user_ctx.dispose()
+    assert accept_resp.status == 200, f"Failed to accept invitation: {accept_resp.status}"
+    return inv_data
+
+
+@pytest.fixture(scope="module")
+def admin_api(playwright: Playwright) -> Generator[APIRequestContext, None, None]:
+    """Admin-authenticated API context for team tests.
+
+    Prefers the ``MCP_AUTH`` env var (set by the Makefile from a token signed with
+    the running gateway's secret) so signatures match the deployed instance. Falls
+    back to a locally-signed JWT only when ``MCP_AUTH`` is unset.
+    """
+    token = os.getenv("MCP_AUTH", "") or _make_jwt("admin@example.com", is_admin=True)
+    ctx = make_playwright_api_context(playwright, BASE_URL, token)
+    yield ctx
+    ctx.dispose()
+
+
+@pytest.fixture(scope="module")
+def private_team(admin_api: APIRequestContext):
+    """Create a private team for invitation tests, cleanup after module."""
+    team_name = f"priv-team-{uuid.uuid4().hex[:8]}"
+    resp = admin_api.post("/teams/", data={"name": team_name, "description": "E2E invite tests", "visibility": "private"})
+    assert resp.status in (200, 201), f"Failed to create private team: {resp.status}"
+    team = resp.json()
+    yield team
+    try:
+        admin_api.delete(f"/teams/{team['id']}")
+    except Exception:
+        pass
+
+
+@pytest.fixture(scope="module")
+def public_team(admin_api: APIRequestContext):
+    """Create a public team for join request tests, cleanup after module."""
+    team_name = f"pub-team-{uuid.uuid4().hex[:8]}"
+    resp = admin_api.post("/teams/", data={"name": team_name, "description": "E2E join tests", "visibility": "public"})
+    assert resp.status in (200, 201), f"Failed to create public team: {resp.status}"
+    team = resp.json()
+    yield team
+    try:
+        admin_api.delete(f"/teams/{team['id']}")
+    except Exception:
+        pass

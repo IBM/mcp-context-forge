@@ -1,0 +1,33 @@
+# ===============================================================
+# Linting Required — Skip Reporter
+# ===============================================================
+#
+# This workflow is the complement of linting-full.yml.
+# It runs on every PR and immediately reports success for the
+# "Linting Complete" required status check so that PRs are not
+# blocked waiting for a check that only runs in the merge queue.
+#
+# Together with the lint-complete job in linting-full.yml,
+# the "Linting Complete" check always reports a result:
+#   - PR        → this workflow reports success (skipped)
+#   - Merge queue → linting-full.yml runs the real full lint
+#
+# ===============================================================
+
+name: Linting Skip Reporter
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+    branches: ["main"]
+
+permissions:
+  contents: read
+
+jobs:
+  lint-complete:
+    name: Linting Complete
+    runs-on: ubuntu-slim
+    steps:
+      - name: Full linting skipped on PR — runs in merge queue
+        run: echo "Full linting skipped — the real check runs in the merge queue via linting-full.yml"

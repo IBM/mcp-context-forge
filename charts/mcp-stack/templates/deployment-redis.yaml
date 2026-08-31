@@ -1,0 +1,128 @@
+{{/* -------------------------------------------------------------------
+     DEPLOYMENT - Redis
+     -------------------------------------------------------------------
+     - Name + labels templated with <release>-mcp-stack-redis.
+     - Adds exec-based readiness & liveness probes (redis-cli PING).
+     - Adds resource requests / limits pulled from values.yaml.
+     ------------------------------------------------------------------- */}}
+
+{{- if and .Values.redis.enabled (not .Values.redis.external.enabled) }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "mcp-stack.fullname" . }}-redis
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app: {{ include "mcp-stack.fullname" . }}-redis
+spec:
+  replicas: 1                   # single instance; swap for StatefulSet if HA
+  selector:
+    matchLabels:
+      app: {{ include "mcp-stack.fullname" . }}-redis
+  template:
+    metadata:
+      labels:
+        app: {{ include "mcp-stack.fullname" . }}-redis
+    spec:
+      # Image pull secrets
+      {{- if .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range .Values.global.imagePullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
+      serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
+      {{- end }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
+      securityContext:
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: redis
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            runAsNonRoot: true
+            capabilities:
+              drop:
+                - ALL
+          image: "{{ .Values.redis.image.repository }}:{{ .Values.redis.image.tag }}"
+          imagePullPolicy: {{ .Values.redis.image.pullPolicy }}
+
+          # Start Redis with optional persistence config and optional password auth.
+          # --maxclients is passed as a flag so it applies even when persistence
+          # is disabled and no redis.conf is mounted (the default install path).
+          command:
+            - /bin/sh
+            - -ec
+            - |
+              AUTH_ARGS=""
+              if [ -n "${REDIS_PASSWORD:-}" ]; then
+                AUTH_ARGS="--requirepass ${REDIS_PASSWORD}"
+              fi
+              if [ -f /usr/local/etc/redis/redis.conf ]; then
+                exec redis-server /usr/local/etc/redis/redis.conf $AUTH_ARGS
+              fi
+              exec redis-server --maxclients {{ .Values.redis.maxclients | default 15000 }} $AUTH_ARGS
+
+          # Expose Redis TCP port inside the pod
+          ports:
+            - name: redis
+              containerPort: {{ .Values.redis.service.port }}
+
+          # ─── Readiness probe ───
+          {{- with .Values.redis.probes.readiness }}
+          readinessProbe:
+{{- include "helpers.renderProbe" (dict "probe" . "root" $) | nindent 12 }}
+          {{- end }}
+
+          # ─── Liveness probe ───
+          {{- with .Values.redis.probes.liveness }}
+          livenessProbe:
+{{- include "helpers.renderProbe" (dict "probe" . "root" $) | nindent 12 }}
+          {{- end }}
+
+          {{- if .Values.redis.auth.enabled }}
+          env:
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mcp-stack.redisSecretName" . | trim | quote }}
+                  key: {{ .Values.redis.auth.passwordKey | default "REDIS_PASSWORD" }}
+          {{- end }}
+
+          # ─── Volume mounts for persistence ───
+          volumeMounts:
+            {{- if .Values.redis.persistence.enabled }}
+            - name: redis-data
+              mountPath: /data
+            - name: redis-config
+              mountPath: /usr/local/etc/redis
+            {{- else }}
+            - name: redis-data
+              mountPath: /data
+            {{- end }}
+            - name: tmp
+              mountPath: /tmp
+
+          # ─── Resource limits & requests ───
+          {{- with .Values.redis.resources }}
+          resources: {{- toYaml . | nindent 12 }}
+          {{- end }}
+
+      volumes:
+        {{- if .Values.redis.persistence.enabled }}
+        - name: redis-data
+          persistentVolumeClaim:
+            claimName: {{ include "mcp-stack.fullname" . }}-redis-pvc
+        - name: redis-config
+          configMap:
+            name: {{ include "mcp-stack.fullname" . }}-redis-config
+        {{- else }}
+        - name: redis-data
+          emptyDir: {}
+        {{- end }}
+        - name: tmp
+          emptyDir: {}
+{{- end }}

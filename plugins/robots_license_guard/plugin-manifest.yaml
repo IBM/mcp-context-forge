@@ -1,0 +1,13 @@
+description: "Honors robots/noai and license meta from HTML; blocks or annotates per policy."
+author: "ContextForge"
+version: "0.1.0"
+tags: ["compliance", "robots", "license"]
+available_hooks:
+  - "resource_pre_fetch"
+  - "resource_post_fetch"
+default_config:
+  user_agent: "MCP-Context-Forge/1.0"
+  respect_noai_meta: true
+  block_on_violation: true
+  license_required: false
+  allow_overrides: []

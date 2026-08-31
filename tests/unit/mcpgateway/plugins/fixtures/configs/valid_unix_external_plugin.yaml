@@ -1,0 +1,22 @@
+# Unix socket external plugin client configuration
+plugins:
+  - name: "ReplaceBadWordsPlugin"
+    kind: "external"
+    unix_socket:
+      path: "/tmp/mcpgateway-test.sock"
+      timeout: 30.0
+      reconnect_attempts: 3
+      reconnect_delay: 0.1
+
+# Plugin directories to scan
+plugin_dirs:
+  - "plugins/native"
+  - "plugins/custom"
+
+# Global plugin settings
+plugin_settings:
+  parallel_execution_within_band: false
+  plugin_timeout: 30
+  fail_on_plugin_error: false
+  enable_plugin_api: true
+  plugin_health_check_interval: 60

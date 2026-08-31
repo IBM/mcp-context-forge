@@ -1,0 +1,28 @@
+{{- if .Values.nginxProxy.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "mcp-stack.fullname" . }}-nginx
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+    app: {{ include "mcp-stack.fullname" . }}-nginx
+  {{- if .Values.nginxProxy.tls.enabled }}
+  annotations:
+    service.beta.openshift.io/serving-cert-secret-name: {{ include "mcp-stack.fullname" . }}-nginx-tls
+  {{- end }}
+spec:
+  type: {{ .Values.nginxProxy.service.type }}
+  selector:
+    app: {{ include "mcp-stack.fullname" . }}-nginx
+  ports:
+    - name: http
+      port: {{ .Values.nginxProxy.service.port }}
+      targetPort: {{ .Values.nginxProxy.containerPort | default 80 }}
+      protocol: TCP
+    {{- if .Values.nginxProxy.tls.enabled }}
+    - name: https
+      port: 443
+      targetPort: {{ .Values.nginxProxy.tls.containerPort | default 8443 }}
+      protocol: TCP
+    {{- end }}
+{{- end }}

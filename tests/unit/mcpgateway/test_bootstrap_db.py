@@ -1,0 +1,1994 @@
+# -*- coding: utf-8 -*-
+"""Location: ./tests/unit/mcpgateway/test_bootstrap_db.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+
+Comprehensive unit tests for bootstrap_db module.
+"""
+
+# Standard
+import asyncio
+import json
+import os
+from unittest.mock import ANY, AsyncMock, MagicMock, Mock, patch
+
+# Third-Party
+from pydantic import SecretStr
+import pytest
+
+# First-Party
+from mcpgateway.bootstrap_db import (
+    alembic_at_head,
+    advisory_lock,
+    bootstrap_admin_user,
+    bootstrap_default_roles,
+    bootstrap_resource_assignments,
+    main,
+    normalize_team_visibility,
+)
+from mcpgateway.common.validators import SecurityValidator
+
+
+@pytest.fixture
+def mock_settings():
+    """Create mock settings."""
+    settings = Mock()
+    settings.email_auth_enabled = True
+    settings.platform_admin_email = "admin@example.com"
+    settings.platform_admin_password = SecretStr("secure_password")
+    settings.platform_admin_full_name = "Platform Admin"
+    settings.auto_create_personal_teams = True
+    settings.database_url = "sqlite:///:memory:"
+    return settings
+
+
+@pytest.fixture
+def mock_db_session():
+    """Create mock database session."""
+    session = Mock()
+    session.query = Mock()
+    session.commit = Mock()
+    session.close = Mock()
+    session.__enter__ = Mock(return_value=session)
+    session.__exit__ = Mock(return_value=None)
+    return session
+
+
+@pytest.fixture
+def mock_conn():
+    """Create mock database connection."""
+    conn = Mock()
+    conn.commit = Mock()
+    conn.rollback = Mock()
+    conn.close = Mock()
+    return conn
+
+
+@pytest.fixture
+def mock_email_auth_service():
+    """Create mock EmailAuthService."""
+    service = Mock()
+    service.get_user_by_email = AsyncMock()
+    service.create_user = AsyncMock()
+    return service
+
+
+@pytest.fixture
+def mock_role_service():
+    """Create mock RoleService."""
+    service = Mock()
+    service.get_role_by_name = AsyncMock()
+    service.create_role = AsyncMock()
+    service.get_user_role_assignment = AsyncMock()
+    service.assign_role_to_user = AsyncMock()
+    return service
+
+
+@pytest.fixture
+def mock_admin_user():
+    """Create mock admin user."""
+    user = Mock()
+    user.email = "admin@example.com"
+    user.is_admin = True
+    user.email_verified_at = None
+    user.get_personal_team = Mock()
+    return user
+
+
+@pytest.fixture
+def mock_personal_team():
+    """Create mock personal team."""
+    team = Mock()
+    team.id = "team-123"
+    team.name = "Admin Personal Team"
+    return team
+
+
+class TestAdvisoryLock:
+    """Test advisory_lock behavior for different SQL backends."""
+
+    def test_postgresql_lock_acquire_and_release(self):
+        conn = MagicMock()
+        conn.dialect.name = "postgresql"
+
+        with advisory_lock(conn):
+            pass
+
+        assert conn.execute.call_count == 2
+
+
+class TestBootstrapAdminUser:
+    """Test bootstrap_admin_user function."""
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_admin_user_disabled(self, mock_settings, mock_conn):
+        """Test when email auth is disabled."""
+        mock_settings.email_auth_enabled = False
+
+        with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+            with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                await bootstrap_admin_user(mock_conn)
+
+                mock_logger.info.assert_called_with("Email authentication disabled - skipping admin user bootstrap")
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_admin_user_already_exists(self, mock_settings, mock_db_session, mock_email_auth_service, mock_admin_user, mock_conn):
+        """Test when admin user already exists."""
+        mock_email_auth_service.get_user_by_email.return_value = mock_admin_user
+
+        with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+            with patch("mcpgateway.bootstrap_db.Session", return_value=mock_db_session):
+                with patch("mcpgateway.services.email_auth_service.EmailAuthService", return_value=mock_email_auth_service):
+                    with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                        await bootstrap_admin_user(mock_conn)
+
+                        mock_email_auth_service.get_user_by_email.assert_called_once_with(mock_settings.platform_admin_email)
+                        mock_email_auth_service.create_user.assert_not_called()
+                        mock_logger.info.assert_called_with(f"Admin user {mock_settings.platform_admin_email} already exists - skipping creation")
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_admin_user_success(self, mock_settings, mock_db_session, mock_email_auth_service, mock_admin_user, mock_conn):
+        """Test successful admin user creation."""
+        mock_email_auth_service.get_user_by_email.return_value = None
+        mock_email_auth_service.create_platform_admin.return_value = mock_admin_user
+
+        with (
+            patch("mcpgateway.bootstrap_db.settings", mock_settings),
+            patch("mcpgateway.bootstrap_db.Session", return_value=mock_db_session),
+            patch("mcpgateway.services.email_auth_service.EmailAuthService", return_value=mock_email_auth_service),
+            patch("mcpgateway.db.utc_now") as mock_utc_now,
+            patch("mcpgateway.bootstrap_db.logger") as mock_logger,
+        ):
+            mock_utc_now.return_value = "2024-01-01T00:00:00Z"
+            await bootstrap_admin_user(mock_conn)
+
+            mock_email_auth_service.create_platform_admin.assert_called_once_with(
+                email=mock_settings.platform_admin_email,
+                password=mock_settings.platform_admin_password.get_secret_value(),
+                full_name=mock_settings.platform_admin_full_name,
+            )
+            mock_logger.info.assert_any_call(f"Creating platform admin user: {mock_settings.platform_admin_email}")
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_admin_user_password_changed_at_failure_logged(self, mock_settings, mock_db_session, mock_email_auth_service, mock_admin_user, mock_conn):
+        """If utc_now fails, password_changed_at should be best-effort and logged."""
+        mock_email_auth_service.get_user_by_email.return_value = None
+        mock_email_auth_service.create_platform_admin = AsyncMock(return_value=mock_admin_user)
+
+        with (
+            patch("mcpgateway.bootstrap_db.settings", mock_settings),
+            patch("mcpgateway.bootstrap_db.Session", return_value=mock_db_session),
+            patch("mcpgateway.services.email_auth_service.EmailAuthService", return_value=mock_email_auth_service),
+            patch("mcpgateway.db.utc_now") as mock_utc_now,
+            patch("mcpgateway.bootstrap_db.logger") as mock_logger,
+        ):
+            mock_utc_now.side_effect = ["2024-01-01T00:00:00Z", RuntimeError("boom")]
+            await bootstrap_admin_user(mock_conn)
+
+            assert mock_logger.debug.called
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_admin_user_skips_password_change_required_when_disabled(self, mock_settings, mock_db_session, mock_email_auth_service, mock_admin_user, mock_conn):
+        """Cover branch where password change enforcement is disabled and no personal team log is emitted."""
+        mock_settings.password_change_enforcement_enabled = False
+        mock_settings.auto_create_personal_teams = False
+
+        mock_email_auth_service.get_user_by_email.return_value = None
+        mock_email_auth_service.create_platform_admin = AsyncMock(return_value=mock_admin_user)
+
+        with (
+            patch("mcpgateway.bootstrap_db.settings", mock_settings),
+            patch("mcpgateway.bootstrap_db.Session", return_value=mock_db_session),
+            patch("mcpgateway.services.email_auth_service.EmailAuthService", return_value=mock_email_auth_service),
+            patch("mcpgateway.db.utc_now", return_value="2024-01-01T00:00:00Z"),
+            patch("mcpgateway.bootstrap_db.logger") as mock_logger,
+        ):
+            await bootstrap_admin_user(mock_conn)
+            assert "Personal team automatically created for admin user" not in " ".join(str(c) for c in mock_logger.info.call_args_list)
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_admin_user_with_personal_team(self, mock_settings, mock_db_session, mock_email_auth_service, mock_admin_user, mock_conn):
+        """Test admin user creation with personal team auto-creation."""
+        mock_settings.auto_create_personal_teams = True
+        mock_email_auth_service.get_user_by_email.return_value = None
+        mock_email_auth_service.create_platform_admin.return_value = mock_admin_user
+
+        with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+            with patch("mcpgateway.bootstrap_db.Session", return_value=mock_db_session):
+                with patch("mcpgateway.services.email_auth_service.EmailAuthService", return_value=mock_email_auth_service):
+                    with patch("mcpgateway.db.utc_now", return_value="2024-01-01T00:00:00Z"):
+                        with patch("mcpgateway.bootstrap_db.logger"):
+                            await bootstrap_admin_user(mock_conn)
+
+                            # Verify that the user creation was attempted
+                            mock_email_auth_service.create_platform_admin.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_admin_user_exception(self, mock_settings, mock_db_session, mock_email_auth_service, mock_conn):
+        """Test exception handling during admin user creation."""
+        mock_email_auth_service.get_user_by_email.side_effect = Exception("Database error")
+
+        with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+            with patch("mcpgateway.bootstrap_db.Session", return_value=mock_db_session):
+                with patch("mcpgateway.services.email_auth_service.EmailAuthService", return_value=mock_email_auth_service):
+                    with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                        await bootstrap_admin_user(mock_conn)
+
+                        mock_logger.error.assert_called_with("Failed to bootstrap admin user: Database error")
+
+
+class TestBootstrapDefaultRoles:
+    """Test bootstrap_default_roles function."""
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_roles_disabled(self, mock_settings, mock_conn):
+        """Test when email auth is disabled."""
+        mock_settings.email_auth_enabled = False
+
+        with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+            with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                await bootstrap_default_roles(mock_conn)
+
+                mock_logger.info.assert_called_with("Email authentication disabled - skipping default roles bootstrap")
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_roles_additional_roles_relative_path_in_cwd_empty_list_skips_warnings(
+        self, monkeypatch, tmp_path, mock_settings, mock_email_auth_service, mock_role_service, mock_admin_user, mock_conn
+    ):
+        """Cover relative-path file exists in CWD, and empty list roles file (no 'no valid roles' warning)."""
+        monkeypatch.chdir(tmp_path)
+        (tmp_path / "roles.json").write_text("[]", encoding="utf-8")
+
+        mock_settings.mcpgateway_bootstrap_roles_in_db_enabled = True
+        mock_settings.mcpgateway_bootstrap_roles_in_db_file = "roles.json"
+
+        mock_email_auth_service.get_user_by_email.return_value = mock_admin_user
+
+        existing_role = Mock()
+        existing_role.id = "role-1"
+        existing_role.name = "platform_admin"
+        mock_role_service.get_role_by_name.return_value = existing_role
+
+        existing_assignment = Mock()
+        existing_assignment.is_active = True
+        mock_role_service.get_user_role_assignment.return_value = existing_assignment
+
+        mock_db = Mock()
+        mock_session_cm = Mock()
+        mock_session_cm.__enter__ = Mock(return_value=mock_db)
+        mock_session_cm.__exit__ = Mock(return_value=None)
+
+        with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+            with patch("mcpgateway.bootstrap_db.Session", return_value=mock_session_cm):
+                with patch("mcpgateway.services.email_auth_service.EmailAuthService", return_value=mock_email_auth_service):
+                    with patch("mcpgateway.services.role_service.RoleService", return_value=mock_role_service):
+                        with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                            await bootstrap_default_roles(mock_conn)
+                            assert not any("No valid roles found in additional roles file" in str(c) for c in mock_logger.warning.call_args_list)
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_roles_additional_roles_no_valid_roles_warns(self, tmp_path, mock_settings, mock_email_auth_service, mock_role_service, mock_admin_user, mock_conn):
+        """Additional roles file with entries but no valid roles should warn."""
+        roles_path = tmp_path / "roles.json"
+        roles_path.write_text(json.dumps([{"foo": "bar"}]), encoding="utf-8")
+
+        mock_settings.mcpgateway_bootstrap_roles_in_db_enabled = True
+        mock_settings.mcpgateway_bootstrap_roles_in_db_file = str(roles_path)
+
+        mock_email_auth_service.get_user_by_email.return_value = mock_admin_user
+        mock_role_service.get_role_by_name.return_value = Mock(name="existing")
+
+        mock_db = Mock()
+        mock_session_cm = Mock()
+        mock_session_cm.__enter__ = Mock(return_value=mock_db)
+        mock_session_cm.__exit__ = Mock(return_value=None)
+
+        with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+            with patch("mcpgateway.bootstrap_db.Session", return_value=mock_session_cm):
+                with patch("mcpgateway.services.email_auth_service.EmailAuthService", return_value=mock_email_auth_service):
+                    with patch("mcpgateway.services.role_service.RoleService", return_value=mock_role_service):
+                        with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                            await bootstrap_default_roles(mock_conn)
+                            mock_logger.warning.assert_any_call("No valid roles found in additional roles file")
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_roles_platform_admin_assignment_error_logged(self, mock_settings, mock_email_auth_service, mock_role_service, mock_admin_user, mock_conn):
+        """Assignment errors should be caught and logged without failing bootstrap."""
+        mock_email_auth_service.get_user_by_email.return_value = mock_admin_user
+        mock_role_service.get_role_by_name.return_value = None
+
+        async def _create_role(**kwargs):  # noqa: D401 - test stub
+            role = Mock()
+            role.id = f"role-{kwargs['name']}"
+            role.name = kwargs["name"]
+            return role
+
+        mock_role_service.create_role.side_effect = _create_role
+        mock_role_service.get_user_role_assignment.side_effect = RuntimeError("boom")
+
+        mock_db = Mock()
+        mock_session_cm = Mock()
+        mock_session_cm.__enter__ = Mock(return_value=mock_db)
+        mock_session_cm.__exit__ = Mock(return_value=None)
+
+        with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+            with patch("mcpgateway.bootstrap_db.Session", return_value=mock_session_cm):
+                with patch("mcpgateway.services.email_auth_service.EmailAuthService", return_value=mock_email_auth_service):
+                    with patch("mcpgateway.services.role_service.RoleService", return_value=mock_role_service):
+                        with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                            await bootstrap_default_roles(mock_conn)
+                            mock_logger.error.assert_any_call(f"Failed to assign platform_admin role to {mock_admin_user.email}: boom. Admin UI routes using allow_admin_bypass=False will return 403.")
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_roles_db_fallback_when_role_not_in_created_roles(self, mock_settings, mock_email_auth_service, mock_role_service, mock_admin_user, mock_conn):
+        """When platform_admin creation fails but role exists in DB, assignment uses DB fallback."""
+        mock_email_auth_service.get_user_by_email.return_value = mock_admin_user
+
+        # Simulate: role creation fails for platform_admin, so it's not in created_roles
+        platform_admin_from_db = Mock()
+        platform_admin_from_db.id = "role-from-db"
+        platform_admin_from_db.name = "platform_admin"
+
+        async def _get_role_by_name(name, scope):
+            # First calls (during role creation loop): return None so create_role is called
+            # Final call (DB fallback): return the existing role
+            if name == "platform_admin" and scope == "global":
+                return platform_admin_from_db
+            return None
+
+        mock_role_service.get_role_by_name.side_effect = _get_role_by_name
+
+        # All role creations fail
+        mock_role_service.create_role.side_effect = RuntimeError("creation failed")
+        mock_role_service.get_user_role_assignment.return_value = None
+
+        mock_db = Mock()
+        mock_session_cm = Mock()
+        mock_session_cm.__enter__ = Mock(return_value=mock_db)
+        mock_session_cm.__exit__ = Mock(return_value=None)
+
+        with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+            with patch("mcpgateway.bootstrap_db.Session", return_value=mock_session_cm):
+                with patch("mcpgateway.services.email_auth_service.EmailAuthService", return_value=mock_email_auth_service):
+                    with patch("mcpgateway.services.role_service.RoleService", return_value=mock_role_service):
+                        with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                            await bootstrap_default_roles(mock_conn)
+                            # Role assignment should have been called with the DB fallback role
+                            mock_role_service.assign_role_to_user.assert_called_once_with(
+                                user_email=mock_admin_user.email,
+                                role_id="role-from-db",
+                                scope="global",
+                                scope_id=None,
+                                granted_by=mock_admin_user.email,
+                            )
+                            mock_logger.info.assert_any_call(f"Assigned platform_admin role to {mock_admin_user.email}")
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_roles_not_found_anywhere_logs_error(self, mock_settings, mock_email_auth_service, mock_role_service, mock_admin_user, mock_conn):
+        """When platform_admin role is not in created_roles and not in DB, error is logged."""
+        mock_email_auth_service.get_user_by_email.return_value = mock_admin_user
+
+        # All role creations fail, and DB lookup also returns None
+        mock_role_service.get_role_by_name.return_value = None
+        mock_role_service.create_role.side_effect = RuntimeError("creation failed")
+
+        mock_db = Mock()
+        mock_session_cm = Mock()
+        mock_session_cm.__enter__ = Mock(return_value=mock_db)
+        mock_session_cm.__exit__ = Mock(return_value=None)
+
+        with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+            with patch("mcpgateway.bootstrap_db.Session", return_value=mock_session_cm):
+                with patch("mcpgateway.services.email_auth_service.EmailAuthService", return_value=mock_email_auth_service):
+                    with patch("mcpgateway.services.role_service.RoleService", return_value=mock_role_service):
+                        with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                            await bootstrap_default_roles(mock_conn)
+                            mock_logger.error.assert_any_call(
+                                f"platform_admin role not found — could not assign to {mock_admin_user.email}. Admin UI routes using allow_admin_bypass=False will return 403."
+                            )
+                            # Assignment should NOT have been called
+                            mock_role_service.assign_role_to_user.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_roles_outer_exception_logged(self, mock_settings, mock_email_auth_service, mock_conn):
+        """Unexpected exceptions should be caught and logged."""
+        mock_email_auth_service.get_user_by_email.return_value = Mock()
+
+        mock_db = Mock()
+        mock_session_cm = Mock()
+        mock_session_cm.__enter__ = Mock(return_value=mock_db)
+        mock_session_cm.__exit__ = Mock(return_value=None)
+
+        with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+            with patch("mcpgateway.bootstrap_db.Session", return_value=mock_session_cm):
+                with patch("mcpgateway.services.email_auth_service.EmailAuthService", return_value=mock_email_auth_service):
+                    with patch("mcpgateway.services.role_service.RoleService", side_effect=RuntimeError("boom")):
+                        with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                            await bootstrap_default_roles(mock_conn)
+                            mock_logger.error.assert_any_call("Failed to bootstrap default roles: boom")
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_roles_no_admin_user(self, mock_settings, mock_email_auth_service, mock_role_service, mock_conn):
+        """Test when admin user doesn't exist."""
+        mock_email_auth_service.get_user_by_email.return_value = None
+
+        # Mock Session context manager
+        mock_db = Mock()
+        mock_session_cm = Mock()
+        mock_session_cm.__enter__ = Mock(return_value=mock_db)
+        mock_session_cm.__exit__ = Mock(return_value=None)
+
+        with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+            with patch("mcpgateway.bootstrap_db.Session", return_value=mock_session_cm):
+                with patch("mcpgateway.services.email_auth_service.EmailAuthService", return_value=mock_email_auth_service):
+                    with patch("mcpgateway.services.role_service.RoleService", return_value=mock_role_service):
+                        with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                            await bootstrap_default_roles(mock_conn)
+
+                            mock_logger.info.assert_called_with("Admin user not found - skipping role assignment")
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_roles_create_success(self, mock_settings, mock_email_auth_service, mock_role_service, mock_admin_user, mock_conn):
+        """Test successful role creation and assignment."""
+        mock_email_auth_service.get_user_by_email.return_value = mock_admin_user
+        mock_role_service.get_role_by_name.return_value = None  # No existing roles
+
+        platform_admin_role = Mock()
+        platform_admin_role.id = "role-admin"
+        platform_admin_role.name = "platform_admin"
+
+        mock_role_service.create_role.return_value = platform_admin_role
+        mock_role_service.get_user_role_assignment.return_value = None
+
+        # Mock Session context manager
+        mock_db = Mock()
+        mock_session_cm = Mock()
+        mock_session_cm.__enter__ = Mock(return_value=mock_db)
+        mock_session_cm.__exit__ = Mock(return_value=None)
+
+        with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+            with patch("mcpgateway.bootstrap_db.Session", return_value=mock_session_cm):
+                with patch("mcpgateway.services.email_auth_service.EmailAuthService", return_value=mock_email_auth_service):
+                    with patch("mcpgateway.services.role_service.RoleService", return_value=mock_role_service):
+                        with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                            await bootstrap_default_roles(mock_conn)
+
+                            # Check that roles were created
+                            assert mock_role_service.create_role.call_count >= 4
+
+                            # Check that admin role was assigned
+                            mock_role_service.assign_role_to_user.assert_called_once_with(
+                                user_email=mock_admin_user.email, role_id=platform_admin_role.id, scope="global", scope_id=None, granted_by=mock_admin_user.email
+                            )
+
+                            mock_logger.info.assert_any_call(f"Assigned platform_admin role to {mock_admin_user.email}")
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_roles_already_exist(self, mock_settings, mock_email_auth_service, mock_role_service, mock_admin_user, mock_conn):
+        """Test when roles already exist."""
+        mock_email_auth_service.get_user_by_email.return_value = mock_admin_user
+
+        existing_role = Mock()
+        existing_role.id = "role-admin"
+        existing_role.name = "platform_admin"
+        mock_role_service.get_role_by_name.return_value = existing_role
+
+        existing_assignment = Mock()
+        existing_assignment.is_active = True
+        mock_role_service.get_user_role_assignment.return_value = existing_assignment
+
+        # Mock Session context manager
+        mock_db = Mock()
+        mock_session_cm = Mock()
+        mock_session_cm.__enter__ = Mock(return_value=mock_db)
+        mock_session_cm.__exit__ = Mock(return_value=None)
+
+        with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+            with patch("mcpgateway.bootstrap_db.Session", return_value=mock_session_cm):
+                with patch("mcpgateway.services.email_auth_service.EmailAuthService", return_value=mock_email_auth_service):
+                    with patch("mcpgateway.services.role_service.RoleService", return_value=mock_role_service):
+                        with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                            await bootstrap_default_roles(mock_conn)
+
+                            mock_role_service.create_role.assert_not_called()
+                            mock_role_service.assign_role_to_user.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_roles_synchronizes_is_admin_flag_when_false(self, mock_settings, mock_email_auth_service, mock_role_service, mock_admin_user, mock_conn):
+        """Test that is_admin flag is synchronized to True when platform_admin role is assigned and flag is False."""
+        # Setup: Admin user exists but is_admin is False (simulating manual demotion)
+        mock_admin_user.is_admin = False
+        mock_email_auth_service.get_user_by_email.return_value = mock_admin_user
+
+        platform_admin_role = Mock()
+        platform_admin_role.id = "role-admin"
+        platform_admin_role.name = "platform_admin"
+
+        # Role doesn't exist yet, will be created
+        mock_role_service.get_role_by_name.return_value = None
+        mock_role_service.create_role.return_value = platform_admin_role
+
+        # No existing assignment
+        mock_role_service.get_user_role_assignment.return_value = None
+
+        # Mock Session context manager
+        mock_db = Mock()
+        mock_db.commit = Mock()
+        mock_session_cm = Mock()
+        mock_session_cm.__enter__ = Mock(return_value=mock_db)
+        mock_session_cm.__exit__ = Mock(return_value=None)
+
+        with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+            with patch("mcpgateway.bootstrap_db.Session", return_value=mock_session_cm):
+                with patch("mcpgateway.services.email_auth_service.EmailAuthService", return_value=mock_email_auth_service):
+                    with patch("mcpgateway.services.role_service.RoleService", return_value=mock_role_service):
+                        with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                            await bootstrap_default_roles(mock_conn)
+
+                            # Verify role was assigned
+                            mock_role_service.assign_role_to_user.assert_called_once_with(
+                                user_email=mock_admin_user.email, role_id=platform_admin_role.id, scope="global", scope_id=None, granted_by=mock_admin_user.email
+                            )
+
+                            # Verify is_admin flag was synchronized
+                            assert mock_admin_user.is_admin is True
+                            mock_db.commit.assert_called()
+
+                            # Verify synchronization was logged (with sanitized email)
+                            mock_logger.info.assert_any_call(f"Synchronizing is_admin flag for {SecurityValidator.sanitize_log_message(mock_admin_user.email)} (was False, setting to True)")
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_roles_skips_sync_when_is_admin_already_true(self, mock_settings, mock_email_auth_service, mock_role_service, mock_admin_user, mock_conn):
+        """Test that is_admin flag synchronization is skipped when already True."""
+        # Setup: Admin user exists with is_admin already True and role already assigned
+        mock_admin_user.is_admin = True
+        mock_email_auth_service.get_user_by_email.return_value = mock_admin_user
+
+        platform_admin_role = Mock()
+        platform_admin_role.id = "role-admin"
+        platform_admin_role.name = "platform_admin"
+
+        # Role already exists
+        mock_role_service.get_role_by_name.return_value = platform_admin_role
+
+        # Role already assigned and active
+        existing_assignment = Mock()
+        existing_assignment.is_active = True
+        mock_role_service.get_user_role_assignment.return_value = existing_assignment
+
+        # Mock Session context manager
+        mock_db = Mock()
+        mock_db.commit = Mock()
+        mock_session_cm = Mock()
+        mock_session_cm.__enter__ = Mock(return_value=mock_db)
+        mock_session_cm.__exit__ = Mock(return_value=None)
+
+        with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+            with patch("mcpgateway.bootstrap_db.Session", return_value=mock_session_cm):
+                with patch("mcpgateway.services.email_auth_service.EmailAuthService", return_value=mock_email_auth_service):
+                    with patch("mcpgateway.services.role_service.RoleService", return_value=mock_role_service):
+                        with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                            await bootstrap_default_roles(mock_conn)
+
+                            # Verify role was NOT re-assigned (already exists and active)
+                            mock_role_service.assign_role_to_user.assert_not_called()
+
+                            # Verify is_admin flag remains True
+                            assert mock_admin_user.is_admin is True
+
+                            # Verify synchronization log was NOT emitted (flag already True)
+                            sync_log_calls = [call for call in mock_logger.info.call_args_list if "Synchronizing is_admin flag" in str(call)]
+                            assert len(sync_log_calls) == 0
+
+                            # Verify the "already has role" message was logged
+                            mock_logger.info.assert_any_call("Admin user already has platform_admin role")
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_roles_exception_handling(self, mock_settings, mock_email_auth_service, mock_role_service, mock_admin_user, mock_conn):
+        """Test exception handling during role creation."""
+        mock_email_auth_service.get_user_by_email.return_value = mock_admin_user
+        mock_role_service.get_role_by_name.return_value = None
+        mock_role_service.create_role.side_effect = Exception("Role creation failed")
+
+        # Mock Session context manager
+        mock_db = Mock()
+        mock_session_cm = Mock()
+        mock_session_cm.__enter__ = Mock(return_value=mock_db)
+        mock_session_cm.__exit__ = Mock(return_value=None)
+
+        with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+            with patch("mcpgateway.bootstrap_db.Session", return_value=mock_session_cm):
+                with patch("mcpgateway.services.email_auth_service.EmailAuthService", return_value=mock_email_auth_service):
+                    with patch("mcpgateway.services.role_service.RoleService", return_value=mock_role_service):
+                        with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                            await bootstrap_default_roles(mock_conn)
+
+                            mock_logger.error.assert_any_call("Failed to create role platform_admin: Role creation failed")
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_roles_with_additional_roles_file(self, mock_settings, mock_email_auth_service, mock_role_service, mock_admin_user, mock_conn, tmp_path):
+        """Test loading additional roles from JSON file."""
+        mock_email_auth_service.get_user_by_email.return_value = mock_admin_user
+        mock_role_service.get_role_by_name.return_value = None
+
+        # Create a temporary JSON file with additional roles
+        additional_roles = [
+            {
+                "name": "custom_role",
+                "description": "Custom role for testing",
+                "scope": "team",
+                "permissions": ["tools.read", "resources.read"],
+                "is_system_role": False,
+            }
+        ]
+        roles_file = tmp_path / "additional_roles.json"
+        roles_file.write_text(json.dumps(additional_roles))
+
+        mock_settings.mcpgateway_bootstrap_roles_in_db_enabled = True
+        mock_settings.mcpgateway_bootstrap_roles_in_db_file = str(roles_file)
+
+        platform_admin_role = Mock()
+        platform_admin_role.id = "role-admin"
+        platform_admin_role.name = "platform_admin"
+        mock_role_service.create_role.return_value = platform_admin_role
+        mock_role_service.get_user_role_assignment.return_value = None
+
+        # Mock Session context manager
+        mock_db = Mock()
+        mock_session_cm = Mock()
+        mock_session_cm.__enter__ = Mock(return_value=mock_db)
+        mock_session_cm.__exit__ = Mock(return_value=None)
+
+        with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+            with patch("mcpgateway.bootstrap_db.Session", return_value=mock_session_cm):
+                with patch("mcpgateway.services.email_auth_service.EmailAuthService", return_value=mock_email_auth_service):
+                    with patch("mcpgateway.services.role_service.RoleService", return_value=mock_role_service):
+                        with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                            await bootstrap_default_roles(mock_conn)
+
+                            # Verify additional roles were loaded
+                            mock_logger.info.assert_any_call("Added 1 additional roles to default roles in bootstrap db")
+                            # Should create 4 default roles + 1 custom role = 5 total
+                            assert mock_role_service.create_role.call_count >= 5
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_roles_with_additional_roles_file_not_found(self, mock_settings, mock_email_auth_service, mock_role_service, mock_admin_user, mock_conn):
+        """Test handling when additional roles file doesn't exist."""
+        mock_email_auth_service.get_user_by_email.return_value = mock_admin_user
+        mock_role_service.get_role_by_name.return_value = None
+
+        mock_settings.mcpgateway_bootstrap_roles_in_db_enabled = True
+        mock_settings.mcpgateway_bootstrap_roles_in_db_file = "nonexistent_file.json"
+
+        platform_admin_role = Mock()
+        platform_admin_role.id = "role-admin"
+        platform_admin_role.name = "platform_admin"
+        mock_role_service.create_role.return_value = platform_admin_role
+        mock_role_service.get_user_role_assignment.return_value = None
+
+        # Mock Session context manager
+        mock_db = Mock()
+        mock_session_cm = Mock()
+        mock_session_cm.__enter__ = Mock(return_value=mock_db)
+        mock_session_cm.__exit__ = Mock(return_value=None)
+
+        with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+            with patch("mcpgateway.bootstrap_db.Session", return_value=mock_session_cm):
+                with patch("mcpgateway.services.email_auth_service.EmailAuthService", return_value=mock_email_auth_service):
+                    with patch("mcpgateway.services.role_service.RoleService", return_value=mock_role_service):
+                        with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                            await bootstrap_default_roles(mock_conn)
+
+                            # Should log warning about file not found
+                            mock_logger.warning.assert_any_call(ANY)
+                            # Should still create default roles (4 roles)
+                            assert mock_role_service.create_role.call_count >= 4
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_roles_with_additional_roles_disabled(self, mock_settings, mock_email_auth_service, mock_role_service, mock_admin_user, mock_conn):
+        """Test when additional roles loading is disabled."""
+        mock_email_auth_service.get_user_by_email.return_value = mock_admin_user
+        mock_role_service.get_role_by_name.return_value = None
+
+        mock_settings.mcpgateway_bootstrap_roles_in_db_enabled = False
+
+        platform_admin_role = Mock()
+        platform_admin_role.id = "role-admin"
+        platform_admin_role.name = "platform_admin"
+        mock_role_service.create_role.return_value = platform_admin_role
+        mock_role_service.get_user_role_assignment.return_value = None
+
+        # Mock Session context manager
+        mock_db = Mock()
+        mock_session_cm = Mock()
+        mock_session_cm.__enter__ = Mock(return_value=mock_db)
+        mock_session_cm.__exit__ = Mock(return_value=None)
+
+        with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+            with patch("mcpgateway.bootstrap_db.Session", return_value=mock_session_cm):
+                with patch("mcpgateway.services.email_auth_service.EmailAuthService", return_value=mock_email_auth_service):
+                    with patch("mcpgateway.services.role_service.RoleService", return_value=mock_role_service):
+                        with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                            await bootstrap_default_roles(mock_conn)
+
+                            # Should only create default roles (5 roles: platform_admin, team_admin, developer, viewer, platform_viewer)
+                            assert mock_role_service.create_role.call_count == 5
+                            # Should not log about additional roles
+                            assert not any("additional roles" in str(call) for call in mock_logger.info.call_args_list)
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_roles_with_invalid_json_file(self, mock_settings, mock_email_auth_service, mock_role_service, mock_admin_user, mock_conn, tmp_path):
+        """Test handling of invalid JSON in additional roles file."""
+        mock_email_auth_service.get_user_by_email.return_value = mock_admin_user
+        mock_role_service.get_role_by_name.return_value = None
+
+        # Create a file with invalid JSON
+        roles_file = tmp_path / "invalid_roles.json"
+        roles_file.write_text("{ invalid json content")
+
+        mock_settings.mcpgateway_bootstrap_roles_in_db_enabled = True
+        mock_settings.mcpgateway_bootstrap_roles_in_db_file = str(roles_file)
+
+        platform_admin_role = Mock()
+        platform_admin_role.id = "role-admin"
+        platform_admin_role.name = "platform_admin"
+        mock_role_service.create_role.return_value = platform_admin_role
+        mock_role_service.get_user_role_assignment.return_value = None
+
+        # Mock Session context manager
+        mock_db = Mock()
+        mock_session_cm = Mock()
+        mock_session_cm.__enter__ = Mock(return_value=mock_db)
+        mock_session_cm.__exit__ = Mock(return_value=None)
+
+        with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+            with patch("mcpgateway.bootstrap_db.Session", return_value=mock_session_cm):
+                with patch("mcpgateway.services.email_auth_service.EmailAuthService", return_value=mock_email_auth_service):
+                    with patch("mcpgateway.services.role_service.RoleService", return_value=mock_role_service):
+                        with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                            await bootstrap_default_roles(mock_conn)
+
+                            # Should log error about failed loading
+                            mock_logger.error.assert_any_call(ANY)
+                            # Should still create default roles (4 roles)
+                            assert mock_role_service.create_role.call_count >= 4
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_roles_with_relative_path(self, mock_settings, mock_email_auth_service, mock_role_service, mock_admin_user, mock_conn, tmp_path):
+        """Test loading additional roles with relative path resolution."""
+        mock_email_auth_service.get_user_by_email.return_value = mock_admin_user
+        mock_role_service.get_role_by_name.return_value = None
+
+        # Create additional roles file
+        additional_roles = [
+            {
+                "name": "analyst",
+                "description": "Data analyst role",
+                "scope": "team",
+                "permissions": ["tools.read", "resources.read", "prompts.read"],
+                "is_system_role": False,
+            }
+        ]
+
+        # Use relative path
+        mock_settings.mcpgateway_bootstrap_roles_in_db_enabled = True
+        mock_settings.mcpgateway_bootstrap_roles_in_db_file = "test_roles.json"
+
+        platform_admin_role = Mock()
+        platform_admin_role.id = "role-admin"
+        platform_admin_role.name = "platform_admin"
+        mock_role_service.create_role.return_value = platform_admin_role
+        mock_role_service.get_user_role_assignment.return_value = None
+
+        # Mock Session context manager
+        mock_db = Mock()
+        mock_session_cm = Mock()
+        mock_session_cm.__enter__ = Mock(return_value=mock_db)
+        mock_session_cm.__exit__ = Mock(return_value=None)
+
+        # Mock Path.exists to simulate file not found in current dir but found in project root
+        with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+            with patch("mcpgateway.bootstrap_db.Session", return_value=mock_session_cm):
+                with patch("mcpgateway.services.email_auth_service.EmailAuthService", return_value=mock_email_auth_service):
+                    with patch("mcpgateway.services.role_service.RoleService", return_value=mock_role_service):
+                        with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                            # with patch("builtins.open", side_effect=FileNotFoundError("File not found")):
+                            await bootstrap_default_roles(mock_conn)
+
+                            # Should log error about failed loading
+                            mock_logger.warning.assert_any_call(ANY)
+                            # Should still create default roles
+                            assert mock_role_service.create_role.call_count >= 4
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_roles_with_multiple_additional_roles(self, mock_settings, mock_email_auth_service, mock_role_service, mock_admin_user, mock_conn, tmp_path):
+        """Test loading multiple additional roles from JSON file."""
+        mock_email_auth_service.get_user_by_email.return_value = mock_admin_user
+        mock_role_service.get_role_by_name.return_value = None
+
+        # Create a file with multiple additional roles
+        additional_roles = [
+            {
+                "name": "data_scientist",
+                "description": "Data scientist role",
+                "scope": "team",
+                "permissions": ["tools.read", "tools.execute", "resources.read"],
+                "is_system_role": False,
+            },
+            {
+                "name": "auditor",
+                "description": "Audit role",
+                "scope": "global",
+                "permissions": ["tools.read", "resources.read", "audit.read"],
+                "is_system_role": True,
+            },
+            {
+                "name": "guest",
+                "description": "Guest role",
+                "scope": "team",
+                "permissions": ["tools.read"],
+                "is_system_role": False,
+            },
+        ]
+        roles_file = tmp_path / "multiple_roles.json"
+        roles_file.write_text(json.dumps(additional_roles))
+
+        mock_settings.mcpgateway_bootstrap_roles_in_db_enabled = True
+        mock_settings.mcpgateway_bootstrap_roles_in_db_file = str(roles_file)
+
+        platform_admin_role = Mock()
+        platform_admin_role.id = "role-admin"
+        platform_admin_role.name = "platform_admin"
+        mock_role_service.create_role.return_value = platform_admin_role
+        mock_role_service.get_user_role_assignment.return_value = None
+
+        # Mock Session context manager
+        mock_db = Mock()
+        mock_session_cm = Mock()
+        mock_session_cm.__enter__ = Mock(return_value=mock_db)
+        mock_session_cm.__exit__ = Mock(return_value=None)
+
+        with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+            with patch("mcpgateway.bootstrap_db.Session", return_value=mock_session_cm):
+                with patch("mcpgateway.services.email_auth_service.EmailAuthService", return_value=mock_email_auth_service):
+                    with patch("mcpgateway.services.role_service.RoleService", return_value=mock_role_service):
+                        with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                            await bootstrap_default_roles(mock_conn)
+
+                            # Verify 3 additional roles were loaded
+                            mock_logger.info.assert_any_call("Added 3 additional roles to default roles in bootstrap db")
+                            # Should create 4 default roles + 3 custom roles = 7 total
+                            assert mock_role_service.create_role.call_count >= 7
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_roles_with_minimal_valid_role(self, mock_settings, mock_email_auth_service, mock_role_service, mock_admin_user, mock_conn, tmp_path):
+        """Test that a role with only required fields (no description/is_system_role) is created successfully."""
+        mock_email_auth_service.get_user_by_email.return_value = mock_admin_user
+        mock_role_service.get_role_by_name.return_value = None
+
+        # Create a role with ONLY required fields - no description or is_system_role
+        minimal_roles = [
+            {
+                "name": "minimal_role",
+                "scope": "team",
+                "permissions": ["tools.read"],
+            }
+        ]
+        roles_file = tmp_path / "minimal_roles.json"
+        roles_file.write_text(json.dumps(minimal_roles))
+
+        mock_settings.mcpgateway_bootstrap_roles_in_db_enabled = True
+        mock_settings.mcpgateway_bootstrap_roles_in_db_file = str(roles_file)
+
+        platform_admin_role = Mock()
+        platform_admin_role.id = "role-admin"
+        platform_admin_role.name = "platform_admin"
+        mock_role_service.create_role.return_value = platform_admin_role
+        mock_role_service.get_user_role_assignment.return_value = None
+
+        mock_db = Mock()
+        mock_session_cm = Mock()
+        mock_session_cm.__enter__ = Mock(return_value=mock_db)
+        mock_session_cm.__exit__ = Mock(return_value=None)
+
+        with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+            with patch("mcpgateway.bootstrap_db.Session", return_value=mock_session_cm):
+                with patch("mcpgateway.services.email_auth_service.EmailAuthService", return_value=mock_email_auth_service):
+                    with patch("mcpgateway.services.role_service.RoleService", return_value=mock_role_service):
+                        with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                            await bootstrap_default_roles(mock_conn)
+
+                            # Should successfully add the minimal role
+                            mock_logger.info.assert_any_call("Added 1 additional roles to default roles in bootstrap db")
+                            # Should create 4 default + 1 minimal = 5 roles
+                            assert mock_role_service.create_role.call_count >= 5
+                            # Verify create_role was called with default values for optional fields
+                            create_calls = mock_role_service.create_role.call_args_list
+                            minimal_call = [c for c in create_calls if c.kwargs.get("name") == "minimal_role"]
+                            assert len(minimal_call) == 1
+                            assert minimal_call[0].kwargs["description"] == ""
+                            assert minimal_call[0].kwargs["is_system_role"] is False
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_roles_updates_existing_system_role_permissions(self, mock_settings, mock_email_auth_service, mock_role_service, mock_admin_user, mock_conn, tmp_path):
+        mock_email_auth_service.get_user_by_email.return_value = mock_admin_user
+        mock_settings.mcpgateway_bootstrap_roles_in_db_enabled = True
+        roles_file = tmp_path / "roles.json"
+        roles_file.write_text(
+            json.dumps(
+                [
+                    {
+                        "name": "platform_admin",
+                        "description": "Platform admin role",
+                        "scope": "global",
+                        "permissions": ["tools.read", "tools.execute"],
+                        "is_system_role": True,
+                    }
+                ]
+            )
+        )
+        mock_settings.mcpgateway_bootstrap_roles_in_db_file = str(roles_file)
+
+        existing_role = Mock()
+        existing_role.name = "platform_admin"
+        existing_role.permissions = ["tools.read"]
+        existing_role.is_system_role = True
+        mock_role_service.get_role_by_name.return_value = existing_role
+
+        mock_db = Mock()
+        mock_session_cm = Mock()
+        mock_session_cm.__enter__ = Mock(return_value=mock_db)
+        mock_session_cm.__exit__ = Mock(return_value=None)
+
+        with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+            with patch("mcpgateway.bootstrap_db.Session", return_value=mock_session_cm):
+                with patch("mcpgateway.services.email_auth_service.EmailAuthService", return_value=mock_email_auth_service):
+                    with patch("mcpgateway.services.role_service.RoleService", return_value=mock_role_service):
+                        await bootstrap_default_roles(mock_conn)
+
+        assert existing_role.permissions == ["tools.execute", "tools.read"]
+        assert mock_db.commit.called
+        mock_db.refresh.assert_any_call(existing_role)
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_roles_with_dict_instead_of_list(self, mock_settings, mock_email_auth_service, mock_role_service, mock_admin_user, mock_conn, tmp_path):
+        """Test handling when JSON is a dict instead of a list."""
+        mock_email_auth_service.get_user_by_email.return_value = mock_admin_user
+        mock_role_service.get_role_by_name.return_value = None
+
+        # Create a file with a dict instead of a list
+        invalid_data = {"name": "single_role", "scope": "team", "permissions": ["tools.read"]}
+        roles_file = tmp_path / "dict_role.json"
+        roles_file.write_text(json.dumps(invalid_data))
+
+        mock_settings.mcpgateway_bootstrap_roles_in_db_enabled = True
+        mock_settings.mcpgateway_bootstrap_roles_in_db_file = str(roles_file)
+
+        platform_admin_role = Mock()
+        platform_admin_role.id = "role-admin"
+        platform_admin_role.name = "platform_admin"
+        mock_role_service.create_role.return_value = platform_admin_role
+        mock_role_service.get_user_role_assignment.return_value = None
+
+        mock_db = Mock()
+        mock_session_cm = Mock()
+        mock_session_cm.__enter__ = Mock(return_value=mock_db)
+        mock_session_cm.__exit__ = Mock(return_value=None)
+
+        with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+            with patch("mcpgateway.bootstrap_db.Session", return_value=mock_session_cm):
+                with patch("mcpgateway.services.email_auth_service.EmailAuthService", return_value=mock_email_auth_service):
+                    with patch("mcpgateway.services.role_service.RoleService", return_value=mock_role_service):
+                        with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                            await bootstrap_default_roles(mock_conn)
+
+                            # Should log error about wrong type
+                            mock_logger.error.assert_any_call("Additional roles file must contain a JSON array, got dict")
+                            # Should still create default roles (4 roles)
+                            assert mock_role_service.create_role.call_count >= 4
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_roles_with_missing_required_keys(self, mock_settings, mock_email_auth_service, mock_role_service, mock_admin_user, mock_conn, tmp_path):
+        """Test handling when role entries are missing required keys."""
+        mock_email_auth_service.get_user_by_email.return_value = mock_admin_user
+        mock_role_service.get_role_by_name.return_value = None
+
+        # Create a file with roles missing required keys
+        invalid_roles = [
+            {"name": "missing_scope_and_permissions"},  # Missing scope and permissions
+            {"name": "valid_role", "scope": "team", "permissions": ["tools.read"]},  # Valid
+            {"scope": "team", "permissions": ["tools.read"]},  # Missing name
+            "not_a_dict",  # Not a dict at all
+        ]
+        roles_file = tmp_path / "missing_keys.json"
+        roles_file.write_text(json.dumps(invalid_roles))
+
+        mock_settings.mcpgateway_bootstrap_roles_in_db_enabled = True
+        mock_settings.mcpgateway_bootstrap_roles_in_db_file = str(roles_file)
+
+        platform_admin_role = Mock()
+        platform_admin_role.id = "role-admin"
+        platform_admin_role.name = "platform_admin"
+        mock_role_service.create_role.return_value = platform_admin_role
+        mock_role_service.get_user_role_assignment.return_value = None
+
+        mock_db = Mock()
+        mock_session_cm = Mock()
+        mock_session_cm.__enter__ = Mock(return_value=mock_db)
+        mock_session_cm.__exit__ = Mock(return_value=None)
+
+        with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+            with patch("mcpgateway.bootstrap_db.Session", return_value=mock_session_cm):
+                with patch("mcpgateway.services.email_auth_service.EmailAuthService", return_value=mock_email_auth_service):
+                    with patch("mcpgateway.services.role_service.RoleService", return_value=mock_role_service):
+                        with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                            await bootstrap_default_roles(mock_conn)
+
+                            # Should log warnings about invalid entries
+                            warning_calls = [str(call) for call in mock_logger.warning.call_args_list]
+                            assert any("missing required keys" in call or "expected dict" in call for call in warning_calls)
+                            # Default roles should still be created even when additional roles have issues
+                            assert mock_role_service.create_role.call_count >= 4
+
+
+class TestNormalizeTeamVisibility:
+    """Test normalize_team_visibility function."""
+
+    def test_normalize_team_visibility_no_invalid(self, mock_db_session, mock_conn):
+        """Test when all teams have valid visibility."""
+        mock_query = Mock()
+        mock_query.filter.return_value = mock_query
+        mock_query.all.return_value = []
+        mock_db_session.query.return_value = mock_query
+
+        with patch("mcpgateway.bootstrap_db.Session", return_value=mock_db_session):
+            with patch("mcpgateway.bootstrap_db.logger"):
+                result = normalize_team_visibility(mock_conn)
+
+                assert result == 0
+                mock_db_session.commit.assert_not_called()
+
+    def test_normalize_team_visibility_with_invalid(self, mock_db_session, mock_conn):
+        """Test normalizing teams with invalid visibility."""
+        mock_team1 = Mock()
+        mock_team1.id = "team-1"
+        mock_team1.visibility = "team"  # Invalid
+
+        mock_team2 = Mock()
+        mock_team2.id = "team-2"
+        mock_team2.visibility = "internal"  # Invalid
+
+        mock_query = Mock()
+        mock_query.filter.return_value = mock_query
+        mock_query.all.return_value = [mock_team1, mock_team2]
+        mock_db_session.query.return_value = mock_query
+
+        with patch("mcpgateway.bootstrap_db.Session", return_value=mock_db_session):
+            with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                result = normalize_team_visibility(mock_conn)
+
+                assert result == 2
+                assert mock_team1.visibility == "private"
+                assert mock_team2.visibility == "private"
+                mock_db_session.commit.assert_called_once()
+                assert mock_logger.info.call_count == 2
+
+    def test_normalize_team_visibility_exception(self, mock_db_session, mock_conn):
+        """Test exception handling during normalization."""
+        mock_db_session.query.side_effect = Exception("Database error")
+
+        with patch("mcpgateway.bootstrap_db.Session", return_value=mock_db_session):
+            with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                result = normalize_team_visibility(mock_conn)
+
+                assert result == 0
+                mock_logger.error.assert_called_with("Failed to normalize team visibility: Database error")
+
+
+class TestBootstrapResourceAssignments:
+    """Test bootstrap_resource_assignments function."""
+
+    @pytest.mark.asyncio
+    async def test_resource_assignments_disabled(self, mock_settings, mock_conn):
+        """Test when email auth is disabled."""
+        mock_settings.email_auth_enabled = False
+
+        with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+            with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                await bootstrap_resource_assignments(mock_conn)
+
+                mock_logger.info.assert_called_with("Email authentication disabled - skipping resource assignment")
+
+    @pytest.mark.asyncio
+    async def test_resource_assignments_no_admin(self, mock_settings, mock_db_session, mock_conn):
+        """Test when admin user doesn't exist."""
+        mock_query = Mock()
+        mock_query.filter.return_value = mock_query
+        mock_query.first.return_value = None
+        mock_db_session.query.return_value = mock_query
+
+        with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+            with patch("mcpgateway.bootstrap_db.Session", return_value=mock_db_session):
+                with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                    await bootstrap_resource_assignments(mock_conn)
+
+                    mock_logger.warning.assert_called_with("Admin user not found - skipping resource assignment")
+
+    @pytest.mark.asyncio
+    async def test_resource_assignments_no_personal_team(self, mock_settings, mock_db_session, mock_admin_user, mock_conn):
+        """Test when admin has no personal team."""
+        mock_admin_user.get_personal_team.return_value = None
+
+        mock_query = Mock()
+        mock_query.filter.return_value = mock_query
+        mock_query.first.return_value = mock_admin_user
+        mock_db_session.query.return_value = mock_query
+
+        with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+            with patch("mcpgateway.bootstrap_db.Session", return_value=mock_db_session):
+                with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                    await bootstrap_resource_assignments(mock_conn)
+
+                    mock_logger.warning.assert_called_with("Admin personal team not found - skipping resource assignment")
+
+    @pytest.mark.asyncio
+    async def test_resource_assignments_success(self, mock_settings, mock_db_session, mock_admin_user, mock_personal_team, mock_conn):
+        """Test successful resource assignment."""
+        mock_admin_user.get_personal_team.return_value = mock_personal_team
+
+        # Mock unassigned resources
+        mock_server = Mock()
+        mock_server.team_id = None
+        mock_server.owner_email = None
+        mock_server.visibility = None
+        mock_server.federation_source = None
+        mock_server.name = "test-server"
+
+        mock_tool = Mock()
+        mock_tool.team_id = None
+        mock_tool.owner_email = None
+        mock_tool.visibility = None
+        mock_tool.name = "test-tool"
+
+        def mock_query_handler(model):
+            query = MagicMock()
+            query.filter.return_value = query
+
+            if hasattr(model, "__name__") and model.__name__ == "EmailUser":
+                query.first.return_value = mock_admin_user
+            elif hasattr(model, "__name__") and model.__name__ == "Server":
+                query.all.return_value = [mock_server]
+            elif hasattr(model, "__name__") and model.__name__ == "Tool":
+                query.all.return_value = [mock_tool]
+            else:
+                query.all.return_value = []
+
+            return query
+
+        mock_db_session.query.side_effect = mock_query_handler
+
+        with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+            with patch("mcpgateway.bootstrap_db.Session", return_value=mock_db_session):
+                with patch("mcpgateway.db.EmailUser", Mock(__name__="EmailUser")):
+                    with patch("mcpgateway.db.Server", Mock(__name__="Server")):
+                        with patch("mcpgateway.db.Tool", Mock(__name__="Tool")):
+                            with patch("mcpgateway.db.Resource", Mock(__name__="Resource")):
+                                with patch("mcpgateway.db.Prompt", Mock(__name__="Prompt")):
+                                    with patch("mcpgateway.db.Gateway", Mock(__name__="Gateway")):
+                                        with patch("mcpgateway.db.A2AAgent", Mock(__name__="A2AAgent")):
+                                            with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                                                await bootstrap_resource_assignments(mock_conn)
+
+                                                # Check that resources were assigned
+                                                assert mock_server.team_id == mock_personal_team.id
+                                                assert mock_server.owner_email == mock_admin_user.email
+                                                assert mock_server.visibility == "public"
+                                                assert mock_server.federation_source == "mcpgateway-0.7.0-migration"
+
+                                                assert mock_tool.team_id == mock_personal_team.id
+                                                assert mock_tool.owner_email == mock_admin_user.email
+                                                assert mock_tool.visibility == "public"
+
+                                                mock_logger.info.assert_any_call("Successfully assigned 2 orphaned resources to admin team")
+
+    @pytest.mark.asyncio
+    async def test_name_conflict_with_existing(self, mock_settings, mock_db_session, mock_admin_user, mock_personal_team, mock_conn):
+        """Orphan whose name already exists in admin team is renamed with a -2 suffix."""
+        mock_admin_user.get_personal_team.return_value = mock_personal_team
+
+        mock_server = Mock()
+        mock_server.team_id = None
+        mock_server.owner_email = None
+        mock_server.visibility = None
+        mock_server.federation_source = None
+        mock_server.name = "Web Search"
+
+        def mock_query_handler(model):
+            query = MagicMock()
+            query.filter.return_value = query
+            if hasattr(model, "__tablename__") and model.__tablename__ == "email_users":
+                query.first.return_value = mock_admin_user
+            elif hasattr(model, "__tablename__") and model.__tablename__ == "servers":
+                query.all.return_value = [mock_server]
+            elif hasattr(model, "__tablename__"):
+                query.all.return_value = []
+            else:
+                # Column attribute query (existing_taken) — only Server has orphans here
+                query.__iter__ = Mock(return_value=iter([("Web Search",)]))
+            return query
+
+        mock_db_session.query.side_effect = mock_query_handler
+
+        with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+            with patch("mcpgateway.bootstrap_db.Session", return_value=mock_db_session):
+                with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                    await bootstrap_resource_assignments(mock_conn)
+
+                    assert mock_server.name == "Web Search-2"
+                    assert mock_server.team_id == mock_personal_team.id
+                    assert mock_server.owner_email == mock_admin_user.email
+                    mock_logger.warning.assert_any_call("Name conflict for servers 'Web Search' — renaming to 'Web Search-2'")
+
+    @pytest.mark.asyncio
+    async def test_intra_batch_duplicates(self, mock_settings, mock_db_session, mock_admin_user, mock_personal_team, mock_conn):
+        """Two orphans with the same name — first keeps name, second is renamed to name-2."""
+        mock_admin_user.get_personal_team.return_value = mock_personal_team
+
+        mock_server1 = Mock()
+        mock_server1.team_id = None
+        mock_server1.owner_email = None
+        mock_server1.visibility = None
+        mock_server1.federation_source = None
+        mock_server1.name = "Web Search"
+
+        mock_server2 = Mock()
+        mock_server2.team_id = None
+        mock_server2.owner_email = None
+        mock_server2.visibility = None
+        mock_server2.federation_source = None
+        mock_server2.name = "Web Search"
+
+        def mock_query_handler(model):
+            query = MagicMock()
+            query.filter.return_value = query
+            if hasattr(model, "__tablename__") and model.__tablename__ == "email_users":
+                query.first.return_value = mock_admin_user
+            elif hasattr(model, "__tablename__") and model.__tablename__ == "servers":
+                query.all.return_value = [mock_server1, mock_server2]
+            elif hasattr(model, "__tablename__"):
+                query.all.return_value = []
+            else:
+                # Column attribute query (existing_taken) — no existing conflicts
+                query.__iter__ = Mock(return_value=iter([]))
+            return query
+
+        mock_db_session.query.side_effect = mock_query_handler
+
+        with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+            with patch("mcpgateway.bootstrap_db.Session", return_value=mock_db_session):
+                with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                    await bootstrap_resource_assignments(mock_conn)
+
+                    assert mock_server1.name == "Web Search"
+                    assert mock_server2.name == "Web Search-2"
+                    assert mock_server1.team_id == mock_personal_team.id
+                    assert mock_server2.team_id == mock_personal_team.id
+                    mock_logger.warning.assert_any_call("Name conflict for servers 'Web Search' — renaming to 'Web Search-2'")
+
+    @pytest.mark.asyncio
+    async def test_existing_suffix_collision(self, mock_settings, mock_db_session, mock_admin_user, mock_personal_team, mock_conn):
+        """Orphan name conflicts and admin team already has name-2 — renamed to name-3."""
+        mock_admin_user.get_personal_team.return_value = mock_personal_team
+
+        mock_server = Mock()
+        mock_server.team_id = None
+        mock_server.owner_email = None
+        mock_server.visibility = None
+        mock_server.federation_source = None
+        mock_server.name = "Web Search"
+
+        def mock_query_handler(model):
+            query = MagicMock()
+            query.filter.return_value = query
+            if hasattr(model, "__tablename__") and model.__tablename__ == "email_users":
+                query.first.return_value = mock_admin_user
+            elif hasattr(model, "__tablename__") and model.__tablename__ == "servers":
+                query.all.return_value = [mock_server]
+            elif hasattr(model, "__tablename__"):
+                query.all.return_value = []
+            else:
+                # Column attribute query (existing_taken) — admin team already has name and name-2
+                query.__iter__ = Mock(return_value=iter([("Web Search",), ("Web Search-2",)]))
+            return query
+
+        mock_db_session.query.side_effect = mock_query_handler
+
+        with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+            with patch("mcpgateway.bootstrap_db.Session", return_value=mock_db_session):
+                with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                    await bootstrap_resource_assignments(mock_conn)
+
+                    assert mock_server.name == "Web Search-3"
+                    assert mock_server.team_id == mock_personal_team.id
+                    mock_logger.warning.assert_any_call("Name conflict for servers 'Web Search' — renaming to 'Web Search-3'")
+
+    @pytest.mark.asyncio
+    async def test_null_field_value_skips_conflict_detection(self, mock_settings, mock_db_session, mock_admin_user, mock_personal_team, mock_conn):
+        """Orphan with None unique-field value is assigned without conflict detection."""
+        mock_admin_user.get_personal_team.return_value = mock_personal_team
+
+        mock_server = Mock()
+        mock_server.team_id = None
+        mock_server.owner_email = None
+        mock_server.visibility = None
+        mock_server.federation_source = None
+        mock_server.name = None
+
+        def mock_query_handler(model):
+            query = MagicMock()
+            query.filter.return_value = query
+            if hasattr(model, "__tablename__") and model.__tablename__ == "email_users":
+                query.first.return_value = mock_admin_user
+            elif hasattr(model, "__tablename__") and model.__tablename__ == "servers":
+                query.all.return_value = [mock_server]
+            elif hasattr(model, "__tablename__"):
+                query.all.return_value = []
+            else:
+                query.__iter__ = Mock(return_value=iter([]))
+            return query
+
+        mock_db_session.query.side_effect = mock_query_handler
+
+        with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+            with patch("mcpgateway.bootstrap_db.Session", return_value=mock_db_session):
+                with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                    await bootstrap_resource_assignments(mock_conn)
+
+                    # Resource should be assigned even with None name
+                    assert mock_server.name is None
+                    assert mock_server.team_id == mock_personal_team.id
+                    assert mock_server.owner_email == mock_admin_user.email
+                    assert mock_server.visibility == "public"
+                    # No warning about renaming should appear
+                    for call in mock_logger.warning.call_args_list:
+                        assert "Name conflict" not in str(call)
+
+    @pytest.mark.asyncio
+    async def test_resource_assignments_per_resource_error_continues(self, mock_settings, mock_db_session, mock_admin_user, mock_personal_team, mock_conn):
+        """Errors for a single resource type should be logged and processing should continue."""
+        mock_admin_user.get_personal_team.return_value = mock_personal_team
+
+        def mock_query_handler(model):
+            query = Mock()
+            query.filter.return_value = query
+
+            if model.__name__ == "EmailUser":
+                query.first.return_value = mock_admin_user
+            elif model.__name__ == "Server":
+                query.all.side_effect = Exception("Server query boom")
+            else:
+                query.all.return_value = []
+
+            return query
+
+        mock_db_session.query.side_effect = mock_query_handler
+
+        with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+            with patch("mcpgateway.bootstrap_db.Session", return_value=mock_db_session):
+                with patch("mcpgateway.db.EmailUser", Mock(__name__="EmailUser")):
+                    with patch("mcpgateway.db.Server", Mock(__name__="Server")):
+                        with patch("mcpgateway.db.Tool", Mock(__name__="Tool")):
+                            with patch("mcpgateway.db.Resource", Mock(__name__="Resource")):
+                                with patch("mcpgateway.db.Prompt", Mock(__name__="Prompt")):
+                                    with patch("mcpgateway.db.Gateway", Mock(__name__="Gateway")):
+                                        with patch("mcpgateway.db.A2AAgent", Mock(__name__="A2AAgent")):
+                                            with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                                                await bootstrap_resource_assignments(mock_conn)
+                                                mock_logger.error.assert_any_call("Failed to assign servers: Server query boom")
+
+    @pytest.mark.asyncio
+    async def test_resource_assignments_no_orphans(self, mock_settings, mock_db_session, mock_admin_user, mock_personal_team, mock_conn):
+        """Test when no orphaned resources exist."""
+        mock_admin_user.get_personal_team.return_value = mock_personal_team
+
+        def mock_query_handler(model):
+            query = Mock()
+            query.filter.return_value = query
+
+            if model.__name__ == "EmailUser":
+                query.first.return_value = mock_admin_user
+            else:
+                query.all.return_value = []
+
+            return query
+
+        mock_db_session.query.side_effect = mock_query_handler
+
+        with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+            with patch("mcpgateway.bootstrap_db.Session", return_value=mock_db_session):
+                with patch("mcpgateway.db.EmailUser", Mock(__name__="EmailUser")):
+                    with patch("mcpgateway.db.Server", Mock(__name__="Server")):
+                        with patch("mcpgateway.db.Tool", Mock(__name__="Tool")):
+                            with patch("mcpgateway.db.Resource", Mock(__name__="Resource")):
+                                with patch("mcpgateway.db.Prompt", Mock(__name__="Prompt")):
+                                    with patch("mcpgateway.db.Gateway", Mock(__name__="Gateway")):
+                                        with patch("mcpgateway.db.A2AAgent", Mock(__name__="A2AAgent")):
+                                            with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                                                await bootstrap_resource_assignments(mock_conn)
+
+                                                mock_logger.info.assert_any_call("No orphaned resources found - all resources have team assignments")
+
+    @pytest.mark.asyncio
+    async def test_resource_assignments_exception(self, mock_settings, mock_db_session, mock_conn):
+        """Test exception handling during resource assignment."""
+        mock_db_session.query.side_effect = Exception("Database error")
+
+        with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+            with patch("mcpgateway.bootstrap_db.Session", return_value=mock_db_session):
+                with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                    await bootstrap_resource_assignments(mock_conn)
+
+                    mock_logger.error.assert_called_with("Failed to bootstrap resource assignments: Database error")
+
+    @pytest.mark.asyncio
+    async def test_resource_assignments_integrity_error_rollback(self, mock_settings, mock_db_session, mock_admin_user, mock_personal_team, mock_conn):
+        """Test IntegrityError handling with rollback and expunge (issue #4993)."""
+        from sqlalchemy.exc import IntegrityError
+
+        mock_admin_user.get_personal_team.return_value = mock_personal_team
+
+        # Mock unassigned tool
+        mock_tool = Mock()
+        mock_tool.team_id = None
+        mock_tool.owner_email = None
+        mock_tool.visibility = None
+        mock_tool.name = "test-tool"
+
+        def mock_query_handler(model):
+            query = MagicMock()
+            query.filter.return_value = query
+
+            if hasattr(model, "__name__") and model.__name__ == "EmailUser":
+                query.first.return_value = mock_admin_user
+            elif hasattr(model, "__name__") and model.__name__ == "Tool":
+                query.all.return_value = [mock_tool]
+            else:
+                query.all.return_value = []
+
+            return query
+
+        # First commit raises IntegrityError (concurrent worker assigned it first)
+        mock_db_session.query.side_effect = mock_query_handler
+        mock_db_session.commit.side_effect = IntegrityError("duplicate key", None, None)
+
+        with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+            with patch("mcpgateway.bootstrap_db.Session", return_value=mock_db_session):
+                with patch("mcpgateway.db.EmailUser", Mock(__name__="EmailUser")):
+                    with patch("mcpgateway.db.Tool", Mock(__name__="Tool")):
+                        with patch("mcpgateway.db.Server", Mock(__name__="Server")):
+                            with patch("mcpgateway.db.Resource", Mock(__name__="Resource")):
+                                with patch("mcpgateway.db.Prompt", Mock(__name__="Prompt")):
+                                    with patch("mcpgateway.db.Gateway", Mock(__name__="Gateway")):
+                                        with patch("mcpgateway.db.A2AAgent", Mock(__name__="A2AAgent")):
+                                            with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                                                await bootstrap_resource_assignments(mock_conn)
+
+                                                # Verify rollback and expunge were called
+                                                mock_db_session.rollback.assert_called()
+                                                mock_db_session.expunge.assert_called_with(mock_tool)
+
+                                                # Verify debug log for skipped resource
+                                                mock_logger.debug.assert_called()
+                                                debug_call_args = mock_logger.debug.call_args[0][0]
+                                                assert "Skipping" in debug_call_args
+                                                assert "already assigned by concurrent worker" in debug_call_args
+
+    @pytest.mark.asyncio
+    async def test_resource_assignments_integrity_error_with_rename(self, mock_settings, mock_db_session, mock_admin_user, mock_personal_team, mock_conn):
+        """Test IntegrityError with renamed resource cleans up batch_assigned correctly."""
+        from sqlalchemy.exc import IntegrityError
+
+        mock_admin_user.get_personal_team.return_value = mock_personal_team
+
+        # Mock two unassigned tools with same name
+        mock_tool1 = Mock()
+        mock_tool1.team_id = None
+        mock_tool1.owner_email = None
+        mock_tool1.visibility = None
+        mock_tool1.name = "duplicate-tool"
+
+        mock_tool2 = Mock()
+        mock_tool2.team_id = None
+        mock_tool2.owner_email = None
+        mock_tool2.visibility = None
+        mock_tool2.name = "other-tool"
+
+        # Mock existing tool with same base name (will trigger rename)
+        mock_existing = Mock()
+        mock_existing.name = "duplicate-tool"
+        mock_existing.team_id = mock_personal_team.id
+        mock_existing.owner_email = mock_admin_user.email
+
+        call_count = {"query": 0}
+
+        def mock_query_handler(model):
+            query = MagicMock()
+            query.filter.return_value = query
+
+            if hasattr(model, "__name__") and model.__name__ == "EmailUser":
+                query.first.return_value = mock_admin_user
+            elif hasattr(model, "__name__") and model.__name__ == "Tool":
+                call_count["query"] += 1
+                if call_count["query"] == 1:
+                    # First query: return unassigned tools
+                    query.all.return_value = [mock_tool1, mock_tool2]
+                else:
+                    # Second query: return existing tool for conflict detection
+                    return query
+            else:
+                query.all.return_value = []
+
+            return query
+
+        commit_count = {"count": 0}
+
+        def mock_commit_side_effect():
+            commit_count["count"] += 1
+            if commit_count["count"] == 1:
+                # First commit (tool1) fails with IntegrityError
+                raise IntegrityError("duplicate key", None, None)
+            # Second commit (tool2) succeeds
+
+        mock_db_session.query.side_effect = mock_query_handler
+        mock_db_session.commit.side_effect = mock_commit_side_effect
+
+        with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+            with patch("mcpgateway.bootstrap_db.Session", return_value=mock_db_session):
+                with patch("mcpgateway.db.EmailUser", Mock(__name__="EmailUser")):
+                    with patch("mcpgateway.db.Tool", Mock(__name__="Tool")):
+                        with patch("mcpgateway.db.Server", Mock(__name__="Server")):
+                            with patch("mcpgateway.db.Resource", Mock(__name__="Resource")):
+                                with patch("mcpgateway.db.Prompt", Mock(__name__="Prompt")):
+                                    with patch("mcpgateway.db.Gateway", Mock(__name__="Gateway")):
+                                        with patch("mcpgateway.db.A2AAgent", Mock(__name__="A2AAgent")):
+                                            with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                                                await bootstrap_resource_assignments(mock_conn)
+
+                                                # Verify rollback and expunge were called for failed resource
+                                                assert mock_db_session.rollback.call_count >= 1
+                                                assert mock_db_session.expunge.call_count >= 1
+
+                                                # Verify second tool was processed (commit called twice)
+                                                assert commit_count["count"] == 2
+
+    @pytest.mark.asyncio
+    async def test_resource_assignments_multiple_integrity_errors(self, mock_settings, mock_db_session, mock_admin_user, mock_personal_team, mock_conn):
+        """Test multiple IntegrityErrors in same batch are handled independently."""
+        from sqlalchemy.exc import IntegrityError
+
+        mock_admin_user.get_personal_team.return_value = mock_personal_team
+
+        # Mock three unassigned tools
+        mock_tool1 = Mock()
+        mock_tool1.team_id = None
+        mock_tool1.owner_email = None
+        mock_tool1.visibility = None
+        mock_tool1.name = "tool-1"
+
+        mock_tool2 = Mock()
+        mock_tool2.team_id = None
+        mock_tool2.owner_email = None
+        mock_tool2.visibility = None
+        mock_tool2.name = "tool-2"
+
+        mock_tool3 = Mock()
+        mock_tool3.team_id = None
+        mock_tool3.owner_email = None
+        mock_tool3.visibility = None
+        mock_tool3.name = "tool-3"
+
+        def mock_query_handler(model):
+            query = MagicMock()
+            query.filter.return_value = query
+
+            if hasattr(model, "__name__") and model.__name__ == "EmailUser":
+                query.first.return_value = mock_admin_user
+            elif hasattr(model, "__name__") and model.__name__ == "Tool":
+                query.all.return_value = [mock_tool1, mock_tool2, mock_tool3]
+            else:
+                query.all.return_value = []
+
+            return query
+
+        commit_count = {"count": 0}
+
+        def mock_commit_side_effect():
+            commit_count["count"] += 1
+            if commit_count["count"] in [1, 3]:
+                # First and third commits fail (tool-1 and tool-3)
+                raise IntegrityError("duplicate key", None, None)
+            # Second commit succeeds (tool-2)
+
+        mock_db_session.query.side_effect = mock_query_handler
+        mock_db_session.commit.side_effect = mock_commit_side_effect
+
+        with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+            with patch("mcpgateway.bootstrap_db.Session", return_value=mock_db_session):
+                with patch("mcpgateway.db.EmailUser", Mock(__name__="EmailUser")):
+                    with patch("mcpgateway.db.Tool", Mock(__name__="Tool")):
+                        with patch("mcpgateway.db.Server", Mock(__name__="Server")):
+                            with patch("mcpgateway.db.Resource", Mock(__name__="Resource")):
+                                with patch("mcpgateway.db.Prompt", Mock(__name__="Prompt")):
+                                    with patch("mcpgateway.db.Gateway", Mock(__name__="Gateway")):
+                                        with patch("mcpgateway.db.A2AAgent", Mock(__name__="A2AAgent")):
+                                            with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                                                await bootstrap_resource_assignments(mock_conn)
+
+                                                # Verify rollback called twice (for tool-1 and tool-3)
+                                                assert mock_db_session.rollback.call_count == 2
+
+                                                # Verify expunge called twice
+                                                assert mock_db_session.expunge.call_count == 2
+
+                                                # Verify all three commits were attempted
+                                                assert commit_count["count"] == 3
+
+                                                # Verify success message logged with 1 assigned resource
+                                                mock_logger.info.assert_any_call("Successfully assigned 1 orphaned resources to admin team")
+
+
+class TestMain:
+    """Test main function."""
+
+    @pytest.mark.asyncio
+    async def test_main_with_normalization(self, mock_settings):
+        """Test main function with team normalization."""
+        mock_settings.mcpgateway_skip_migrations = False
+        mock_engine = Mock()
+        mock_conn = Mock()
+        mock_conn.commit = Mock()
+
+        mock_config = MagicMock()
+        mock_config.attributes = {}
+
+        # Mock engine.connect() as context manager
+        mock_connect_cm = Mock()
+        mock_connect_cm.__enter__ = Mock(return_value=mock_conn)
+        mock_connect_cm.__exit__ = Mock(return_value=None)
+        mock_engine.connect = Mock(return_value=mock_connect_cm)
+
+        with patch("mcpgateway.bootstrap_db.create_engine", return_value=mock_engine):
+            with patch("importlib.resources.files") as mock_files:
+                mock_files.return_value.joinpath.return_value = "alembic.ini"
+
+                with patch("mcpgateway.bootstrap_db.Config", return_value=mock_config):
+                    with patch("mcpgateway.bootstrap_db.command"):
+                        with patch("mcpgateway.bootstrap_db.normalize_team_visibility", return_value=5):
+                            with patch("mcpgateway.bootstrap_db.bootstrap_admin_user", new=AsyncMock()):
+                                with patch("mcpgateway.bootstrap_db.bootstrap_default_roles", new=AsyncMock()):
+                                    with patch("mcpgateway.bootstrap_db.bootstrap_resource_assignments", new=AsyncMock()):
+                                        with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+                                            with patch("mcpgateway.bootstrap_db.advisory_lock"):
+                                                with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                                                    await main()
+
+                                                    mock_logger.info.assert_any_call("Normalized 5 team record(s) to supported visibility values")
+
+    @pytest.mark.asyncio
+    async def test_main_complete_flow(self, mock_settings):
+        """Test complete main flow: skip_migration=True with schema already at head."""
+        # mock_settings.mcpgateway_skip_migrations is a truthy Mock attribute — tests skip_migration=True path
+        mock_engine = Mock()
+        mock_conn = Mock()
+        mock_conn.commit = Mock()
+
+        mock_config = MagicMock()
+        mock_config.attributes = {}
+
+        # Mock engine.connect() as context manager
+        mock_connect_cm = Mock()
+        mock_connect_cm.__enter__ = Mock(return_value=mock_conn)
+        mock_connect_cm.__exit__ = Mock(return_value=None)
+        mock_engine.connect = Mock(return_value=mock_connect_cm)
+
+        with patch("mcpgateway.bootstrap_db.create_engine", return_value=mock_engine):
+            with patch("importlib.resources.files") as mock_files:
+                mock_files.return_value.joinpath.return_value = "alembic.ini"
+
+                with patch("mcpgateway.bootstrap_db.Config", return_value=mock_config):
+                    with patch("mcpgateway.bootstrap_db.command") as mock_command:
+                        with patch("mcpgateway.bootstrap_db.alembic_at_head", return_value=True):
+                            with patch("mcpgateway.bootstrap_db.normalize_team_visibility", return_value=0):
+                                with patch("mcpgateway.bootstrap_db.bootstrap_admin_user", new=AsyncMock()) as mock_admin:
+                                    with patch("mcpgateway.bootstrap_db.bootstrap_default_roles", new=AsyncMock()) as mock_roles:
+                                        with patch("mcpgateway.bootstrap_db.bootstrap_resource_assignments", new=AsyncMock()) as mock_resources:
+                                            with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+                                                with patch("mcpgateway.bootstrap_db.advisory_lock"):
+                                                    with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                                                        await main()
+
+                                                        # Schema at head — upgrade must NOT be called
+                                                        mock_command.upgrade.assert_not_called()
+                                                        # All bootstrap functions were called
+                                                        mock_admin.assert_called_once()
+                                                        mock_roles.assert_called_once()
+                                                        mock_resources.assert_called_once()
+                                                        mock_logger.info.assert_any_call("Database ready")
+
+    @pytest.mark.asyncio
+    async def test_main_skip_migration_fresh_db(self, mock_settings):
+        """skip_migration=True on a DB not at head raises RuntimeError (fail-fast)."""
+        mock_engine = Mock()
+        mock_conn = Mock()
+        mock_conn.commit = Mock()
+
+        mock_connect_cm = Mock()
+        mock_connect_cm.__enter__ = Mock(return_value=mock_conn)
+        mock_connect_cm.__exit__ = Mock(return_value=None)
+        mock_engine.connect = Mock(return_value=mock_connect_cm)
+
+        with patch("mcpgateway.bootstrap_db.create_engine", return_value=mock_engine), \
+             patch("importlib.resources.files") as mock_files, \
+             patch("mcpgateway.bootstrap_db.Config", return_value=MagicMock(attributes={})), \
+             patch("mcpgateway.bootstrap_db.alembic_at_head", return_value=False), \
+             patch("mcpgateway.bootstrap_db.settings", mock_settings):
+            mock_files.return_value.joinpath.return_value = "alembic.ini"
+            with pytest.raises(RuntimeError, match="Schema not at head; migrations required before startup"):
+                await main()
+
+    @pytest.mark.asyncio
+    async def test_main_exception_handling(self, mock_settings):
+        """Test main function exception handling and re-raise."""
+        mock_settings.mcpgateway_skip_migrations = False
+        mock_engine = Mock()
+
+        # Mock engine.connect() to raise an exception
+        mock_engine.connect.side_effect = Exception("Connection failed")
+
+        with patch("mcpgateway.bootstrap_db.create_engine", return_value=mock_engine):
+            with patch("mcpgateway.bootstrap_db.settings", mock_settings):
+                with patch("mcpgateway.bootstrap_db.logger") as mock_logger:
+                    with pytest.raises(Exception, match="Connection failed"):
+                        await main()
+
+                    mock_logger.error.assert_called_with("Database migration failed: Connection failed")
+
+
+class TestAlembicAtHead:
+    """Unit tests for the ``alembic_at_head`` fast-path probe.
+
+    ``alembic_at_head`` decides whether ``main()`` skips the migration
+    advisory lock — the fast-path that prevents multi-replica startup from
+    serializing on a session-scoped lock that a transaction-pooling
+    connection pooler can orphan. Its truth-table needs pinning independently
+    of the integration test so a future refactor cannot silently widen or
+    narrow the fast-path's trigger.
+    """
+
+    def test_returns_true_when_db_heads_match_script_heads(self):
+        """At-head DB → fast-path fires."""
+        # First-Party
+        from mcpgateway.bootstrap_db import alembic_at_head  # pylint: disable=import-outside-toplevel
+
+        mock_conn = Mock()
+        mock_cfg = Mock()
+
+        mock_script_dir = Mock()
+        mock_script_dir.get_heads.return_value = ("abc123",)
+        mock_context = Mock()
+        mock_context.get_current_heads.return_value = ("abc123",)
+
+        with patch("mcpgateway.bootstrap_db.ScriptDirectory") as mock_sd:
+            mock_sd.from_config.return_value = mock_script_dir
+            with patch("mcpgateway.bootstrap_db.MigrationContext") as mock_mc:
+                mock_mc.configure.return_value = mock_context
+                assert alembic_at_head(mock_conn, mock_cfg) is True
+
+        mock_sd.from_config.assert_called_once_with(mock_cfg)
+        mock_mc.configure.assert_called_once_with(mock_conn)
+
+    def test_returns_false_when_db_has_no_alembic_version(self):
+        """Empty DB or missing ``alembic_version`` row → must take slow path."""
+        # First-Party
+        from mcpgateway.bootstrap_db import alembic_at_head  # pylint: disable=import-outside-toplevel
+
+        mock_script_dir = Mock()
+        mock_script_dir.get_heads.return_value = ("abc123",)
+        mock_context = Mock()
+        mock_context.get_current_heads.return_value = ()  # no version rows
+
+        with patch("mcpgateway.bootstrap_db.ScriptDirectory") as mock_sd:
+            mock_sd.from_config.return_value = mock_script_dir
+            with patch("mcpgateway.bootstrap_db.MigrationContext") as mock_mc:
+                mock_mc.configure.return_value = mock_context
+                assert alembic_at_head(Mock(), Mock()) is False
+
+    def test_returns_false_when_db_head_does_not_match_script_head(self):
+        """Out-of-date DB → must take slow path so migrations actually run."""
+        # First-Party
+        from mcpgateway.bootstrap_db import alembic_at_head  # pylint: disable=import-outside-toplevel
+
+        mock_script_dir = Mock()
+        mock_script_dir.get_heads.return_value = ("newhead",)
+        mock_context = Mock()
+        mock_context.get_current_heads.return_value = ("oldhead",)
+
+        with patch("mcpgateway.bootstrap_db.ScriptDirectory") as mock_sd:
+            mock_sd.from_config.return_value = mock_script_dir
+            with patch("mcpgateway.bootstrap_db.MigrationContext") as mock_mc:
+                mock_mc.configure.return_value = mock_context
+                assert alembic_at_head(Mock(), Mock()) is False
+
+    def test_returns_false_when_script_directory_has_no_heads(self):
+        """Defensive: a zero-revision script dir must not fast-path."""
+        # First-Party
+        from mcpgateway.bootstrap_db import alembic_at_head  # pylint: disable=import-outside-toplevel
+
+        mock_script_dir = Mock()
+        mock_script_dir.get_heads.return_value = ()
+
+        with patch("mcpgateway.bootstrap_db.ScriptDirectory") as mock_sd:
+            mock_sd.from_config.return_value = mock_script_dir
+            # MigrationContext must never be consulted in this case.
+            with patch("mcpgateway.bootstrap_db.MigrationContext") as mock_mc:
+                assert alembic_at_head(Mock(), Mock()) is False
+                mock_mc.configure.assert_not_called()
+
+    def test_returns_false_on_probe_exception(self):
+        """Any error while probing falls through to the slow path."""
+        # First-Party
+        from mcpgateway.bootstrap_db import alembic_at_head  # pylint: disable=import-outside-toplevel
+
+        with patch(
+            "mcpgateway.bootstrap_db.ScriptDirectory.from_config",
+            side_effect=RuntimeError("boom"),
+        ):
+            assert alembic_at_head(Mock(), Mock()) is False
+
+
+class TestModuleLevel:
+    """Test module-level code and imports."""
+
+    def test_module_imports(self):
+        """Test that module imports work correctly."""
+        # First-Party
+        from mcpgateway.bootstrap_db import logger, logging_service
+
+        assert logging_service is not None
+        assert logger is not None
+        assert hasattr(logger, "info")
+        assert hasattr(logger, "error")
+
+    def test_main_entrypoint(self):
+        """Test that main can be called as a module."""
+        # Just verify the module structure is correct
+        # First-Party
+        from mcpgateway.bootstrap_db import main
+
+        assert asyncio.iscoroutinefunction(main)
+
+
+class TestMainAdditionalBranches:
+    """Cover bootstrap_db.main() branches not exercised by TestMain."""
+
+    def _make_engine_cm(self):
+        mock_engine = Mock()
+        mock_conn = Mock()
+        mock_conn.commit = Mock()
+        mock_cm = Mock()
+        mock_cm.__enter__ = Mock(return_value=mock_conn)
+        mock_cm.__exit__ = Mock(return_value=None)
+        mock_engine.connect = Mock(return_value=mock_cm)
+        return mock_engine, mock_conn
+
+    @pytest.mark.asyncio
+    async def test_main_skip_migration_at_head_with_normalization(self, mock_settings):
+        """skip_migration=True, at head, normalize_team_visibility > 0 logs info (line 798)."""
+        mock_settings.mcpgateway_skip_migrations = True
+        mock_engine, _ = self._make_engine_cm()
+
+        with (
+            patch("mcpgateway.bootstrap_db.create_engine", return_value=mock_engine),
+            patch("importlib.resources.files") as mock_files,
+            patch("mcpgateway.bootstrap_db.Config", return_value=MagicMock(attributes={})),
+            patch("mcpgateway.bootstrap_db.alembic_at_head", return_value=True),
+            patch("mcpgateway.bootstrap_db.normalize_team_visibility", return_value=3),
+            patch("mcpgateway.bootstrap_db.bootstrap_admin_user", new=AsyncMock()),
+            patch("mcpgateway.bootstrap_db.bootstrap_default_roles", new=AsyncMock()),
+            patch("mcpgateway.bootstrap_db.bootstrap_resource_assignments", new=AsyncMock()),
+            patch("mcpgateway.bootstrap_db.settings", mock_settings),
+            patch("mcpgateway.bootstrap_db.logger") as mock_logger,
+        ):
+            mock_files.return_value.joinpath.return_value = "alembic.ini"
+            await main()
+            mock_logger.info.assert_any_call("Normalized 3 team record(s) to supported visibility values")
+
+    @pytest.mark.asyncio
+    async def test_main_skip_migration_exception_reraises(self, mock_settings):
+        """skip_migration=True, exception inside try: logged and re-raised (lines 803-805)."""
+        mock_settings.mcpgateway_skip_migrations = True
+        mock_engine, _ = self._make_engine_cm()
+
+        with (
+            patch("mcpgateway.bootstrap_db.create_engine", return_value=mock_engine),
+            patch("importlib.resources.files") as mock_files,
+            patch("mcpgateway.bootstrap_db.Config", return_value=MagicMock(attributes={})),
+            patch("mcpgateway.bootstrap_db.alembic_at_head", side_effect=RuntimeError("alembic check failed")),
+            patch("mcpgateway.bootstrap_db.settings", mock_settings),
+            patch("mcpgateway.bootstrap_db.logger") as mock_logger,
+        ):
+            mock_files.return_value.joinpath.return_value = "alembic.ini"
+            with pytest.raises(RuntimeError, match="alembic check failed"):
+                await main()
+            mock_logger.error.assert_called_with("Bootstrap failed: alembic check failed")
+
+    @pytest.mark.asyncio
+    async def test_main_fast_path_already_at_head(self, mock_settings):
+        """skip_migration=False, already at head: skips advisory lock, commits (lines 820, 827)."""
+        mock_settings.mcpgateway_skip_migrations = False
+        mock_engine, mock_conn = self._make_engine_cm()
+
+        with (
+            patch("mcpgateway.bootstrap_db.create_engine", return_value=mock_engine),
+            patch("importlib.resources.files") as mock_files,
+            patch("mcpgateway.bootstrap_db.Config", return_value=MagicMock(attributes={})),
+            patch("mcpgateway.bootstrap_db.alembic_at_head", return_value=True),
+            patch("mcpgateway.bootstrap_db.normalize_team_visibility", return_value=0),
+            patch("mcpgateway.bootstrap_db.bootstrap_admin_user", new=AsyncMock()) as mock_admin,
+            patch("mcpgateway.bootstrap_db.bootstrap_default_roles", new=AsyncMock()) as mock_roles,
+            patch("mcpgateway.bootstrap_db.bootstrap_resource_assignments", new=AsyncMock()) as mock_resources,
+            patch("mcpgateway.bootstrap_db.settings", mock_settings),
+            patch("mcpgateway.bootstrap_db.logger") as mock_logger,
+        ):
+            mock_files.return_value.joinpath.return_value = "alembic.ini"
+            await main()
+            mock_logger.info.assert_any_call("Schema already at Alembic head; skipping migration lock")
+            mock_conn.commit.assert_called()
+            mock_admin.assert_called_once()
+            mock_roles.assert_called_once()
+            mock_resources.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_main_sqlite_multi_replica_warning(self, mock_settings):
+        """SQLite + GATEWAY_REPLICAS > 1 emits warning (line 768)."""
+        mock_settings.mcpgateway_skip_migrations = False
+        mock_settings.database_url = "sqlite:///./mcp.db"
+        mock_engine, _ = self._make_engine_cm()
+
+        with (
+            patch.dict(os.environ, {"GATEWAY_REPLICAS": "2"}),
+            patch("mcpgateway.bootstrap_db.create_engine", return_value=mock_engine),
+            patch("importlib.resources.files") as mock_files,
+            patch("mcpgateway.bootstrap_db.Config", return_value=MagicMock(attributes={})),
+            patch("mcpgateway.bootstrap_db.alembic_at_head", return_value=True),
+            patch("mcpgateway.bootstrap_db.normalize_team_visibility", return_value=0),
+            patch("mcpgateway.bootstrap_db.bootstrap_admin_user", new=AsyncMock()),
+            patch("mcpgateway.bootstrap_db.bootstrap_default_roles", new=AsyncMock()),
+            patch("mcpgateway.bootstrap_db.bootstrap_resource_assignments", new=AsyncMock()),
+            patch("mcpgateway.bootstrap_db.settings", mock_settings),
+            patch("mcpgateway.bootstrap_db.logger") as mock_logger,
+        ):
+            mock_files.return_value.joinpath.return_value = "alembic.ini"
+            await main()
+            warning_calls = [str(c) for c in mock_logger.warning.call_args_list]
+            assert any("GATEWAY_REPLICAS" in c for c in warning_calls)

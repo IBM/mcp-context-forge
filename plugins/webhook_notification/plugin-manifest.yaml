@@ -1,0 +1,27 @@
+description: "Send HTTP webhook notifications on events, violations, and state changes"
+author: "Manav Gupta"
+version: "1.0.0"
+available_hooks:
+  - "prompt_pre_fetch"
+  - "prompt_post_fetch"
+  - "tool_pre_invoke"
+  - "tool_post_invoke"
+  - "resource_pre_fetch"
+  - "resource_post_fetch"
+default_configs:
+  webhooks: []
+  payload_templates: {}
+  default_template: |
+    {
+      "event": "{{event}}",
+      "plugin": "{{plugin_name}}",
+      "timestamp": "{{timestamp}}",
+      "request_id": "{{request_id}}",
+      "user": "{{user}}",
+      "tenant_id": "{{tenant_id}}",
+      "server_id": "{{server_id}}",
+      "violation": {{violation}},
+      "metadata": {{metadata}}
+    }
+  include_payload_data: false
+  max_payload_size: 1000

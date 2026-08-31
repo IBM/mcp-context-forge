@@ -1,0 +1,370 @@
+# Plugin Lifecycle
+
+The plugin framework includes CLI tools to help you create, test, and deploy your plugins.
+
+## Development Flow
+
+The plugin development workflow  follows a straightforward workflow that gets you from idea to running plugin quickly.
+
+```mermaid
+graph LR
+
+    A["template"]
+    B(["$> bootstrap"])
+    C(["$> build"])
+    D(["$> serve"])
+
+    subgraph dev
+        A -.-> B
+    end
+
+    subgraph deploy
+        C --> D
+    end
+
+    B --> C
+
+    subgraph CF["ContextForge"]
+        E["gateway"]
+        D o--"MCP<br>&nbsp;&nbsp;<small>tools/call <i>hook</i></small>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;"--o E
+    end
+
+    style A stroke-dasharray: 3 3;
+```
+
+The process breaks down into these main steps:
+
+- **Bootstrap**: Start with a plugin template and run the bootstrap command to set up your project structure
+- **Build**: Compile and package your plugin code
+- **Serve**: Launch a local development server to test your plugin
+- **Connect**: Your served plugin automatically integrates with ContextForge's gateway via MCP (Model Context Protocol), using tool calls over standardized hooks for seamless communication
+
+This streamlined approach lets developers focus on building functionality rather than wrestling with configuration, while ensuring plugins work smoothly within the broader ContextForge ecosystem.
+
+### Bootstrap
+
+Creating a new plugin for ContextForge only takes a few minutes!
+
+Using the `mcpplugins` tool (installed with ContextForge),
+
+```bash
+mcpplugins bootstrap --destination your/plugin/dir
+```
+
+The interactive prompt you guide you to enter plugin metadata, and will boostrap a complete plugin project for you including everything you need to kick the tires writing your new plugin.
+
+For a full list of options, check:
+
+```bash
+mcpplugins bootstrap --help
+```
+
+!!! tip
+        When prompted for the choosing the plugin type, select `external` to create standalone plugins (with their own lock files and dependency trees).
+        Select `native` if you want to create a plugin that embeds and gets loaded directly into the gateway environment.
+
+
+The examples under the `plugins` directory in the gateway repository serve as a guide of how to develop and test `native` plugins.
+
+The following instructions apply to `external` plugins. First, change directory to work with your newly bootstrapped plugin:
+
+```bash
+cd your/plugin/dir
+cp .env.template .env
+```
+
+### Configuration
+
+There are two main configuration files for your project.
+
+```bash
+./resources
+    /plugins/config.yaml # configuration for your plugin and the plugin loader
+    /runtime/config.yaml # configuration for the plugin server runtime
+```
+
+Inspect those two files and get familiar with them. There are many options you can customize, depending on your use case.
+
+### Dependencies
+
+Plugins are Python packages with dependencies managed by `uv`. Just like the gateway, you can add, lock, lint, and ensure that best practices are followed when creating your plugins. To install dependencies with dev packages (required for linting and testing), run:
+
+```bash
+make install-dev
+```
+
+Alternatively, you can also install it in editable mode:
+
+```bash
+make install-editable
+```
+
+### Test
+
+To run all unit tests for your plugins:
+
+```bash
+make test
+```
+
+### Build
+
+To build a container image (runtime) containing a standardized plugin server, run:
+
+```bash
+make build
+```
+
+### Serve
+
+To start the plugin server:
+
+```bash
+make start
+```
+
+By default, this will start a Streamable HTTP MCP server on `http://localhost:8000/mcp`.
+
+You can run `mcp inspector` to check your new server (note, it requires `npm`):
+
+```bash
+npx @modelcontextprotocol/inspector
+```
+
+### Using gRPC Transport
+
+For higher performance, you can use gRPC transport instead of MCP/HTTP. See the [gRPC Transport Guide](./grpc-transport.md) for details on performance comparisons.
+
+#### Local Development with gRPC
+
+```bash
+# Install with gRPC support
+make install-grpc
+
+# Set transport to gRPC in .env
+echo "PLUGINS_TRANSPORT=grpc" >> .env
+
+# Start the server (defaults to port 50051)
+./run-server.sh
+```
+
+#### Container Deployment with gRPC
+
+To deploy your plugin container with gRPC transport:
+
+```bash
+# 1. Build the container with gRPC support
+make build-grpc
+
+# 2. Configure .env for gRPC
+cat >> .env << 'EOF'
+PLUGINS_TRANSPORT=grpc
+PLUGINS_GRPC_SERVER_HOST=0.0.0.0
+PLUGINS_GRPC_SERVER_PORT=50051
+EOF
+
+# 3. Start the container with gRPC port mapping
+make start-grpc
+```
+
+Alternatively, you can manually specify the port:
+
+```bash
+make CONTAINER_PORT=50051 CONTAINER_INTERNAL_PORT=50051 start
+```
+
+#### Enabling mTLS for gRPC
+
+To secure gRPC communication with mutual TLS:
+
+```bash
+# 1. Generate certificates (from the gateway directory)
+make certs-mcp-ca                            # Generate CA
+make certs-mcp-plugin PLUGIN_NAME=MyPlugin   # Generate plugin server cert
+
+# 2. Copy certs to your plugin directory
+mkdir -p certs/grpc
+cp path/to/ca.pem certs/grpc/
+cp path/to/server.pem certs/grpc/
+cp path/to/server-key.pem certs/grpc/
+
+# 3. Configure .env for mTLS
+cat >> .env << 'EOF'
+PLUGINS_TRANSPORT=grpc
+PLUGINS_GRPC_SERVER_HOST=0.0.0.0
+PLUGINS_GRPC_SERVER_PORT=50051
+PLUGINS_GRPC_SERVER_SSL_ENABLED=true
+PLUGINS_GRPC_SERVER_SSL_CERTFILE=certs/grpc/server.pem
+PLUGINS_GRPC_SERVER_SSL_KEYFILE=certs/grpc/server-key.pem
+PLUGINS_GRPC_SERVER_SSL_CA_CERTS=certs/grpc/ca.pem
+PLUGINS_GRPC_SERVER_SSL_CLIENT_AUTH=require
+EOF
+
+# 4. Build and start with mTLS
+make build-grpc
+make start-grpc-tls   # Mounts certs/ into the container
+```
+
+The `start-grpc-tls` target automatically mounts the `certs/` directory into the container at `/opt/app-root/src/certs`.
+
+For detailed TLS/mTLS configuration options, see the [gRPC Transport Guide](./grpc-transport.md#tlsmtls-configuration).
+
+#### Container Deployment with Unix Socket Transport
+
+For local high-performance deployments using Unix domain sockets:
+
+```bash
+# 1. Build the container with gRPC support (required for protobuf)
+make build-grpc
+
+# 2. Configure .env for Unix socket
+cat >> .env << 'EOF'
+PLUGINS_TRANSPORT=unix
+PLUGINS_UNIX_SOCKET_PATH=/var/run/mcp-plugin.sock
+EOF
+
+# 3. Start with socket volume mount
+docker run --name my-plugin \
+    --env-file=.env \
+    -v /var/run:/var/run \
+    my-plugin:latest
+```
+
+## Plugin Templates
+
+Plugin templates are bundled inside the [CPEX (ContextForge Plugin Extensions)](https://github.com/contextforge-org/contextforge-plugins-framework) package and are used automatically by the bootstrap command. Use the CLI to scaffold a new plugin project:
+
+```bash
+# Creates a new plugin from built-in CPEX templates, asks interactive prompts
+mcpplugins bootstrap --destination your/plugin/dir
+
+# Pass --type to select template directly
+mcpplugins bootstrap --destination your/plugin/dir --type native   # or external
+```
+
+The built-in templates provide:
+
+- **Native template**: Plugin class skeleton extending `Plugin`, manifest metadata, example config entry, and README.
+- **External template**: Full project with plugin implementation skeleton, runtime config, `pyproject.toml`, `Containerfile`, `Makefile`, `run-server.sh`, and example tests.
+
+After bootstrapping, follow the steps above to install deps, run tests, build, and serve.
+
+## Gateway Integration
+
+Let's assume you have boostrapped the following plugin (`resources/plugins/config.yaml`) with default runtime (`resources/runtime/config.yaml`) options:
+
+```yaml
+plugins:
+
+  - name: "MyFilter"
+    kind: "myfilter.plugin.MyFilter"
+    description: "A filter plugin"
+    version: "0.1.0"
+    author: "Frederico Araujo"
+    hooks: ["prompt_pre_fetch", "prompt_post_fetch", "tool_pre_invoke", "tool_post_invoke"]
+    tags: ["plugin"]
+    mode: "sequential"  # sequential | transform | disabled
+    priority: 150
+    conditions:
+      # Apply to specific tools/servers
+      - server_ids: []  # Apply to all servers
+        tenant_ids: []  # Apply to all tenants
+    config:
+      # Plugin config dict passed to the plugin constructor
+
+# Plugin directories to scan
+plugin_dirs:
+
+  - "myfilter"
+
+# Global plugin settings
+plugin_settings:
+  parallel_execution_within_band: true
+  plugin_timeout: 30
+  fail_on_plugin_error: false
+  enable_plugin_api: true
+  plugin_health_check_interval: 60
+```
+
+For A2A tools, `TOOL_PRE_INVOKE` receives `payload.headers` with the non-sensitive request headers that pass the A2A agent's explicit `passthrough_headers` allowlist. When the field is unset or empty, no request headers are forwarded. Sensitive headers, such as `Authorization`, are not exposed to tool pre-invoke plugin payloads.
+
+To integrate this plugin with the gateway, all you need to do is copying the following configuration under the `plugins` list in the gateway's `plugins/config.yaml` file:
+
+```yaml
+plugins:
+  # External Filter Plugin
+  - name: "MyFilter"
+    kind: "external"
+    priority: 10 # adjust the priority
+    mcp:
+      proto: STREAMABLEHTTP
+      url: http://localhost:8000/mcp
+
+To use Streamable HTTP over a Unix domain socket (no TCP port):
+
+```yaml
+plugins:
+
+  - name: "MyFilter"
+    kind: "external"
+    priority: 10
+    mcp:
+      proto: STREAMABLEHTTP
+      url: http://localhost/mcp
+      uds: /var/run/mcp-plugin.sock
+```
+```
+
+To use STDIO instead of HTTP:
+
+```yaml
+plugins:
+
+  - name: "MyFilter"
+    kind: "external"
+    priority: 10
+    mcp:
+      proto: STDIO
+      cmd: ["python", "path/to/your/plugin_server.py"]
+      env:
+        PLUGINS_CONFIG_PATH: "/opt/plugins/config.yaml"
+      cwd: "/opt/plugins"
+      # Relative script paths are resolved from cwd when provided
+      # or: script: path/to/your/plugin_server.py  # .py/.sh or executable
+```
+
+Then, start the gateway:
+
+```bash
+make serve
+```
+
+!!! note
+        `PLUGINS_ENABLED=true` should be set in your gateway `.env` file.
+
+## Multi-Worker Execution
+
+Under multiple workers (`GUNICORN_WORKERS`), every worker calls each plugin's
+`initialize()`, so **hooks run on every worker by design**. A non-hook plugin
+that does a **side effect** at startup or in a background task would otherwise
+run it once per worker. Gate it with `is_primary_worker()` to run on one worker
+per host:
+
+```python
+from mcpgateway.utils.primary_worker import is_primary_worker
+
+class InventorySync(Plugin):
+    async def initialize(self) -> None:
+        if not is_primary_worker():
+            return
+        ...  # runs on one worker only
+```
+
+One worker is elected via a file lock; the OS frees it on process exit, so a
+follower takes over. Re-check it each cycle for recurring work. The lock is per
+host and its path is overridable with `PRIMARY_WORKER_LOCK_PATH`.
+
+By default election is per host (`PRIMARY_WORKER_ELECTION_BACKEND=filelock`). For
+a single primary across **multiple instances/replicas**, set the backend to
+`redis`, which elects one primary across all instances sharing the same Redis
+(best-effort under network partitions, so keep side effects idempotent).

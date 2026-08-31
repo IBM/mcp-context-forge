@@ -1,0 +1,2467 @@
+# -*- coding: utf-8 -*-
+"""Location: ./mcpgateway/common/validators.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+
+SecurityValidator for ContextForge
+This module defines the `SecurityValidator` class, which provides centralized, configurable
+validation logic for user-generated content in MCP-based applications.
+
+The validator enforces strict security and structural rules across common input types such as:
+- Display text (e.g., names, descriptions)
+- Identifiers and tool names
+- URIs and URLs
+- JSON object depth
+- Templates (including limited HTML/Jinja2)
+- MIME types
+
+Key Features:
+- Pattern-based validation using settings-defined regex for HTML/script safety
+- Configurable max lengths and depth limits
+- Whitelist-based URL scheme and MIME type validation
+- Safe escaping of user-visible text fields
+- Reusable static/class methods for field-level and form-level validation
+
+Intended to be used with Pydantic or similar schema-driven systems to validate and sanitize
+user input in a consistent, centralized way.
+
+Dependencies:
+- Standard Library: asyncio, re, html, logging, urllib.parse
+- First-party: `settings` from `mcpgateway.config`
+
+Example usage:
+    SecurityValidator.validate_name("my_tool", field_name="Tool Name")
+    SecurityValidator.validate_url("https://example.com")
+    SecurityValidator.validate_json_depth({...})
+
+Examples:
+    >>> from mcpgateway.common.validators import SecurityValidator
+    >>> SecurityValidator.sanitize_display_text('<b>Test</b>', 'test')
+    'Test'
+    >>> SecurityValidator.validate_name('valid_name-123', 'test')
+    'valid_name-123'
+    >>> SecurityValidator.validate_identifier('my.test.id_123', 'test')
+    'my.test.id_123'
+    >>> SecurityValidator.validate_json_depth({'a': {'b': 1}})
+    >>> SecurityValidator.validate_json_depth({'a': 1})
+"""
+
+# Standard
+import asyncio
+from functools import lru_cache
+from html.parser import HTMLParser
+import ipaddress
+import json
+import logging
+from pathlib import Path
+import re
+import shlex
+import socket
+from typing import Any, Dict, Iterable, List, Optional, Pattern
+from urllib.parse import unquote, urlparse
+import uuid
+
+# First-Party
+from mcpgateway.config import settings
+
+logger = logging.getLogger(__name__)
+
+# ============================================================================
+# Precompiled regex patterns (compiled once at module load for performance)
+# ============================================================================
+# Note: Settings-based patterns (DANGEROUS_HTML_PATTERN, DANGEROUS_JS_PATTERN,
+# NAME_PATTERN, IDENTIFIER_PATTERN, etc.) are NOT precompiled here because tests
+# override the class attributes at runtime. Only truly static patterns are
+# precompiled at module level.
+
+# Static inline patterns used multiple times
+_HTML_SPECIAL_CHARS_RE: Pattern[str] = re.compile(r'[<>"\']')  # / removed per SEP-986
+_DANGEROUS_TEMPLATE_TAGS_RE: Pattern[str] = re.compile(r"<(script|iframe|object|embed|link|meta|base|form)\b", re.IGNORECASE)
+_EVENT_HANDLER_RE: Pattern[str] = re.compile(r"on\w+\s*=", re.IGNORECASE)
+_MIME_TYPE_RE: Pattern[str] = re.compile(r'^[a-zA-Z0-9][a-zA-Z0-9!#$&\-\^_+\.]*\/[a-zA-Z0-9][a-zA-Z0-9!#$&\-\^_+\.]*(?:\s*;\s*[a-zA-Z0-9!#$&\-\^_+\.]+=(?:[a-zA-Z0-9!#$&\-\^_+\.]+|"[^"\r\n]*"))*$')
+_URI_SCHEME_RE: Pattern[str] = re.compile(r"^[a-zA-Z][a-zA-Z0-9+\-.]*://")
+_SHELL_DANGEROUS_CHARS_RE: Pattern[str] = re.compile(r"[;&|`$(){}\[\]<>]")
+_ANSI_ESCAPE_RE: Pattern[str] = re.compile(r"\x1B\[[0-9;]*[A-Za-z]")
+_CONTROL_CHARS_RE: Pattern[str] = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]")
+
+# Polyglot attack patterns (precompiled with IGNORECASE)
+_POLYGLOT_PATTERNS: List[Pattern[str]] = [
+    re.compile(r"['\"];.*alert\s*\(", re.IGNORECASE),
+    re.compile(r"-->\s*<[^>]+>", re.IGNORECASE),
+    re.compile(r"['\"].*//['\"]", re.IGNORECASE),
+    re.compile(r"<<[A-Z]+>", re.IGNORECASE),
+    re.compile(r"String\.fromCharCode", re.IGNORECASE),
+    re.compile(r"javascript:.*\(", re.IGNORECASE),
+]
+
+# SSTI prevention - safe scanning without regex backtracking.
+_SSTI_DANGEROUS_SUBSTRINGS: tuple[str, ...] = (
+    "__",
+    ".",
+    "config",
+    "self",
+    "request",
+    "application",
+    "globals",
+    "builtins",
+    "import",
+    "getattr",  # Python getattr function
+    "|attr",  # Jinja2 attr filter (checked after whitespace normalization)
+    "|selectattr",  # Jinja2 selectattr filter (takes attribute name as arg)
+    "|sort",  # Jinja2 sort filter with attribute parameter
+    "|map",  # Jinja2 map filter with attribute parameter
+    "attribute=",  # Jinja2 filters: map(attribute=...), selectattr, sort(attribute=...)
+    "\\x",  # Hex escape sequences (e.g., \x5f for underscore)
+    "\\u",  # Unicode escape sequences (e.g., \u005f for underscore)
+    "\\n{",  # Named unicode escapes (e.g., \N{LOW LINE})
+    "\\0",
+    "\\1",
+    "\\2",
+    "\\3",
+    "\\4",
+    "\\5",
+    "\\6",
+    "\\7",  # Octal escapes
+)
+# Operators that enable code execution or dynamic construction
+_SSTI_DANGEROUS_OPERATORS: tuple[str, ...] = (
+    "*",
+    "/",
+    "+",
+    "-",
+    "~",  # Jinja2 string concatenation (can build dunder names dynamically)
+    "[",  # Bracket notation for dynamic attribute access
+    "%",  # Python string formatting (e.g., '%c' % 95 produces '_')
+)
+_SSTI_SIMPLE_TEMPLATE_PREFIXES: tuple[str, ...] = ("${", "#{", "%{")
+
+
+def _iter_template_expressions(value: str, start: str, end: str) -> Iterable[str]:
+    """Yield template expression contents for a start/end delimiter, skipping delimiters inside quotes.
+
+    Args:
+        value (str): Template text to scan.
+        start (str): Opening delimiter.
+        end (str): Closing delimiter.
+
+    Yields:
+        str: The template expression contents between delimiters.
+
+    Raises:
+        ValueError: If an unterminated template expression is found (fail-closed behavior).
+    """
+    start_len = len(start)
+    end_len = len(end)
+    i = 0
+    value_len = len(value)
+    while i <= value_len - start_len:
+        if value.startswith(start, i):
+            j = i + start_len
+            in_quote: Optional[str] = None
+            escaped = False
+            while j <= value_len - end_len:
+                ch = value[j]
+                if escaped:
+                    escaped = False
+                elif ch == "\\":
+                    escaped = True
+                elif in_quote:
+                    if ch == in_quote:
+                        in_quote = None
+                else:
+                    if ch in ("'", '"'):
+                        in_quote = ch
+                    elif value.startswith(end, j):
+                        yield value[i + start_len : j]
+                        i = j + end_len
+                        break
+                j += 1
+            else:
+                raise ValueError("Template contains potentially dangerous expressions")
+        else:
+            i += 1
+
+
+def _has_simple_template_expression(value: str, start: str) -> bool:
+    """Return True if start is followed by any closing brace.
+
+    Uses O(n) linear scan by finding last } first, then checking prefixes.
+
+    Args:
+        value (str): Template text to scan.
+        start (str): Opening delimiter.
+
+    Returns:
+        bool: True if a closing brace exists after the delimiter.
+    """
+    # Find the last closing brace - if none exists, no expression can be complete
+    last_close = value.rfind("}")
+    if last_close == -1:
+        return False
+    # Check if any prefix exists before the last closing brace - O(n) single find
+    idx = value.find(start)
+    return idx != -1 and idx < last_close
+
+
+# Dangerous URL protocol patterns (precompiled with IGNORECASE)
+_DANGEROUS_URL_PATTERNS: List[Pattern[str]] = [
+    re.compile(r"javascript:", re.IGNORECASE),
+    re.compile(r"data:", re.IGNORECASE),
+    re.compile(r"vbscript:", re.IGNORECASE),
+    re.compile(r"about:", re.IGNORECASE),
+    re.compile(r"chrome:", re.IGNORECASE),
+    re.compile(r"file:", re.IGNORECASE),
+    re.compile(r"ftp:", re.IGNORECASE),
+    re.compile(r"mailto:", re.IGNORECASE),
+]
+
+# Escape-sequence patterns rejected by percent-encoding hardening in URL validation.
+# IIS-style `%uXXXX` is not decoded by urllib; JS `\uXXXX`/`\xXX` bypass regex blocklists
+# when a URL is later embedded in a JavaScript context.
+_PERCENT_U_ESCAPE_RE: Pattern[str] = re.compile(r"%u[0-9a-fA-F]{4}", re.IGNORECASE)
+_JS_ESCAPE_RE: Pattern[str] = re.compile(r"\\[ux][0-9a-fA-F]+")
+
+# SQL injection patterns (precompiled with IGNORECASE)
+_SQL_PATTERNS: List[Pattern[str]] = [
+    re.compile(r"[';\"\\]", re.IGNORECASE),
+    re.compile(r"--", re.IGNORECASE),
+    re.compile(r"/\*.*?\*/", re.IGNORECASE),
+    re.compile(r"\b(union|select|insert|update|delete|drop|exec|execute)\b", re.IGNORECASE),
+]
+
+
+def _unquote_if_needed(text: str) -> str:
+    """Decode percent-encoding only when the input actually contains `%`.
+
+    Most incoming URLs and identifiers have no percent-encoding; skipping
+    unquote() in that case avoids a full-string scan + allocation on the hot path.
+
+    NOTE: Mirrored in mcpgateway/plugins/framework/validators.py pending
+    extraction into a shared stdlib-only module (tracked by issue #4434).
+    """
+    return unquote(text) if "%" in text else text
+
+
+def _decode_strict(value: str, field_name: str) -> str:
+    """Decode once; reject payloads that remain percent-encoded after one pass.
+
+    Blocks the double-encoding bypass class: `%253Cscript%253E` decodes to
+    `%3Cscript%3E` under a single unquote(), which slips past regex blocklists
+    targeting literal `<script>`. A downstream consumer that decodes a second
+    time would then see `<script>`.
+    """
+    decoded = _unquote_if_needed(value)
+    if decoded is not value and unquote(decoded) != decoded:
+        raise ValueError(f"{field_name} contains double-encoded characters which are not allowed")
+    return decoded
+
+
+@lru_cache(maxsize=256)
+def _parse_ip_network_cached(network_str: str) -> "ipaddress._BaseNetwork":
+    """Parse a CIDR string and reuse the ip_network object across calls.
+
+    NOTE: `lru_cache` does not cache exceptions, so invalid CIDRs re-raise
+    (and re-parse) on every call. The caller is expected to catch ValueError
+    and emit a single warning per-call rather than per-iteration.
+    """
+    return ipaddress.ip_network(network_str, strict=False)
+
+
+_CGNAT_IPV4_NETWORK = ipaddress.IPv4Network("100.64.0.0/10")
+
+
+def _is_cgnat_ip(ip_addr: ipaddress._BaseAddress) -> bool:
+    """Return whether an IP belongs to RFC 6598 shared address space."""
+    return isinstance(ip_addr, ipaddress.IPv4Address) and ip_addr in _CGNAT_IPV4_NETWORK
+
+
+def _classify_restricted_outbound_ip(ip_addr: ipaddress._BaseAddress) -> Optional[str]:
+    """Classify non-public outbound IP ranges shared by URL validators."""
+    if _is_cgnat_ip(ip_addr):
+        return "cgnat"
+    if ip_addr.is_loopback:
+        return "loopback"
+    if ip_addr.is_link_local:
+        return "link-local"
+    if ip_addr.is_unspecified:
+        return "unspecified"
+    if ip_addr.is_multicast:
+        return "multicast"
+    if ip_addr.is_reserved:
+        return "reserved"
+    if ip_addr.is_private:
+        return "private"
+    return None
+
+
+# ============================================================================
+# HTML Tag Stripper with Character Preservation
+# ============================================================================
+class _TagStripper(HTMLParser):
+    """Strip HTML tags while preserving all text content and special characters.
+
+    This parser removes HTML tags but keeps the text content exactly as-is,
+    including special characters like &, ", and '. HTML entities are decoded
+    to their literal characters (e.g., & becomes &).
+    """
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.reset()
+        self.strict = False
+        self.fed: List[str] = []
+
+    def handle_data(self, data: str) -> None:
+        """Handle text data between tags.
+
+        With convert_charrefs=True, HTML entities are automatically decoded
+        (e.g., &amp; → &) and plain text with & passes through unchanged.
+
+        Args:
+            data: Text content between HTML tags
+        """
+        self.fed.append(data)
+
+    def get_data(self) -> str:
+        """Return the accumulated text content.
+
+        Returns:
+            str: Concatenated text content from all handled data
+        """
+        return "".join(self.fed)
+
+
+def _strip_html_tags(value: str) -> str:
+    """Remove HTML tags while preserving special characters exactly as-is.
+
+    Args:
+        value: String that may contain HTML tags
+
+    Returns:
+        String with HTML tags removed but text content preserved
+
+    Examples:
+        >>> _strip_html_tags('<b>Hello</b> World')
+        'Hello World'
+        >>> _strip_html_tags('Test & Check')
+        'Test & Check'
+        >>> _strip_html_tags('Quote: "Hello"')
+        'Quote: "Hello"'
+        >>> _strip_html_tags('&&&')
+        '&&&'
+    """
+    s = _TagStripper()
+    s.feed(value)
+    s.close()
+    return s.get_data()
+
+
+class SecurityValidator:
+    """Configurable validation with MCP-compliant limits"""
+
+    # Configurable patterns (from settings)
+    DANGEROUS_HTML_PATTERN = settings.validation_dangerous_html_pattern  # Default: '<(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)\b|</*(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|area|map|canvas|applet|frame|frameset|html|head|body|style)>'
+    DANGEROUS_JS_PATTERN = settings.validation_dangerous_js_pattern  # Default: javascript:|vbscript:|on\w+\s*=|data:.*script
+    ALLOWED_URL_SCHEMES = settings.validation_allowed_url_schemes  # Default: ["http://", "https://", "ws://", "wss://"]
+
+    # Character type patterns
+    NAME_PATTERN = settings.validation_name_pattern  # Default: ^[a-zA-Z0-9_.\- ]+$ (literal space, not \s)
+    IDENTIFIER_PATTERN = settings.validation_identifier_pattern  # Default: ^[a-zA-Z0-9_\-\.]+$
+    VALIDATION_SAFE_URI_PATTERN = settings.validation_safe_uri_pattern  # Default: ^[a-zA-Z0-9_\-.:/?=&%]+$
+    VALIDATION_UNSAFE_URI_PATTERN = settings.validation_unsafe_uri_pattern  # Default: [<>"\'\\]
+    TOOL_NAME_PATTERN = settings.validation_tool_name_pattern  # Default: ^[a-zA-Z0-9_][a-zA-Z0-9._/-]*$ (SEP-986)
+
+    # MCP-compliant limits (configurable)
+    MAX_NAME_LENGTH = settings.validation_max_name_length  # Default: 255
+    MAX_TOOL_NAME_LENGTH = settings.validation_max_tool_name_length  # Default: 128 (MCP spec)
+    MAX_DESCRIPTION_LENGTH = settings.validation_max_description_length  # Default: 8192 (8KB)
+    MAX_TEMPLATE_LENGTH = settings.validation_max_template_length  # Default: 65536
+    MAX_CONTENT_LENGTH = settings.validation_max_content_length  # Default: 1048576 (1MB)
+    MAX_JSON_DEPTH = settings.validation_max_json_depth  # Default: 30
+    MAX_URL_LENGTH = settings.validation_max_url_length  # Default: 2048
+
+    @classmethod
+    def sanitize_display_text(cls, value: str, field_name: str) -> str:
+        """Ensure text is safe for display in UI by escaping special characters
+
+        Args:
+            value (str): Value to validate
+            field_name (str): Name of field being validated
+
+        Returns:
+            str: Value if acceptable
+
+        Raises:
+            ValueError: When input is not acceptable
+
+        Examples:
+            Basic HTML tag stripping:
+
+            >>> SecurityValidator.sanitize_display_text('Hello World', 'test')
+            'Hello World'
+            >>> SecurityValidator.sanitize_display_text('Hello <b>World</b>', 'test')
+            'Hello World'
+
+            Empty/None handling:
+
+            >>> SecurityValidator.sanitize_display_text('', 'test')
+            ''
+            >>> SecurityValidator.sanitize_display_text(None, 'test') #doctest: +SKIP
+
+            Dangerous script patterns:
+
+            >>> SecurityValidator.sanitize_display_text('alert();', 'test')
+            'alert();'
+            >>> SecurityValidator.sanitize_display_text('javascript:alert(1)', 'test')
+            Traceback (most recent call last):
+                ...
+            ValueError: test contains script patterns that may cause display issues
+
+            Polyglot attack patterns:
+
+            >>> SecurityValidator.sanitize_display_text('"; alert()', 'test')
+            Traceback (most recent call last):
+                ...
+            ValueError: test contains potentially dangerous character sequences
+            >>> SecurityValidator.sanitize_display_text('-->test', 'test')
+            '-->test'
+            >>> SecurityValidator.sanitize_display_text('--><script>', 'test')
+            Traceback (most recent call last):
+                ...
+            ValueError: test contains HTML tags that may cause display issues
+            >>> SecurityValidator.sanitize_display_text('String.fromCharCode(65)', 'test')
+            Traceback (most recent call last):
+                ...
+            ValueError: test contains potentially dangerous character sequences
+
+            Special characters (preserved as-is, no HTML entity conversion):
+
+            >>> SecurityValidator.sanitize_display_text('User & Admin', 'test')
+            'User & Admin'
+            >>> SecurityValidator.sanitize_display_text('Quote: "Hello"', 'test')
+            'Quote: "Hello"'
+            >>> SecurityValidator.sanitize_display_text("Quote: 'Hello'", 'test')
+            "Quote: 'Hello'"
+        """
+        if not value:
+            return value
+
+        # Decode + double-encoding rejection so `%253Cscript%253E`-style payloads
+        # cannot bypass these pattern blocklists after a downstream second decode.
+        decoded_value = _decode_strict(value, field_name)
+
+        if re.search(cls.DANGEROUS_HTML_PATTERN, decoded_value, re.IGNORECASE):
+            raise ValueError(f"{field_name} contains HTML tags that may cause display issues")
+
+        if re.search(cls.DANGEROUS_JS_PATTERN, decoded_value, re.IGNORECASE):
+            raise ValueError(f"{field_name} contains script patterns that may cause display issues")
+
+        for pattern in _POLYGLOT_PATTERNS:
+            if pattern.search(decoded_value):
+                raise ValueError(f"{field_name} contains potentially dangerous character sequences")
+
+        cleaned = _strip_html_tags(value)
+        return cleaned
+
+    @classmethod
+    def validate_name(cls, value: str, field_name: str = "Name") -> str:
+        """Validate names with strict character requirements
+
+        Args:
+            value (str): Value to validate
+            field_name (str): Name of field being validated
+
+        Returns:
+            str: Value if acceptable
+
+        Raises:
+            ValueError: When input is not acceptable
+
+        Examples:
+            >>> SecurityValidator.validate_name('valid_name')
+            'valid_name'
+            >>> SecurityValidator.validate_name('valid_name-123')
+            'valid_name-123'
+            >>> SecurityValidator.validate_name('valid_name_test')
+            'valid_name_test'
+            >>> SecurityValidator.validate_name('Test Name')
+            'Test Name'
+            >>> try:
+            ...     SecurityValidator.validate_name('Invalid Name!')
+            ... except ValueError as e:
+            ...     'can only contain' in str(e)
+            True
+            >>> try:
+            ...     SecurityValidator.validate_name('')
+            ... except ValueError as e:
+            ...     'cannot be empty' in str(e)
+            True
+            >>> try:
+            ...     SecurityValidator.validate_name('name<script>')
+            ... except ValueError as e:
+            ...     'HTML special characters' in str(e) or 'can only contain' in str(e)
+            True
+
+            Test length limit (line 181):
+
+            >>> long_name = 'a' * 256
+            >>> try:
+            ...     SecurityValidator.validate_name(long_name)
+            ... except ValueError as e:
+            ...     'exceeds maximum length' in str(e)
+            True
+
+            Test HTML special characters (line 178):
+
+            >>> try:
+            ...     SecurityValidator.validate_name('name"test')
+            ... except ValueError as e:
+            ...     'can only contain' in str(e)
+            True
+            >>> try:
+            ...     SecurityValidator.validate_name("name'test")
+            ... except ValueError as e:
+            ...     'can only contain' in str(e)
+            True
+            >>> try:
+            ...     SecurityValidator.validate_name('name/test')
+            ... except ValueError as e:
+            ...     'can only contain' in str(e)
+            True
+        """
+        if not value:
+            raise ValueError(f"{field_name} cannot be empty")
+
+        # Check against allowed pattern
+        if not re.match(cls.NAME_PATTERN, value):
+            raise ValueError(f"{field_name} can only contain letters, numbers, underscore, and hyphen. Special characters like <, >, quotes are not allowed.")
+
+        # Additional check for HTML-like patterns (uses precompiled regex)
+        if _HTML_SPECIAL_CHARS_RE.search(value):
+            raise ValueError(f"{field_name} cannot contain HTML special characters")
+
+        if len(value) > cls.MAX_NAME_LENGTH:
+            raise ValueError(f"{field_name} exceeds maximum length of {cls.MAX_NAME_LENGTH}")
+
+        return value
+
+    @classmethod
+    def validate_identifier(cls, value: str, field_name: str) -> str:
+        """Validate identifiers (IDs) - MCP compliant
+
+        Args:
+            value (str): Value to validate
+            field_name (str): Name of field being validated
+
+        Returns:
+            str: Value if acceptable
+
+        Raises:
+            ValueError: When input is not acceptable
+
+        Examples:
+            >>> SecurityValidator.validate_identifier('valid_id', 'ID')
+            'valid_id'
+            >>> SecurityValidator.validate_identifier('valid.id.123', 'ID')
+            'valid.id.123'
+            >>> SecurityValidator.validate_identifier('valid-id_test', 'ID')
+            'valid-id_test'
+            >>> SecurityValidator.validate_identifier('test123', 'ID')
+            'test123'
+            >>> try:
+            ...     SecurityValidator.validate_identifier('Invalid/ID', 'ID')
+            ... except ValueError as e:
+            ...     'can only contain' in str(e)
+            True
+            >>> try:
+            ...     SecurityValidator.validate_identifier('', 'ID')
+            ... except ValueError as e:
+            ...     'cannot be empty' in str(e)
+            True
+            >>> try:
+            ...     SecurityValidator.validate_identifier('id<script>', 'ID')
+            ... except ValueError as e:
+            ...     'HTML special characters' in str(e) or 'can only contain' in str(e)
+            True
+
+            Test HTML special characters (line 233):
+
+            >>> try:
+            ...     SecurityValidator.validate_identifier('id"test', 'ID')
+            ... except ValueError as e:
+            ...     'can only contain' in str(e)
+            True
+            >>> try:
+            ...     SecurityValidator.validate_identifier("id'test", 'ID')
+            ... except ValueError as e:
+            ...     'can only contain' in str(e)
+            True
+            >>> try:
+            ...     SecurityValidator.validate_identifier('id/test', 'ID')
+            ... except ValueError as e:
+            ...     'can only contain' in str(e)
+            True
+
+            Test length limit (line 236):
+
+            >>> long_id = 'a' * 256
+            >>> try:
+            ...     SecurityValidator.validate_identifier(long_id, 'ID')
+            ... except ValueError as e:
+            ...     'exceeds maximum length' in str(e)
+            True
+        """
+        if not value:
+            raise ValueError(f"{field_name} cannot be empty")
+
+        # MCP spec: identifiers should be alphanumeric + limited special chars
+        if not re.match(cls.IDENTIFIER_PATTERN, value):
+            raise ValueError(f"{field_name} can only contain letters, numbers, underscore, hyphen, and dots")
+
+        # Block HTML-like patterns (uses precompiled regex)
+        if _HTML_SPECIAL_CHARS_RE.search(value):
+            raise ValueError(f"{field_name} cannot contain HTML special characters")
+
+        if len(value) > cls.MAX_NAME_LENGTH:
+            raise ValueError(f"{field_name} exceeds maximum length of {cls.MAX_NAME_LENGTH}")
+
+        return value
+
+    @classmethod
+    def validate_uri(cls, value: str, field_name: str = "URI") -> str:
+        """Validate URIs - MCP compliant
+
+        Args:
+            value (str): Value to validate
+            field_name (str): Name of field being validated
+
+        Returns:
+            str: Value if acceptable
+
+        Raises:
+            ValueError: When input is not acceptable
+
+        Examples:
+            >>> SecurityValidator.validate_uri('/valid/uri', 'URI')
+            '/valid/uri'
+            >>> SecurityValidator.validate_uri('..', 'URI')
+            Traceback (most recent call last):
+                ...
+            ValueError: URI cannot contain directory traversal sequences ('..')
+        """
+        if not value:
+            raise ValueError(f"{field_name} cannot be empty")
+
+        # Decode + double-encoding rejection: `%252E%252E` would otherwise decode
+        # to `%2E%2E` and pass the `..` check, then decode again downstream to `..`.
+        decoded_value = _decode_strict(value, field_name)
+
+        if any(ch < "\x20" for ch in decoded_value) or "\x7f" in decoded_value:
+            raise ValueError(f"{field_name} contains control characters which are not allowed")
+
+        if re.search(cls.VALIDATION_UNSAFE_URI_PATTERN, decoded_value):
+            raise ValueError(f"{field_name} cannot contain HTML special characters")
+
+        if ".." in decoded_value:
+            raise ValueError(f"{field_name} cannot contain directory traversal sequences ('..')")
+
+        if not re.search(cls.VALIDATION_SAFE_URI_PATTERN, value):
+            raise ValueError(f"{field_name} contains invalid characters")
+
+        if len(value) > cls.MAX_NAME_LENGTH:
+            raise ValueError(f"{field_name} exceeds maximum length of {cls.MAX_NAME_LENGTH}")
+
+        return value
+
+    @classmethod
+    def validate_tool_name(cls, value: str) -> str:
+        """Special validation for MCP tool names
+
+        Args:
+            value (str): Value to validate
+
+        Returns:
+            str: Value if acceptable
+
+        Raises:
+            ValueError: When input is not acceptable
+
+        Examples:
+            >>> SecurityValidator.validate_tool_name('tool_1')
+            'tool_1'
+            >>> SecurityValidator.validate_tool_name('_5gpt_query')
+            '_5gpt_query'
+            >>> SecurityValidator.validate_tool_name('1tool')
+            '1tool'
+
+            Test invalid characters (rejected by pattern):
+
+            >>> try:
+            ...     SecurityValidator.validate_tool_name('tool<script>')
+            ... except ValueError as e:
+            ...     'must start with a letter, number, or underscore' in str(e)
+            True
+            >>> try:
+            ...     SecurityValidator.validate_tool_name('tool"test')
+            ... except ValueError as e:
+            ...     'must start with a letter, number, or underscore' in str(e)
+            True
+            >>> try:
+            ...     SecurityValidator.validate_tool_name("tool'test")
+            ... except ValueError as e:
+            ...     'must start with a letter, number, or underscore' in str(e)
+            True
+            >>> # Slashes are allowed per SEP-986
+            >>> SecurityValidator.validate_tool_name('tool/test')
+            'tool/test'
+            >>> SecurityValidator.validate_tool_name('namespace/subtool')
+            'namespace/subtool'
+
+            Test length limit (line 313):
+
+            >>> long_tool_name = 'a' * 256
+            >>> try:
+            ...     SecurityValidator.validate_tool_name(long_tool_name)
+            ... except ValueError as e:
+            ...     'exceeds MCP spec limit' in str(e)
+            True
+        """
+        if not value:
+            raise ValueError("Tool name cannot be empty")
+
+        # MCP tools have specific naming requirements
+        if not re.match(cls.TOOL_NAME_PATTERN, value):
+            raise ValueError("Tool name must start with a letter, number, or underscore and contain only letters, numbers, periods, underscores, hyphens, and slashes")
+
+        # Ensure no HTML-like content (uses precompiled regex)
+        if _HTML_SPECIAL_CHARS_RE.search(value):
+            raise ValueError("Tool name cannot contain HTML special characters")
+
+        if len(value) > cls.MAX_TOOL_NAME_LENGTH:
+            raise ValueError(f"Tool name exceeds MCP spec limit of {cls.MAX_TOOL_NAME_LENGTH} characters (got {len(value)})")
+
+        return value
+
+    @classmethod
+    def validate_uuid(cls, value: str, field_name: str = "UUID") -> str:
+        """Validate UUID format
+        Args:
+            value (str): Value to validate
+            field_name (str): Name of field being validated
+
+        Returns:
+            str: Value if validated as safe
+
+        Raises:
+            ValueError: When value is not a valid UUID
+
+        Examples:
+            >>> SecurityValidator.validate_uuid('550e8400-e29b-41d4-a716-446655440000')
+            '550e8400e29b41d4a716446655440000'
+            >>> SecurityValidator.validate_uuid('invalid-uuid')
+            Traceback (most recent call last):
+                ...
+            ValueError: UUID must be a valid UUID format
+
+            Test empty UUID (line 340):
+
+            >>> SecurityValidator.validate_uuid('')
+            ''
+
+            Test normalized UUID format (lines 344-346):
+
+            >>> SecurityValidator.validate_uuid('550E8400-E29B-41D4-A716-446655440000')
+            '550e8400e29b41d4a716446655440000'
+            >>> SecurityValidator.validate_uuid('550e8400e29b41d4a716446655440000')
+            '550e8400e29b41d4a716446655440000'
+
+            Test various invalid UUID formats (line 347-348):
+
+            >>> try:
+            ...     SecurityValidator.validate_uuid('not-a-uuid')
+            ... except ValueError as e:
+            ...     'valid UUID format' in str(e)
+            True
+            >>> try:
+            ...     SecurityValidator.validate_uuid('550e8400-e29b-41d4-a716')
+            ... except ValueError as e:
+            ...     'valid UUID format' in str(e)
+            True
+            >>> try:
+            ...     SecurityValidator.validate_uuid('550e8400-e29b-41d4-a716-446655440000-extra')
+            ... except ValueError as e:
+            ...     'valid UUID format' in str(e)
+            True
+            >>> try:
+            ...     SecurityValidator.validate_uuid('gggggggg-gggg-gggg-gggg-gggggggggggg')
+            ... except ValueError as e:
+            ...     'valid UUID format' in str(e)
+            True
+        """
+        if not value:
+            return value
+
+        try:
+            # Validate UUID format by attempting to parse it
+            uuid_obj = uuid.UUID(value)
+            # Return the normalized string representation
+            return str(uuid_obj).replace("-", "")
+        except ValueError:
+            logger.error(f"Invalid UUID format for {field_name}: {value}")
+            raise ValueError(f"{field_name} must be a valid UUID format")
+
+    @classmethod
+    def validate_template(cls, value: str) -> str:
+        """Special validation for templates - allow safe Jinja2 but prevent SSTI
+
+        Args:
+            value (str): Value to validate
+
+        Returns:
+            str: Value if acceptable
+
+        Raises:
+            ValueError: When input is not acceptable
+
+        Examples:
+            Empty template handling:
+
+            >>> SecurityValidator.validate_template('')
+            ''
+            >>> SecurityValidator.validate_template(None) #doctest: +SKIP
+
+            Safe Jinja2 templates:
+
+            >>> SecurityValidator.validate_template('Hello {{ name }}')
+            'Hello {{ name }}'
+            >>> SecurityValidator.validate_template('{% if condition %}text{% endif %}')
+            '{% if condition %}text{% endif %}'
+            >>> SecurityValidator.validate_template('{{ username }}')
+            '{{ username }}'
+
+            Dangerous HTML tags blocked:
+
+            >>> SecurityValidator.validate_template('Hello <script>alert(1)</script>')
+            Traceback (most recent call last):
+                ...
+            ValueError: Template contains HTML tags that may interfere with proper display
+            >>> SecurityValidator.validate_template('Test <iframe src="evil.com"></iframe>')
+            Traceback (most recent call last):
+                ...
+            ValueError: Template contains HTML tags that may interfere with proper display
+            >>> SecurityValidator.validate_template('<form action="/evil"></form>')
+            Traceback (most recent call last):
+                ...
+            ValueError: Template contains HTML tags that may interfere with proper display
+
+            Event handlers blocked:
+
+            >>> SecurityValidator.validate_template('<div onclick="evil()">Test</div>')
+            Traceback (most recent call last):
+                ...
+            ValueError: Template contains event handlers that may cause display issues
+            >>> SecurityValidator.validate_template('onload = "alert(1)"')
+            Traceback (most recent call last):
+                ...
+            ValueError: Template contains event handlers that may cause display issues
+
+            SSTI prevention patterns:
+
+            >>> SecurityValidator.validate_template('{{ __import__ }}')
+            Traceback (most recent call last):
+                ...
+            ValueError: Template contains potentially dangerous expressions
+            >>> SecurityValidator.validate_template('{{ config }}')
+            Traceback (most recent call last):
+                ...
+            ValueError: Template contains potentially dangerous expressions
+            >>> SecurityValidator.validate_template('{% import os %}')
+            Traceback (most recent call last):
+                ...
+            ValueError: Template contains potentially dangerous expressions
+            >>> SecurityValidator.validate_template('{{ 7*7 }}')
+            Traceback (most recent call last):
+                ...
+            ValueError: Template contains potentially dangerous expressions
+            >>> SecurityValidator.validate_template('{{ 10/2 }}')
+            Traceback (most recent call last):
+                ...
+            ValueError: Template contains potentially dangerous expressions
+            >>> SecurityValidator.validate_template('{{ 5+5 }}')
+            Traceback (most recent call last):
+                ...
+            ValueError: Template contains potentially dangerous expressions
+            >>> SecurityValidator.validate_template('{{ 10-5 }}')
+            Traceback (most recent call last):
+                ...
+            ValueError: Template contains potentially dangerous expressions
+
+            Other template injection patterns:
+
+            >>> SecurityValidator.validate_template('${evil}')
+            Traceback (most recent call last):
+                ...
+            ValueError: Template contains potentially dangerous expressions
+            >>> SecurityValidator.validate_template('#{evil}')
+            Traceback (most recent call last):
+                ...
+            ValueError: Template contains potentially dangerous expressions
+            >>> SecurityValidator.validate_template('%{evil}')
+            Traceback (most recent call last):
+                ...
+            ValueError: Template contains potentially dangerous expressions
+
+            Length limit note: size validation is performed at the service layer
+            using configurable limits (ContentSecurityService). This validator
+            only checks encoding, dangerous patterns, and SSTI prevention.
+        """
+        if not value:
+            return value
+
+        # Block dangerous tags but allow Jinja2 syntax {{ }} and {% %} (uses precompiled regex)
+        if _DANGEROUS_TEMPLATE_TAGS_RE.search(value):
+            raise ValueError("Template contains HTML tags that may interfere with proper display")
+
+        # Check for event handlers that could cause issues (uses precompiled regex)
+        if _EVENT_HANDLER_RE.search(value):
+            raise ValueError("Template contains event handlers that may cause display issues")
+
+        # SSTI prevention - scan expressions without regex backtracking.
+        for expr in _iter_template_expressions(value, "{{", "}}"):
+            expr_lower = expr.lower()
+            # Normalize whitespace around | and = to catch bypass variants
+            expr_normalized = re.sub(r"\s*\|\s*", "|", expr_lower)
+            expr_normalized = re.sub(r"\s*=\s*", "=", expr_normalized)
+            if any(token in expr_normalized for token in _SSTI_DANGEROUS_SUBSTRINGS):
+                raise ValueError("Template contains potentially dangerous expressions")
+            if any(op in expr for op in _SSTI_DANGEROUS_OPERATORS):
+                raise ValueError("Template contains potentially dangerous expressions")
+
+        for expr in _iter_template_expressions(value, "{%", "%}"):
+            expr_lower = expr.lower()
+            # Normalize whitespace around | and = to catch bypass variants
+            expr_normalized = re.sub(r"\s*\|\s*", "|", expr_lower)
+            expr_normalized = re.sub(r"\s*=\s*", "=", expr_normalized)
+            if any(token in expr_normalized for token in _SSTI_DANGEROUS_SUBSTRINGS):
+                raise ValueError("Template contains potentially dangerous expressions")
+            if any(op in expr for op in _SSTI_DANGEROUS_OPERATORS):
+                raise ValueError("Template contains potentially dangerous expressions")
+
+        if any(_has_simple_template_expression(value, prefix) for prefix in _SSTI_SIMPLE_TEMPLATE_PREFIXES):
+            raise ValueError("Template contains potentially dangerous expressions")
+
+        return value
+
+    @classmethod
+    def sanitize_log_message(cls, message: Optional[Any], max_length: int = 10000) -> str:
+        """Sanitize log message to prevent log injection attacks.
+
+        Removes newlines, carriage returns, ANSI escapes, and control characters
+        to prevent log forging and injection attacks (CWE-117).
+
+        Args:
+            message: Log message to sanitize
+            max_length: Maximum length (default: 10000)
+
+        Returns:
+            Sanitized message safe for logging
+
+        Examples:
+            Basic newline removal:
+
+            >>> SecurityValidator.sanitize_log_message("User\\nFake: admin")
+            'User Fake: admin'
+            >>> SecurityValidator.sanitize_log_message("Test\\rInjection")
+            'Test Injection'
+
+            ANSI escape removal:
+
+            >>> SecurityValidator.sanitize_log_message("User: \\x1B[31madmin\\x1B[0m")
+            'User: admin'
+
+            Control character removal:
+
+            >>> result = SecurityValidator.sanitize_log_message("User\\x00\\x01\\x02")
+            >>> "\\x00" not in result and "\\x01" not in result
+            True
+
+            Length truncation:
+
+            >>> long_msg = "A" * 15000
+            >>> result = SecurityValidator.sanitize_log_message(long_msg, max_length=10000)
+            >>> len(result) <= 10020
+            True
+            >>> result.endswith("[truncated]")
+            True
+
+            Empty input handling:
+
+            >>> SecurityValidator.sanitize_log_message("")
+            ''
+            >>> SecurityValidator.sanitize_log_message(None)
+            ''
+        """
+        if not message:
+            return ""
+
+        text = str(message)
+
+        # Remove newlines and carriage returns (primary log injection vectors)
+        text = text.replace("\n", " ").replace("\r", " ")
+
+        # Remove ANSI escape sequences
+        text = _ANSI_ESCAPE_RE.sub("", text)
+
+        # Remove control characters
+        text = _CONTROL_CHARS_RE.sub("", text)
+
+        # Truncate to prevent log flooding
+        if len(text) > max_length:
+            text = text[:max_length] + "...[truncated]"
+
+        return text
+
+    @classmethod
+    def validate_url(cls, value: str, field_name: str = "URL", *, skip_ssrf: bool = False) -> str:
+        """Validate URLs for allowed schemes and safe display.
+
+        Validation is performed on a percent-decoded copy of the URL to block
+        encoded injection payloads (CRLF, XSS, credential-separator smuggling,
+        protocol tunnelling). Double-encoded payloads, IIS `%uXXXX` escapes,
+        JS `\\uXXXX`/`\\xXX` escapes, and invalid UTF-8 overlong sequences are
+        also rejected. The **original**, un-decoded URL is returned on success
+        so callers can pass it through to downstream HTTP clients unchanged.
+
+        Args:
+            value (str): Value to validate
+            field_name (str): Name of field being validated
+            skip_ssrf (bool): Skip DNS-based SSRF checks. Intended only for
+                callers that immediately resolve, validate, and pin the same
+                outbound connection target.
+
+        Returns:
+            str: The ORIGINAL (percent-encoded) URL if acceptable. Downstream
+                callers that perform their own `unquote()` on the returned
+                value MUST re-validate the decoded form.
+
+        Raises:
+            ValueError: When input is not acceptable
+
+        Examples:
+            Valid URLs (including legitimate percent-encoding in path/query).
+            Skipped when SSRF DNS resolution is unavailable; covered by unit tests.
+
+            >>> SecurityValidator.validate_url('https://example.com')  # doctest: +SKIP
+            'https://example.com'
+            >>> SecurityValidator.validate_url('http://example.com')  # doctest: +SKIP
+            'http://example.com'
+            >>> SecurityValidator.validate_url('ws://example.com')  # doctest: +SKIP
+            'ws://example.com'
+            >>> SecurityValidator.validate_url('wss://example.com')  # doctest: +SKIP
+            'wss://example.com'
+            >>> SecurityValidator.validate_url('https://example.com:8080/path')  # doctest: +SKIP
+            'https://example.com:8080/path'
+            >>> SecurityValidator.validate_url('https://example.com/path?query=value')  # doctest: +SKIP
+            'https://example.com/path?query=value'
+            >>> SecurityValidator.validate_url('https://example.com/hello%20world')  # doctest: +SKIP
+            'https://example.com/hello%20world'
+
+            Percent-encoded attack vectors (blocked):
+
+            >>> try:
+            ...     SecurityValidator.validate_url('https://example.com/%0d%0aX:1')
+            ... except ValueError as e:
+            ...     'control characters' in str(e)
+            True
+            >>> try:  # doctest: +SKIP
+            ...     SecurityValidator.validate_url('https://example.com/%3Cscript%3E')
+            ... except ValueError as e:
+            ...     'HTML tags' in str(e)
+            True
+            >>> try:
+            ...     SecurityValidator.validate_url('https://example.com/%253Cscript%253E')
+            ... except ValueError as e:
+            ...     'double-encoded' in str(e)
+            True
+            >>> try:
+            ...     SecurityValidator.validate_url('https://example.com/%u003c')
+            ... except ValueError as e:
+            ...     '%u-style' in str(e)
+            True
+
+            Empty URL handling:
+
+            >>> SecurityValidator.validate_url('')
+            Traceback (most recent call last):
+                ...
+            ValueError: URL cannot be empty
+
+            Length validation:
+
+            >>> long_url = 'https://example.com/' + 'a' * 2100
+            >>> SecurityValidator.validate_url(long_url)
+            Traceback (most recent call last):
+                ...
+            ValueError: URL exceeds maximum length of 2048
+
+            Scheme validation:
+
+            >>> SecurityValidator.validate_url('ftp://example.com')
+            Traceback (most recent call last):
+                ...
+            ValueError: URL must start with one of: http://, https://, ws://, wss://
+            >>> SecurityValidator.validate_url('file:///etc/passwd')
+            Traceback (most recent call last):
+                ...
+            ValueError: URL must start with one of: http://, https://, ws://, wss://
+            >>> SecurityValidator.validate_url('javascript:alert(1)')
+            Traceback (most recent call last):
+                ...
+            ValueError: URL must start with one of: http://, https://, ws://, wss://
+            >>> SecurityValidator.validate_url('data:text/plain,hello')
+            Traceback (most recent call last):
+                ...
+            ValueError: URL must start with one of: http://, https://, ws://, wss://
+            >>> SecurityValidator.validate_url('vbscript:alert(1)')
+            Traceback (most recent call last):
+                ...
+            ValueError: URL must start with one of: http://, https://, ws://, wss://
+            >>> SecurityValidator.validate_url('about:blank')
+            Traceback (most recent call last):
+                ...
+            ValueError: URL must start with one of: http://, https://, ws://, wss://
+            >>> SecurityValidator.validate_url('chrome://settings')
+            Traceback (most recent call last):
+                ...
+            ValueError: URL must start with one of: http://, https://, ws://, wss://
+            >>> SecurityValidator.validate_url('mailto:test@example.com')
+            Traceback (most recent call last):
+                ...
+            ValueError: URL must start with one of: http://, https://, ws://, wss://
+
+            IPv6 URL blocking:
+
+            >>> SecurityValidator.validate_url('https://[::1]:8080/')
+            Traceback (most recent call last):
+                ...
+            ValueError: URL contains IPv6 address which is not supported
+            >>> SecurityValidator.validate_url('https://[2001:db8::1]/')
+            Traceback (most recent call last):
+                ...
+            ValueError: URL contains IPv6 address which is not supported
+
+            Protocol-relative URL blocking:
+
+            >>> SecurityValidator.validate_url('//example.com/path')
+            Traceback (most recent call last):
+                ...
+            ValueError: URL must start with one of: http://, https://, ws://, wss://
+
+            Control character injection:
+
+            >>> SecurityValidator.validate_url('https://example.com\\rHost: evil.com')
+            Traceback (most recent call last):
+                ...
+            ValueError: URL contains control characters which are not allowed
+            >>> SecurityValidator.validate_url('https://example.com\\nHost: evil.com')
+            Traceback (most recent call last):
+                ...
+            ValueError: URL contains control characters which are not allowed
+
+            Space validation:
+
+            >>> SecurityValidator.validate_url('https://exam ple.com')
+            Traceback (most recent call last):
+                ...
+            ValueError: URL contains spaces which are not allowed in URLs
+            >>> SecurityValidator.validate_url('https://example.com/path?query=hello world')  # doctest: +SKIP
+            'https://example.com/path?query=hello world'
+
+            Malformed URLs:
+
+            >>> SecurityValidator.validate_url('https://')
+            Traceback (most recent call last):
+                ...
+            ValueError: URL is not a valid URL
+            >>> SecurityValidator.validate_url('not-a-url')
+            Traceback (most recent call last):
+                ...
+            ValueError: URL must start with one of: http://, https://, ws://, wss://
+
+            Restricted IP addresses:
+
+            >>> SecurityValidator.validate_url('https://0.0.0.0/')
+            Traceback (most recent call last):
+                ...
+            ValueError: URL contains invalid IP address (0.0.0.0)
+            >>> SecurityValidator.validate_url('https://169.254.169.254/')  # doctest: +ELLIPSIS
+            Traceback (most recent call last):
+                ...
+            ValueError: URL contains IP address blocked by SSRF protection ...
+
+            Invalid port numbers (SSRF runs before port check; skipped offline):
+
+            >>> SecurityValidator.validate_url('https://example.com:0/')  # doctest: +SKIP
+            Traceback (most recent call last):
+                ...
+            ValueError: URL contains invalid port number
+            >>> try:  # doctest: +SKIP
+            ...     SecurityValidator.validate_url('https://example.com:65536/')
+            ... except ValueError as e:
+            ...     'Port out of range' in str(e) or 'invalid port' in str(e)
+            True
+
+            Credentials in URL (SSRF runs before credentials check; skipped offline):
+
+            >>> SecurityValidator.validate_url('https://user@example.com/')  # doctest: +SKIP
+            Traceback (most recent call last):
+                ...
+            ValueError: URL contains credentials which are not allowed
+
+            XSS patterns in URLs:
+
+            >>> SecurityValidator.validate_url('https://example.com/<script>')  # doctest: +SKIP
+            Traceback (most recent call last):
+                ...
+            ValueError: URL contains HTML tags that may cause security issues
+            >>> SecurityValidator.validate_url('https://example.com?param=javascript:alert(1)')
+            Traceback (most recent call last):
+                ...
+            ValueError: URL contains unsupported or potentially dangerous protocol
+        """
+        if not value:
+            raise ValueError(f"{field_name} cannot be empty")
+
+        # Length check
+        if len(value) > cls.MAX_URL_LENGTH:
+            raise ValueError(f"{field_name} exceeds maximum length of {cls.MAX_URL_LENGTH}")
+
+        # Single-pass decode + double-encoding rejection (centralised in _decode_strict).
+        decoded_value = _decode_strict(value, field_name)
+
+        # Reject IIS-style `%uXXXX` escapes that urllib does not decode.
+        # Check both original (`%uXXXX`) and decoded (`%25u003c` → `%u003c`) forms
+        # to close the double-encoded `%25uXXXX` bypass.
+        if _PERCENT_U_ESCAPE_RE.search(value) or _PERCENT_U_ESCAPE_RE.search(decoded_value):
+            raise ValueError(f"{field_name} contains non-standard %u-style escapes which are not allowed")
+
+        # Reject JS-style `\uXXXX`/`\xXX` escapes that bypass blocklists in JS contexts.
+        if _JS_ESCAPE_RE.search(decoded_value):
+            raise ValueError(f"{field_name} contains JavaScript-style escape sequences which are not allowed")
+
+        # `unquote()` emits U+FFFD for invalid UTF-8 / overlong sequences (e.g. `%c0%bc`);
+        # legitimate percent-encoded UTF-8 never decodes to U+FFFD.
+        if "\ufffd" in decoded_value:
+            raise ValueError(f"{field_name} contains invalid UTF-8 byte sequences which are not allowed")
+
+        # Check allowed schemes (lowercase value once, not per scheme).
+        allowed_schemes = cls.ALLOWED_URL_SCHEMES
+        value_lower = value.lower()
+        if not any(value_lower.startswith(scheme.lower()) for scheme in allowed_schemes):
+            raise ValueError(f"{field_name} must start with one of: {', '.join(allowed_schemes)}")
+
+        # Block dangerous URL patterns anywhere in the decoded URL (defense-in-depth:
+        # downstream consumers may extract query/fragment and reuse as URLs elsewhere).
+        # Conservative by design; legitimate `mailto:`/`ftp:` in query strings should
+        # be sent as separate structured fields rather than embedded in a URL.
+        for pattern in _DANGEROUS_URL_PATTERNS:
+            if pattern.search(decoded_value):
+                raise ValueError(f"{field_name} contains unsupported or potentially dangerous protocol")
+
+        # Block IPv6 URLs (square brackets). Scanning `decoded_value` alone
+        # suffices: unquote() never removes non-`%` chars, so any `[` in
+        # `value` also appears in `decoded_value`; `%5B` adds a `[` only there.
+        if "[" in decoded_value or "]" in decoded_value:
+            raise ValueError(f"{field_name} contains IPv6 address which is not supported")
+
+        # Block protocol-relative URLs
+        if value.startswith("//"):
+            raise ValueError(f"{field_name} contains protocol-relative URL which is not supported")
+
+        # Reject C0 control characters (literal or decoded from %00–%1f) and DEL.
+        # Subsumes the prior CRLF-only check: NUL (%00), TAB (%09), VT (%0b),
+        # FF (%0c), and DEL (%7f) are equally illegitimate in URLs.
+        if any(ch != " " and ch < "\x20" for ch in decoded_value) or "\x7f" in decoded_value:
+            raise ValueError(f"{field_name} contains control characters which are not allowed")
+
+        # Literal space check uses `value` (NOT decoded): `%20` is the standard
+        # encoding for space in paths and must remain valid. Authority-level
+        # encoded-space bypass is handled separately after urlparse below.
+        if " " in value.split("?", maxsplit=1)[0]:
+            raise ValueError(f"{field_name} contains spaces which are not allowed in URLs")
+
+        # Basic URL structure validation
+        try:
+            result = urlparse(value)
+            if not all([result.scheme, result.netloc]):
+                raise ValueError(f"{field_name} is not a valid URL")
+
+            # Additional validation: ensure netloc doesn't contain brackets (double-check)
+            if "[" in result.netloc or "]" in result.netloc:
+                raise ValueError(f"{field_name} contains IPv6 address which is not supported")
+
+            # urlparse does not decode netloc; decode to catch `exam%20ple.com`-style
+            # authority injection without breaking encoded-space in path/query.
+            decoded_netloc = _unquote_if_needed(result.netloc)
+            if any(ch.isspace() for ch in decoded_netloc):
+                raise ValueError(f"{field_name} contains spaces which are not allowed in URLs")
+
+            # SSRF hostname check: urlparse does NOT percent-decode `hostname`,
+            # so `%31%32%37%2E%30%2E%30%2E%31` (= 127.0.0.1) bypasses without this.
+            hostname = result.hostname
+            if hostname:
+                decoded_hostname = _unquote_if_needed(hostname)
+                if decoded_hostname == "0.0.0.0":  # nosec B104 - blocked for security
+                    raise ValueError(f"{field_name} contains invalid IP address (0.0.0.0)")
+
+                if settings.ssrf_protection_enabled and not skip_ssrf:
+                    cls._validate_ssrf(decoded_hostname, field_name)
+
+            # Validate port number
+            if result.port is not None:
+                if result.port < 1 or result.port > 65535:
+                    raise ValueError(f"{field_name} contains invalid port number")
+
+            # Credentials: `result.username`/`password` catches literal `user:pass@`;
+            # `@` in decoded_netloc catches percent-encoded userinfo (e.g. `user%3Apass@`).
+            if result.username or result.password or "@" in decoded_netloc:
+                raise ValueError(f"{field_name} contains credentials which are not allowed")
+
+            # Check for XSS patterns in the entire URL
+            if re.search(cls.DANGEROUS_HTML_PATTERN, decoded_value, re.IGNORECASE):
+                raise ValueError(f"{field_name} contains HTML tags that may cause security issues")
+
+            if re.search(cls.DANGEROUS_JS_PATTERN, decoded_value, re.IGNORECASE):
+                raise ValueError(f"{field_name} contains script patterns that may cause security issues")
+
+        except ValueError:
+            # Re-raise ValueError as-is
+            raise
+        except Exception:
+            raise ValueError(f"{field_name} is not a valid URL")
+
+        return value
+
+    @staticmethod
+    def _normalize_hostname(hostname: str) -> str:
+        """Normalize hostname for security checks.
+
+        Performs:
+        - Lowercase conversion
+        - Trailing dot removal
+        - IDN to ASCII (Punycode) conversion for non-ASCII domains
+        - RFC 1123 fallback for ASCII hostnames (allows underscores for Docker/K8s)
+        - Handles wildcard patterns (*.example.com)
+        - Skips normalization for IP addresses
+
+        Args:
+            hostname: Raw hostname from URL (may include wildcard prefix)
+
+        Returns:
+            Normalized hostname (with wildcard prefix preserved if present)
+
+        Raises:
+            ValueError: If hostname contains invalid IDN or fails RFC 1123 validation
+
+        Examples:
+            >>> SecurityValidator._normalize_hostname("Example.COM.")
+            'example.com'
+            >>> SecurityValidator._normalize_hostname("münchen.de")
+            'xn--mnchen-3ya.de'
+            >>> SecurityValidator._normalize_hostname("*.münchen.de")
+            '*.xn--mnchen-3ya.de'
+            >>> SecurityValidator._normalize_hostname("fast_time_server")
+            'fast_time_server'
+        """
+        # Third-Party
+        import idna  # pylint: disable=import-outside-toplevel
+
+        # Handle wildcard patterns separately
+        wildcard_prefix = ""
+        if hostname.startswith("*."):
+            wildcard_prefix = "*."
+            hostname = hostname[2:]  # Remove "*." for normalization
+
+        hostname_normalized = hostname.lower().rstrip(".")
+
+        # Skip normalization for IP addresses (IPv4 and IPv6)
+        try:
+            ipaddress.ip_address(hostname_normalized)
+            return wildcard_prefix + hostname_normalized
+        except ValueError:
+            pass  # Not an IP address, proceed with hostname normalization
+
+        # Non-ASCII hostnames MUST pass strict IDNA encoding (homograph protection)
+        if not hostname_normalized.isascii():
+            try:
+                hostname_normalized = idna.encode(hostname_normalized).decode("ascii")
+                return wildcard_prefix + hostname_normalized
+            except idna.IDNAError as e:
+                raise ValueError(f"Invalid IDN hostname: {hostname}") from e
+
+        # For ASCII hostnames, try IDN first (covers ASCII-only IDN domains)
+        try:
+            hostname_normalized = idna.encode(hostname_normalized).decode("ascii")
+            return wildcard_prefix + hostname_normalized
+        except idna.IDNAError:
+            pass  # Not a valid IDN domain, fall through to RFC 1123
+
+        # IDN failed — validate as RFC 1123 hostname (allows underscores for internal names)
+        _rfc1123_label_re = re.compile(r"^[a-z0-9](?:[a-z0-9_-]{0,61}[a-z0-9])?$")
+        labels = hostname_normalized.split(".")
+        if all(_rfc1123_label_re.match(label) for label in labels if label):
+            return wildcard_prefix + hostname_normalized
+
+        raise ValueError(f"Invalid hostname: {hostname}")
+
+    @classmethod
+    def _validate_ssrf_blocked_hostname(cls, hostname: str, field_name: str) -> str:
+        """Normalize a hostname and enforce hostname-only SSRF block rules."""
+        hostname = _unquote_if_needed(hostname)
+        hostname_normalized = cls._normalize_hostname(hostname)
+
+        for blocked_host in settings.ssrf_blocked_hosts:
+            blocked_normalized = cls._normalize_hostname(blocked_host)
+            if hostname_normalized == blocked_normalized:
+                raise ValueError(f"{field_name} contains blocked hostname '{hostname}' (SSRF protection)")
+
+        return hostname_normalized
+
+    @classmethod
+    def _validate_ssrf(cls, hostname: str, field_name: str) -> None:
+        """Validate hostname/IP against SSRF protection rules.
+
+        This method implements configurable SSRF (Server-Side Request Forgery) protection
+        to prevent the gateway from being used to access internal resources or cloud
+        metadata services.
+
+        Args:
+            hostname (str): The hostname or IP address to validate.
+            field_name (str): Name of field being validated (for error messages).
+
+        Raises:
+            ValueError: If the hostname/IP is blocked by SSRF protection rules.
+
+        Configuration (via settings):
+            - ssrf_protection_enabled: Master switch (must be True for this to be called)
+            - ssrf_blocked_networks: CIDR ranges always blocked (e.g., cloud metadata)
+            - ssrf_blocked_hosts: Hostnames always blocked
+            - ssrf_allow_localhost: If False, blocks 127.0.0.0/8 and localhost
+            - ssrf_allow_private_networks: If False, blocks RFC 1918 private ranges
+            - ssrf_allowed_networks: Optional CIDR allowlist for private ranges
+
+        Examples:
+            Cloud metadata (always blocked):
+
+            >>> from unittest.mock import patch, MagicMock
+            >>> mock_settings = MagicMock()
+            >>> mock_settings.ssrf_protection_enabled = True
+            >>> mock_settings.ssrf_blocked_networks = ["169.254.169.254/32"]
+            >>> mock_settings.ssrf_blocked_hosts = ["metadata.google.internal"]
+            >>> mock_settings.ssrf_allow_localhost = True
+            >>> mock_settings.ssrf_allow_private_networks = True
+            >>> with patch('mcpgateway.common.validators.settings', mock_settings):
+            ...     try:
+            ...         SecurityValidator._validate_ssrf('169.254.169.254', 'URL')
+            ...     except ValueError as e:
+            ...         'blocked by SSRF protection' in str(e)
+            True
+
+            Localhost (configurable):
+
+            >>> mock_settings.ssrf_allow_localhost = False
+            >>> with patch('mcpgateway.common.validators.settings', mock_settings):
+            ...     try:
+            ...         SecurityValidator._validate_ssrf('127.0.0.1', 'URL')
+            ...     except ValueError as e:
+            ...         'localhost' in str(e).lower()
+            True
+
+            Public IPs (always allowed):
+
+            >>> mock_settings.ssrf_allow_localhost = True
+            >>> mock_settings.ssrf_allow_private_networks = True
+            >>> mock_settings.ssrf_allowed_networks = []
+            >>> with patch('mcpgateway.common.validators.settings', mock_settings):
+            ...     SecurityValidator._validate_ssrf('8.8.8.8', 'URL')  # Should not raise
+        """
+        hostname_normalized = cls._validate_ssrf_blocked_hostname(hostname, field_name)
+
+        # Resolve hostname to IP for network-based checks
+        # Uses getaddrinfo to check ALL resolved addresses (A and AAAA records)
+        ip_addresses: list = []
+        try:
+            # Try to parse as IP address directly (use normalized hostname)
+            ip_addresses = [ipaddress.ip_address(hostname_normalized)]
+        except ValueError:
+            # It's a hostname, resolve ALL addresses (IPv4 and IPv6)
+            try:
+                # getaddrinfo returns all A/AAAA records (use normalized hostname)
+                addr_info = socket.getaddrinfo(hostname_normalized, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+                for _, _, _, _, sockaddr in addr_info:
+                    try:
+                        ip_addresses.append(ipaddress.ip_address(sockaddr[0]))
+                    except ValueError:
+                        continue
+            except (socket.gaierror, socket.herror):
+                # DNS resolution failed
+                if settings.ssrf_dns_fail_closed:
+                    raise ValueError(f"{field_name} DNS resolution failed and SSRF_DNS_FAIL_CLOSED is enabled")
+                # Fail open: allow through (hostname blocking above catches known dangerous hostnames)
+                return
+
+        if not ip_addresses:
+            if settings.ssrf_dns_fail_closed:
+                raise ValueError(f"{field_name} DNS resolution returned no addresses and SSRF_DNS_FAIL_CLOSED is enabled")
+            return
+
+        # Check ALL resolved addresses - if ANY is blocked, reject the request
+        for ip_addr in ip_addresses:
+            # Check against blocked networks (always blocked regardless of other settings)
+            for network_str in settings.ssrf_blocked_networks:
+                try:
+                    network = _parse_ip_network_cached(network_str)
+                except ValueError:
+                    logger.warning(f"Invalid CIDR in ssrf_blocked_networks: {network_str}")
+                    continue
+
+                if ip_addr in network:
+                    raise ValueError(f"{field_name} contains IP address blocked by SSRF protection (network: {network_str})")
+
+            restricted_ip_kind = _classify_restricted_outbound_ip(ip_addr)
+            if restricted_ip_kind == "cgnat":
+                raise ValueError(f"{field_name} contains shared address space which is blocked by SSRF protection")
+
+            # Check localhost/loopback (if not allowed)
+            if not settings.ssrf_allow_localhost:
+                if ip_addr.is_loopback or hostname_normalized in ("localhost", "localhost.localdomain"):
+                    raise ValueError(f"{field_name} contains localhost address which is blocked by SSRF protection")
+
+            # Check private networks (if not allowed)
+            if not settings.ssrf_allow_private_networks:
+                if ip_addr.is_private and not ip_addr.is_loopback:
+                    allowed_private = False
+                    allowed_networks = getattr(settings, "ssrf_allowed_networks", []) or []
+                    for network_str in allowed_networks:
+                        try:
+                            network = _parse_ip_network_cached(network_str)
+                        except ValueError:
+                            logger.warning(f"Invalid CIDR in ssrf_allowed_networks: {network_str}")
+                            continue
+                        if ip_addr in network:
+                            allowed_private = True
+                            break
+
+                    if not allowed_private:
+                        raise ValueError(f"{field_name} contains private network address which is blocked by SSRF protection")
+
+    @classmethod
+    async def validate_url_for_connection_pinning(cls, value: str, field_name: str = "URL") -> Dict[str, Optional[str]]:
+        """Validate an outbound URL and return DNS metadata for connection pinning.
+
+        This helper is intended for async request handlers that validate a URL
+        immediately before outbound I/O. It runs the existing URL validator off
+        the event loop, resolves the hostname off the event loop, checks every
+        resolved address with the existing outbound URL policy, and returns metadata the
+        caller can use to pin the actual connection without rebuilding the URL.
+
+        Args:
+            value: URL to validate.
+            field_name: Human-readable field name for validation errors.
+
+        Returns:
+            Metadata containing ``validated_url``, original ``hostname``,
+            ``original_authority`` from the URL netloc, and an optional safe
+            ``resolved_ip``. ``resolved_ip`` may be ``None`` only when SSRF
+            protection is disabled and DNS resolution is allowed to fail open.
+
+        Raises:
+            ValueError: If validation fails or the resolved target violates the
+                outbound URL policy.
+
+        Examples:
+            >>> result = await SecurityValidator.validate_url_for_connection_pinning(
+            ...     "https://example.com/path?sig=abc",
+            ...     "Tool URL",
+            ... )  # doctest: +SKIP
+            >>> result["validated_url"]  # doctest: +SKIP
+            'https://example.com/path?sig=abc'
+        """
+        if not value:
+            raise ValueError(f"{field_name} cannot be empty")
+
+        dns_timeout = float(getattr(settings, "gateway_test_dns_timeout", 5.0))
+        loop = asyncio.get_running_loop()
+        try:
+            validated_url = await asyncio.wait_for(
+                loop.run_in_executor(None, lambda: cls.validate_url(value, field_name, skip_ssrf=True)),
+                timeout=dns_timeout,
+            )
+        except asyncio.TimeoutError as exc:
+            raise ValueError(f"{field_name} URL validation timed out") from exc
+
+        try:
+            parsed = urlparse(validated_url)
+            hostname = parsed.hostname
+            if not hostname:
+                raise ValueError(f"{field_name} is not a valid URL")
+            hostname_normalized = _unquote_if_needed(hostname)
+            if settings.ssrf_protection_enabled:
+                hostname_normalized = cls._validate_ssrf_blocked_hostname(hostname_normalized, field_name)
+            else:
+                hostname_normalized = cls._normalize_hostname(hostname_normalized)
+        except ValueError:
+            raise
+        except Exception as exc:
+            raise ValueError(f"{field_name} is not a valid URL") from exc
+
+        try:
+            literal_ip = ipaddress.ip_address(hostname_normalized)
+            if literal_ip.version == 6 and literal_ip.ipv4_mapped is not None:
+                literal_ip = literal_ip.ipv4_mapped
+            resolved_ips = [str(literal_ip)]
+        except ValueError:
+            resolved_ips = await cls._resolve_hostname_for_connection_pinning(hostname_normalized, field_name, dns_timeout)
+
+        if settings.ssrf_protection_enabled:
+            for resolved_ip in resolved_ips:
+                cls._validate_ssrf(resolved_ip, field_name)
+
+        return {
+            "validated_url": validated_url,
+            "hostname": hostname,
+            "original_authority": parsed.netloc,
+            "resolved_ip": resolved_ips[0] if resolved_ips else None,
+        }
+
+    @classmethod
+    async def _resolve_hostname_for_connection_pinning(cls, hostname: str, field_name: str, timeout: float) -> List[str]:
+        """Resolve a hostname for outbound pinning without blocking the event loop."""
+        loop = asyncio.get_running_loop()
+        try:
+            addr_info = await asyncio.wait_for(
+                loop.run_in_executor(
+                    None,
+                    lambda: socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM),
+                ),
+                timeout=timeout,
+            )
+        except (TimeoutError, asyncio.TimeoutError, socket.gaierror, socket.herror) as exc:
+            if settings.ssrf_protection_enabled:
+                raise ValueError(f"{field_name} DNS resolution failed and connection pinning requires a resolved address") from exc
+            return []
+
+        resolved_ips: List[str] = []
+        for _, _, _, _, sockaddr in addr_info:
+            try:
+                resolved_ip = ipaddress.ip_address(sockaddr[0])
+                if resolved_ip.version == 6 and resolved_ip.ipv4_mapped is not None:
+                    resolved_ip = resolved_ip.ipv4_mapped
+                resolved_ip_str = str(resolved_ip)
+                if resolved_ip_str not in resolved_ips:
+                    resolved_ips.append(resolved_ip_str)
+            except ValueError:
+                continue
+
+        if not resolved_ips and settings.ssrf_protection_enabled:
+            raise ValueError(f"{field_name} DNS resolution returned no addresses and connection pinning requires a resolved address")
+        return resolved_ips
+
+    @classmethod
+    async def validate_gateway_test_url(cls, value: str, allowed_hosts: list[str], field_name: str = "URL") -> dict[str, str]:
+        """Validate URLs for the /admin/gateways/test endpoint with allowlist enforcement.
+
+        This method implements strict validation for the gateway test endpoint to prevent
+        SSRF attacks and unauthorized proxy usage. It performs:
+        1. FQDN normalization (strips trailing dots to prevent bypass)
+        2. Allowlist enforcement against provided host patterns
+        3. Conditional blocking of private IPs, loopback, and link-local addresses
+           (when ssrf_protection_enabled=true, the default)
+        4. Standard URL validation (scheme, structure, XSS patterns)
+        5. DNS resolution capture for outbound IP pinning
+
+        **Security Note - SSRF Protection:**
+        When ssrf_protection_enabled=true (default), private IPs (RFC 1918), loopback
+        addresses, link-local addresses, carrier-grade NAT, and other restricted ranges
+        are blocked regardless of allowlist membership. When ssrf_protection_enabled=false
+        (for development/testing), only allowlist enforcement applies.
+
+        **Security Note - DNS Rebinding Mitigation:**
+        This validation resolves DNS at validation time, verifies all resolved addresses are
+        safe (subject to SSRF flag), and returns the validated hostname plus a pinned resolved
+        IP. Callers must use the pinned IP for the outbound connection while preserving the
+        original hostname in the HTTP Host header and TLS SNI context. This closes the
+        validation-time vs connection-time DNS rebinding gap for the gateway test flow.
+
+        Args:
+            value (str): The URL to validate
+            allowed_hosts (list[str]): List of allowed host patterns. Supports:
+                - Exact hostnames: "example.com"
+                - Wildcard subdomains: "*.example.com"
+                Empty list means reject all URLs.
+            field_name (str): Name of field being validated (for error messages)
+
+        Returns:
+            dict[str, str]: Validation metadata containing:
+                - validated_url: Original validated URL string
+                - hostname: Original parsed hostname
+                - resolved_ip: Safe resolved IP string pinned for outbound connections
+
+        Raises:
+            ValueError: If URL fails validation (generic message, no internal details)
+
+        Examples:
+            Valid URL matching allowlist:
+
+            >>> result = await SecurityValidator.validate_gateway_test_url(
+            ...     'https://api.example.com/test',
+            ...     ['*.example.com'],
+            ...     'Gateway URL'
+            ... )  # doctest: +SKIP
+            >>> result["validated_url"]  # doctest: +SKIP
+            'https://api.example.com/test'
+
+            Trailing dot bypass attempt (blocked):
+
+            >>> await SecurityValidator.validate_gateway_test_url(  # doctest: +SKIP
+            ...     'https://evil.com./bypass',
+            ...     ['trusted.com'],
+            ...     'Gateway URL'
+            ... )
+            Traceback (most recent call last):
+                ...
+            ValueError: Gateway URL is not allowed
+
+            Private IP address (blocked when ssrf_protection_enabled=true, the default):
+
+            >>> await SecurityValidator.validate_gateway_test_url(  # doctest: +SKIP
+            ...     'https://192.168.1.1/',
+            ...     ['192.168.1.1'],
+            ...     'Gateway URL'
+            ... )
+            Traceback (most recent call last):
+                ...
+            ValueError: Gateway URL is not allowed
+
+            Loopback address (blocked when ssrf_protection_enabled=true, the default):
+
+            >>> await SecurityValidator.validate_gateway_test_url(  # doctest: +SKIP
+            ...     'https://127.0.0.1/',
+            ...     ['127.0.0.1'],
+            ...     'Gateway URL'
+            ... )
+            Traceback (most recent call last):
+                ...
+            ValueError: Gateway URL is not allowed
+
+            Private IP allowed when SSRF protection disabled:
+
+            >>> # With ssrf_protection_enabled=false
+            >>> result = await SecurityValidator.validate_gateway_test_url(  # doctest: +SKIP
+            ...     'https://192.168.1.1/',
+            ...     ['192.168.1.1'],
+            ...     'Gateway URL'
+            ... )  # doctest: +SKIP
+            >>> result["validated_url"]  # doctest: +SKIP
+            'https://192.168.1.1/'
+        """
+        if not value:
+            raise ValueError(f"{field_name} cannot be empty")
+
+        # First, perform standard URL validation (scheme, structure, XSS, etc.)
+        # This also does the initial SSRF checks
+        try:
+            validated_url = cls.validate_url(value, field_name)
+        except ValueError:
+            # Return generic error message (don't expose validation details)
+            raise ValueError(f"{field_name} is not allowed")
+
+        # Parse the URL to extract hostname for allowlist check
+        try:
+            result = urlparse(validated_url)
+            hostname = result.hostname
+            if not hostname:
+                raise ValueError(f"{field_name} is not allowed")
+        except Exception:
+            raise ValueError(f"{field_name} is not allowed")
+
+        # FQDN normalization: strip trailing dots to prevent bypass
+        # Example: evil.com. should be normalized to evil.com before allowlist check
+        hostname_normalized = hostname.lower().rstrip(".")
+
+        # Apply additional SSRF protections only when global SSRF protection is enabled.
+        # This ensures consistency with other endpoints that respect ssrf_protection_enabled.
+        # When SSRF protection is disabled (e.g., for development/testing), the gateway test
+        # endpoint will still enforce allowlist-based restrictions but won't block private IPs.
+        try:
+            ip_addr = ipaddress.ip_address(hostname_normalized)
+            # Unwrap IPv4-mapped IPv6 addresses (e.g., ::ffff:127.0.0.1 -> 127.0.0.1)
+            # Python 3.11 bug: is_loopback returns False for IPv4-mapped loopback addresses
+            if ip_addr.version == 6 and ip_addr.ipv4_mapped is not None:
+                ip_addr = ip_addr.ipv4_mapped
+
+            # Block private IPs (RFC 1918: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16)
+            # Block loopback (127.0.0.0/8, ::1)
+            # Block link-local (169.254.0.0/16, fe80::/10)
+            # Block unspecified (0.0.0.0, ::)
+            # Block multicast (224.0.0.0/4, ff00::/8)
+            # Block reserved (240.0.0.0/4)
+            # Block carrier-grade NAT (100.64.0.0/10)
+            restricted_ip_kind = _classify_restricted_outbound_ip(ip_addr)
+            if restricted_ip_kind:
+                if settings.ssrf_protection_enabled:
+                    # Block private IPs, loopback, and link-local addresses
+                    # This prevents testing internal services regardless of allowlist
+                    raise ValueError(f"{field_name} is not allowed")
+                # SSRF protection is disabled - log when direct IP addresses to private/internal
+                # networks are allowed through for forensic visibility
+                logger.warning(
+                    "Gateway test URL validation: SSRF protection bypass - private/internal IP allowed (ssrf_protection_enabled=false). target=%s ip_type=%s",
+                    hostname_normalized,
+                    restricted_ip_kind,
+                )
+        except ValueError as e:
+            # Re-raise if it's our security error, otherwise it's not a valid IP (continue to hostname check)
+            if "is not allowed" in str(e):
+                raise
+
+        # Resolve hostname to check for private IPs and capture a safe IP for outbound pinning.
+        # Run DNS resolution in an executor to avoid blocking the event loop and bound it
+        # with a timeout because this validator is used from async request handlers.
+        resolved_ips: list[str] = []
+        try:
+            loop = asyncio.get_running_loop()
+            addr_info = await asyncio.wait_for(
+                loop.run_in_executor(
+                    None,
+                    lambda: socket.getaddrinfo(hostname_normalized, None, socket.AF_UNSPEC, socket.SOCK_STREAM),
+                ),
+                timeout=float(settings.gateway_test_dns_timeout),
+            )
+            for _, _, _, _, sockaddr in addr_info:
+                try:
+                    resolved_ip = ipaddress.ip_address(sockaddr[0])
+                    # Unwrap IPv4-mapped IPv6 addresses
+                    if resolved_ip.version == 6 and resolved_ip.ipv4_mapped is not None:
+                        resolved_ip = resolved_ip.ipv4_mapped
+
+                    # Check for dangerous network ranges
+                    restricted_ip_kind = _classify_restricted_outbound_ip(resolved_ip)
+
+                    if restricted_ip_kind:
+                        if settings.ssrf_protection_enabled:
+                            # Apply SSRF checks to resolved IPs only when protection is enabled
+                            raise ValueError(f"{field_name} is not allowed")
+                        # SSRF protection is disabled - log when DNS resolves to private/internal IPs
+                        # for forensic visibility
+                        logger.warning(
+                            "Gateway test URL validation: SSRF protection bypass - hostname resolves to private/internal IP (ssrf_protection_enabled=false). hostname=%s resolved_ip=%s ip_type=%s",
+                            hostname_normalized,
+                            str(resolved_ip),
+                            restricted_ip_kind,
+                        )
+
+                    resolved_ips.append(str(resolved_ip))
+                except ValueError as e:
+                    # Re-raise if it's our security error, otherwise skip this address record
+                    if "is not allowed" in str(e):
+                        raise
+                    # ValueError from ipaddress.ip_address() - invalid format, skip this record
+                    continue
+        except (TimeoutError, asyncio.TimeoutError, socket.gaierror, socket.herror):
+            # DNS resolution failed - reject with generic message
+            raise ValueError(f"{field_name} is not allowed")
+
+        if not resolved_ips:
+            raise ValueError(f"{field_name} is not allowed")
+
+        # Check against allowlist
+        if not allowed_hosts:
+            # Empty allowlist means reject all
+            # Use generic message to prevent allowlist enumeration
+            raise ValueError(f"{field_name} is not allowed")
+
+        allowed = False
+        for pattern in allowed_hosts:
+            # Normalize pattern (lowercase, strip trailing dots)
+            pattern_normalized = pattern.lower().rstrip(".")
+
+            if pattern_normalized.startswith("*."):
+                # Wildcard subdomain pattern: *.example.com
+                # Matches subdomains ONLY, not the base domain itself (per DNS conventions)
+                domain_suffix = pattern_normalized[2:]  # Remove "*."
+                if hostname_normalized.endswith("." + domain_suffix):
+                    allowed = True
+                    break
+            else:
+                # Exact hostname match
+                if hostname_normalized == pattern_normalized:
+                    allowed = True
+                    break
+
+        if not allowed:
+            # Use generic message to prevent allowlist enumeration
+            raise ValueError(f"{field_name} is not allowed")
+
+        return {
+            "validated_url": validated_url,
+            "hostname": hostname,
+            "resolved_ip": resolved_ips[0],
+        }
+
+    @classmethod
+    def validate_no_xss(cls, value: str, field_name: str) -> None:
+        """
+        Validate that a string does not contain XSS patterns.
+
+        Args:
+            value (str): Value to validate.
+            field_name (str): Name of the field being validated.
+
+        Raises:
+            ValueError: If the value contains XSS patterns.
+
+        Examples:
+            Safe strings pass validation:
+
+            >>> SecurityValidator.validate_no_xss('Hello World', 'test_field')
+            >>> SecurityValidator.validate_no_xss('User: admin@example.com', 'email')
+            >>> SecurityValidator.validate_no_xss('Price: $10.99', 'price')
+
+            Empty/None strings are considered safe:
+
+            >>> SecurityValidator.validate_no_xss('', 'empty_field')
+            >>> SecurityValidator.validate_no_xss(None, 'none_field') #doctest: +SKIP
+
+            Dangerous HTML tags trigger validation errors:
+
+            >>> SecurityValidator.validate_no_xss('<script>alert(1)</script>', 'test_field')
+            Traceback (most recent call last):
+                ...
+            ValueError: test_field contains HTML tags that may cause security issues
+            >>> SecurityValidator.validate_no_xss('<iframe src="evil.com"></iframe>', 'content')
+            Traceback (most recent call last):
+                ...
+            ValueError: content contains HTML tags that may cause security issues
+            >>> SecurityValidator.validate_no_xss('<object data="malware.swf"></object>', 'data')
+            Traceback (most recent call last):
+                ...
+            ValueError: data contains HTML tags that may cause security issues
+            >>> SecurityValidator.validate_no_xss('<embed src="evil.swf">', 'embed')
+            Traceback (most recent call last):
+                ...
+            ValueError: embed contains HTML tags that may cause security issues
+            >>> SecurityValidator.validate_no_xss('<link rel="stylesheet" href="evil.css">', 'style')
+            Traceback (most recent call last):
+                ...
+            ValueError: style contains HTML tags that may cause security issues
+            >>> SecurityValidator.validate_no_xss('<meta http-equiv="refresh" content="0;url=evil.com">', 'meta')
+            Traceback (most recent call last):
+                ...
+            ValueError: meta contains HTML tags that may cause security issues
+            >>> SecurityValidator.validate_no_xss('<base href="http://evil.com">', 'base')
+            Traceback (most recent call last):
+                ...
+            ValueError: base contains HTML tags that may cause security issues
+            >>> SecurityValidator.validate_no_xss('<form action="evil.php">', 'form')
+            Traceback (most recent call last):
+                ...
+            ValueError: form contains HTML tags that may cause security issues
+            >>> SecurityValidator.validate_no_xss('<img src="x" onerror="alert(1)">', 'image')
+            Traceback (most recent call last):
+                ...
+            ValueError: image contains HTML tags that may cause security issues
+            >>> SecurityValidator.validate_no_xss('<svg onload="alert(1)"></svg>', 'svg')
+            Traceback (most recent call last):
+                ...
+            ValueError: svg contains HTML tags that may cause security issues
+            >>> SecurityValidator.validate_no_xss('<video src="x" onerror="alert(1)"></video>', 'video')
+            Traceback (most recent call last):
+                ...
+            ValueError: video contains HTML tags that may cause security issues
+            >>> SecurityValidator.validate_no_xss('<audio src="x" onerror="alert(1)"></audio>', 'audio')
+            Traceback (most recent call last):
+                ...
+            ValueError: audio contains HTML tags that may cause security issues
+        """
+        if not value:
+            return  # Empty values are considered safe
+        # Decode + double-encoding rejection so `%253Cscript%253E` cannot slip past.
+        decoded_value = _decode_strict(value, field_name)
+        if re.search(cls.DANGEROUS_HTML_PATTERN, decoded_value, re.IGNORECASE):
+            raise ValueError(f"{field_name} contains HTML tags that may cause security issues")
+        if re.search(cls.DANGEROUS_JS_PATTERN, decoded_value, re.IGNORECASE):
+            raise ValueError(f"{field_name} contains script patterns that may cause security issues")
+
+    @classmethod
+    def validate_json_depth(
+        cls,
+        obj: object,
+        max_depth: int | None = None,
+        current_depth: int = 0,
+    ) -> None:
+        """Validate that a JSON‑like structure does not exceed a depth limit.
+
+        A *depth* is counted **only** when we enter a container (`dict` or
+        `list`). Primitive values (`str`, `int`, `bool`, `None`, etc.) do not
+        increase the depth, but an *empty* container still counts as one level.
+
+        Args:
+            obj: Any Python object to inspect recursively.
+            max_depth: Maximum allowed depth (defaults to
+                :pyattr:`SecurityValidator.MAX_JSON_DEPTH`).
+            current_depth: Internal recursion counter. **Do not** set this
+                from user code.
+
+        Raises:
+            ValueError: If the nesting level exceeds *max_depth*.
+
+        Examples:
+            Simple flat dictionary – depth 1: ::
+
+                >>> SecurityValidator.validate_json_depth({'name': 'Alice'})
+
+            Nested dict – depth 2: ::
+
+                >>> SecurityValidator.validate_json_depth(
+                ...     {'user': {'name': 'Alice'}}
+                ... )
+
+            Mixed dict/list – depth 3: ::
+
+                >>> SecurityValidator.validate_json_depth(
+                ...     {'users': [{'name': 'Alice', 'meta': {'age': 30}}]}
+                ... )
+
+            At 10 levels of nesting – allowed: ::
+
+                >>> deep_10 = {'1': {'2': {'3': {'4': {'5': {'6': {'7': {'8':
+                ...     {'9': {'10': 'end'}}}}}}}}}}
+                >>> SecurityValidator.validate_json_depth(deep_10)
+
+            At new default limit (30) – allowed: ::
+
+                >>> deep_30 = {'1': {'2': {'3': {'4': {'5': {'6': {'7': {'8':
+                ...     {'9': {'10': {'11': {'12': {'13': {'14': {'15': {'16':
+                ...     {'17': {'18': {'19': {'20': {'21': {'22': {'23': {'24':
+                ...     {'25': {'26': {'27': {'28': {'29': {'30': 'end'}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}
+                >>> SecurityValidator.validate_json_depth(deep_30)
+
+            One level deeper – rejected: ::
+
+                >>> deep_31 = {'1': {'2': {'3': {'4': {'5': {'6': {'7': {'8':
+                ...     {'9': {'10': {'11': {'12': {'13': {'14': {'15': {'16':
+                ...     {'17': {'18': {'19': {'20': {'21': {'22': {'23': {'24':
+                ...     {'25': {'26': {'27': {'28': {'29': {'30': {'31': 'end'}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}}
+                >>> SecurityValidator.validate_json_depth(deep_31)
+                Traceback (most recent call last):
+                    ...
+                ValueError: JSON structure exceeds maximum depth of 30
+        """
+        if max_depth is None:
+            max_depth = cls.MAX_JSON_DEPTH
+
+        # Only containers count toward depth; primitives are ignored
+        if not isinstance(obj, (dict, list)):
+            return
+
+        next_depth = current_depth + 1
+        if next_depth > max_depth:
+            raise ValueError(f"JSON structure exceeds maximum depth of {max_depth}")
+
+        if isinstance(obj, dict):
+            for value in obj.values():
+                cls.validate_json_depth(value, max_depth, next_depth)
+        else:  # obj is a list
+            for item in obj:
+                cls.validate_json_depth(item, max_depth, next_depth)
+
+    @classmethod
+    def validate_mime_type(cls, value: str) -> str:
+        """Validate MIME type format
+
+        Args:
+            value (str): Value to validate
+
+        Returns:
+            str: Value if acceptable
+
+        Raises:
+            ValueError: When input is not acceptable
+
+        Examples:
+            Empty/None handling:
+
+            >>> SecurityValidator.validate_mime_type('')
+            ''
+            >>> SecurityValidator.validate_mime_type(None) #doctest: +SKIP
+
+            Valid standard MIME types:
+
+            >>> SecurityValidator.validate_mime_type('text/plain')
+            'text/plain'
+            >>> SecurityValidator.validate_mime_type('application/json')
+            'application/json'
+            >>> SecurityValidator.validate_mime_type('image/jpeg')
+            'image/jpeg'
+            >>> SecurityValidator.validate_mime_type('text/html')
+            'text/html'
+            >>> SecurityValidator.validate_mime_type('application/pdf')
+            'application/pdf'
+
+            Valid vendor-specific MIME types:
+
+            >>> SecurityValidator.validate_mime_type('application/x-custom')
+            'application/x-custom'
+            >>> SecurityValidator.validate_mime_type('text/x-log')
+            'text/x-log'
+
+            Valid MIME types with suffixes:
+
+            >>> SecurityValidator.validate_mime_type('application/vnd.api+json')
+            'application/vnd.api+json'
+            >>> SecurityValidator.validate_mime_type('image/svg+xml')
+            'image/svg+xml'
+
+            Valid MIME types with parameters:
+
+            >>> SecurityValidator.validate_mime_type('application/json; charset=utf-8')
+            'application/json; charset=utf-8'
+            >>> SecurityValidator.validate_mime_type('text/plain; charset=utf-8')
+            'text/plain; charset=utf-8'
+
+            Invalid MIME type formats:
+
+            >>> SecurityValidator.validate_mime_type('invalid')
+            Traceback (most recent call last):
+                ...
+            ValueError: Invalid MIME type format
+            >>> SecurityValidator.validate_mime_type('text/')
+            Traceback (most recent call last):
+                ...
+            ValueError: Invalid MIME type format
+            >>> SecurityValidator.validate_mime_type('/plain')
+            Traceback (most recent call last):
+                ...
+            ValueError: Invalid MIME type format
+            >>> SecurityValidator.validate_mime_type('text//plain')
+            Traceback (most recent call last):
+                ...
+            ValueError: Invalid MIME type format
+            >>> SecurityValidator.validate_mime_type('text/plain/extra')
+            Traceback (most recent call last):
+                ...
+            ValueError: Invalid MIME type format
+            >>> SecurityValidator.validate_mime_type('text plain')
+            Traceback (most recent call last):
+                ...
+            ValueError: Invalid MIME type format
+            >>> SecurityValidator.validate_mime_type('<text/plain>')
+            Traceback (most recent call last):
+                ...
+            ValueError: Invalid MIME type format
+
+            Disallowed MIME types (not in whitelist - line 620):
+
+            >>> try:
+            ...     SecurityValidator.validate_mime_type('application/evil')
+            ... except ValueError as e:
+            ...     'not in the allowed list' in str(e)
+            True
+            >>> try:
+            ...     SecurityValidator.validate_mime_type('text/evil')
+            ... except ValueError as e:
+            ...     'not in the allowed list' in str(e)
+            True
+
+            Test MIME type with parameters:
+
+            >>> try:
+            ...     SecurityValidator.validate_mime_type('application/evil; charset=utf-8')
+            ... except ValueError as e:
+            ...     'not in the allowed list' in str(e)
+            True
+        """
+        if not value:
+            return value
+
+        # Basic MIME type pattern (uses precompiled regex)
+        if not _MIME_TYPE_RE.match(value):
+            raise ValueError("Invalid MIME type format")
+
+        # Common safe MIME types
+        safe_mime_types = settings.validation_allowed_mime_types
+        base_type = value.split(";", 1)[0].strip()
+        if value not in safe_mime_types and base_type not in safe_mime_types:
+            # Allow x- vendor types and + suffixes
+            if not (base_type.startswith("application/x-") or base_type.startswith("text/x-") or "+" in base_type):
+                raise ValueError(f"MIME type '{value}' is not in the allowed list")
+
+        return value
+
+    @classmethod
+    def validate_shell_parameter(cls, value: str) -> str:
+        """Validate and escape shell parameters to prevent command injection.
+
+        Args:
+            value (str): Shell parameter to validate
+
+        Returns:
+            str: Validated/escaped parameter
+
+        Raises:
+            ValueError: If parameter contains dangerous characters in strict mode
+
+        Examples:
+            >>> SecurityValidator.validate_shell_parameter('safe_param')
+            'safe_param'
+            >>> SecurityValidator.validate_shell_parameter('param with spaces')
+            'param with spaces'
+        """
+        if not isinstance(value, str):
+            raise ValueError("Parameter must be string")
+
+        # Check for dangerous patterns (uses precompiled regex)
+        if _SHELL_DANGEROUS_CHARS_RE.search(value):
+            # Check if validation is strict
+            strict_mode = getattr(settings, "validation_strict", True)
+            if strict_mode:
+                raise ValueError("Parameter contains shell metacharacters")
+            # In non-strict mode, escape using shlex
+            return shlex.quote(value)
+
+        return value
+
+    @classmethod
+    def validate_path(cls, path: str, allowed_roots: Optional[List[str]] = None) -> str:
+        """Validate and normalize file paths to prevent directory traversal.
+
+        Args:
+            path (str): File path to validate
+            allowed_roots (Optional[List[str]]): List of allowed root directories
+
+        Returns:
+            str: Validated and normalized path
+
+        Raises:
+            ValueError: If path contains traversal attempts or is outside allowed roots
+
+        Examples:
+            >>> SecurityValidator.validate_path('/safe/path')
+            '/safe/path'
+            >>> SecurityValidator.validate_path('http://example.com/file')
+            'http://example.com/file'
+        """
+        if not isinstance(path, str):
+            raise ValueError("Path must be string")
+
+        # Skip validation for URI schemes (http://, plugin://, etc.) (uses precompiled regex)
+        if _URI_SCHEME_RE.match(path):
+            return path
+
+        try:
+            p = Path(path)
+            # Check for path traversal
+            if ".." in p.parts:
+                raise ValueError("Path traversal detected")
+
+            resolved_path = p.resolve()
+
+            # Check against allowed roots
+            if allowed_roots:
+                allowed = any(str(resolved_path).startswith(str(Path(root).resolve())) for root in allowed_roots)
+                if not allowed:
+                    raise ValueError("Path outside allowed roots")
+
+            return str(resolved_path)
+        except (OSError, ValueError) as e:
+            raise ValueError(f"Invalid path: {e}")
+
+    @classmethod
+    def validate_sql_parameter(cls, value: str) -> str:
+        """Validate SQL parameters to prevent SQL injection attacks.
+
+        Args:
+            value (str): SQL parameter to validate
+
+        Returns:
+            str: Validated/escaped parameter
+
+        Raises:
+            ValueError: If parameter contains SQL injection patterns in strict mode
+
+        .. note::
+            This method decodes percent-encoding before checking patterns.
+            Callers that pass already-decoded strings will work correctly,
+            but callers that pass percent-encoded strings (e.g. ``%27``)
+            will see the decoded form (``'``) matched against SQL patterns.
+            Pass raw, non-encoded values when possible.
+
+        Examples:
+            >>> SecurityValidator.validate_sql_parameter('safe_value')
+            'safe_value'
+            >>> SecurityValidator.validate_sql_parameter('123')
+            '123'
+        """
+        if not isinstance(value, str):
+            return value
+
+        # Decode + double-encoding rejection so `%2527` / `%252D%252D`-style bypasses
+        # are caught even when a downstream consumer decodes again.
+        decoded_value = _decode_strict(value, "Parameter")
+
+        for pattern in _SQL_PATTERNS:
+            if pattern.search(decoded_value):
+                if getattr(settings, "validation_strict", True):
+                    raise ValueError("Parameter contains SQL injection patterns")
+                # Basic escaping
+                value = value.replace("'", "''").replace('"', '""')
+
+        return value
+
+    @classmethod
+    def validate_parameter_length(cls, value: str, max_length: Optional[int] = None) -> str:
+        """Validate parameter length against configured limits.
+
+        Args:
+            value (str): Parameter to validate
+            max_length (int): Maximum allowed length
+
+        Returns:
+            str: Parameter if within length limits
+
+        Raises:
+            ValueError: If parameter exceeds maximum length
+
+        Examples:
+            >>> SecurityValidator.validate_parameter_length('short', 10)
+            'short'
+        """
+        max_len = max_length or getattr(settings, "max_param_length", 10000)
+        if len(value) > max_len:
+            raise ValueError(f"Parameter exceeds maximum length of {max_len}")
+        return value
+
+    @classmethod
+    def sanitize_text(cls, text: str) -> str:
+        """Remove control characters and ANSI escape sequences from text.
+
+        Args:
+            text (str): Text to sanitize
+
+        Returns:
+            str: Sanitized text with control characters removed
+
+        Examples:
+            >>> SecurityValidator.sanitize_text('Hello World')
+            'Hello World'
+            >>> SecurityValidator.sanitize_text('Text\x1b[31mwith\x1b[0mcolors')
+            'Textwithcolors'
+        """
+        if not isinstance(text, str):
+            return text
+
+        # Remove ANSI escape sequences (uses precompiled regex)
+        text = _ANSI_ESCAPE_RE.sub("", text)
+        # Remove control characters except newlines and tabs (uses precompiled regex)
+        sanitized = _CONTROL_CHARS_RE.sub("", text)
+        return sanitized
+
+    @classmethod
+    def sanitize_json_response(cls, data: Any) -> Any:
+        """Recursively sanitize JSON response data by removing control characters.
+
+        Args:
+            data (Any): JSON data structure to sanitize
+
+        Returns:
+            Any: Sanitized data structure with same type as input
+
+        Examples:
+            >>> SecurityValidator.sanitize_json_response('clean text')
+            'clean text'
+            >>> SecurityValidator.sanitize_json_response({'key': 'value'})
+            {'key': 'value'}
+            >>> SecurityValidator.sanitize_json_response(['item1', 'item2'])
+            ['item1', 'item2']
+        """
+        if isinstance(data, str):
+            return cls.sanitize_text(data)
+        if isinstance(data, dict):
+            return {k: cls.sanitize_json_response(v) for k, v in data.items()}
+        if isinstance(data, list):
+            return [cls.sanitize_json_response(item) for item in data]
+        return data
+
+
+def validate_core_url(value: str, field_name: str = "URL") -> str:
+    """Core ContextForge URL validation entry point.
+
+    This wrapper provides an explicit core-only entry point so the core
+    processing path does not depend on plugin-framework validators.
+
+    Args:
+        value: The URL string to validate.
+        field_name: Descriptive name for error messages.
+
+    Returns:
+        The validated URL string.
+    """
+    return SecurityValidator.validate_url(value, field_name)
+
+
+# CWE-400: Limits for user-supplied meta_data forwarded to upstream MCP servers.
+# Keeps arbitrarily large dicts from amplifying into downstream network/DB load.
+# These are now read from config (settings.meta_max_keys, etc.) but kept as
+# module-level aliases for backward-compatible imports.
+META_MAX_KEYS: int = settings.meta_max_keys
+META_MAX_DEPTH: int = settings.meta_max_depth
+META_MAX_BYTES: int = settings.meta_max_bytes
+
+
+def validate_meta_data(meta_data: Optional[Dict[str, Any]]) -> None:
+    """Enforce size, key-count, and depth limits on user-supplied meta_data (CWE-400).
+
+    Args:
+        meta_data: The metadata dictionary to validate. ``None`` is always accepted.
+
+    Raises:
+        ValueError: if any limit is exceeded.
+    """
+    max_keys = settings.meta_max_keys
+    max_depth = settings.meta_max_depth
+    max_bytes = settings.meta_max_bytes
+
+    if not meta_data:
+        return
+    if len(meta_data) > max_keys:
+        raise ValueError(f"meta_data exceeds maximum key count ({max_keys}): got {len(meta_data)}")
+
+    def _check_depth(obj: Any, depth: int) -> None:
+        """Recursively enforce nesting depth, traversing both dicts and lists (CWE-400).
+
+        Lists are traversed without incrementing the depth counter so that a
+        list-of-dicts does not hide an extra level of dict nesting — e.g.
+        ``{"k": [{"l2": {"l3": "x"}}]}`` is correctly caught as depth 3.
+        """
+        if depth > max_depth:
+            raise ValueError(f"meta_data exceeds maximum nesting depth ({max_depth})")
+        if isinstance(obj, dict):
+            for v in obj.values():
+                _check_depth(v, depth + 1)
+        elif isinstance(obj, list):
+            for item in obj:
+                _check_depth(item, depth)
+
+    for v in meta_data.values():
+        _check_depth(v, 1)
+
+    try:
+        # CWE-20: Use strict json.dumps (no default=str) so non-serializable objects
+        # raise TypeError rather than being silently coerced — keeps the byte limit
+        # meaningful and matches the strict rejection behaviour used in prompt_service.
+        size = len(json.dumps(meta_data))
+        if size > max_bytes:
+            raise ValueError(f"meta_data exceeds maximum size ({max_bytes} bytes): got {size}")
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"meta_data is not serializable: {exc}") from exc

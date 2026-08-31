@@ -1,0 +1,144 @@
+---
+# OCP Benchmark Setup — enable Locust and configure server ID
+# Equivalent to: make ocp-benchmark-setup OCP_NS=<namespace>
+#
+# Usage:
+#   ansible-playbook ansible/ocp/playbooks/benchmark-setup.yml -i ansible/ocp/inventory/cluster.yml
+
+- name: Enable Locust and configure benchmark
+  hosts: localhost
+  gather_facts: false
+
+  vars_files:
+    - ../vars/defaults.yml
+
+  tasks:
+    - name: Display benchmark setup summary
+      ansible.builtin.debug:
+        msg: |
+          ========================================
+          OCP Benchmark Setup: Enable Locust
+          ========================================
+          Namespace: {{ ocp_namespace }}
+
+          This will:
+            1. Fetch JWT secret and generate a token
+            2. Fetch the virtual server UUID from /servers
+            3. Run helm upgrade with testing.locust.enabled=true and the server ID
+            4. Wait up to {{ locust_worker_wait_timeout }}s for {{ locust_workers }} Locust workers
+            5. If only some workers schedule, continue with a warning
+
+    - name: Confirm before proceeding
+      ansible.builtin.pause:
+        prompt: "Continue? (yes/no)"
+      register: confirm
+      failed_when: confirm.user_input | lower not in ['yes', 'y']
+      when: not (skip_confirm | default(false) | bool)
+
+    # Step 1: Find gateway pod and generate JWT token
+    - name: Find gateway pod
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Pod
+        namespace: "{{ ocp_namespace }}"
+        label_selectors:
+          - "app={{ ocp_namespace }}-mcp-stack-mcpgateway"
+        field_selectors:
+          - "status.phase=Running"
+      register: gw_pods
+
+    - name: Generate JWT token
+      kubernetes.core.k8s_exec:
+        namespace: "{{ ocp_namespace }}"
+        pod: "{{ gw_pods.resources[0].metadata.name }}"
+        command: >
+          sh -c 'python3 -m mcpgateway.utils.create_jwt_token
+          --username admin@example.com --exp 5
+          --secret "$JWT_SECRET_KEY"'
+      register: jwt_result
+      no_log: true
+
+    - name: Extract token
+      ansible.builtin.set_fact:
+        jwt_token: "{{ jwt_result.stdout_lines[-1] }}"
+      no_log: true
+
+    # Step 3: Fetch server ID
+    - name: Fetch virtual server ID
+      kubernetes.core.k8s_exec:
+        namespace: "{{ ocp_namespace }}"
+        pod: "{{ gw_pods.resources[0].metadata.name }}"
+        command: >
+          curl -s -H "Authorization: Bearer {{ jwt_token }}" http://localhost:4444/servers
+      register: servers_result
+      no_log: true
+
+    - name: Parse server list
+      ansible.builtin.set_fact:
+        server_list: "{{ servers_result.stdout | from_json }}"
+
+    - name: Extract server ID (filter by name, fall back to first)
+      ansible.builtin.set_fact:
+        server_id: >-
+          {{ (server_list | selectattr('name', 'equalto', 'Fast Time Server') | map(attribute='id') | list | first)
+             if (server_list | selectattr('name', 'equalto', 'Fast Time Server') | list | length > 0)
+             else server_list[0].id }}
+
+    - name: Verify server ID found
+      ansible.builtin.assert:
+        that:
+          - server_id | length > 0
+        fail_msg: "No virtual server found. Check that registration hooks ran successfully."
+
+    - name: Report server ID
+      ansible.builtin.debug:
+        msg: "Server ID: {{ server_id }}"
+
+    # Step 4: Helm upgrade with Locust enabled
+    - name: Enable Locust and set server ID
+      ansible.builtin.command:
+        cmd: >
+          helm upgrade {{ ocp_namespace }} {{ ocp_chart_path }}
+          -n {{ ocp_namespace }}
+          -f {{ ocp_values }}
+          -f {{ ocp_secrets }}
+          --set testing.locust.enabled=true
+          --set testing.locust.mcpServerID={{ server_id }}
+      register: upgrade_result
+      changed_when: "'Release' in upgrade_result.stdout"
+
+    - name: Report helm upgrade
+      ansible.builtin.debug:
+        msg: "Helm upgrade complete."
+
+    # Step 5: Wait for Locust workers
+    - name: Wait for Locust workers to be Running
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Pod
+        namespace: "{{ ocp_namespace }}"
+        label_selectors:
+          - "app={{ ocp_namespace }}-mcp-stack-locust-worker"
+        field_selectors:
+          - "status.phase=Running"
+      register: worker_pods
+      until: worker_pods.resources | length >= locust_workers
+      retries: "{{ (locust_worker_wait_timeout / locust_worker_poll_interval) | int }}"
+      delay: "{{ locust_worker_poll_interval }}"
+      ignore_errors: true
+
+    - name: Report worker status
+      ansible.builtin.debug:
+        msg: >-
+          {{ worker_pods.resources | length }}/{{ locust_workers }} workers Running.
+          {{ 'All workers ready.' if worker_pods.resources | length >= locust_workers
+          else 'WARNING: only ' + (worker_pods.resources | length | string) + ' of ' + (locust_workers | string) +
+          ' workers scheduled. Benchmark will run with fewer workers — RPS may be slightly lower.' }}
+
+    - name: Benchmark setup complete
+      ansible.builtin.debug:
+        msg: |
+          ========================================
+          Setup complete
+          ========================================
+          Run: ansible-playbook ansible/ocp/playbooks/benchmark.yml -i ansible/ocp/inventory/cluster.yml

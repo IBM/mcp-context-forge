@@ -1,0 +1,40 @@
+# -*- coding: utf-8 -*-
+"""Location: ./tests/unit/mcpgateway/plugins/conftest.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+
+Pytest fixtures for plugin framework tests.
+"""
+
+# Third-Party
+import pytest
+
+# First-Party
+import mcpgateway.plugins as fw
+from cpex.framework import PluginManager
+from cpex.framework.settings import settings
+
+
+
+@pytest.fixture(autouse=True)
+def reset_plugin_manager_state():
+    """Reset PluginManager Borg state, the shared-toggle cache, and the factory singleton before/after each test."""
+    PluginManager.reset()
+    fw.reset_plugin_manager_factory()
+    fw._invalidate_shared_enabled_cache()
+    fw._state.clear_local_mode_overrides()
+    fw._reset_factory_init_degraded_for_tests()
+    yield
+    PluginManager.reset()
+    fw.reset_plugin_manager_factory()
+    fw._invalidate_shared_enabled_cache()
+    fw._state.clear_local_mode_overrides()
+    fw._reset_factory_init_degraded_for_tests()
+
+
+@pytest.fixture(autouse=True)
+def clear_plugins_settings_cache(reset_plugin_manager_state):
+    """Clear the settings LRU cache so env changes take effect per test."""
+    settings.cache_clear()
+    yield
+    settings.cache_clear()

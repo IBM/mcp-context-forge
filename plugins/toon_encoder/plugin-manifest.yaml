@@ -1,0 +1,12 @@
+description: "Convert JSON tool results to TOON format for 30-70% token reduction"
+author: "Joe Stein"
+version: "1.0.0"
+available_hooks:
+  - "tool_post_invoke"
+default_configs:
+  min_size_bytes: 100
+  max_size_bytes: 1048576
+  exclude_tools: []
+  include_tools: null
+  add_format_marker: true
+  skip_on_error: true

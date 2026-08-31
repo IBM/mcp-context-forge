@@ -1,0 +1,28 @@
+# Ignore test results
+results/
+*.txt
+*.csv
+*.log
+
+# Ignore generated auth tokens
+.auth_token
+
+# Ignore generated reports (but commit the directory)
+reports/*.html
+!reports/.gitkeep
+
+# Ignore generated docker-compose files
+docker-compose.perf.yml
+docker-compose.backup_*.yml
+nginx.conf
+
+# Ignore baselines (user-specific, don't commit)
+baselines/*.json
+!baselines/.gitkeep
+
+# Keep directory structure
+!results/.gitkeep
+
+# Ignore performance profiles
+plugins/prof
+plugins/prof_baseline

@@ -1,0 +1,21 @@
+import asyncio
+import orjson
+import types
+
+
+def test_echo_tool_schema_importable():
+    # Basic import test ensures package structure is valid
+    mod = __import__('{{ cookiecutter.package_name }}.server', fromlist=['server'])
+    assert isinstance(mod, types.ModuleType)
+
+
+def test_echo_tool_logic_snapshot():
+    from {{ cookiecutter.package_name }}.server import call_tool
+
+    async def run():
+        result = await call_tool('echo', {'text': 'hello'})
+        payload = orjson.loads(result[0].text)
+        assert payload['ok'] is True
+        assert payload['echo'] == 'hello'
+
+    asyncio.get_event_loop().run_until_complete(run())

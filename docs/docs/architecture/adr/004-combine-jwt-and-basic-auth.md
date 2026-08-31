@@ -1,0 +1,248 @@
+# ADR-0004: Combine JWT & Basic Auth
+
+- *Status:* Accepted
+- *Date:* 2025-02-01
+- *Deciders:* Core Engineering Team
+
+## Context
+
+The gateway needs to support two types of clients:
+
+- **Browser-based users** using the Admin UI
+- **Headless clients** such as scripts, services, and tools
+
+These use cases require different authentication workflows:
+
+- Browsers prefer form-based login and session cookies.
+- Automation prefers stateless, token-based access.
+
+The current config exposes both:
+
+- `BASIC_AUTH_USER` and `BASIC_AUTH_PASSWORD`
+- `JWT_SECRET_KEY`, `JWT_EXPIRY_SECONDS`, and cookie settings
+
+## Decision
+
+We will combine both authentication modes as follows:
+
+- **Basic Auth** secures access to `/admin`. Upon success, a short-lived **JWT cookie** is issued.
+- **JWT Bearer token** (via header or cookie) is required for all API, WebSocket, and SSE requests.
+- Tokens are signed using the shared `JWT_SECRET_KEY` and include standard claims (sub, exp, scopes).
+- When `AUTH_REQUIRED=false`, the gateway allows unauthenticated access (dev only).
+
+## Consequences
+
+- ✅ Developers can log in once via browser and obtain an authenticated session.
+- ✅ Scripts can use a generated JWT directly, with no credential storage.
+- ❌ Tokens must be signed, rotated, and verified securely (TLS required).
+- 🔄 JWTs expire and must be refreshed periodically by clients.
+
+## Alternatives Considered
+
+| Option | Why Not |
+|--------|---------|
+| **JWT only** | CLI tools need a pre-acquired token; not friendly for interactive login. |
+| **Basic only** | Password sent on every request; cannot easily revoke or expire credentials. |
+| **OAuth2 / OpenID Connect** | Too complex for self-hosted setups; requires external identity provider. |
+| **mTLS client auth** | Secure but heavy; not usable in browsers or simple HTTP clients. |
+
+## Status
+
+This combined authentication mechanism is implemented and enabled by default in the gateway.
+
+---
+
+## Update: Asymmetric JWT Algorithm Support
+
+- *Date:* 2025-01-13
+- *Status:* Extended
+- *Enhancement By:* Core Engineering Team
+
+### Enhancement Overview
+
+JWT authentication has been extended to support both symmetric (HMAC) and asymmetric (RSA/ECDSA) algorithms, significantly expanding the gateway's authentication capabilities for enterprise and distributed environments.
+
+### Supported Algorithms
+
+| Category | Algorithms | Use Case | Key Management |
+|----------|------------|----------|----------------|
+| **HMAC (Symmetric)** | HS256, HS384, HS512 | Single-service, simple deployments | Shared secret (`JWT_SECRET_KEY`) |
+| **RSA (Asymmetric)** | RS256, RS384, RS512 | Multi-service, enterprise | Public/private key pair |
+| **ECDSA (Asymmetric)** | ES256, ES384, ES512 | High-performance, modern crypto | Public/private key pair |
+
+### Configuration
+
+**Symmetric (HMAC) - Default:**
+```bash
+JWT_ALGORITHM=HS256
+JWT_SECRET_KEY=your-secret-key
+```
+
+**Asymmetric (RSA/ECDSA) - New:**
+```bash
+JWT_ALGORITHM=RS256
+JWT_PUBLIC_KEY_PATH=jwt/public.pem
+JWT_PRIVATE_KEY_PATH=jwt/private.pem
+JWT_AUDIENCE_VERIFICATION=true
+JWT_ISSUER_VERIFICATION=true
+```
+
+### Benefits of Asymmetric Support
+
+✅ **Enhanced Security**
+
+- Private key never leaves the signing service
+- Public key can be safely distributed for verification
+- Eliminates shared secret management challenges
+
+✅ **Scalability & Federation**
+
+- Multiple services can verify tokens independently
+- No need to distribute signing secrets
+- Supports microservices and distributed architectures
+
+✅ **Enterprise Compliance**
+
+- Meets enterprise security standards (SOC2, ISO 27001)
+- Supports Hardware Security Module (HSM) integration
+- Enables proper key lifecycle management
+
+✅ **Future-Proof Architecture**
+
+- Foundation for advanced features like key rotation
+- Compatible with industry-standard JWT libraries
+- Supports Dynamic Client Registration scenarios
+
+### Implementation Notes
+
+- **Backward Compatibility**: All existing HMAC configurations continue to work unchanged
+- **Runtime Configuration**: Algorithm and keys are validated at startup
+- **Error Handling**: Clear error messages for misconfigured keys or missing files
+- **Performance**: Minimal overhead for asymmetric operations in typical workloads
+
+### Security Considerations
+
+- **Key Storage**: Private keys must be secured and never committed to version control
+- **Key Rotation**: Implement regular key rotation procedures for asymmetric keys
+- **Algorithm Selection**: Choose algorithm based on security requirements and performance needs
+- **Audience Verification**: Can be disabled for Dynamic Client Registration (DCR) scenarios
+
+---
+
+## Update: MCP Endpoint Authentication Configuration
+
+- *Date:* 2025-01-16
+- *Status:* Extended
+- *Enhancement By:* Core Engineering Team
+
+### Enhancement Overview
+
+A new `MCP_REQUIRE_AUTH` configuration option provides fine-grained control over authentication requirements for MCP protocol endpoints (`/mcp/*`), independent of the global `AUTH_REQUIRED` setting.
+
+### Configuration
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `MCP_REQUIRE_AUTH` | `false` | When `true`, all `/mcp` requests must include a valid Bearer token. When `false`, unauthenticated requests are allowed but can only access public tools, resources, and prompts — except for servers with `oauth_enabled=True`, which always require authentication. |
+
+### Behavior Matrix
+
+| `AUTH_REQUIRED` | `MCP_REQUIRE_AUTH` | REST API | MCP Endpoints |
+|-----------------|-------------------|----------|---------------|
+| `true` | `false` (default) | Auth required | Public-only access without token* |
+| `true` | `true` | Auth required | Auth required |
+| `false` | `false` | No auth | Public-only access without token* |
+| `false` | `true` | No auth | Auth required |
+
+*\*Per-server override: virtual servers with `oauth_enabled=True` always require authentication, even when `MCP_REQUIRE_AUTH=false`. Unauthenticated requests to these servers receive a 401 with a `WWW-Authenticate` header containing the RFC 9728 resource metadata URL.*
+
+### Use Cases
+
+**Default (`MCP_REQUIRE_AUTH=false`):**
+
+- Suitable for public MCP services offering public tools
+- Unauthenticated clients can discover and invoke public tools only
+- Team-scoped and private tools require authentication
+- Servers with `oauth_enabled=True` require authentication regardless (per-server override)
+
+**Strict Mode (`MCP_REQUIRE_AUTH=true`):**
+
+- Recommended for multi-tenant deployments
+- All MCP clients must authenticate before any operation
+- Prevents anonymous enumeration of available tools
+
+### Security Considerations
+
+- When `MCP_REQUIRE_AUTH=false`, unauthenticated requests receive an empty team list (`teams=[]`), restricting access to `visibility=public` items only
+- **Per-server OAuth enforcement**: servers with `oauth_enabled=True` reject unauthenticated requests with 401 even in permissive mode, with a `WWW-Authenticate` header pointing to the RFC 9728 resource metadata URL for OAuth discovery
+- **Fail-closed on infrastructure errors**: if the database is unavailable during per-server OAuth enforcement, the request is rejected with 503 rather than silently allowed
+- Private and team-scoped tools, resources, and prompts are never exposed to unauthenticated users
+- The service layer enforces access control regardless of this setting
+
+### Configuration Dependencies
+
+Full MCP access control (visibility + team scoping + membership validation) requires:
+
+1. `MCP_CLIENT_AUTH_ENABLED=true` (default) - enables JWT authentication for MCP endpoints
+2. Valid Bearer tokens with `teams` claim for team-scoped access
+3. Team membership validation runs on each request (60s cache TTL)
+
+When `MCP_CLIENT_AUTH_ENABLED=false`:
+
+- Access control relies on `MCP_REQUIRE_AUTH` + tool/resource visibility only
+- Team membership validation is skipped (no JWT to extract teams from)
+- Use `TRUST_PROXY_AUTH=true` with a reverse proxy for user identification
+
+---
+
+## Update: API Basic Authentication Disabled by Default
+
+- *Date:* 2026-01-28
+- *Status:* Extended
+- *Enhancement By:* Core Engineering Team
+
+### Security Enhancement Overview
+
+Basic authentication for API endpoints is now **disabled by default** to improve security posture. This change follows security best practices by preferring JWT tokens for programmatic API access.
+
+### Configuration
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `API_ALLOW_BASIC_AUTH` | `false` | Enable Basic auth for API endpoints (`/api/metrics/*`). Disabled by default for security. |
+| `DOCS_ALLOW_BASIC_AUTH` | `false` | Enable Basic auth for documentation endpoints (`/docs`, `/redoc`). Independent of API setting. |
+
+### Behavior Changes
+
+| Component | Before | After |
+|-----------|--------|-------|
+| **Admin UI** | Basic auth (broken - validated but not passed to routes) | Email/password authentication (`PLATFORM_ADMIN_EMAIL`/`PASSWORD`) |
+| **API Endpoints** | Basic auth allowed | Basic auth **disabled by default**. Set `API_ALLOW_BASIC_AUTH=true` to enable. |
+| **Documentation** | Basic auth configurable | Unchanged - controlled by `DOCS_ALLOW_BASIC_AUTH` |
+| **CLI Tools** | Basic auth fallback | Only uses Basic auth if `API_ALLOW_BASIC_AUTH=true` |
+
+### Migration Guide
+
+**For API access:**
+```bash
+# Recommended: Use JWT tokens
+export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
+    --username admin@example.com --exp 10080 --secret $JWT_SECRET_KEY)
+
+# If Basic auth is required (development only):
+export API_ALLOW_BASIC_AUTH=true
+```
+
+**For Admin UI:**
+```bash
+# Use email/password authentication
+PLATFORM_ADMIN_EMAIL=admin@example.com
+PLATFORM_ADMIN_PASSWORD=your-secure-password
+```
+
+### Security Rationale
+
+- **JWT tokens are more secure**: They have expiration, can be revoked, and don't transmit passwords on every request
+- **Basic auth sends credentials on every request**: Higher risk of credential exposure
+- **Separation of concerns**: Admin UI authentication is now clearly separate from API authentication
+- **Defense in depth**: Disabled by default reduces attack surface

@@ -1,0 +1,1468 @@
+# Release Management
+
+This document describes the complete release process for ContextForge, from pre-release preparation through tagging, publishing, and post-release housekeeping. Every step must pass before a release is tagged.
+
+---
+
+## 📋 Release Checklist Overview
+
+| Phase | Steps |
+|-------|-------|
+| [1. Version Update](#1-version-update) | Bump version, update references, CHANGELOG, roadmap, security advisories, base images |
+| [2. Python Dependency Updates](#2-python-dependency-updates) | Update pyproject.toml/requirements.txt, pip-audit |
+| [3. Rust & JS Dependency Updates](#3-rust-go-javascript-dependency-updates) | cargo update, npm update |
+| [4. Quality Gates](#4-quality-gates) | Package metadata validation, secrets scanning (pre-commit/CI handle the rest) |
+| [5. Test Gates](#5-test-gates) | Unit tests, JS tests, UI tests, MCP tests, load tests |
+| [6. Build Verification](#6-build-verification) | Docker build, compose stack, embedded mode, package validation |
+| [7. SSO Verification](#7-sso-verification) | Keycloak SSO login flow |
+| [8. Observability Verification](#8-observability-verification) | Monitoring stack under load |
+| [9. Security & Analysis](#9-security-analysis) | SonarQube, container scanning |
+| [10. Deployment Verification](#10-deployment-verification) | Helm chart lint, IaC scanning, Minikube deploy |
+| [11. Documentation Verification](#11-documentation-verification) | Broken links, build, deploy |
+| [12. Plugin Testing](#12-plugin-testing) | PII filter, plugin framework, tool invocation hooks |
+| [13. Upgrade Testing](#13-upgrade-testing) | PostgreSQL upgrade, SQLite upgrade, fresh install |
+| [14. Manual Testing](#14-manual-testing) | MCP servers, virtual servers, tokens, Inspector, VS Code |
+| [15. Draft Release](#15-draft-release) | GitHub release, release notes, announcements |
+| [16. Post-Release](#16-post-release) | Milestone cleanup, next iteration setup |
+
+---
+
+## 1. Version Update
+
+### 1.1 Bump the version
+
+Use `bump2version` to update all version references atomically:
+
+```bash
+bump2version --verbose --new-version=X.Y.Z-RC-N build
+```
+
+This updates the version string in the canonical locations defined in `.bumpversion.cfg`:
+
+
+!!! note "bump2version does not commit or tag"
+    The project's `.bumpversion.cfg` has `commit = False` and `tag = False`. You must commit and tag manually after all gates pass.
+
+### 1.2 Check for stale version references
+
+Search the codebase for any remaining references to the **old** version and update them. Exclude files where the old version appears in a historical context:
+
+- `CHANGELOG.md` (historical entries are expected)
+- `docs/docs/architecture/roadmap.md` (closed milestones are expected)
+- Git history
+
+Common places to check:
+
+- `charts/mcp-stack/Chart.yaml` (`appVersion`)
+- `charts/mcp-stack/values.yaml` (image tag)
+- `docs/docs/index.md` or overview pages
+- `README.md` badge or installation snippets
+
+### 1.3 Update `CHANGELOG.md`
+
+Update `CHANGELOG.md` following [Keep a Changelog](https://keepachangelog.com/) format:
+
+- Add a new section header: `## [X.Y.Z] - YYYY-MM-DD - Release Title`
+- Include an **Overview** paragraph describing the release focus
+- Document **Breaking Changes** with migration tables (old default vs. new default)
+- Organize entries under standard headings: `Added`, `Changed`, `Deprecated`, `Removed`, `Fixed`, `Security`
+- Link each entry to its GitHub issue or PR where applicable
+
+### 1.4 Update `docs/docs/architecture/roadmap.md`
+
+- Set the release's **Completion** to `100%` and **Status** to `Closed`
+- Verify the **Due Date** matches the actual release date
+- Move any incomplete issues from this milestone to the next release
+
+### 1.5 Resolve GitHub security advisories
+
+Review and resolve all items on the [Security tab](https://github.com/IBM/mcp-context-forge/security):
+
+- **Dependabot alerts** — upgrade or dismiss every open alert. No critical or high severity alerts may remain open at release time.
+- **Code scanning alerts** — review any CodeQL or third-party SAST findings and resolve or justify each one.
+- **Secret scanning alerts** — verify no leaked secrets are flagged; rotate any that were exposed.
+
+```bash
+# Quick check via CLI
+gh api repos/IBM/mcp-context-forge/dependabot/alerts --jq '[.[] | select(.state=="open")] | length'
+gh api repos/IBM/mcp-context-forge/code-scanning/alerts --jq '[.[] | select(.state=="open")] | length'
+```
+
+**Acceptance criteria:** Zero open critical/high Dependabot alerts. All code scanning and secret scanning alerts reviewed and resolved or triaged with documented justification.
+
+### 1.6 Update container base images
+
+Update the `FROM` lines in `Containerfile` to the latest available tags. Pinned image tags prevent silent drift but must be bumped manually before each release.
+
+Check current base images:
+
+```bash
+grep '^FROM' Containerfile
+```
+
+| Stage | Current image | What to check |
+|-------|---------------|---------------|
+| Rust builder | `registry.access.redhat.com/ubi10/ubi:<tag>` | [Red Hat Container Catalog](https://catalog.redhat.com/software/containers/ubi10/ubi) |
+| Frontend builder | `registry.access.redhat.com/ubi10/nodejs-24:<tag>` | [Red Hat Container Catalog](https://catalog.redhat.com/software/containers/ubi10/nodejs-24) |
+| Builder | `registry.access.redhat.com/ubi10/ubi:<tag>` | [Red Hat Container Catalog](https://catalog.redhat.com/software/containers/ubi10/ubi) |
+| Runtime | `registry.access.redhat.com/ubi10/ubi-minimal:<tag>` | [Red Hat Container Catalog](https://catalog.redhat.com/software/containers/ubi10/ubi-minimal) |
+
+Update `Containerfile` with the latest tags, then verify the image builds:
+
+```bash
+make docker-prod DOCKER_BUILD_ARGS="--no-cache"
+```
+
+## 2. Python Dependency Updates
+
+Update all Python dependencies across the repository before cutting a release. This ensures the release ships with current, patched versions.
+
+### 2.1 Update CPEX dependencies
+
+Update the `[tool.uv.sources]` / `[tool.uv.exclude-newer-package]` section of the root `pyproject.toml` to the current date/time, then run:
+
+```bash
+uv lock --upgrade
+```
+
+### 2.2 Update all `pyproject.toml` lockfiles and `requirements.txt` files
+
+The snippet below auto-discovers every `pyproject.toml` and `requirements.txt` in the repository, skipping generated templates and virtual-environment directories. No hardcoded path list means newly added or deleted sub-projects are picked up automatically.
+
+```bash
+# uv-sync + lockfile upgrade for every pyproject.toml
+# Skips: mcp-servers/templates (generated), .venv dirs, Rust crates (no uv)
+find . \
+  -path "./mcp-servers/templates" -prune -o \
+  -path "*/.venv" -prune -o \
+  -path "*/target" -prune -o \
+  -path "./.cache" -prune -o \
+  -name "pyproject.toml" -type f -print \
+| while read -r toml_file; do
+    dir=$(dirname "$toml_file")
+    echo "==> $dir"
+    uv-upsync --project "$dir" 2>/dev/null || true
+    uv lock --upgrade --exclude-newer "10 days" --project "$dir"
+  done
+
+# requirements.txt files (docs, tests)
+find . \
+  -path "*/.venv" -prune -o \
+  -path "./.cache" -prune -o \
+  -name "requirements.txt" -type f -print \
+| while read -r req_file; do
+    echo "==> $req_file"
+    python .github/tools/update_dependencies.py --file "$req_file"
+  done
+```
+
+!!! tip "Dry-run the requirements updater first"
+    Use `--dry-run` to preview changes before applying:
+    ```bash
+    python .github/tools/update_dependencies.py --file docs/requirements.txt --dry-run
+    ```
+
+### 2.3 Reinstall and verify
+
+After updating, reinstall the dev environment and verify everything still resolves:
+
+```bash
+make install-dev
+```
+
+### 2.4 Audit for vulnerabilities
+
+```bash
+make pip-audit
+```
+
+**Acceptance criteria:** No known CVEs in the resolved dependency tree. If `pip-audit` reports vulnerabilities, evaluate whether a fix is available or whether the dependency must be pinned with a documented justification.
+
+### 2.4 Rebuild and test
+
+Verify the containers build with the updated dependencies and the test suite passes:
+
+```bash
+make docker-prod DOCKER_BUILD_ARGS="--no-cache"
+make test
+```
+
+---
+
+## 3. Rust & JavaScript Dependency Updates
+
+Update non-Python dependencies across the repository.
+
+### 3.1 Rust dependencies
+
+Update the root workspace `Cargo.lock` and verify the workspace builds and passes tests:
+
+```bash
+cargo update --workspace
+
+# Verify build + lint + tests
+make rust-check
+```
+
+| What it runs | Description |
+|--------------|-------------|
+| `cargo fmt --check` | Verify Rust formatting |
+| `cargo clippy -- -D warnings` | Lint for common mistakes and anti-patterns |
+| `cargo test --lib --release` | Run Rust unit tests |
+
+### 3.2 Rust supply-chain vetting
+
+After any Rust dependency update, run cargo-vet before release freeze:
+
+```bash
+make rust-vet
+```
+
+The `make rust-vet` target runs `cargo vet check` against `supply-chain/config.toml`, `supply-chain/audits.toml`, and the trusted audit imports recorded in `supply-chain/imports.lock`. Release CI treats this as a blocking gate for Rust wheels and source distributions.
+
+If vetting fails, use the [cargo-vet audit workflow](https://mozilla.github.io/cargo-vet/performing-audits.html) to handle each unvetted crate before tagging:
+
+| Option | When to use it | What to do |
+|--------|----------------|------------|
+| Use an imported audit | A trusted upstream audit set already covers the crate/version | Review the suggested import, then update `supply-chain/config.toml` and `supply-chain/imports.lock` if the trust relationship is acceptable |
+| Audit the diff | Cargo-vet suggests a small `cargo vet diff <crate> <old> <new>` | Review the exact version diff, then record it with `cargo vet certify <crate> <old> <new>` |
+| Audit the crate fully | The crate is new, or the diff is not a useful review unit | Inspect the exact crate source with `cargo vet inspect <crate> <version>`, then record it with `cargo vet certify <crate> <version>` |
+| Add a temporary exemption | The update is needed now, but a full audit is not practical before release | Add the narrowest `[[exemptions.<crate>]]` entry in `supply-chain/config.toml` with the required criteria, and document why it is acceptable |
+| Skip or revert the update | The audit cost or risk is too high for the release window | Keep the currently vetted version and move the dependency update to a follow-up task |
+
+Audits and exemptions should be reviewed by Rust maintainers or security reviewers who understand the affected crate and the `safe-to-deploy` / `safe-to-run` criteria. Prefer diff audits over exemptions. Exemptions are allowed, but each one reduces the value of the vetting gate and should be revisited with `cargo vet suggest`.
+
+When ContextForge and `cpex-plugins` share Rust dependency changes, apply the same decision in both repositories: run each repo's cargo-vet check, update each repo's `supply-chain/` metadata, or explicitly defer the update in the repo where the audit cannot be completed.
+
+At the end of Rust supply-chain vetting, prune stale cargo-vet exemptions:
+
+```bash
+cargo vet prune
+```
+
+### 3.3 JavaScript dependencies (npm)
+
+Update `package.json` and verify the frontend builds and passes linting:
+
+```bash
+npm update
+npm audit
+npm audit fix
+```
+
+Then run the full web linting and test suite:
+
+```bash
+make lint-web
+make test-js-coverage
+```
+
+### 3.4 Frontend CDN dependencies
+
+The Admin UI installs vendor JavaScript through npm and bundles/chunks it with Vite. Release validation should therefore focus on npm dependency updates and verifying the generated bundle, not CDN-pinned assets.
+
+| File | What it controls |
+|------|------------------|
+| `package.json` | Frontend dependency versions and scripts |
+| `package-lock.json` | Locked npm dependency graph |
+| `mcpgateway/admin_ui/` | Admin UI source bundled by Vite |
+
+**Update procedure:**
+
+1. **Check for new versions** of frontend dependencies in `package.json` and the lockfile.
+
+2. **Update npm dependencies** and refresh the lockfile:
+
+    ```bash
+    npm update
+    npm audit
+    npm audit fix
+    ```
+
+3. **Rebuild the Admin UI bundle**:
+
+    ```bash
+    make build-ui
+    ```
+
+4. **Rebuild the container** to verify the frontend build path:
+
+    ```bash
+    make docker-prod DOCKER_BUILD_ARGS="--no-cache"
+    ```
+
+5. **Smoke test the Admin UI** to verify bundled assets load correctly in normal and air-gapped deployments.
+
+!!! note "Bundled frontend assets"
+    Admin UI vendor JavaScript is installed from npm and bundled/chunked with Vite. Keep `package.json`, `package-lock.json`, and the Admin UI source in sync when updating frontend dependencies.
+
+### 3.5 Rebuild containers
+
+After updating all dependency ecosystems, rebuild the production container from scratch to verify everything integrates:
+
+```bash
+make docker-prod DOCKER_BUILD_ARGS="--no-cache"
+```
+
+---
+
+## 4. Quality Gates
+
+The steps below are the quality gates that require a human to run at release time. Formatting (`ruff-format`), import sorting, YAML/TOML/JSON syntax checks, and docstring coverage are all enforced by pre-commit hooks on every commit and are not repeated here. Python linters (`ruff`, `bandit`, `interrogate`, `pylint`), web linting, and config-file linting run in CI on every PR.
+
+!!! note "Pre-commit hooks run automatically"
+    `ruff-format`, `ruff-check`, `bandit`, `interrogate`, `detect-secrets`, `yamllint`, `check-yaml`, `check-toml`, and `check-json` all run as pre-commit hooks and in CI. They do not need a dedicated manual release step. `check-headers` also runs as a pre-commit hook but is not yet in CI — it remains a manual release step (§4.3) until a CI job is added.
+
+### 4.1 Package metadata validation
+
+```bash
+make verify
+```
+
+Validates the wheel and sdist with twine, check-manifest, and pyroma. This is not yet wired into a CI job and must be run manually before tagging.
+
+### 4.2 Secrets scanning
+
+```bash
+make detect-secrets-scan-all
+```
+
+Re-runs the full baseline scan across all tracked files against `.secrets.baseline`. (`make detect-secrets-scan` is the developer-facing variant: it scans only files changed vs `main`, merges results into the baseline while preserving audited entries for out-of-scope tracked files, and exits non-zero on any live, unaudited, or audited-as-real findings.) Whole-tree coverage is also enforced in CI by `make detect-secrets-hook` over `git ls-files` with `--fail-on-unaudited`, but a fresh full-tree scan immediately before tagging is the last line of defence.
+
+**Acceptance criteria:** No unaudited secrets detected. Any false positives are triaged via `make detect-secrets-audit` and recorded in `.secrets.baseline`.
+
+!!! warning "Run before tagging"
+    Secrets in git history survive even after deletion from the working tree. Always run the secrets-scan gate before creating a release tag.
+
+### 4.3 License header compliance
+
+```bash
+make check-headers
+```
+
+Verifies all Python files have correct Apache-2.0 license headers, copyright year, and SPDX identifier. This is a dry-run check — no files are modified.
+
+**Acceptance criteria:** Zero files reported as missing or having incorrect headers. If any are found, fix them with `make fix-all-headers` before release.
+
+---
+
+## 5. Test Gates
+
+### 5.1 Python unit tests with coverage
+
+```bash
+make coverage
+```
+
+Runs the full pytest suite with coverage reporting. Review coverage for any significant regressions.
+
+### 5.2 JavaScript unit tests with coverage
+
+```bash
+make test-js-coverage
+```
+
+Runs Vitest with Istanbul coverage against frontend JavaScript.
+
+### 5.3 UI tests (Playwright)
+
+Requires the compose stack to be running (see [Build Verification](#6-build-verification)).
+
+```bash
+make test-ui-headless
+```
+
+Runs the full Playwright test suite in headless Chromium against the live compose stack.
+
+### 5.4 MCP protocol tests
+
+Requires the compose stack to be running with SSE transport enabled.
+
+```bash
+make test-mcp-rbac test-mcp-protocol-e2e
+```
+
+| Target | What it tests |
+|--------|---------------|
+| `test-mcp-rbac` | RBAC enforcement and multi-transport MCP protocol compliance |
+| `test-mcp-protocol-e2e` | MCP protocol via FastMCP client against the gateway |
+
+### 5.5 Load testing
+
+Requires the compose stack with the testing profile (includes Locust).
+
+```bash
+make load-test-cli
+```
+
+**Acceptance criteria:** 10-minute sustained run, 1000 RPS target, **0% error rate**.
+
+The load test defaults are configured via Makefile variables (`LOADTEST_HOST`, `LOADTEST_USERS`, `LOADTEST_SPAWN_RATE`, `LOADTEST_RUN_TIME`, `LOADTEST_PROCESSES`). For release validation, ensure the test runs for a sufficient duration with realistic concurrency.
+
+!!! tip "System tuning"
+    For accurate load test results, run `sudo scripts/tune-loadtest.sh` to optimize kernel parameters before testing.
+
+Additional load profiles are available for targeted validation:
+
+```bash
+make load-test-light      # Quick smoke: 10 users, 30s
+make load-test-heavy      # Stress: 200 users, 120s
+make load-test-sustained  # Endurance: 25 users, 300s
+make load-test-stress     # Peak: 500 users, 60s
+```
+
+---
+
+## 6. Build Verification
+
+### 6.1 Production container build
+
+Build the production image from scratch to verify there are no build regressions:
+
+```bash
+make docker-prod DOCKER_BUILD_ARGS="--no-cache"
+```
+
+This builds the lite production image with Docker Content Trust enabled.
+
+### 6.2 Compose stack validation
+
+Bring up the full stack with the testing profile and verify all services are healthy:
+
+```bash
+make testing-down compose-clean testing-up
+```
+
+This starts the gateway along with Locust, A2A echo server, fast test server, and MCP Inspector. Verify all services are healthy:
+
+```bash
+make compose-ps
+```
+
+!!! warning "Run compose tests before tearing down"
+    The UI tests, MCP tests, and load tests in [Section 5](#5-test-gates) require this stack to be running. Run all compose-dependent tests before calling `make compose-clean`.
+
+### 6.3 Embedded mode verification
+
+Verify the gateway works correctly in embedded/iframe mode with benchmark servers:
+
+```bash
+make embedded-up
+```
+
+This starts the embedded stack with:
+
+| Service | URL | Purpose |
+|---------|-----|---------|
+| iframe Harness | `http://localhost:8889` | UI inside iframe |
+| Gateway (nginx) | `http://localhost:8080` | API proxy |
+| Gateway Admin UI | `http://localhost:8080/admin/` | Direct admin access |
+| Benchmark Servers | `http://localhost:9000-9099` | MCP benchmark targets |
+
+Verify:
+
+- The Admin UI renders correctly inside the iframe harness at `http://localhost:8889`
+- Benchmark servers are auto-registered and their tools appear in the catalog
+- Navigation, tool execution, and resource browsing work within the embedded context
+
+Tear down when done:
+
+```bash
+make embedded-down
+```
+
+### 6.4 Python package build
+
+```bash
+make dist
+make verify
+```
+
+Builds the wheel and sdist, then validates with twine, check-manifest, and pyroma.
+
+---
+
+## 7. SSO Verification
+
+Verify the SSO login flow works end-to-end with Keycloak:
+
+```bash
+make compose-sso
+```
+
+This starts the full stack with the SSO profile, including a Keycloak instance:
+
+| Service | URL | Credentials |
+|---------|-----|-------------|
+| Gateway | `http://localhost:8080` | SSO login via Keycloak |
+| Keycloak | `http://localhost:8180` | `admin` / `changeme` |
+
+Verify:
+
+- Navigate to the Admin UI at `http://localhost:8080/admin/` and confirm the SSO login redirect to Keycloak
+- Log in with the Keycloak credentials and verify the redirect back to the Admin UI with a valid session
+- Confirm that RBAC roles from Keycloak tokens are correctly mapped and enforced
+- Test logout and verify the session is invalidated
+
+Tear down when done:
+
+```bash
+make compose-sso-down
+```
+
+---
+
+## 8. Observability Verification
+
+Verify the monitoring stack works correctly under active load. This must be done while the compose stack is running.
+
+### 8.1 Start the monitoring stack
+
+```bash
+make monitoring-up
+```
+
+This starts Prometheus, Grafana, and Tempo with OTEL tracing enabled:
+
+| Service | URL | Credentials |
+|---------|-----|-------------|
+| Grafana | `http://localhost:3000` | `admin` / `changeme` |
+| Prometheus | `http://localhost:9090` | — |
+| Tempo | `http://localhost:3200` | OTLP: 4317 (gRPC), 4318 (HTTP) |
+
+### 8.2 Run a load test with monitoring active
+
+```bash
+make load-test-cli
+```
+
+While the load test is running, verify in Grafana:
+
+- The **MCP Gateway Overview** dashboard populates with live metrics
+- Request rate, latency percentiles, and error rate graphs are rendering
+- Prometheus targets are all in `UP` state at `http://localhost:9090/targets`
+- Traces are flowing into Tempo and visible from the Grafana Explore view
+
+### 8.3 Teardown
+
+```bash
+make monitoring-down
+```
+
+---
+
+## 9. Security & Analysis
+
+### 9.1 SonarQube analysis
+
+Start SonarQube and submit a scan:
+
+```bash
+# Start SonarQube (pick your runtime)
+make sonar-up-docker    # or: make sonar-up-podman
+
+# Submit the scan
+make sonar-submit-docker  # or: make sonar-submit-podman
+```
+
+**Acceptance criteria:** Clean SonarQube report — no new bugs, vulnerabilities, or security hotspots. Review any code smells and technical debt.
+
+!!! tip "First-time setup"
+    Run `make sonar-info` for instructions on generating the SonarQube authentication token.
+
+### 9.2 Semgrep security analysis
+
+Run Semgrep with the auto ruleset to detect security anti-patterns, injection risks, and unsafe code:
+
+```bash
+make semgrep
+```
+
+Semgrep scans the `mcpgateway/` source for patterns including SQL injection, command injection, SSRF, insecure deserialization, and framework-specific misuse. Review any findings and fix or justify before release.
+
+### 9.3 SBOM generation
+
+Generate a Software Bill of Materials for the release:
+
+```bash
+make sbom
+```
+
+This produces a CycloneDX XML SBOM (`mcpgateway.sbom.xml`) listing all Python dependencies and their versions. Include the SBOM as a release artifact or attach it to the GitHub Release.
+
+### 9.4 Container security scanning
+
+The CI pipeline (`docker-scan.yml`) builds the container image and generates an SBOM artifact for review. For local verification, see also [Section 6.2](#62-containerfile-linting-and-image-scanning).
+
+---
+
+## 10. Deployment Verification
+
+### 10.1 Helm chart lint and IaC security scanning
+
+```bash
+make helm-lint linting-security-kube-linter linting-security-checkov
+```
+
+| Target | What it checks |
+|--------|----------------|
+| `helm-lint` | Helm chart static analysis for correctness |
+| `linting-security-kube-linter` | Kubernetes best-practice linting (resource limits, security contexts, probes) |
+| `linting-security-checkov` | IaC security scanning across Dockerfiles, docker-compose files, Helm charts, and k8s manifests |
+
+### 10.2 Helm chart package
+
+```bash
+make helm-package
+```
+
+Packages the chart into `dist/mcp-stack-<version>.tgz`.
+
+### 10.3 Minikube deployment
+
+Deploy to a local Minikube cluster to verify the Helm chart works end-to-end:
+
+```bash
+# Start Minikube (if not already running)
+make minikube-start
+
+# Load the freshly built image
+make minikube-image-load
+
+# Deploy via Helm
+make helm-deploy
+
+# Verify pods are healthy
+make minikube-status
+
+# Port-forward and smoke test
+make minikube-port-forward
+```
+
+Verify the application starts, the health endpoint responds, and basic functionality works through the forwarded port.
+
+### 10.4 Teardown
+
+```bash
+make helm-delete
+make minikube-stop
+```
+
+---
+
+## 11. Documentation Verification
+
+Verify the documentation builds cleanly, has no broken links, and is ready for deployment.
+
+### 11.1 Check for broken links
+
+```bash
+make linting-docs-markdown-links
+```
+
+Scans Markdown files for broken internal and external links. Fix any broken references before release.
+
+### 11.2 Build and preview documentation
+
+```bash
+cd docs && make serve
+```
+
+This starts a local MkDocs development server. Manually review:
+
+- The new version's content is accurate and complete
+- Navigation structure is correct
+- No rendering issues in code blocks, tables, or admonitions
+- Release-specific pages (CHANGELOG, roadmap) reflect the current release
+
+### 11.3 Deploy versioned documentation
+
+Deploy the documentation for the release version using mike. This creates a version-specific folder on the `gh-pages` branch:
+
+```bash
+cd docs
+
+# Deploy the version (e.g., 1.0.0) with 'latest' alias
+make mike-deploy VERSION=1.0.0
+
+# Set as default version (landing page)
+make mike-set-default
+```
+
+**Versioning strategy:**
+
+- Documentation is maintained in `main` branch alongside code changes
+- When cutting a release tag (e.g., `v1.0.0`), deploy docs to that version
+- Each version gets its own folder on `gh-pages`: `1.0.0/`, `1.0.1/`, etc.
+- The `latest` alias points to the newest release
+- Old versions remain accessible but are not updated (frozen at release time)
+
+**Version deployment workflow:**
+
+```bash
+cd docs
+
+# For stable releases (deploys with 'latest' alias)
+make mike-deploy VERSION=1.0.0
+
+# For release candidates
+make mike-deploy VERSION=1.0.0-RC1
+
+# For development previews
+make mike-deploy VERSION=dev
+
+# Set default version (landing page)
+make mike-set-default
+
+# Delete a version
+make mike-delete VERSION=0.8.0
+```
+
+**Verify deployment:**
+
+```bash
+cd docs
+make mike-list  # Show all deployed versions
+```
+
+**Local preview:**
+
+```bash
+cd docs
+make mike-serve  # http://localhost:8000 with version selector
+```
+
+The version selector in the docs UI (top right) allows users to switch between versions.
+
+!!! note "Single source, multiple deployments"
+    This strategy maintains a single documentation source in `main` that evolves with the code. Each release tag triggers a versioned deployment, creating a snapshot of the docs at that point in time. No separate version branches are needed.
+
+---
+
+## 12. Plugin Testing
+
+Verify the plugin framework and key plugins work correctly. This requires the compose stack to be running with `PLUGINS_ENABLED=true` (the default in `docker-compose.yml`).
+
+### 12.1 Enable the PII filter plugin
+
+Edit `plugins/config.yaml` to set the PII filter plugin to enforce mode:
+
+```yaml
+- name: "PIIFilterPlugin"
+  kind: "cpex_pii_filter.PIIFilterPlugin"
+  hooks:
+    [
+      "tool_pre_invoke",
+      "tool_post_invoke",
+    ]
+  mode: "enforce"  # Change from "disabled" to "enforce"
+  priority: 50
+  config:
+    detect_ssn: true
+    detect_credit_card: true
+    detect_email: true
+    detect_phone: true
+    detect_ip_address: true
+    detect_aws_keys: true
+    detect_api_keys: true
+    default_mask_strategy: "partial"
+    block_on_detection: false
+    log_detections: true
+    include_detection_details: true
+```
+
+Restart the compose stack to pick up the change:
+
+```bash
+make compose-restart
+```
+
+### 12.2 Test PII detection on tool invocation
+
+Register a simple REST tool and invoke it with PII-laden arguments to verify the plugin intercepts and masks sensitive data:
+
+```bash
+# Create a tool that echoes its input
+curl -sS -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "tool": {
+         "name": "echo_tool",
+         "description": "Echoes input for testing",
+         "url": "https://httpbin.org/post",
+         "request_type": "POST",
+         "integration_type": "REST",
+         "input_schema": {
+           "type": "object",
+           "properties": {
+             "message": {"type": "string", "description": "Message to echo"}
+           }
+         }
+       }
+     }' \
+     "$BASE_URL/tools" | jq
+```
+
+The create response returns the canonical tool name as `echo-tool` (hyphenated). Use that name for JSON-RPC tool calls.
+
+Invoke the tool with supported PII types and verify masking:
+
+```bash
+# Test with SSN
+curl -sS -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"echo-tool","arguments":{"message":"My SSN is 123-45-6789"}}}' \
+     "$BASE_URL/rpc" | jq
+
+# Test with credit card number
+curl -sS -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"echo-tool","arguments":{"message":"Card: 4111-1111-1111-1111"}}}' \
+     "$BASE_URL/rpc" | jq
+
+# Test with email address
+curl -sS -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"echo-tool","arguments":{"message":"Contact john.doe@example.com for details"}}}' \
+     "$BASE_URL/rpc" | jq
+
+# Test with phone number
+curl -sS -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"echo-tool","arguments":{"message":"Call me at 212-555-0199"}}}' \
+     "$BASE_URL/rpc" | jq
+```
+
+**Acceptance criteria:** Each response should show the PII values masked in the upstream payload returned by httpbin (for example, `123-45-6789` becomes `***-**-6789`). The original PII must not appear in the tool invocation payload. If `tools/call` returns an ambiguous tool error, remove duplicate `echo-tool` entries or create the test tool with a unique name and invoke the returned canonical name.
+
+### 12.3 Test PII detection via MCP protocol
+
+Create a virtual server for the tool and invoke it through the Streamable HTTP MCP endpoint:
+
+```bash
+# Create a virtual server that exposes the echo tool.
+# Replace TOOL_ID with the id from the /tools create response above.
+curl -sS -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{
+       "server": {
+         "name": "step12-pii-server",
+         "description": "Step 12 PII MCP verification",
+         "associated_tools": ["TOOL_ID"]
+       },
+       "visibility": "public"
+     }' \
+     "$BASE_URL/servers" | jq
+```
+
+Initialize an MCP session against the returned server id:
+
+```bash
+SERVER_ID="..."  # id from the /servers create response
+
+curl -i -sS -X POST "$BASE_URL/servers/$SERVER_ID/mcp/" \
+     -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+     -H "Accept: application/json, text/event-stream" \
+     -H "Content-Type: application/json" \
+     -H "MCP-Protocol-Version: 2025-11-25" \
+     -d '{
+       "jsonrpc": "2.0",
+       "id": 1,
+       "method": "initialize",
+       "params": {
+         "protocolVersion": "2025-11-25",
+         "capabilities": {},
+         "clientInfo": {"name": "step12-curl", "version": "1.0.0"}
+       }
+     }'
+```
+
+Copy the `mcp-session-id` response header, then call the tool through MCP:
+
+```bash
+MCP_SESSION_ID="..."  # mcp-session-id response header from initialize
+
+curl -sS -X POST "$BASE_URL/servers/$SERVER_ID/mcp/" \
+     -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+     -H "Accept: application/json, text/event-stream" \
+     -H "Content-Type: application/json" \
+     -H "MCP-Protocol-Version: 2025-11-25" \
+     -H "mcp-session-id: $MCP_SESSION_ID" \
+     -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"echo-tool","arguments":{"message":"My SSN is 123-45-6789"}}}' \
+     | jq
+```
+
+**Acceptance criteria:** The MCP `tools/call` response should show the SSN masked in the upstream payload, and the original `123-45-6789` value must not appear.
+
+### 12.4 Verify plugin health and status
+
+Check the plugin framework is healthy via the Admin UI or API. The bearer token must have the `admin.plugins` permission, so generate a platform admin token before calling the endpoint:
+
+```bash
+export JWT_SECRET_KEY=$(grep '^JWT_SECRET_KEY=' .env | cut -d= -f2-)
+
+export MCPGATEWAY_ADMIN_TOKEN=$(./.venv/bin/python -m mcpgateway.utils.create_jwt_token \
+  --username admin@example.com \
+  --admin \
+  --exp 10080 \
+  --secret "$JWT_SECRET_KEY" \
+  --algo HS256 \
+  2>/dev/null | tail -n 1)
+
+curl -sS -H "Authorization: Bearer $MCPGATEWAY_ADMIN_TOKEN" \
+     -H "Accept: application/json" \
+     "$BASE_URL/admin/plugins/PIIFilterPlugin" | jq '{name,status,mode,hooks,kind}'
+```
+
+Verify:
+
+- The PII filter plugin shows `status: enabled` and `mode: enforce`
+- The plugin has both `tool_pre_invoke` and `tool_post_invoke` in `hooks`
+- No plugin errors appear in the gateway logs (`make compose-logs | grep -i plugin`)
+
+### 12.5 Cleanup
+
+Reset the plugin config back to disabled mode before proceeding:
+
+```yaml
+mode: "disabled"  # Revert to disabled
+```
+
+```bash
+make compose-restart
+```
+
+---
+
+## 13. Upgrade Testing
+
+Verify that Alembic database migrations work correctly when upgrading from a previous release. The upgrade validation harness tests four scenarios: SQLite fresh, SQLite upgrade, PostgreSQL fresh, and PostgreSQL upgrade.
+
+### 13.1 Automated upgrade validation
+
+The `upgrade-validate` target runs the full validation harness automatically. It defaults to upgrading from `1.0.0-BETA-2` to the locally built image:
+
+```bash
+# Build the current image first
+make docker-prod DOCKER_BUILD_ARGS="--no-cache"
+
+# Run all four upgrade scenarios
+make upgrade-validate
+```
+
+This executes `scripts/ci/run_upgrade_validation.sh`, which:
+
+1. **SQLite fresh install** — starts the target image with a new SQLite database, verifies the Alembic head is correct
+2. **SQLite upgrade** — starts the base image (`1.0.0-BETA-2`), seeds marker data, stops it, starts the target image against the same database file, verifies migrations ran and data is preserved
+3. **PostgreSQL fresh install** — starts a fresh Postgres 18 container and the target image, verifies the Alembic head
+4. **PostgreSQL upgrade** — starts the base image against Postgres, seeds marker data, swaps to the target image, verifies migrations and data preservation
+
+**Acceptance criteria:** All four scenarios pass. The Alembic version in the database matches the expected single head, and seeded marker data survives the upgrade.
+
+### 13.2 Custom base version
+
+To test upgrades from a different release:
+
+```bash
+make upgrade-validate \
+  UPGRADE_BASE_IMAGE=ghcr.io/ibm/mcp-context-forge:1.0.0-RC-1 \
+  UPGRADE_TARGET_IMAGE=mcpgateway/mcpgateway:latest
+```
+
+### 13.3 Manual compose upgrade test (PostgreSQL)
+
+For a more realistic test that exercises the full compose stack and PgBouncer:
+
+```bash
+# 1. Start with the old release image
+make compose-clean
+```
+
+Edit `docker-compose.yml` to use the old release image:
+
+```yaml
+gateway:
+  image: ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-2
+  #image: ${IMAGE_LOCAL:-mcpgateway/mcpgateway:latest}
+```
+
+```bash
+# 2. Bring up the old stack and seed some data
+make compose-up
+make compose-ps   # verify all services are healthy
+
+# Seed data: register a gateway, create a virtual server, create a tool
+curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{"name":"upgrade_test_gw","url":"http://localhost:8002/sse"}' \
+     http://localhost:8080/gateways | jq
+
+curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{"name":"upgrade_test_server","description":"Pre-upgrade server"}' \
+     http://localhost:8080/servers | jq
+
+# 3. Stop the stack (preserves Postgres volume)
+make compose-down
+```
+
+Swap back to the local latest image:
+
+```yaml
+gateway:
+  image: ${IMAGE_LOCAL:-mcpgateway/mcpgateway:latest}
+  #image: ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-2
+```
+
+```bash
+# 4. Bring up with the new image (Alembic auto-migrates on startup)
+make compose-up
+make compose-ps   # verify all services are healthy
+
+# 5. Verify data survived the upgrade
+curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+     http://localhost:8080/gateways | jq '.[] | select(.name=="upgrade_test_gw")'
+
+curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+     http://localhost:8080/servers | jq '.[] | select(.name=="upgrade_test_server")'
+```
+
+Verify:
+
+- The gateway starts without migration errors in the logs (`make compose-logs | grep -i alembic`)
+- Previously created gateways, servers, and tools are present and intact
+- The Admin UI loads and displays the pre-upgrade data
+- New features from the current release are functional
+
+### 13.4 Manual SQLite upgrade test
+
+For SQLite, the upgrade path can be tested without compose:
+
+```bash
+# 1. Run the old image with a mounted SQLite volume
+mkdir -p /tmp/upgrade-test-sqlite
+docker run -d --name upgrade-old \
+  -p 4444:4444 \
+  -e "DATABASE_URL=sqlite:////app/data/mcp.db" \
+  -e "AUTH_REQUIRED=false" \
+  -e "HOST=0.0.0.0" -e "PORT=4444" \
+  -e "MCPGATEWAY_UI_ENABLED=true" \
+  -e "MCPGATEWAY_ADMIN_API_ENABLED=true" \
+  -v /tmp/upgrade-test-sqlite:/app/data \
+  ghcr.io/ibm/mcp-context-forge:1.0.0-BETA-2
+
+# Wait for health, seed data, stop
+curl --retry 30 --retry-delay 2 -sf http://localhost:4444/health
+curl -s -X POST -H "Content-Type: application/json" \
+     -d '{"name":"sqlite_upgrade_test","url":"http://example.com/sse"}' \
+     http://localhost:4444/gateways | jq
+docker stop upgrade-old && docker rm upgrade-old
+
+# 2. Run the new image against the same database file
+docker run -d --name upgrade-new \
+  -p 4444:4444 \
+  -e "DATABASE_URL=sqlite:////app/data/mcp.db" \
+  -e "AUTH_REQUIRED=false" \
+  -e "HOST=0.0.0.0" -e "PORT=4444" \
+  -e "MCPGATEWAY_UI_ENABLED=true" \
+  -e "MCPGATEWAY_ADMIN_API_ENABLED=true" \
+  -v /tmp/upgrade-test-sqlite:/app/data \
+  mcpgateway/mcpgateway:latest
+
+# 3. Verify
+curl --retry 30 --retry-delay 2 -sf http://localhost:4444/health
+curl -s http://localhost:4444/gateways | jq '.[] | select(.name=="sqlite_upgrade_test")'
+
+# 4. Cleanup
+docker stop upgrade-new && docker rm upgrade-new
+rm -rf /tmp/upgrade-test-sqlite
+```
+
+### 13.5 Comprehensive migration test suite
+
+For deeper migration testing across multiple version pairs (forward, reverse, skip-version):
+
+```bash
+# Run the full migration test suite
+make migration-test-all
+
+# Or run database-specific tests
+make migration-test-sqlite
+make migration-test-postgres
+make migration-test-performance
+```
+
+The migration test suite follows an **n-2 support policy** and tests sequential upgrades, downgrades, and skip-version jumps. See `tests/migration/README.md` for full documentation.
+
+---
+
+## 14. Manual Testing
+
+These tests verify core user-facing workflows that automated tests do not fully cover.
+
+Before starting, ensure `.env` has a real JWT secret (the default `.env` ships with a placeholder that breaks token authentication):
+
+```bash
+# Generate secrets and merge into .env (skip if already done)
+make init-secrets
+# Confirm JWT_SECRET_KEY is no longer the placeholder
+grep JWT_SECRET_KEY .env   # must not contain __REPLACE_ME__
+```
+
+Build and start the compose stack:
+
+```bash
+make docker-prod && make testing-up
+```
+
+### 14.1 Generate a JWT token
+
+Create a token for API and client access:
+
+```bash
+# JWT_SECRET_KEY must match the value in .env (run make init-secrets if not set)
+export JWT_SECRET_KEY=$(grep '^JWT_SECRET_KEY=' .env | cut -d= -f2-)
+
+export MCPGATEWAY_BEARER_TOKEN=$(python -m mcpgateway.utils.create_jwt_token \
+  --username admin@example.com \
+  --exp 10080 \
+  --secret "$JWT_SECRET_KEY")
+
+export BASE_URL="http://localhost:8080"
+```
+
+### 14.2 Register an MCP server via SSE
+
+The translate process must bind to `0.0.0.0` so the gateway container can reach it via `host.docker.internal`:
+
+```bash
+# Start MCP time server exposed via SSE (bind to 0.0.0.0 for Docker reachability)
+python3 -m mcpgateway.translate \
+  --stdio "uvx mcp-server-time --local-timezone=UTC" \
+  --expose-sse \
+  --port 8002 \
+  --host 0.0.0.0 &
+
+# Register with gateway (use host.docker.internal since gateway runs in Docker)
+curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{"name":"release_test_sse","url":"http://host.docker.internal:8002/sse"}' \
+     $BASE_URL/gateways | jq
+
+# Verify tools appear in catalog
+curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" $BASE_URL/tools | jq
+```
+
+**Expected:** Each tool object contains `gateway_id` (UUID of the registering gateway) but no `gateway_name` field — the `/tools` API does not denormalize the gateway name. To resolve a human-readable name, call `GET /gateways/<gateway_id>`. This is by design.
+
+### 14.3 Register an MCP server via Streamable HTTP
+
+Streamable HTTP transport requires the `--expose-streamable-http` flag and an explicit `"transport":"STREAMABLEHTTP"` field in the registration payload — the gateway does not auto-detect transport from the URL:
+
+```bash
+# Start MCP server exposed via Streamable HTTP
+python3 -m mcpgateway.translate \
+  --stdio "uvx mcp-server-time --local-timezone=UTC" \
+  --expose-streamable-http \
+  --port 8003 \
+  --host 0.0.0.0 &
+
+# Register with gateway (explicit transport field required)
+curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{"name":"release_test_streamable","url":"http://host.docker.internal:8003/mcp","transport":"STREAMABLEHTTP"}' \
+     $BASE_URL/gateways | jq
+
+# Verify tools
+curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" $BASE_URL/tools | jq
+```
+
+**Expected:** Tools from both gateways appear in the catalog, each with `gateway_id` populated. As with SSE, `gateway_name` is not included in the response; use `GET /gateways/<gateway_id>` to resolve the name.
+
+### 14.4 Create a virtual server and export it
+
+The request body must wrap the server fields under a `"server"` key:
+
+```bash
+# Create virtual server
+curl -s -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
+     -H "Content-Type: application/json" \
+     -d '{"server":{"name":"release_test_server","description":"Release validation tools","associatedTools":[]}}' \
+     $BASE_URL/servers | jq
+
+# Verify (shows id, name, associatedTools)
+curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" $BASE_URL/servers | jq '[.[] | {id, name, associatedTools}]'
+```
+
+Export the configuration for backup verification. Override `HOST`/`PORT` via env — do not use a `--url` flag:
+
+```bash
+MCPGATEWAY_BEARER_TOKEN=$MCPGATEWAY_BEARER_TOKEN HOST=localhost PORT=8080 \
+  python -m mcpgateway.cli export --out release-test-export.json
+```
+
+**Expected:** The export file contains the virtual server, both registered gateways, and any standalone (local REST) tools. MCP gateway-discovered tools — those imported from an upstream MCP server — are intentionally excluded from the `tools` list in the export. They are considered ephemeral: when the gateway is re-imported, the tools are re-discovered automatically. Only standalone tools created directly via `POST /tools` appear as independent exported entities. Verify that `entities.gateways` contains both `release_test_sse` and `release_test_streamable`, and `entities.servers` contains `release_test_server`.
+
+### 14.5 Test with MCP Inspector
+
+Registered MCP gateways cannot be accessed directly via Inspector — they must be exposed through a virtual server. Add the SSE and Streamable HTTP gateways to `release_test_server` via the Admin UI or API, then connect Inspector to the virtual server.
+
+```bash
+npx -y @modelcontextprotocol/inspector
+```
+
+In the Inspector UI:
+
+1. Set **Transport** to `SSE`
+2. Set **URL** to `$BASE_URL/servers/<VIRTUAL_SERVER_UUID>/sse`
+3. Set **Header** `Authorization` to `Bearer <YOUR_TOKEN>`
+4. Click **Connect**
+5. Verify: tools from both registered gateways appear, you can execute a tool call, and the response is correct
+
+Repeat with **Streamable HTTP**:
+
+1. Set **Transport** to `Streamable HTTP`
+2. Set **URL** to `$BASE_URL/servers/<VIRTUAL_SERVER_UUID>/mcp`
+3. Set the same Authorization header
+4. Verify: tools list loads and tool calls execute correctly
+
+> **Note:** Streamable HTTP is a stateful protocol. Before `tools/list` can be called, the client must complete an `initialize` handshake, which the server responds to with a `Mcp-Session-Id` header. All subsequent requests must include that header. MCP Inspector handles this automatically. Raw `curl` calls that skip `initialize` will receive a `-32600 Missing session ID` error — this is expected protocol behaviour, not a gateway bug.
+
+### 14.6 Test with VS Code (GitHub Copilot)
+
+Create a `.vscode/mcp.json` in a test workspace to verify the IDE integration end-to-end.
+
+**SSE configuration:**
+
+```json
+{
+  "servers": {
+    "contextforge-sse": {
+      "type": "sse",
+      "url": "http://localhost:8080/servers/<VIRTUAL_SERVER_UUID>/sse",
+      "headers": {
+        "Authorization": "Bearer <YOUR_JWT_TOKEN>"
+      }
+    }
+  }
+}
+```
+
+**Streamable HTTP configuration:**
+
+```json
+{
+  "servers": {
+    "contextforge-http": {
+      "type": "http",
+      "url": "http://localhost:8080/servers/<VIRTUAL_SERVER_UUID>/mcp/",
+      "headers": {
+        "Authorization": "Bearer <YOUR_JWT_TOKEN>"
+      }
+    }
+  }
+}
+```
+
+Verify in VS Code (requires VS Code >= 1.99 with `"chat.mcp.enabled": true`):
+
+1. Open the Copilot chat panel
+2. Confirm the MCP server status indicator shows connected
+3. Ask Copilot to use one of the registered tools (e.g., "What time is it?")
+4. Verify the tool call executes and returns a valid response
+5. Test with both SSE and Streamable HTTP configurations
+
+### 14.7 Cleanup
+
+Stop the sample MCP servers and remove test artifacts:
+
+```bash
+# Stop background translate processes
+kill %1 %2 2>/dev/null || true
+
+# Remove test export
+rm -f release-test-export.json
+```
+
+---
+
+## 15. Draft Release
+
+### 15.1 Commit the version bump
+
+Once all gates pass, commit the version changes:
+
+```bash
+git add -A
+git commit -s -m "chore: bump version to X.Y.Z"
+```
+
+!!! note "DCO requirement"
+    All commits must be signed off (`-s` flag) per the project's Developer Certificate of Origin policy.
+
+### 15.2 Tag the release
+
+```bash
+git tag -s vX.Y.Z -m "Release vX.Y.Z"
+git push origin main --tags
+```
+
+The tag format is `vX.Y.Z` (e.g., `v1.0.0`, `v1.0.0-RC-2`) as configured in `.bumpversion.cfg`.
+
+### 15.3 Create the GitHub Release
+
+Create a release on GitHub from the tag. The release notes should include:
+
+1. **Summary** — One-paragraph description of the release focus
+2. **Highlights** — Bullet list of the most notable changes
+3. **Breaking Changes** — Migration instructions for any breaking changes (copy from CHANGELOG)
+4. **New Features** — Key new capabilities
+5. **Bug Fixes** — Notable fixes
+6. **Security** — Security-related changes
+7. **Upgrade Instructions** — Link to the [upgrade guide](../manage/upgrade.md) with any release-specific notes
+8. **Full Changelog** — Link to the diff between the previous and current tag
+
+```bash
+gh release create vX.Y.Z \
+  --title "vX.Y.Z - Release Title" \
+  --notes-file release-notes.md
+```
+
+!!! important "CI triggers on release publish"
+    Publishing the GitHub Release creates the git tag, which triggers the `docker-multiplatform.yml` workflow. On a `v*` tag push it builds all platform images (amd64, arm64, s390x, ppc64le), creates the multiplatform manifest tagged with the semantic version and `latest`, and signs the image with Cosign.
+
+### 15.4 Verify CI release pipeline
+
+After publishing, verify that the `docker-multiplatform.yml` workflow completes successfully:
+
+```bash
+gh run list --workflow=docker-multiplatform.yml --limit=1
+```
+
+Confirm the container image is available at `ghcr.io/ibm/mcp-context-forge:vX.Y.Z`.
+
+---
+
+## 16. Post-Release
+
+### 16.1 Close the milestone
+
+If not already done in step 1.5, close the GitHub milestone and ensure all issues are accounted for.
+- Move all remaining open issues to the next milestone
+- Close the current milestone on GitHub
+
+---
+
+### 16.2 Create the next milestone
+
+Create the next milestone on GitHub with the planned due date from the roadmap.
+
+### 16.3 Verify documentation deployment
+
+If the documentation site auto-deploys, verify the new version's docs are live and the release notes are visible.
+
+### 16.4 Announce the release
+
+Notify relevant channels (GitHub Discussions, Slack, mailing list, etc.) with a summary of the release highlights.
+
+---
+
+## Quick Reference: Gate Commands
+
+Copy-paste checklist for running all gates in sequence:
+
+```bash
+# 0. Security advisories & base images
+gh api repos/IBM/mcp-context-forge/dependabot/alerts --jq '[.[] | select(.state=="open")] | length'
+# ... resolve all open Dependabot, code scanning, secret scanning alerts ...
+# ... update FROM tags in Containerfile ...
+grep '^FROM' Containerfile
+
+# 1. Python dependency updates
+python .github/tools/update_dependencies.py --file pyproject.toml
+# ... repeat for all pyproject.toml and requirements.txt (see Section 2) ...
+make install-dev
+make pip-audit
+
+# 2. Rust / JS / CDN dependency updates
+cargo update --workspace
+make rust-vet
+npm update && npm audit && npm audit fix
+make lint-web test-js-coverage
+# Frontend deps: update package.json/package-lock.json and rebuild the Vite bundle
+
+# 3. Rebuild after dep updates
+make docker-prod DOCKER_BUILD_ARGS="--no-cache"
+make test
+
+# 4. Quality gates (pre-commit/CI handle formatting and linting)
+make verify
+make detect-secrets-scan-all   # whole-tree scan before tagging; detect-secrets-scan is scoped to changed files
+make check-headers
+
+# 5. Unit tests
+make coverage
+make test-js-coverage
+
+# 6. Build & compose stack
+make docker-prod DOCKER_BUILD_ARGS="--no-cache"
+make testing-down compose-clean testing-up
+
+# 7. Integration tests (compose stack must be running)
+make test-ui-headless
+make test-mcp-rbac test-mcp-protocol-e2e
+make load-test-cli
+
+# 8. Embedded mode
+make embedded-up
+# ... verify iframe UI, benchmark servers ...
+make embedded-down
+
+# 9. SSO
+make compose-sso
+# ... verify Keycloak login flow ...
+make compose-sso-down
+
+# 10. Monitoring under load (compose stack must be running)
+make monitoring-up
+make load-test-cli
+# ... verify Grafana dashboards, Prometheus targets, Tempo traces ...
+make monitoring-down
+
+# 11. Security & analysis
+make semgrep
+make sbom
+make sonar-up-docker && make sonar-submit-docker
+
+# 12. Helm / Minikube / IaC
+make helm-lint linting-security-kube-linter linting-security-checkov
+make helm-package
+make minikube-start minikube-image-load helm-deploy
+make minikube-status
+make helm-delete minikube-stop
+
+# 13. Documentation
+make linting-docs-markdown-links
+cd docs && make serve   # manual review
+cd docs && make deploy
+
+# 14. Plugin testing
+# ... enable PII filter in plugins/config.yaml (mode: "enforce") ...
+make compose-restart
+# ... invoke tools with PII (SSN, credit card, email, phone number) ...
+# ... verify masking in responses ...
+# ... run PII filter unit tests if present ...
+# ... revert plugin config, restart ...
+
+# 15. Upgrade testing
+make upgrade-validate
+# ... or manual compose upgrade: swap image in docker-compose.yml ...
+make migration-test-all
+
+# 16. Manual testing (see Section 14 for full walkthrough)
+# ... register SSE + Streamable HTTP servers, create virtual server,
+#     export config, test with MCP Inspector, test with VS Code ...
+
+# 17. Teardown
+make testing-down compose-clean
+```

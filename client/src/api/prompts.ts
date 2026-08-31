@@ -1,0 +1,143 @@
+/**
+ * Prompts API service
+ */
+
+import { api } from "./client";
+import type { PromptRead, PromptUpdate } from "@/generated/types";
+
+/**
+ * Shape of a rendered MCP `prompts/get` response — the gateway substitutes
+ * template variables and runs plugin hooks, but does not invoke an LLM.
+ *
+ * The OpenAPI spec models this as `unknown`; this local type captures the
+ * fields the UI actually renders. Keep narrow — widen only as the panel grows.
+ */
+export interface RenderedPromptMessage {
+  role: "user" | "assistant" | "system";
+  content: {
+    type: "text";
+    text: string;
+  };
+}
+
+export interface RenderedPrompt {
+  messages: RenderedPromptMessage[];
+  description?: string | null;
+}
+
+export interface RenderResult {
+  rendered: RenderedPrompt;
+  status: number;
+}
+
+// Mirrors the backend `SecurityValidator.NAME_PATTERN` in
+// `mcpgateway/utils/security_validator.py` — the same characters the gateway
+// accepts for a prompt name (space, dot, dash allowed). If the backend widens
+// the pattern, update here in lockstep.
+const PROMPT_NAME_PATTERN = /^[a-zA-Z0-9_.\- ]+$/;
+
+function validatePromptName(value: string): string {
+  if (!value || typeof value !== "string") {
+    throw new Error("Invalid prompt name");
+  }
+  if (!PROMPT_NAME_PATTERN.test(value)) {
+    throw new Error("Invalid prompt name format");
+  }
+  return value;
+}
+
+/**
+ * Validates a prompt ID (the primary-key identifier used by `PUT /prompts/{id}`,
+ * distinct from the name used by {@link promptsApi.render}). Guards against path
+ * traversal and injection by allowing only alphanumerics, hyphens, and
+ * underscores.
+ */
+function validatePromptId(id: string): string {
+  if (!id || typeof id !== "string") {
+    throw new Error("Invalid prompt ID");
+  }
+  if (!/^[a-zA-Z0-9_-]+$/.test(id)) {
+    throw new Error("Invalid prompt ID format");
+  }
+  return id;
+}
+
+export const promptsApi = {
+  /**
+   * Render a prompt without invoking an LLM. Runs plugin hooks; returns the
+   * MCP `messages` array with template substitutions applied.
+   *
+   * Mirrors `POST /prompts/{prompt_id}` (`mcpgateway/main.py`). The gateway
+   * endpoint accepts either the prompt's name or its ID (see
+   * `_find_prompt_by_name_or_id` in `mcpgateway/services/prompt_service.py`);
+   * this call passes the name so the identifier matches what the Code-tab
+   * snippets show and what MCP-spec clients use on the wire.
+   *
+   * Failure modes to be aware of:
+   *   - If the same name is visible to the caller in more than one scope, the
+   *     backend raises PromptError ("ambiguous across multiple scopes"). The
+   *     hook unwraps `ApiError.detail` and surfaces the message via toast.
+   *   - MCP 2026-07-28 RC introduces an `Mcp-Name` header as the canonical
+   *     wire identifier for prompts; keeping this call name-shaped means the
+   *     snippet URL string and the future header value are the same identifier.
+   *
+   * Future option (tracked separately from this fix-up):
+   *   - Route Preview and snippets through the server-scoped MCP transport
+   *     (`POST /servers/{server_id}/mcp` with a JSON-RPC `prompts/get`
+   *     envelope). Removes ambiguity entirely and matches how real MCP
+   *     clients address prompts. Depends on the Prompts page carrying a
+   *     server context, which is not the case today.
+   */
+  render: (
+    name: string,
+    args: Record<string, string> = {},
+    options: { signal?: AbortSignal } = {},
+  ): Promise<RenderResult> => {
+    // Validate outside the async chain so bad names reject the *caller* before
+    // any network I/O and preserve the synchronous-throw contract exercised by
+    // `prompts.test.ts`.
+    const validName = validatePromptName(name);
+    return api
+      .postWithMeta<RenderedPrompt>(`/prompts/${encodeURIComponent(validName)}`, args, {
+        signal: options.signal,
+      })
+      .then(({ data, status }) => ({ rendered: data, status }));
+  },
+
+  /**
+   * Replace a prompt's tags.
+   *
+   * Sends a partial `PUT /prompts/{id}` (keyed by the prompt's primary-key ID,
+   * not its name) carrying only `tags`; the update service preserves every other
+   * field when it is omitted. Returns the updated prompt so callers can patch
+   * their cache with the normalized tags.
+   */
+  updateTags: (id: string, tags: string[]): Promise<PromptRead> => {
+    const validId = validatePromptId(id);
+    return api.put<PromptRead>(`/prompts/${encodeURIComponent(validId)}`, { tags });
+  },
+
+  /**
+   * Update an existing prompt.
+   *
+   * Sends a `PUT /prompts/{id}` (keyed by the prompt's primary-key ID) with the
+   * edited fields. The update service preserves any field left undefined, so the
+   * caller only needs to send what changed. Returns the updated prompt.
+   */
+  update: (id: string, data: NonNullable<PromptUpdate>): Promise<PromptRead> => {
+    const validId = validatePromptId(id);
+    return api.put<PromptRead>(`/prompts/${encodeURIComponent(validId)}`, data);
+  },
+
+  /**
+   * Delete a prompt by its primary-key ID.
+   *
+   * Mirrors `DELETE /prompts/{prompt_id}` (`mcpgateway/main.py`), which requires
+   * the `prompts.delete` permission. The ID is validated (not the name used by
+   * {@link promptsApi.render}) to guard against path traversal and injection.
+   */
+  delete: (id: string): Promise<void> => {
+    const validId = validatePromptId(id);
+    return api.delete(`/prompts/${encodeURIComponent(validId)}`);
+  },
+};

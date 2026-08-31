@@ -1,0 +1,534 @@
+# -*- coding: utf-8 -*-
+"""Location: ./mcpgateway/middleware/security_headers.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+
+Security Headers Middleware for ContextForge.
+
+This module implements essential security headers to prevent common attacks including
+XSS, clickjacking, MIME sniffing, cross-origin attacks, and Web Cache Deception.
+"""
+
+# Standard
+import re
+import secrets
+from typing import Any, Callable, Set
+
+# Third-Party
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import Response
+
+# First-Party
+from mcpgateway.config import settings
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """
+    Security headers middleware that adds essential security headers to all responses.
+
+    This middleware implements security best practices by adding headers that help
+    prevent various types of attacks and security vulnerabilities.
+
+    Security headers added:
+    - X-Content-Type-Options: Prevents MIME type sniffing
+    - X-Frame-Options: Prevents clickjacking attacks
+    - X-XSS-Protection: Disables legacy XSS protection (modern browsers use CSP)
+    - Referrer-Policy: Controls referrer information sent with requests
+    - Content-Security-Policy: Nonce-based CSP prevents XSS and code injection
+    - Strict-Transport-Security: Forces HTTPS connections (when appropriate)
+    - Cache-Control: Prevents Web Cache Deception on authenticated endpoints (no-store, private)
+    - Vary: Authorization - Prevents cache key collisions on authenticated endpoints
+
+    CSP Implementation:
+    - Uses cryptographically secure nonces (secrets.token_urlsafe(16))
+    - script-src-elem: nonce-based, no unsafe-inline (primary defense for modern browsers)
+    - script-src: strict policy, no unsafe-eval or unsafe-inline
+    - style-src: uses 'unsafe-inline' for style attributes (documented configuration for animations and positioning)
+    - Nonce stored in request.state.csp_nonce for template access
+    - Inline scripts must include nonce="{{ csp_nonce(request) }}" attribute
+    - All HTMX hx-vals and hx-on attributes migrated to JavaScript event handlers
+
+    Sensitive headers removed:
+    - X-Powered-By: Removes server technology disclosure
+    - Server: Removes server version information
+
+    Web Cache Deception Protection:
+    Authenticated API endpoints receive Cache-Control: no-store, private to prevent
+    intermediary caching (CDN, reverse proxy, load balancer) that could expose
+    sensitive data to unauthenticated users. The Vary: Authorization header ensures
+    cache keys include authentication context.
+
+    Examples:
+        >>> middleware = SecurityHeadersMiddleware(None)
+        >>> isinstance(middleware, SecurityHeadersMiddleware)
+        True
+        >>> # Test CSP directive construction with nonce
+        >>> import secrets
+        >>> csp_nonce = secrets.token_urlsafe(16)
+        >>> csp_directives = [
+        ...     "default-src 'self'",
+        ...     f"script-src 'self' 'nonce-{csp_nonce}'",
+        ...     f"style-src 'self' 'nonce-{csp_nonce}'"
+        ... ]
+        >>> csp = "; ".join(csp_directives) + ";"
+        >>> "default-src 'self'" in csp
+        True
+        >>> csp.endswith(";")
+        True
+        >>> "'nonce-" in csp
+        True
+        >>> # Test HSTS value construction
+        >>> hsts_max_age = 31536000
+        >>> hsts_value = f"max-age={hsts_max_age}"
+        >>> include_subdomains = True
+        >>> if include_subdomains:
+        ...     hsts_value += "; includeSubDomains"
+        >>> "max-age=31536000" in hsts_value
+        True
+        >>> "includeSubDomains" in hsts_value
+        True
+        >>> # Test CORS origin validation logic
+        >>> allowed_origins = ["https://example.com", "https://app.example.com"]
+        >>> origin = "https://example.com"
+        >>> origin in allowed_origins
+        True
+        >>> "https://malicious.com" in allowed_origins
+        False
+        >>> # Test Vary header construction
+        >>> existing_vary = "Accept-Encoding"
+        >>> vary_val = "Origin" if not existing_vary else (existing_vary + ", Origin")
+        >>> vary_val
+        'Accept-Encoding, Origin'
+    """
+
+    # Paths that should have strict no-cache headers (authenticated endpoints)
+    # These are API endpoints that return user-specific or sensitive data
+    PROTECTED_PATH_PATTERNS: Set[str] = {
+        r"^/tools(/.*)?$",
+        r"^/servers(/.*)?$",
+        r"^/resources(/.*)?$",
+        r"^/gateways(/.*)?$",
+        r"^/prompts(/.*)?$",
+        r"^/tags(/.*)?$",
+        r"^/roots(/.*)?$",
+        r"^/protocol(/.*)?$",
+        r"^/metrics(/.*)?$",
+        r"^/admin(/.*)?$",
+        r"^/api(/.*)?$",
+        r"^/_internal(/.*)?$",
+        r"^/mcp(/.*)?$",
+        r"^/auth(/.*)?$",
+        r"^/oauth(/.*)?$",
+        r"^/sso(/.*)?$",
+        r"^/teams(/.*)?$",
+        r"^/tokens(/.*)?$",
+        r"^/users(/.*)?$",
+        r"^/rbac(/.*)?$",
+        r"^/observability(/.*)?$",
+        r"^/llm(/.*)?$",
+        r"^/a2a(/.*)?$",
+    }
+
+    # Paths that can be cached (public, static content).
+    # NOTE: /docs, /redoc, /openapi.json are intentionally NOT here — they are
+    # auth-protected by DocsAuthMiddleware and must receive no-store/private.
+    EXEMPTED_PATH_PATTERNS: Set[str] = {
+        r"^/static/.*$",
+        r"^/health$",
+        r"^/ready$",
+        r"^/\.well-known/.*$",
+        r"^/servers/[^/]+/\.well-known/.*$",
+    }
+
+    def __init__(self, app: Any) -> None:
+        """Initialize the security headers middleware."""
+        super().__init__(app)
+        # Compile regex patterns for performance
+        self._protected_patterns = [re.compile(pattern) for pattern in self.PROTECTED_PATH_PATTERNS]
+        self._exempted_patterns = [re.compile(pattern) for pattern in self.EXEMPTED_PATH_PATTERNS]
+
+    def _is_protected_path(self, path: str) -> bool:
+        """
+        Check if the path should have strict no-cache headers.
+
+        Args:
+            path: The request path to check
+
+        Returns:
+            True if the path should have no-cache headers, False otherwise
+        """
+        # First check if path is exempted (can be cached)
+        for pattern in self._exempted_patterns:
+            if pattern.match(path):
+                return False
+
+        # Then check if path is protected (must not be cached)
+        for pattern in self._protected_patterns:
+            if pattern.match(path):
+                return True
+
+        # SECURITY: Hardened default - treat unmatched paths as protected (fail-secure).
+        # New endpoints inherit protection automatically until explicitly exempted.
+        return True
+
+    async def dispatch(self, request: Request, call_next: Callable[[Request], Any]) -> Response:
+        """
+        Process the request and add security headers to the response.
+
+        Args:
+            request: The incoming HTTP request
+            call_next: The next middleware or endpoint handler
+
+        Returns:
+            Response with security headers added
+
+        Examples:
+            Test middleware instantiation:
+            >>> from mcpgateway.middleware.security_headers import SecurityHeadersMiddleware
+            >>> middleware = SecurityHeadersMiddleware(app=None)
+            >>> isinstance(middleware, SecurityHeadersMiddleware)
+            True
+
+            Test security header values:
+            >>> # X-Content-Type-Options
+            >>> x_content_type = "nosniff"
+            >>> x_content_type == "nosniff"
+            True
+
+            >>> # X-XSS-Protection modern value
+            >>> x_xss_protection = "0"  # Modern browsers use CSP
+            >>> x_xss_protection == "0"
+            True
+
+            >>> # X-Download-Options for IE
+            >>> x_download_options = "noopen"
+            >>> x_download_options == "noopen"
+            True
+
+            >>> # Referrer-Policy value
+            >>> referrer_policy = "strict-origin-when-cross-origin"
+            >>> "strict-origin" in referrer_policy
+            True
+
+            Test CSP directive construction with nonce-based approach:
+            >>> import secrets
+            >>> csp_nonce = secrets.token_urlsafe(16)
+            >>> csp_directives = [
+            ...     "default-src 'self'",
+            ...     f"script-src 'self' 'nonce-{csp_nonce}' https://cdnjs.cloudflare.com",
+            ...     "style-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com",
+            ...     "img-src 'self' data: https:",
+            ...     "font-src 'self' data: https://cdnjs.cloudflare.com",
+            ...     "connect-src 'self' ws: wss: https:",
+            ...     "frame-ancestors 'self'",  # Example for SAMEORIGIN
+            ... ]
+            >>> csp_header = "; ".join(csp_directives) + ";"
+            >>> "default-src 'self'" in csp_header
+            True
+            >>> "frame-ancestors 'self'" in csp_header
+            True
+            >>> csp_header.endswith(";")
+            True
+            >>> "'unsafe-inline'" not in csp_header or "style-src" in csp_header
+            True
+            >>> "'unsafe-eval'" not in csp_header
+            True
+
+            Test HSTS header construction:
+            >>> hsts_max_age = 31536000  # 1 year
+            >>> hsts_value = f"max-age={hsts_max_age}"
+            >>> hsts_include_subdomains = True
+            >>> if hsts_include_subdomains:
+            ...     hsts_value += "; includeSubDomains"
+            >>> "max-age=31536000" in hsts_value
+            True
+            >>> "includeSubDomains" in hsts_value
+            True
+
+            Test CORS origin validation logic:
+            >>> # Test allowed origins check
+            >>> allowed_origins = ["https://example.com", "https://app.example.com"]
+            >>> test_origin = "https://example.com"
+            >>> test_origin in allowed_origins
+            True
+            >>> "https://malicious.com" in allowed_origins
+            False
+
+            >>> # Test CORS credentials header
+            >>> cors_allow_credentials = True
+            >>> credentials_header = "true" if cors_allow_credentials else "false"
+            >>> credentials_header == "true"
+            True
+
+            Test Vary header construction:
+            >>> # Test with no existing Vary header
+            >>> existing_vary = None
+            >>> vary_val = "Origin" if not existing_vary else (existing_vary + ", Origin")
+            >>> vary_val
+            'Origin'
+
+            >>> # Test with existing Vary header
+            >>> existing_vary = "Accept-Encoding"
+            >>> vary_val = "Origin" if not existing_vary else (existing_vary + ", Origin")
+            >>> vary_val
+            'Accept-Encoding, Origin'
+
+            Test Access-Control-Expose-Headers:
+            >>> exposed_headers = ["Content-Length", "X-Request-ID"]
+            >>> expose_header_value = ", ".join(exposed_headers)
+            >>> "Content-Length" in expose_header_value
+            True
+            >>> "X-Request-ID" in expose_header_value
+            True
+
+            Test server header removal logic:
+            >>> # Headers that should be removed
+            >>> sensitive_headers = ["X-Powered-By", "Server"]
+            >>> "X-Powered-By" in sensitive_headers
+            True
+            >>> "Server" in sensitive_headers
+            True
+
+            Test environment-based CORS logic:
+            >>> # Production environment requires explicit allowlist
+            >>> environment = "production"
+            >>> origin = "https://example.com"
+            >>> allowed_origins = ["https://example.com"]
+            >>> allow = origin in allowed_origins if environment == "production" else True
+            >>> allow
+            True
+
+            >>> # Non-production with empty allowed_origins allows all
+            >>> environment = "development"
+            >>> allowed_origins = []
+            >>> allow = (not allowed_origins) if environment != "production" else False
+            >>> allow
+            True
+
+            Execute middleware end-to-end with a dummy call_next:
+            >>> import asyncio
+            >>> from unittest.mock import patch
+            >>> from starlette.requests import Request
+            >>> from starlette.responses import Response
+            >>> async def call_next(req):
+            ...     return Response("ok")
+            >>> scope = {
+            ...     'type': 'http', 'method': 'GET', 'path': '/', 'scheme': 'https',
+            ...     'headers': [(b'origin', b'https://example.com'), (b'x-forwarded-proto', b'https')]
+            ... }
+            >>> request = Request(scope)
+            >>> mw = SecurityHeadersMiddleware(app=None)
+            >>> with patch('mcpgateway.middleware.security_headers.settings') as s:
+            ...     s.security_headers_enabled = True
+            ...     s.x_content_type_options_enabled = True
+            ...     s.x_frame_options = 'DENY'
+            ...     s.x_xss_protection_enabled = True
+            ...     s.x_download_options_enabled = True
+            ...     s.hsts_enabled = True
+            ...     s.hsts_max_age = 31536000
+            ...     s.hsts_include_subdomains = True
+            ...     s.remove_server_headers = True
+            ...     s.environment = 'production'
+            ...     s.allowed_origins = ['https://example.com']
+            ...     s.cors_allow_credentials = True
+            ...     resp = asyncio.run(mw.dispatch(request, call_next))
+            >>> resp.headers['X-Content-Type-Options']
+            'nosniff'
+            >>> resp.headers['X-Frame-Options']
+            'DENY'
+            >>> 'Content-Security-Policy' in resp.headers
+            True
+            >>> resp.headers['Strict-Transport-Security'].startswith('max-age=')
+            True
+            >>> resp.headers['Access-Control-Allow-Origin']
+            'https://example.com'
+            >>> 'Vary' in resp.headers and 'Origin' in resp.headers['Vary']
+            True
+        """
+        # Generate CSP nonce BEFORE processing request so templates can access it
+        # This must happen before call_next() so request.state.csp_nonce is available during template rendering
+        csp_nonce = secrets.token_urlsafe(16)
+        request.state.csp_nonce = csp_nonce
+
+        response = await call_next(request)
+
+        # Only apply security headers if enabled
+        if not settings.security_headers_enabled:
+            return response
+
+        # Essential security headers (configurable)
+        if settings.x_content_type_options_enabled:
+            response.headers["X-Content-Type-Options"] = "nosniff"
+
+        # Handle X-Frame-Options: None/empty = don't set header (allow embedding), other values = set header
+        # Note: config validator normalizes ""/"null"/"none" to None, but we guard here too for safety
+        x_frame = settings.x_frame_options
+        if isinstance(x_frame, str) and not x_frame.strip():
+            x_frame = None
+        if x_frame is not None:
+            response.headers["X-Frame-Options"] = x_frame
+
+        if settings.x_xss_protection_enabled:
+            response.headers["X-XSS-Protection"] = "0"  # Modern browsers use CSP instead
+
+        if settings.x_download_options_enabled:
+            response.headers["X-Download-Options"] = "noopen"  # Prevent IE from executing downloads
+
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+
+        # Content Security Policy with nonce-based approach (nonce already generated above)
+        # /app/* uses a strict CSP — the React SPA is fully bundled by Vite:
+        #   - no CDN imports, no eval, no inline scripts.
+        # All other routes keep the broader legacy CSP for the HTMX/Alpine UI.
+        is_spa_path = request.url.path == "/app" or request.url.path.startswith("/app/")
+        if is_spa_path:
+            csp_directives = [
+                "default-src 'self'",
+                # Vite bundles all JS locally; no CDN, no eval, no inline scripts.
+                "script-src 'self'",
+                # Tailwind v4 injects styles at runtime via a <style> tag — unsafe-inline
+                # is required until the project migrates to a nonce-based approach.
+                "style-src 'self' 'unsafe-inline'",
+                "img-src 'self' data:",
+                "font-src 'self'",
+                # API calls go to the same origin only.
+                "connect-src 'self'",
+            ]
+
+        # Determine the route-only path (strip root_path for path matching)
+        path = request.url.path
+        root_path = request.scope.get("root_path", "")
+        if root_path and path.startswith(root_path):
+            path = path[len(root_path) :]
+
+        # FastAPI's built-in /docs and /redoc pages use inline scripts without nonces
+        # to initialise SwaggerUIBundle.  Skipping CSP on these endpoints lets the
+        # documentation UI render while keeping strict CSP everywhere else.
+        skip_csp_for_docs = path in ("/docs", "/redoc", "/openapi.json")
+
+        # CSP directives with strict nonce-based security (CSP Level 3)
+        #
+        # script-src-elem: Controls <script> tags - requires nonces for inline scripts.
+        #   This prevents XSS via injected <script> blocks while allowing legitimate
+        #   inline scripts that have the matching nonce attribute.
+        #
+        # script-src: Fallback for older browsers. No unsafe-eval or unsafe-inline.
+        #   All HTMX hx-vals="js:{...}" have been migrated to htmx:configRequest handlers.
+        #   All hx-on:* event handlers have been migrated to addEventListener.
+        #   Alpine.js has been migrated to @alpinejs/csp build (no eval required).
+        #   Tailwind CSS uses precompiled CSS (no eval required).
+        #
+        # style-src: 'unsafe-inline' for style attributes (documented configuration).
+        #   Inline style attributes (style="...") are used for animation delays,
+        #   positioning, and dynamic styling throughout the application.
+        #   This is acceptable per CSP Level 3 guidance since CSS cannot execute
+        #   JavaScript directly. While CSS injection can be used for clickjacking
+        #   or UI redressing attacks, these are mitigated by:
+        #   1. X-Frame-Options/frame-ancestors preventing iframe embedding
+        #   2. All inline styles are server-rendered (no user-controlled content)
+        #   3. Authentication required for admin UI (not publicly exposed)
+        #   This is a documented trade-off between security strictness and
+        #   implementation complexity (visual-only impact vs. code-execution risk).
+        #   Note: Nonce cannot be used alongside 'unsafe-inline' in style-src because
+        #   the nonce takes precedence and causes the browser to ignore 'unsafe-inline',
+        #   which would block all style attributes since nonces can only apply to <style> blocks.
+        #
+        # CDN Allowlist Rationale:
+        #   - cdnjs.cloudflare.com: Font Awesome 7.0.1 icons, CodeMirror 5.65.20 (code editor)
+        #   - cdn.jsdelivr.net: Chart.js 4.5.1 (metrics charts), Marked 18.0.3 (markdown rendering),
+        #                       DOMPurify 3.4.2 (XSS sanitization)
+        #   - unpkg.com: Reserved for future use (Alpine.js, HTMX updates)
+        #   All CDN resources use SRI (Subresource Integrity) hashes where supported.
+        if not skip_csp_for_docs:
+            csp_directives = [
+                "default-src 'self'",
+                f"script-src-elem 'self' 'nonce-{csp_nonce}'",
+                "script-src-attr 'unsafe-inline'",
+                "script-src 'self'",
+                "style-src 'self' 'unsafe-inline'",
+                "img-src 'self' data: https:",
+                "font-src 'self' data:",
+                "connect-src 'self' ws: wss: https:",
+            ]
+
+            # Only add frame-ancestors if x_frame is set (None/empty = allow all embedding)
+            if x_frame is not None:
+                x_frame_upper = x_frame.upper()
+
+                if x_frame_upper == "DENY":
+                    frame_ancestors = "'none'"
+                elif x_frame_upper == "SAMEORIGIN":
+                    frame_ancestors = "'self'"
+                elif x_frame_upper.startswith("ALLOW-FROM"):
+                    allowed_uri = x_frame.split(" ", 1)[1] if " " in x_frame else "'none'"
+                    frame_ancestors = allowed_uri
+                elif x_frame_upper == "ALLOW-ALL":
+                    frame_ancestors = "* file: http: https:"
+                else:
+                    # Default to none for unknown values (matches DENY default)
+                    frame_ancestors = "'none'"
+
+                csp_directives.append(f"frame-ancestors {frame_ancestors}")
+            response.headers["Content-Security-Policy"] = "; ".join(csp_directives) + ";"
+
+        # HSTS for HTTPS connections (configurable)
+        if settings.hsts_enabled and (request.url.scheme == "https" or request.headers.get("X-Forwarded-Proto") == "https"):
+            hsts_value = f"max-age={settings.hsts_max_age}"
+            if settings.hsts_include_subdomains:
+                hsts_value += "; includeSubDomains"
+            response.headers["Strict-Transport-Security"] = hsts_value
+
+        # Remove sensitive headers that might disclose server information (configurable)
+        if settings.remove_server_headers:
+            if "X-Powered-By" in response.headers:
+                del response.headers["X-Powered-By"]
+            if "Server" in response.headers:
+                del response.headers["Server"]
+
+        # Lightweight dynamic CORS reflection based on current settings
+        origin = request.headers.get("Origin")
+        if origin:
+            allow = False
+            if settings.environment != "production":
+                # In non-production, honor allowed_origins dynamically
+                allow = (not settings.allowed_origins) or (origin in settings.allowed_origins)
+            else:
+                # In production, require explicit allow-list
+                allow = origin in settings.allowed_origins
+            if allow:
+                response.headers["Access-Control-Allow-Origin"] = origin
+                # Standard CORS helpers
+                if settings.cors_allow_credentials:
+                    response.headers["Access-Control-Allow-Credentials"] = "true"
+                # Expose common headers for clients
+                exposed = ["Content-Length", "X-Request-ID"]
+                response.headers["Access-Control-Expose-Headers"] = ", ".join(exposed)
+                # Ensure caches vary on Origin
+                existing_vary = response.headers.get("Vary")
+                vary_val = "Origin" if not existing_vary else (existing_vary + ", Origin")
+                response.headers["Vary"] = vary_val
+
+        # Hardened Cache Control for Protected Endpoints
+        # Implements defense-in-depth caching policies
+        path = request.url.path
+        root_path = request.scope.get("root_path", "")
+        if root_path and path.startswith(root_path):
+            path = path[len(root_path) :]
+
+        if self._is_protected_path(path):
+            # Strict cache control: no-store prevents intermediary caching, private restricts to user agent
+            response.headers["Cache-Control"] = "no-store, private"
+
+            # Legacy protocol compatibility for defense-in-depth
+            response.headers["Pragma"] = "no-cache"
+            response.headers["Expires"] = "0"
+
+            # Cache variance control for proper request isolation
+            existing_vary = response.headers.get("Vary", "")
+            vary_parts = [v.strip() for v in existing_vary.split(",") if v.strip()] if existing_vary else []
+            if "Authorization" not in vary_parts:
+                vary_parts.append("Authorization")
+            response.headers["Vary"] = ", ".join(vary_parts)
+
+        return response

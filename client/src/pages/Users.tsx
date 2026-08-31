@@ -1,0 +1,353 @@
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Plus } from "lucide-react";
+import { useIntl } from "react-intl";
+import { toast } from "sonner";
+import { Button } from "@/components/ui/button";
+import { ListSearch } from "@/components/ui/list-search";
+import { SettingsToolbar, useHideSettingsTabs } from "@/components/settings/settings-toolbar";
+import { UserForm } from "@/components/users/UserForm";
+import { UsersTable } from "@/components/users/UsersTable";
+import { ConfirmDialog } from "@/components/servers/ConfirmDialog";
+import { useUsersList } from "@/hooks/useUsersList";
+import { useQuery } from "@/hooks/useQuery";
+import { useLocalSearch } from "@/hooks/useLocalSearch";
+import { usersApi } from "@/api/users";
+import { ApiError } from "@/api/client";
+import { createOptimisticUser } from "@/hooks/useUserForm";
+import { useAuthContext } from "@/auth/AuthContext";
+import { useRouter } from "@/router";
+import type { User, CreateUserRequest, UpdateUserRequest } from "@/types/user";
+
+const DEFAULT_PAGE_SIZE = 10;
+
+// Backend error message constants (coupled to mcpgateway/routers/email_auth.py)
+// TODO: Replace with structured error codes from API
+const ERROR_MESSAGES = {
+  CANNOT_DELETE_SELF: "own account",
+  CANNOT_DELETE_LAST_ADMIN: "last remaining admin",
+} as const;
+
+export function Users() {
+  const intl = useIntl();
+  const { user: currentUser } = useAuthContext();
+  const { path } = useRouter();
+  const [limit, setLimit] = useState(DEFAULT_PAGE_SIZE);
+  const [allUsers, setAllUsers] = useState<User[]>([]);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
+  const [isFormOpen, setIsFormOpen] = useState(false);
+  const [userToEdit, setUserToEdit] = useState<User | null>(null);
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
+  const [userToDelete, setUserToDelete] = useState<User | null>(null);
+  const selectedSearchUserId = useMemo(() => {
+    const queryString = path.split("?")[1] ?? "";
+    return new URLSearchParams(queryString).get("selected")?.trim() || null;
+  }, [path]);
+  const {
+    data: response,
+    error: queryError,
+    isLoading,
+  } = useUsersList({ limit: DEFAULT_PAGE_SIZE });
+  const selectedSearchUserPath = selectedSearchUserId
+    ? `/auth/email/admin/users/${encodeURIComponent(selectedSearchUserId)}`
+    : null;
+  const { data: selectedSearchUser } = useQuery<User>(selectedSearchUserPath, {
+    enabled: Boolean(selectedSearchUserId),
+  });
+
+  const {
+    execute: executeLoadMore,
+    isLoading: isLoadingMore,
+    error: loadMoreError,
+  } = useUsersList({ cursor: nextCursor ?? undefined, limit, enabled: false, immediate: false });
+
+  useEffect(() => {
+    if (response) {
+      setAllUsers(response.users);
+      setNextCursor(response.nextCursor ?? null);
+    }
+  }, [response]);
+
+  useEffect(() => {
+    if (loadMoreError) {
+      console.error("Failed to load more users:", loadMoreError);
+    }
+  }, [loadMoreError]);
+
+  useEffect(() => {
+    if (!selectedSearchUserId) return;
+
+    const loadedUser = allUsers.find((user) => user.email === selectedSearchUserId);
+    const user = selectedSearchUser ?? loadedUser;
+    if (!user) return;
+
+    setUserToEdit(user);
+    setIsFormOpen(true);
+  }, [allUsers, selectedSearchUser, selectedSearchUserId]);
+
+  const handleLoadMore = useCallback(async () => {
+    if (!nextCursor || isLoadingMore) return;
+
+    try {
+      const result = await executeLoadMore();
+      setAllUsers((prev) => [...prev, ...result.users]);
+      setNextCursor(result.nextCursor ?? null);
+    } catch {
+      // Error already logged in useEffect
+    }
+  }, [nextCursor, isLoadingMore, executeLoadMore]);
+
+  const handleLimitChange = useCallback((newLimit: number) => {
+    setLimit(newLimit);
+  }, []);
+
+  const handleEditClick = useCallback((user: User) => {
+    setUserToEdit(user);
+    setIsFormOpen(true);
+  }, []);
+
+  const handleFormClose = useCallback(() => {
+    setIsFormOpen(false);
+    setUserToEdit(null);
+  }, []);
+
+  const handleDeleteClick = useCallback((user: User) => {
+    setUserToDelete(user);
+    setDeleteDialogOpen(true);
+  }, []);
+
+  const handleDeleteConfirm = useCallback(async () => {
+    if (!userToDelete) return;
+
+    const emailToDelete = userToDelete.email;
+
+    // Client-side guard: never send the request if the user is deleting themselves.
+    // We check this client-side to save a network call and avoid showing a
+    // confusing error message after the API rejects the request and the UI reverts.
+    if (currentUser?.email === emailToDelete) {
+      setDeleteDialogOpen(false);
+      setUserToDelete(null);
+      toast.error(intl.formatMessage({ id: "users.delete.error.self" }));
+      return;
+    }
+
+    // Optimistic update: snapshot current list, remove immediately, close dialog
+    const previousUsers = allUsers;
+    setAllUsers(allUsers.filter((u) => u.email !== emailToDelete));
+    setDeleteDialogOpen(false);
+    setUserToDelete(null);
+
+    try {
+      await usersApi.delete(emailToDelete);
+      toast.success(intl.formatMessage({ id: "users.delete.success" }, { email: emailToDelete }));
+    } catch (err) {
+      // Rollback: restore the list as it was before the optimistic removal
+      setAllUsers(previousUsers);
+
+      let errorMessage = intl.formatMessage(
+        { id: "users.delete.error.generic" },
+        { error: err instanceof Error ? err.message : "Unknown error" },
+      );
+
+      if (err instanceof ApiError) {
+        if (err.status === 400) {
+          const detail = (err.body as { detail?: string })?.detail || "";
+          if (detail.includes(ERROR_MESSAGES.CANNOT_DELETE_SELF)) {
+            errorMessage = intl.formatMessage({ id: "users.delete.error.self" });
+          } else if (detail.includes(ERROR_MESSAGES.CANNOT_DELETE_LAST_ADMIN)) {
+            errorMessage = intl.formatMessage({ id: "users.delete.error.lastAdmin" });
+          }
+        } else if (err.status === 404) {
+          errorMessage = intl.formatMessage({ id: "users.delete.error.notFound" });
+        }
+      }
+
+      toast.error(errorMessage);
+    }
+  }, [allUsers, userToDelete, currentUser, intl]);
+
+  const handleDeleteCancel = useCallback(() => {
+    setDeleteDialogOpen(false);
+    setUserToDelete(null);
+  }, []);
+
+  const error = queryError ? queryError.message : null;
+
+  const getUserText = useCallback((user: User) => `${user.full_name ?? ""} ${user.email}`, []);
+  const { query, setQuery, results } = useLocalSearch(allUsers, getUserText);
+
+  // While the create/edit form is open it takes over the whole area, so hide
+  // the Settings tab strip + toolbar.
+  useHideSettingsTabs(isFormOpen);
+
+  return (
+    <div>
+      {isFormOpen ? (
+        <UserForm
+          key={userToEdit?.email ?? "create"}
+          isOpen={isFormOpen}
+          onToggle={handleFormClose}
+          user={userToEdit ?? undefined}
+          onOptimisticCreate={(userData: CreateUserRequest | UpdateUserRequest) => {
+            if ("email" in userData) {
+              const optimisticUser = createOptimisticUser(userData);
+              setAllUsers((prev) => [optimisticUser, ...prev]);
+            }
+          }}
+          onSuccess={(result?: User) => {
+            if (result) {
+              setAllUsers((prev) => prev.map((u) => (u.email === result.email ? result : u)));
+              toast.success(
+                intl.formatMessage({ id: "users.edit.success" }, { email: result.email }),
+              );
+            }
+            handleFormClose();
+          }}
+          onError={(userData: CreateUserRequest | UpdateUserRequest) => {
+            if ("email" in userData) {
+              setAllUsers((prev) => prev.filter((u) => u.email !== userData.email));
+            }
+          }}
+        />
+      ) : (
+        <div className="space-y-6">
+          <header className="flex items-center justify-end">
+            {/* The Settings tab already labels this section, so the visible
+                title is dropped per design; kept sr-only for accessibility. */}
+            <h2 className="sr-only">{intl.formatMessage({ id: "users.title" })}</h2>
+            {/* Hosted inside the Settings tabs, these actions render on the tab
+                row (via the toolbar slot); standalone they fall back inline. */}
+            <SettingsToolbar>
+              <div className="flex items-center gap-3">
+                {allUsers.length > 0 && (
+                  <ListSearch
+                    value={query}
+                    onChange={setQuery}
+                    ariaLabel={intl.formatMessage(
+                      { id: "common.searchLabel" },
+                      { entity: intl.formatMessage({ id: "navigation.users" }) },
+                    )}
+                    placeholder={intl.formatMessage({ id: "common.search" })}
+                  />
+                )}
+                <Button
+                  variant="default"
+                  className="h-7 rounded-sm px-4"
+                  onClick={() => setIsFormOpen(true)}
+                >
+                  <Plus className="h-4 w-4" aria-hidden="true" />
+                  {intl.formatMessage({ id: "users.createUser" })}
+                </Button>
+              </div>
+            </SettingsToolbar>
+          </header>
+          {isLoading ? (
+            <div
+              role="status"
+              aria-live="polite"
+              aria-busy="true"
+              className="flex items-center justify-center p-12"
+            >
+              <span className="sr-only">{intl.formatMessage({ id: "users.loading.sr" })}</span>
+              <div className="h-8 w-8 animate-spin rounded-full border-4 border-border border-t-primary" />
+            </div>
+          ) : (
+            <>
+              {error && (
+                <div
+                  className="mb-6 rounded-lg border border-destructive/20 bg-destructive/10 p-4"
+                  role="alert"
+                  aria-live="assertive"
+                  aria-atomic="true"
+                >
+                  <h3 className="mb-1 font-semibold">
+                    {intl.formatMessage({ id: "users.error.loading" })}
+                  </h3>
+                  <p className="text-destructive">{error}</p>
+                </div>
+              )}
+
+              {allUsers.length > 0 ? (
+                <>
+                  <UsersTable
+                    users={results}
+                    onDeleteClick={handleDeleteClick}
+                    onEditClick={handleEditClick}
+                  />
+                  {query.trim() && results.length === 0 && (
+                    <p className="mt-6 text-sm text-muted-foreground">
+                      {intl.formatMessage({ id: "common.search.noResults" })}
+                    </p>
+                  )}
+
+                  <div className="mt-6 flex items-center justify-between">
+                    <div className="flex items-center gap-4">
+                      <div className="text-sm text-muted-foreground">
+                        {intl.formatMessage({ id: "users.showing" }, { count: results.length })}
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <label
+                          htmlFor="users-limit-select"
+                          className="text-sm text-muted-foreground"
+                        >
+                          {intl.formatMessage({ id: "users.perPage" })}
+                        </label>
+                        <select
+                          id="users-limit-select"
+                          value={limit}
+                          onChange={(event) => handleLimitChange(Number(event.target.value))}
+                          className="rounded-md border border-gray-300 dark:border-gray-700 bg-white dark:bg-gray-800 px-2 py-1 text-sm"
+                        >
+                          <option value={10}>10</option>
+                          <option value={25}>25</option>
+                          <option value={50}>50</option>
+                          <option value={100}>100</option>
+                        </select>
+                      </div>
+                    </div>
+                    {!query.trim() && nextCursor && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={handleLoadMore}
+                        disabled={isLoadingMore}
+                        aria-label={intl.formatMessage({ id: "users.loadMore.aria" })}
+                      >
+                        {isLoadingMore
+                          ? intl.formatMessage({ id: "users.loadMore.loading" })
+                          : intl.formatMessage({ id: "users.loadMore" })}
+                      </Button>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <div className="rounded-2xl border border-border bg-card p-8 shadow-sm">
+                  <h2 className="text-xl font-semibold text-card-foreground">
+                    {intl.formatMessage({ id: "users.empty.title" })}
+                  </h2>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+      {userToDelete && (
+        <ConfirmDialog
+          open={deleteDialogOpen}
+          onOpenChange={(open) => {
+            if (!open) handleDeleteCancel();
+          }}
+          title={intl.formatMessage({ id: "users.delete.dialog.title" })}
+          description={intl.formatMessage(
+            { id: "users.delete.dialog.description" },
+            { name: userToDelete.full_name || userToDelete.email, email: userToDelete.email },
+          )}
+          confirmLabel={intl.formatMessage({ id: "users.delete.dialog.confirm" })}
+          cancelLabel={intl.formatMessage({ id: "users.delete.dialog.cancel" })}
+          variant="destructive"
+          role="alertdialog"
+          onConfirm={handleDeleteConfirm}
+        />
+      )}
+    </div>
+  );
+}

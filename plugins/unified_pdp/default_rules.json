@@ -1,0 +1,61 @@
+[
+  {
+    "id": "default.admin-full-access",
+    "roles": ["admin", "platform_admin"],
+    "actions": ["*"],
+    "resource_types": ["*"],
+    "resource_ids": ["*"],
+    "reason": "Platform administrators have unrestricted access"
+  },
+  {
+    "id": "default.developer-read-tools",
+    "roles": ["developer"],
+    "actions": ["tools.list", "tools.get", "tools.describe"],
+    "resource_types": ["tool"],
+    "resource_ids": ["*"],
+    "reason": "Developers may browse and inspect tools"
+  },
+  {
+    "id": "default.developer-invoke-tools",
+    "roles": ["developer"],
+    "actions": ["tools.invoke", "tools.invoke.*"],
+    "resource_types": ["tool"],
+    "resource_ids": ["*"],
+    "reason": "Developers may invoke tools"
+  },
+  {
+    "id": "default.developer-read-resources",
+    "roles": ["developer"],
+    "actions": ["resources.fetch", "resources.list"],
+    "resource_types": ["resource"],
+    "resource_ids": ["*"],
+    "reason": "Developers may read resources"
+  },
+  {
+    "id": "default.viewer-read-only",
+    "roles": ["viewer"],
+    "actions": ["tools.list", "tools.get", "resources.list", "resources.fetch"],
+    "resource_types": ["*"],
+    "resource_ids": ["*"],
+    "reason": "Viewers have read-only access"
+  },
+  {
+    "id": "deny:no-mfa-destructive",
+    "roles": ["*"],
+    "actions": ["tools.delete", "tools.update", "resources.delete", "resources.update", "servers.delete"],
+    "resource_types": ["*"],
+    "resource_ids": ["*"],
+    "conditions": {
+      "subject.mfa_verified": false
+    },
+    "reason": "Multi-factor authentication is required for destructive operations"
+  },
+  {
+    "id": "deny:health-check-open",
+    "roles": ["*"],
+    "actions": ["pdp.health_check"],
+    "resource_types": ["*"],
+    "resource_ids": ["__health__"],
+    "reason": "Health check bypass – this deny rule ensures the health endpoint rule doesn't accidentally allow real traffic"
+  }
+]

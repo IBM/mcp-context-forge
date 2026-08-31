@@ -1,0 +1,874 @@
+# Gateway Tuning Guide
+
+> This page collects practical levers for squeezing the most performance, reliability, and observability out of **ContextForge**-no matter where you run the container (Code Engine, Kubernetes, Docker Compose, Nomad, etc.).
+>
+> **TL;DR**
+>
+> 1. Tune the **runtime environment** via `.env` and configure mcpgateway to use PostgreSQL and Redis.
+> 2. Adjust **Gunicorn** workers & time-outs in `gunicorn.conf.py`.
+> 3. Right-size **CPU/RAM** for the container or spin up more instances (with shared Redis state) and change the database settings (ex: connection limits).
+> 4. Benchmark with **hey** (or your favourite load-generator) before & after. See also: [performance testing guide](../testing/performance.md)
+
+---
+
+## 1 - Environment variables (`.env`)
+
+|  Variable        |  Default       |  Why you might change it                                                            |
+| ---------------- | -------------- | ----------------------------------------------------------------------------------- |
+| `AUTH_REQUIRED`  | `true`         | Disable for internal/behind-VPN deployments to shave a few ms per request.          |
+| `JWT_SECRET_KEY` | random         | Longer key ➜ slower HMAC verify; still negligible-leave as is.                      |
+| `CACHE_TYPE`     | `database`     | Switch to `redis` or `memory` if your workload is read-heavy and latency-sensitive. |
+| `DATABASE_URL`   | SQLite         | Move to managed PostgreSQL + connection pooling for anything beyond dev tests.      |
+| `HOST`/`PORT`    | `0.0.0.0:4444` | Expose a different port or bind only to `127.0.0.1` behind a reverse-proxy.         |
+
+### Redis Connection Pool Tuning
+
+When using `CACHE_TYPE=redis`, tune the connection pool for your workload:
+
+| Variable | Default | Tuning Guidance |
+| -------- | ------- | --------------- |
+| `REDIS_MAX_CONNECTIONS` | `50` | Pool size per worker. Formula: `(concurrent_requests / workers) × 1.5` |
+| `REDIS_SOCKET_TIMEOUT` | `2.0` | Lower (1.0s) for high-concurrency; Redis ops typically <100ms |
+| `REDIS_SOCKET_CONNECT_TIMEOUT` | `2.0` | Keep low to fail fast on network issues |
+| `REDIS_HEALTH_CHECK_INTERVAL` | `30` | Lower (15s) for production to detect stale connections faster |
+
+**High-concurrency production settings:**
+
+```bash
+# Pool size: replicas × workers × REDIS_MAX_CONNECTIONS must stay below Redis maxclients (15000)
+# Example: 10 replicas × 24 workers × 50 = 12,000 < 15,000 ✅
+REDIS_MAX_CONNECTIONS=50
+REDIS_SOCKET_TIMEOUT=1.0
+REDIS_SOCKET_CONNECT_TIMEOUT=1.0
+REDIS_HEALTH_CHECK_INTERVAL=15
+```
+
+> **Tip**  Any change here requires rebuilding or restarting the container if you pass the file with `--env-file`.
+
+---
+
+## 2 - Gunicorn settings (`gunicorn.conf.py`)
+
+|  Knob                    |  Purpose            |  Rule of thumb                                                    |
+| ------------------------ | ------------------- | ----------------------------------------------------------------- |
+| `workers`                | Parallel processes  | `2-4 × vCPU` for CPU-bound work; fewer if memory-bound.           |
+| `threads`                | Per-process threads | Use only with `sync` worker; keeps memory low for I/O workloads.  |
+| `timeout`                | Kill stuck worker   | Set ≥ end-to-end model latency. E.g. 600 s for LLM calls.         |
+| `preload_app`            | Load app once       | Saves RAM; safe for pure-Python apps.                             |
+| `worker_class`           | Async workers       | `gevent` or `eventlet` for many concurrent requests / websockets. |
+| `max_requests(+_jitter)` | Self-healing        | Recycle workers to mitigate memory leaks.                         |
+
+Edit the file **before** building the image, then redeploy.
+
+---
+
+## 2b - Uvicorn Performance Extras
+
+ContextForge uses `uvicorn[standard]` which includes high-performance components that are automatically detected and used:
+
+| Package | Purpose | Platform | Improvement |
+|---------|---------|----------|-------------|
+| `uvloop` | Fast event loop (libuv-based, Cython) | Linux, macOS | 20-40% lower latency |
+| `httptools` | Fast HTTP parsing (C extension) | All platforms | 40-60% faster parsing |
+| `websockets` | Optimized WebSocket handling | All platforms | Better WS performance |
+| `watchfiles` | Fast file watching for `--reload` | All platforms | Faster dev cycle |
+
+### Automatic Detection
+
+When Gunicorn spawns Uvicorn workers, these components are automatically detected:
+
+```bash
+# Verify extras are installed
+pip list | grep -E "uvloop|httptools|websockets|watchfiles"
+
+# Expected output (Linux/macOS):
+# httptools    0.6.x
+# uvloop       0.21.x
+# websockets   15.x.x
+# watchfiles   1.x.x
+```
+
+### Platform Notes
+
+- **Linux/macOS**: Full performance benefits (uvloop + httptools)
+- **Windows**: httptools provides benefits; uvloop unavailable (graceful fallback to asyncio)
+
+### Performance Impact
+
+Combined improvements from uvloop and httptools:
+
+| Workload | Improvement |
+|----------|-------------|
+| Simple JSON endpoints | 15-25% faster |
+| High-concurrency requests | 20-30% higher throughput |
+| WebSocket connections | Lower latency, better handling |
+| Development `--reload` | Faster file change detection |
+
+> **Note**: These optimizations are transparent - no code or configuration changes needed.
+
+---
+
+## 3 - Container resources
+
+| vCPU × RAM   | Good for              | Notes                                              |
+| ------------ | --------------------- | -------------------------------------------------- |
+| `0.5 × 1 GB` | Smoke tests / CI      | Smallest footprint; likely CPU-starved under load. |
+| `1 × 4 GB`   | Typical dev / staging | Handles a few hundred RPS with default 8 workers.  |
+| `2 × 8 GB`   | Small prod            | Allows \~16-20 workers; good concurrency.          |
+| `4 × 16 GB`+ | Heavy prod            | Combine with async workers or autoscaling.         |
+
+> Always test with **your** workload; JSON-RPC payload size and backend model latency change the equation.
+
+To change your database connection settings, see the respective documentation for your selected database or managed service. For example, when using IBM Cloud Databases for PostgreSQL - you can [raise the maximum number of connections](https://cloud.ibm.com/docs/databases-for-postgresql?topic=databases-for-postgresql-managing-connections&locale=en#postgres-connection-limits).
+
+---
+
+## 4 - Performance testing
+
+### 4.1 Tooling: **hey**
+
+Install one of:
+
+```bash
+brew install hey            # macOS
+sudo apt install hey         # Debian/Ubuntu
+# or build from source
+go install github.com/rakyll/hey@latest  # $GOPATH/bin must be in PATH
+```
+
+### 4.2 Sample load-test script (`tests/hey.sh`)
+
+```bash
+#!/usr/bin/env bash
+# Run 10 000 requests with 200 concurrent workers.
+JWT="$(cat jwt.txt)"   # <- place a valid token here
+hey -n 10000 -c 200 \
+    -m POST \
+    -T application/json \
+    -H "Authorization: Bearer ${JWT}" \
+    -D tests/hey/payload.json \
+    http://localhost:4444/rpc
+```
+
+**Payload (`tests/hey/payload.json`)**
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": 1,
+  "method": "convert_time",
+  "params": {
+    "source_timezone": "Europe/Berlin",
+    "target_timezone": "Europe/Dublin",
+    "time": "09:00"
+  }
+}
+```
+
+### 4.3 Reading the output
+
+`hey` prints latency distribution, requests/second, and error counts. Focus on:
+
+* **99th percentile latency** - adjust `timeout` if it clips.
+* **Errors** - 5xx under load often mean too few workers or DB connections.
+* **Throughput (RPS)** - compare before/after tuning.
+
+### 4.4 Common bottlenecks & fixes
+
+| Symptom                  | Likely cause                        | Mitigation                                                 |
+| ------------------------ | ----------------------------------- | ---------------------------------------------------------- |
+| High % of 5xx under load | Gunicorn workers exhausted          | Increase `workers`, switch to async workers, raise CPU.    |
+| Latency > timeout        | Long model call / external API      | Increase `timeout`, add queueing, review upstream latency. |
+| Memory OOM               | Too many workers / large batch size | Lower `workers`, disable `preload_app`, add RAM.           |
+
+---
+
+## 5 - Logging & observability
+
+* Set `loglevel = "debug"` in `gunicorn.conf.py` during tests; revert to `info` in prod.
+* Forward `stdout`/`stderr` from the container to your platform's log stack (e.g. `kubectl logs`, `docker logs`).
+* Expose `/metrics` via a Prometheus exporter (planned) for request timing & queue depth; track enablement in the project roadmap.
+
+---
+
+## 6 - MCP Session Pool Tuning
+
+The MCP session pool maintains persistent connections to upstream MCP servers, providing **10-20x latency improvement** for repeated tool calls from the same user.
+
+!!! note "Disabled by Default"
+    Session pooling is disabled by default for safety. Enable it explicitly after testing in your environment:
+    ```bash
+    MCP_SESSION_POOL_ENABLED=true
+    ```
+
+### When to Enable Pooling
+
+| Enable pooling when... | Avoid or tighten isolation when... |
+|------------------------|-----------------------------------|
+| MCP servers are stable and latency matters | MCP servers maintain per-session state |
+| You can tolerate session reuse within user/tenant scope | You rely on request-scoped headers for security/tracing |
+| High-throughput tool invocations | Long-running tools (>30s) need custom timeouts |
+
+### Configuration Variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MCP_SESSION_POOL_ENABLED` | `false` | Enable/disable session pooling |
+| `MCP_SESSION_POOL_MAX_PER_KEY` | `10` | Max sessions per (URL, identity, transport). **Increase to 50-200 for high concurrency.** |
+| `MCP_SESSION_POOL_TTL` | `300.0` | Session TTL before forced close (seconds) |
+| `MCP_SESSION_POOL_TRANSPORT_TIMEOUT` | `30.0` | Timeout for all HTTP operations (seconds) |
+| `MCP_SESSION_POOL_HEALTH_CHECK_INTERVAL` | `60.0` | Idle time before health check (seconds) |
+| `MCP_SESSION_POOL_HEALTH_CHECK_METHODS` | `ping,skip` | Ordered list of health check methods (ping, list_tools, list_prompts, list_resources, skip) |
+| `MCP_SESSION_POOL_HEALTH_CHECK_TIMEOUT` | `5.0` | Timeout per health check attempt (seconds) |
+| `MCP_SESSION_POOL_ACQUIRE_TIMEOUT` | `30.0` | Timeout waiting for session slot |
+| `MCP_SESSION_POOL_CREATE_TIMEOUT` | `30.0` | Timeout creating new session |
+| `MCP_SESSION_POOL_IDLE_EVICTION` | `600.0` | Evict idle pool keys after (seconds) |
+| `MCP_SESSION_POOL_CIRCUIT_BREAKER_THRESHOLD` | `5` | Consecutive failures before circuit opens |
+| `MCP_SESSION_POOL_CIRCUIT_BREAKER_RESET` | `60.0` | Circuit reset time (seconds) |
+
+### Recommended Production Settings
+
+```bash
+# Baseline settings for authenticated deployments (low-to-moderate traffic)
+MCP_SESSION_POOL_ENABLED=true
+MCP_SESSION_POOL_MAX_PER_KEY=10
+MCP_SESSION_POOL_TTL=300
+MCP_SESSION_POOL_TRANSPORT_TIMEOUT=30
+
+# High-concurrency settings (1000+ concurrent users)
+MCP_SESSION_POOL_ENABLED=true
+MCP_SESSION_POOL_MAX_PER_KEY=200          # 50-200 for high concurrency
+MCP_SESSION_POOL_TTL=300
+MCP_SESSION_POOL_TRANSPORT_TIMEOUT=30
+MCP_SESSION_POOL_ACQUIRE_TIMEOUT=60       # Longer timeout under load
+
+# Ensure identity headers are present
+ENABLE_HEADER_PASSTHROUGH=true
+DEFAULT_PASSTHROUGH_HEADERS="Authorization,X-Tenant-Id,X-User-Id,X-API-Key"
+```
+
+### Session Isolation
+
+Sessions are isolated by a composite key: `(URL, identity_hash, transport_type)`. Identity is derived from authentication headers (`Authorization`, `X-Tenant-ID`, `X-User-ID`, `X-API-Key`, `Cookie`).
+
+**Key security considerations:**
+
+1. **Anonymous Pooling**: When no identity headers are present, identity collapses to `"anonymous"` and all such requests share sessions. This is safe **only if** upstream MCP servers are stateless.
+2. **Shared Credentials**: With OAuth Client Credentials or static API keys, all users share the same identity hash. Only safe if the upstream MCP server has no per-user state.
+3. **Header Passthrough**: If gateway auth is disabled (`AUTH_REQUIRED=false`), enable header passthrough to preserve user identity:
+   ```bash
+   ENABLE_HEADER_PASSTHROUGH=true
+   DEFAULT_PASSTHROUGH_HEADERS="Authorization,X-Tenant-Id,X-User-Id"
+   ```
+
+### Long-Running Tools
+
+The transport timeout applies to **all** HTTP operations, not just connection establishment. For tools that take longer than 30 seconds:
+
+```bash
+# Increase for long-running tools
+MCP_SESSION_POOL_TRANSPORT_TIMEOUT=120
+```
+
+### Health Check Timeout Trade-offs
+
+Pool staleness checks use `MCP_SESSION_POOL_TRANSPORT_TIMEOUT` (default 30s) for session acquisition. When `MCP_SESSION_POOL_EXPLICIT_HEALTH_RPC=true`, the explicit RPC call uses `HEALTH_CHECK_TIMEOUT` (default 30s).
+
+**Behavior summary:**
+
+| Check Type | Timeout Used | Default |
+|------------|--------------|---------|
+| Pool staleness check (idle > interval) | `MCP_SESSION_POOL_TRANSPORT_TIMEOUT` | 30s |
+| Explicit health RPC (when enabled) | `HEALTH_CHECK_TIMEOUT` | 30s |
+| Session creation | `MCP_SESSION_POOL_CREATE_TIMEOUT` | 30s |
+
+**Trade-off**: The 30s transport timeout allows long-running tools to complete but means unhealthy sessions may take longer to detect. If you need faster failure detection:
+
+```bash
+# Stricter health checks (30s timeout for explicit RPC)
+MCP_SESSION_POOL_EXPLICIT_HEALTH_RPC=true
+HEALTH_CHECK_TIMEOUT=30
+
+# Or reduce transport timeout (affects all operations)
+MCP_SESSION_POOL_TRANSPORT_TIMEOUT=10
+```
+
+### Circuit Breaker Behavior
+
+The circuit breaker is keyed by URL only (not per-identity). After `MCP_SESSION_POOL_CIRCUIT_BREAKER_THRESHOLD` consecutive **session creation failures** for a URL, the circuit opens and all requests fail fast for `MCP_SESSION_POOL_CIRCUIT_BREAKER_RESET` seconds.
+
+**Note**: Only session creation failures (connection refused, SSL errors) trip the circuit. Tool call failures do not affect the circuit breaker.
+
+### Monitoring
+
+Monitor pool performance via the metrics endpoint:
+
+```bash
+curl -u admin:changeme http://localhost:4444/admin/mcp-pool/metrics
+```
+
+Response includes:
+
+- `total_sessions_created` / `total_sessions_reused`: Pool hit ratio
+- `pool_hits` / `pool_misses`: Cache effectiveness
+- `active_sessions`: Current utilization
+- `circuit_breaker_states`: Per-URL circuit status
+
+### Operational Checklist
+
+Before enabling pooling in production:
+
+- [ ] Confirm upstream MCP servers are stateless for any shared/anonymous access
+- [ ] Verify identity headers are present and stable
+- [ ] Validate tool call durations vs `MCP_SESSION_POOL_TRANSPORT_TIMEOUT`
+- [ ] Ensure tracing headers are not relied upon in pooled sessions
+
+After enabling pooling:
+
+- [ ] Monitor pool metrics at `/admin/mcp-pool/metrics`
+- [ ] Watch for increased tool timeouts or unexpected auth failures
+- [ ] Verify correlation IDs in upstream logs (note: per-request headers are stripped from pooled sessions)
+
+---
+
+## 7 - Nginx Reverse Proxy Tuning
+
+When deploying ContextForge behind nginx (as in the default `docker-compose.yml`), several optimizations can significantly improve performance under load.
+
+### Admin UI Caching
+
+Admin pages use Jinja2 template rendering which is CPU-intensive under high concurrency. The default nginx configuration enables short-TTL caching with multi-tenant isolation:
+
+| Setting | Value | Purpose |
+|---------|-------|---------|
+| `proxy_cache_valid` | `5s` | Short TTL keeps data fresh while reducing backend load |
+| `Cache-Control` | `private` | Prevents CDNs/proxies from caching user-specific content |
+| Cache key | Includes auth tokens | Per-user isolation prevents data leakage |
+
+**Performance impact (4000 concurrent users):**
+
+| Metric | Without Caching | With Caching | Improvement |
+|--------|-----------------|--------------|-------------|
+| `/admin/` response time | 5414ms | 199ms | 96% |
+| Throughput | ~2400 RPS | ~4000 RPS | 67% |
+
+### Multi-Tenant Cache Safety
+
+The cache key includes all authentication credentials to ensure user isolation:
+
+```nginx
+proxy_cache_key "$scheme$request_method$host$request_uri$is_args$args$http_authorization$cookie_jwt_token$cookie_access_token";
+```
+
+This ensures:
+
+- **Bearer token auth** (`$http_authorization`): API clients get isolated caches
+- **Primary session cookie** (`$cookie_jwt_token`): Browser users get isolated caches
+- **Alternative auth cookie** (`$cookie_access_token`): Fallback auth method also isolated
+
+### Verifying Cache Behavior
+
+Check the `X-Cache-Status` header to verify caching is working:
+
+```bash
+curl -I http://localhost:8080/admin/ -b "jwt_token=..." | grep X-Cache
+# X-Cache-Status: MISS  (first request)
+# X-Cache-Status: HIT   (subsequent requests within 5s)
+# X-Cache-Status: STALE (background refresh in progress)
+```
+
+### Disabling Admin Caching
+
+If you need real-time admin data or have concerns about caching, modify `infra/nginx/nginx.conf`:
+
+```nginx
+location /admin {
+    proxy_cache off;
+    add_header Cache-Control "no-cache, no-store, must-revalidate" always;
+    # ... rest of config
+}
+```
+
+---
+
+## 8 - High-Concurrency Production Tuning
+
+This section covers comprehensive tuning for deployments handling **1000+ concurrent users**. These settings have been tested under load with 6500 concurrent users.
+
+### 8.1 Database Connection Pool (SQLAlchemy)
+
+The gateway's internal connection pool manages connections between the application and PgBouncer (or PostgreSQL directly).
+
+| Variable | Default | High-Concurrency | Description |
+|----------|---------|------------------|-------------|
+| `DB_POOL_CLASS` | `auto` | `queue` | Pool implementation. Use `queue` with PgBouncer, `null` for safest option |
+| `DB_POOL_PRE_PING` | `false` | `true` | Validate connections before use (SELECT 1). Prevents stale connection errors |
+| `DB_POOL_SIZE` | `5` | `20` | Persistent connections per worker. Formula: `(concurrent_users / workers) × 0.5` |
+| `DB_MAX_OVERFLOW` | `10` | `10` | Extra connections allowed during spikes |
+| `DB_POOL_TIMEOUT` | `30` | `60` | Seconds to wait for available connection before error |
+| `DB_POOL_RECYCLE` | `3600` | `60` | Recycle connections after N seconds. **Must be less than PgBouncer CLIENT_IDLE_TIMEOUT** |
+
+**Example high-concurrency configuration:**
+
+```bash
+# With PgBouncer (recommended)
+DB_POOL_CLASS=queue
+DB_POOL_PRE_PING=true
+DB_POOL_SIZE=20
+DB_MAX_OVERFLOW=10
+DB_POOL_TIMEOUT=60
+DB_POOL_RECYCLE=60    # Half of PgBouncer CLIENT_IDLE_TIMEOUT (120s)
+```
+
+**Common errors and solutions:**
+
+| Error | Cause | Solution |
+|-------|-------|----------|
+| `QueuePool limit reached, connection timed out` | Pool too small for load | Increase `DB_POOL_SIZE` (e.g., 5→20) |
+| `idle transaction timeout` | Transactions not committed | Ensure all endpoints call `db.commit()` |
+| `connection reset by peer` | PgBouncer recycled stale connection | Set `DB_POOL_RECYCLE` < `CLIENT_IDLE_TIMEOUT` |
+
+---
+
+### 8.2 PgBouncer Connection Pooler
+
+PgBouncer multiplexes many application connections into fewer PostgreSQL connections, dramatically reducing database overhead.
+
+#### Client-Side Settings (from gateway workers)
+
+| Variable | Default | High-Concurrency | Description |
+|----------|---------|------------------|-------------|
+| `MAX_CLIENT_CONN` | `1000` | `5000-15000` | Max connections from all gateway workers. Formula: `replicas × workers × pool_size × 2` |
+| `DEFAULT_POOL_SIZE` | `20` | `600` | Shared connections to PostgreSQL per database |
+| `MIN_POOL_SIZE` | `0` | `100` | Pre-warmed connections for instant response |
+| `RESERVE_POOL_SIZE` | `0` | `150` | Emergency pool for burst traffic |
+| `RESERVE_POOL_TIMEOUT` | `5` | `2` | Seconds before tapping reserve pool |
+
+#### Server-Side Settings (to PostgreSQL)
+
+| Variable | Default | High-Concurrency | Description |
+|----------|---------|------------------|-------------|
+| `MAX_DB_CONNECTIONS` | `100` | `700` | Max connections to PostgreSQL. **Must be < PostgreSQL max_connections** |
+| `MAX_USER_CONNECTIONS` | `100` | `700` | Per-user limit, typically equals `MAX_DB_CONNECTIONS` |
+| `SERVER_LIFETIME` | `3600` | `1800-3600` | Recycle server connections after N seconds |
+| `SERVER_IDLE_TIMEOUT` | `600` | `600` | Close unused server connections after N seconds |
+
+#### Timeout Settings
+
+| Variable | Default | High-Concurrency | Description |
+|----------|---------|------------------|-------------|
+| `QUERY_WAIT_TIMEOUT` | `120` | `60` | Max wait for available connection |
+| `CLIENT_IDLE_TIMEOUT` | `0` | `120-300` | Close idle client connections. **Gateway DB_POOL_RECYCLE must be less than this** |
+| `SERVER_CONNECT_TIMEOUT` | `15` | `5` | Timeout for new PostgreSQL connections |
+| `IDLE_TRANSACTION_TIMEOUT` | `0` | `60-300` | Kill transactions idle > N seconds. **Critical for preventing connection starvation** |
+
+#### Transaction Reset Settings
+
+| Variable | Default | High-Concurrency | Description |
+|----------|---------|------------------|-------------|
+| `SERVER_RESET_QUERY` | `DISCARD ALL` | `DISCARD ALL` | Reset connection state when returned to pool |
+| `SERVER_RESET_QUERY_ALWAYS` | `0` | `1` | Always run reset query even after clean transactions |
+| `POOL_MODE` | `session` | `transaction` | Connection returned after each transaction (required for web apps) |
+
+**Example PgBouncer configuration (docker-compose.yml):**
+
+```yaml
+pgbouncer:
+  image: edoburu/pgbouncer:latest
+  environment:
+    - DATABASE_URL=postgres://postgres:password@postgres:5432/mcp
+    - POOL_MODE=transaction
+    # Client limits
+    - MAX_CLIENT_CONN=5000
+    - DEFAULT_POOL_SIZE=600
+    - MIN_POOL_SIZE=100
+    - RESERVE_POOL_SIZE=150
+    # Server limits
+    - MAX_DB_CONNECTIONS=700
+    - SERVER_LIFETIME=1800
+    - SERVER_IDLE_TIMEOUT=600
+    # Timeouts
+    - QUERY_WAIT_TIMEOUT=60
+    - CLIENT_IDLE_TIMEOUT=120
+    - IDLE_TRANSACTION_TIMEOUT=60
+    # Reset
+    - SERVER_RESET_QUERY=DISCARD ALL
+    - SERVER_RESET_QUERY_ALWAYS=1
+  ulimits:
+    nofile:
+      soft: 65536
+      hard: 65536
+```
+
+---
+
+### 8.3 Container File Descriptor Limits (ulimits)
+
+Each network connection requires a file descriptor. Containers default to 1024 soft limit, which is insufficient for high concurrency.
+
+| Container | Recommended `nofile` | Rationale |
+|-----------|---------------------|-----------|
+| **PgBouncer** | `65536` | `MAX_CLIENT_CONN + MAX_DB_CONNECTIONS + overhead` |
+| **PostgreSQL** | `8192` | `max_connections + internal FDs` |
+| **Redis** | `65536` | `maxclients (15000) + overhead` |
+| **Gateway** | `65536` | `HTTP connections + DB connections + MCP sessions` |
+| **Nginx** | `65535` | `worker_connections × workers` |
+
+**docker-compose.yml example:**
+
+```yaml
+services:
+  pgbouncer:
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+
+  postgres:
+    ulimits:
+      nofile:
+        soft: 8192
+        hard: 8192
+
+  redis:
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
+
+  gateway:
+    ulimits:
+      nofile:
+        soft: 65535
+        hard: 65535
+```
+
+**Verification:**
+
+```bash
+# Check container limits
+docker exec <container> cat /proc/1/limits | grep "open files"
+
+# Count current open FDs
+docker exec <container> ls /proc/1/fd | wc -l
+```
+
+**Common error:** `accept() failed: No file descriptors available` - Increase `ulimits.nofile`.
+
+---
+
+### 8.4 Host System Tuning (sysctl)
+
+The Docker host kernel settings affect all containers. These must be set on the host, not in containers.
+
+| Setting | Default | High-Concurrency | Description |
+|---------|---------|------------------|-------------|
+| `net.core.somaxconn` | `128` | `65535` | Max socket listen backlog |
+| `net.core.netdev_max_backlog` | `1000` | `65535` | Max packets queued before processing |
+| `net.ipv4.tcp_max_syn_backlog` | `128` | `65535` | Max SYN packets pending connection |
+| `net.ipv4.tcp_fin_timeout` | `60` | `15` | Faster TIME_WAIT cleanup |
+| `net.ipv4.tcp_tw_reuse` | `0` | `1` | Reuse TIME_WAIT sockets |
+| `net.ipv4.ip_local_port_range` | `32768 60999` | `1024 65535` | More ephemeral ports |
+| `fs.file-max` | varies | `2097152` | System-wide file descriptor limit |
+
+**Apply temporarily:**
+
+```bash
+sudo sysctl -w \
+  net.core.somaxconn=65535 \
+  net.core.netdev_max_backlog=65535 \
+  net.ipv4.tcp_max_syn_backlog=65535 \
+  net.ipv4.tcp_fin_timeout=15 \
+  net.ipv4.tcp_tw_reuse=1 \
+  net.ipv4.ip_local_port_range="1024 65535"
+```
+
+**Apply permanently** (`/etc/sysctl.d/99-mcp-loadtest.conf`):
+
+```ini
+# High-concurrency TCP tuning for ContextForge load testing
+net.core.somaxconn = 65535
+net.core.netdev_max_backlog = 65535
+net.ipv4.tcp_max_syn_backlog = 65535
+net.ipv4.tcp_fin_timeout = 15
+net.ipv4.tcp_tw_reuse = 1
+net.ipv4.ip_local_port_range = 1024 65535
+fs.file-max = 2097152
+```
+
+Then apply: `sudo sysctl -p /etc/sysctl.d/99-mcp-loadtest.conf`
+
+---
+
+### 8.5 HTTPX Client Pool (Outbound HTTP)
+
+The gateway uses a shared HTTPX client pool for all outbound requests (federation, health checks, A2A, MCP tool calls).
+
+| Variable | Default | High-Concurrency | Description |
+|----------|---------|------------------|-------------|
+| `HTTPX_MAX_CONNECTIONS` | `100` | `200` | Total connections in pool |
+| `HTTPX_MAX_KEEPALIVE_CONNECTIONS` | `20` | `100` | Persistent keepalive connections |
+| `HTTPX_KEEPALIVE_EXPIRY` | `5.0` | `30.0` | Idle connection expiry (seconds) |
+| `HTTPX_CONNECT_TIMEOUT` | `5.0` | `5.0` | TCP connection timeout |
+| `HTTPX_READ_TIMEOUT` | `30.0` | `120.0` | Response read timeout (increase for slow tools) |
+| `HTTPX_POOL_TIMEOUT` | `5.0` | `10.0` | Wait for available connection |
+
+**Example:**
+
+```bash
+HTTPX_MAX_CONNECTIONS=200
+HTTPX_MAX_KEEPALIVE_CONNECTIONS=100
+HTTPX_KEEPALIVE_EXPIRY=30.0
+HTTPX_READ_TIMEOUT=120.0
+HTTPX_POOL_TIMEOUT=10.0
+```
+
+---
+
+### 8.6 Complete High-Concurrency Configuration
+
+Here's a complete configuration for 3000-6500 concurrent users:
+
+```yaml
+# docker-compose.yml gateway environment
+environment:
+  # Database pool (via PgBouncer)
+  - DATABASE_URL=postgresql+psycopg://postgres:password@pgbouncer:6432/mcp
+  - DB_POOL_CLASS=queue
+  - DB_POOL_PRE_PING=true
+  - DB_POOL_SIZE=20
+  - DB_MAX_OVERFLOW=10
+  - DB_POOL_TIMEOUT=60
+  - DB_POOL_RECYCLE=60
+
+  # MCP Session Pool
+  - MCP_SESSION_POOL_ENABLED=true
+  - MCP_SESSION_POOL_MAX_PER_KEY=200
+  - MCP_SESSION_POOL_ACQUIRE_TIMEOUT=60
+
+  # HTTPX Client Pool
+  - HTTPX_MAX_CONNECTIONS=200
+  - HTTPX_MAX_KEEPALIVE_CONNECTIONS=100
+  - HTTPX_READ_TIMEOUT=120.0
+
+  # Redis — keep replicas × workers × pool < maxclients (15000)
+  - REDIS_MAX_CONNECTIONS=50
+
+  # Performance
+  - LOG_LEVEL=ERROR
+  - DISABLE_ACCESS_LOG=true
+  - AUDIT_TRAIL_ENABLED=false
+```
+
+---
+
+## 9 - MCP Streamable HTTP Transport Tuning
+
+The MCP Streamable HTTP endpoint (`/servers/{id}/mcp`) has its own performance characteristics distinct from the REST API (`/rpc`). This section covers settings that specifically affect MCP protocol performance.
+
+### Critical Settings
+
+These settings have the largest measured impact on MCP throughput:
+
+| Setting | Recommended | Impact | Notes |
+|---------|-------------|--------|-------|
+| `MCP_SESSION_POOL_ENABLED` | `true` | ~10% RPS improvement | Reuses upstream MCP server connections |
+| `JSON_RESPONSE_ENABLED` | `true` | **Required** — disabling breaks JSON clients | Returns JSON instead of SSE framing |
+| `USE_STATEFUL_SESSIONS` | `false` | **Required** for multi-replica | Stateful sessions are per-process |
+| `DB_POOL_CLASS` | `queue` | **Required** — `null` causes ~55% RPS loss | QueuePool with PgBouncer |
+| `AUTH_CACHE_ENABLED` | `true` | Significant — reduces per-request DB queries | Caches user/team/role lookups |
+| `CACHE_TYPE` | `redis` | Significant — shared cache across workers | Enables cross-worker caching |
+
+### Settings with Negligible Impact
+
+These settings were tested and found to have less than ~3% effect on MCP throughput. Tune them for correctness, not performance:
+
+| Setting | Why Negligible |
+|---------|---------------|
+| `VALIDATION_MIDDLEWARE_ENABLED` | Deprecated as of 2026-06-11; sunsets on 2026-07-07. MCP requests bypass most validation. See [Deprecations](../deprecations.md). |
+| `DB_METRICS_RECORDING_ENABLED` | Writes are buffered, minimal per-request overhead |
+| `REGISTRY_CACHE_ENABLED` | MCP handlers use their own DB queries, not the registry cache |
+| `PERFORMANCE_TRACKING_ENABLED` | Lightweight in-memory tracking |
+| `TOKEN_USAGE_LOGGING_ENABLED` | Rate-limited to one DB write per 5 minutes per token |
+| `CORRELATION_ID_ENABLED` | Adds/reads one header per request |
+
+### MCP SDK / FastMCP Tunables
+
+When running MCP servers behind the gateway:
+
+| Setting | Recommendation | Why |
+|---------|---------------|-----|
+| `MCP_SESSION_POOL_HEALTH_CHECK_METHODS` | `["skip"]` for max throughput | Skips health checks on pooled sessions |
+| `MCP_SESSION_POOL_CLEANUP_TIMEOUT` | `0.5` | Fast cleanup of stale sessions |
+| Upstream `stateless_http` | `true` for multi-replica servers | Avoids session affinity requirements |
+| Upstream `json_response` | `true` for unary tool calls | Removes SSE framing overhead |
+| `terminate_on_close` | `false` for pooled sessions | Prevents session teardown on reuse |
+| Streamable HTTP over SSE | Prefer Streamable HTTP | Recommended production transport |
+
+### MCP Worker Tuning
+
+The gateway worker count (`GUNICORN_WORKERS`) directly affects MCP throughput:
+
+- Too few workers: CPU underutilized, low RPS
+- Too many workers: Excessive context switching, DB connection pressure
+- **Rule of thumb:** Match `GUNICORN_WORKERS` to the available CPU cores per container. 24 workers per 8-CPU container is well-tuned for MCP workloads.
+
+### Auth Cache TTL Guidance
+
+The auth cache prevents repeated database lookups for the same JWT token. Higher TTLs reduce DB pressure but delay permission changes:
+
+| Setting | Max Allowed | Recommendation |
+|---------|-------------|---------------|
+| `AUTH_CACHE_USER_TTL` | 300s | 300s (max) for performance |
+| `AUTH_CACHE_TEAM_TTL` | 300s | 300s (max) for performance |
+| `AUTH_CACHE_ROLE_TTL` | 300s | 300s (max) for performance |
+| `AUTH_CACHE_REVOCATION_TTL` | 120s | 120s (max) — security-sensitive |
+| `AUTH_CACHE_BATCH_QUERIES` | — | `true` — batches three queries into one |
+
+---
+
+## 10 - Disable unused features
+
+ContextForge has many optional features that are enabled by default for completeness but consume CPU, memory, or database I/O even when not used. Disabling features you do not need is a free performance win that does not require additional resources.
+
+### High-impact features to disable
+
+These features have measurable per-request or background overhead. Disable any you are not actively using:
+
+| Feature | Setting | Default | Overhead When Enabled |
+|---------|---------|---------|----------------------|
+| **Admin UI** | `MCPGATEWAY_UI_ENABLED` | `false` | Template rendering CPU, admin middleware checks on every request |
+| **Admin API** | `MCPGATEWAY_ADMIN_API_ENABLED` | `false` | Exposes additional endpoints, admin auth middleware |
+| **A2A protocol** | `MCPGATEWAY_A2A_ENABLED` | `true` | A2A router registration, agent discovery, metrics tracking |
+| **A2A metrics** | `MCPGATEWAY_A2A_METRICS_ENABLED` | `true` | DB writes per A2A invocation |
+| **LLM chat** | `LLMCHAT_ENABLED` | `true` | Session management, Redis locks, chat routing middleware |
+| **Catalog** | `MCPGATEWAY_CATALOG_ENABLED` | `true` | Catalog server sync, background health checks |
+| **Plugins** | `PLUGINS_ENABLED` | `false` | Plugin discovery, hook dispatch on every request |
+| **DB metrics recording** | `DB_METRICS_RECORDING_ENABLED` | `true` | One buffered DB write per tool/resource/prompt execution |
+| **Token usage logging** | `TOKEN_USAGE_LOGGING_ENABLED` | `true` | DB write per unique token per 5-minute window |
+| **Structured logging (DB)** | `STRUCTURED_LOGGING_DATABASE_ENABLED` | `false` | DB writes per log entry (high overhead) |
+| **Audit trail** | `AUDIT_TRAIL_ENABLED` | `false` | DB write per mutating request (high overhead) |
+| **Security logging** | `SECURITY_LOGGING_ENABLED` | `false` | DB writes for auth events |
+| **Observability** | `OBSERVABILITY_ENABLED` | `false` | Span creation, trace storage, request instrumentation |
+| **Prometheus** | `ENABLE_METRICS` | `false` | Per-request histogram updates, `/metrics` endpoint |
+| **Net connections count** | `MCPGATEWAY_PERFORMANCE_NET_CONNECTIONS_ENABLED` | `true` | `psutil.net_connections()` call in performance stats |
+
+### Medium-impact features
+
+These add some overhead but are useful in most deployments. Disable only if you are certain you do not need them:
+
+| Feature | Setting | Default | When to Disable |
+|---------|---------|---------|-----------------|
+| **Correlation ID** | `CORRELATION_ID_ENABLED` | `true` | If your external proxy already handles trace IDs |
+| **Performance tracking** | `PERFORMANCE_TRACKING_ENABLED` | `true` | If using external APM (Datadog, New Relic, etc.) |
+| **Metrics aggregation** | `METRICS_AGGREGATION_ENABLED` | `true` | If using external metrics (Prometheus, Grafana) |
+| **Metrics rollup** | `METRICS_ROLLUP_ENABLED` | `true` | If raw metrics are exported externally |
+| **Metrics cleanup** | `METRICS_CLEANUP_ENABLED` | `true` | Only disable if you manage retention externally |
+| **Elicitation** | `MCPGATEWAY_ELICITATION_ENABLED` | `true` | If no MCP clients use elicitation |
+| **Tool cancellation** | `MCPGATEWAY_TOOL_CANCELLATION_ENABLED` | `true` | If clients do not cancel in-flight tool calls |
+| **SSE keepalive** | `SSE_KEEPALIVE_ENABLED` | `true` | If not using SSE transport |
+| **Dynamic client registration** | `DCR_ENABLED` | `true` | If not using OAuth DCR flow |
+| **OAuth discovery** | `OAUTH_DISCOVERY_ENABLED` | `true` | If not using OAuth |
+
+### Low-impact features (safe to leave enabled)
+
+These have negligible runtime cost and are generally worth keeping:
+
+| Feature | Setting | Default | Notes |
+|---------|---------|---------|-------|
+| Security headers | `SECURITY_HEADERS_ENABLED` | `true` | Adds static headers, near-zero CPU |
+| CORS | `CORS_ENABLED` | `true` | Standard cross-origin handling |
+| SSRF protection | `SSRF_PROTECTION_ENABLED` | `true` | URL validation on registration only |
+| Password policy | `PASSWORD_POLICY_ENABLED` | `true` | Checked only during password set/change |
+| Well-known endpoints | `WELL_KNOWN_ENABLED` | `true` | Rarely hit, cached responses |
+| Auth cache | `AUTH_CACHE_ENABLED` | `true` | **Improves** performance; do not disable |
+| Registry cache | `REGISTRY_CACHE_ENABLED` | `true` | **Improves** performance; do not disable |
+| Tool lookup cache | `TOOL_LOOKUP_CACHE_ENABLED` | `true` | **Improves** performance; do not disable |
+
+### Deployment profiles
+
+**MCP-only deployment** (maximum MCP protocol throughput):
+
+```bash
+# Disable everything not needed for MCP tool serving
+MCPGATEWAY_UI_ENABLED=false
+MCPGATEWAY_ADMIN_API_ENABLED=false
+MCPGATEWAY_A2A_ENABLED=false
+MCPGATEWAY_CATALOG_ENABLED=false
+LLMCHAT_ENABLED=false
+PLUGINS_ENABLED=false
+OBSERVABILITY_ENABLED=false
+ENABLE_METRICS=false
+AUDIT_TRAIL_ENABLED=false
+SECURITY_LOGGING_ENABLED=false
+STRUCTURED_LOGGING_DATABASE_ENABLED=false
+CORRELATION_ID_ENABLED=false
+DB_METRICS_RECORDING_ENABLED=false
+MCPGATEWAY_PERFORMANCE_NET_CONNECTIONS_ENABLED=false
+COMPRESSION_ENABLED=false          # Let nginx handle compression
+DISABLE_ACCESS_LOG=true
+
+# Keep these enabled
+AUTH_CACHE_ENABLED=true
+REGISTRY_CACHE_ENABLED=true
+MCP_SESSION_POOL_ENABLED=true
+CACHE_TYPE=redis
+```
+
+**Full-featured production** (all features, tuned for performance):
+
+```bash
+# Features enabled
+MCPGATEWAY_UI_ENABLED=true
+MCPGATEWAY_ADMIN_API_ENABLED=true
+MCPGATEWAY_A2A_ENABLED=true
+PLUGINS_ENABLED=true
+
+# Expensive features disabled unless needed
+OBSERVABILITY_ENABLED=false         # Enable only when tracing needed
+ENABLE_METRICS=false                # Enable with Prometheus
+AUDIT_TRAIL_ENABLED=false           # Enable for compliance
+STRUCTURED_LOGGING_DATABASE_ENABLED=false
+SECURITY_LOGGING_ENABLED=false
+DB_METRICS_RECORDING_ENABLED=true   # Keep for built-in analytics
+
+# Caching maximized
+AUTH_CACHE_ENABLED=true
+AUTH_CACHE_BATCH_QUERIES=true
+REGISTRY_CACHE_ENABLED=true
+MCP_SESSION_POOL_ENABLED=true
+CACHE_TYPE=redis
+```
+
+**Development / debugging** (full observability, relaxed performance):
+
+```bash
+# Everything on for debugging
+MCPGATEWAY_UI_ENABLED=true
+MCPGATEWAY_ADMIN_API_ENABLED=true
+OBSERVABILITY_ENABLED=true
+ENABLE_METRICS=true
+DB_METRICS_RECORDING_ENABLED=true
+DB_QUERY_LOG_ENABLED=true           # N+1 detection
+STRUCTURED_LOGGING_DATABASE_ENABLED=true
+LOG_LEVEL=INFO
+CORRELATION_ID_ENABLED=true
+PERFORMANCE_TRACKING_ENABLED=true
+```
+
+---
+
+## 11 - Security tips while tuning
+
+* Never commit real `JWT_SECRET_KEY`, DB passwords, or tokens-use `.env.example` as a template.
+* Prefer platform secrets (K8s Secrets, Code Engine secrets) over baking creds into the image.
+* If you enable `gevent`/`eventlet`, pin their versions and run **bandit** plus your preferred dependency or container review checks.
+
+---
+
+## See Also
+
+- [Performance Profiling Guide](../development/profiling.md) - py-spy, memray, PostgreSQL profiling, MCP bottleneck triage
+- [Database Performance Guide](../development/db-performance.md) - N+1 detection, query logging, query counting
+- [Performance Architecture](../architecture/performance-architecture.md) - MCP request path, caching layers, scaling capacity
+- [Scaling Guide](scale.md) - Production scaling configuration

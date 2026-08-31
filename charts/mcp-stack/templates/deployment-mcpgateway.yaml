@@ -1,0 +1,338 @@
+########################################################################
+# DEPLOYMENT - ContextForge (Gateway)
+#
+# - Spins up the HTTP / WebSocket gateway pods.
+# - Injects release-scoped hosts for Postgres & Redis.
+# - Pulls ALL other environment variables from the dedicated
+#   ConfigMap + Secret via envFrom (mounted later in this file).
+# - DATABASE_URL and REDIS_URL are declared LAST so that every
+#   $(POSTGRES_*) / $(REDIS_*) placeholder is already defined.
+########################################################################
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  # <release>-mcp-stack-mcpgateway
+  name: {{ include "mcp-stack.fullname" . }}-mcpgateway
+  labels:
+    {{- include "mcp-stack.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.mcpContextForge.replicaCount }}
+
+  selector:
+    matchLabels:
+      app: {{ include "mcp-stack.fullname" . }}-mcpgateway
+
+  template:
+    metadata:
+      labels:
+        app: {{ include "mcp-stack.fullname" . }}-mcpgateway
+
+    spec:
+      # Image pull secrets
+      {{- if .Values.global.imagePullSecrets }}
+      imagePullSecrets:
+        {{- range .Values.global.imagePullSecrets }}
+        - name: {{ . }}
+        {{- end }}
+      {{- end }}
+      {{- if or .Values.serviceAccount.create .Values.serviceAccount.name }}
+      serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
+      {{- end }}
+      automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
+      {{- if gt (int .Values.mcpContextForge.replicaCount) 1 }}
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: {{ include "mcp-stack.fullname" . }}-mcpgateway
+                topologyKey: kubernetes.io/hostname
+      {{- end }}
+      securityContext:
+        {{- toYaml .Values.mcpContextForge.podSecurityContext | nindent 8 }}
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: mcp-context-forge
+          securityContext:
+            {{- toYaml .Values.mcpContextForge.containerSecurityContext | nindent 12 }}
+          image: "{{ .Values.mcpContextForge.image.repository }}:{{ .Values.mcpContextForge.image.tag }}"
+          imagePullPolicy: {{ .Values.mcpContextForge.image.pullPolicy }}
+          {{- $pluginsConfigFile := default "plugins/config.yaml" .Values.mcpContextForge.config.PLUGINS_CONFIG_FILE }}
+
+          # Gateway's internal port
+          ports:
+            - containerPort: {{ .Values.mcpContextForge.containerPort }}
+
+          ################################################################
+          # EXPLICIT ENV-VARS
+          # - DB/cache endpoints must be set here so they can be used as
+          #   placeholders in the derived URL variables declared below.
+          ################################################################
+          env:
+            # ---------- POSTGRES (via PgBouncer if enabled) ----------
+            - name: POSTGRES_HOST
+              {{- if .Values.pgbouncer.enabled }}
+              value: {{ printf "%s-pgbouncer" (include "mcp-stack.fullname" .) }}
+              {{- else if .Values.postgres.external.enabled }}
+              {{- if .Values.postgres.external.existingSecret }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mcp-stack.postgresSecretName" . }}
+                  key: {{ .Values.postgres.external.hostKey | default "host" }}
+              {{- else }}
+              value: {{ .Values.postgres.external.host | quote }}
+              {{- end }}
+              {{- else }}
+              value: {{ printf "%s-postgres" (include "mcp-stack.fullname" .) }}
+              {{- end }}
+            - name: POSTGRES_PORT
+              {{- if .Values.pgbouncer.enabled }}
+              value: "{{ .Values.pgbouncer.service.port }}"
+              {{- else if .Values.postgres.external.enabled }}
+              {{- if .Values.postgres.external.existingSecret }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mcp-stack.postgresSecretName" . }}
+                  key: {{ .Values.postgres.external.portKey | default "port" }}
+              {{- else }}
+              value: "{{ .Values.postgres.external.port }}"
+              {{- end }}
+              {{- else }}
+              value: "{{ .Values.mcpContextForge.env.postgres.port }}"
+              {{- end }}
+            - name: POSTGRES_DB
+              {{- if .Values.postgres.external.enabled }}
+              {{- if .Values.postgres.external.existingSecret }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mcp-stack.postgresSecretName" . | trim }}
+                  key: {{ .Values.postgres.external.databaseKey | default "dbname" }}
+              {{- else }}
+              value: {{ .Values.postgres.external.database | quote }}
+              {{- end }}
+              {{- else }}
+              value: "{{ .Values.mcpContextForge.env.postgres.db }}"
+              {{- end }}
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mcp-stack.postgresSecretName" . | trim }}
+                  key: {{ if .Values.postgres.external.enabled }}{{ .Values.postgres.external.userKey | default "user" }}{{ else }}POSTGRES_USER{{ end }}
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mcp-stack.postgresSecretName" . | trim }}
+                  key: {{ if .Values.postgres.external.enabled }}{{ .Values.postgres.external.passwordKey | default "password" }}{{ else }}POSTGRES_PASSWORD{{ end }}
+
+            # ---------- REDIS ----------
+            {{- if .Values.redis.external.enabled }}
+            {{- if and (not .Values.redis.external.existingSecret) (not .Values.redis.external.url) }}
+            - name: REDIS_HOST
+              value: {{ .Values.redis.external.host | quote }}
+            - name: REDIS_PORT
+              value: "{{ .Values.redis.external.port }}"
+            {{- end }}
+            {{- else if or .Values.redis.enabled .Values.mcpContextForge.env.redis.host }}
+            - name: REDIS_HOST
+              value: {{ .Values.mcpContextForge.env.redis.host | default (printf "%s-redis" (include "mcp-stack.fullname" .)) | quote }}
+            - name: REDIS_PORT
+              value: "{{ .Values.mcpContextForge.env.redis.port }}"
+            {{- if and .Values.redis.enabled .Values.redis.auth.enabled }}
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "mcp-stack.redisSecretName" . | trim | quote }}
+                  key: {{ .Values.redis.auth.passwordKey | default "REDIS_PASSWORD" }}
+            {{- end }}
+            {{- else }}
+            - name: REDIS_HOST
+              value: ""
+            - name: REDIS_PORT
+              value: ""
+            {{- end }}
+
+            # ---------- METRICS ----------
+            {{- if .Values.mcpContextForge.metrics.enabled }}
+            - name: ENABLE_METRICS
+              value: "{{ .Values.mcpContextForge.metrics.enabled }}"
+            {{- if .Values.mcpContextForge.metrics.excludedHandlers }}
+            - name: METRICS_EXCLUDED_HANDLERS
+              value: "{{ .Values.mcpContextForge.metrics.excludedHandlers }}"
+            {{- end }}
+            {{- if .Values.mcpContextForge.metrics.customLabels }}
+            - name: METRICS_CUSTOM_LABELS
+              value: "{{ range $key, $value := .Values.mcpContextForge.metrics.customLabels }}{{ $key }}={{ $value }},{{ end }}"
+            {{- end }}
+            {{- else }}
+            - name: ENABLE_METRICS
+              value: "false"
+            {{- end }}
+
+            # ---------- DERIVED URLS ----------
+            # These MUST be placed *after* the concrete vars above so the
+            # $(...) placeholders are expanded correctly inside the pod.
+            - name: DATABASE_URL
+              value: >-
+                postgresql+psycopg://$(POSTGRES_USER):$(POSTGRES_PASSWORD)@$(POSTGRES_HOST):$(POSTGRES_PORT)/$(POSTGRES_DB)
+            - name: REDIS_URL
+              {{- if .Values.redis.external.enabled }}
+              {{- if .Values.redis.external.existingSecret }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.redis.external.existingSecret }}
+                  key: {{ .Values.redis.external.urlKey | default "REDIS_URL" }}
+              {{- else if .Values.redis.external.url }}
+              value: {{ .Values.redis.external.url | quote }}
+              {{- else }}
+              value: "redis://$(REDIS_HOST):$(REDIS_PORT)/{{ .Values.redis.external.db }}"
+              {{- end }}
+            {{- else if or .Values.redis.enabled .Values.mcpContextForge.env.redis.host }}
+              {{- if and .Values.redis.enabled .Values.redis.auth.enabled }}
+              value: "redis://:$(REDIS_PASSWORD)@$(REDIS_HOST):$(REDIS_PORT)/0"
+              {{- else }}
+              value: "redis://$(REDIS_HOST):$(REDIS_PORT)/0"
+              {{- end }}
+              {{- else }}
+              value: ""
+              {{- end }}
+
+            # ---------- EXTRA ENV (user-defined) ----------
+
+            # ---------- RATE LIMITER REDIS (Optional) ----------
+            {{- if .Values.mcpContextForge.config.RATELIMITER_REDIS_URL }}
+            - name: RATELIMITER_REDIS_URL
+              value: {{ .Values.mcpContextForge.config.RATELIMITER_REDIS_URL | quote }}
+            {{- end }}
+            {{- if .Values.mcpContextForge.config.RATELIMITER_REDIS_MAX_CONNECTIONS }}
+            - name: RATELIMITER_REDIS_MAX_CONNECTIONS
+              value: {{ .Values.mcpContextForge.config.RATELIMITER_REDIS_MAX_CONNECTIONS | quote }}
+            {{- end }}
+            {{- if .Values.mcpContextForge.config.RATELIMITER_REDIS_SOCKET_TIMEOUT }}
+            - name: RATELIMITER_REDIS_SOCKET_TIMEOUT
+              value: {{ .Values.mcpContextForge.config.RATELIMITER_REDIS_SOCKET_TIMEOUT | quote }}
+            {{- end }}
+            {{- if .Values.mcpContextForge.config.RATELIMITER_REDIS_SOCKET_CONNECT_TIMEOUT }}
+            - name: RATELIMITER_REDIS_SOCKET_CONNECT_TIMEOUT
+              value: {{ .Values.mcpContextForge.config.RATELIMITER_REDIS_SOCKET_CONNECT_TIMEOUT | quote }}
+            {{- end }}
+            {{- if .Values.mcpContextForge.config.RATELIMITER_REDIS_SSL_CHECK_HOSTNAME }}
+            - name: RATELIMITER_REDIS_SSL_CHECK_HOSTNAME
+              value: {{ .Values.mcpContextForge.config.RATELIMITER_REDIS_SSL_CHECK_HOSTNAME | quote }}
+            {{- end }}
+            {{- if .Values.mcpContextForge.config.RATELIMITER_REDIS_SSL }}
+            - name: RATELIMITER_REDIS_SSL
+              value: {{ .Values.mcpContextForge.config.RATELIMITER_REDIS_SSL | quote }}
+            {{- end }}
+            {{- if .Values.mcpContextForge.config.RATELIMITER_REDIS_CA_CERTS }}
+            - name: RATELIMITER_REDIS_CA_CERTS
+              value: {{ .Values.mcpContextForge.config.RATELIMITER_REDIS_CA_CERTS | quote }}
+            {{- end }}
+            {{- if .Values.mcpContextForge.config.RATELIMITER_REDIS_CLIENT_CERT }}
+            - name: RATELIMITER_REDIS_CLIENT_CERT
+              value: {{ .Values.mcpContextForge.config.RATELIMITER_REDIS_CLIENT_CERT | quote }}
+            {{- end }}
+            {{- if .Values.mcpContextForge.config.RATELIMITER_REDIS_SSL_KEYFILE }}
+            - name: RATELIMITER_REDIS_SSL_KEYFILE
+              value: {{ .Values.mcpContextForge.config.RATELIMITER_REDIS_SSL_KEYFILE | quote }}
+            {{- end }}
+
+            # Placed last so users can override any variable including derived URLs
+            {{- if .Values.mcpContextForge.extraEnv }}
+            {{- toYaml .Values.mcpContextForge.extraEnv | nindent 12 }}
+            {{- end }}
+            {{- if .Values.mcpContextForge.pluginConfig.enabled }}
+            # Keep runtime lookup path in sync with plugin config mount path.
+            # This intentionally comes after extraEnv so it cannot drift.
+            - name: PLUGINS_CONFIG_FILE
+              value: {{ $pluginsConfigFile | quote }}
+            {{- end }}
+            # Migration runner ownership — wired from .Values.migration.enabled:
+            #   true  → pre-install Job owns the schema; gateway pods skip alembic upgrade head
+            #           and fail fast if the Job left the schema behind.
+            #   false → no dedicated runner; each gateway pod runs the advisory-lock migration
+            #           path itself (safe for single-replica or SQLite deployments).
+            # Placed after extraEnv so users cannot accidentally drop the contract by overriding it.
+            - name: MCPGATEWAY_SKIP_MIGRATIONS
+              value: {{ ternary "true" "false" .Values.migration.enabled | quote }}
+
+          ################################################################
+          # BULK ENV-VARS - pulled from ConfigMap + Secret
+          ################################################################
+          envFrom:
+            - secretRef:
+                name: {{ include "mcp-stack.fullname" . }}-gateway-secret
+            - configMapRef:
+                name: {{ include "mcp-stack.fullname" . }}-gateway-config
+            {{- if .Values.mcpContextForge.extraEnvFrom }}
+            {{- toYaml .Values.mcpContextForge.extraEnvFrom | nindent 12 }}
+            {{- end }}
+
+          ################################################################
+          # HEALTH & READINESS PROBES
+          ################################################################
+          {{- if .Values.migration.enabled }}
+          startupProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  # Schema-at-head guard: refuse Ready until alembic_version
+                  # matches the script-directory head. This is the chart-level
+                  # invariant — pods cannot serve traffic against a half-
+                  # migrated DB regardless of which entity (pre-install Job,
+                  # post-install Job, init container, external CD pipeline)
+                  # is responsible for running migrations.
+                  if [ -f /tmp/schema_at_head_done ]; then
+                    exit 0
+                  fi
+                  python3 -m mcpgateway.utils.check_schema_at_head || exit 1
+                  touch /tmp/schema_at_head_done
+                  exit 0
+            initialDelaySeconds: 10
+            periodSeconds: 5
+            timeoutSeconds: 15
+            failureThreshold: 60    # Allow up to 5 minutes for migration to complete
+          {{- else }}
+          {{- with .Values.mcpContextForge.probes.startup }}
+          startupProbe:
+{{- include "helpers.renderProbe" (dict "probe" . "root" $) | nindent 12 }}
+          {{- end }}
+          {{- end }}
+
+          {{- with .Values.mcpContextForge.probes.readiness }}
+          readinessProbe:
+{{- include "helpers.renderProbe" (dict "probe" . "root" $) | nindent 12 }}
+          {{- end }}
+
+          {{- with .Values.mcpContextForge.probes.liveness }}
+          livenessProbe:
+{{- include "helpers.renderProbe" (dict "probe" . "root" $) | nindent 12 }}
+          {{- end }}
+
+          # Resource requests / limits
+          resources:
+{{- toYaml .Values.mcpContextForge.resources | nindent 12 }}
+
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+          {{- if .Values.mcpContextForge.pluginConfig.enabled }}
+            - name: plugin-config-volume
+              mountPath: /app/{{ $pluginsConfigFile }}
+              subPath: config.yaml
+          {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir: {}
+      {{- if .Values.mcpContextForge.pluginConfig.enabled }}
+        - name: plugin-config-volume
+          configMap:
+            name: {{ include "mcp-stack.fullname" . }}-gateway-plugins
+            items:
+              - key: config.yaml
+                path: config.yaml
+      {{- end }}

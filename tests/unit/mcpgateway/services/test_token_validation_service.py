@@ -1,0 +1,671 @@
+# -*- coding: utf-8 -*-
+"""Location: ./tests/unit/mcpgateway/services/test_token_validation_service.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+
+Unit tests for token_validation_service.
+"""
+
+# Standard
+from unittest.mock import patch
+
+# Third-Party
+import jwt
+
+# First-Party
+from mcpgateway.services.token_validation_service import (
+    _derive_issuer_from_token_url,
+    _normalize_scope,
+    TokenValidationResult,
+    validate_oauth_token_claims,
+)
+
+
+def _make_jwt(claims: dict) -> str:
+    """Create an unsigned JWT for testing (HS256 with a dummy key)."""
+    return jwt.encode(claims, "test-key", algorithm="HS256")
+
+
+# ---------- TokenValidationResult ----------
+
+
+class TestTokenValidationResult:
+    def test_defaults(self):
+        r = TokenValidationResult()
+        assert r.is_jwt is False
+        assert r.warnings == []
+        assert r.audience_match is None
+        assert r.scopes_sufficient is None
+        assert r.issuer_match is None
+        assert r.token_type_valid is None
+
+    def test_blocking_errors_empty_when_no_warnings(self):
+        r = TokenValidationResult(is_jwt=True)
+        assert r.blocking_errors == []
+
+    def test_blocking_errors_none_flags_are_not_blocking(self):
+        """Missing claims (None) must NOT produce blocking errors."""
+        r = TokenValidationResult(is_jwt=True)
+        r.audience_match = None
+        r.scopes_sufficient = None
+        r.issuer_match = None
+        assert r.blocking_errors == []
+
+    def test_blocking_errors_true_flags_are_not_blocking(self):
+        """Matching claims (True) must NOT produce blocking errors."""
+        r = TokenValidationResult(is_jwt=True)
+        r.audience_match = True
+        r.scopes_sufficient = True
+        r.issuer_match = True
+        assert r.blocking_errors == []
+
+    def test_blocking_errors_audience_mismatch(self):
+        r = TokenValidationResult(is_jwt=True)
+        r.audience_match = False
+        r.warnings.append("Token audience mismatch: token aud does not match expected resource or gateway URL")
+        errors = r.blocking_errors
+        assert len(errors) == 1
+        assert "audience" in errors[0].lower()
+
+    def test_blocking_errors_scope_mismatch(self):
+        r = TokenValidationResult(is_jwt=True)
+        r.scopes_sufficient = False
+        r.warnings.append("Token may be missing required scopes: [write]")
+        errors = r.blocking_errors
+        assert len(errors) == 1
+        assert "scope" in errors[0].lower()
+
+    def test_blocking_errors_issuer_mismatch(self):
+        r = TokenValidationResult(is_jwt=True)
+        r.issuer_match = False
+        r.warnings.append("Token issuer mismatch: token iss='https://wrong.com', expected 'https://right.com'")
+        errors = r.blocking_errors
+        assert len(errors) == 1
+        assert "issuer" in errors[0].lower()
+
+    def test_blocking_errors_multiple_mismatches(self):
+        r = TokenValidationResult(is_jwt=True)
+        r.audience_match = False
+        r.scopes_sufficient = False
+        r.issuer_match = False
+        r.warnings = [
+            "Token audience mismatch: token aud does not match expected resource or gateway URL",
+            "Token may be missing required scopes: [write]",
+            "Token issuer mismatch: token iss='wrong', expected 'right'",
+        ]
+        assert len(r.blocking_errors) == 3
+
+    def test_blocking_errors_only_false_not_none(self):
+        """audience_match=False blocks; scopes_sufficient=None does NOT."""
+        r = TokenValidationResult(is_jwt=True)
+        r.audience_match = False
+        r.scopes_sufficient = None  # absent claim — must not block
+        r.warnings.append("Token audience mismatch: token aud does not match expected resource or gateway URL")
+        errors = r.blocking_errors
+        assert len(errors) == 1
+        assert "audience" in errors[0].lower()
+
+    def test_blocking_errors_audience_advisory_when_derived(self):
+        """audience_match=False is advisory (not blocking) when audience_source is 'derived'."""
+        r = TokenValidationResult(is_jwt=True)
+        r.audience_match = False
+        r.audience_source = "derived"
+        r.warnings.append("Token audience mismatch: token aud does not match expected resource or gateway URL")
+        assert r.blocking_errors == []
+
+    def test_blocking_errors_audience_blocking_when_configured(self):
+        """audience_match=False is blocking when audience_source is 'configured' (default)."""
+        r = TokenValidationResult(is_jwt=True)
+        r.audience_match = False
+        r.audience_source = "configured"
+        r.warnings.append("Token audience mismatch: token aud does not match expected resource or gateway URL")
+        assert len(r.blocking_errors) == 1
+
+
+# ---------- _derive_issuer_from_token_url ----------
+
+
+class TestDeriveIssuerFromTokenUrl:
+    def test_entra_id_v2(self):
+        url = "https://login.microsoftonline.com/tenant-abc/oauth2/v2.0/token"
+        assert _derive_issuer_from_token_url(url) == "https://login.microsoftonline.com/tenant-abc/v2.0"
+
+    def test_generic_idp(self):
+        url = "https://auth.example.com/oauth/token"
+        assert _derive_issuer_from_token_url(url) == "https://auth.example.com"
+
+    def test_empty_url(self):
+        assert _derive_issuer_from_token_url("") is None
+
+    def test_no_scheme(self):
+        assert _derive_issuer_from_token_url("just-a-host.com/token") is None
+
+
+# ---------- _normalize_scope ----------
+
+
+class TestNormalizeScope:
+    def test_simple_scopes(self):
+        scopes = _normalize_scope("read write")
+        assert "read" in scopes
+        assert "write" in scopes
+
+    def test_uri_prefixed_scopes(self):
+        scopes = _normalize_scope("api://app-a/Tools.Read api://app-a/Tools.Write")
+        assert "api://app-a/Tools.Read" in scopes
+        assert "Tools.Read" in scopes
+        assert "api://app-a/Tools.Write" in scopes
+        assert "Tools.Write" in scopes
+
+    def test_empty_string(self):
+        assert _normalize_scope("") == set()
+
+    def test_list_input_simple_scopes(self):
+        """Test that _normalize_scope handles list input (OAuth providers like Gamma)."""
+        scopes = _normalize_scope(["read", "write"])
+        assert "read" in scopes
+        assert "write" in scopes
+
+    def test_list_input_uri_prefixed_scopes(self):
+        """Test that _normalize_scope handles list with URI-prefixed scopes."""
+        scopes = _normalize_scope(["api://app-a/Tools.Read", "api://app-a/Tools.Write"])
+        assert "api://app-a/Tools.Read" in scopes
+        assert "Tools.Read" in scopes
+        assert "api://app-a/Tools.Write" in scopes
+        assert "Tools.Write" in scopes
+
+    def test_empty_list(self):
+        """Test that _normalize_scope handles empty list."""
+        assert _normalize_scope([]) == set()
+
+    def test_mixed_list_with_uri_and_simple(self):
+        """Test that _normalize_scope handles mixed list of URI and simple scopes."""
+        scopes = _normalize_scope(["read", "api://app-a/Tools.Write", "admin"])
+        assert "read" in scopes
+        assert "admin" in scopes
+        assert "api://app-a/Tools.Write" in scopes
+        assert "Tools.Write" in scopes
+
+    def test_invalid_input_type(self):
+        """Test that _normalize_scope handles invalid input gracefully."""
+        assert _normalize_scope(None) == set()
+        assert _normalize_scope(123) == set()
+        assert _normalize_scope({}) == set()
+
+    def test_list_with_non_string_elements(self):
+        """Test that _normalize_scope filters out non-string list elements safely."""
+        scopes = _normalize_scope(["read", 123, None, "write"])
+        assert "read" in scopes
+        assert "write" in scopes
+        assert 123 not in scopes
+        assert None not in scopes
+
+
+# ---------- validate_oauth_token_claims ----------
+
+
+class TestValidateOauthTokenClaims:
+    """Tests for the main validation function."""
+
+    # -- Happy path: all claims match --
+
+    def test_valid_jwt_all_matching(self):
+        token = _make_jwt(
+            {
+                "aud": "https://mcp-server.example.com",
+                "scope": "Tools.Read Tools.Write",
+                "iss": "https://login.microsoftonline.com/tenant/v2.0",
+            }
+        )
+        oauth_config = {
+            "scopes": ["Tools.Read"],
+            "resource": "https://mcp-server.example.com",
+            "token_url": "https://login.microsoftonline.com/tenant/oauth2/v2.0/token",
+        }
+        result = validate_oauth_token_claims(token, oauth_config, "https://gw.example.com", "test-gw")
+
+        assert result.is_jwt is True
+        assert result.warnings == []
+        assert result.audience_match is True
+        assert result.scopes_sufficient is True
+        assert result.issuer_match is True
+        assert result.token_type_valid is True
+
+    # -- Audience mismatch --
+
+    def test_audience_mismatch(self):
+        token = _make_jwt({"aud": "api://wrong-app"})
+        oauth_config = {"resource": "api://correct-app"}
+        result = validate_oauth_token_claims(token, oauth_config, "https://gw.example.com", "test-gw")
+
+        assert result.is_jwt is True
+        assert result.audience_match is False
+        assert any("audience mismatch" in w.lower() for w in result.warnings)
+
+    def test_audience_match_with_list(self):
+        token = _make_jwt({"aud": ["api://app-a", "api://app-b"]})
+        oauth_config = {"resource": "api://app-b"}
+        result = validate_oauth_token_claims(token, oauth_config, "https://gw.example.com", "test-gw")
+
+        assert result.audience_match is True
+        assert not any("audience" in w.lower() for w in result.warnings)
+
+    def test_audience_falls_back_to_gateway_url_origin(self):
+        """Fallback derives the ORIGIN (scheme + netloc), matching the value oauth_router
+        sends as the outbound ``resource`` param on initial auth + callback.
+
+        Real IdPs (Salesforce, Azure AD, Okta) mint tokens with origin-level ``aud``,
+        so validating against the full path would silently reject valid tokens.
+        """
+        token = _make_jwt({"aud": "https://mcp.example.com"})
+        oauth_config = {}  # No resource configured
+        result = validate_oauth_token_claims(token, oauth_config, "https://mcp.example.com/platform/mcp/v1", "test-gw")
+
+        assert result.audience_match is True
+
+    def test_audience_fallback_uses_urn_verbatim_when_origin_not_derivable(self):
+        """URN-shaped gateway.url has no origin; the raw value is used as the fallback."""
+        token = _make_jwt({"aud": "urn:example:mcp-gateway"})
+        oauth_config = {}
+        result = validate_oauth_token_claims(token, oauth_config, "urn:example:mcp-gateway", "test-gw")
+
+        assert result.audience_match is True
+
+    def test_audience_no_aud_claim(self):
+        token = _make_jwt({"scope": "read"})
+        oauth_config = {"resource": "https://example.com"}
+        result = validate_oauth_token_claims(token, oauth_config, "https://gw.example.com", "test-gw")
+
+        # No aud claim — cannot validate, no warning
+        assert result.audience_match is None
+        assert not any("audience" in w.lower() for w in result.warnings)
+
+    def test_audience_no_expected_audience(self):
+        """When neither resource nor gateway_url is set, audience validation is skipped."""
+        token = _make_jwt({"aud": "api://anything"})
+        oauth_config = {}
+        result = validate_oauth_token_claims(token, oauth_config, "", "test-gw")
+
+        assert result.audience_match is None
+        assert not any("audience" in w.lower() for w in result.warnings)
+
+    def test_audience_resource_list_matches(self):
+        """When resource is a list (learned from IdP aud array), any overlap is a match."""
+        token = _make_jwt({"aud": "my-client-id"})
+        oauth_config = {"resource": ["https://api.example.com", "my-client-id"]}
+        result = validate_oauth_token_claims(token, oauth_config, "https://gw.example.com", "test-gw")
+
+        assert result.audience_match is True
+
+    def test_audience_resource_takes_precedence_over_gateway_url(self):
+        """When resource is set, gateway_url is not used as fallback."""
+        token = _make_jwt({"aud": "https://gw.example.com"})
+        oauth_config = {"resource": "some-other-value"}
+        result = validate_oauth_token_claims(token, oauth_config, "https://gw.example.com", "test-gw")
+
+        assert result.audience_match is False
+
+    def test_audience_match_with_opaque_learned_resource_string(self):
+        """Round-trip: opaque aud (e.g. ServiceNow/Authentik client_id) matches opaque persisted resource."""
+        token = _make_jwt({"aud": "my-servicenow-client-id"})
+        oauth_config = {"resource": "my-servicenow-client-id"}
+        result = validate_oauth_token_claims(token, oauth_config, "https://gw.example.com", "test-gw")
+
+        assert result.audience_match is True
+        assert not any("audience" in w.lower() for w in result.warnings)
+
+    def test_audience_match_with_opaque_learned_resource_list(self):
+        """Round-trip: opaque aud list matches a learned-resource list with overlap."""
+        token = _make_jwt({"aud": ["my-client-id"]})
+        oauth_config = {"resource": ["my-client-id", "another-id"]}
+        result = validate_oauth_token_claims(token, oauth_config, "https://gw.example.com", "test-gw")
+
+        assert result.audience_match is True
+        assert not any("audience" in w.lower() for w in result.warnings)
+
+    def test_audience_mismatch_authoritative_when_resource_configured(self):
+        """A configured resource makes audience mismatch authoritative (blocking)."""
+        token = _make_jwt({"aud": "wrong-aud"})
+        oauth_config = {"resource": "configured-resource"}
+        result = validate_oauth_token_claims(token, oauth_config, "https://gw.example.com", "test-gw")
+
+        assert result.audience_match is False
+        assert result.audience_source == "configured"
+        assert len(result.blocking_errors) == 1
+
+    def test_audience_mismatch_advisory_when_no_resource_configured(self):
+        """Without a configured resource, audience mismatch is advisory (warning, not blocking)."""
+        token = _make_jwt({"aud": "wrong-aud"})
+        oauth_config = {}
+        result = validate_oauth_token_claims(token, oauth_config, "https://gw.example.com", "test-gw")
+
+        assert result.audience_match is False
+        assert result.audience_source == "derived"
+        assert any("audience" in w.lower() for w in result.warnings)
+        assert result.blocking_errors == []
+
+    def test_audience_match_when_no_resource_source_recorded(self):
+        """When audience matches via the derived fallback, the source is recorded as 'derived' but nothing blocks."""
+        token = _make_jwt({"aud": "https://gw.example.com"})
+        oauth_config = {}
+        result = validate_oauth_token_claims(token, oauth_config, "https://gw.example.com", "test-gw")
+
+        assert result.audience_match is True
+        assert result.audience_source == "derived"
+        assert result.blocking_errors == []
+
+    # -- Scope mismatch --
+
+    def test_scope_mismatch(self):
+        token = _make_jwt({"scope": "read"})
+        oauth_config = {"scopes": ["write", "admin"]}
+        result = validate_oauth_token_claims(token, oauth_config, "https://gw.example.com", "test-gw")
+
+        assert result.scopes_sufficient is False
+        assert any("missing required scopes" in w.lower() for w in result.warnings)
+
+    def test_scope_match_with_uri_prefix(self):
+        """Entra ID returns scopes without URI prefix; config has full URI."""
+        token = _make_jwt({"scp": "Tools.Read Tools.Write"})
+        oauth_config = {"scopes": ["api://app-a/Tools.Read"]}
+        result = validate_oauth_token_claims(token, oauth_config, "https://gw.example.com", "test-gw")
+
+        assert result.scopes_sufficient is True
+
+    def test_scope_scp_claim(self):
+        """Entra ID uses 'scp' instead of 'scope'."""
+        token = _make_jwt({"scp": "Files.Read User.Read"})
+        oauth_config = {"scopes": ["Files.Read"]}
+        result = validate_oauth_token_claims(token, oauth_config, "https://gw.example.com", "test-gw")
+
+        assert result.scopes_sufficient is True
+
+    def test_no_scope_claim(self):
+        token = _make_jwt({"aud": "test"})
+        oauth_config = {"scopes": ["read"]}
+        result = validate_oauth_token_claims(token, oauth_config, "https://gw.example.com", "test-gw")
+
+        # No scope claim — cannot validate, scopes_sufficient stays None
+        assert result.scopes_sufficient is None
+
+    def test_no_configured_scopes(self):
+        token = _make_jwt({"scope": "read write"})
+        oauth_config = {}  # No scopes configured
+        result = validate_oauth_token_claims(token, oauth_config, "https://gw.example.com", "test-gw")
+
+        # Nothing to compare against
+        assert result.scopes_sufficient is None
+
+    def test_empty_list_scope_claim(self):
+        """Empty list scope should be treated as insufficient, not skipped."""
+        token = _make_jwt({"scope": []})
+        oauth_config = {"scopes": ["read"]}
+        result = validate_oauth_token_claims(token, oauth_config, "https://gw.example.com", "test-gw")
+
+        assert result.scopes_sufficient is False
+        assert any("missing required scopes" in w.lower() for w in result.warnings)
+
+    def test_list_scope_mismatch(self):
+        """List-valued scopes with missing required scopes should be flagged."""
+        token = _make_jwt({"scope": ["read", "admin"]})
+        oauth_config = {"scopes": ["write"]}
+        result = validate_oauth_token_claims(token, oauth_config, "https://gw.example.com", "test-gw")
+
+        assert result.scopes_sufficient is False
+        assert any("missing required scopes" in w.lower() for w in result.warnings)
+
+    def test_list_scope_match(self):
+        """List-valued scopes that satisfy required scopes should pass."""
+        token = _make_jwt({"scope": ["read", "write"]})
+        oauth_config = {"scopes": ["write"]}
+        result = validate_oauth_token_claims(token, oauth_config, "https://gw.example.com", "test-gw")
+
+        assert result.scopes_sufficient is True
+
+    # -- Issuer mismatch --
+
+    def test_issuer_mismatch(self):
+        token = _make_jwt({"iss": "https://wrong-issuer.com"})
+        oauth_config = {"issuer": "https://correct-issuer.com"}
+        result = validate_oauth_token_claims(token, oauth_config, "https://gw.example.com", "test-gw")
+
+        assert result.issuer_match is False
+        assert any("issuer mismatch" in w.lower() for w in result.warnings)
+
+    def test_issuer_match_explicit(self):
+        token = _make_jwt({"iss": "https://auth.example.com"})
+        oauth_config = {"issuer": "https://auth.example.com"}
+        result = validate_oauth_token_claims(token, oauth_config, "https://gw.example.com", "test-gw")
+
+        assert result.issuer_match is True
+
+    def test_issuer_derived_from_token_url(self):
+        token = _make_jwt({"iss": "https://login.microsoftonline.com/tenant1/v2.0"})
+        oauth_config = {"token_url": "https://login.microsoftonline.com/tenant1/oauth2/v2.0/token"}
+        result = validate_oauth_token_claims(token, oauth_config, "https://gw.example.com", "test-gw")
+
+        assert result.issuer_match is True
+
+    def test_issuer_trailing_slash_normalization(self):
+        token = _make_jwt({"iss": "https://auth.example.com/"})
+        oauth_config = {"issuer": "https://auth.example.com"}
+        result = validate_oauth_token_claims(token, oauth_config, "https://gw.example.com", "test-gw")
+
+        assert result.issuer_match is True
+
+    def test_no_iss_claim(self):
+        token = _make_jwt({"aud": "test"})
+        oauth_config = {"issuer": "https://auth.example.com"}
+        result = validate_oauth_token_claims(token, oauth_config, "https://gw.example.com", "test-gw")
+
+        # No iss claim — cannot validate
+        assert result.issuer_match is None
+
+    # -- Token type --
+
+    def test_token_type_bearer_valid(self):
+        token = _make_jwt({})
+        result = validate_oauth_token_claims(token, {}, "https://gw.example.com", "test-gw", token_type="Bearer")
+        assert result.token_type_valid is True
+
+    def test_token_type_bearer_case_insensitive(self):
+        token = _make_jwt({})
+        result = validate_oauth_token_claims(token, {}, "https://gw.example.com", "test-gw", token_type="bearer")
+        assert result.token_type_valid is True
+
+    def test_token_type_invalid(self):
+        token = _make_jwt({})
+        result = validate_oauth_token_claims(token, {}, "https://gw.example.com", "test-gw", token_type="mac")
+        assert result.token_type_valid is False
+        assert any("token_type" in w.lower() for w in result.warnings)
+
+    # -- Opaque (non-JWT) tokens --
+
+    def test_opaque_token(self):
+        result = validate_oauth_token_claims("not-a-jwt-at-all", {}, "https://gw.example.com", "test-gw")
+
+        assert result.is_jwt is False
+        # token_type is still validated even for opaque tokens
+        assert result.token_type_valid is True
+        # No JWT-related warnings (only token_type could warn)
+        assert not any("audience" in w.lower() or "scope" in w.lower() or "issuer" in w.lower() for w in result.warnings)
+
+    # -- Multiple warnings --
+
+    def test_multiple_warnings(self):
+        token = _make_jwt(
+            {
+                "aud": "api://wrong",
+                "scope": "read",
+                "iss": "https://wrong-issuer.com",
+            }
+        )
+        oauth_config = {
+            "resource": "api://correct",
+            "scopes": ["write"],
+            "issuer": "https://correct-issuer.com",
+        }
+        result = validate_oauth_token_claims(token, oauth_config, "https://gw.example.com", "test-gw")
+
+        assert result.audience_match is False
+        assert result.scopes_sufficient is False
+        assert result.issuer_match is False
+        assert len(result.warnings) == 3
+
+    # -- Missing oauth_config fields --
+
+    def test_empty_oauth_config(self):
+        token = _make_jwt({"aud": "test", "scope": "read", "iss": "https://auth.com"})
+        result = validate_oauth_token_claims(token, {}, "https://gw.example.com", "test-gw")
+
+        assert result.is_jwt is True
+        # With empty config: aud checked against gateway_url, scopes not checked, issuer not checked
+        assert result.scopes_sufficient is None
+        assert result.issuer_match is None
+
+    def test_none_values_in_oauth_config(self):
+        """Graceful handling of None values in config fields."""
+        token = _make_jwt({"aud": "test"})
+        oauth_config = {"resource": None, "scopes": None, "issuer": None, "token_url": None}
+        result = validate_oauth_token_claims(token, oauth_config, "https://gw.example.com", "test-gw")
+
+        # Should not crash
+        assert result.is_jwt is True
+
+
+class TestOAuthRequireConfiguredResourceSetting:
+    """Reviewer HIGH-severity finding: setting must flip advisory audience mismatch to blocking.
+
+    When OAUTH_REQUIRE_CONFIGURED_RESOURCE=true, even auto-derived audience
+    mismatches (no explicit resource configured, validator falls back to
+    gateway_url) become authoritative — this is the strict deployment mode
+    where the gateway rejects cross-resource tokens itself rather than
+    relying on the upstream MCP server to check ``aud``.
+    """
+
+    def test_default_off_keeps_auto_derived_advisory(self):
+        with patch("mcpgateway.services.token_validation_service.settings") as mock_settings:
+            mock_settings.oauth_require_configured_resource = False
+            token = _make_jwt({"aud": "wrong-aud"})
+            result = validate_oauth_token_claims(token, {}, "https://gw.example.com", "test-gw")
+
+        assert result.audience_match is False
+        assert result.audience_source == "derived"
+        assert result.blocking_errors == []
+
+    def test_enabled_makes_auto_derived_authoritative(self):
+        with patch("mcpgateway.services.token_validation_service.settings") as mock_settings:
+            mock_settings.oauth_require_configured_resource = True
+            token = _make_jwt({"aud": "wrong-aud"})
+            result = validate_oauth_token_claims(token, {}, "https://gw.example.com", "test-gw")
+
+            # blocking_errors evaluates the strict setting at access time,
+            # so assert inside the patch context.
+            assert result.audience_match is False
+            assert result.audience_source == "derived"
+            assert len(result.blocking_errors) == 1
+
+    def test_setting_does_not_downgrade_configured_resource(self):
+        """When resource is explicitly configured, mismatch is always authoritative — setting is a no-op."""
+        with patch("mcpgateway.services.token_validation_service.settings") as mock_settings:
+            mock_settings.oauth_require_configured_resource = False
+            token = _make_jwt({"aud": "wrong-aud"})
+            result = validate_oauth_token_claims(token, {"resource": "configured"}, "https://gw.example.com", "test-gw")
+
+        assert result.audience_match is False
+        assert result.audience_source == "configured"
+        assert len(result.blocking_errors) == 1
+
+    def test_setting_only_affects_mismatches(self):
+        """Enabling the setting with a matching aud has no effect (no false blocking)."""
+        with patch("mcpgateway.services.token_validation_service.settings") as mock_settings:
+            mock_settings.oauth_require_configured_resource = True
+            token = _make_jwt({"aud": "https://gw.example.com"})
+            result = validate_oauth_token_claims(token, {}, "https://gw.example.com", "test-gw")
+
+        assert result.audience_match is True
+        assert result.blocking_errors == []
+
+    def test_strict_mode_accepts_origin_aud_against_path_bearing_gateway_url(self):
+        """Strict mode + path-bearing gateway_url + origin-only aud must MATCH.
+
+        Regression coverage for the validator/oauth_router contract mismatch: the
+        route sends ``resource=<origin>`` on initial auth so the IdP mints an
+        origin-level ``aud``. If the validator falls back to the full gateway URL,
+        a valid origin-aud token gets rejected under strict mode. Origin-level
+        derivation on both sides keeps the contract consistent.
+        """
+        with patch("mcpgateway.services.token_validation_service.settings") as mock_settings:
+            mock_settings.oauth_require_configured_resource = True
+            token = _make_jwt({"aud": "https://api.salesforce.com"})
+            result = validate_oauth_token_claims(token, {}, "https://api.salesforce.com/platform/mcp/v1", "sf-gw")
+
+        assert result.audience_match is True
+        assert result.blocking_errors == []
+
+
+class TestLearnedAudPrecedence:
+    """Per-user learned aud precedence (MEDIUM security fix).
+
+    ``validate_oauth_token_claims`` accepts ``learned_aud`` sourced from the
+    caller's own OAuthToken row. The precedence is
+    ``oauth_config.resource`` > ``learned_aud`` > ``gateway_url``, with the
+    first two authoritative and the last advisory (unless the strict setting
+    is on). These tests lock the ordering + the audience_source behavior
+    for the per-user learned path so a regression cannot silently drop the
+    per-user check to advisory.
+    """
+
+    def test_learned_aud_used_when_no_configured_resource(self):
+        token = _make_jwt({"aud": "opaque-tenant-a-id"})
+        result = validate_oauth_token_claims(token, {}, "https://gw.example.com", "test-gw", learned_aud="opaque-tenant-a-id")
+
+        assert result.audience_match is True
+        assert result.audience_source == "learned"
+        assert result.blocking_errors == []
+
+    def test_learned_aud_mismatch_is_authoritative(self):
+        token = _make_jwt({"aud": "wrong-aud"})
+        result = validate_oauth_token_claims(token, {}, "https://gw.example.com", "test-gw", learned_aud="opaque-tenant-a-id")
+
+        assert result.audience_match is False
+        assert result.audience_source == "learned"
+        assert len(result.blocking_errors) == 1
+
+    def test_configured_resource_beats_learned_aud(self):
+        """Admin config always wins — even a matching learned_aud cannot rescue a config-mismatched token."""
+        token = _make_jwt({"aud": "learned-value"})
+        result = validate_oauth_token_claims(token, {"resource": "configured-value"}, "https://gw.example.com", "test-gw", learned_aud="learned-value")
+
+        assert result.audience_match is False
+        assert result.audience_source == "configured"
+        assert len(result.blocking_errors) == 1
+
+    def test_learned_aud_list_shape_supported(self):
+        """RFC 7519 §4.1.3 aud can be a list; learned_aud list is checked correctly."""
+        token = _make_jwt({"aud": "id-b"})
+        result = validate_oauth_token_claims(token, {}, "https://gw.example.com", "test-gw", learned_aud=["id-a", "id-b"])
+
+        assert result.audience_match is True
+
+    def test_no_learned_aud_falls_back_to_gateway_url_advisory(self):
+        """Explicit None learned_aud → gateway URL fallback → advisory mismatch."""
+        with patch("mcpgateway.services.token_validation_service.settings") as mock_settings:
+            mock_settings.oauth_require_configured_resource = False
+            token = _make_jwt({"aud": "unrelated"})
+            result = validate_oauth_token_claims(token, {}, "https://gw.example.com", "test-gw", learned_aud=None)
+
+        assert result.audience_match is False
+        assert result.audience_source == "derived"
+        assert result.blocking_errors == []
+
+    def test_empty_learned_aud_falls_back_to_gateway_url(self):
+        """Empty string learned_aud (falsy) treated as absent → falls back to gateway URL."""
+        with patch("mcpgateway.services.token_validation_service.settings") as mock_settings:
+            mock_settings.oauth_require_configured_resource = False
+            token = _make_jwt({"aud": "unrelated"})
+            result = validate_oauth_token_claims(token, {}, "https://gw.example.com", "test-gw", learned_aud="")
+
+        assert result.audience_match is False
+        assert result.audience_source == "derived"
+        assert result.blocking_errors == []

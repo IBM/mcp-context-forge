@@ -1,0 +1,38 @@
+description: "Advanced content moderation using AI services (IBM Watson, IBM Granite Guardian, OpenAI, Azure, AWS)"
+author: "Manav Gupta"
+version: "1.0.0"
+available_hooks:
+  - "prompt_pre_fetch"
+  - "tool_pre_invoke"
+  - "tool_post_invoke"
+default_configs:
+  provider: "ibm_watson"
+  fallback_provider: "ibm_granite"
+  fallback_on_error: "warn"
+  categories:
+    hate:
+      threshold: 0.7
+      action: "block"
+    violence:
+      threshold: 0.8
+      action: "block"
+    sexual:
+      threshold: 0.6
+      action: "warn"
+    self_harm:
+      threshold: 0.5
+      action: "block"
+    harassment:
+      threshold: 0.7
+      action: "warn"
+    profanity:
+      threshold: 0.6
+      action: "redact"
+    toxic:
+      threshold: 0.7
+      action: "warn"
+  audit_decisions: true
+  include_confidence_scores: true
+  enable_caching: true
+  cache_ttl: 3600
+  max_text_length: 10000

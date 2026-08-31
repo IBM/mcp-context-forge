@@ -1,0 +1,6 @@
+description: "Convert HTML resource content to Markdown"
+author: "Mihai Criveti"
+version: "0.1.0"
+available_hooks:
+  - "resource_post_fetch"
+default_configs: {}

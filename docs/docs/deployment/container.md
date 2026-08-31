@@ -1,0 +1,204 @@
+# 📦 Container Deployment
+
+You can run ContextForge as a fully self-contained container. This is the recommended method for production or platform-agnostic deployments. You can use any container engine (ex: Docker or Podman).
+
+---
+
+## Quick Start (Pre-built Container Image)
+
+If you just want to run the gateway using the official OCI container image from GitHub Container Registry:
+
+```bash
+docker run -d --name mcpgateway \
+  -p 4444:4444 \
+  -e HOST=0.0.0.0 \
+  -e JWT_SECRET_KEY=my-test-key-but-now-longer-than-32-bytes \
+  -e JWT_AUDIENCE=mcpgateway-api \
+  -e JWT_ISSUER=mcpgateway \
+  -e AUTH_REQUIRED=true \
+  -e PLATFORM_ADMIN_EMAIL=admin@example.com \
+  -e PLATFORM_ADMIN_PASSWORD=changeme \
+  -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
+  -e DATABASE_URL=sqlite:///./mcp.db \
+  ghcr.io/ibm/mcp-context-forge:1.0.0-RC-3
+
+docker logs mcpgateway
+```
+
+You can now access the UI at [http://localhost:4444/admin](http://localhost:4444/admin) using email/password authentication.
+
+!!! info "Authentication"
+    The Admin UI uses email/password authentication (`PLATFORM_ADMIN_EMAIL`/`PASSWORD`). Basic auth for API endpoints is disabled by default for security. Use JWT tokens for API access.
+
+### Multi-architecture containers
+
+Note: the container build process creates container images for 'amd64', 'arm64', 's390x', and 'ppc64le' architectures. The version `ghcr.io/ibm/mcp-context-forge:VERSION`
+points to a manifest so that all commands will pull the correct image for the architecture being used (whether that be locally or on Kubernetes or OpenShift).
+
+If the specific image is needed for one architecture on a different architecture use the appropriate arguments for your given container execution tool:
+
+With docker run:
+
+```
+docker run [... all your options...] --platform linux/arm64 ghcr.io/ibm/mcp-context-forge:VERSION
+```
+
+With podman run:
+
+```
+podman run [... all your options...] --platform linux/arm64 ghcr.io/ibm/mcp-context-forge:VERSION
+```
+
+Or
+
+```
+podman run [... all your options...] --arch arm64 ghcr.io/ibm/mcp-context-forge:VERSION
+```
+
+## 🐳 Build the Container
+
+### Using Podman (recommended)
+
+```bash
+make podman
+```
+
+### Using Docker (manual alternative)
+
+```bash
+docker build -t mcpgateway:latest -f Containerfile .
+```
+
+> The container images are based on Red Hat UBI 10 with Python 3.12 and run Gunicorn with Uvicorn workers.
+
+### Build Stages
+
+All container builds include a Node.js stage that compiles Tailwind CSS from source. This removes the need for the Tailwind CDN and eliminates `unsafe-eval` from the Content Security Policy for Tailwind-related assets.
+
+| Stage | Image | Purpose |
+|-------|-------|---------|
+| `frontend-builder` | `node:lts-alpine` | Builds the Admin UI Vite bundle (JS/CSS) |
+| `node-builder` | `ubi10/nodejs-24` | Compiles `tailwind.src.css` → `tailwind.min.css` |
+| `rust-builder` | `ubi10/ubi` | Builds optional Rust native extensions (`ENABLE_RUST=true`) |
+| `builder` | `ubi10/ubi` | Installs Python dependencies into a venv |
+| `runtime` | `ubi10-minimal` | Final runtime image |
+
+The Node.js builder uses the official Red Hat UBI10 Node.js 24 image (`registry.access.redhat.com/ubi10/nodejs-24`). It is a temporary build stage and does not affect the final runtime image size.
+
+**Required files for the CSS build:**
+
+- `package.json` / `package-lock.json` — Node.js dependencies
+- `tailwind.config.js` — Tailwind configuration with content paths
+- `postcss.config.js` — PostCSS configuration
+- `mcpgateway/static/css/tailwind.src.css` — Source CSS file
+- `mcpgateway/templates/**/*.html` — Templates scanned for Tailwind classes
+- `mcpgateway/static/**/*.js` — JavaScript files scanned for classes
+
+**Local development (without Docker):**
+
+```bash
+# Install Node.js dependencies
+npm install
+
+# Build CSS once
+make build-css
+
+# Or watch for changes during development
+make watch-css
+```
+
+---
+
+## 🔒 Air-Gapped Deployments (Optional)
+
+All Admin UI vendor libraries (HTMX, Alpine.js, Tailwind CSS, CodeMirror, Chart.js, Font Awesome, etc.) are installed via npm and bundled/chunked into the JavaScript bundle by the `frontend-builder` stage — no CDN dependency, no separate build variant needed.
+
+### Build Air-Gapped Container
+
+The standard `Containerfile` build already bundles all vendor assets locally:
+
+```bash
+docker build -f Containerfile -t mcpgateway:airgapped .
+```
+
+### Run in Air-Gapped Mode
+
+```bash
+docker run -d --name mcpgateway \
+  -p 4444:4444 \
+  -e MCPGATEWAY_UI_AIRGAPPED=true \
+  -e MCPGATEWAY_UI_ENABLED=true \
+  -e MCPGATEWAY_ADMIN_API_ENABLED=true \
+  -e HOST=0.0.0.0 \
+  -e JWT_SECRET_KEY=my-test-key-but-now-longer-than-32-bytes \
+  -e AUTH_REQUIRED=true \
+  -e PLATFORM_ADMIN_EMAIL=admin@example.com \
+  -e PLATFORM_ADMIN_PASSWORD=changeme \
+  -e DATABASE_URL=sqlite:///./mcp.db \
+  mcpgateway:airgapped
+```
+
+!!! success "Fully Offline UI"
+    With `MCPGATEWAY_UI_AIRGAPPED=true`, the Admin UI works completely offline with zero external dependencies. The main JavaScript bundle (HTMX + Alpine.js) is always local, and remaining vendor libraries (Tailwind CSS, CodeMirror, Chart.js, Font Awesome, etc.) are served from local files bundled in the container.
+
+---
+
+## 🏃 Run the Container
+
+### With HTTP (no TLS)
+
+```bash
+make podman-run
+```
+
+This starts the app at `http://localhost:4444`.
+
+---
+
+### With Self-Signed TLS (HTTPS)
+
+```bash
+make podman-run-ssl
+```
+
+Runs the gateway using certs from `./certs/`, available at:
+
+```
+https://localhost:4444
+```
+
+---
+
+## ⚙ Runtime Configuration
+
+All environment variables can be passed via:
+
+- `docker run -e KEY=value`
+- A mounted `.env` file (`--env-file .env`)
+
+---
+
+## 🧪 Test the Running Container
+
+```bash
+curl http://localhost:4444/health
+curl http://localhost:4444/tools
+```
+
+> Use `curl -k` if running with self-signed TLS
+
+---
+
+## 🧼 Stop & Clean Up
+
+```bash
+podman stop mcpgateway
+podman rm mcpgateway
+```
+
+Or with Docker:
+
+```bash
+docker stop mcpgateway
+docker rm mcpgateway
+```

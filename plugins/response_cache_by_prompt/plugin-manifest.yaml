@@ -1,0 +1,13 @@
+description: "Advisory response cache using cosine similarity over prompt/input fields."
+author: "ContextForge"
+version: "0.1.0"
+tags: ["performance", "cache", "similarity"]
+available_hooks:
+  - "tool_pre_invoke"
+  - "tool_post_invoke"
+default_config:
+  cacheable_tools: []
+  fields: ["prompt", "input", "query"]
+  ttl: 600
+  threshold: 0.92
+  max_entries: 1000

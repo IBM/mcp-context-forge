@@ -1,0 +1,1032 @@
+# ----------------------------------------------------------------
+# 💡 Build system (PEP 517)
+#     - setuptools ≥ 78.1.1 gives SPDX licence support (PEP 639) and fixes CVE-2025-47273
+#     - wheel is needed by most build front-ends
+# ----------------------------------------------------------------
+[build-system]
+requires = ["setuptools>=78.1.1", "wheel>=0.46.2"]
+build-backend = "setuptools.build_meta"
+
+# Custom build hook to generate UI assets before packaging
+[tool.setuptools.cmdclass]
+build_py = "mcpgateway.tools.builder.build_hooks.BuildPyWithUI"
+
+[tool.uv]
+exclude-newer = "10 days"
+
+[tool.uv.exclude-newer-package]
+cpex = "2026-07-27T23:59:59Z"
+# cpex-url-reputation pinned past its normal soak cutoff: 0.3.5 (2026-07-14) is the first
+# release that emits result.metadata["url_reputation"] for resource_pre_fetch, which
+# tests/integration/plugins/test_plugin_metrics_consumer_integration.py and
+# tests/e2e/test_otel_plugin_metadata_e2e.py depend on. Vetted ahead of the usual window for
+# this reason.
+cpex-url-reputation = "2026-07-27T23:59:59Z"
+# cpex-rate-limiter pinned past its normal soak cutoff: 0.1.7 (2026-07-14) is the first
+# release that emits result.metadata["rate_limiter"] for prompt_pre_fetch/tool_pre_invoke, which
+# tests/integration/plugins/test_plugin_metrics_consumer_integration.py and
+# tests/e2e/test_otel_plugin_metadata_e2e.py depend on. Vetted ahead of the usual window for
+# this reason.
+cpex-rate-limiter = "2026-07-27T23:59:59Z"
+# cpex-encoded-exfil-detection pinned past its normal soak cutoff: 0.3.6 (2026-07-14) is the
+# first release that emits result.metadata["encoded_exfil_detection"] for
+# tool_post_invoke/tool_pre_invoke/resource hooks, which
+# tests/integration/plugins/test_plugin_metrics_consumer_integration.py and
+# tests/e2e/test_otel_plugin_metadata_e2e.py depend on. Vetted ahead of the usual window for
+# this reason.
+cpex-encoded-exfil-detection = "2026-07-27T23:59:59Z"
+# cpex-pii-filter pinned past its normal soak cutoff: 0.3.6 (2026-07-07) is the first
+# release that emits result.metadata for tool_post_invoke, which tests/e2e/test_otel_plugin_metadata_e2e.py
+# depends on. Vetted ahead of the usual window for this reason.
+cpex-pii-filter = "2026-07-27T23:59:59Z"
+# cpex-retry-with-backoff pinned past its normal soak cutoff: 0.3.7 (2026-07-15) is required.
+# 0.3.6 first emitted result.metadata["retry_with_backoff"] for tool_post_invoke (which
+# tests/integration/plugins/test_plugin_metrics_consumer_integration.py and
+# tests/e2e/test_otel_plugin_metadata_e2e.py depend on) but shipped a retry-detection
+# regression: is_failure read the tool_post_invoke result via PyDict::get_item (C-level dict
+# storage), which silently misses every key on the gateway's CopyOnWriteDict payload-isolation
+# wrapper (its data lives in a Python-level overlay) -- every retryable failure looked like a
+# success and the plugin never retried. 0.3.7 fixes this by reading through the Python mapping
+# protocol instead. See IBM/cpex-plugins#124 / #137. Vetted ahead of the usual window for both
+# reasons.
+cpex-retry-with-backoff = "2026-07-27T23:59:59Z"
+# cpex-secrets-detection pinned past its normal soak cutoff: 0.3.10 (2026-07-21)
+# preserves secret field names during redaction. 0.3.9 adds field_allowlist and
+# field_denylist support for gateway plugin config.
+# 0.3.7 is the first release that emits result.metadata["secrets_detection"] for
+# tool_post_invoke, which tests/integration/plugins/test_plugin_metrics_consumer_integration.py
+# and tests/e2e/test_otel_plugin_metadata_e2e.py depend on. Vetted ahead of the usual window
+# for these reasons.
+cpex-secrets-detection = "2026-07-27T23:59:59Z"
+# cpex-sql-sanitizer pinned past its normal soak cutoff: 0.1.0 (2026-07-21) is the only
+# release. Without this pin the `exclude-newer = "10 days"` default would resolve the
+# [plugins] extra to nothing and the gateway would fail to load SQLSanitizer at boot.
+# Vetted ahead of the usual window for this reason.
+cpex-sql-sanitizer = "2026-07-21T23:59:59Z"
+langgraph = "2026-05-12T23:59:59Z"
+fastapi = "2026-07-27T23:59:59Z"
+filelock = "2026-07-27T23:59:59Z"
+grpcio = "2026-07-27T23:59:59Z"
+grpcio-reflection = "2026-07-27T23:59:59Z"
+grpcio-tools = "2026-07-27T23:59:59Z"
+langchain-core = "2026-07-27T23:59:59Z"
+langchain-openai = "2026-07-27T23:59:59Z"
+langsmith = "2026-07-27T23:59:59Z"
+prometheus-client = "2026-07-27T23:59:59Z"
+prometheus-fastapi-instrumentator = "2026-07-27T23:59:59Z"
+sse-starlette = "2026-07-27T23:59:59Z"
+starlette-compress = "2026-07-27T23:59:59Z"
+
+
+[tool.uv.sources]
+compliance-reference-server = { path = "mcp-servers/python/compliance_reference_server", editable = true }
+
+# ----------------------------------------------------------------
+# 📦 Core project metadata (PEP 621)
+# ----------------------------------------------------------------
+[project]
+name = "mcp-contextforge-gateway"
+version = "1.0.6"
+description = "ContextForge AI Gateway — an AI gateway, registry, and proxy for MCP, A2A, and REST/gRPC APIs. Exposes a unified control plane with centralized governance, discovery, and observability. Optimizes agent and tool calling, and supports plugins."
+keywords = ["MCP","API","gateway","proxy","tools",
+  "agents","agentic ai","model context protocol","multi-agent","fastapi",
+  "json-rpc","sse","websocket","federation","security","authentication",
+  "ai control plane","control plane","governance","observability"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Framework :: FastAPI",
+    "Framework :: AsyncIO",
+    "Topic :: Internet :: WWW/HTTP :: WSGI :: Application",
+    "Topic :: Software Development :: Libraries :: Application Frameworks"
+]
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+
+# SPDX licence expression + explicit licence file (PEP 639)
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+
+# Maintainers
+maintainers = [
+    {name = "Mihai Criveti", email = "redacted@ibm.com"}
+]
+
+# ----------------------------------------------------------------
+# Runtime dependencies
+# ----------------------------------------------------------------
+dependencies = [
+    "alembic>=1.18.5",
+    "argon2-cffi>=25.1.0",
+    "base58>=2.1.1",
+    "brotli>=1.2.0",
+    "click>=8.4.2", # Transitive pin
+    "cpex>=0.1.1",
+    "cryptography>=49.0.0",
+    "fastapi>=0.140.0",
+    "filelock>=3.32.0,<3.33.0", # 3.30.0 added fork-safety guard that raises on pre-fork lock reuse; gateway_service.py:5351 rebuilds per-PID (fix from #5654). primary_worker.py and bootstrap_db.py create FileLock post-fork so are unaffected. Ceiling bumped to 3.32.x: 3.30.x–3.32.x have zero runtime changes (CI matrix, packaging, platform support only). Advance ceiling after verifying next minor release.
+    "gunicorn>=26.0.0",
+    "httpx>=0.28.1",
+    "httpx[http2]>=0.28.1",
+    "idna>=3.18",
+    "jinja2>=3.1.6",
+    "jq>=1.12.0",
+    "jsonpath-ng>=1.8.0",
+    "jsonschema>=4.26.0",
+    "Mako>=1.3.12", # Transitive pin (alembic)
+    "mcp>=1.28.1,<2",
+    "msgpack>=1.2.1",
+    "orjson>=3.11.9",
+    "parse>=1.22.1",
+    "prometheus-fastapi-instrumentator>=8.1.0", # 8.0.1: fix _IncludedRouter crash (issue #370)
+    "prometheus_client>=0.26.0",
+    "psutil>=7.2.2",
+    "pydantic>=2.13.4",
+    "pydantic[email]>=2.13.4",
+    "pydantic-settings>=2.14.2",
+    "pyjwt>=2.13.0",
+    "python-json-logger>=4.1.0",
+    "python-multipart>=0.0.32", # Transitive pin (mcp, fastapi); dependabot/81
+    "PyYAML>=6.0.3",
+    "redis>=8.0.1",
+    "requests>=2.34.2", # Transivite pin (requests-oauthlib)
+    "requests-oauthlib>=2.0.0",
+    "sqlalchemy>=2.0.51",
+    "sse-starlette>=3.4.6",
+    "starlette>=1.3.1",
+    "starlette-compress>=1.8.0",
+    "typer>=0.27.0",
+    "urllib3>=2.7.0", # Transitive pin (requests); dependabot/76
+    "uvicorn[standard]>=0.51.0",
+]
+
+# ----------------------------------------------------------------
+# Development dependencies (for contributors and maintainers)
+# ----------------------------------------------------------------
+[dependency-groups]
+dev = [
+    "a2a-sdk[http-server]",
+    "aiohttp==3.14.1",
+    "argparse-manpage>=4.7",
+    "authlib>=1.7.2", # Transitive pin via fastmcp (dev-only test client); 1.7.0 ships security fixes — see tool.uv.exclude-newer-package override
+    "autoflake>=2.3.3",
+    "bandit>=1.9.4",
+    "bump2version>=1.0.1",
+    "check-manifest>=0.51",
+    "code2flow>=2.5.1",
+    "cookiecutter>=2.7.1",
+    "coverage>=7.10.7",
+    "diff-cover>=10.3.0",
+    "dodgy>=0.2.1",
+    "faker>=40.28.1",
+    "fakeredis[lua]>=2.36.2",
+    "compliance-reference-server",
+    "fastmcp>=3.4.2",
+    "fawltydeps>=0.20.0",
+    "gprof2dot>=2025.4.14",
+    "hypothesis>=6.152.1",
+    "locust>=2.44.4",
+    "mypy>=2.1.0",
+    "pexpect>=4.9.0",
+    "pip-licenses>=5.5.5",
+    "pip_audit>=2.10.1",
+    "pre-commit>=4.6.0",
+    "pydocstyle>=6.3.0",
+    "pyrefly>=1.1.1",
+    "pyright>=1.1.411",
+    "pyroma>=5.0.1",
+    "playwright>=1.61.0",
+    "python-owasp-zap-v2.4>=0.1.0",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "pytest-benchmark>=5.2.3",
+    "pytest-cov>=7.1.0",
+    "pytest-env>=1.6.0",
+    "pytest-examples>=0.0.18",
+    "pytest-html>=4.2.0",
+    "pytest-httpx>=0.36.2",
+    "pytest-instafail>=0.5.0",
+    "pytest-integration-mark>=0.2.0",
+    # "pytest-md-report>=0.7.0",
+    "pytest-playwright>=0.8.0",
+    "pytest-rerunfailures>=16.4",
+    "pytest-timeout>=2.4.0",
+    "pytest-trio>=0.8.0",
+    "pytest-xdist>=3.8.0",
+    "schemathesis>=4.15.2", # 4.11.0 requires pytest>=9; pytest-md-report 0.7.0 caps at <9
+    "pytype>=2024.10.11",
+    "pyupgrade>=3.21.2",
+    "radon>=6.0.1",
+    "redis>=8.0.1",
+    "rich>=15.0.0",
+    #"semgrep>=1.136.0",   # conflicts with opentelemetry-sdk
+    "settings-doc>=4.3.2",
+    "snakeviz>=2.2.2",
+    "tomlkit>=0.15.0",
+    "tox>=4.34.1",
+    "tox-uv>=1.35.2",
+    "twine>=6.2.0",
+    "ty>=0.0.1a21",
+    "types-tabulate>=0.10.0.20260508",
+    "url-normalize>=3.0.0",
+    "uv>=0.11.6",
+    "websockets>=16.0",
+    "pyasn1>=0.6.4", # a2a-sdk; https://github.com/IBM/mcp-context-forge/security/dependabot/73
+    "tornado>=6.5.7",  # transitive via jupyter; CVE-2026-31958
+    # gRPC plugin framework testing (optional at runtime, required for test coverage)
+    "grpcio>=1.81.1",
+    "grpcio-reflection>=1.81.1",
+    "grpcio-tools>=1.81.1",
+    "pipdeptree>=3.1.0",
+    "setuptools>=83.0.0",
+    "debugpy>=1.8.21",
+    "maturin>=1.14.1",
+    "Pygments>=2.20.0",
+]
+
+# ----------------------------------------------------------------
+# Optional dependency groups (extras)
+# ----------------------------------------------------------------
+[project.optional-dependencies]
+
+# Optional dependency groups (runtime)
+# Redis with hiredis C parser for up to 83x faster response parsing
+# See ADR-026 for benchmarks and decision rationale
+redis = [
+    "redis[hiredis]>=8.0.1",
+]
+
+# Pure-Python Redis parser fallback (for environments where hiredis wheels aren't available)
+redis-pure = [
+    "redis>=8.0.1",
+]
+
+# PostgreSQL adapter with psycopg3
+# Requires system dependency: libpq-dev (Debian/Ubuntu) or postgresql-devel (RHEL/Fedora)
+# Install with: sudo apt-get install libpq-dev (or dnf install postgresql-devel)
+postgres = [
+    "psycopg[c,binary]>=3.3.4",
+]
+
+llmchat = [
+    "langchain-core<=1.5.1",
+    "langchain-mcp-adapters>=0.3.0",
+    "langchain-ollama>=1.1.0",
+    "langchain-openai<=1.4.1",
+    "langgraph<=1.2.0",
+    "langsmith>=0.10.10", # Transitive pin (langchain-core)
+]
+
+# Observability dependencies (optional)
+observability = [
+    "opentelemetry-api>=1.44.0",
+    "opentelemetry-exporter-otlp-proto-grpc>=1.44.0",
+    "opentelemetry-exporter-otlp-proto-http>=1.44.0",
+    "opentelemetry-sdk>=1.44.0",
+]
+
+# Async SQLite Driver (optional)
+aiosqlite = [
+    "aiosqlite>=0.22.1",
+]
+
+# Async PostgreSQL driver (optional)
+asyncpg = [
+    "asyncpg>=0.31.0",
+]
+
+# Profiling tools (optional) - for debugging memory leaks and performance issues
+# memray requires Python 3.12+ and Linux/macOS (not Windows)
+# Install with: pip install mcp-contextforge-gateway[profiling]
+# Usage: memray run -o profile.bin python -m mcpgateway
+#        memray flamegraph profile.bin -o flamegraph.html
+# See docs/docs/development/profiling.md for detailed usage
+profiling = [
+    "memray>=1.19.3",
+    "py-spy>=0.4.2",
+]
+
+# Plugin templating tools (optional)
+templating = [
+    "cookiecutter>=2.7.1",
+]
+
+# External plugin packages (optional)
+# Install with: pip install mcp-contextforge-gateway[plugins]
+plugins = [
+    "cpex-encoded-exfil-detection>=0.3.6", # 0.3.6 is the first release that emits result.metadata
+    "cpex-pii-filter>=0.3.6", # 0.3.6 is the first release that emits result.metadata on tool_post_invoke
+    "cpex-rate-limiter>=0.1.7", # 0.1.7 is the first release that emits result.metadata
+    "cpex-retry-with-backoff>=0.3.7", # 0.3.7 fixes a retry-detection regression against the gateway's CopyOnWriteDict payload isolation (IBM/cpex-plugins#124); 0.3.6 added the result.metadata emission but never actually retried in the gateway. Prior <0.3.2 CI pin (from #5332) is superseded.
+    "cpex-secrets-detection>=0.3.10", # 0.3.10 preserves secret field names during redaction; 0.3.9 adds field filters; 0.3.7 first emits result.metadata
+    "cpex-sql-sanitizer>=0.1.0", # Rust-backed SQL sanitizer; 0.1.0 is the only release
+    "cpex-url-reputation>=0.3.5", # 0.3.5 is the first release that emits result.metadata
+]
+
+# gRPC Support (EXPERIMENTAL - optional, disabled by default)
+# Install with: pip install mcp-contextforge-gateway[grpc]
+grpc = [
+    "grpcio>=1.83.0",
+    "grpcio-reflection>=1.83.0",
+    "grpcio-tools>=1.83.0",
+    "protobuf>=7.35.1", # grpcio-reflection >=1.79.0 lifted the <7.0.0 protobuf cap; lock resolves grpcio-reflection 1.83.0 alongside protobuf 7.35.1
+]
+
+# Convenience meta-extras
+all = [
+    "mcp-contextforge-gateway[redis]>=1.0.6",
+]
+
+dev-all = [
+    "mcp-contextforge-gateway[redis,dev,plugins]>=1.0.6",
+]
+
+# --------------------------------------------------------------------
+#  Authors and URLs
+# --------------------------------------------------------------------
+[[project.authors]]
+name = "Mihai Criveti"
+email = "redacted@ibm.com"
+
+[project.urls]
+Homepage = "https://ibm.github.io/mcp-context-forge/"
+Documentation = "https://ibm.github.io/mcp-context-forge/"
+Repository = "https://github.com/IBM/mcp-context-forge"
+"Bug Tracker" = "https://github.com/IBM/mcp-context-forge/issues"
+Changelog = "https://github.com/IBM/mcp-context-forge/blob/main/CHANGELOG.md"
+
+# --------------------------------------------------------------------
+#  💻 Project scripts (cli entrypoint)
+# --------------------------------------------------------------------
+[project.scripts]
+mcpgateway = "mcpgateway.cli:main"
+mcpplugins = "cpex.tools.cli:main"
+cforge = "mcpgateway.tools.cli:main"
+init-secrets = "mcpgateway.scripts.init_secrets:main"
+mcpgateway-server = "mcpgateway.__main__:main"
+
+# --------------------------------------------------------------------
+#  🔧 setuptools-specific configuration
+# --------------------------------------------------------------------
+[tool.setuptools]
+include-package-data = true          # ensure wheels include the data files
+
+# Automatic discovery: keep every package that starts with "mcpgateway"
+[tool.setuptools.packages.find]
+include = ["mcpgateway*"]
+exclude = ["tests*"]
+
+##  Runtime data files  ------------------------------------------------
+#  - py.typed  -> advertises inline type hints (PEP 561)
+#  - static/*  -> CSS/JS for the admin UI
+#  - templates -> Jinja2 templates shipped at runtime
+[tool.setuptools.package-data]
+mcpgateway = [
+  "tools/builder/templates/*.yaml.j2",
+  "tools/builder/templates/compose/*.yaml.j2",
+  "tools/builder/templates/kubernetes/*.yaml.j2",
+  "py.typed",
+  "static/*.css",
+  "static/css/*.css",
+  "static/*.js",
+  "templates/*.html",
+  "*.json",
+  "alembic.ini",
+  "alembic/*.py",
+  "alembic/*.mako",
+  "alembic/*.md",
+  "alembic/versions/*.py",
+]
+
+# --------------------------------------------------------------------
+#  🛠  Tool configurations (black, mypy, etc.)
+# --------------------------------------------------------------------
+[tool.pytype]
+# Directory-specific options:
+inputs = ["mcpgateway"]
+python_version = "3.11"          # match default runtime
+
+[tool.pyright]
+typeCheckingMode = "standard"
+reportUnusedCoroutine = "error"
+reportMissingTypeStubs = "warning"
+exclude = ["build", ".venv", ".cache", "tests/async/profiles"]
+
+[tool.check-manifest]
+ignore = [
+    "docs/**",
+    "tests/**",
+    ".github/**",
+    "Makefile",
+    "mcpgateway/admin_ui/**",
+    "mcpgateway/static/assets/**",
+    "mcpgateway/static/css/**",
+    "mcpgateway/static/chunk-*.js",
+    "mcpgateway/static/bundle-*.js",
+]
+
+[tool.black]
+line-length = 200
+target-version = ["py310", "py311", "py312"]
+include = "\\.pyi?$"
+exclude = '''
+/(
+    \.git
+  | \.venv
+  | venv
+  | \.tox
+  | \.eggs
+  | build
+  | dist
+  | node_modules
+)/
+'''
+
+[tool.ruff]
+# Exclude a variety of commonly ignored directories.
+exclude = [
+    ".bzr",
+    ".direnv",
+    ".eggs",
+    ".git",
+    ".git-rewrite",
+    ".hg",
+    ".ipynb_checkpoints",
+    ".mypy_cache",
+    ".nox",
+    ".pants.d",
+    ".pyenv",
+    ".pytest_cache",
+    ".pytype",
+    ".ruff_cache",
+    ".svn",
+    ".tox",
+    ".venv",
+    ".vscode",
+    "__pypackages__",
+    "_build",
+    "buck-out",
+    "build",
+    "dist",
+    "node_modules",
+    "site-packages",
+    "venv",
+    "docs",
+    "test"
+]
+
+# 200 line length
+line-length = 200
+indent-width = 4
+
+# Assume Python 3.11
+target-version = "py311"
+
+
+[tool.ruff.lint]
+# Enable Pyflakes (`F`) and a subset of the pycodestyle (`E`)  codes by default.
+# Also "D1" for docstring present checks.
+# "PL" enables Pylint rules natively in ruff (replaces pylint for these checks).
+# TODO: Enable "I" for import sorting as a separate PR.
+select = ["E3", "E4", "E7", "E9", "F", "D1", "D417", "PL", "G004"]
+ignore = [
+    # ---- Rules already disabled in .pylintrc (intentionally relaxed) ----
+    "PLW0717",  # Try clause contains too many statements (> 5)
+    "PLR0904",  # too-many-public-methods  (pylint R0904)
+    "PLR0912",  # too-many-branches        (pylint R0912)
+    "PLR0913",  # too-many-arguments       (pylint R0913)
+    "PLR0914",  # too-many-locals          (pylint R0914)
+    "PLR0915",  # too-many-statements      (pylint R0915)
+    # ---- Accepted codebase patterns (high violation count, tolerated by pylint scoring) ----
+    "PLC0415",  # import-outside-top-level (pylint C0415) — FastAPI/lazy-import patterns
+    "PLW0603",  # global-statement         (pylint W0603) — config/singleton patterns
+    # ---- Ruff-only PL rules with no pylint equivalent (out of migration scope) ----
+    "PLC1901",  # compare-to-empty-string  (deprecated in pylint)
+    "PLC2701",  # import-private-name      (ruff-only)
+    "PLR2004",  # magic-value-comparison   (ruff-only)
+    "PLR5501",  # collapsible-else-if      (ruff-only)
+    "PLR6104",  # non-augmented-assignment (ruff-only)
+    "PLR6201",  # literal-membership       (ruff-only)
+    "PLR6301",  # no-self-use              (ruff-only)
+    "PLW2901",  # redefined-loop-name      (ruff-only)
+]
+
+# Allow fix for all enabled rules (when `--fix`) is provided.
+fixable = ["ALL"]
+unfixable = []
+
+# Allow unused variables when underscore-prefixed.
+dummy-variable-rgx = "^(_+|(_+[a-zA-Z0-9_]*[a-zA-Z0-9]+?))$"
+
+preview = true
+
+# Ignore D1 (docstring checks) in tests and other non-production code
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["D1", "D417", "E402"]
+"scripts/**/*.py" = ["D1", "D417"]
+"mcp-servers/**/*.py" = ["D1", "D417"]
+".github/**/*.py" = ["D1", "D417"]
+"migration_add_annotations.py" = ["D1", "D417"]
+"playwright.config.py" = ["D1", "D417"]
+"run_mutmut.py" = ["D1", "D417"]
+# G004 enforced only in mcpgateway/services/ — other dirs deferred to separate PRs
+"plugins/**/*.py" = ["G004"]
+"mcpgateway/*.py" = ["G004"]
+"mcpgateway/admin_ui/**/*.py" = ["G004"]
+"mcpgateway/alembic/**/*.py" = ["G004"]
+"mcpgateway/cache/**/*.py" = ["G004"]
+"mcpgateway/common/**/*.py" = ["G004"]
+"mcpgateway/handlers/**/*.py" = ["G004"]
+"mcpgateway/instrumentation/**/*.py" = ["G004"]
+"mcpgateway/middleware/**/*.py" = ["G004"]
+"mcpgateway/plugins/**/*.py" = ["G004"]
+"mcpgateway/routers/**/*.py" = ["G004"]
+"mcpgateway/scripts/**/*.py" = ["G004"]
+"mcpgateway/toolops/**/*.py" = ["G004"]
+"mcpgateway/tools/**/*.py" = ["G004"]
+"mcpgateway/transports/**/*.py" = ["G004"]
+"mcpgateway/utils/**/*.py" = ["G004"]
+"mcpgateway/validation/**/*.py" = ["G004"]
+
+[tool.ruff.lint.pylint]
+# Match thresholds from .pylintrc [DESIGN] and [REFACTORING] sections
+max-args = 12               # .pylintrc max-args
+max-positional-args = 16    # .pylintrc max-positional-arguments
+max-returns = 16            # .pylintrc max-returns
+max-bool-expr = 10          # .pylintrc max-bool-expr
+max-branches = 12           # .pylintrc max-branches (ignored; PLR0912 disabled)
+max-statements = 50         # .pylintrc max-statements (ignored; PLR0915 disabled)
+max-locals = 15             # .pylintrc max-locals (ignored; PLR0914 disabled)
+max-public-methods = 20     # .pylintrc max-public-methods (ignored; PLR0904 disabled)
+max-nested-blocks = 18      # .pylintrc max-nested-blocks
+
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Query"]
+
+[tool.ruff.lint.isort]
+###############################################################################
+# Core behaviour
+###############################################################################
+# profile                    = "black"      # inherit Black's own import-sorting profile
+# line-length                = 200          # match Black's custom line length
+# multi-line-output          = 3            # vertical-hanging-indent style
+# include-trailing-comma     = true         # keep trailing commas for Black
+from-first                 = true         # place all "from ... import ..." before plain "import ..."
+
+###############################################################################
+# Section ordering & headings
+###############################################################################
+# sections                   = ["FUTURE", "STDLIB", "THIRDPARTY", "FIRSTPARTY", "LOCALFOLDER"]
+# import-heading-future      = "Future"       # header above FUTURE imports (if headings enabled)
+# import-heading-stdlib      = "Standard"     # header for built-in Stdlib imports
+# import-heading-thirdparty  = "Third-Party"  # header for pip-installed packages
+# import-heading-firstparty  = "First-Party"  # header for internal 'mcpgateway' code
+# import-heading-localfolder = "Local"        # header for ad-hoc scripts / tests
+
+###############################################################################
+# What belongs where
+###############################################################################
+known-first-party          = ["mcpgateway"]    # treat "mcpgateway.*" as FIRSTPARTY
+known-local-folder         = ["tests", "scripts"]  # treat these folders as LOCALFOLDER
+known-third-party          = ["alembic", "cpex"] # treat "alembic" and "cpex" as THIRDPARTY
+# src-paths                = ["src/mcpgateway"]    # uncomment only if package moves under src/
+
+###############################################################################
+# Style niceties
+###############################################################################
+force-sort-within-sections = true         # always alphabetise names inside each block
+order-by-type              = false        # don't group imports by "type vs. straight name"
+# balanced-wrapping          = true         # spread wrapped imports evenly between lines
+# lines-between-sections     = 1            # exactly one blank line between the five groups
+# lines-between-types        = 1            # one blank line between 'import X' and 'from X import ...'
+no-lines-before            = ["local-folder"]  # suppress blank line *before* the LOCALFOLDER block
+# ensure-newline-before-comments = true     # newline before any inline # comment after an import
+
+[tool.ruff.format]
+# Like Black, use double quotes for strings.
+quote-style = "double"
+
+# Like Black, indent with spaces, rather than tabs.
+indent-style = "space"
+
+# Like Black, respect magic trailing commas.
+skip-magic-trailing-comma = false
+
+# Like Black, automatically detect the appropriate line ending.
+line-ending = "auto"
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
+
+[tool.isort]
+###############################################################################
+# Core behaviour
+###############################################################################
+profile                    = "black"      # inherit Black's own import-sorting profile
+line_length                = 200          # match Black's custom line length
+multi_line_output          = 3            # vertical-hanging-indent style
+include_trailing_comma     = true         # keep trailing commas for Black
+from_first                 = true         # place all "from ... import ..." before plain "import ..."
+
+###############################################################################
+# Section ordering & headings
+###############################################################################
+sections                   = ["FUTURE", "STDLIB", "THIRDPARTY", "FIRSTPARTY", "LOCALFOLDER"]
+import_heading_future      = "Future"       # header above FUTURE imports (if headings enabled)
+import_heading_stdlib      = "Standard"     # header for built-in Stdlib imports
+import_heading_thirdparty  = "Third-Party"  # header for pip-installed packages
+import_heading_firstparty  = "First-Party"  # header for internal 'mcpgateway' code
+import_heading_localfolder = "Local"        # header for ad-hoc scripts / tests
+
+###############################################################################
+# What belongs where
+###############################################################################
+known_first_party          = ["mcpgateway"]    # treat "mcpgateway.*" as FIRSTPARTY
+known_local_folder         = ["tests", "scripts"]  # treat these folders as LOCALFOLDER
+known_third_party          = ["alembic", "cpex"] # treat "alembic" and "cpex" as THIRDPARTY
+# src_paths                = ["src/mcpgateway"]    # uncomment only if package moves under src/
+
+###############################################################################
+# Style niceties
+###############################################################################
+force_sort_within_sections = true         # always alphabetise names inside each block
+order_by_type              = false        # don't group imports by "type vs. straight name"
+balanced_wrapping          = true         # spread wrapped imports evenly between lines
+lines_between_sections     = 1            # exactly one blank line between the five groups
+lines_between_types        = 1            # one blank line between 'import X' and 'from X import ...'
+no_lines_before            = ["LOCALFOLDER"]  # suppress blank line *before* the LOCALFOLDER block
+ensure_newline_before_comments = true     # newline before any inline # comment after an import
+
+###############################################################################
+# Ignore junk we never want to touch
+###############################################################################
+extend_skip                = [
+  ".md", ".json", ".yaml", ".yml",
+  "dist", "build", ".venv", ".tox",
+  "*.tmp", "*.bak",
+]
+skip_glob                  = ["**/__init__.py"]  # leave namespace init files alone
+
+# ---- Optional CI toggles ----------------------------------------------------
+# check_only             = true    # dry-run mode: non-zero exit if files would change
+# verbose                = true    # print every file name processed
+# case_sensitive         = true    # treat upper/lowercase differences as significant
+
+[tool.mypy]
+# Target Python version
+python_version = "3.11"
+
+# Full strictness and individual checks
+strict = true                           # Enable all strict checks
+
+check_untyped_defs = true              # Type-check the bodies of untyped functions
+no_implicit_optional = true            # Require explicit Optional for None default
+disallow_untyped_defs = true           # Require type annotations for all functions
+disallow_untyped_calls = true          # Disallow calling functions without type info
+disallow_any_unimported = true         # Disallow Any from missing imports
+warn_return_any = true                 # Warn if a function returns Any
+warn_unreachable = true                # Warn about unreachable code
+warn_unused_ignores = true             # Warn if a "# type: ignore" is unnecessary
+warn_unused_configs = true             # Warn about unused config options
+warn_redundant_casts = true            # Warn if a cast does nothing
+strict_equality = true                 # Disallow ==/!= between incompatible types
+
+# Output formatting
+show_error_codes = true                # Show error codes in output
+pretty = true                          # Format output nicely
+
+# Exclude these paths from analysis
+exclude = [
+  '^build/',
+  '^\\.venv/',
+  '^\\.mypy_cache/',
+]
+
+# Plugins to use with mypy
+plugins = ["pydantic.mypy"]              # Enable mypy plugin for Pydantic models
+
+[tool.pytest.ini_options]
+minversion = "6.0"
+addopts = "-ra -q -p no:playwright -p no:benchmark --ignore=tests/playwright --ignore=tests/migration --ignore=tests/performance --ignore=tests/compliance --ignore=tests/live_gateway"
+testpaths = [ "tests",]
+asyncio_mode = "auto"
+filterwarnings = [
+  "ignore:Passing 'msg' argument to .*\\.cancel\\(\\) is deprecated:DeprecationWarning", # From 3rd party libraries
+  "ignore:Use `streamable_http_client` instead\\.:DeprecationWarning",
+  "ignore:'HTTP_413_REQUEST_ENTITY_TOO_LARGE' is deprecated\\.:DeprecationWarning",
+  "ignore:coroutine 'AsyncMockMixin\\._execute_mock_call' was never awaited:RuntimeWarning",
+]
+
+# Set environment variables for all tests.
+# Heavy optional features (admin API, admin UI, LLM chat) are disabled by
+# default so `import mcpgateway.main` stays cheap. `tests/conftest.py` also
+# force-sets these at bootstrap time in case a host env flipped them on.
+# Tests that exercise the admin API via main.app use the
+# `main_app_with_admin_api` session fixture (tests/conftest.py), which
+# clears the Settings lru_cache and reloads mcpgateway.main with the flags
+# flipped back on. LLM chat unit tests import the router module directly,
+# so they do not need it mounted on main.app.
+env = [
+    "D:MCPGATEWAY_ADMIN_API_ENABLED=false",
+    "D:MCPGATEWAY_UI_ENABLED=false",
+    "D:LLMCHAT_ENABLED=false",
+    "DATABASE_URL=sqlite:///:memory:",
+    "TEST_DATABASE_URL=sqlite:///:memory:"
+]
+
+# ===== PLAYWRIGHT-SPECIFIC CONFIGURATIONS =====
+# Pytest test markers
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "ui: marks tests as UI tests",
+    "api: marks tests as API tests",
+    "smoke: marks tests as smoke tests for quick validation",
+    "e2e: marks tests as end-to-end tests",
+    "playwright_security_e2e: marks browser-driven security end-to-end tests",
+    "fuzz: marks tests as fuzz tests (excluded from main test suite)",
+    "benchmark: marks tests as performance benchmarks (migration testing)",
+    "integration: marks tests as integration tests (require external services)",
+    "postgresql: marks tests that require PostgreSQL database",
+    "mcp20251125: marks MCP 2025-11-25 compliance tests",
+    "mcp_core: marks MCP core compliance tests",
+    "mcp_required: marks MCP MUST-level compliance checks",
+    "mcp_recommended: marks MCP SHOULD-level compliance checks",
+    "mcp_optional: marks MCP MAY/optional compliance checks",
+    "mcp_base: marks JSON-RPC and envelope compliance checks",
+    "mcp_lifecycle: marks initialize/capability lifecycle checks",
+    "mcp_transport_core: marks streamable-http/transport checks",
+    "mcp_server_features: marks tools/resources/prompts/logging checks",
+    "mcp_client_features: marks roots/sampling/elicitation checks",
+    "mcp_utilities: marks ping/cancel/progress/pagination checks",
+    "mcp_tasks: marks tasks capability checks",
+    "mcp_auth: marks authorization discovery checks", # pragma: allowlist secret
+    "mcp_security: marks security compliance checks",
+    "regression: marks regression tests for previously-fixed bugs",
+    "proxy: marks tests that run through a simulated proxy prefix",
+    "iframe: marks tests that run inside an iframe host page",
+    "owasp_a01: marks OWASP A01:2021 Broken Access Control security tests",
+    "owasp_a01_zap: marks OWASP A01 ZAP DAST scan tests (requires ZAP daemon; set ZAP_BASE_URL)",
+    "protocol_compliance: marks black-box MCP protocol compliance harness tests (tests/live_gateway/protocol_compliance)",
+    "target_reference: marks tests that exercise the reference FastMCP server target",
+    "target_gateway_proxy: marks tests that exercise the gateway-as-proxy target",
+    "target_gateway_virtual: marks tests that exercise a gateway virtual-server target",
+    "transport_stdio: marks tests that exercise the stdio transport",
+    "transport_sse: marks tests that exercise the SSE transport",
+    "transport_http: marks tests that exercise the Streamable HTTP transport",
+    "mcp_drift: marks cross-target behavioral-equivalence tests",
+]
+
+# Playwright-specific test discovery patterns
+python_files = ["test_*.py", "*_test.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+
+# Playwright browser configuration (can be overridden via CLI)
+# These are custom options that your conftest.py can read
+# playwright_browser = "chromium"  # default browser
+# playwright_headed = false        # run headless by default
+# playwright_slow_mo = 0          # milliseconds delay between actions
+# playwright_screenshot = "only-on-failure"
+# playwright_video = "retain-on-failure"
+# playwright_trace = "retain-on-failure"
+
+# ── fawltydeps ─────────────────────────────────────────────────────
+[tool.fawltydeps]
+# only parse main pyproject.toml
+deps = ["pyproject.toml"]
+
+# ignore 'dev' extras so they won't show up in fawltydeps
+ignore_unused = [
+  "autoflake",
+  "argparse-manpage",
+  "bandit",
+  "bump2version",
+  "check-manifest",
+  "code2flow",
+  "cookiecutter",
+  "coverage",
+  "diff-cover",
+  "fawltydeps",
+  "gprof2dot",
+  "gunicorn",
+  "ty",
+  "mypy",
+  "pexpect",
+  "pip-licenses",
+  "pip_audit",
+  "pre-commit",
+  "pydocstyle",
+  "pyre-check",
+  "pyright",
+  "pyroma",
+  "pytest",
+  "pytest-asyncio",
+  "pytest-cov",
+  "pytest-examples",
+  "pytest-md-report",
+  "pytest-rerunfailures",
+  "pytest-xdist",
+  "pytype",
+  "settings-doc",
+  "snakeviz",
+  "types-tabulate",
+  "twine",
+  "uvicorn"
+]
+
+# --------------------------------------------------------------------
+#  🛠  https://github.com/facebook/pyrefly (replaces pyre)
+# --------------------------------------------------------------------
+[tool.pyrefly]
+project-excludes = [
+    "**/build/",
+    '**/\.venv/',
+    '**/\.mypy_cache/',
+]
+python-version = "3.11.0"
+
+# --------------------------------------------------------------------
+#  🧬 mutmut - Mutation testing configuration
+# --------------------------------------------------------------------
+[tool.mutmut]
+paths_to_mutate = ["mcpgateway/"]
+tests_dir = ["tests/"]
+do_not_mutate = ["mcpgateway/services/gateway_service.py"]
+also_copy = ["plugins/", "pyproject.toml", "mutmut_config.py"]
+
+# --------------------------------------------------------------------
+#  📊 coverage - Code coverage configuration
+# --------------------------------------------------------------------
+[tool.coverage.run]
+source = ["mcpgateway"]
+parallel = true
+concurrency = ["thread", "multiprocessing"]
+omit = [
+    "mcpgateway/alembic/*",
+    "mcpgateway/tools/builder/*",
+    "*/tests/*",
+    "*/test_*.py",
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if self.debug",
+    "if TYPE_CHECKING:",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if 0:",
+    "if __name__ == .__main__.",
+]
+ignore_errors = true
+
+# --------------------------------------------------------------------
+#  Pylint - Static code analysis
+# --------------------------------------------------------------------
+[tool.pylint.main]
+# C extension modules that pylint cannot introspect - trust their members
+extension-pkg-allow-list = ["orjson"]
+
+[tool.pylint."messages control"]
+# Rules migrated to ruff PL — see [tool.ruff.lint] select and .pylintrc for full list
+disable = [
+    # Convention (C) → ruff PLC
+    "typevar-name-incorrect-variance",  # C0105 → PLC0105
+    "typevar-double-variance",          # C0131 → PLC0131
+    "typevar-name-mismatch",            # C0132 → PLC0132
+    "single-string-used-for-slots",     # C0205 → PLC0205
+    "consider-using-dict-items",        # C0206 → PLC0206
+    "use-maxsplit-arg",                 # C0207 → PLC0207
+    "use-sequence-for-iteration",       # C0208 → PLC0208
+    "useless-import-alias",             # C0414 → PLC0414
+    "import-outside-toplevel",          # C0415 → PLC0415
+    "use-implicit-booleaness-not-len",  # C1802 → PLC1802
+    "non-ascii-name",                   # C2401 → PLC2401
+    "non-ascii-module-import",          # C2403 → PLC2403
+    "unnecessary-dunder-call",          # C2801 → PLC2801
+    "unnecessary-direct-lambda-call",   # C3002 → PLC3002
+    # Error (E) → ruff PLE
+    "init-is-generator",                # E0100 → PLE0100
+    "return-in-init",                   # E0101 → PLE0101
+    "nonlocal-and-global",              # E0115 → PLE0115
+    "continue-in-finally",              # E0116 → PLE0116
+    "nonlocal-without-binding",         # E0117 → PLE0117
+    "used-prior-global-declaration",    # E0118 → PLE0118
+    "assigning-non-slot",               # E0237 → PLE0237
+    "duplicate-bases",                  # E0241 → PLE0241
+    "unexpected-special-method-signature",  # E0302 → PLE0302
+    "invalid-length-returned",          # E0303 → PLE0303
+    "invalid-bool-returned",            # E0304 → PLE0304
+    "invalid-index-returned",           # E0305 → PLE0305
+    "invalid-str-returned",             # E0307 → PLE0307
+    "invalid-bytes-returned",           # E0308 → PLE0308
+    "invalid-hash-returned",            # E0309 → PLE0309
+    "invalid-all-object",               # E0604 → PLE0604
+    "invalid-all-format",               # E0605 → PLE0605
+    "potential-index-error",            # E0643 → PLE0643
+    "misplaced-bare-raise",             # E0704 → PLE0704
+    "repeated-keyword",                 # E1132 → PLE1132
+    "dict-iter-missing-items",          # E1141 → PLE1141
+    "await-outside-async",              # E1142 → PLE1142
+    "logging-too-many-args",            # E1205 → PLE1205
+    "logging-too-few-args",             # E1206 → PLE1206
+    "bad-format-character",             # E1300 → PLE1300
+    "bad-string-format-type",           # E1307 → PLE1307
+    "bad-str-strip-call",               # E1310 → PLE1310
+    "invalid-envvar-value",             # E1507 → PLE1507
+    "singledispatch-method",            # E1519 → PLE1519
+    "singledispatchmethod-function",    # E1520 → PLE1520
+    "yield-inside-async-function",      # E1700 → PLE1700
+    "bidirectional-unicode",            # E2502 → PLE2502
+    "invalid-character-backspace",      # E2510 → PLE2510
+    "invalid-character-sub",            # E2512 → PLE2512
+    "invalid-character-esc",            # E2513 → PLE2513
+    "invalid-character-nul",            # E2514 → PLE2514
+    "invalid-character-zero-width-space",  # E2515 → PLE2515
+    "modified-iterating-set",           # E4703 → PLE4703
+    # Refactor (R) → ruff PLR
+    "comparison-with-itself",           # R0124 → PLR0124
+    "comparison-of-constants",          # R0133 → PLR0133
+    "no-classmethod-decorator",         # R0202 → PLR0202
+    "no-staticmethod-decorator",        # R0203 → PLR0203
+    "property-with-parameters",         # R0206 → PLR0206
+    "consider-using-from-import",       # R0402 → PLR0402
+    "too-many-return-statements",       # R0911 → PLR0911
+    "too-many-boolean-expressions",     # R0916 → PLR0916
+    "too-many-positional-arguments",    # R0917 → PLR0917
+    "consider-merging-isinstance",      # R1701 → PLR1701
+    "too-many-nested-blocks",           # R1702 → PLR1702
+    "redefined-argument-from-local",    # R1704 → PLR1704
+    "consider-using-ternary",           # R1706 → PLR1706
+    "stop-iteration-return",            # R1708 → PLR1708
+    "useless-return",                   # R1711 → PLR1711
+    "consider-using-in",                # R1714 → PLR1714
+    "chained-comparison",               # R1716 → PLR1716
+    "consider-using-sys-exit",          # R1722 → PLR1722
+    "consider-using-min-builtin",       # R1730 → PLR1730
+    "unnecessary-dict-index-lookup",    # R1733 → PLR1733
+    "unnecessary-list-index-lookup",    # R1736 → PLR1736
+    # Warning (W) → ruff PLW
+    "unnecessary-lambda",               # W0108 → PLW0108
+    "useless-else-on-loop",             # W0120 → PLW0120
+    "self-assigning-variable",          # W0127 → PLW0127
+    "redeclared-assigned-name",         # W0128 → PLW0128
+    "assert-on-string-literal",         # W0129 → PLW0129
+    "named-expr-without-context",       # W0131 → PLW0131
+    "pointless-exception-statement",    # W0133 → PLW0133
+    "nan-comparison",                   # W0177 → PLW0177
+    "bad-staticmethod-argument",        # W0211 → PLW0211
+    "redefined-slots-in-subclass",      # W0244 → PLW0244
+    "super-without-brackets",           # W0245 → PLW0245
+    "import-self",                      # W0406 → PLW0406
+    "global-variable-not-assigned",     # W0602 → PLW0602
+    "global-statement",                 # W0603 → PLW0603
+    "global-at-module-level",           # W0604 → PLW0604
+    "self-cls-assignment",              # W0642 → PLW0642
+    "binary-op-exception",              # W0711 → PLW0711
+    "bad-open-mode",                    # W1501 → PLW1501
+    "shallow-copy-environ",             # W1507 → PLW1507
+    "invalid-envvar-default",           # W1508 → PLW1508
+    "subprocess-popen-preexec-fn",      # W1509 → PLW1509
+    "subprocess-run-check",             # W1510 → PLW1510
+    "unspecified-encoding",             # W1514 → PLW1514
+    "useless-with-lock",                # W2101 → PLW2101
+    "nested-min-max",                   # W3301 → PLW3301
+]
+
+# --------------------------------------------------------------------
+#  Interrogate - Documentation coverage tool
+# --------------------------------------------------------------------
+[tool.interrogate]
+ignore-init-method = true
+ignore-init-module = false
+ignore-magic = false
+ignore-semiprivate = false
+ignore-private = false
+ignore-property-decorators = false
+ignore-module = false
+ignore-nested-functions = false
+ignore-nested-classes = true
+ignore-setters = false
+fail-under = 100
+exclude = ["setup.py", "docs", "build", "tests"]
+ignore-regex = ["^get_", "^post_"]
+verbose = 0
+quiet = false
+whitelist-regex = []
+color = true
+omit-covered-files = false
+
+# --------------------------------------------------------------------
+# Bandit security scanner configuration
+# --------------------------------------------------------------------
+[tool.bandit]
+# No global skips - use inline # nosec comments for specific false positives
+exclude_dirs = [".venv", "venv", "build", "dist", ".tox", ".eggs", "node_modules"]

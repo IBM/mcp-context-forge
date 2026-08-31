@@ -1,0 +1,16 @@
+description: "Formats code/text outputs with lightweight normalization (indentation, trailing whitespace, newline, optional JSON pretty-print)"
+author: "ContextForge"
+version: "0.1.0"
+tags: ["format", "enhancement", "postprocess"]
+available_hooks:
+  - "tool_post_invoke"
+  - "resource_post_fetch"
+default_config:
+  languages: ["plaintext", "python", "javascript", "typescript", "json", "markdown", "shell"]
+  tab_width: 4
+  trim_trailing: true
+  ensure_newline: true
+  dedent_code: true
+  format_json: true
+  format_code_fences: true
+  max_size_kb: 1024

@@ -1,0 +1,284 @@
+<!-- htmlhint doctype-first:false -->
+<!-- System Metrics Display with Tabs -->
+<div x-data="{ activeTab: 'overview' }" class="space-y-6">
+  {% if not db_metrics_recording_enabled %}
+  <div
+    class="bg-yellow-100 border-l-4 border-yellow-500 text-yellow-700 p-4 rounded mb-4"
+  >
+    <p class="font-bold">Execution metrics recording is disabled</p>
+    <p class="text-sm">
+      Set DB_METRICS_RECORDING_ENABLED=true in your environment to record
+      tool/resource/prompt/server execution metrics to the database.
+    </p>
+  </div>
+  {% endif %}
+
+  <!-- Tab Navigation -->
+  <div class="border-b border-gray-200 dark:border-gray-700">
+    <nav class="flex flex-wrap -mb-px text-sm font-medium" aria-label="Metrics Tabs">
+      <button @click="activeTab = 'overview'" :class="activeTab === 'overview' ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'" class="py-3 px-4 border-b-2 transition-colors">
+        📊 Overview
+      </button>
+      <button @click="activeTab = 'users'" :class="activeTab === 'users' ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'" class="py-3 px-4 border-b-2 transition-colors">
+        👥 Users & Teams
+      </button>
+      <button @click="activeTab = 'resources'" :class="activeTab === 'resources' ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'" class="py-3 px-4 border-b-2 transition-colors">
+        🔌 MCP Resources
+      </button>
+      <button @click="activeTab = 'activity'" :class="activeTab === 'activity' ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'" class="py-3 px-4 border-b-2 transition-colors">
+        📈 Activity
+      </button>
+      <button @click="activeTab = 'security'" :class="activeTab === 'security' ? 'border-indigo-500 text-indigo-600 dark:text-indigo-400' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300 dark:text-gray-400 dark:hover:text-gray-300'" class="py-3 px-4 border-b-2 transition-colors">
+        🔒 Security
+      </button>
+    </nav>
+  </div>
+
+  <!-- Overview Tab -->
+  <div x-show="activeTab === 'overview'" x-transition>
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div class="bg-gradient-to-br from-blue-50 to-blue-100 dark:from-blue-900/20 dark:to-blue-800/20 rounded-lg p-4 border border-blue-200 dark:border-blue-800">
+        <div class="text-2xl font-bold text-blue-900 dark:text-blue-100">{{ "{:,}".format(stats.users.total) }}</div>
+        <div class="text-sm text-blue-700 dark:text-blue-300 mt-1">👤 Total Users</div>
+        <div class="text-xs text-blue-600 dark:text-blue-400 mt-2">{{ "{:,}".format(stats.users.breakdown.active) }} active</div>
+      </div>
+      <div class="bg-gradient-to-br from-purple-50 to-purple-100 dark:from-purple-900/20 dark:to-purple-800/20 rounded-lg p-4 border border-purple-200 dark:border-purple-800">
+        <div class="text-2xl font-bold text-purple-900 dark:text-purple-100">{{ "{:,}".format(stats.teams.total) }}</div>
+        <div class="text-sm text-purple-700 dark:text-purple-300 mt-1">👥 Total Teams</div>
+        <div class="text-xs text-purple-600 dark:text-purple-400 mt-2">{{ "{:,}".format(stats.teams.breakdown.members) }} members</div>
+      </div>
+      <div class="bg-gradient-to-br from-green-50 to-green-100 dark:from-green-900/20 dark:to-green-800/20 rounded-lg p-4 border border-green-200 dark:border-green-800">
+        <div class="text-2xl font-bold text-green-900 dark:text-green-100">{{ "{:,}".format(stats.mcp_resources.total) }}</div>
+        <div class="text-sm text-green-700 dark:text-green-300 mt-1">🔌 MCP Resources</div>
+        <div class="text-xs text-green-600 dark:text-green-400 mt-2">{{ "{:,}".format(stats.mcp_resources.breakdown.tools) }} tools</div>
+      </div>
+      <div class="bg-gradient-to-br from-orange-50 to-orange-100 dark:from-orange-900/20 dark:to-orange-800/20 rounded-lg p-4 border border-orange-200 dark:border-orange-800">
+        <div class="text-2xl font-bold text-orange-900 dark:text-orange-100">{{ "{:,}".format(stats.metrics.total) }}</div>
+        <div class="text-sm text-orange-700 dark:text-orange-300 mt-1">📊 Total Metrics</div>
+        <div class="text-xs text-orange-600 dark:text-orange-400 mt-2">{{ "{:,}".format(stats.metrics.breakdown.token_usage_logs) }} token logs</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Users & Teams Tab -->
+  <div x-show="activeTab === 'users'" x-transition>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <!-- Users Section -->
+      <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+        <h4 class="font-semibold text-gray-900 dark:text-gray-100 mb-4 flex items-center text-lg">
+          <span class="text-2xl mr-2">👤</span> Users
+        </h4>
+        <div class="space-y-3">
+          <div class="flex justify-between items-center py-2 border-b border-gray-100 dark:border-gray-700">
+            <span class="text-gray-600 dark:text-gray-400">Total Users</span>
+            <span class="font-semibold text-gray-900 dark:text-gray-100">{{ "{:,}".format(stats.users.total) }}</span>
+          </div>
+          <div class="flex justify-between items-center py-2 border-b border-gray-100 dark:border-gray-700">
+            <span class="text-gray-600 dark:text-gray-400">✅ Active</span>
+            <span class="font-semibold text-green-600 dark:text-green-400">{{ "{:,}".format(stats.users.breakdown.active) }}</span>
+          </div>
+          <div class="flex justify-between items-center py-2 border-b border-gray-100 dark:border-gray-700">
+            <span class="text-gray-600 dark:text-gray-400">❌ Inactive</span>
+            <span class="font-semibold text-gray-600 dark:text-gray-400">{{ "{:,}".format(stats.users.breakdown.inactive) }}</span>
+          </div>
+          <div class="flex justify-between items-center py-2">
+            <span class="text-gray-600 dark:text-gray-400">👑 Admins</span>
+            <span class="font-semibold text-indigo-600 dark:text-indigo-400">{{ "{:,}".format(stats.users.breakdown.admins) }}</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Teams Section -->
+      <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+        <h4 class="font-semibold text-gray-900 dark:text-gray-100 mb-4 flex items-center text-lg">
+          <span class="text-2xl mr-2">👥</span> Teams
+        </h4>
+        <div class="space-y-3">
+          <div class="flex justify-between items-center py-2 border-b border-gray-100 dark:border-gray-700">
+            <span class="text-gray-600 dark:text-gray-400">Total Teams</span>
+            <span class="font-semibold text-gray-900 dark:text-gray-100">{{ "{:,}".format(stats.teams.total) }}</span>
+          </div>
+          <div class="flex justify-between items-center py-2 border-b border-gray-100 dark:border-gray-700">
+            <span class="text-gray-600 dark:text-gray-400">🏠 Personal</span>
+            <span class="font-semibold text-blue-600 dark:text-blue-400">{{ "{:,}".format(stats.teams.breakdown.personal) }}</span>
+          </div>
+          <div class="flex justify-between items-center py-2 border-b border-gray-100 dark:border-gray-700">
+            <span class="text-gray-600 dark:text-gray-400">🏢 Organizational</span>
+            <span class="font-semibold text-purple-600 dark:text-purple-400">{{ "{:,}".format(stats.teams.breakdown.organizational) }}</span>
+          </div>
+          <div class="flex justify-between items-center py-2">
+            <span class="text-gray-600 dark:text-gray-400">🤝 Team Members</span>
+            <span class="font-semibold text-gray-900 dark:text-gray-100">{{ "{:,}".format(stats.teams.breakdown.members) }}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- MCP Resources Tab -->
+  <div x-show="activeTab === 'resources'" x-transition>
+    <div class="grid grid-cols-2 md:grid-cols-3 gap-4">
+      <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 text-center">
+        <div class="text-4xl mb-3">🖥️</div>
+        <div class="text-3xl font-bold text-gray-900 dark:text-gray-100 mb-1">{{ "{:,}".format(stats.mcp_resources.breakdown.servers) }}</div>
+        <div class="text-sm text-gray-600 dark:text-gray-400">Virtual Servers</div>
+      </div>
+      <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 text-center">
+        <div class="text-4xl mb-3">🌐</div>
+        <div class="text-3xl font-bold text-gray-900 dark:text-gray-100 mb-1">{{ "{:,}".format(stats.mcp_resources.breakdown.gateways) }}</div>
+        <div class="text-sm text-gray-600 dark:text-gray-400">Gateway Peers</div>
+      </div>
+      <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 text-center">
+        <div class="text-4xl mb-3">🔧</div>
+        <div class="text-3xl font-bold text-gray-900 dark:text-gray-100 mb-1">{{ "{:,}".format(stats.mcp_resources.breakdown.tools) }}</div>
+        <div class="text-sm text-gray-600 dark:text-gray-400">Tools</div>
+      </div>
+      <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 text-center">
+        <div class="text-4xl mb-3">📚</div>
+        <div class="text-3xl font-bold text-gray-900 dark:text-gray-100 mb-1">{{ "{:,}".format(stats.mcp_resources.breakdown.resources) }}</div>
+        <div class="text-sm text-gray-600 dark:text-gray-400">Resources</div>
+      </div>
+      <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 text-center">
+        <div class="text-4xl mb-3">💬</div>
+        <div class="text-3xl font-bold text-gray-900 dark:text-gray-100 mb-1">{{ "{:,}".format(stats.mcp_resources.breakdown.prompts) }}</div>
+        <div class="text-sm text-gray-600 dark:text-gray-400">Prompts</div>
+      </div>
+      <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6 text-center">
+        <div class="text-4xl mb-3">🤖</div>
+        <div class="text-3xl font-bold text-gray-900 dark:text-gray-100 mb-1">{{ "{:,}".format(stats.mcp_resources.breakdown.a2a_agents) }}</div>
+        <div class="text-sm text-gray-600 dark:text-gray-400">A2A Agents</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Activity Tab -->
+  <div x-show="activeTab === 'activity'" x-transition>
+    <div class="space-y-4">
+      <!-- API Tokens -->
+      <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+        <h4 class="font-semibold text-gray-900 dark:text-gray-100 mb-4 flex items-center text-lg">
+          <span class="text-2xl mr-2">🔑</span> API Tokens
+        </h4>
+        <div class="grid grid-cols-3 gap-4">
+          <div class="text-center p-4 bg-gray-50 dark:bg-gray-700 rounded-lg">
+            <div class="text-3xl font-bold text-green-600 dark:text-green-400">{{ "{:,}".format(stats.tokens.breakdown.active) }}</div>
+            <div class="text-sm text-gray-600 dark:text-gray-400 mt-1">Active</div>
+          </div>
+          <div class="text-center p-4 bg-gray-50 dark:bg-gray-700 rounded-lg">
+            <div class="text-3xl font-bold text-red-600 dark:text-red-400">{{ "{:,}".format(stats.tokens.breakdown.revoked) }}</div>
+            <div class="text-sm text-gray-600 dark:text-gray-400 mt-1">Revoked</div>
+          </div>
+          <div class="text-center p-4 bg-gray-50 dark:bg-gray-700 rounded-lg">
+            <div class="text-3xl font-bold text-gray-900 dark:text-gray-100">{{ "{:,}".format(stats.tokens.total) }}</div>
+            <div class="text-sm text-gray-600 dark:text-gray-400 mt-1">Total</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Sessions & Activity -->
+      <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+        <h4 class="font-semibold text-gray-900 dark:text-gray-100 mb-4 flex items-center text-lg">
+          <span class="text-2xl mr-2">📊</span> Sessions & Activity
+        </h4>
+        <div class="space-y-3">
+          <div class="flex justify-between items-center py-2 border-b border-gray-100 dark:border-gray-700">
+            <span class="text-gray-600 dark:text-gray-400">🔄 MCP Sessions</span>
+            <span class="font-semibold text-gray-900 dark:text-gray-100">{{ "{:,}".format(stats.sessions.breakdown.mcp_sessions) }}</span>
+          </div>
+          <div class="flex justify-between items-center py-2 border-b border-gray-100 dark:border-gray-700">
+            <span class="text-gray-600 dark:text-gray-400">💬 MCP Messages</span>
+            <span class="font-semibold text-gray-900 dark:text-gray-100">{{ "{:,}".format(stats.sessions.breakdown.mcp_messages) }}</span>
+          </div>
+          <div class="flex justify-between items-center py-2 border-b border-gray-100 dark:border-gray-700">
+            <span class="text-gray-600 dark:text-gray-400">📡 Subscriptions</span>
+            <span class="font-semibold text-gray-900 dark:text-gray-100">{{ "{:,}".format(stats.sessions.breakdown.subscriptions) }}</span>
+          </div>
+          <div class="flex justify-between items-center py-2">
+            <span class="text-gray-600 dark:text-gray-400">🎫 OAuth Tokens</span>
+            <span class="font-semibold text-gray-900 dark:text-gray-100">{{ "{:,}".format(stats.sessions.breakdown.oauth_tokens) }}</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Metrics Breakdown -->
+      <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+        <h4 class="font-semibold text-gray-900 dark:text-gray-100 mb-4 flex items-center text-lg">
+          <span class="text-2xl mr-2">📈</span> Metrics Collection
+        </h4>
+        <div class="grid grid-cols-2 md:grid-cols-3 gap-3">
+          <div class="text-center p-3 bg-gray-50 dark:bg-gray-700 rounded">
+            <div class="text-2xl font-bold text-gray-900 dark:text-gray-100">{{ "{:,}".format(stats.metrics.breakdown.tool_metrics) }}</div>
+            <div class="text-xs text-gray-600 dark:text-gray-400 mt-1">🔧 Tool Metrics</div>
+          </div>
+          <div class="text-center p-3 bg-gray-50 dark:bg-gray-700 rounded">
+            <div class="text-2xl font-bold text-gray-900 dark:text-gray-100">{{ "{:,}".format(stats.metrics.breakdown.resource_metrics) }}</div>
+            <div class="text-xs text-gray-600 dark:text-gray-400 mt-1">📚 Resource Metrics</div>
+          </div>
+          <div class="text-center p-3 bg-gray-50 dark:bg-gray-700 rounded">
+            <div class="text-2xl font-bold text-gray-900 dark:text-gray-100">{{ "{:,}".format(stats.metrics.breakdown.prompt_metrics) }}</div>
+            <div class="text-xs text-gray-600 dark:text-gray-400 mt-1">💬 Prompt Metrics</div>
+          </div>
+          <div class="text-center p-3 bg-gray-50 dark:bg-gray-700 rounded">
+            <div class="text-2xl font-bold text-gray-900 dark:text-gray-100">{{ "{:,}".format(stats.metrics.breakdown.server_metrics) }}</div>
+            <div class="text-xs text-gray-600 dark:text-gray-400 mt-1">🖥️ Server Metrics</div>
+          </div>
+          <div class="text-center p-3 bg-gray-50 dark:bg-gray-700 rounded">
+            <div class="text-2xl font-bold text-gray-900 dark:text-gray-100">{{ "{:,}".format(stats.metrics.breakdown.a2a_agent_metrics) }}</div>
+            <div class="text-xs text-gray-600 dark:text-gray-400 mt-1">🤖 A2A Metrics</div>
+          </div>
+          <div class="text-center p-3 bg-gray-50 dark:bg-gray-700 rounded">
+            <div class="text-2xl font-bold text-gray-900 dark:text-gray-100">{{ "{:,}".format(stats.metrics.breakdown.token_usage_logs) }}</div>
+            <div class="text-xs text-gray-600 dark:text-gray-400 mt-1">📝 Token Logs</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Security Tab -->
+  <div x-show="activeTab === 'security'" x-transition>
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <!-- Security Events -->
+      <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+        <h4 class="font-semibold text-gray-900 dark:text-gray-100 mb-4 flex items-center text-lg">
+          <span class="text-2xl mr-2">🔐</span> Audit & Events
+        </h4>
+        <div class="space-y-3">
+          <div class="flex justify-between items-center py-2 border-b border-gray-100 dark:border-gray-700">
+            <span class="text-gray-600 dark:text-gray-400">🔒 Auth Events</span>
+            <span class="font-semibold text-gray-900 dark:text-gray-100">{{ "{:,}".format(stats.security.breakdown.auth_events) }}</span>
+          </div>
+          <div class="flex justify-between items-center py-2 border-b border-gray-100 dark:border-gray-700">
+            <span class="text-gray-600 dark:text-gray-400">📋 Audit Logs</span>
+            <span class="font-semibold text-gray-900 dark:text-gray-100">{{ "{:,}".format(stats.security.breakdown.audit_logs) }}</span>
+          </div>
+          <div class="flex justify-between items-center py-2 border-b border-gray-100 dark:border-gray-700">
+            <span class="text-gray-600 dark:text-gray-400">⏳ Pending Approvals</span>
+            <span class="font-semibold text-orange-600 dark:text-orange-400">{{ "{:,}".format(stats.security.breakdown.pending_approvals) }}</span>
+          </div>
+          <div class="flex justify-between items-center py-2">
+            <span class="text-gray-600 dark:text-gray-400">🔑 SSO Providers</span>
+            <span class="font-semibold text-green-600 dark:text-green-400">{{ "{:,}".format(stats.security.breakdown.sso_providers) }}</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Workflow State -->
+      <div class="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 p-6">
+        <h4 class="font-semibold text-gray-900 dark:text-gray-100 mb-4 flex items-center text-lg">
+          <span class="text-2xl mr-2">⚙️</span> Workflow State
+        </h4>
+        <div class="space-y-3">
+          <div class="flex justify-between items-center py-2 border-b border-gray-100 dark:border-gray-700">
+            <span class="text-gray-600 dark:text-gray-400">📧 Team Invitations</span>
+            <span class="font-semibold text-gray-900 dark:text-gray-100">{{ "{:,}".format(stats.workflow.breakdown.team_invitations) }}</span>
+          </div>
+          <div class="flex justify-between items-center py-2">
+            <span class="text-gray-600 dark:text-gray-400">📩 Join Requests</span>
+            <span class="font-semibold text-gray-900 dark:text-gray-100">{{ "{:,}".format(stats.workflow.breakdown.join_requests) }}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>

@@ -1,0 +1,150 @@
+---
+# OCP Setup — namespace, PostgresCluster, schema privileges
+# Equivalent to: make ocp-setup OCP_NS=<namespace>
+#
+# Usage:
+#   ansible-playbook ansible/ocp/playbooks/setup.yml -i ansible/ocp/inventory/cluster.yml
+#   ansible-playbook ansible/ocp/playbooks/setup.yml -i ansible/ocp/inventory/cluster.yml -e ocp_namespace=my-ns
+
+- name: Set up OCP namespace and CrunchyData Postgres
+  hosts: localhost
+  gather_facts: false
+
+  vars_files:
+    - ../vars/defaults.yml
+
+  tasks:
+    - name: Display setup summary
+      ansible.builtin.debug:
+        msg: |
+          ========================================
+          OCP Setup: namespace + CrunchyData Postgres
+          ========================================
+          Namespace: {{ ocp_namespace }}
+          CR:        {{ ocp_pg_cr }}
+
+          This will:
+            1. Verify the CrunchyData PGO operator is installed
+            2. Create the namespace if it does not exist
+            3. Apply the PostgresCluster CR
+            4. Wait for Postgres master pod to be Ready
+            5. Grant schema privileges (CREATE, USAGE on public)
+
+    - name: Confirm before proceeding
+      ansible.builtin.pause:
+        prompt: "Continue? (yes/no)"
+      register: confirm
+      failed_when: confirm.user_input | lower not in ['yes', 'y']
+      when: not (skip_confirm | default(false) | bool)
+
+    # Step 1: Check PGO operator (cluster-scoped CRD, works before namespace exists)
+    - name: Check CrunchyData PGO operator is installed
+      kubernetes.core.k8s_info:
+        api_version: apiextensions.k8s.io/v1
+        kind: CustomResourceDefinition
+        name: postgresclusters.postgres-operator.crunchydata.com
+      register: pgo_crd
+
+    - name: Verify PGO operator found
+      ansible.builtin.assert:
+        that:
+          - pgo_crd.resources | length > 0
+        fail_msg: "CrunchyData PGO operator not installed. Install it via OperatorHub first."
+        success_msg: "PGO operator: installed"
+
+    # Step 2: Create namespace
+    - name: Create namespace if it does not exist
+      kubernetes.core.k8s:
+        api_version: v1
+        kind: Namespace
+        name: "{{ ocp_namespace }}"
+        state: present
+      register: ns_result
+
+    - name: Report namespace status
+      ansible.builtin.debug:
+        msg: "Namespace: {{ 'created' if ns_result.changed else 'already exists' }}"
+
+    # Step 3: Apply PostgresCluster CR
+    - name: Check if PostgresCluster is already running
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Pod
+        namespace: "{{ ocp_namespace }}"
+        label_selectors:
+          - "postgres-operator.crunchydata.com/cluster"
+        field_selectors:
+          - "status.phase=Running"
+      register: pg_pods
+
+    - name: Apply PostgresCluster CR
+      kubernetes.core.k8s:
+        state: present
+        namespace: "{{ ocp_namespace }}"
+        src: "{{ ocp_pg_cr }}"
+      when: pg_pods.resources | length == 0
+
+    - name: Report PostgresCluster status
+      ansible.builtin.debug:
+        msg: "PostgresCluster: {{ 'already running' if pg_pods.resources | length > 0 else 'CR applied, waiting for pods...' }}"
+
+    # Step 4: Wait for Postgres master pod
+    - name: Wait for Postgres master pod to exist
+      kubernetes.core.k8s_info:
+        api_version: v1
+        kind: Pod
+        namespace: "{{ ocp_namespace }}"
+        label_selectors:
+          - "postgres-operator.crunchydata.com/role=master"
+      register: master_pod_exists
+      until: master_pod_exists.resources | length > 0
+      retries: 30
+      delay: 10
+      when: pg_pods.resources | length == 0
+
+    - name: Wait for Postgres master pod to be Ready
+      ansible.builtin.command:
+        cmd: >
+          oc wait pod -n {{ ocp_namespace }}
+          -l postgres-operator.crunchydata.com/role=master
+          --for=condition=Ready
+          --timeout=270s
+      changed_when: false
+
+    - name: Get Postgres master pod name
+      ansible.builtin.command:
+        cmd: >
+          oc get pod -n {{ ocp_namespace }}
+          -l postgres-operator.crunchydata.com/role=master
+          -o jsonpath='{.items[0].metadata.name}'
+      register: master_pod_name
+      changed_when: false
+
+    - name: Report Postgres master pod
+      ansible.builtin.debug:
+        msg: "Postgres master pod: {{ master_pod_name.stdout }}"
+
+    # Step 5: Grant schema privileges
+    - name: Grant CREATE, USAGE on public schema to admin user
+      kubernetes.core.k8s_exec:
+        namespace: "{{ ocp_namespace }}"
+        pod: "{{ master_pod_name.stdout }}"
+        container: database
+        command: >
+          psql -U postgres -d {{ pg_database }}
+          -c "GRANT CREATE, USAGE ON SCHEMA public TO {{ pg_admin_user }};"
+      register: grant_result
+      changed_when: "'GRANT' in grant_result.stdout"
+
+    - name: Report schema privileges
+      ansible.builtin.debug:
+        msg: "Schema privileges: granted (CREATE, USAGE on public)"
+
+    - name: Setup complete
+      ansible.builtin.debug:
+        msg: |
+          ========================================
+          Setup complete
+          ========================================
+          Next: create secrets file at {{ ocp_secrets }}
+          Then: ansible-playbook ansible/ocp/playbooks/deploy.yml -i ansible/ocp/inventory/cluster.yml

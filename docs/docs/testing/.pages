@@ -1,0 +1,9 @@
+nav:
+  - index.md
+  - unittest.md
+  - basic.md
+  - security.md
+  - entra-id-e2e.md
+  - acceptance.md
+  - fuzzing.md
+  - LocalTest.md

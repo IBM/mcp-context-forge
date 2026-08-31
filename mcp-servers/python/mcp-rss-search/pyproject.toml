@@ -1,0 +1,77 @@
+[project]
+name = "mcp-rss-search"
+version = "1.0.0"
+description = "MCP server for advanced RSS feed parsing, searching, and analysis"
+authors = [
+  { name = "ContextForge", email = "noreply@example.com" }
+]
+license = { text = "Apache-2.0" }
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastmcp>=3.4.4",
+    "feedparser>=6.0.12",
+    "httpx>=0.28.1",
+    "orjson>=3.11.9",
+    "pydantic>=2.13.4",
+    "python-dateutil>=2.9.0.post0",
+]
+
+[project.optional-dependencies]
+similarity = [
+    "numpy>=2.5.1",
+    "rank-bm25>=0.2.2",
+    "scikit-learn>=1.9.0",
+    "sentence-transformers>=5.6.1",
+]
+dev = [
+    "black>=26.5.1",
+    "mypy>=2.3.0",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "pytest-cov>=7.1.0",
+    "pytest-httpx>=0.36.2",
+    "ruff>=0.16.0",
+]
+full = [
+    "black>=26.5.1",
+    "mypy>=2.3.0",
+    "numpy>=2.5.1",
+    "pytest>=9.1.1",
+    "pytest-asyncio>=1.4.0",
+    "pytest-cov>=7.1.0",
+    "pytest-httpx>=0.36.2",
+    "ruff>=0.16.0",
+    "scikit-learn>=1.9.0",
+    "sentence-transformers>=5.6.1",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/mcp_rss_search"]
+
+[project.scripts]
+mcp-rss-search = "mcp_rss_search.server_fastmcp:main"
+
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+select = ["E", "W", "F", "B", "I", "N", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+addopts = "--cov=mcp_rss_search --cov-report=term-missing"

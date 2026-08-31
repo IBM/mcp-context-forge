@@ -1,0 +1,2634 @@
+# -*- coding: utf-8 -*-
+"""Location: ./tests/unit/mcpgateway/validation/test_validators_advanced.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+
+Test the validators module.
+Author: Mihai Criveti
+
+This module provides comprehensive tests for the SecurityValidator class,
+including validation of names, identifiers, URIs, URLs, templates, and
+dangerous content patterns (HTML/JavaScript).
+
+The tests cover:
+- Basic validation rules (empty values, length limits, character restrictions)
+- XSS prevention (HTML tags, JavaScript patterns, event handlers)
+- Case sensitivity handling
+- Boundary detection for security patterns
+- False positive prevention for legitimate content
+- URL scheme validation and dangerous protocol detection
+"""
+
+# Standard
+import asyncio
+import socket
+from unittest.mock import MagicMock, patch
+
+# Third-Party
+import pytest
+
+# First-Party
+from mcpgateway.common.validators import SecurityValidator
+
+
+class DummySettings:
+    """Mock settings for testing SecurityValidator.
+
+    These settings define validation patterns and limits used throughout
+    the tests. The patterns are designed to catch common XSS vectors while
+    minimizing false positives.
+    """
+
+    # HTML pattern: Catches dangerous HTML tags that could be used for XSS
+    validation_dangerous_html_pattern = (
+        r"<(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|"
+        r"area|map|canvas|applet|frame|frameset|html|head|body|style)\b|"
+        r"</*(script|iframe|object|embed|link|meta|base|form|img|svg|video|audio|source|track|"
+        r"area|map|canvas|applet|frame|frameset|html|head|body|style)>"
+    )
+
+    # JavaScript pattern: Enhanced pattern with case-insensitive matching and boundary detection
+    # This is the NEW pattern being tested
+    validation_dangerous_js_pattern = r"(?i)(?:^|\s|[\"'`<>=])(javascript:|vbscript:|data:\s*[^,]*[;\s]*(javascript|vbscript)|" r"\bon[a-z]+\s*=|<\s*script\b)"
+
+    # Allowed URL schemes for security
+    validation_allowed_url_schemes = ["http://", "https://", "ws://", "wss://"]
+
+    # Character validation patterns
+    validation_name_pattern = r"^[a-zA-Z0-9_.\- ]+$"  # Names can have spaces (literal space, not \s to reject control chars)
+    validation_identifier_pattern = r"^[a-zA-Z0-9_\-\.]+$"  # IDs cannot have spaces
+    validation_safe_uri_pattern = r"^[a-zA-Z0-9_\-.:/?=&%{}]+$"
+    validation_unsafe_uri_pattern = r'[<>"\'\\]'
+    validation_tool_name_pattern = r"^[a-zA-Z0-9_][a-zA-Z0-9._/-]*$"  # SEP-986 pattern
+
+    # Size limits for various fields
+    validation_max_name_length = 100  # Realistic name length
+    validation_max_description_length = 1000
+    validation_max_template_length = 10000
+    validation_max_content_length = 100000
+    validation_max_json_depth = 5
+    validation_max_url_length = 2048  # Standard URL length limit
+
+    # Allowed MIME types
+    validation_allowed_mime_types = ["application/json", "text/plain", "text/html"]
+
+
+@pytest.fixture(autouse=True)
+def patch_logger(monkeypatch):
+    """Mock logger to capture log messages during tests."""
+    logs = []
+
+    class DummyLogger:
+        def __getattr__(self, name):
+            def logfn(*args, **kwargs):
+                logs.append((name, args, kwargs))
+
+            return logfn
+
+    monkeypatch.setattr("mcpgateway.common.validators.logger", DummyLogger())
+    yield logs
+
+
+@pytest.fixture(autouse=True)
+def patch_settings_and_classvars(monkeypatch):
+    """Patch settings and SecurityValidator class variables for testing."""
+    with patch("mcpgateway.config.settings", new=DummySettings):
+        # Update all class variables to use test settings
+        SecurityValidator.MAX_NAME_LENGTH = DummySettings.validation_max_name_length
+        SecurityValidator.MAX_DESCRIPTION_LENGTH = DummySettings.validation_max_description_length
+        SecurityValidator.MAX_TEMPLATE_LENGTH = DummySettings.validation_max_template_length
+        SecurityValidator.MAX_CONTENT_LENGTH = DummySettings.validation_max_content_length
+        SecurityValidator.MAX_JSON_DEPTH = DummySettings.validation_max_json_depth
+        SecurityValidator.MAX_URL_LENGTH = DummySettings.validation_max_url_length
+        SecurityValidator.DANGEROUS_HTML_PATTERN = DummySettings.validation_dangerous_html_pattern
+        SecurityValidator.DANGEROUS_JS_PATTERN = DummySettings.validation_dangerous_js_pattern
+        SecurityValidator.ALLOWED_URL_SCHEMES = DummySettings.validation_allowed_url_schemes
+        SecurityValidator.NAME_PATTERN = DummySettings.validation_name_pattern
+        SecurityValidator.IDENTIFIER_PATTERN = DummySettings.validation_identifier_pattern
+        SecurityValidator.VALIDATION_SAFE_URI_PATTERN = DummySettings.validation_safe_uri_pattern
+        SecurityValidator.VALIDATION_UNSAFE_URI_PATTERN = DummySettings.validation_unsafe_uri_pattern
+        SecurityValidator.TOOL_NAME_PATTERN = DummySettings.validation_tool_name_pattern
+        yield
+
+
+# =============================================================================
+# SANITIZE DISPLAY TEXT TESTS
+# =============================================================================
+
+
+def test_sanitize_display_text_valid():
+    """Test that valid text passes through with HTML escaping."""
+    # Normal text should be escaped but not raise errors
+    result = SecurityValidator.sanitize_display_text("Hello World", "desc")
+    assert result == "Hello World"
+
+    # Text with special characters should be escaped
+    result = SecurityValidator.sanitize_display_text("Hello & Goodbye", "desc")
+    assert result == "Hello & Goodbye"
+
+    # Quotes should be escaped
+    result = SecurityValidator.sanitize_display_text('Hello "World"', "desc")
+    assert result == 'Hello "World"'
+
+
+def test_sanitize_display_text_empty():
+    """Test that empty strings are handled correctly."""
+    assert SecurityValidator.sanitize_display_text("", "desc") == ""
+    assert SecurityValidator.sanitize_display_text(None, "desc") == None
+
+
+def test_sanitize_display_text_html_tags():
+    """Test detection of dangerous HTML tags."""
+    dangerous_html = [
+        "<script>alert(1)</script>",
+        '<iframe src="malicious.com"></iframe>',
+        "<object data='bad.swf'></object>",
+        "<embed src='bad.swf'>",
+        "<link rel='stylesheet' href='bad.css'>",
+        "<meta http-equiv='refresh' content='0;url=bad.com'>",
+        "<base href='http://evil.com/'>",
+        "<form action='steal.php'>",
+        "</script>",  # Closing tags also caught
+        "<img src=x onerror=alert(1)>",
+        "<svg onload=alert(1)>",
+        "<style>@import 'bad.css';</style>",
+    ]
+
+    for html in dangerous_html:
+        with pytest.raises(ValueError, match="contains HTML tags"):
+            SecurityValidator.sanitize_display_text(html, "desc")
+
+
+def test_sanitize_display_text_js_patterns_basic():
+    """Test detection of basic JavaScript patterns."""
+    # Only test patterns that won't be caught by HTML filter first
+    dangerous_js = [
+        " javascript:alert(1)",  # Space before to trigger boundary
+        " vbscript:msgbox(1)",  # Space before to trigger boundary
+        " data:text/html;javascript",  # Space before to trigger boundary
+    ]
+
+    for js in dangerous_js:
+        with pytest.raises(ValueError, match="contains script patterns"):
+            SecurityValidator.sanitize_display_text(js, "desc")
+
+    # These contain both HTML and JS patterns - JS pattern might be checked first
+    mixed_patterns = [
+        "<img src=x onload=alert(1)>",
+        "<div onclick=alert(1)>",
+    ]
+
+    for pattern in mixed_patterns:
+        with pytest.raises(ValueError, match="contains (HTML tags|script patterns)"):
+            SecurityValidator.sanitize_display_text(pattern, "desc")
+
+
+def test_sanitize_display_text_js_case_insensitive():
+    """Test that JavaScript patterns are caught regardless of case."""
+    # Pure JS patterns (no HTML tags)
+    case_variations = [
+        "JavaScript:alert(1)",
+        "JAVASCRIPT:alert(1)",
+        "JaVaScRiPt:alert(1)",
+        "VBScript:msgbox(1)",
+        "vBsCrIpT:msgbox(1)",
+        "VBSCRIPT:msgbox(1)",
+    ]
+
+    for js in case_variations:
+        with pytest.raises(ValueError, match="contains script patterns"):
+            SecurityValidator.sanitize_display_text(js, "desc")
+
+    # These contain HTML tags so will be caught by HTML filter
+    html_case_variations = [
+        "<img src=x OnLoad=alert(1)>",
+        "<img src=x ONLOAD=alert(1)>",
+        "<img src=x oNcLiCk=alert(1)>",
+    ]
+
+    for html in html_case_variations:
+        with pytest.raises(ValueError, match="contains HTML tags"):
+            SecurityValidator.sanitize_display_text(html, "desc")
+
+
+def test_sanitize_display_text_js_boundaries():
+    """Test boundary detection for JavaScript patterns."""
+    # Should catch with various delimiters
+    boundary_cases = [
+        '"javascript:alert(1)"',  # Double quotes
+        "'javascript:alert(1)'",  # Single quotes
+        "`javascript:alert(1)`",  # Backticks
+        "<javascript:alert(1)>",  # Angle brackets
+        "=javascript:alert(1)",  # Equals sign
+        " javascript:alert(1)",  # Space before
+    ]
+
+    for js in boundary_cases:
+        with pytest.raises(ValueError, match="contains script patterns"):
+            SecurityValidator.sanitize_display_text(js, "desc")
+
+    # Should NOT catch when part of a word (no boundary)
+    valid_cases = [
+        "myjavascript:function",  # Part of larger word
+        "nojavascript:here",  # Part of larger word
+    ]
+
+    for valid in valid_cases:
+        # These should pass through (though will be HTML escaped)
+        result = SecurityValidator.sanitize_display_text(valid, "desc")
+        assert "javascript:" in result.lower()  # Verify it wasn't blocked
+
+
+@pytest.mark.skip(reason="test_sanitize_display_text_data_uri_enhanced not implemented")
+def test_sanitize_display_text_data_uri_enhanced():
+    """Test enhanced data URI detection."""
+    # Should catch data URIs with script execution
+    dangerous_data_uris = [
+        " data:text/html;javascript",  # Space before to trigger boundary
+        " data:text/html;base64,javascript",  # Space before
+        " data:;javascript",  # Space before
+        " data: text/html ; javascript",  # With spaces and boundary
+        " data:text/html;vbscript",  # Space before
+        " data: ; vbscript",  # Space before
+    ]
+
+    for uri in dangerous_data_uris:
+        with pytest.raises(ValueError, match="contains script patterns"):
+            SecurityValidator.sanitize_display_text(uri, "desc")
+
+    # Should NOT catch legitimate data URIs without script execution
+    valid_data_uris = [
+        "data:image/png;base64,iVBORw0KGgo",
+        "data:text/plain;charset=utf-8,Hello%20World",
+        "data:image/jpeg;base64,/9j/4AAQSkZJRg",
+        "data:application/x-javascript",  # Without actual javascript/vbscript after semicolon
+    ]
+
+    for uri in valid_data_uris:
+        result = SecurityValidator.sanitize_display_text(uri, "desc")
+        assert "data:" in result  # Verify it wasn't blocked
+
+
+def test_sanitize_display_text_event_handlers_precise():
+    """Test precise event handler detection with word boundaries."""
+    # Should catch actual event handlers (pure, without HTML tags)
+    event_handlers = [
+        " onclick=alert(1)",  # Space before to trigger boundary
+        " onmouseover=alert(1)",
+        " onload=doEvil()",
+        " onerror=hack()",
+    ]
+
+    for handler in event_handlers:
+        with pytest.raises(ValueError, match="contains script patterns"):
+            SecurityValidator.sanitize_display_text(handler, "desc")
+
+    # HTML-containing event handlers might be caught by either filter
+    with pytest.raises(ValueError, match="contains (HTML tags|script patterns)"):
+        SecurityValidator.sanitize_display_text('<div onkeydown="steal()">', "desc")
+
+    # Should NOT catch words that happen to start with 'on' when not preceded by boundary
+    # Note: Some patterns like "once=", "only=", "online=" will be caught because they match \bon[a-z]+\s*=
+    false_positive_cases = [
+        "conditional=true",  # Should pass - doesn't start with 'on'
+        "donation=100",  # Should pass - doesn't start with 'on'
+        "honor=high",  # Should pass - doesn't start with 'on'
+    ]
+
+    for valid in false_positive_cases:
+        result = SecurityValidator.sanitize_display_text(valid, "desc")
+        assert valid.split("=")[0] in result  # Verify the word wasn't blocked
+
+
+def test_sanitize_display_text_script_tag_variations():
+    """Test script tag detection with whitespace variations."""
+    # These will be caught by HTML pattern, not JS pattern
+    script_variations = [
+        "< script>alert(1)</script>",  # Space after <
+        "<  script>alert(1)</script>",  # Multiple spaces
+        "<\tscript>alert(1)</script>",  # Tab
+        "<\nscript>alert(1)</script>",  # Newline
+        "< \tscript>alert(1)</script>",  # Mixed whitespace
+    ]
+
+    for script in script_variations:
+        with pytest.raises(ValueError, match="contains HTML tags"):
+            SecurityValidator.sanitize_display_text(script, "desc")
+
+
+@pytest.mark.skip(reason="test_sanitize_display_text_false_positives not implemented")
+def test_sanitize_display_text_false_positives():
+    """Test that legitimate content is not incorrectly blocked."""
+    # The new pattern will catch some of these, so we need to adjust expectations
+    legitimate_content = [
+        # These should actually pass
+        "Learn about JavaScript programming at our school",  # JavaScript (capital S) without colon
+        "The conditional=false setting disables checks",
+        "The function uses data: {name: 'value'} format",  # data: without javascript/vbscript
+        "We accept donations online",
+        "Check your internet connection if you're not online",
+        "This is done only once per session",
+    ]
+
+    for content in legitimate_content:
+        try:
+            result = SecurityValidator.sanitize_display_text(content, "desc")
+            # Should succeed and return escaped content
+            assert result is not None
+        except ValueError as e:
+            pytest.fail(f"False positive - legitimate content blocked: '{content}' - Error: {e}")
+
+    # These are expected to be caught due to the new pattern's boundary detection
+    expected_catches = [
+        " javascript: protocol is dangerous",  # Space before javascript:
+        " online=true to enable",  # Space before online= matches pattern
+        " data: text/html ; javascript",  # data: followed by javascript
+        " onclick handlers can be risky",  # Space before onclick
+        " once=true for single",  # Space before once=
+        " only=false to disable",  # Space before only=
+    ]
+
+    for content in expected_catches:
+        with pytest.raises(ValueError, match="contains script patterns"):
+            SecurityValidator.sanitize_display_text(content, "desc")
+
+
+# =============================================================================
+# NAME VALIDATION TESTS
+# =============================================================================
+
+
+def test_validate_name_valid():
+    """Test valid name patterns."""
+    valid_names = [
+        "ValidName",
+        "Valid Name",  # Spaces allowed
+        "Valid.Name",  # Dots allowed
+        "Valid-Name",  # Hyphens allowed
+        "Valid_Name",  # Underscores allowed
+        "Name123",  # Numbers allowed
+        "A",  # Single character
+    ]
+
+    for name in valid_names:
+        assert SecurityValidator.validate_name(name, "Name") == name
+
+
+def test_validate_name_invalid():
+    """Test invalid name patterns."""
+    with pytest.raises(ValueError, match="cannot be empty"):
+        SecurityValidator.validate_name("", "Name")
+
+    # Special characters not allowed - check for actual error message
+    invalid_chars = ["Name!", "Name@", "Name#", "Name$", "Name%", "Name<>", "Name&"]
+    for name in invalid_chars:
+        with pytest.raises(ValueError, match="can only contain letters, numbers"):
+            SecurityValidator.validate_name(name, "Name")
+
+
+def test_validate_name_rejects_control_characters():
+    """EDGE-03: Control characters (\\n, \\t, \\r) must be rejected, not treated as whitespace."""
+    control_char_names = [
+        "test\nname",  # newline
+        "test\tname",  # tab
+        "test\rname",  # carriage return
+        "test\x0bname",  # vertical tab
+        "test\x0cname",  # form feed
+    ]
+    for name in control_char_names:
+        with pytest.raises(ValueError, match="can only contain letters, numbers"):
+            SecurityValidator.validate_name(name, "Name")
+
+
+def test_validate_name_length():
+    """Test name length validation."""
+    # At limit (100 chars)
+    valid_name = "a" * 100
+    assert SecurityValidator.validate_name(valid_name, "Name") == valid_name
+
+    # Over limit (101 chars)
+    with pytest.raises(ValueError, match="exceeds maximum length"):
+        SecurityValidator.validate_name("a" * 101, "Name")
+
+
+# =============================================================================
+# IDENTIFIER VALIDATION TESTS
+# =============================================================================
+
+
+def test_validate_identifier_valid():
+    """Test valid identifier patterns."""
+    valid_ids = [
+        "id123",
+        "user_id",
+        "user-id",
+        "user.id",
+        "UUID.123.456",
+        "a",  # Single character
+    ]
+
+    for id_val in valid_ids:
+        assert SecurityValidator.validate_identifier(id_val, "ID") == id_val
+
+
+def test_validate_identifier_invalid():
+    """Test invalid identifier patterns."""
+    with pytest.raises(ValueError, match="cannot be empty"):
+        SecurityValidator.validate_identifier("", "ID")
+
+    # No spaces allowed in identifiers - check for actual error message
+    with pytest.raises(ValueError, match="can only contain letters, numbers"):
+        SecurityValidator.validate_identifier("id with space", "ID")
+
+    # No special characters
+    invalid_ids = ["id!", "id@", "id#", "id<>", "id&"]
+    for id_val in invalid_ids:
+        with pytest.raises(ValueError, match="can only contain letters, numbers"):
+            SecurityValidator.validate_identifier(id_val, "ID")
+
+
+def test_validate_identifier_length():
+    """Test identifier length validation."""
+    # At limit
+    valid_id = "a" * 100
+    assert SecurityValidator.validate_identifier(valid_id, "ID") == valid_id
+
+    # Over limit
+    with pytest.raises(ValueError, match="exceeds maximum length"):
+        SecurityValidator.validate_identifier("a" * 101, "ID")
+
+
+# =============================================================================
+# URI VALIDATION TESTS
+# =============================================================================
+
+
+def test_validate_uri_patterns():
+    """Test URI validation patterns."""
+    # URIs must match safe pattern
+    valid_uri = "http://example.com/path"
+    result = SecurityValidator.validate_uri(valid_uri, "URI")
+    assert result == valid_uri
+
+    # Empty URI
+    with pytest.raises(ValueError, match="cannot be empty"):
+        SecurityValidator.validate_uri("", "URI")
+
+    # Path traversal - check for actual error message
+    with pytest.raises(ValueError, match="cannot contain directory traversal"):
+        SecurityValidator.validate_uri("../../../etc/passwd", "URI")
+
+    # HTML in URI
+    with pytest.raises(ValueError, match="cannot contain HTML"):
+        SecurityValidator.validate_uri("path/<script>", "URI")
+
+    # Invalid characters
+    with pytest.raises(ValueError, match="contains invalid characters"):
+        SecurityValidator.validate_uri("path|with|pipes", "URI")
+
+
+# =============================================================================
+# TOOL NAME VALIDATION TESTS
+# =============================================================================
+
+
+def test_validate_tool_name_valid():
+    """Test valid tool name patterns."""
+    valid_names = [
+        "tool",
+        "Tool",
+        "tool_name",
+        "tool-name",
+        "tool.name",
+        "toolName123",
+        "t",  # Single character
+    ]
+
+    for name in valid_names:
+        assert SecurityValidator.validate_tool_name(name) == name
+
+
+def test_validate_tool_name_invalid():
+    """Test invalid tool name patterns."""
+    # Empty name
+    with pytest.raises(ValueError, match="cannot be empty"):
+        SecurityValidator.validate_tool_name("")
+
+    # Names starting with hyphen are invalid (not in [a-zA-Z0-9_])
+    with pytest.raises(ValueError, match="must start with a letter, number, or underscore"):
+        SecurityValidator.validate_tool_name("-tool")
+
+    # Tool name pattern doesn't match - contains invalid characters
+    with pytest.raises(ValueError, match="must start with a letter, number, or underscore"):
+        SecurityValidator.validate_tool_name("tool<name>")
+    with pytest.raises(ValueError, match="must start with a letter, number, or underscore"):
+        SecurityValidator.validate_tool_name('tool"name')
+
+
+def test_validate_tool_name_valid_with_leading_underscore_or_number():
+    """Test valid tool names starting with underscore or number (per MCP spec)."""
+    # Names starting with underscore are valid (per MCP spec)
+    assert SecurityValidator.validate_tool_name("_tool") == "_tool"
+    assert SecurityValidator.validate_tool_name("_5gpt_query_by_market_id") == "_5gpt_query_by_market_id"
+
+    # Names starting with number are valid (per MCP spec)
+    assert SecurityValidator.validate_tool_name("1tool") == "1tool"
+    assert SecurityValidator.validate_tool_name("5gpt_query") == "5gpt_query"
+
+
+def test_validate_tool_name_length():
+    """Test tool name length validation."""
+    # At limit
+    valid_name = "t" + "o" * 127  # 128 chars total, starts with letter
+    assert SecurityValidator.validate_tool_name(valid_name) == valid_name
+
+    # Over limit
+    with pytest.raises(ValueError, match="exceeds MCP spec limit"):
+        SecurityValidator.validate_tool_name("t" + "o" * 128)  # 129 chars
+
+
+# =============================================================================
+# TEMPLATE VALIDATION TESTS
+# =============================================================================
+
+
+def test_validate_template_valid():
+    """Test valid template patterns."""
+    valid_templates = [
+        "Hello {{ name }}",  # Jinja2 variable
+        "{% if condition %}Show this{% endif %}",  # Jinja2 control
+        "Plain text template",
+        "<div>{{ content }}</div>",  # HTML with Jinja2
+        "",  # Empty template
+    ]
+
+    for template in valid_templates:
+        assert SecurityValidator.validate_template(template) == template
+
+
+def test_validate_template_dangerous():
+    """Test detection of dangerous content in templates."""
+    # Dangerous HTML tags
+    dangerous_templates = [
+        "<script>alert(1)</script>",
+        "<iframe src='bad.com'></iframe>",
+        "<form action='steal.php'>",
+        "<embed src='bad.swf'>",
+    ]
+
+    for template in dangerous_templates:
+        with pytest.raises(ValueError, match="contains HTML tags"):
+            SecurityValidator.validate_template(template)
+
+    # Event handlers
+    with pytest.raises(ValueError, match="contains event handlers"):
+        SecurityValidator.validate_template("<div onclick='alert(1)'>")
+
+
+def test_validate_template_length():
+    """Test template length passes schema validation (size enforced at service layer)."""
+    # At limit (10000 chars)
+    valid_template = "a" * 10000
+    assert SecurityValidator.validate_template(valid_template) == valid_template
+
+    # Over limit - schema no longer rejects; size enforcement is at service layer
+    over_limit = "a" * 10001
+    assert SecurityValidator.validate_template(over_limit) == over_limit
+
+
+# =============================================================================
+# URL VALIDATION TESTS
+# =============================================================================
+
+
+def test_validate_url_valid():
+    """Test valid URL patterns."""
+    valid_urls = [
+        "http://example.com",
+        "https://example.com",
+        "https://example.com/path",
+        "https://example.com:8080/path?query=value",
+        "ws://example.com/ws",
+        "wss://example.com/ws",
+    ]
+
+    for url in valid_urls:
+        assert SecurityValidator.validate_url(url, "URL") == url
+
+
+def test_validate_url_invalid_schemes():
+    """Test URL validation with disallowed schemes."""
+    invalid_schemes = [
+        "ftp://example.com",  # FTP not allowed
+        "file:///etc/passwd",  # File protocol dangerous
+        "javascript:alert(1)",  # JavaScript protocol
+        "vbscript:msgbox(1)",  # VBScript protocol
+        "data:text/html,<script>alert(1)</script>",  # Data URI
+        "about:blank",  # About protocol
+        "chrome://settings",  # Chrome protocol
+        "mailto:user@example.com",  # Mailto protocol
+    ]
+
+    for url in invalid_schemes:
+        with pytest.raises(ValueError, match="dangerous protocol|must start with"):
+            SecurityValidator.validate_url(url, "URL")
+
+
+def test_validate_url_case_insensitive():
+    """Test that dangerous protocols are caught regardless of case."""
+    case_variations = [
+        "JavaScript:alert(1)",
+        "JAVASCRIPT:alert(1)",
+        "JaVaScRiPt:alert(1)",
+        "VBScript:msgbox(1)",
+        "VBSCRIPT:msgbox(1)",
+        "DATA:text/html,<script>alert(1)</script>",
+        "FiLe:///etc/passwd",
+    ]
+
+    for url in case_variations:
+        with pytest.raises(ValueError, match="dangerous protocol|must start with"):
+            SecurityValidator.validate_url(url, "URL")
+
+
+def test_validate_url_structure():
+    """Test URL structure validation."""
+    with pytest.raises(ValueError, match="cannot be empty"):
+        SecurityValidator.validate_url("", "URL")
+
+    # Invalid URL structures
+    invalid_urls = [
+        "not-a-url",
+        "http://",  # No host
+        "://example.com",  # No scheme
+        "http:/example.com",  # Missing slash
+    ]
+
+    for url in invalid_urls:
+        with pytest.raises(ValueError):
+            SecurityValidator.validate_url(url, "URL")
+
+
+def test_validate_url_length():
+    """Test URL length validation."""
+    # Create a URL at the limit (2048 chars)
+    long_path = "a" * (2048 - len("https://example.com/"))
+    valid_url = f"https://example.com/{long_path}"
+    assert SecurityValidator.validate_url(valid_url, "URL") == valid_url
+
+    # Over limit
+    with pytest.raises(ValueError, match="exceeds maximum length"):
+        SecurityValidator.validate_url(valid_url + "a", "URL")
+
+
+# =============================================================================
+# JSON DEPTH VALIDATION TESTS
+# =============================================================================
+
+
+def test_validate_json_depth_valid():
+    """Test JSON depth validation with valid objects."""
+    # Depth 1
+    obj1 = {"key": "value"}
+    SecurityValidator.validate_json_depth(obj1)  # Should not raise
+
+    # Depth 3 (at limit with default settings)
+    obj3 = {"level1": {"level2": {"level3": "value"}}}
+    SecurityValidator.validate_json_depth(obj3)  # Should not raise
+
+    # Arrays count toward depth
+    arr = [[[["deep"]]]]  # Depth 4 in arrays
+    SecurityValidator.validate_json_depth(arr, max_depth=4)  # Should not raise
+
+
+def test_validate_json_depth_exceeded():
+    """Test JSON depth validation with objects exceeding max depth."""
+    # Depth 6 (exceeds default limit of 5)
+    deep_obj = {"l1": {"l2": {"l3": {"l4": {"l5": {"l6": "too deep"}}}}}}
+
+    with pytest.raises(ValueError, match="exceeds maximum depth"):
+        SecurityValidator.validate_json_depth(deep_obj)
+
+    # Should work with higher limit
+    SecurityValidator.validate_json_depth(deep_obj, max_depth=6)
+
+
+def test_validate_json_depth_mixed():
+    """Test JSON depth with mixed arrays and objects."""
+    mixed = {"array": [{"nested": [{"deep": "value"}]}]}
+    # Depth is 4: dict -> array -> dict -> array -> dict
+    SecurityValidator.validate_json_depth(mixed, max_depth=5)  # Should not raise
+
+    with pytest.raises(ValueError, match="exceeds maximum depth"):
+        SecurityValidator.validate_json_depth(mixed, max_depth=3)
+
+
+# =============================================================================
+# PERFORMANCE AND EDGE CASE TESTS
+# =============================================================================
+
+
+@pytest.mark.parametrize(
+    "test_input,should_fail",
+    [
+        # Legitimate content that should pass
+        ("Learn JavaScript programming", False),
+        ("The conditional=false setting", False),
+        # TODO: Skip Use once=true for now
+        # ("Use once=true", False),
+        ("We accept donations online", False),
+        # Dangerous content that should fail
+        ("javascript:alert(1)", True),
+        ("JAVASCRIPT:void(0)", True),
+        ("<script>alert(1)</script>", True),
+        (" onclick=hack()", True),  # Space before onclick
+        # Edge cases that WILL be caught by new pattern
+        ("The javascript: protocol is dangerous", True),  # Space before javascript:
+        ("Set online=true", True),  # online= matches pattern
+    ],
+)
+def test_sanitize_parametrized(test_input, should_fail):
+    """Parametrized tests for various input patterns."""
+    if should_fail:
+        with pytest.raises(ValueError):
+            SecurityValidator.sanitize_display_text(test_input, "test")
+    else:
+        result = SecurityValidator.sanitize_display_text(test_input, "test")
+        assert result is not None
+
+
+def test_pattern_performance():
+    """Ensure regex patterns don't cause catastrophic backtracking."""
+    # Standard
+    import time
+
+    # Create potentially problematic inputs
+    test_cases = [
+        "a" * 10000 + "javascript:" + "b" * 10000,  # Long string with pattern in middle
+        "<" * 1000 + "script" + ">" * 1000,  # Repeated characters
+        "on" * 5000 + "load=alert(1)",  # Repeated pattern prefix
+    ]
+
+    for test_input in test_cases:
+        start = time.time()
+        try:
+            SecurityValidator.sanitize_display_text(test_input, "perf_test")
+        except ValueError:
+            pass  # Expected for dangerous content
+        elapsed = time.time() - start
+
+        # Should complete quickly (under 1 second even for pathological cases)
+        assert elapsed < 1.0, f"Pattern took too long: {elapsed:.2f}s for input length {len(test_input)}"
+
+
+def test_unicode_handling():
+    """Test handling of unicode characters in validation."""
+    unicode_tests = [
+        "Hello 世界",  # Chinese characters
+        "Привет мир",  # Cyrillic
+        "مرحبا بالعالم",  # Arabic
+        "🚀 Emoji test 🎉",  # Emojis
+    ]
+
+    for text in unicode_tests:
+        # Should handle unicode gracefully
+        result = SecurityValidator.sanitize_display_text(text, "unicode_test")
+        assert result is not None
+
+        # Name validation might be more restrictive
+        with pytest.raises(ValueError, match="can only contain"):
+            SecurityValidator.validate_name(text, "Name")
+
+
+@pytest.mark.skip(reason="test_null_byte_injection not implemented")
+def test_null_byte_injection():
+    """Test handling of null byte injection attempts."""
+    null_tests = [
+        "javascript:\x00alert(1)",  # Null byte in middle
+        "java\x00script:alert(1)",  # Null byte breaking keyword
+        "<scr\x00ipt>alert(1)</script>",  # Null in tag
+    ]
+
+    for test in null_tests:
+        # Should still catch these as dangerous
+        with pytest.raises(ValueError):
+            SecurityValidator.sanitize_display_text(test, "null_test")
+
+
+# =============================================================================
+# SPECIAL CASES FOR NEW PATTERN
+# =============================================================================
+
+
+def test_new_pattern_special_cases():
+    """Test special cases specific to the new enhanced pattern."""
+    # Test that the pattern requires boundaries
+    assert SecurityValidator.sanitize_display_text("myjavascript:test", "desc")  # Should pass
+    assert SecurityValidator.sanitize_display_text("conditional=true", "desc")  # Should pass
+
+    # Test case insensitivity
+    with pytest.raises(ValueError):
+        SecurityValidator.sanitize_display_text("JAVASCRIPT:test", "desc")
+
+    # Test data URI specifics
+    with pytest.raises(ValueError):
+        SecurityValidator.sanitize_display_text("data:;javascript", "desc")
+
+    # Test that legitimate data URIs pass
+    assert SecurityValidator.sanitize_display_text("data:image/png;base64,abc", "desc")
+
+
+# --------------------------------------------------------------------------- #
+# Coverage: validate_no_xss                                                    #
+# --------------------------------------------------------------------------- #
+class TestValidateNoXss:
+    """Tests for validate_no_xss (lines 1266-1270)."""
+
+    def test_empty_string(self):
+        SecurityValidator.validate_no_xss("", "test")  # Should not raise
+
+    def test_none_value(self):
+        SecurityValidator.validate_no_xss(None, "test")  # Should not raise
+
+    def test_safe_text(self):
+        SecurityValidator.validate_no_xss("Hello World", "test")  # Should not raise
+
+    def test_html_script_tag(self):
+        with pytest.raises(ValueError, match="HTML tags"):
+            SecurityValidator.validate_no_xss("<script>alert(1)</script>", "test")
+
+    def test_html_iframe_tag(self):
+        with pytest.raises(ValueError, match="HTML tags"):
+            SecurityValidator.validate_no_xss("<iframe src='evil'></iframe>", "test")
+
+
+# --------------------------------------------------------------------------- #
+# Coverage: validate_mime_type                                                 #
+# --------------------------------------------------------------------------- #
+class TestValidateMimeType:
+    """Tests for validate_mime_type (lines 1454-1469)."""
+
+    def test_empty_string(self):
+        assert SecurityValidator.validate_mime_type("") == ""
+
+    def test_valid_standard_types(self):
+        assert SecurityValidator.validate_mime_type("text/plain") == "text/plain"
+        assert SecurityValidator.validate_mime_type("application/json") == "application/json"
+        assert SecurityValidator.validate_mime_type("image/jpeg") == "image/jpeg"
+
+    def test_invalid_format(self):
+        allowed_mime_types = DummySettings.validation_allowed_mime_types
+        invalid_mime_types = [
+            "invalid",
+            *(f"{mime_type};param" for mime_type in allowed_mime_types),
+            *(f"{mime_type}; charset" for mime_type in allowed_mime_types),
+            *(f"{mime_type.split('/', 1)[0]}/" for mime_type in allowed_mime_types if "/" in mime_type),
+        ]
+        for mime_type in invalid_mime_types:
+            with pytest.raises(ValueError, match="Invalid MIME type"):
+                SecurityValidator.validate_mime_type(mime_type)
+
+    def test_vendor_types_allowed(self):
+        assert SecurityValidator.validate_mime_type("application/x-custom") == "application/x-custom"
+        assert SecurityValidator.validate_mime_type("text/x-log") == "text/x-log"
+
+    def test_plus_suffix_allowed(self):
+        assert SecurityValidator.validate_mime_type("application/vnd.api+json") == "application/vnd.api+json"
+        assert SecurityValidator.validate_mime_type("image/svg+xml") == "image/svg+xml"
+
+    def test_parameterized_types_allowed(self):
+        allowed_parameterized_types = [
+            "text/plain; charset=utf-8",
+            "application/json; charset=utf-8",
+            "text/html; profile=interactive-app",
+        ]
+        for mime_type in allowed_parameterized_types:
+            assert SecurityValidator.validate_mime_type(mime_type) == mime_type
+
+    def test_not_in_whitelist(self):
+        with pytest.raises(ValueError, match="not in the allowed list"):
+            SecurityValidator.validate_mime_type("application/evil")
+        with pytest.raises(ValueError, match="not in the allowed list"):
+            SecurityValidator.validate_mime_type("application/evil; charset=utf-8")
+
+
+# --------------------------------------------------------------------------- #
+# Coverage: validate_shell_parameter                                           #
+# --------------------------------------------------------------------------- #
+class TestValidateShellParameter:
+    """Tests for validate_shell_parameter (lines 1490-1502)."""
+
+    def test_non_string(self):
+        with pytest.raises(ValueError, match="must be string"):
+            SecurityValidator.validate_shell_parameter(123)
+
+    def test_safe_value(self):
+        assert SecurityValidator.validate_shell_parameter("safe_param") == "safe_param"
+
+    def test_dangerous_strict(self):
+        with patch("mcpgateway.common.validators.settings") as mock_s:
+            mock_s.validation_strict = True
+            with pytest.raises(ValueError, match="shell metacharacters"):
+                SecurityValidator.validate_shell_parameter("test; rm -rf /")
+
+    def test_dangerous_non_strict(self):
+        with patch("mcpgateway.common.validators.settings") as mock_s:
+            mock_s.validation_strict = False
+            result = SecurityValidator.validate_shell_parameter("test; rm")
+            # shlex.quote wraps in single quotes
+            assert result.startswith("'")
+
+
+# --------------------------------------------------------------------------- #
+# Coverage: validate_path                                                      #
+# --------------------------------------------------------------------------- #
+class TestValidatePath:
+    """Tests for validate_path (lines 1524-1547)."""
+
+    def test_non_string(self):
+        with pytest.raises(ValueError, match="must be string"):
+            SecurityValidator.validate_path(123)
+
+    def test_uri_scheme_passthrough(self):
+        assert SecurityValidator.validate_path("http://example.com/file") == "http://example.com/file"
+        assert SecurityValidator.validate_path("plugin://some/path") == "plugin://some/path"
+
+    def test_traversal_detected(self):
+        with pytest.raises(ValueError, match="Path traversal"):
+            SecurityValidator.validate_path("../../../etc/passwd")
+
+    def test_allowed_roots_denied(self):
+        with pytest.raises(ValueError, match="outside allowed roots"):
+            SecurityValidator.validate_path("/tmp/file", allowed_roots=["/nonexistent/root"])
+
+    def test_valid_path(self):
+        result = SecurityValidator.validate_path("/tmp")
+        assert result  # Returns resolved path
+
+
+# --------------------------------------------------------------------------- #
+# Coverage: validate_sql_parameter                                             #
+# --------------------------------------------------------------------------- #
+class TestValidateSqlParameter:
+    """Tests for validate_sql_parameter (lines 1568-1579)."""
+
+    def test_non_string_passthrough(self):
+        assert SecurityValidator.validate_sql_parameter(123) == 123
+
+    def test_safe_value(self):
+        assert SecurityValidator.validate_sql_parameter("safe_value") == "safe_value"
+
+    def test_injection_strict(self):
+        with patch("mcpgateway.common.validators.settings") as mock_s:
+            mock_s.validation_strict = True
+            with pytest.raises(ValueError, match="SQL injection"):
+                SecurityValidator.validate_sql_parameter("'; DROP TABLE users--")
+
+    def test_injection_non_strict(self):
+        with patch("mcpgateway.common.validators.settings") as mock_s:
+            mock_s.validation_strict = False
+            result = SecurityValidator.validate_sql_parameter("test' OR '1'='1")
+            assert "''" in result  # Single quotes escaped
+
+
+# --------------------------------------------------------------------------- #
+# Coverage: validate_parameter_length                                          #
+# --------------------------------------------------------------------------- #
+class TestValidateParameterLength:
+    """Tests for validate_parameter_length (lines 1599-1602)."""
+
+    def test_within_limit(self):
+        assert SecurityValidator.validate_parameter_length("short", 10) == "short"
+
+    def test_exceeds_limit(self):
+        with pytest.raises(ValueError, match="exceeds maximum length"):
+            SecurityValidator.validate_parameter_length("a" * 100, max_length=10)
+
+    def test_default_limit(self):
+        assert SecurityValidator.validate_parameter_length("test") == "test"
+
+
+# --------------------------------------------------------------------------- #
+# Coverage: sanitize_text                                                      #
+# --------------------------------------------------------------------------- #
+class TestSanitizeText:
+    """Tests for sanitize_text (lines 1620-1627)."""
+
+    def test_non_string_passthrough(self):
+        assert SecurityValidator.sanitize_text(123) == 123
+
+    def test_ansi_removal(self):
+        result = SecurityValidator.sanitize_text("\x1b[31mRed\x1b[0m Text")
+        assert "\x1b" not in result
+        assert "Red" in result
+
+    def test_control_char_removal(self):
+        result = SecurityValidator.sanitize_text("Text\x00with\x01control")
+        assert "\x00" not in result
+        assert "\x01" not in result
+
+    def test_clean_text(self):
+        assert SecurityValidator.sanitize_text("Clean text") == "Clean text"
+
+
+# --------------------------------------------------------------------------- #
+# Coverage: sanitize_json_response                                             #
+# --------------------------------------------------------------------------- #
+class TestSanitizeJsonResponse:
+    """Tests for sanitize_json_response (lines 1647-1653)."""
+
+    def test_string(self):
+        result = SecurityValidator.sanitize_json_response("text\x1b[31m")
+        assert "\x1b" not in result
+
+    def test_dict(self):
+        data = {"key": "val\x00ue", "nested": {"k": "v\x01"}}
+        result = SecurityValidator.sanitize_json_response(data)
+        assert "\x00" not in result["key"]
+        assert "\x01" not in result["nested"]["k"]
+
+    def test_list(self):
+        data = ["item\x00", "item\x1b[31m"]
+        result = SecurityValidator.sanitize_json_response(data)
+        assert "\x00" not in result[0]
+        assert "\x1b" not in result[1]
+
+    def test_primitives(self):
+        assert SecurityValidator.sanitize_json_response(123) == 123
+        assert SecurityValidator.sanitize_json_response(None) is None
+        assert SecurityValidator.sanitize_json_response(True) is True
+
+
+# --------------------------------------------------------------------------- #
+# Coverage: _iter_template_expressions edge cases                              #
+# --------------------------------------------------------------------------- #
+class TestIterTemplateExpressions:
+    """Tests for _iter_template_expressions backslash/quote/unterminated paths."""
+
+    def test_unterminated_expression(self):
+        with pytest.raises(ValueError, match="potentially dangerous"):
+            SecurityValidator.validate_template("{{ unclosed")
+
+    def test_escaped_chars_in_expression(self):
+        """Template with escaped backslash inside expression."""
+        result = SecurityValidator.validate_template("{{ 'test' }}")
+        assert result == "{{ 'test' }}"
+
+    def test_double_quoted_expression(self):
+        result = SecurityValidator.validate_template('{{ "hello" }}')
+        assert result == '{{ "hello" }}'
+
+
+# --------------------------------------------------------------------------- #
+# Coverage: validate_template SSTI branches                                    #
+# --------------------------------------------------------------------------- #
+class TestValidateTemplateSsti:
+    """Tests for SSTI detection in validate_template (lines 802-818)."""
+
+    def test_ssti_dangerous_substring_in_expression(self):
+        with pytest.raises(ValueError, match="potentially dangerous"):
+            SecurityValidator.validate_template("{{ config }}")
+
+    def test_ssti_dangerous_substring_import(self):
+        with pytest.raises(ValueError, match="potentially dangerous"):
+            SecurityValidator.validate_template("{{ __import__('os') }}")
+
+    def test_ssti_dangerous_operator_bracket(self):
+        with pytest.raises(ValueError, match="potentially dangerous"):
+            SecurityValidator.validate_template("{{ foo[bar] }}")
+
+    def test_ssti_in_block_tag(self):
+        with pytest.raises(ValueError, match="potentially dangerous"):
+            SecurityValidator.validate_template("{% set x = __class__ %}")
+
+    def test_ssti_dangerous_operator_in_block_tag(self):
+        """Operators like '+' in {% %} blocks should be rejected (line 815)."""
+        with pytest.raises(ValueError, match="potentially dangerous"):
+            SecurityValidator.validate_template("{% set x = 1 + 1 %}")
+
+    def test_ssti_simple_template_dollar(self):
+        with pytest.raises(ValueError, match="potentially dangerous"):
+            SecurityValidator.validate_template("${evil}")
+
+    def test_ssti_simple_template_hash(self):
+        with pytest.raises(ValueError, match="potentially dangerous"):
+            SecurityValidator.validate_template("#{expression}")
+
+
+# --------------------------------------------------------------------------- #
+# Coverage: validate_url additional security branches                          #
+# --------------------------------------------------------------------------- #
+class TestValidateUrlSecurity:
+    """Tests for uncovered URL validation branches (lines 1011-1070)."""
+
+    def test_ipv6_blocked(self):
+        with pytest.raises(ValueError, match="IPv6"):
+            SecurityValidator.validate_url("https://[::1]/path")
+
+    def test_crlf_injection(self):
+        with pytest.raises(ValueError, match="control characters"):
+            SecurityValidator.validate_url("https://example.com/\r\nHost: evil.com")
+
+    def test_space_in_domain(self):
+        with pytest.raises(ValueError, match="spaces"):
+            SecurityValidator.validate_url("https://exam ple.com/")
+
+    def test_zero_address(self):
+        with pytest.raises(ValueError, match="0.0.0.0"):
+            SecurityValidator.validate_url("https://0.0.0.0/")
+
+    def test_credentials_in_url(self):
+        with pytest.raises(ValueError, match="credentials"):
+            SecurityValidator.validate_url("https://user:pass@example.com/")  # pragma: allowlist secret
+
+    def test_html_in_url(self):
+        with pytest.raises(ValueError, match="HTML tags"):
+            SecurityValidator.validate_url("https://example.com/<script>")
+
+    def test_js_in_url_query(self):
+        with pytest.raises(ValueError):
+            SecurityValidator.validate_url("https://example.com?x=javascript:alert(1)")
+
+    def test_dangerous_data_protocol_in_url(self):
+        """data: protocol patterns in URL (line 1011)."""
+        with pytest.raises(ValueError):
+            SecurityValidator.validate_url("https://example.com?r=data:text/html,<script>")
+
+    def test_protocol_relative_url_blocked_even_if_allowed_schemes_misconfigured(self, monkeypatch):
+        """Protocol-relative URLs must be blocked even if // is (incorrectly) whitelisted (line 1019)."""
+        monkeypatch.setattr(SecurityValidator, "ALLOWED_URL_SCHEMES", ["//", "http://", "https://", "ws://", "wss://"])
+        with pytest.raises(ValueError, match="protocol-relative"):
+            SecurityValidator.validate_url("//example.com", "URL")
+
+    def test_ipv6_double_check_netloc_brackets(self):
+        """Defensive netloc bracket check after urlparse (line 1037)."""
+        from types import SimpleNamespace
+
+        stub = SimpleNamespace(scheme="https", netloc="[::1]", path="", hostname=None, port=None, username=None, password=None)
+        with patch("mcpgateway.common.validators.urlparse", return_value=stub):
+            with pytest.raises(ValueError, match="IPv6"):
+                SecurityValidator.validate_url("https://example.com", "URL")
+
+    def test_ssrf_skipped_when_disabled(self, monkeypatch):
+        """SSRF protection can be disabled via settings (branch 1047->1051)."""
+        import mcpgateway.common.validators as validators
+
+        monkeypatch.setattr(validators.settings, "ssrf_protection_enabled", False)
+        assert SecurityValidator.validate_url("https://example.com", "URL") == "https://example.com"
+
+    def test_validate_url_skip_ssrf_keeps_structural_checks(self):
+        """Internal callers can skip DNS SSRF work without bypassing URL safety checks."""
+
+        with patch.object(SecurityValidator, "_validate_ssrf") as validate_ssrf:
+            assert SecurityValidator.validate_url("https://127.0.0.1/path", "URL", skip_ssrf=True) == "https://127.0.0.1/path"
+
+        validate_ssrf.assert_not_called()
+
+        with pytest.raises(ValueError, match="script patterns"):
+            SecurityValidator.validate_url("https://example.com/?q=onload=alert(1)", "URL", skip_ssrf=True)
+
+    def test_script_patterns_in_url(self, monkeypatch):
+        """Script patterns (non-protocol) should be blocked (line 1064)."""
+        import mcpgateway.common.validators as validators
+
+        monkeypatch.setattr(validators.settings, "ssrf_protection_enabled", False)
+        with pytest.raises(ValueError, match="script patterns"):
+            SecurityValidator.validate_url("https://example.com/?q=onload=alert(1)", "URL")
+
+    def test_urlparse_exception_raises_valueerror(self, monkeypatch):
+        """Non-ValueError exceptions are converted to a generic validation error (lines 1069-1070)."""
+        import mcpgateway.common.validators as validators
+
+        monkeypatch.setattr(validators.settings, "ssrf_protection_enabled", False)
+        with patch("mcpgateway.common.validators.urlparse", side_effect=RuntimeError("boom")):
+            with pytest.raises(ValueError, match="not a valid URL"):
+                SecurityValidator.validate_url("https://example.com", "URL")
+
+    def test_hostname_missing_still_runs_port_validation(self, monkeypatch):
+        """Cover hostname=None branch (1041->1051) without accepting an invalid port."""
+        import mcpgateway.common.validators as validators
+
+        monkeypatch.setattr(validators.settings, "ssrf_protection_enabled", False)
+        with pytest.raises(ValueError):
+            SecurityValidator.validate_url("http://:99999", "URL")
+
+
+# --------------------------------------------------------------------------- #
+# Coverage: percent-encoded injection vectors for validate_url (PR #4335)      #
+# --------------------------------------------------------------------------- #
+class TestValidateUrlPercentEncoding:
+    """Regression tests that encoded injection payloads cannot bypass validate_url."""
+
+    @pytest.fixture(autouse=True)
+    def _disable_ssrf(self, monkeypatch):
+        """SSRF tests live in TestValidateSsrf; here we focus on pattern bypass."""
+        import mcpgateway.common.validators as validators
+
+        monkeypatch.setattr(validators.settings, "ssrf_protection_enabled", False)
+
+    @pytest.mark.parametrize(
+        "url,match",
+        [
+            ("https://example.com/%0d%0aHost:evil.com", "control characters"),
+            ("https://example.com/%0D%0AHost:evil.com", "control characters"),
+            ("https://example.com/%0a", "control characters"),
+            ("https://example.com/%0d", "control characters"),
+        ],
+    )
+    def test_encoded_crlf_blocked(self, url, match):
+        with pytest.raises(ValueError, match=match):
+            SecurityValidator.validate_url(url, "URL")
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://example.com/%3Cscript%3Ealert(1)%3C/script%3E",
+            "https://example.com/%3cscript%3ealert(1)%3c/script%3e",
+            "https://example.com/%3Ciframe%20src=x%3E",
+        ],
+    )
+    def test_encoded_html_tags_blocked(self, url):
+        with pytest.raises(ValueError, match="HTML tags"):
+            SecurityValidator.validate_url(url, "URL")
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://example.com/?x=javascript%3Aalert(1)",
+            "https://example.com/?x=JAVASCRIPT%3Aalert(1)",
+            "https://example.com/?x=vbscript%3Amsgbox(1)",
+            "https://example.com/?x=data%3Atext/html,<script>",
+        ],
+    )
+    def test_encoded_dangerous_protocols_blocked(self, url):
+        with pytest.raises(ValueError, match="unsupported or potentially dangerous protocol"):
+            SecurityValidator.validate_url(url, "URL")
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://%5B%3A%3A1%5D:8080/",
+            "https://%5B::1%5D:8080/",
+        ],
+    )
+    def test_encoded_ipv6_brackets_blocked(self, url):
+        with pytest.raises(ValueError, match="IPv6"):
+            SecurityValidator.validate_url(url, "URL")
+
+    def test_encoded_space_in_authority_blocked(self):
+        with pytest.raises(ValueError, match="spaces"):
+            SecurityValidator.validate_url("https://exam%20ple.com/", "URL")
+
+    def test_encoded_tab_in_authority_blocked(self):
+        with pytest.raises(ValueError, match="control characters"):
+            SecurityValidator.validate_url("https://example%09.com/", "URL")
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://example.com/%253Cscript%253E",
+            "https://example.com/%250d%250aHost:evil.com",
+            "https://example.com/%2520",
+        ],
+    )
+    def test_double_encoded_payloads_blocked(self, url):
+        with pytest.raises(ValueError, match="double-encoded"):
+            SecurityValidator.validate_url(url, "URL")
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://example.com/%u003cscript%u003e",
+            "https://example.com/%U003C",
+        ],
+    )
+    def test_iis_unicode_escapes_blocked(self, url):
+        with pytest.raises(ValueError, match="%u-style escapes"):
+            SecurityValidator.validate_url(url, "URL")
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://example.com/%5Cu003cscript%5Cu003e",
+            "https://example.com/%5Cx3c",
+            "https://example.com/path\\u003cscript",
+        ],
+    )
+    def test_js_unicode_escape_blocked(self, url):
+        """JS-style `\\uXXXX` / `\\xXX` escapes must be rejected."""
+        with pytest.raises(ValueError, match="JavaScript-style escape sequences"):
+            SecurityValidator.validate_url(url, "URL")
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://example.com/%C0%BC",
+            "https://example.com/%c0%bcscript",
+            "https://example.com/%ED%A0%80",
+        ],
+    )
+    def test_utf8_overlong_or_invalid_rejected(self, url):
+        """Invalid UTF-8 / overlong sequences produce U+FFFD and are rejected."""
+        with pytest.raises(ValueError, match="invalid UTF-8"):
+            SecurityValidator.validate_url(url, "URL")
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://example.com/hello%20world",
+            "https://example.com/?q=hello%20world",
+            "https://example.com/foo%2Fbar",
+            "https://example.com/caf%C3%A9",
+            "https://example.com/%2B",
+        ],
+    )
+    def test_legitimate_encoded_characters_accepted(self, url):
+        """Regression: `%20` and other legitimate encodings in path/query must pass."""
+        assert SecurityValidator.validate_url(url, "URL") == url
+
+    def test_encoded_loopback_blocked_with_ssrf(self):
+        """Encoded `127.0.0.1` in hostname must be caught by SSRF once enabled."""
+        ssrf_settings = MagicMock()
+        ssrf_settings.ssrf_protection_enabled = True
+        ssrf_settings.ssrf_blocked_networks = []
+        ssrf_settings.ssrf_blocked_hosts = []
+        ssrf_settings.ssrf_allow_localhost = False
+        ssrf_settings.ssrf_allow_private_networks = False
+        ssrf_settings.ssrf_allowed_networks = []
+        ssrf_settings.ssrf_dns_fail_closed = True
+        with patch("mcpgateway.common.validators.settings", ssrf_settings):
+            with pytest.raises(ValueError, match="localhost|SSRF"):
+                SecurityValidator.validate_url("http://%31%32%37%2E%30%2E%30%2E%31/", "URL")
+
+
+# --------------------------------------------------------------------------- #
+# Coverage: percent-encoded bypass prevention on adjacent validators           #
+# --------------------------------------------------------------------------- #
+class TestAdjacentValidatorPercentEncoding:
+    """Ensure percent-encoded payloads cannot bypass validate_no_xss / validate_uri / sanitize_display_text."""
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            "%3Cscript%3Ealert(1)%3C/script%3E",
+            "%3Ciframe%20src=x%3E",
+            "%3Cimg%20onerror=x%3E",
+        ],
+    )
+    def test_validate_no_xss_blocks_encoded_html(self, payload):
+        with pytest.raises(ValueError, match="HTML tags"):
+            SecurityValidator.validate_no_xss(payload, "field")
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            "foo/%2E%2E/bar",
+            "foo/%2e%2e/bar",
+            "/%2E%2E/etc/passwd",
+        ],
+    )
+    def test_validate_uri_blocks_encoded_traversal(self, payload):
+        with pytest.raises(ValueError, match="directory traversal"):
+            SecurityValidator.validate_uri(payload, "URI")
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            "%3Cscript%3Ealert(1)%3C/script%3E",
+            "%3Ciframe%20src=evil%3E",
+        ],
+    )
+    def test_sanitize_display_text_blocks_encoded_html(self, payload):
+        with pytest.raises(ValueError, match="HTML tags"):
+            SecurityValidator.sanitize_display_text(payload, "field")
+
+    def test_sanitize_display_text_blocks_encoded_js_protocol(self):
+        with pytest.raises(ValueError, match="script patterns"):
+            SecurityValidator.sanitize_display_text("javascript%3Aalert(1)", "field")
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            "foo/%252E%252E/bar",
+            "%252E%252E%252Fetc%252Fpasswd",
+        ],
+    )
+    def test_validate_uri_blocks_double_encoded_traversal(self, payload):
+        """Double-encoded `%2E%2E` must not slip past validate_uri."""
+        with pytest.raises(ValueError, match="double-encoded"):
+            SecurityValidator.validate_uri(payload, "URI")
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            "%253Cscript%253Ealert(1)%253C/script%253E",
+            "%253Cimg%2520onerror%253Dx%253E",
+        ],
+    )
+    def test_validate_no_xss_blocks_double_encoded_html(self, payload):
+        """Double-encoded `%3Cscript%3E` must not slip past validate_no_xss."""
+        with pytest.raises(ValueError, match="double-encoded"):
+            SecurityValidator.validate_no_xss(payload, "field")
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            "%253Cscript%253Ealert(1)%253C/script%253E",
+            "javascript%253Aalert(1)",
+        ],
+    )
+    def test_sanitize_display_text_blocks_double_encoded(self, payload):
+        """Double-encoded HTML/script must not slip past sanitize_display_text."""
+        with pytest.raises(ValueError, match="double-encoded"):
+            SecurityValidator.sanitize_display_text(payload, "field")
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            "%2527 OR 1=1",
+            "admin%253B DROP TABLE users",
+            "1%252D%252D",
+        ],
+    )
+    def test_validate_sql_parameter_blocks_double_encoded(self, payload):
+        """Double-encoded SQL metacharacters must not slip past validate_sql_parameter."""
+        with pytest.raises(ValueError, match="double-encoded"):
+            SecurityValidator.validate_sql_parameter(payload)
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            "javascript%3Aalert(1)",
+            "vbscript%3Amsgbox(1)",
+            "click%20onload%3Dalert(1)",
+        ],
+    )
+    def test_validate_no_xss_blocks_encoded_js_protocol(self, payload):
+        """validate_no_xss now also rejects encoded JavaScript protocol patterns."""
+        with pytest.raises(ValueError, match="script patterns|HTML tags"):
+            SecurityValidator.validate_no_xss(payload, "field")
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            "%27 OR 1=1",
+            "%27%3B DROP TABLE users",
+            "1%2D%2D",
+            "admin%3B",
+            "%2F%2A evil %2A%2F",
+        ],
+    )
+    def test_validate_sql_parameter_blocks_encoded(self, payload):
+        """Percent-encoded SQL injection tokens must not bypass validate_sql_parameter."""
+        with pytest.raises(ValueError, match="SQL injection"):
+            SecurityValidator.validate_sql_parameter(payload)
+
+    @pytest.mark.parametrize(
+        "safe",
+        [
+            "plain_param",
+            "user@example.com",
+            "12345",
+        ],
+    )
+    def test_validate_sql_parameter_accepts_safe_values(self, safe):
+        """Regression: safe parameters still pass."""
+        assert SecurityValidator.validate_sql_parameter(safe) == safe
+
+
+# --------------------------------------------------------------------------- #
+# Coverage: _validate_ssrf branches                                            #
+# --------------------------------------------------------------------------- #
+class TestValidateSsrf:
+    """Tests for _validate_ssrf (lines 1130-1189)."""
+
+    @pytest.fixture
+    def ssrf_settings(self):
+        s = MagicMock()
+        s.ssrf_protection_enabled = True
+        s.ssrf_blocked_networks = ["169.254.169.254/32"]
+        s.ssrf_blocked_hosts = ["metadata.google.internal"]
+        s.ssrf_allow_localhost = False
+        s.ssrf_allow_private_networks = False
+        s.ssrf_allowed_networks = []
+        s.ssrf_dns_fail_closed = True
+        return s
+
+    def test_blocked_hostname(self, ssrf_settings):
+        with patch("mcpgateway.common.validators.settings", ssrf_settings):
+            with pytest.raises(ValueError, match="blocked hostname"):
+                SecurityValidator._validate_ssrf("metadata.google.internal", "URL")
+
+    def test_blocked_network(self, ssrf_settings):
+        with patch("mcpgateway.common.validators.settings", ssrf_settings):
+            with pytest.raises(ValueError, match="blocked by SSRF"):
+                SecurityValidator._validate_ssrf("169.254.169.254", "URL")
+
+    def test_localhost_blocked(self, ssrf_settings):
+        with patch("mcpgateway.common.validators.settings", ssrf_settings):
+            with pytest.raises(ValueError, match="localhost"):
+                SecurityValidator._validate_ssrf("127.0.0.1", "URL")
+
+    def test_private_network_blocked(self, ssrf_settings):
+        with patch("mcpgateway.common.validators.settings", ssrf_settings):
+            with pytest.raises(ValueError, match="private network"):
+                SecurityValidator._validate_ssrf("10.1.2.3", "URL")
+
+    def test_private_network_allowed_when_in_allowlist(self, ssrf_settings):
+        ssrf_settings.ssrf_allowed_networks = ["10.1.0.0/16"]
+        with patch("mcpgateway.common.validators.settings", ssrf_settings):
+            SecurityValidator._validate_ssrf("10.1.2.3", "URL")  # Should not raise
+
+    def test_cgnat_blocked_even_when_private_networks_allowed(self, ssrf_settings):
+        """RFC 6598 shared address space is blocked even though ipaddress does not mark it private."""
+        ssrf_settings.ssrf_blocked_networks = []
+        ssrf_settings.ssrf_allow_localhost = True
+        ssrf_settings.ssrf_allow_private_networks = True
+        with patch("mcpgateway.common.validators.settings", ssrf_settings):
+            with pytest.raises(ValueError, match="shared address space"):
+                SecurityValidator._validate_ssrf("100.64.0.1", "URL")
+
+    def test_dns_fail_closed(self, ssrf_settings):
+        with patch("mcpgateway.common.validators.settings", ssrf_settings):
+            with patch("socket.getaddrinfo", side_effect=socket.gaierror):
+                with pytest.raises(ValueError, match="DNS resolution failed"):
+                    SecurityValidator._validate_ssrf("nonexistent.example.invalid", "URL")
+
+    def test_public_ip_allowed(self, ssrf_settings):
+        ssrf_settings.ssrf_allow_localhost = True
+        ssrf_settings.ssrf_allow_private_networks = True
+        with patch("mcpgateway.common.validators.settings", ssrf_settings):
+            SecurityValidator._validate_ssrf("8.8.8.8", "URL")  # Should not raise
+
+    def test_invalid_cidr_logged(self, ssrf_settings):
+        ssrf_settings.ssrf_blocked_networks = ["invalid-cidr"]
+        ssrf_settings.ssrf_allow_localhost = True
+        ssrf_settings.ssrf_allow_private_networks = True
+        with patch("mcpgateway.common.validators.settings", ssrf_settings):
+            SecurityValidator._validate_ssrf("8.8.8.8", "URL")  # Should not raise
+
+    def test_invalid_allowlist_cidr_logged(self, ssrf_settings):
+        ssrf_settings.ssrf_allowed_networks = ["invalid-cidr"]
+        with patch("mcpgateway.common.validators.settings", ssrf_settings):
+            with pytest.raises(ValueError, match="private network"):
+                SecurityValidator._validate_ssrf("10.1.2.3", "URL")
+
+    def test_no_resolved_addresses_fail_closed(self, ssrf_settings):
+        """DNS resolves but returns no valid addresses."""
+        with patch("mcpgateway.common.validators.settings", ssrf_settings):
+            with patch("socket.getaddrinfo", return_value=[]):
+                with pytest.raises(ValueError, match="no addresses"):
+                    SecurityValidator._validate_ssrf("weird.host.example", "URL")
+
+    def test_invalid_dns_address_fail_open(self, ssrf_settings):
+        """DNS returns unparseable addresses: skip invalid entries and fail-open if configured (lines 1153-1165)."""
+        ssrf_settings.ssrf_dns_fail_closed = False
+        ssrf_settings.ssrf_allow_localhost = True
+        ssrf_settings.ssrf_allow_private_networks = True
+
+        bad_addrinfo = [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("not-an-ip", 0)),
+        ]
+        with patch("mcpgateway.common.validators.settings", ssrf_settings):
+            with patch("socket.getaddrinfo", return_value=bad_addrinfo):
+                SecurityValidator._validate_ssrf("weird.host.example", "URL")  # Should not raise
+
+    def test_private_network_check_skips_loopback(self, ssrf_settings):
+        """When localhost allowed but private networks blocked, loopback should not trip the private-range check (branch 1188->1168)."""
+        ssrf_settings.ssrf_allow_localhost = True
+        ssrf_settings.ssrf_allow_private_networks = False
+        ssrf_settings.ssrf_dns_fail_closed = True
+        with patch("mcpgateway.common.validators.settings", ssrf_settings):
+            SecurityValidator._validate_ssrf("127.0.0.1", "URL")  # Should not raise
+
+
+# --------------------------------------------------------------------------- #
+# Coverage: A-G helpers (_unquote_if_needed, _parse_ip_network_cached)        #
+# --------------------------------------------------------------------------- #
+class TestUrlHardeningHelpers:
+    """Verify the module-level helpers added by the A-G hardening refactor."""
+
+    def test_unquote_if_needed_returns_identity_for_no_percent(self):
+        """No `%` → helper returns the same object (enables `is not` short-circuit)."""
+        from mcpgateway.common.validators import _unquote_if_needed
+
+        s = "https://example.com/path/no/percent"
+        result = _unquote_if_needed(s)
+        assert result is s, "no-% path must return same object identity"
+
+    def test_unquote_if_needed_decodes_when_percent_present(self):
+        """With `%` → helper returns a new decoded string."""
+        from mcpgateway.common.validators import _unquote_if_needed
+
+        s = "https://example.com/hello%20world"
+        result = _unquote_if_needed(s)
+        assert result is not s
+        assert result == "https://example.com/hello world"
+
+    def test_parse_ip_network_cached_reuses_cache(self):
+        """Second call with the same CIDR must be a cache hit."""
+        from mcpgateway.common.validators import _parse_ip_network_cached
+
+        _parse_ip_network_cached.cache_clear()
+        first = _parse_ip_network_cached("10.0.0.0/8")
+        info_after_first = _parse_ip_network_cached.cache_info()
+        second = _parse_ip_network_cached("10.0.0.0/8")
+        info_after_second = _parse_ip_network_cached.cache_info()
+
+        assert first is second, "same CIDR must return same cached network object"
+        assert info_after_first.misses == 1
+        assert info_after_second.hits == info_after_first.hits + 1
+
+    def test_parse_ip_network_cached_raises_for_invalid_cidr_every_call(self):
+        """Invalid CIDRs re-raise on every call (lru_cache does not cache exceptions)."""
+        import pytest as _pytest
+
+        from mcpgateway.common.validators import _parse_ip_network_cached
+
+        _parse_ip_network_cached.cache_clear()
+        for _ in range(3):
+            with _pytest.raises(ValueError):
+                _parse_ip_network_cached("not-a-cidr")
+
+    def test_decode_strict_rejects_double_encoded(self):
+        """_decode_strict must raise on double-encoded payloads."""
+        import pytest as _pytest
+
+        from mcpgateway.common.validators import _decode_strict
+
+        with _pytest.raises(ValueError, match="double-encoded"):
+            _decode_strict("%253Cscript%253E", "field")
+
+    def test_decode_strict_passes_through_clean_input(self):
+        """_decode_strict returns same-identity object for no-% input."""
+        from mcpgateway.common.validators import _decode_strict
+
+        s = "https://example.com/clean"
+        assert _decode_strict(s, "field") is s
+
+
+# --------------------------------------------------------------------------- #
+# Coverage: C0 control character rejection in validate_url                     #
+# --------------------------------------------------------------------------- #
+class TestValidateUrlControlCharacters:
+    """Verify that C0 controls and DEL are rejected in decoded URLs."""
+
+    @pytest.fixture(autouse=True)
+    def _disable_ssrf(self, monkeypatch):
+        import mcpgateway.common.validators as validators
+
+        monkeypatch.setattr(validators.settings, "ssrf_protection_enabled", False)
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://example.com/%00",
+            "https://example.com/%09path",
+            "https://example.com/%0b",
+            "https://example.com/%0c",
+            "https://example.com/%7f",
+            "https://example.com/%01%02%03",
+        ],
+    )
+    def test_encoded_c0_controls_blocked(self, url):
+        with pytest.raises(ValueError, match="control characters"):
+            SecurityValidator.validate_url(url, "URL")
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://example.com/%20path",
+            "https://example.com/caf%C3%A9",
+            "https://example.com/%2B",
+        ],
+    )
+    def test_legitimate_encodings_still_accepted(self, url):
+        assert SecurityValidator.validate_url(url, "URL") == url
+
+
+# --------------------------------------------------------------------------- #
+# Coverage: C0 control character rejection in validate_uri                     #
+# --------------------------------------------------------------------------- #
+class TestValidateUriControlCharacters:
+    """Verify that C0 controls are rejected in decoded URIs."""
+
+    @pytest.mark.parametrize(
+        "uri",
+        [
+            "resource/%00name",
+            "resource/%09tab",
+            "resource/%0bvtab",
+            "resource/%7fdelchar",
+        ],
+    )
+    def test_encoded_c0_controls_blocked_in_uri(self, uri):
+        with pytest.raises(ValueError, match="control characters"):
+            SecurityValidator.validate_uri(uri, "URI")
+
+
+# --------------------------------------------------------------------------- #
+# Coverage: %25uXXXX bypass regression (double-encoded IIS escapes)           #
+# --------------------------------------------------------------------------- #
+class TestDoubleEncodedIisEscapes:
+    """Verify %25uXXXX decodes to %uXXXX and is still rejected."""
+
+    @pytest.fixture(autouse=True)
+    def _disable_ssrf(self, monkeypatch):
+        import mcpgateway.common.validators as validators
+
+        monkeypatch.setattr(validators.settings, "ssrf_protection_enabled", False)
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://example.com/%25u003cscript%25u003e",
+            "https://example.com/%25U003C",
+            "https://example.com/%25u0022",
+        ],
+    )
+    def test_double_encoded_iis_escapes_blocked(self, url):
+        with pytest.raises(ValueError, match="%u-style escapes"):
+            SecurityValidator.validate_url(url, "URL")
+
+
+# --------------------------------------------------------------------------- #
+# Coverage: JS-pattern false-positive awareness on free text                   #
+# --------------------------------------------------------------------------- #
+class TestJsPatternFalsePositiveAwareness:
+    """Document expected behavior of DANGEROUS_JS_PATTERN on free text.
+
+    These tests make the strictness policy explicit: event-handler-like patterns
+    in display text ARE rejected by validate_no_xss / sanitize_display_text.
+    If this policy changes, update these expectations.
+    """
+
+    @pytest.mark.parametrize(
+        "safe_text",
+        [
+            "Meeting is oncall rotation",
+            "Turn on the lights",
+            "Python onclick handler docs",
+            "condition: true",
+            "user@example.com",
+        ],
+    )
+    def test_freetext_without_equals_accepted_by_validate_no_xss(self, safe_text):
+        SecurityValidator.validate_no_xss(safe_text, "field")
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            "oncall=1",
+            "onclick=alert(1)",
+            "onload=evil()",
+        ],
+    )
+    def test_event_handler_like_patterns_rejected_by_validate_no_xss(self, text):
+        with pytest.raises(ValueError, match="script patterns"):
+            SecurityValidator.validate_no_xss(text, "field")
+
+    @pytest.mark.parametrize(
+        "safe_text",
+        [
+            "plain text",
+            "user@example.com",
+            "12345",
+            "hello world with spaces",
+        ],
+    )
+    def test_freetext_accepted_by_sanitize_display_text(self, safe_text):
+        result = SecurityValidator.sanitize_display_text(safe_text, "field")
+        assert result == safe_text
+
+
+class TestGatewayTestUrlValidation:
+    """Test suite for gateway test endpoint URL validation (security issue ICA_ContextForgeICACF-14).
+
+    This test class validates the security fixes for the /admin/gateways/test endpoint,
+    which previously allowed arbitrary URLs and could be used as an open proxy.
+
+    The tests verify:
+    - Allowlist enforcement for approved hosts
+    - FQDN normalization (trailing dot bypass prevention)
+    - Private IP blocking (RFC 1918, loopback, link-local)
+    - DNS rebinding protection
+    - Generic error messages (no internal detail leakage)
+    """
+
+    @pytest.fixture
+    def mock_dns_public(self):
+        """Mock DNS resolution to return a public IP address."""
+        with patch("socket.getaddrinfo") as mock_getaddrinfo:
+            # Simulate DNS returning a public IP (8.8.8.8)
+            mock_getaddrinfo.return_value = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("8.8.8.8", 443))]
+            yield mock_getaddrinfo
+
+    @pytest.fixture
+    def mock_dns_private(self):
+        """Mock DNS resolution to return a private IP address."""
+        with patch("socket.getaddrinfo") as mock_getaddrinfo:
+            # Simulate DNS returning a private IP (192.168.1.1)
+            mock_getaddrinfo.return_value = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("192.168.1.1", 443))]
+            yield mock_getaddrinfo
+
+    @pytest.mark.asyncio
+    async def test_trailing_dot_fqdn_bypass_rejected(self, mock_dns_public):
+        """Test that trailing dot FQDN bypass is rejected (AC #5).
+
+        A trailing dot (evil.com.) is valid DNS FQDN notation but can bypass
+        naive allowlist checks. The validator must normalize before checking.
+        """
+        allowed_hosts = ["trusted.com"]
+        with pytest.raises(ValueError, match="is not allowed"):
+            await SecurityValidator.validate_gateway_test_url(
+                "https://evil.com./bypass",
+                allowed_hosts,
+                "Gateway URL"
+            )
+
+    @pytest.mark.asyncio
+    async def test_trailing_dot_fqdn_normalized_and_allowed(self, mock_dns_public):
+        """Test that trailing dots are normalized for legitimate hosts."""
+        allowed_hosts = ["trusted.com"]
+        # trusted.com. should be normalized to trusted.com and allowed
+        result = await SecurityValidator.validate_gateway_test_url(
+            "https://trusted.com./path",
+            allowed_hosts,
+            "Gateway URL"
+        )
+        assert result["validated_url"] == "https://trusted.com./path"
+        assert result["hostname"] == "trusted.com."
+        assert result["resolved_ip"] == "8.8.8.8"
+
+    @pytest.mark.asyncio
+    async def test_private_ip_blocked_when_ssrf_enabled(self):
+        """Test that private IPs are blocked when SSRF protection is enabled (AC #3).
+
+        When ssrf_protection_enabled=true (the default), private IPs are blocked
+        even if explicitly included in the allowlist.
+        """
+        from unittest.mock import patch
+
+        # RFC 1918 private ranges
+        private_ips = [
+            "https://192.168.1.1/",
+            "https://10.0.0.1/",
+            "https://172.16.0.1/",
+        ]
+        # Even if we explicitly allow them, they should be blocked when SSRF protection is enabled
+        allowed_hosts = ["192.168.1.1", "10.0.0.1", "172.16.0.1"]
+
+        # Explicitly set SSRF protection to enabled
+        with patch("mcpgateway.common.validators.settings") as mock_settings:
+            mock_settings.ssrf_protection_enabled = True
+            mock_settings.gateway_test_dns_timeout = 5.0
+
+            for url in private_ips:
+                with pytest.raises(ValueError, match="is not allowed"):
+                    await SecurityValidator.validate_gateway_test_url(url, allowed_hosts, "Gateway URL")
+
+    @pytest.mark.asyncio
+    async def test_loopback_blocked_when_ssrf_enabled(self):
+        """Test that loopback addresses are blocked when SSRF protection is enabled (AC #3).
+
+        When ssrf_protection_enabled=true (the default), loopback addresses are blocked
+        even if explicitly included in the allowlist.
+        """
+        from unittest.mock import patch
+
+        loopback_urls = [
+            "https://127.0.0.1/",
+            "https://127.0.0.2/",
+            "https://localhost/",
+        ]
+        # Even if we explicitly allow them, they should be blocked when SSRF protection is enabled
+        allowed_hosts = ["127.0.0.1", "localhost"]
+
+        # Explicitly set SSRF protection to enabled
+        with patch("mcpgateway.common.validators.settings") as mock_settings:
+            mock_settings.ssrf_protection_enabled = True
+            mock_settings.gateway_test_dns_timeout = 5.0
+
+            for url in loopback_urls:
+                with pytest.raises(ValueError, match="is not allowed"):
+                    await SecurityValidator.validate_gateway_test_url(url, allowed_hosts, "Gateway URL")
+
+    @pytest.mark.asyncio
+    async def test_link_local_blocked_when_ssrf_enabled(self):
+        """Test that link-local addresses are blocked when SSRF protection is enabled (AC #3).
+
+        When ssrf_protection_enabled=true (the default), link-local addresses are blocked
+        even if explicitly included in the allowlist. This is critical for preventing
+        cloud metadata service access (e.g., 169.254.169.254).
+        """
+        from unittest.mock import patch
+
+        # Link-local range (169.254.0.0/16) - commonly used for cloud metadata
+        # Explicitly set SSRF protection to enabled
+        with patch("mcpgateway.common.validators.settings") as mock_settings:
+            mock_settings.ssrf_protection_enabled = True
+            mock_settings.gateway_test_dns_timeout = 5.0
+
+            with pytest.raises(ValueError, match="is not allowed"):
+                await SecurityValidator.validate_gateway_test_url(
+                    "https://169.254.169.254/",
+                    ["169.254.169.254"],
+                    "Gateway URL"
+                )
+
+    @pytest.mark.asyncio
+    async def test_cgnat_blocked_when_ssrf_enabled(self):
+        """Gateway-test validation blocks RFC 6598 shared address space."""
+        with patch("mcpgateway.common.validators.settings") as mock_settings:
+            mock_settings.ssrf_protection_enabled = True
+            mock_settings.gateway_test_dns_timeout = 5.0
+
+            with pytest.raises(ValueError, match="is not allowed"):
+                await SecurityValidator.validate_gateway_test_url(
+                    "https://100.64.0.1/",
+                    ["100.64.0.1"],
+                    "Gateway URL",
+                )
+
+    @pytest.mark.asyncio
+    async def test_dns_rebinding_attack_blocked(self, mock_dns_private):
+        """Test that DNS rebinding attacks are blocked.
+
+        An attacker might register a domain that resolves to a public IP initially
+        but later resolves to a private IP. The validator must check resolved IPs.
+        """
+        allowed_hosts = ["evil-rebinding.com"]
+        # evil-rebinding.com is in allowlist, but DNS returns private IP
+        with pytest.raises(ValueError, match="is not allowed"):
+            await SecurityValidator.validate_gateway_test_url(
+                "https://evil-rebinding.com/",
+                allowed_hosts,
+                "Gateway URL"
+            )
+
+    @pytest.mark.asyncio
+    async def test_exact_hostname_match_allowed(self, mock_dns_public):
+        """Test that exact hostname matches are allowed."""
+        allowed_hosts = ["api.example.com"]
+        result = await SecurityValidator.validate_gateway_test_url(
+            "https://api.example.com/test",
+            allowed_hosts,
+            "Gateway URL"
+        )
+        assert result["validated_url"] == "https://api.example.com/test"
+        assert result["hostname"] == "api.example.com"
+        assert result["resolved_ip"] == "8.8.8.8"
+
+    @pytest.mark.asyncio
+    async def test_wildcard_subdomain_match_allowed(self, mock_dns_public):
+        """Test that wildcard subdomain patterns work correctly."""
+        allowed_hosts = ["*.example.com"]
+
+        # Should match subdomains
+        result = await SecurityValidator.validate_gateway_test_url(
+            "https://api.example.com/test",
+            allowed_hosts,
+            "Gateway URL"
+        )
+        assert result["validated_url"] == "https://api.example.com/test"
+        assert result["resolved_ip"] == "8.8.8.8"
+
+        result = await SecurityValidator.validate_gateway_test_url(
+            "https://api.v2.example.com/test",
+            allowed_hosts,
+            "Gateway URL"
+        )
+        assert result["validated_url"] == "https://api.v2.example.com/test"
+        assert result["resolved_ip"] == "8.8.8.8"
+
+        # Should NOT match the base domain itself (only subdomains)
+        with pytest.raises(ValueError, match="is not allowed"):
+            await SecurityValidator.validate_gateway_test_url(
+                "https://example.com/test",
+                allowed_hosts,
+                "Gateway URL"
+            )
+
+    @pytest.mark.asyncio
+    async def test_wildcard_does_not_match_different_domain(self, mock_dns_public):
+        """Test that wildcard patterns don't match unrelated domains."""
+        allowed_hosts = ["*.example.com"]
+        with pytest.raises(ValueError, match="is not allowed"):
+            await SecurityValidator.validate_gateway_test_url(
+                "https://evil.com/test",
+                allowed_hosts,
+                "Gateway URL"
+            )
+
+    @pytest.mark.asyncio
+    async def test_empty_allowlist_rejects_all(self, mock_dns_public):
+        """Test that empty allowlist rejects all URLs (AC #1)."""
+        with pytest.raises(ValueError, match="is not allowed"):
+            await SecurityValidator.validate_gateway_test_url(
+                "https://example.com/",
+                [],
+                "Gateway URL"
+            )
+
+    @pytest.mark.asyncio
+    async def test_generic_error_message_no_detail_leakage(self):
+        """Test that error messages don't expose internal validation details (AC #4)."""
+        allowed_hosts = ["trusted.com"]
+
+        # Test various rejection scenarios - all should return generic messages
+        test_cases = [
+            "https://evil.com/",  # Not in allowlist
+            "https://192.168.1.1/",  # Private IP
+            "https://127.0.0.1/",  # Loopback
+        ]
+
+        for url in test_cases:
+            try:
+                await SecurityValidator.validate_gateway_test_url(url, allowed_hosts, "Gateway URL")
+                pytest.fail(f"Expected ValueError for {url}")
+            except ValueError as e:
+                error_msg = str(e)
+                # Error message should be generic
+                assert "Gateway URL" in error_msg
+                # Should NOT contain internal details
+                assert "not allowed" in error_msg.lower()
+                # Should NOT expose specific validation failure reasons in detail
+                assert "private" not in error_msg.lower()
+                assert "loopback" not in error_msg.lower()
+
+    @pytest.mark.asyncio
+    async def test_case_insensitive_hostname_matching(self, mock_dns_public):
+        """Test that hostname matching is case-insensitive."""
+        allowed_hosts = ["Example.COM"]
+        result = await SecurityValidator.validate_gateway_test_url(
+            "https://example.com/test",
+            allowed_hosts,
+            "Gateway URL"
+        )
+        assert result["validated_url"] == "https://example.com/test"
+        assert result["resolved_ip"] == "8.8.8.8"
+
+    @pytest.mark.asyncio
+    async def test_prevents_oob_callback_to_external_collaborator(self, mock_dns_public):
+        """Test that out-of-band callbacks to external collaborators are blocked (AC #6).
+
+        This simulates a penetration test scenario where an attacker tries to use
+        the gateway test endpoint to trigger a callback to their external server
+        (e.g., burpcollaborator.net, interact.sh, etc.) to prove the vulnerability.
+        """
+        allowed_hosts = ["trusted.com"]
+
+        # Common external collaborator services used in pentesting
+        collaborator_domains = [
+            "https://attacker.burpcollaborator.net/callback",
+            "https://test.interact.sh/oob",
+            "https://evil.oastify.com/exfiltrate",
+            "https://attacker-controlled.com/collect-data",
+        ]
+
+        for url in collaborator_domains:
+            with pytest.raises(ValueError, match="is not allowed"):
+                await SecurityValidator.validate_gateway_test_url(url, allowed_hosts, "Gateway URL")
+
+    @pytest.mark.asyncio
+    async def test_multiple_allowlist_patterns(self, mock_dns_public):
+        """Test that multiple allowlist patterns work correctly."""
+        allowed_hosts = ["api.example.com", "*.partner.com", "legacy.system.net"]
+
+        # All of these should be allowed
+        valid_urls = [
+            "https://api.example.com/test",
+            "https://v1.partner.com/api",
+            "https://v2.partner.com/api",
+            "https://legacy.system.net/old",
+        ]
+
+        for url in valid_urls:
+            result = await SecurityValidator.validate_gateway_test_url(url, allowed_hosts, "Gateway URL")
+            assert result["validated_url"] == url
+            assert result["resolved_ip"] == "8.8.8.8"
+
+        # These should be rejected
+        rejected_urls = [
+            "https://evil.com/",
+            "https://partner.com/api",  # *.partner.com does not match base domain
+        ]
+        for url in rejected_urls:
+            with pytest.raises(ValueError, match="is not allowed"):
+                await SecurityValidator.validate_gateway_test_url(url, allowed_hosts, "Gateway URL")
+
+    @pytest.mark.asyncio
+    async def test_empty_url_rejected(self):
+        """Test that empty URLs are rejected."""
+        allowed_hosts = ["example.com"]
+
+        with pytest.raises(ValueError, match="cannot be empty"):
+            await SecurityValidator.validate_gateway_test_url("", allowed_hosts, "Gateway URL")
+
+        with pytest.raises(ValueError, match="cannot be empty"):
+            await SecurityValidator.validate_gateway_test_url(None, allowed_hosts, "Gateway URL")
+
+    @pytest.mark.asyncio
+    async def test_url_without_hostname_rejected(self, mock_dns_public):
+        """Test that URLs without hostnames are rejected."""
+        allowed_hosts = ["example.com"]
+
+        # URL with no hostname
+        with pytest.raises(ValueError, match="is not allowed"):
+            await SecurityValidator.validate_gateway_test_url("https:///path", allowed_hosts, "Gateway URL")
+
+    @pytest.mark.asyncio
+    async def test_ipv4_mapped_ipv6_loopback_blocked(self):
+        """Test that IPv4-mapped IPv6 loopback addresses are blocked."""
+        allowed_hosts = ["::ffff:127.0.0.1"]
+
+        # IPv4-mapped IPv6 loopback should be blocked
+        with pytest.raises(ValueError, match="is not allowed"):
+            await SecurityValidator.validate_gateway_test_url(
+                "http://[::ffff:127.0.0.1]/test",
+                allowed_hosts,
+                "Gateway URL"
+            )
+
+    @pytest.mark.asyncio
+    async def test_ipv4_mapped_ipv6_in_resolved_address_blocked(self, monkeypatch):
+        """Test that IPv4-mapped IPv6 addresses in DNS resolution are unwrapped and checked."""
+        import socket
+
+        # Mock DNS to return IPv4-mapped IPv6 private address
+        def mock_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+            # Return IPv4-mapped IPv6 address for private IP
+            return [(socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("::ffff:192.168.1.1", port or 443))]
+
+        monkeypatch.setattr("mcpgateway.common.validators.socket.getaddrinfo", mock_getaddrinfo)
+
+        allowed_hosts = ["mapped.example.com"]
+
+        with pytest.raises(ValueError, match="is not allowed"):
+            await SecurityValidator.validate_gateway_test_url(
+                "https://mapped.example.com/test",
+                allowed_hosts,
+                "Gateway URL"
+            )
+
+    @pytest.mark.asyncio
+    async def test_dns_resolution_failure_rejected(self, monkeypatch):
+        """Test that DNS resolution failures are rejected."""
+        import socket
+
+        def mock_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+            raise socket.gaierror("Name or service not known")
+
+        monkeypatch.setattr("mcpgateway.common.validators.socket.getaddrinfo", mock_getaddrinfo)
+
+        allowed_hosts = ["nonexistent.example.com"]
+
+        with pytest.raises(ValueError, match="is not allowed"):
+            await SecurityValidator.validate_gateway_test_url(
+                "https://nonexistent.example.com/test",
+                allowed_hosts,
+                "Gateway URL"
+            )
+
+    @pytest.mark.asyncio
+    async def test_cgnat_address_blocked(self, monkeypatch):
+        """Test that carrier-grade NAT (CGNAT) addresses are blocked."""
+        import socket
+
+        # Mock DNS to return CGNAT IP (100.64.0.0/10)
+        def mock_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("100.64.1.1", port or 443))]
+
+        monkeypatch.setattr("mcpgateway.common.validators.socket.getaddrinfo", mock_getaddrinfo)
+
+        allowed_hosts = ["cgnat.example.com"]
+
+        # Should be blocked even if in allowlist
+        with pytest.raises(ValueError, match="is not allowed"):
+            await SecurityValidator.validate_gateway_test_url(
+                "https://cgnat.example.com/test",
+                allowed_hosts,
+                "Gateway URL"
+            )
+
+    @pytest.mark.asyncio
+    async def test_cgnat_direct_ip_blocked(self):
+        """Test that direct CGNAT IP addresses are blocked."""
+        allowed_hosts = ["100.64.0.1"]
+
+        # CGNAT addresses (100.64.0.0/10) should be blocked
+        cgnat_ips = [
+            "http://100.64.0.1/test",
+            "http://100.64.255.254/test",
+            "http://100.127.255.255/test",
+        ]
+
+        for url in cgnat_ips:
+            with pytest.raises(ValueError, match="is not allowed"):
+                await SecurityValidator.validate_gateway_test_url(url, allowed_hosts, "Gateway URL")
+
+    @pytest.mark.asyncio
+    async def test_resolved_ip_exception_continues_checking(self, monkeypatch):
+        """Test that exceptions during resolved IP checking don't stop validation."""
+        import socket
+
+        # Mock DNS to return mix of valid and invalid entries
+        def mock_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+            return [
+                (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("not-an-ip", port or 443)),  # Invalid
+                (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("8.8.8.8", port or 443)),  # Valid public IP
+            ]
+
+        monkeypatch.setattr("mcpgateway.common.validators.socket.getaddrinfo", mock_getaddrinfo)
+
+        allowed_hosts = ["mixed.example.com"]
+
+        # Should succeed because one address is valid
+        result = await SecurityValidator.validate_gateway_test_url(
+            "https://mixed.example.com/test",
+            allowed_hosts,
+            "Gateway URL"
+        )
+        assert result["validated_url"] == "https://mixed.example.com/test"
+        assert result["resolved_ip"] == "8.8.8.8"
+
+    @pytest.mark.asyncio
+    async def test_url_parse_exception_rejected(self):
+        """Test that URLs that raise exceptions during parsing are rejected."""
+        allowed_hosts = ["example.com"]
+
+        # URL that might cause parsing issues - test the exception handling path
+        # Using a malformed URL structure
+        with pytest.raises(ValueError, match="is not allowed"):
+            # Create a URL object that will fail hostname extraction
+            await SecurityValidator.validate_gateway_test_url("http://", allowed_hosts, "Gateway URL")
+
+    @pytest.mark.asyncio
+    async def test_wildcard_subdomain_match(self, monkeypatch):
+        """Test wildcard subdomain pattern matching."""
+        import socket
+
+        def mock_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("8.8.8.8", port or 443))]
+
+        monkeypatch.setattr("mcpgateway.common.validators.socket.getaddrinfo", mock_getaddrinfo)
+
+        allowed_hosts = ["*.example.com"]
+
+        # Test wildcard match for subdomain
+        result = await SecurityValidator.validate_gateway_test_url(
+            "https://sub.example.com/test",
+            allowed_hosts,
+            "Gateway URL"
+        )
+        assert result["validated_url"] == "https://sub.example.com/test"
+        assert result["hostname"] == "sub.example.com"
+        assert result["resolved_ip"] == "8.8.8.8"
+
+        # Test that base domain does NOT match wildcard pattern (only subdomains)
+        with pytest.raises(ValueError, match="is not allowed"):
+            await SecurityValidator.validate_gateway_test_url(
+                "https://example.com/test",
+                allowed_hosts,
+                "Gateway URL"
+            )
+
+    @pytest.mark.asyncio
+    async def test_hostname_not_in_allowlist_rejected(self, monkeypatch):
+        """Test that hostnames not in allowlist are rejected with generic message."""
+        import socket
+
+        def mock_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("8.8.8.8", port or 443))]
+
+        monkeypatch.setattr("mcpgateway.common.validators.socket.getaddrinfo", mock_getaddrinfo)
+
+        allowed_hosts = ["allowed.example.com"]
+
+        # Test that non-matching hostname is rejected
+        with pytest.raises(ValueError, match="is not allowed"):
+            await SecurityValidator.validate_gateway_test_url(
+                "https://notallowed.example.com/test",
+                allowed_hosts,
+                "Gateway URL"
+            )
+
+    @pytest.mark.asyncio
+    async def test_ipv4_mapped_ipv6_public_unwrapping(self):
+        """Test that IPv4-mapped IPv6 public addresses are unwrapped and checked."""
+        # Use IPv4-mapped public IP - this hits the unwrapping logic on line 1560
+        # Even though it's a public IP, it should fail allowlist check
+        allowed_hosts = ["8.8.8.8"]
+
+        # IPv4-mapped public IP should be unwrapped and pass through to allowlist check
+        # It will fail because the IP itself is not in the allowlist (need hostname match)
+        with pytest.raises(ValueError, match="is not allowed"):
+            await SecurityValidator.validate_gateway_test_url(
+                "http://[::ffff:8.8.8.8]/test",
+                allowed_hosts,
+                "Gateway URL"
+            )
+
+    @pytest.mark.asyncio
+    async def test_url_with_missing_hostname_rejected(self):
+        """Test that URLs without a hostname are rejected (covers lines 1545-1547)."""
+        allowed_hosts = ["example.com"]
+
+        # URL with no hostname (http:///test has hostname=None)
+        with pytest.raises(ValueError, match="is not allowed"):
+            await SecurityValidator.validate_gateway_test_url(
+                "http:///test",
+                allowed_hosts,
+                "Gateway URL"
+            )
+
+    @pytest.mark.asyncio
+    async def test_multiple_public_dns_answers_use_first_safe_ip(self, monkeypatch):
+        """Multiple public DNS answers should be accepted and the first safe IP should be pinned."""
+        import socket
+
+        def mock_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+            return [
+                (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("8.8.4.4", port or 443)),
+                (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("8.8.8.8", port or 443)),
+            ]
+
+        monkeypatch.setattr("mcpgateway.common.validators.socket.getaddrinfo", mock_getaddrinfo)
+
+        result = await SecurityValidator.validate_gateway_test_url(
+            "https://multi.example.com/test",
+            ["multi.example.com"],
+            "Gateway URL",
+        )
+
+        assert result["validated_url"] == "https://multi.example.com/test"
+        assert result["hostname"] == "multi.example.com"
+        assert result["resolved_ip"] == "8.8.4.4"
+
+    @pytest.mark.asyncio
+    async def test_direct_public_ip_base_url_returns_literal_as_pinned_ip(self, monkeypatch):
+        """Direct public IP URLs should succeed without DNS rebinding exposure and pin the same IP."""
+        import socket
+
+        # Mock DNS to return the same IP when resolving an IP address
+        def mock_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (host, port or 443))]
+
+        monkeypatch.setattr("mcpgateway.common.validators.socket.getaddrinfo", mock_getaddrinfo)
+
+        result = await SecurityValidator.validate_gateway_test_url(
+            "https://8.8.8.8/test",
+            ["8.8.8.8"],
+            "Gateway URL",
+        )
+
+        assert result["validated_url"] == "https://8.8.8.8/test"
+        assert result["hostname"] == "8.8.8.8"
+        assert result["resolved_ip"] == "8.8.8.8"
+
+
+class TestOutboundUrlConnectionPinningValidation:
+    """Tests for generic outbound URL validation metadata used by tool invocation."""
+
+    @staticmethod
+    def _settings(**overrides):
+        values = {
+            "ssrf_protection_enabled": True,
+            "ssrf_blocked_networks": ["169.254.0.0/16"],
+            "ssrf_blocked_hosts": [],
+            "ssrf_allow_localhost": False,
+            "ssrf_allow_private_networks": False,
+            "ssrf_allowed_networks": [],
+            "ssrf_dns_fail_closed": True,
+            "gateway_test_dns_timeout": 5.0,
+        }
+        values.update(overrides)
+        return MagicMock(**values)
+
+    @pytest.mark.asyncio
+    async def test_validate_url_for_connection_pinning_preserves_original_url_parts(self, monkeypatch):
+        """The helper returns metadata without rebuilding or dropping query strings."""
+
+        def mock_getaddrinfo(_host, port, family=0, type=0, proto=0, flags=0):
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("8.8.4.4", port or 443))]
+
+        monkeypatch.setattr("mcpgateway.common.validators.socket.getaddrinfo", mock_getaddrinfo)
+
+        with patch("mcpgateway.common.validators.settings", self._settings()):
+            result = await SecurityValidator.validate_url_for_connection_pinning("https://api.example.com:8443/path?sig=abc", "Tool URL")
+
+        assert result == {
+            "validated_url": "https://api.example.com:8443/path?sig=abc",
+            "hostname": "api.example.com",
+            "original_authority": "api.example.com:8443",
+            "resolved_ip": "8.8.4.4",
+        }
+
+    @pytest.mark.asyncio
+    async def test_validate_url_for_connection_pinning_rejects_empty_value(self):
+        """Empty outbound URLs are rejected before DNS work."""
+
+        with pytest.raises(ValueError, match="cannot be empty"):
+            await SecurityValidator.validate_url_for_connection_pinning("", "Tool URL")
+
+    @pytest.mark.asyncio
+    async def test_validate_url_for_connection_pinning_rejects_validation_timeout(self):
+        """Slow URL validation fails closed for async callers."""
+
+        with patch("mcpgateway.common.validators.asyncio.wait_for", side_effect=asyncio.TimeoutError):
+            with pytest.raises(ValueError, match="URL validation timed out"):
+                await SecurityValidator.validate_url_for_connection_pinning("https://api.example.com/path", "Tool URL")
+
+    @pytest.mark.asyncio
+    async def test_validate_url_for_connection_pinning_resolves_hostname_once(self, monkeypatch):
+        """The same DNS result is used for policy checks and connection pinning."""
+
+        resolved_hosts = []
+
+        def mock_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+            resolved_hosts.append(host)
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("8.8.4.4", port or 443))]
+
+        monkeypatch.setattr("mcpgateway.common.validators.socket.getaddrinfo", mock_getaddrinfo)
+
+        with patch("mcpgateway.common.validators.settings", self._settings()):
+            result = await SecurityValidator.validate_url_for_connection_pinning("https://api.example.com/path", "Tool URL")
+
+        assert resolved_hosts == ["api.example.com"]
+        assert result["resolved_ip"] == "8.8.4.4"
+
+    @pytest.mark.asyncio
+    async def test_validate_url_for_connection_pinning_preserves_blocked_hostname_policy(self, monkeypatch):
+        """Hostname blocklist checks still run before DNS pinning."""
+
+        resolved_hosts = []
+
+        def mock_getaddrinfo(host, *_args, **_kwargs):
+            resolved_hosts.append(host)
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("8.8.4.4", 443))]
+
+        monkeypatch.setattr("mcpgateway.common.validators.socket.getaddrinfo", mock_getaddrinfo)
+
+        with patch("mcpgateway.common.validators.settings", self._settings(ssrf_blocked_hosts=["api.example.com"])):
+            with pytest.raises(ValueError, match="blocked hostname"):
+                await SecurityValidator.validate_url_for_connection_pinning("https://api.example.com/path", "Tool URL")
+
+        assert resolved_hosts == []
+
+    @pytest.mark.asyncio
+    async def test_validate_url_for_connection_pinning_rejects_missing_hostname(self):
+        """Validated URL metadata must include a hostname."""
+
+        with patch.object(SecurityValidator, "validate_url", return_value="http:///path"):
+            with pytest.raises(ValueError, match="not a valid URL"):
+                await SecurityValidator.validate_url_for_connection_pinning("http:///path", "Tool URL")
+
+    @pytest.mark.asyncio
+    async def test_validate_url_for_connection_pinning_wraps_parse_errors(self):
+        """Unexpected parse failures are normalized to validation errors."""
+
+        with (
+            patch.object(SecurityValidator, "validate_url", return_value="https://api.example.com/path"),
+            patch("mcpgateway.common.validators.urlparse", side_effect=RuntimeError("parse failed")),
+        ):
+            with pytest.raises(ValueError, match="not a valid URL"):
+                await SecurityValidator.validate_url_for_connection_pinning("https://api.example.com/path", "Tool URL")
+
+    @pytest.mark.asyncio
+    async def test_validate_url_for_connection_pinning_unwraps_ipv4_mapped_literal(self):
+        """IPv4-mapped IPv6 literal URLs pin to the embedded IPv4 address."""
+
+        with (
+            patch.object(SecurityValidator, "validate_url", return_value="https://[::ffff:8.8.8.8]/path"),
+            patch("mcpgateway.common.validators.settings", self._settings()),
+        ):
+            result = await SecurityValidator.validate_url_for_connection_pinning("https://[::ffff:8.8.8.8]/path", "Tool URL")
+
+        assert result["hostname"] == "::ffff:8.8.8.8"
+        assert result["resolved_ip"] == "8.8.8.8"
+
+    @pytest.mark.asyncio
+    async def test_validate_url_for_connection_pinning_rejects_disallowed_dns_answer(self, monkeypatch):
+        """Every resolved address must satisfy the existing outbound URL policy."""
+
+        def mock_getaddrinfo(_host, port, family=0, type=0, proto=0, flags=0):
+            return [
+                (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("8.8.4.4", port or 443)),
+                (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", port or 443)),
+            ]
+
+        monkeypatch.setattr("mcpgateway.common.validators.socket.getaddrinfo", mock_getaddrinfo)
+
+        with patch("mcpgateway.common.validators.settings", self._settings()):
+            with pytest.raises(ValueError, match="localhost"):
+                await SecurityValidator.validate_url_for_connection_pinning("https://api.example.com/path", "Tool URL")
+
+    @pytest.mark.asyncio
+    async def test_validate_url_for_connection_pinning_rejects_cgnat_dns_answer(self, monkeypatch):
+        """REST tool pinning rejects RFC 6598 shared address space."""
+
+        def mock_getaddrinfo(_host, port, family=0, type=0, proto=0, flags=0):
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("100.64.0.1", port or 443))]
+
+        monkeypatch.setattr("mcpgateway.common.validators.socket.getaddrinfo", mock_getaddrinfo)
+
+        with patch("mcpgateway.common.validators.settings", self._settings(ssrf_allow_private_networks=True, ssrf_blocked_networks=[])):
+            with pytest.raises(ValueError, match="shared address space"):
+                await SecurityValidator.validate_url_for_connection_pinning("https://api.example.com/path", "Tool URL")
+
+    @pytest.mark.asyncio
+    async def test_validate_url_for_connection_pinning_allows_private_when_policy_disabled(self, monkeypatch):
+        """Disabling protection preserves local/private dev tool behavior."""
+
+        def mock_getaddrinfo(_host, port, family=0, type=0, proto=0, flags=0):
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", port or 443))]
+
+        monkeypatch.setattr("mcpgateway.common.validators.socket.getaddrinfo", mock_getaddrinfo)
+
+        with patch("mcpgateway.common.validators.settings", self._settings(ssrf_protection_enabled=False)):
+            result = await SecurityValidator.validate_url_for_connection_pinning("http://local-tool.example/path", "Tool URL")
+
+        assert result["resolved_ip"] == "127.0.0.1"
+        assert result["original_authority"] == "local-tool.example"
+
+    @pytest.mark.asyncio
+    async def test_resolve_hostname_for_connection_pinning_fails_closed_on_dns_error(self, monkeypatch):
+        """DNS errors are rejected when fail-closed behavior is enabled."""
+
+        def mock_getaddrinfo(_host, *_args, **_kwargs):
+            raise socket.gaierror("not found")
+
+        monkeypatch.setattr("mcpgateway.common.validators.socket.getaddrinfo", mock_getaddrinfo)
+
+        with patch("mcpgateway.common.validators.settings", self._settings()):
+            with pytest.raises(ValueError, match="DNS resolution failed"):
+                await SecurityValidator._resolve_hostname_for_connection_pinning("api.example.com", "Tool URL", 5.0)
+
+    @pytest.mark.asyncio
+    async def test_resolve_hostname_for_connection_pinning_fails_closed_when_protection_enabled(self, monkeypatch):
+        """Pinned resolution does not allow SSRF DNS fail-open to continue unpinned."""
+
+        def mock_getaddrinfo(_host, *_args, **_kwargs):
+            raise socket.gaierror("not found")
+
+        monkeypatch.setattr("mcpgateway.common.validators.socket.getaddrinfo", mock_getaddrinfo)
+
+        with patch("mcpgateway.common.validators.settings", self._settings(ssrf_dns_fail_closed=False)):
+            with pytest.raises(ValueError, match="connection pinning requires a resolved address"):
+                await SecurityValidator._resolve_hostname_for_connection_pinning("api.example.com", "Tool URL", 5.0)
+
+    @pytest.mark.asyncio
+    async def test_resolve_hostname_for_connection_pinning_fails_open_when_protection_disabled(self, monkeypatch):
+        """DNS errors can return no pin when SSRF protection is disabled."""
+
+        def mock_getaddrinfo(_host, *_args, **_kwargs):
+            raise socket.gaierror("not found")
+
+        monkeypatch.setattr("mcpgateway.common.validators.socket.getaddrinfo", mock_getaddrinfo)
+
+        with patch("mcpgateway.common.validators.settings", self._settings(ssrf_protection_enabled=False, ssrf_dns_fail_closed=False)):
+            result = await SecurityValidator._resolve_hostname_for_connection_pinning("api.example.com", "Tool URL", 5.0)
+
+        assert result == []
+
+    @pytest.mark.asyncio
+    async def test_resolve_hostname_for_connection_pinning_unwraps_and_skips_invalid_answers(self, monkeypatch):
+        """Resolver answers are normalized and invalid addresses are ignored."""
+
+        def mock_getaddrinfo(_host, _port, _family=0, _type=0, _proto=0, _flags=0):
+            return [
+                (socket.AF_INET6, socket.SOCK_STREAM, 6, "", ("::ffff:8.8.4.4", 0, 0, 0)),
+                (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("not-an-ip", 0)),
+            ]
+
+        monkeypatch.setattr("mcpgateway.common.validators.socket.getaddrinfo", mock_getaddrinfo)
+
+        result = await SecurityValidator._resolve_hostname_for_connection_pinning("api.example.com", "Tool URL", 5.0)
+
+        assert result == ["8.8.4.4"]
+
+    @pytest.mark.asyncio
+    async def test_resolve_hostname_for_connection_pinning_rejects_no_valid_answers(self, monkeypatch):
+        """Fail-closed DNS rejects resolver answers that contain no usable IPs."""
+
+        def mock_getaddrinfo(_host, _port, _family=0, _type=0, _proto=0, _flags=0):
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("not-an-ip", 0))]
+
+        monkeypatch.setattr("mcpgateway.common.validators.socket.getaddrinfo", mock_getaddrinfo)
+
+        with patch("mcpgateway.common.validators.settings", self._settings()):
+            with pytest.raises(ValueError, match="returned no addresses"):
+                await SecurityValidator._resolve_hostname_for_connection_pinning("api.example.com", "Tool URL", 5.0)
+
+    @pytest.mark.asyncio
+    async def test_resolve_hostname_for_connection_pinning_rejects_no_valid_answers_when_fail_open_configured(self, monkeypatch):
+        """SSRF-protected pinning requires a usable address even when DNS fail-open is configured."""
+
+        def mock_getaddrinfo(_host, _port, _family=0, _type=0, _proto=0, _flags=0):
+            return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("not-an-ip", 0))]
+
+        monkeypatch.setattr("mcpgateway.common.validators.socket.getaddrinfo", mock_getaddrinfo)
+
+        with patch("mcpgateway.common.validators.settings", self._settings(ssrf_dns_fail_closed=False)):
+            with pytest.raises(ValueError, match="connection pinning requires a resolved address"):
+                await SecurityValidator._resolve_hostname_for_connection_pinning("api.example.com", "Tool URL", 5.0)

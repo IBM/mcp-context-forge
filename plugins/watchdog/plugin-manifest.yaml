@@ -1,0 +1,11 @@
+description: "Enforces max runtime for tools; warn or block on threshold."
+author: "ContextForge"
+version: "0.1.0"
+tags: ["reliability", "latency", "slo"]
+available_hooks:
+  - "tool_pre_invoke"
+  - "tool_post_invoke"
+default_config:
+  max_duration_ms: 30000
+  action: "warn"
+  tool_overrides: {}

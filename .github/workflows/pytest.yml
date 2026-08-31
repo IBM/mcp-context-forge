@@ -1,0 +1,218 @@
+# ===============================================================
+# 🧪  PyTest & Coverage - Quality Gate
+# ===============================================================
+#
+#   - runs the full test-suite across three Python versions
+#   - measures branch + line coverage (fails < 90% main, < 35% doctest)
+#   - uploads the XML/HTML coverage reports as build artifacts
+#   - (optionally) generates / commits an SVG badge - kept disabled
+#   - posts a concise per-file coverage table to the job summary
+#   - executes on every push / PR to *main*  ➕  a weekly cron
+# ---------------------------------------------------------------
+
+name: Tests & Coverage
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review]
+    branches: ["main"]
+    paths:
+      - "mcpgateway/**"
+      - "tests/**"
+      - "!tests/live_gateway/e2e_rust/**"
+      - "pyproject.toml"
+      - "uv.lock"
+      - ".github/workflows/pytest.yml"
+  # schedule:
+  #   - cron: '42 3 * * 1'   # Monday 03:42 UTC
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  ci-decision:
+    name: Full CI decision
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      run-full-ci: ${{ steps.decision.outputs.run-full-ci }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+
+      - name: Decide full CI scope
+        id: decision
+        env:
+          GH_TOKEN: ${{ github.token }}
+          WORKFLOW_FILE: pytest.yml
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_JSON: ${{ toJson(github.event) }}
+          GITHUB_API_URL: ${{ github.api_url }}
+          GITHUB_REPOSITORY_NAME: ${{ github.repository }}
+          GITHUB_REF_TYPE_VALUE: ${{ github.ref_type }}
+          GITHUB_SHA_VALUE: ${{ github.sha }}
+        run: python3 .github/scripts/secret_baseline_ci_decision.py
+
+  test:
+    needs: ci-decision
+    if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.draft) && (needs.ci-decision.result != 'success' || needs.ci-decision.outputs.run-full-ci != 'false')
+    name: pytest (py${{ matrix.python }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12"]
+
+    env:
+      PYTHONUNBUFFERED: "1"
+      PIP_DISABLE_PIP_VERSION_CHECK: "1"
+      # Strong test-only secrets so Settings() validates in all environments.
+      # config.py now rejects placeholder/weak secrets unconditionally (GHSA-8pcq-mx48-hjvj).
+      # These values are CI-only and are never used outside the test suite.
+      JWT_SECRET_KEY: "ci-test-jwt-secret-DO-NOT-USE-IN-PRODUCTION-this-is-only-for-ci-pytest"  # pragma: allowlist secret
+      AUTH_ENCRYPTION_SECRET: "ci-test-enc-secret-DO-NOT-USE-IN-PRODUCTION-this-is-only-for-ci-pytest"  # pragma: allowlist secret
+
+    steps:
+      # -----------------------------------------------------------
+      # 0️⃣  Checkout
+      # -----------------------------------------------------------
+      - name: ⬇️  Checkout code
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          persist-credentials: false
+          fetch-depth: 0  # diff-cover needs full history to compare branches
+
+      # -----------------------------------------------------------
+      # 1️⃣  Set-up Python
+      # -----------------------------------------------------------
+      - name: 🐍  Setup Python ${{ matrix.python }}
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6
+        with:
+          python-version: ${{ matrix.python }}
+          cache: pip
+
+      # -----------------------------------------------------------
+      # 2  Install uv
+      # -----------------------------------------------------------
+      - name: ⚡ Install uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.10.11"
+          python-version: ${{ matrix.python }}
+
+      # -----------------------------------------------------------
+      # Note: Rust plugin builds removed - all plugins now distributed as PyPI packages
+      # Rust MCP runtime (tools_rust/mcp_runtime) not needed for main pytest suite
+      # (e2e_rust tests are excluded and run in separate workflow)
+      # -----------------------------------------------------------
+
+      # 3️⃣  Run the tests with coverage (fail under 95 %total  coverage)
+      # -----------------------------------------------------------
+      - name: 🧪  Run pytest
+        run: |
+          uv run --extra plugins pytest -n auto \
+            --durations=10 \
+            --ignore=tests/fuzz \
+            --cov=mcpgateway \
+            --cov-report=xml \
+            --cov-report=html \
+            --cov-report=term \
+            --cov-branch \
+            --cov-fail-under=95
+
+      # -----------------------------------------------------------
+      # 3.5  Diff-cover: enforce 93% coverage on changed lines (PRs only)
+      #
+      # Why 93%?  Based on experience, this is currently the
+      # best balance between the value of additional tests
+      # and effort required to write them.  A 95% threshold required
+      # too much effort for tests that essentially mocked everything
+      # before a given line just to show demonstrate it executed.
+      #
+      # The threshold will likely continue to evolve.
+      # -----------------------------------------------------------
+      - name: 📈  Diff-cover (changed lines)
+        if: github.event_name == 'pull_request'
+        run: |
+          uv run diff-cover coverage.xml \
+            --compare-branch=origin/${{ github.base_ref }} \
+            --fail-under=93
+
+      # -----------------------------------------------------------
+      # 4️⃣  Run doctests (fail under 30% coverage)
+      # -----------------------------------------------------------
+      - name: 📊  Doctest coverage with threshold
+        run: |
+          # Run doctests with coverage measurement
+          uv run pytest -n auto \
+            --doctest-modules mcpgateway/ \
+            --cov=mcpgateway \
+            --cov-report=term \
+            --cov-report=json:doctest-coverage.json \
+            --cov-fail-under=30 \
+            --tb=short
+
+      # -----------------------------------------------------------
+      # 5️⃣  Doctest coverage check
+      # -----------------------------------------------------------
+      - name: 📊  Doctest coverage validation
+        run: |
+          uv run python3 -c "
+          import subprocess, sys
+          result = subprocess.run(['uv', 'run', 'python3', '-m', 'pytest', '--doctest-modules', 'mcpgateway/', '--tb=no', '-q'], capture_output=True)
+          if result.returncode == 0:
+              print('✅ All doctests passing')
+          else:
+              print('❌ Doctest failures detected')
+              print(result.stdout.decode())
+              print(result.stderr.decode())
+              sys.exit(1)
+          "
+
+    # -----------------------------------------------------------
+    # 4️⃣  Upload coverage artifacts (XML + HTML)
+    #       --- keep disabled unless you need them ---
+    # -----------------------------------------------------------
+    # - name: 📤  Upload coverage.xml
+    #   uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+    #   with:
+    #     name: coverage-xml-${{ matrix.python }}
+    #     path: coverage.xml
+    #
+    # - name: 📤  Upload HTML coverage
+    #   uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+    #   with:
+    #     name: htmlcov-${{ matrix.python }}
+    #     path: htmlcov/
+
+    # -----------------------------------------------------------
+    # 5️⃣  Publish coverage table to the job summary
+    # -----------------------------------------------------------
+
+#     - name: 📝  Coverage summary
+#       if: always()
+#       run: |
+#         echo "### Coverage - Python ${{ matrix.python }}" >> "$GITHUB_STEP_SUMMARY"
+#         echo "| File | Stmts | Miss | Branch | BrMiss | Cover |" >> "$GITHUB_STEP_SUMMARY"
+#         echo "|------|------:|-----:|-------:|-------:|------:|" >> "$GITHUB_STEP_SUMMARY"
+#         coverage json -q -o cov.json
+#         python3 - <<'PY'
+# import json, pathlib, sys, os
+# data = json.load(open("cov.json"))
+# root = pathlib.Path().resolve()
+# for f in data["files"].values():
+#     rel = pathlib.Path(f["filename"]).resolve().relative_to(root)
+#     s   = f["summary"]
+#     print(f"| {rel} | {s['num_statements']} | {s['missing_lines']} | "
+#           f"{s['num_branches']} | {s['missing_branches']} | "
+#           f"{s['percent_covered']:.1f}% |")
+# PY >> "$GITHUB_STEP_SUMMARY"

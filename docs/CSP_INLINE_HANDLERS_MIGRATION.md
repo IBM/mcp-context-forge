@@ -1,0 +1,232 @@
+# CSP Inline Event Handlers Migration
+
+## Summary
+
+Successfully migrated **273 inline event handlers** across **16 template files** to use a data-action delegation system, making the admin UI compliant with strict Content Security Policy (CSP) that prohibits `unsafe-inline` in `script-src`.
+
+## Issue Reference
+
+- **GitHub Issue**: #4655 - 165 inline event handlers in admin.html blocked under strict CSP
+- **Related PR**: #4424 - feat(security): implement nonce-based CSP
+
+## Changes Made
+
+### 1. Event Delegation System (`mcpgateway/admin_ui/eventDelegation.js`)
+
+Created a new event delegation module that:
+- Intercepts events at the document level using capture phase
+- Parses `data-action-*` attributes to determine which function to call
+- Extracts arguments from `data-arg0`, `data-arg1`, etc. attributes
+- Handles special cases like `this` references and event objects
+- Supports all common event types: click, input, change, submit, keydown, focus, blur
+
+**Key Features:**
+- Automatic `this` reference resolution (converts `data-arg0="this"` to the actual element)
+- JSON parsing for complex argument types
+- Automatic value/checked state passing for input/change events
+- Event object always available as last parameter
+
+### 2. Integration (`mcpgateway/admin_ui/admin.js` & `events.js`)
+
+- Imported `initializeEventDelegation` in admin.js
+- Called initialization in events.js DOMContentLoaded handler (before other initializations)
+- Event delegation system is now active for all admin UI interactions
+
+### 3. Migration Script (`scripts/migrate_inline_handlers.py`)
+
+Created an automated migration script that:
+- Scans all HTML template files for inline event handlers
+- Converts handlers to data-action format
+- Handles `return` statements, `this` references, and complex arguments
+- Provides dry-run mode for preview
+- Successfully migrated 273 handlers across 16 files
+
+### 4. Template Files Modified
+
+**Files with migrations:**
+1. `admin.html` - 194 handlers (main admin interface)
+2. `mcp_registry_partial.html` - 16 handlers
+3. `teams_partial.html` - 10 handlers
+4. `tools_with_pagination.html` - 12 handlers
+5. `llm_providers_partial.html` - 8 handlers
+6. `llm_models_partial.html` - 6 handlers
+7. `overview_partial.html` - 6 handlers
+8. `change-password-required.html` - 5 handlers
+9. `resources_partial.html` - 3 handlers
+10. `tools_partial.html` - 3 handlers
+11. `agents_partial.html` - 2 handlers
+12. `gateways_partial.html` - 2 handlers
+13. `prompts_partial.html` - 2 handlers
+14. `servers_partial.html` - 2 handlers
+15. `login.html` - 1 handler
+16. `version_info_partial.html` - 1 handler
+
+## Migration Examples
+
+### Before (Inline Handler)
+```html
+<button onclick="Admin.showTab('tools')">Tools</button>
+<input oninput="Admin.searchTeamSelector(this.value)" />
+<form onsubmit="return Admin.handleToggleSubmit(event, 'tools')">
+<button onclick="Admin.editTeamSafe(this)">Edit</button>
+```
+
+### After (Data-Action Delegation)
+```html
+<button data-action-click="showTab" data-arg0="'tools'">Tools</button>
+<input data-action-input="searchTeamSelector" />
+<form data-action-submit="handleToggleSubmit" data-arg0="'tools'">
+<button data-action-click="editTeamSafe" data-arg0="this">Edit</button>
+```
+
+## Verification
+
+### Inline Handlers Removed
+```bash
+# Before migration
+$ grep -r 'onclick=' mcpgateway/templates/*.html | wc -l
+255
+
+# After migration
+$ grep -r 'onclick=' mcpgateway/templates/*.html | wc -l
+0
+```
+
+All inline event handlers (`onclick`, `oninput`, `onchange`, `onsubmit`, `onkeydown`, `onfocus`, `onblur`, `onload`) have been successfully removed from template files.
+
+### CSP Compliance
+
+The admin UI now works with strict CSP policies. Below is a minimal illustrative example focusing on script-related directives:
+```
+Content-Security-Policy: script-src 'self' 'nonce-ABC123...'
+```
+
+**Current effective CSP** (as of PR #5111, 2026-06-29):
+```
+script-src-elem: 'self' 'nonce-{random}' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net https://unpkg.com
+script-src: 'self'
+style-src: 'self' 'unsafe-inline' https://cdnjs.cloudflare.com https://cdn.jsdelivr.net
+```
+
+**Key CSP improvements:**
+- ✅ No `'unsafe-inline'` or `'unsafe-hashes'` in `script-src` (inline event handlers removed)
+- ✅ No `'unsafe-eval'` in any script-related directive
+- ✅ `script-src-attr` directive completely removed
+- ℹ️ `style-src 'unsafe-inline'` retained for inline style attributes (animations, positioning) - acceptable per CSP Level 3 guidance as CSS cannot execute JavaScript
+
+**Tailwind CSS Loading Strategy** (updated issue #5412):
+- **All modes**: All three auth/admin templates unconditionally use precompiled CSS (`/static/css/tailwind.min.css`) - CSP-compliant, no `eval()` required in any deployment mode
+- Templates: `login.html`, `change-password-required.html`, `admin.html` — all use `<link rel="stylesheet" href=".../static/css/tailwind.min.css" />` with no airgapped branch
+- The vendored `tailwind.min.js` bundle (`/static/vendor/tailwindcss/tailwind.min.js`) is no longer referenced by any template; it used a JIT runtime that requires `eval()`, violating strict CSP
+
+## Testing Checklist
+
+- [ ] Admin UI loads without console errors
+- [ ] Navigation between tabs works (sidebar links)
+- [ ] Global search modal opens (Ctrl/Cmd+K)
+- [ ] Team selector dropdown functions
+- [ ] Form submissions work (create/edit/delete operations)
+- [ ] Input field handlers work (search, filters)
+- [ ] Button click handlers work (all action buttons)
+- [ ] Modal open/close functions
+- [ ] Toggle switches work (enable/disable)
+- [ ] LLM provider/model management
+- [ ] Team management (create, edit, delete, join requests)
+- [ ] Tool operations (test, view, edit, delete)
+- [ ] Gateway operations
+- [ ] Server operations
+
+## Known Limitations
+
+1. **✅ RESOLVED (PR #5111)**: ~~HTMX `hx-vals="js:{...}"` and `hx-on:*` - Several instances in `admin.html` still use HTMX's JS eval path, so `'unsafe-eval'` remains in `script-src`.~~ All HTMX JS eval patterns have been successfully migrated to `htmx:configRequest` event handlers and `addEventListener`. `'unsafe-eval'` has been completely removed from **all script-related directives** (`script-src`, `script-src-elem`) as of PR #5111 (2026-06-29).
+
+2. **✅ RESOLVED (PR #5111)**: ~~HTMX `hx-on:*` attributes - The 8 `hx-on:*` attributes are not affected by this migration as HTMX evaluates these via the trusted HTMX script and honors `inlineScriptNonce`.~~ All `hx-on:*` attributes have been migrated to standard JavaScript `addEventListener` patterns.
+
+3. **ℹ️ By Design (PR #5111)**: `style-src 'unsafe-inline'` remains by design for inline style attributes (`style="animation-delay: 2s"`) used throughout the UI. This is acceptable per CSP Level 3 guidance as CSS cannot execute JavaScript or exfiltrate data. All inline styles are server-rendered with no user input. Industry standard practice (GitHub, GitLab use similar configurations).
+
+4. **Complex inline functions**: A few handlers with complex inline arrow functions or callbacks may need manual review if they weren't automatically converted. This is a maintenance consideration for future development, not a current blocker.
+
+## Rollback Procedure
+
+If issues are discovered:
+
+1. Revert the template changes:
+   ```bash
+   git checkout HEAD~1 mcpgateway/templates/
+   ```
+
+2. Revert the JS changes:
+   ```bash
+   git checkout HEAD~1 mcpgateway/admin_ui/eventDelegation.js
+   git checkout HEAD~1 mcpgateway/admin_ui/admin.js
+   git checkout HEAD~1 mcpgateway/admin_ui/events.js
+   ```
+
+3. The migration script is preserved for future use if needed.
+
+## Future Improvements
+
+### Code Enhancements
+
+1. **Performance monitoring**: Add metrics to track event delegation performance
+2. **Error handling**: Enhance error reporting for missing functions or invalid arguments
+3. **Developer tools**: Create browser extension or debug mode to visualize delegated events
+4. **Documentation**: Add inline documentation for common patterns
+
+### Test Recommendations (from PR #5111 Review)
+
+Recommendations from ja8zyjits's security review (2026-06-29):
+
+#### 🔴 High Priority (Security)
+
+1. **Browser-based CSP enforcement test (Playwright)**
+   - Verify browser blocks `eval()` and inline handlers at runtime
+   - Current tests only check header presence/format
+   - Should test actual browser CSP enforcement behavior
+   - **Rationale**: Header checks don't verify the browser actually blocks violations
+
+2. **CSP nonce collision test**
+   - Statistical test with 10K+ iterations
+   - Verify cryptographic randomness and uniqueness
+   - Test concurrent nonce generation
+   - **Rationale**: Nonce collisions would break CSP security model
+
+3. **End-to-end template rendering test**
+   - Verify nonce propagates: middleware → Jinja2 context → rendered HTML
+   - Test `csp_nonce(request)` function integration
+   - Verify nonce appears in both CSP header and script tags
+   - **Rationale**: Critical for CSP effectiveness - broken propagation = no protection
+
+#### 🟡 Medium Priority (Robustness)
+
+4. **HTMX integration test (Playwright)**
+   - Verify HTMX dynamic requests work without `unsafe-eval`
+   - Test hx-get, hx-post, hx-swap operations
+   - Verify `htmx:configRequest` event handlers work correctly
+   - **Rationale**: Validates the HTMX CSP migration didn't break functionality
+
+5. **Malformed Origin header tests**
+   - Empty Origin header
+   - Null Origin (`Origin: null`)
+   - Malformed/invalid Origin values
+   - **Rationale**: Edge case handling for CSP nonce generation
+
+#### 🟢 Low Priority (Defense-in-Depth)
+
+6. **CSP on 500 error test**
+   - Verify CSP headers present on error responses
+   - Test that middleware doesn't skip CSP on exceptions
+   - **Rationale**: Errors shouldn't expose XSS vectors
+
+7. **Nonce leakage test**
+   - Verify nonces aren't logged or exposed in error messages
+   - Test that nonces don't appear in audit trails
+   - **Rationale**: Nonce exposure reduces CSP effectiveness
+
+## References
+
+- [Content Security Policy Level 3](https://www.w3.org/TR/CSP3/)
+- [OWASP CSP Cheat Sheet](https://cheatsheetseries.owasp.org/cheatsheets/Content_Security_Policy_Cheat_Sheet.html)
+- [MDN: Content Security Policy](https://developer.mozilla.org/en-US/docs/Web/HTTP/CSP)
+- Issue #4655: 165 inline event handlers in admin.html blocked under strict CSP
+- PR #4424: feat(security): implement nonce-based CSP

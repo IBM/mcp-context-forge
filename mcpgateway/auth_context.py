@@ -1,0 +1,1039 @@
+# -*- coding: utf-8 -*-
+"""Location: ./mcpgateway/auth_context.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+
+Per-request scope resolution and Rust-runtime trust-layer helpers.
+
+Purpose (for future implementers)
+---------------------------------
+``mcpgateway`` keeps token primitives, request scope resolution, and the
+trusted Rust-runtime hop in three logical groups, even though only two
+modules currently exist:
+
+- ``mcpgateway.auth`` (the larger sibling) - the **token / session / team
+  model layer** and the FastAPI auth dependency. Most helpers there are pure
+  primitives over stored artifacts (JWT claims, API tokens, revocation
+  records, team membership rows) and do not need a ``Request``. The
+  request-coupled exceptions are ``get_current_user`` (the FastAPI
+  dependency that bridges the two layers) plus a small set of helpers it
+  calls into - ``_inject_userinfo_instate`` and ``_propagate_tenant_id`` -
+  which stash payload metadata on ``request.state`` for downstream helpers
+  here. New code added to ``auth.py`` should follow the pure-primitive
+  pattern unless it is part of the dependency chain.
+
+- ``mcpgateway.auth_context`` (this module) - the **per-request scope
+  resolution layer** plus the **Rust-runtime trust-header helpers**. The
+  scope-resolution helpers take a FastAPI ``Request`` plus the ``user``
+  produced by the auth dependency and compute what the caller is allowed
+  to see on this specific request - this is Layer 1 in the two-layer model
+  documented in ``AGENTS.md`` ("what you can SEE"), distinct from the
+  Layer 2 RBAC checks in ``mcpgateway.middleware.rbac`` ("what you can
+  DO"). The trust-header helpers (``decode_internal_mcp_auth_context``,
+  ``has_valid_internal_mcp_runtime_auth_header``, the
+  ``_expected_internal_mcp_runtime_auth_header*`` family) implement the
+  HMAC contract between the Rust MCP runtime and the Python gateway. They
+  live here, not in ``auth.py``, because the trusted forwarded context
+  produces a synthetic ``user`` that the per-request helpers consume; the
+  two responsibilities are coupled at the request boundary. A future
+  refactor may extract them into a third ``mcpgateway.auth_runtime``
+  module if the coupling weakens.
+
+Why this module exists as a separate file
+-----------------------------------------
+Both ``mcpgateway.main`` and ``mcpgateway.admin`` need the scoped-access
+helper to pass ``(user_email, token_teams)`` into the service layer. Before
+this split, the helper lived in ``main.py`` and ``admin.py`` reached back
+through a lazy import, creating a static cyclic import
+(``admin -> main -> admin``) that ``pylint R0401`` flagged. Hoisting the
+helper (and its dependency chain) into a sibling module whose only
+non-stdlib first-party dependencies are ``mcpgateway.auth`` and
+``mcpgateway.config`` breaks the cycle at the architectural level rather
+than papering over it with ``# pylint: disable``.
+
+Public surface
+--------------
+The names below are the **module's public API**. Callers in ``main.py``,
+``admin.py``, routers, and transports should use these names.
+
+    Constants (HTTP header names used by the Rust -> Python MCP bridge)
+        INTERNAL_MCP_SESSION_VALIDATED_HEADER
+
+    Identity resolution
+        get_user_email(user) -> str
+        jwt_subject_is_uuid(payload) -> bool
+        get_jwt_user_email_from_payload(payload) -> str | None
+        resolve_jwt_user_email_from_payload(payload, uuid_email_resolver=None) -> str | None
+
+    Trust-layer headers forwarded from the Rust MCP runtime
+        decode_internal_mcp_auth_context(header_value) -> dict
+        get_internal_mcp_auth_context(request) -> dict | None
+        has_valid_internal_mcp_runtime_auth_header(request) -> bool
+
+    Per-request JWT / scope resolution (the Layer-1 surface)
+        get_token_teams_from_request(request) -> list[str] | None
+        get_rpc_filter_context(request, user) -> (email, teams, is_admin)
+        get_request_identity(request, user) -> (email, is_admin)
+        get_scoped_resource_access_context(request, user) -> (email, teams)
+
+Private surface
+---------------
+Leading-underscore names below are **implementation helpers private to this
+module**. They are not imported from outside and should not be. If you find
+yourself needing one from another module, consider whether the calling code
+should really go through one of the public wrappers above, or whether the
+helper belongs in ``mcpgateway.auth`` instead.
+
+    _INTERNAL_MCP_RUNTIME_AUTH_CONTEXT   (constant string used to derive headers)
+    _INTERNAL_MCP_RUNTIME_AUTH_HEADER    (header name consumed by the trust gate)
+    _auth_encryption_secret_value        (config-dependent secret accessor)
+    _expected_internal_mcp_runtime_auth_header
+    _expected_internal_mcp_runtime_auth_header_for_secret
+    _has_verified_jwt_payload            (probe used by the resolution helpers)
+
+Security invariants
+-------------------
+See ``AGENTS.md`` section "Authentication & RBAC Overview" for the full
+policy. The key invariants that this module enforces:
+
+1. ``get_token_teams_from_request`` respects the secure-first semantics of
+   ``normalize_token_teams``: missing ``teams`` claim means public-only,
+   not admin bypass.
+2. ``get_rpc_filter_context`` derives ``is_admin`` from the verified JWT
+   payload or the trusted internal MCP auth context - NOT from the DB user -
+   so a scoped token (``teams=[]``) cannot inherit admin bypass.
+3. ``get_scoped_resource_access_context`` returns ``(None, None)`` *only* for
+   genuine admin bypass (verified JWT ``is_admin=true`` + ``teams=null``, or
+   non-JWT dev-mode admin). Public-only tokens get ``(email, [])``.
+   Downstream services MUST treat ``(None, None)`` as "admin bypass; still
+   deny private resources" per PR #4341.
+4. Non-JWT admin callers (basic-auth / dev mode) keep unrestricted visibility
+   via the fallback-admin branch; this carve-out is intentional and documented
+   in ``AGENTS.md``.
+"""
+
+# Standard
+import base64
+from collections.abc import Awaitable, Callable
+from functools import lru_cache
+import hashlib
+import hmac
+import logging
+from typing import Any, Dict, List, Optional
+import uuid
+
+# Third-Party
+from fastapi import Request
+import orjson
+from sqlalchemy.orm import Session
+
+# First-Party
+from mcpgateway.config import settings
+from mcpgateway.db import EmailUser
+
+# Module-level logger
+logger = logging.getLogger(__name__)
+
+# Trust-layer header names. ``INTERNAL_MCP_SESSION_VALIDATED_HEADER`` is part
+# of the module's public constant API (main.py's middleware compares against
+# it). The other two are implementation details of the header-derivation chain
+# and are not exported.
+INTERNAL_MCP_SESSION_VALIDATED_HEADER = "x-contextforge-session-validated"
+_INTERNAL_MCP_RUNTIME_AUTH_HEADER = "x-contextforge-mcp-runtime-auth"
+_INTERNAL_MCP_RUNTIME_AUTH_CONTEXT = "contextforge-internal-mcp-runtime-v1"
+
+
+def get_user_email(user: Any) -> str:
+    """Extract email from user object, handling both string and dict formats.
+
+    Args:
+        user: User object, can be either a dict (new RBAC format) or string (legacy format)
+
+    Returns:
+        str: Email address extracted from user object
+
+    Examples:
+        >>> user_dict = {'email': 'admin@example.com'}
+        >>> get_user_email(user_dict)
+        'admin@example.com'
+        >>> user_dict_sub = {'sub': 'user@example.com'}
+        >>> get_user_email(user_dict_sub)
+        'user@example.com'
+        >>> user_dict_both = {'email': 'admin@example.com', 'sub': 'ignored@example.com'}
+        >>> get_user_email(user_dict_both)
+        'admin@example.com'
+        >>> user_dict_no_email = {'other': 'value'}
+        >>> get_user_email(user_dict_no_email)
+        'unknown'
+        >>> user_dict_bad_email = {'email': {'nested': 'value'}}
+        >>> get_user_email(user_dict_bad_email)
+        'unknown'
+        >>> user_dict_list_email = {'email': ['x'], 'sub': 'user@example.com'}
+        >>> get_user_email(user_dict_list_email)
+        'user@example.com'
+        >>> user_string = 'legacy_user'
+        >>> get_user_email(user_string)
+        'legacy_user'
+        >>> get_user_email(None)
+        'unknown'
+        >>> get_user_email({})
+        'unknown'
+        >>> get_user_email(123)
+        '123'
+        >>> user_complex = {'email': 'user@domain.com', 'name': 'Test User', 'roles': ['admin']}
+        >>> get_user_email(user_complex)
+        'user@domain.com'
+        >>> get_user_email('')
+        'unknown'
+        >>> get_user_email(True)
+        'True'
+        >>> get_user_email(False)
+        'unknown'
+    """
+    if user is None:
+        return "unknown"
+    # Handle objects with email attribute (e.g., ORM models, dataclasses)
+    if hasattr(user, "email"):
+        email = getattr(user, "email", None)
+        if isinstance(email, str):
+            return email or "unknown"
+        # Non-string email attribute falls through to str(user) below
+    # Handle dict-like objects
+    if isinstance(user, dict):
+        email = user.get("email")
+        if isinstance(email, str) and email:
+            return email
+        sub = user.get("sub")
+        if isinstance(sub, str) and sub:
+            return sub
+        return "unknown"
+    # Fallback to string conversion for other types
+    return str(user) if user else "unknown"
+
+
+def _is_uuid_string(value: str) -> bool:
+    """Return True when *value* is a syntactically valid UUID string."""
+    try:
+        uuid.UUID(value)
+    except ValueError:
+        return False
+    return True
+
+
+def jwt_subject_is_uuid(payload: dict[str, Any]) -> bool:
+    """Return True when the JWT subject claim is a syntactically valid UUID."""
+    subject = payload.get("sub")
+    if not isinstance(subject, str):
+        return False
+    subject = subject.strip()
+    return bool(subject) and _is_uuid_string(subject)
+
+
+def _non_uuid_identity(value: Any) -> str | None:
+    """Return a non-empty string identity unless it is a UUID."""
+    if not isinstance(value, str):
+        return None
+    value = value.strip()
+    if not value or _is_uuid_string(value):
+        return None
+    return value
+
+
+def normalize_token_teams(payload: Dict[str, Any]) -> Optional[List[str]]:
+    """
+    Normalize token teams to a canonical form for consistent security checks.
+
+    SECURITY: This is the single source of truth for token team normalization.
+    All code paths that read token teams should use this function.
+
+    Rules:
+    - "teams" key missing -> [] (public-only, secure default)
+    - "teams" is null + is_admin=true -> None (admin bypass, sees all)
+    - "teams" is null + is_admin=false -> [] (public-only, no bypass for non-admins)
+    - "teams" is [] -> [] (explicit public-only)
+    - "teams" is [...] -> normalized list of string IDs
+
+    Args:
+        payload: The JWT payload dict
+
+    Returns:
+        None for admin bypass, [] for public-only, or list of normalized team ID strings
+    """
+    if "teams" not in payload:
+        return []
+
+    teams = payload.get("teams")
+
+    if teams is None:
+        is_admin = payload.get("is_admin", False)
+        if not is_admin:
+            user_info = payload.get("user", {})
+            is_admin = user_info.get("is_admin", False) if isinstance(user_info, dict) else False
+        if is_admin:
+            return None
+        return []
+
+    normalized: List[str] = []
+    for team in teams:
+        if isinstance(team, dict):
+            team_id = team.get("id")
+            if team_id:
+                normalized.append(str(team_id))
+        elif isinstance(team, str):
+            normalized.append(team)
+    return normalized
+
+
+def get_jwt_user_email_from_payload(payload: dict[str, Any]) -> str | None:
+    """Extract a human email identity from signed JWT claims without DB lookup.
+
+    The dataplane JWT subject may be an opaque UUID. This helper intentionally
+    never returns that UUID as a user email; callers that need UUID fallback can
+    use :func:`resolve_jwt_user_email_from_payload` with an injected resolver.
+    """
+    user_info = payload.get("user")
+    if isinstance(user_info, dict):
+        user_email = _non_uuid_identity(user_info.get("email"))
+        if user_email is not None:
+            return user_email
+
+    user_email = _non_uuid_identity(payload.get("email"))
+    if user_email is not None:
+        return user_email
+
+    return _non_uuid_identity(payload.get("sub"))
+
+
+async def resolve_jwt_user_email_from_payload(
+    payload: dict[str, Any],
+    *,
+    uuid_email_resolver: Callable[[str], Awaitable[str | None]] | None = None,
+) -> str | None:
+    """Resolve the human email identity from verified JWT claims.
+
+    Signed email metadata is used first and does not touch the database. Only
+    UUID-sub tokens without email metadata use the optional resolver callback.
+    """
+    user_email = get_jwt_user_email_from_payload(payload)
+    if user_email is not None:
+        return user_email
+
+    subject = payload.get("sub")
+    if not isinstance(subject, str):
+        return None
+    subject = subject.strip()
+    if not subject or not _is_uuid_string(subject) or uuid_email_resolver is None:
+        return None
+
+    resolved = await uuid_email_resolver(subject)
+    return _non_uuid_identity(resolved)
+
+
+def get_internal_mcp_auth_context(request: Request) -> Optional[Dict[str, Any]]:
+    """Return trusted auth context forwarded from the StreamableHTTP MCP auth layer.
+
+    Args:
+        request: Incoming request that may carry trusted MCP auth context on state.
+
+    Returns:
+        The forwarded auth context dictionary when present, otherwise ``None``.
+    """
+    internal_auth_context = getattr(request.state, "_mcp_internal_auth_context", None)
+    if isinstance(internal_auth_context, dict):
+        return internal_auth_context
+    return None
+
+
+def encode_internal_mcp_auth_context(auth_context: Dict[str, Any]) -> str:
+    """Encode an edge-validated auth context for forwarding to a trusted internal dispatcher.
+
+    Mirror of :func:`decode_internal_mcp_auth_context`. Packages the auth context
+    so a trusted internal dispatcher (e.g. ``/_internal/mcp/rpc``) can use it
+    without re-running authentication. The unpadded base64url shape keeps the
+    value header-safe.
+
+    Args:
+        auth_context: Auth-context dict to encode.
+
+    Returns:
+        Unpadded base64url-encoded JSON payload for the
+        ``x-contextforge-auth-context`` header.
+    """
+    encoded = base64.urlsafe_b64encode(orjson.dumps(auth_context)).decode("ascii")
+    return encoded.rstrip("=")
+
+
+def decode_internal_mcp_auth_context(header_value: str) -> Dict[str, Any]:
+    """Decode the trusted internal MCP auth header payload.
+
+    Args:
+        header_value: Base64url-encoded trusted auth context header value.
+
+    Returns:
+        Decoded auth context dictionary.
+
+    Raises:
+        ValueError: If the decoded payload is not a JSON object.
+    """
+    padding = "=" * (-len(header_value) % 4)
+    decoded = base64.urlsafe_b64decode(f"{header_value}{padding}".encode("ascii"))
+    payload = orjson.loads(decoded)
+    if not isinstance(payload, dict):
+        raise ValueError("Decoded internal MCP auth context must be an object")
+    return payload
+
+
+def _auth_encryption_secret_value() -> str:
+    """Return the configured auth-encryption secret as a plain string.
+
+    Returns:
+        The auth-encryption secret, normalized to a regular string.
+    """
+    secret = settings.auth_encryption_secret
+    if hasattr(secret, "get_secret_value"):
+        return secret.get_secret_value()
+    return str(secret)
+
+
+@lru_cache(maxsize=8)
+def _expected_internal_mcp_runtime_auth_header_for_secret(secret: str) -> str:
+    """Return the shared secret-derived trust header for Rust->Python MCP hops.
+
+    Args:
+        secret: Auth-encryption secret to derive the trust header from.
+
+    Returns:
+        Hex-encoded SHA-256 digest derived from the provided auth secret.
+    """
+    material = f"{secret}:{_INTERNAL_MCP_RUNTIME_AUTH_CONTEXT}".encode("utf-8")
+    return hashlib.sha256(material).hexdigest()
+
+
+def _expected_internal_mcp_runtime_auth_header() -> str:
+    """Return the current shared secret-derived trust header for Rust->Python MCP hops.
+
+    Returns:
+        Hex-encoded SHA-256 digest derived from the current auth secret.
+    """
+    return _expected_internal_mcp_runtime_auth_header_for_secret(_auth_encryption_secret_value())
+
+
+def has_valid_internal_mcp_runtime_auth_header(request: Request) -> bool:
+    """Validate the shared secret-derived trust header for internal MCP requests.
+
+    Args:
+        request: Incoming internal MCP request.
+
+    Returns:
+        ``True`` when the derived trust header matches the expected value.
+    """
+    provided = request.headers.get(_INTERNAL_MCP_RUNTIME_AUTH_HEADER)
+    if not provided:
+        return False
+    return hmac.compare_digest(provided, _expected_internal_mcp_runtime_auth_header())
+
+
+# Redis-transit integrity for forwarded auth context.
+#
+# The header-borne auth context that reaches /_internal/mcp/rpc is gated by the
+# secret-derived runtime-auth token, so a caller must already hold the secret.
+# The session-affinity Redis pub/sub hop is different: a writer to the Redis
+# channel needs no secret, yet the owner worker re-stamps whatever auth context
+# it reads with a valid runtime-auth token before dispatching. That makes the
+# owner a signing oracle for forged contexts. Signing the auth context alone
+# closes the forged-identity oracle, but it does not prove that the verified
+# identity belongs to the *operation* being executed: an attacker with Redis
+# write access could pair a captured signature with a different method, path,
+# body, or response_channel (CWE-347). To close that, the publisher signs the
+# whole forwarded envelope (every operation field, including response_channel so
+# the response cannot be redirected) and the consumer verifies the envelope
+# before dispatch.
+#
+# These helpers are deliberately separate from the general header-encoding
+# contract (encode/decode_internal_mcp_auth_context), which must stay
+# byte-compatible for the Rust runtime. The forward signature is Redis-only
+# Python transit metadata: it is stripped by the owning worker before the
+# in-process dispatch and never reaches the Rust runtime, so it does not affect
+# the encoded auth-context wire format.
+FORWARD_SIG_FIELD = "forward_sig"
+_REDIS_FORWARD_ENVELOPE_SIG_DOMAIN = b"mcpgw.redis-fwd-envelope.v1"
+_REDIS_FORWARD_ENVELOPE_SIG_DELIMITER = b"\x1f"  # ASCII unit separator; never present in canonical JSON
+
+
+def _redis_forward_envelope_sig_material(envelope: Dict[str, Any]) -> bytes:
+    """Build the domain-separated HMAC input for a Redis-forwarded envelope.
+
+    The signature field itself is excluded, then the remaining envelope is
+    canonicalized with sorted keys so the publisher and the consumer (which has
+    round-tripped the payload through JSON) produce byte-identical material. The
+    domain tag plus a unit separator that cannot occur in the canonical JSON keep
+    the two segments unambiguous.
+
+    Args:
+        envelope: The forwarded Redis payload. The signature field, if present,
+            is ignored so signing and verification see the same input.
+
+    Returns:
+        The byte string fed to HMAC.
+    """
+    without_sig = {k: v for k, v in envelope.items() if k != FORWARD_SIG_FIELD}
+    canonical = orjson.dumps(without_sig, option=orjson.OPT_SORT_KEYS)
+    return _REDIS_FORWARD_ENVELOPE_SIG_DOMAIN + _REDIS_FORWARD_ENVELOPE_SIG_DELIMITER + canonical
+
+
+def sign_redis_forward_envelope(envelope: Dict[str, Any]) -> str:
+    """Sign a full forwarded envelope for transit over the session-affinity Redis hop.
+
+    Keyed with ``auth_encryption_secret`` and bound to every operation field in
+    the envelope (method, path, body, headers, response_channel, auth_context,
+    ...), so a captured signature cannot be replayed under a different operation
+    or to a different response channel.
+
+    Args:
+        envelope: The forwarded Redis payload to protect. Any existing signature
+            field is excluded from the signed material.
+
+    Returns:
+        Hex-encoded HMAC-SHA256 signature.
+    """
+    return hmac.new(
+        _auth_encryption_secret_value().encode("utf-8"),
+        _redis_forward_envelope_sig_material(envelope),
+        hashlib.sha256,
+    ).hexdigest()
+
+
+def verify_redis_forward_envelope(envelope: Dict[str, Any]) -> bool:
+    """Verify a Redis-forwarded envelope signature in constant time.
+
+    Must be called on the untouched received envelope, before any field is
+    decoded or mutated, so the recomputed material matches what was signed.
+
+    Args:
+        envelope: The forwarded Redis payload, including its ``forward_sig``.
+
+    Returns:
+        ``True`` only when the envelope carries a non-empty ``forward_sig`` that
+        is a valid signature for the rest of the envelope under the current secret.
+    """
+    signature = envelope.get(FORWARD_SIG_FIELD)
+    if not isinstance(signature, str) or not signature:
+        return False
+    expected = sign_redis_forward_envelope(envelope)
+    return hmac.compare_digest(signature, expected)
+
+
+# Internal-dispatch trust gate, defined once and shared by all callers.
+INTERNAL_MCP_PATH_PREFIX = "/_internal/mcp"
+INTERNAL_A2A_PATH_PREFIX = "/_internal/a2a"
+INTERNAL_RUNTIME_MARKER_HEADER = "x-contextforge-mcp-runtime"
+INTERNAL_AUTH_CONTEXT_HEADER = "x-contextforge-auth-context"
+TRUSTED_INTERNAL_RUNTIME_MARKERS = frozenset({"rust", "affinity"})
+
+
+def _internal_path_requires_auth_context(path: str) -> bool:
+    """Whether an internal route requires an auth context.
+
+    Only ``*/authenticate`` is exempt, since it creates the context; every
+    other internal route must carry one.
+
+    Args:
+        path: The request path to classify.
+
+    Returns:
+        ``False`` for ``*/authenticate``, otherwise ``True``.
+    """
+    return not path.rstrip("/").endswith("/authenticate")
+
+
+def is_trusted_internal_runtime_request(
+    request: Request,
+    *,
+    allowed_prefixes: tuple[str, ...],
+    require_auth_context: bool,
+    path: Optional[str] = None,
+) -> bool:
+    """Return whether a request is a trusted in-process internal-runtime hop.
+
+    The trust boundary is the HMAC header and, when required, the encoded
+    ``x-contextforge-auth-context``. The loopback check is defense in depth,
+    not an independent gate: ProxyHeaders(trusted_hosts="*") lets a direct
+    external caller influence ``request.client.host`` (the replay is hardened
+    separately by stripping forwarded / client-IP headers).
+
+    Args:
+        request: Incoming request to inspect.
+        allowed_prefixes: Internal path prefixes this caller trusts.
+        require_auth_context: Require a non-empty ``x-contextforge-auth-context``.
+        path: Explicit path override for callers that strip a ``root_path``;
+            defaults to ``request.url.path``.
+
+    Returns:
+        ``True`` only when prefix, runtime marker, HMAC, optional auth context,
+        and loopback all hold; otherwise ``False``.
+    """
+    p = path if path is not None else (getattr(getattr(request, "url", None), "path", "") or "")
+    if not any(p == prefix or p.startswith(f"{prefix}/") for prefix in allowed_prefixes):
+        return False
+    if request.headers.get(INTERNAL_RUNTIME_MARKER_HEADER) not in TRUSTED_INTERNAL_RUNTIME_MARKERS:
+        return False
+    if not has_valid_internal_mcp_runtime_auth_header(request):
+        return False
+    if require_auth_context and not request.headers.get(INTERNAL_AUTH_CONTEXT_HEADER):
+        return False
+    client_host = getattr(getattr(request, "client", None), "host", None)
+    return client_host in ("127.0.0.1", "::1")
+
+
+def is_trusted_internal_mcp_request(request: Request, *, path: Optional[str] = None) -> bool:
+    """MCP + A2A internal trust gate with a path-aware auth-context requirement.
+
+    ``*/authenticate`` routes are exempt from the auth-context requirement;
+    every other internal route requires it. ``/_internal/a2a/*`` is trusted
+    only when the A2A feature is enabled.
+
+    Args:
+        request: Incoming request to inspect.
+        path: Explicit path override (e.g. a ``root_path``-stripped path);
+            defaults to ``request.url.path``.
+
+    Returns:
+        ``True`` when the request is a trusted internal MCP/A2A hop.
+    """
+    p = path if path is not None else (getattr(getattr(request, "url", None), "path", "") or "")
+    if p.startswith(f"{INTERNAL_A2A_PATH_PREFIX}/") and not settings.mcpgateway_a2a_enabled:
+        return False
+    return is_trusted_internal_runtime_request(
+        request,
+        allowed_prefixes=(INTERNAL_MCP_PATH_PREFIX, INTERNAL_A2A_PATH_PREFIX),
+        require_auth_context=_internal_path_requires_auth_context(p),
+        path=p,
+    )
+
+
+def get_token_teams_from_request(request: Request) -> Optional[List[str]]:
+    """Extract and normalize teams from verified JWT token.
+
+    SECURITY: Uses ``normalize_token_teams`` for consistent secure-first semantics:
+
+    - ``teams`` key missing -> ``[]`` (public-only, secure default)
+    - ``teams`` key null + ``is_admin=true`` -> ``None`` (admin bypass)
+    - ``teams`` key null + ``is_admin=false`` -> ``[]`` (public-only)
+    - ``teams`` key ``[]`` -> ``[]`` (explicit public-only)
+    - ``teams`` key ``[...]`` -> normalized list of string IDs
+
+    First checks ``request.state.token_teams`` (set by ``auth.py``), then falls
+    back to calling ``normalize_token_teams`` on the JWT payload.
+
+    Args:
+        request: FastAPI request object.
+
+    Returns:
+        ``None`` for admin bypass, ``[]`` for public-only, or list of normalized team ID strings.
+
+    Examples:
+        >>> from unittest.mock import MagicMock
+        >>> from mcpgateway import auth_context
+        >>> req = MagicMock()
+        >>> req.state = MagicMock()
+        >>> req.state.token_teams = ["team_a"]
+        >>> auth_context.get_token_teams_from_request(req)
+        ['team_a']
+        >>> req.state.token_teams = []
+        >>> auth_context.get_token_teams_from_request(req)
+        []
+    """
+    internal_auth_context = get_internal_mcp_auth_context(request)
+    if isinstance(internal_auth_context, dict) and "teams" in internal_auth_context:
+        internal_teams = internal_auth_context.get("teams")
+        if internal_teams is None or isinstance(internal_teams, list):
+            return internal_teams
+
+    # SECURITY: prefer request.state.token_teams (already normalized by auth.py).
+    _not_set = object()
+    token_teams = getattr(request.state, "token_teams", _not_set)
+    if token_teams is not _not_set and (token_teams is None or isinstance(token_teams, list)):
+        return token_teams
+
+    cached = getattr(request.state, "_jwt_verified_payload", None)
+    if cached and isinstance(cached, tuple) and len(cached) == 2:
+        _, payload = cached
+        if payload:
+            # KNOWN LIMITATION: This fallback path uses normalize_token_teams()
+            # which doesn't understand session semantics. A session token
+            # reaching here would never produce token_teams=None, so the
+            # session admin bypass in get_rpc_filter_context() wouldn't fire.
+            # This is fail-secure (denies bypass rather than wrongly granting
+            # it) but is uncovered and undocumented as a design constraint.
+            # If auth.py ever stops setting request.state.token_teams before
+            # this code runs, session admin bypass would silently stop working.
+            return normalize_token_teams(payload)
+
+    # No JWT payload - return [] for public-only (secure default).
+    return []
+
+
+def get_rpc_filter_context(request: Request, user) -> tuple[Optional[str], Optional[List[str]], bool]:
+    """Extract ``(user_email, token_teams, is_admin)`` for RPC filtering.
+
+    Args:
+        request: FastAPI request object.
+        user: User object from auth dependency.
+
+    Returns:
+        Tuple of ``(user_email, token_teams, is_admin)`` where ``is_admin`` is
+        sourced from the verified token, not the DB user, so that scoped tokens
+        (empty ``teams``) cannot inherit admin bypass.
+
+        **Type validation**: ``user_email`` is validated to be a string or None.
+        Non-string values (dict, list, int, etc.) are logged and converted to None
+        for fail-safe public-only access, preventing SQL binding errors.
+
+    Examples:
+        >>> from unittest.mock import MagicMock
+        >>> from mcpgateway import auth_context
+        >>> req = MagicMock()
+        >>> req.state = MagicMock()
+        >>> req.state._jwt_verified_payload = ("token", {"teams": ["t1"], "is_admin": True})
+        >>> user = {"email": "test@x.com", "is_admin": True}
+        >>> email, teams, is_admin = auth_context.get_rpc_filter_context(req, user)
+        >>> email
+        'test@x.com'
+        >>> teams
+        ['t1']
+        >>> is_admin
+        True
+    """
+    # Use existing get_user_email() helper for consistent email extraction
+    user_email = get_user_email(user)
+    # get_user_email() guarantees a string return, but may return "unknown"
+    # Convert "unknown" to None for downstream SQL queries
+    if user_email == "unknown":
+        user_email = None
+
+    token_teams = get_token_teams_from_request(request)
+
+    # SECURITY: admin bit MUST come from the token, not the DB user, so a
+    # public-only admin token (teams=[]) does not inherit admin bypass.
+    is_admin = False
+    internal_auth_context = get_internal_mcp_auth_context(request)
+    if isinstance(internal_auth_context, dict):
+        if user_email is None:
+            internal_email = internal_auth_context.get("email")
+            # SECURITY: Type-check internal auth context email
+            if internal_email is not None and not isinstance(internal_email, str):
+                logger.warning(
+                    "get_rpc_filter_context: internal_auth_context email non-string type=%s path=%s; forcing None to prevent SQL binding errors",
+                    type(internal_email).__name__,
+                    getattr(getattr(request, "url", None), "path", "unknown"),
+                )
+                internal_email = None
+            user_email = internal_email
+        is_admin = bool(internal_auth_context.get("is_admin", False))
+        if token_teams is not None and len(token_teams) == 0:
+            is_admin = False
+        return user_email, token_teams, is_admin
+
+    cached = getattr(request.state, "_jwt_verified_payload", None)
+    if cached and isinstance(cached, tuple) and len(cached) == 2:
+        _, payload = cached
+        if payload:
+            # Session tokens ignore JWT is_admin claim — DB is the authority.
+            # An old/stale session JWT carrying is_admin=true must not influence
+            # the boolean admin decision; only DB-resolved token_teams=None can
+            # produce admin bypass below.
+            if getattr(request.state, "token_use", None) != "session":
+                is_admin = payload.get("is_admin", False) or payload.get("user", {}).get("is_admin", False)
+
+    if token_teams is not None and len(token_teams) == 0:
+        is_admin = False
+
+    # Session token admin bypass: resolve_session_teams() confirmed admin from DB,
+    # but JWT payload lacks is_admin claim (by design — DB is the authority for
+    # session tokens so revocations take effect immediately).
+    #
+    # Fresh DB check: auth caching can produce token_teams=None from stale
+    # cached_ctx.user["is_admin"] without re-reading the DB.  Verify admin
+    # status from DB before granting bypass so demotions take effect immediately
+    # even when the auth cache has not yet expired.
+    if not is_admin and token_teams is None and getattr(request.state, "token_use", None) == "session":  # nosec B105 - Not a password; token_use is a JWT claim type
+        db_user_is_admin = None
+        if user_email:
+            # First-Party
+            from mcpgateway.db import SessionLocal  # pylint: disable=import-outside-toplevel
+
+            _db = SessionLocal()
+            try:
+                _db_user = _db.query(EmailUser).filter(EmailUser.email == user_email).first()
+                db_user_is_admin = bool(_db_user and _db_user.is_admin) if _db_user else None
+            finally:
+                _db.close()
+        # Grant bypass only when the fresh DB check positively confirms admin.
+        # db_user_is_admin is None (user missing from DB or query error) must
+        # fail-closed — a deleted or missing user should not inherit bypass
+        # even if the cached token_teams=None signal persists.
+        if db_user_is_admin is True:
+            is_admin = True
+            logger.debug(
+                "Session admin bypass: token_use=%s, email=%s path=%s (db_check=%s)",
+                getattr(request.state, "token_use", None),
+                user_email,
+                getattr(getattr(request, "url", None), "path", "unknown"),
+                db_user_is_admin,
+            )
+
+    return user_email, token_teams, is_admin
+
+
+async def is_unrestricted_platform_admin(request: Request, user: Any, db: Session) -> bool:
+    """Return whether request has unrestricted platform-admin authority."""
+    if request is None or not hasattr(request, "state"):
+        return False
+    user_email, token_teams, _token_is_admin = get_rpc_filter_context(request, user)
+    if not user_email or token_teams is not None:
+        return False
+
+    # First-Party
+    from mcpgateway.services.permission_service import PermissionService  # pylint: disable=import-outside-toplevel
+
+    return await PermissionService(db).check_platform_admin_permission(user_email, token_teams=None)
+
+
+def configuration_export_includes_roots(include_types: Optional[List[str]], exclude_types: Optional[List[str]]) -> bool:
+    """Return whether full export selection includes roots."""
+    normalized_include = {item.strip().lower() for item in include_types or [] if item and item.strip()}
+    normalized_exclude = {item.strip().lower() for item in exclude_types or [] if item and item.strip()}
+    if normalized_include:
+        return "roots" in normalized_include
+    return "roots" not in normalized_exclude
+
+
+def selective_selection_includes_roots(entity_selections: Any) -> bool:
+    """Return whether selective export/import selection includes roots."""
+    if not isinstance(entity_selections, dict) or "roots" not in entity_selections:
+        return False
+    roots_selection = entity_selections.get("roots")
+    return roots_selection is None or (isinstance(roots_selection, list) and bool(roots_selection))
+
+
+def import_envelope_includes_roots(import_data: Any, selected_entities: Any = None) -> bool:
+    """Return whether import data and selection would touch roots."""
+    if not isinstance(import_data, dict):
+        return False
+    entities = import_data.get("entities")
+    if not isinstance(entities, dict) or "roots" not in entities:
+        return False
+    roots = entities.get("roots")
+    if not isinstance(roots, list) or not roots:
+        return False
+    if selected_entities is None:
+        return True
+    return selective_selection_includes_roots(selected_entities)
+
+
+def _has_verified_jwt_payload(request: Request) -> bool:
+    """Return whether request has a verified JWT payload cached in request state.
+
+    Args:
+        request: Incoming request context.
+
+    Returns:
+        ``True`` when a verified payload tuple is present, otherwise ``False``.
+    """
+    internal_auth_context = get_internal_mcp_auth_context(request)
+    if isinstance(internal_auth_context, dict):
+        return True
+    cached = getattr(request.state, "_jwt_verified_payload", None)
+    return bool(cached and isinstance(cached, tuple) and len(cached) == 2 and cached[1])
+
+
+def get_request_identity(request: Request, user) -> tuple[str, bool]:
+    """Return requester email and admin state honoring scoped-token semantics.
+
+    Args:
+        request: Incoming request context.
+        user: Authenticated user context from dependency resolution.
+
+    Returns:
+        Tuple of ``(requester_email, requester_is_admin)``.
+    """
+    user_email, _token_teams, token_is_admin = get_rpc_filter_context(request, user)
+    resolved_email = user_email or get_user_email(user)
+
+    # When a JWT payload is present, respect token-derived admin semantics
+    # (including public-only admin tokens where bypass is intentionally disabled).
+    if _has_verified_jwt_payload(request):
+        return resolved_email, token_is_admin
+
+    fallback_is_admin = False
+    if hasattr(user, "is_admin"):
+        fallback_is_admin = bool(getattr(user, "is_admin", False))
+    elif isinstance(user, dict):
+        fallback_is_admin = bool(user.get("is_admin", False) or user.get("user", {}).get("is_admin", False))
+
+    return resolved_email, token_is_admin or fallback_is_admin
+
+
+def get_scoped_resource_access_context(request: Request, user) -> tuple[Optional[str], Optional[List[str]]]:
+    """Resolve scoped resource access context for the current requester.
+
+    This is the Layer-1 entry point that every route handler should use when
+    calling a service's fetch / list / read method. The returned tuple is
+    the canonical ``(user_email, token_teams)`` input shape for service-layer
+    visibility checks:
+
+    - ``(None, None)``: admin bypass. The service still applies the post-PR
+      #4341 rule "admin bypass may see public + team, never another user's
+      private".
+    - ``(email, [])``: public-only token. Service returns public rows only.
+    - ``(email, ["team-a", ...])``: team-scoped token. Service returns
+      public rows + team-scoped rows for the listed teams + the caller's own
+      private rows.
+
+    Args:
+        request: Incoming request context.
+        user: Authenticated user context from dependency resolution.
+
+    Returns:
+        Tuple of ``(user_email, token_teams)`` as described above.
+    """
+    user_email, token_teams, is_admin = get_rpc_filter_context(request, user)
+
+    # Non-JWT admin contexts (basic-auth / dev-mode) keep unrestricted access semantics.
+    if not _has_verified_jwt_payload(request):
+        _requester_email, fallback_admin = get_request_identity(request, user)
+        if fallback_admin:
+            return _requester_email, None  # Keep email for owner matching (PR #4341 / issue #4694)
+
+    if is_admin and token_teams is None:
+        return user_email, None  # Keep user_email for owner matching (PR #4341 / issue #4694)
+    if token_teams is None:
+        return user_email, []
+    return user_email, token_teams
+
+
+def get_scoped_visibility_from_user_context(user_context: Optional[Dict[str, Any]]) -> tuple[Optional[str], Optional[List[str]]]:
+    """Resolve scoped visibility from a user_context dict (StreamableHTTP transport).
+
+    This is the Layer-1 entry point for MCP handlers in the StreamableHTTP
+    transport that operate on a ``user_context`` dict rather than a FastAPI
+    ``Request`` object. It applies the same admin-bypass + public-only-secure-default
+    semantics as :func:`get_scoped_resource_access_context`.
+
+    SECURITY: Empty or ``None`` contexts return ``(None, [])`` (public-only secure
+    default), NOT ``(None, None)`` (admin bypass). This prevents unauthenticated
+    StreamableHTTP requests from widening visibility beyond public rows.
+
+    Args:
+        user_context: User context dict from StreamableHTTP auth layer, or ``None``
+            for unauthenticated requests.
+
+    Returns:
+        Tuple of ``(user_email, token_teams)`` where:
+
+        - ``(email, None)``: admin bypass (authenticated admin with unrestricted token)
+        - ``(None, [])``: unauthenticated or empty context (public-only secure default)
+        - ``(email, [])``: authenticated public-only token
+        - ``(email, ["team-a", ...])``: authenticated team-scoped token
+
+    Examples:
+        >>> # Admin with unrestricted token
+        >>> get_scoped_visibility_from_user_context({"email": "admin@x.com", "teams": None, "is_admin": True})
+        ('admin@x.com', None)
+        >>> # Admin with missing teams key (secure default)
+        >>> get_scoped_visibility_from_user_context({"email": "admin@x.com", "is_admin": True})
+        ('admin@x.com', [])
+        >>> # Admin with public-only token (narrowed)
+        >>> get_scoped_visibility_from_user_context({"email": "admin@x.com", "teams": [], "is_admin": True})
+        ('admin@x.com', [])
+        >>> # Regular user with team access
+        >>> get_scoped_visibility_from_user_context({"email": "user@x.com", "teams": ["t1"], "is_admin": False})
+        ('user@x.com', ['t1'])
+        >>> # Unauthenticated request (secure default)
+        >>> get_scoped_visibility_from_user_context(None)
+        (None, [])
+        >>> # Empty context (secure default)
+        >>> get_scoped_visibility_from_user_context({})
+        (None, [])
+    """
+    # SECURITY: Empty or None context returns public-only, not admin bypass.
+    if not user_context:
+        return None, []
+
+    user_email = user_context.get("email")
+    is_admin = user_context.get("is_admin", False)
+
+    # Distinguish missing "teams" key from explicit teams=None
+    if "teams" not in user_context:
+        return user_email, []
+
+    token_teams = user_context["teams"]
+
+    # Admin bypass - only when token has NO team restrictions (token_teams is None)
+    # If token has explicit team scope (even empty [] for public-only), respect it
+    # Preserve user_email so downstream RBAC can verify admin status via is_user_admin()
+    if is_admin and token_teams is None:
+        return user_email, None
+
+    # Non-admin without teams = public-only (secure default)
+    if token_teams is None:
+        return user_email, []
+
+    return user_email, token_teams
+
+
+async def set_user_context_from_token(request: Request, payload: dict, db: Session) -> None:
+    """Set user context on request state from JWT payload.
+
+    Resolves user ID to email and caches on request.state for performance.
+    This helper supports the token migration from email-based to user-ID-based
+    tokens by using signed email metadata first, then resolving UUID subjects
+    through the provided database session.
+
+    Args:
+        request: FastAPI request object
+        payload: JWT payload dictionary
+        db: Database session for user lookup
+
+    Side Effects:
+        Sets the following attributes on request.state:
+        - user_email: Resolved user email (from UUID lookup or direct if legacy email sub)
+        - user_id: Value of the sub claim (UUID in new tokens, email in legacy tokens)
+        - is_admin: Admin flag resolved from DB (not from JWT)
+        - auth_provider: Auth provider from payload
+
+    Examples:
+        >>> # New format: sub contains UUID
+        >>> payload = {"sub": "550e8400-e29b-41d4-a716-446655440000", "auth_provider": "local"}
+        >>> await set_user_context_from_token(request, payload, db)  # doctest: +SKIP
+        >>> request.state.user_email  # doctest: +SKIP
+        'user@example.com'
+        >>> request.state.user_id  # doctest: +SKIP
+        '550e8400-e29b-41d4-a716-446655440000'
+
+        >>> # Legacy format: sub contains email
+        >>> payload = {"sub": "user@example.com"}
+        >>> await set_user_context_from_token(request, payload, db)  # doctest: +SKIP
+        >>> request.state.user_email  # doctest: +SKIP
+        'user@example.com'
+        >>> request.state.user_id  # doctest: +SKIP
+        'user@example.com'
+    """
+    user_email = get_jwt_user_email_from_payload(payload)
+    db_user = None
+
+    if user_email is None:
+        subject = payload.get("sub")
+        if isinstance(subject, str):
+            subject = subject.strip()
+            if subject and _is_uuid_string(subject):
+                db_user = db.query(EmailUser).filter(EmailUser.id == subject).first()
+                user_email = db_user.email if db_user else None
+
+    if user_email and db_user is None:
+        db_user = db.query(EmailUser).filter(EmailUser.email == user_email).first()
+
+    request.state.user_email = user_email
+    request.state.user_id = payload.get("sub")
+    request.state.is_admin = db_user.is_admin if db_user else False
+    request.state.auth_provider = payload.get("auth_provider", "local")

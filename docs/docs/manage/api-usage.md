@@ -1,0 +1,2320 @@
+# API Usage Guide
+
+This guide provides comprehensive examples for using ContextForge REST API via `curl` to perform common operations like managing gateways (MCP servers), tools, resources, prompts, and more.
+
+## Prerequisites
+
+Before using the API, you need to:
+
+1. **Start ContextForge server**:
+
+    ```bash
+    # Development server (port 8000, auto-reload)
+    make dev
+
+    # Production server (port 4444)
+    make serve
+    ```
+
+2. **Generate a JWT authentication token**:
+
+    !!! warning "Security Warning: CLI Token Generation"
+        The CLI token generator has access to `JWT_SECRET_KEY` and can create tokens with ANY claims, bypassing all API security controls. Only use for development/testing. For production, use the `/tokens` API endpoint.
+
+    **Simple Token (Basic Testing):**
+    ```bash
+    # Generate token (replace secret with your JWT_SECRET_KEY from .env)
+    export TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
+      --username admin@example.com \
+      --exp 10080 \
+      --secret my-test-key-but-now-longer-than-32-bytes 2>/dev/null | head -1)
+
+    # Verify token was generated
+    echo "Token: ${TOKEN:0:50}..."
+    ```
+
+    **Rich Token with Admin Privileges (⚠️ DEV/TEST ONLY):**
+    ```bash
+    # Generate admin token for testing admin operations
+    export TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
+      --username admin@example.com \
+      --admin \
+      --full-name "Admin User" \
+      --exp 10080 \
+      --secret my-test-key-but-now-longer-than-32-bytes 2>/dev/null | head -1)
+    ```
+
+    **Team-Scoped Token (⚠️ DEV/TEST ONLY):**
+    ```bash
+    # Generate token scoped to specific teams
+    export TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
+      --username user@example.com \
+      --teams team-123,team-456 \
+      --full-name "Team User" \
+      --exp 10080 \
+      --secret my-test-key-but-now-longer-than-32-bytes 2>/dev/null | head -1)
+    ```
+
+    !!! tip "Token Expiration"
+        The `--exp` parameter sets token expiration in minutes. Non-expiring tokens (`--exp 0`) require `REQUIRE_TOKEN_EXPIRATION=false` (disabled by default for security).
+
+3. **Set the base URL**:
+
+    ```bash
+    # Development server (make dev)
+    export BASE_URL="http://localhost:8000"
+
+    # Direct production server (make serve, uvx, or docker run)
+    export BASE_URL="http://localhost:4444"
+
+    # Docker Compose with nginx proxy
+    # export BASE_URL="http://localhost:8080"
+    ```
+
+## Authentication
+
+Most API requests require JWT Bearer token authentication (public endpoints include `/health` and `/ready`). Documentation endpoints (`/docs`, `/redoc`, `/openapi.json`) also require auth by default. The `/metrics` endpoint requires `admin.metrics` permission. The `/metrics/prometheus` Prometheus scrape endpoint requires JWT authentication and is disabled by default (`ENABLE_METRICS=false`); see the Prometheus Metrics section in `.env.example` for setup instructions.
+
+```bash
+curl -H "Authorization: Bearer $TOKEN" $BASE_URL/endpoint
+```
+
+## Pagination
+
+!!! info "Default Pagination Behavior"
+    For backward compatibility, **main API list endpoints return plain arrays by default**. Add `?include_pagination=true` to get paginated responses with cursor metadata. Admin API endpoints always return paginated responses.
+
+### Pagination Methods
+
+The API supports two pagination approaches:
+
+1. **Cursor-based pagination** (Main API endpoints: `/tools`, `/servers`, `/gateways`, etc.)
+
+   - Uses opaque cursors for efficient traversal
+   - Best for real-time data and large datasets
+   - No knowledge of total pages required
+
+2. **Page-based pagination** (Admin API endpoints: `/admin/tools`, `/admin/servers`, etc.)
+
+   - Uses page numbers and per-page limits
+   - Provides total count and page information
+   - Easier for UI components with page numbers
+
+### Response Formats
+
+**Main API (Cursor-based):**
+```json
+{
+  "entities": [...],
+  "nextCursor": "base64-encoded-cursor"
+}
+```
+
+The entity key name matches the resource type: `tools`, `gateways`, `servers`, `resources`, `prompts`, or `agents`.
+
+**Admin API (Page-based):**
+```json
+{
+  "data": [...],
+  "pagination": {
+    "total_items": 150,
+    "page": 1,
+    "per_page": 50,
+    "total_pages": 3
+  },
+  "links": {
+    "first": "/admin/tools?page=1&per_page=50",
+    "last": "/admin/tools?page=3&per_page=50",
+    "next": "/admin/tools?page=2&per_page=50",
+    "prev": null
+  }
+}
+```
+
+**Plain Array (default for Main API):**
+```json
+[...]
+```
+
+Add `?include_pagination=true` to main API endpoints to get paginated responses with cursor metadata.
+
+### Pagination Parameters
+
+**Main API (Cursor-based):**
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `cursor` | Opaque pagination cursor for fetching next page | `null` (first page) |
+| `limit` | Maximum items per page (0 = all) | 50 |
+| `include_pagination` | Return paginated format with cursor | `false` |
+
+**Admin API (Page-based):**
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `page` | Page number (1-indexed) | 1 |
+| `per_page` | Items per page | 50 |
+
+### Examples
+
+**Cursor-based pagination (Main API):**
+
+```bash
+# Default: plain array (first 50 items)
+curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/tools | jq '.'
+
+# Enable pagination to get cursor metadata
+curl -s -H "Authorization: Bearer $TOKEN" "$BASE_URL/tools?include_pagination=true" | jq '.'
+
+# Extract cursor and get next page
+CURSOR=$(curl -s -H "Authorization: Bearer $TOKEN" "$BASE_URL/tools?include_pagination=true" | jq -r '.nextCursor')
+curl -s -H "Authorization: Bearer $TOKEN" "$BASE_URL/tools?include_pagination=true&cursor=$CURSOR" | jq '.'
+
+# Get all items as plain array
+curl -s -H "Authorization: Bearer $TOKEN" "$BASE_URL/tools?limit=0" | jq '.'
+```
+
+**Page-based pagination (Admin API):**
+
+```bash
+# First page (default)
+curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/admin/tools | jq '.'
+
+# Specific page with custom page size
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/admin/tools?page=2&per_page=25" | jq '.'
+
+# Loop through all pages
+for page in {1..5}; do
+  curl -s -H "Authorization: Bearer $TOKEN" \
+    "$BASE_URL/admin/tools?page=$page&per_page=50" | jq '.data[]'
+done
+```
+
+## Health & Status
+
+### Check Server Health
+
+```bash
+# Basic health check
+curl -s $BASE_URL/health | jq '.'
+```
+
+Expected output:
+
+```json
+{
+  "status": "healthy"
+}
+```
+
+### Check Readiness
+
+```bash
+# Readiness check (for load balancers)
+curl -s $BASE_URL/ready | jq '.'
+```
+
+Expected output:
+
+```json
+{
+  "status": "ready"
+}
+```
+
+If the gateway is not ready, this endpoint returns HTTP 503 with:
+
+```json
+{
+  "status": "not ready",
+  "error": "..."
+}
+```
+
+### Get Version Information
+
+```bash
+# Get server version and build info
+curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/version | jq '.'
+```
+
+## Gateway Management
+
+Gateways represent upstream MCP servers or peer gateways that provide tools, resources, and prompts.
+
+### List All Gateways
+
+```bash
+# First page - List gateways (paginated response - default)
+curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/gateways | jq '.'
+```
+
+**Response:**
+```json
+{
+  "gateways": [
+    {
+      "id": "abc123",
+      "name": "my-mcp-server",
+      "url": "http://localhost:9000/mcp",
+      "enabled": true,
+      "toolCount": 5,
+      "promptCount": 3,
+      "resourceCount": 2,
+      ...
+    }
+  ],
+  "nextCursor": "eyJjcmVhdGVkX2F0IjogIjIwMjQtMDEtMDFUMTI6MDA6MDBaIiwgImlkIjogImFiYzEyMyJ9"
+}
+```
+
+```bash
+# Second page - Use cursor from first response
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/gateways?cursor=eyJjcmVhdGVkX2F0IjogIjIwMjQtMDEtMDFUMTI6MDA6MDBaIiwgImlkIjogImFiYzEyMyJ9" | jq '.'
+
+# Or loop through all pages programmatically
+CURSOR=""
+while true; do
+  RESPONSE=$(curl -s -H "Authorization: Bearer $TOKEN" "$BASE_URL/gateways${CURSOR:+?cursor=$CURSOR}")
+  echo "$RESPONSE" | jq '.gateways[]'
+  CURSOR=$(echo "$RESPONSE" | jq -r '.nextCursor')
+  [ "$CURSOR" == "null" ] && break
+done
+```
+
+**Non-Paginated (Array Only):**
+```bash
+# Get simple array without pagination metadata
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/gateways?include_pagination=false" | jq '.'
+```
+
+### Get Gateway Details
+
+```bash
+# Get specific gateway by ID, exact name, or exact slug
+export GATEWAY_ID="your-gateway-id"
+curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/gateways/$GATEWAY_ID | jq '.'
+```
+
+When `GATEWAY_ASYNC_LIFECYCLE_ENABLED=true`, this same `GET /gateways/{gateway_id}` route is the status polling endpoint for async gateway create, update, and delete. The identifier can be the gateway ID, exact name, or exact slug. If name and slug resolution would be ambiguous across visible gateways, the API returns `409 Conflict`.
+
+One ambiguity example: one visible gateway has `name="team-alpha"` while another visible gateway has `slug="team-alpha"`. Prefer polling by the gateway `id` returned from create/update responses, or keep names and slugs unique within the caller's visible scope.
+
+### Register a New Gateway
+
+```bash
+# Register an MCP server gateway
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "my-mcp-server",
+    "url": "http://localhost:9000/mcp",
+    "description": "My custom MCP server",
+    "transport": "STREAMABLEHTTP"
+  }' \
+  $BASE_URL/gateways | jq '.'
+```
+
+When `GATEWAY_ASYNC_LIFECYCLE_ENABLED=false` (default), gateway registration remains synchronous.
+
+When `GATEWAY_ASYNC_LIFECYCLE_ENABLED=true`, `POST /gateways` returns `202 Accepted` after the gateway row is persisted with `status="pending"`. `202 Accepted` means the work was accepted, not completed. The background lifecycle worker performs MCP initialization and catalog sync after the response returns. Async `POST`, `PUT`, and `DELETE` gateway lifecycle responses also include a `Retry-After` header derived from `GATEWAY_ASYNC_LIFECYCLE_POLL_INTERVAL` so clients have a polling hint.
+
+**Async create response example (`202 Accepted`):**
+
+```json
+{
+  "id": "abc123",
+  "name": "my-mcp-server",
+  "status": "pending",
+  "reachable": false,
+  "registrationAttempts": 0,
+  "nextRetryAt": null,
+  "lastError": null
+}
+```
+
+### Poll Gateway Lifecycle Status
+
+```bash
+# Poll by ID
+curl -s -H "Authorization: Bearer $TOKEN" \
+  $BASE_URL/gateways/$GATEWAY_ID | jq '.'
+
+# Poll by exact name
+curl -s -H "Authorization: Bearer $TOKEN" \
+  $BASE_URL/gateways/my-mcp-server | jq '.'
+```
+
+Status values:
+
+- `pending` - Create or update accepted, worker still initializing or retrying
+- `active` - Gateway is ready and catalog sync completed
+- `deleting` - Delete accepted, worker cleanup and row removal still in progress
+
+Retry metadata is returned while a gateway is `pending`:
+
+- `registrationAttempts` / `registration_attempts` - Number of failed initialization attempts so far
+- `statusMessage` / `status_message` - Pending acceptance text before first failure, or the latest sanitized lifecycle detail while pending/deleting
+- `nextRetryAt` / `next_retry_at` - Next scheduled retry time, or `null` before first failure
+- `lastError` / `last_error` - Most recent sanitized failure detail, or `null` before first failure
+- `lifecycleClaimedBy`, `lifecycleClaimedAt`, `lifecycleClaimExpiresAt` - Internal worker lease metadata that may appear in admin/API payloads for troubleshooting; clients should not depend on them for business logic
+
+Gateway name is the natural deduplication key for async lifecycle retries. With async lifecycle enabled, retrying `POST /gateways` with the same name while the existing gateway is `pending` returns the current pending record with `202 Accepted`; retrying while the existing gateway is `active` returns `409 Conflict`. Retrying an update while the gateway is already `pending` returns the current pending record with `202 Accepted`. A client-side transport timeout or lost response does not prove server-side failure: poll `GET /gateways/{id|name|slug}` before retrying or deleting.
+
+Pending gateway retries continue with exponential backoff until initialization succeeds or the client sends DELETE. After each failed initialization attempt, the next delay is `min(2 ** (registrationAttempts - 1), 300)` seconds. `nextRetryAt` is the source of truth for when the worker may retry next.
+
+DELETE changes `pending` or `active` gateways to `deleting`; the worker then stops pending retries, performs cleanup, and removes the row. Retrying DELETE while the gateway is already `deleting` is safe: clients should treat the resource as still being removed and keep polling until `404 Not Found`. Once deleted, polling returns `404 Not Found`.
+
+**Pending retry response example (`200 OK`):**
+
+```json
+{
+  "id": "abc123",
+  "name": "my-mcp-server",
+  "status": "pending",
+  "registrationAttempts": 3,
+  "nextRetryAt": "2026-05-01T12:05:32Z",
+  "lastError": "Connection refused: http://127.0.0.1:6666/mcp"
+}
+```
+
+!!! note "Request Types"
+    Supported `request_type` values:
+
+    - `STREAMABLEHTTP`: HTTP/SSE-based MCP server
+    - `SSE`: Server-Sent Events transport
+    - `STDIO`: Standard I/O (for local processes)
+    - `WEBSOCKET`: WebSocket transport
+
+#### Complete Example: Registering a Gateway
+
+```bash
+# 1. Start an MCP server on port 9000 (in another terminal)
+python3 -m mcpgateway.translate --stdio "uvx mcp-server-git" --port 9000
+
+# 2. Register the gateway
+GATEWAY_RESPONSE=$(curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "git-server",
+    "url": "http://localhost:9000/mcp",
+    "description": "Git operations MCP server",
+    "transport": "STREAMABLEHTTP"
+  }' \
+  $BASE_URL/gateways)
+
+# 3. Extract the gateway ID
+export GATEWAY_ID=$(echo $GATEWAY_RESPONSE | jq -r '.id')
+echo "Gateway ID: $GATEWAY_ID"
+```
+
+### Update Gateway
+
+```bash
+# Update gateway properties
+curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "updated-server-name",
+    "description": "Updated description",
+    "enabled": true
+  }' \
+  $BASE_URL/gateways/$GATEWAY_ID | jq '.'
+```
+
+When `GATEWAY_ASYNC_LIFECYCLE_ENABLED=true`, `PUT /gateways/{id}` returns `202 Accepted` with the updated gateway in `status="pending"`. The worker re-initializes the gateway and refreshes the catalog after the response returns. Poll `GET /gateways/{id|name|slug}` until the gateway becomes `active` again.
+
+### Enable/Disable Gateway
+
+```bash
+# Toggle gateway enabled status
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  $BASE_URL/gateways/$GATEWAY_ID/state?activate=false | jq '.'
+```
+
+### Delete Gateway
+
+```bash
+# Delete a gateway (warning: also deletes associated tools)
+curl -s -X DELETE -H "Authorization: Bearer $TOKEN" \
+  $BASE_URL/gateways/$GATEWAY_ID | jq '.'
+```
+
+When `GATEWAY_ASYNC_LIFECYCLE_ENABLED=true`, `DELETE /gateways/{id}` returns `202 Accepted` with `status="deleting"`. The worker completes cleanup and hard deletion on a later polling cycle. Continue polling `GET /gateways/{id|name|slug}` until the route returns `404 Not Found`.
+
+## Tool Management
+
+Tools are executable operations exposed by MCP servers through the gateway.
+
+### List All Tools
+
+```bash
+# First page - List all available tools (paginated response - default)
+curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/tools | jq '.'
+```
+
+**Response:**
+```json
+{
+  "tools": [
+    {
+      "name": "get_weather",
+      "description": "Get current weather",
+      "gatewaySlug": "weather-api",
+      ...
+    }
+  ],
+  "nextCursor": "eyJjcmVhdGVkX2F0IjogIjIwMjQtMDEtMDFUMTI6MDA6MDBaIiwgImlkIjogInRvb2wxMjMifQ"
+}
+```
+
+```bash
+# Second page - Use cursor from first response
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/tools?cursor=eyJjcmVhdGVkX2F0IjogIjIwMjQtMDEtMDFUMTI6MDA6MDBaIiwgImlkIjogInRvb2wxMjMifQ" | jq '.'
+```
+
+**Non-Paginated (Array Only):**
+```bash
+# Get simple array without pagination metadata
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/tools?include_pagination=false" | jq '.'
+
+# Extract specific fields from array
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/tools?include_pagination=false" | \
+  jq '.[] | {name: .name, description: .description, gateway: .gatewaySlug}'
+```
+
+#### Filtering and Pagination
+
+The `/tools` endpoint supports several query parameters for filtering and pagination:
+
+| Parameter | Description |
+|-----------|-------------|
+| `gateway_id` | Filter by gateway ID. Use `null` to match tools without a gateway. |
+| `tags` | Comma-separated list of tags to filter by (matches any). |
+| `visibility` | Filter by visibility: `private`, `team`, or `public`. |
+| `team_id` | Filter by team ID. |
+| `include_inactive` | Include disabled tools (default: `false`). |
+| `limit` | Maximum tools to return. Use `0` for all tools (no limit). Default: 50. |
+| `cursor` | Pagination cursor for fetching the next page. |
+| `include_pagination` | Return paginated format with cursor (default: `true`). Set to `false` for array only. |
+
+**Examples:**
+
+```bash
+# Filter by gateway (paginated)
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/tools?gateway_id=<gateway-id>" | jq '.'
+
+# Get tools not associated with any gateway (REST tools, A2A agents, etc.)
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/tools?gateway_id=null" | jq '.'
+
+# Filter by visibility
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/tools?visibility=public" | jq '.'
+
+# Filter by tags (paginated)
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/tools?tags=api,data" | jq '.'
+
+# Combine filters: all public tools from a specific gateway
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/tools?gateway_id=<gateway-id>&visibility=public&limit=0" | jq '.'
+
+# Get up to 100 tools per page
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/tools?limit=100" | jq '.'
+
+# Get ALL tools (no pagination - returns all as array)
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/tools?limit=0&include_pagination=false" | jq '.'
+
+# Navigate to next page using cursor
+NEXT=$(curl -s -H "Authorization: Bearer $TOKEN" "$BASE_URL/tools" | jq -r '.nextCursor')
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/tools?cursor=$NEXT" | jq '.'
+```
+
+### Get Tool Details
+
+```bash
+# Get specific tool by ID
+export TOOL_ID="your-tool-id"
+curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/tools/$TOOL_ID | jq '.'
+
+# View tool's input schema
+curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/tools/$TOOL_ID | jq '.inputSchema'
+
+# View tool's output schema
+curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/tools/$TOOL_ID | jq '.outputSchema'
+```
+
+### Register a Custom Tool
+
+```bash
+# Register a tool manually (for REST APIs, custom integrations)
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "tool": {
+      "name": "weather-api",
+      "description": "Get weather information for a city",
+      "url": "https://api.weather.com/v1/current",
+      "integration_type": "REST",
+      "request_type": "POST",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "city": {
+            "type": "string",
+            "description": "City name"
+          }
+        },
+        "required": [
+          "city"
+        ]
+      }
+    }
+  }' \
+  $BASE_URL/tools | jq '.'
+```
+
+### Invoke a Tool
+
+```bash
+export TOOL_NAME="your-tool-name"
+# Execute a tool with arguments
+jq -n --arg name "$TOOL_NAME" --argjson args '{"param1":"value1","param2":"value2"}' \
+  '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":$name,"arguments":$args}}' |
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d @- "$BASE_URL/rpc" | jq '.result.content[0].text'
+```
+
+#### Complete Example: Tool Invocation
+
+```bash
+# 1. List tools and find one to test
+TOOLS=$(curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/tools)
+export TOOL_ID=$(echo $TOOLS | jq -r '.[0].id')
+export TOOL_NAME=$(echo $TOOLS | jq -r '.[0].name')
+
+echo "Testing tool: $TOOL_NAME (ID: $TOOL_ID)"
+
+# 2. View the tool's input schema
+echo "Input schema:"
+curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/tools/$TOOL_ID | jq '.inputSchema'
+
+# 3. Invoke the tool
+jq -n --arg name "$TOOL_NAME" --argjson args '{"param1":"test_value"}' \
+  '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":$name,"arguments":$args}}' |
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d @- "$BASE_URL/rpc" | jq '.result.content[0].text'
+```
+
+### Update Tool
+
+```bash
+# Update tool properties
+curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "description": "Updated tool description",
+    "enabled": true
+  }' \
+  $BASE_URL/tools/$TOOL_ID | jq '.'
+```
+
+### Enable/Disable Tool
+
+```bash
+# Toggle tool enabled status
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  $BASE_URL/tools/$TOOL_ID/state?activate=false | jq '.'
+```
+
+### Delete Tool
+
+```bash
+# Delete a tool
+curl -s -X DELETE -H "Authorization: Bearer $TOKEN" \
+  $BASE_URL/tools/$TOOL_ID | jq '.'
+```
+
+## Virtual Server Management
+
+Virtual servers allow you to compose multiple MCP servers and tools into unified service endpoints.
+
+### List All Servers
+
+```bash
+# First page - List all virtual servers (paginated response - default)
+curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/servers | jq '.'
+```
+
+**Response:**
+```json
+{
+  "servers": [
+    {
+      "id": "server123",
+      "name": "my-virtual-server",
+      "description": "Combined MCP endpoints",
+      ...
+    }
+  ],
+  "nextCursor": "eyJjcmVhdGVkX2F0IjogIjIwMjQtMDEtMDFUMTI6MDA6MDBaIiwgImlkIjogInNlcnZlcjEyMyJ9"
+}
+```
+
+```bash
+# Second page - Use cursor from first response
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/servers?cursor=eyJjcmVhdGVkX2F0IjogIjIwMjQtMDEtMDFUMTI6MDA6MDBaIiwgImlkIjogInNlcnZlcjEyMyJ9" | jq '.'
+```
+
+**Non-Paginated:**
+```bash
+# Get simple array
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/servers?include_pagination=false" | jq '.'
+```
+
+### Create Virtual Server
+
+```bash
+# Create a new virtual server
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+  "server": {
+    "name": "my-virtual-server",
+    "description": "Composed server with multiple tools",
+    "associated_tools": ["'$TOOL_ID'"]
+    }
+  }' \
+  $BASE_URL/servers | jq '.'
+```
+
+### Get Server Details
+
+```bash
+# Get specific server
+export SERVER_ID="your-server-id"
+curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/servers/$SERVER_ID | jq '.'
+```
+
+**Response:**
+```json
+{
+  "id": "server123",
+  "name": "my-virtual-server",
+  "associatedTools": ["tool1", "tool2"],
+  "enabled": true
+}
+```
+
+
+
+#### Complete Example: Virtual Server Creation
+
+```bash
+# 1. Get tools IDs to associate
+TOOLS=$(curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/tools)
+export TOOL1_ID=$(echo $TOOLS | jq -r '.[0].id')
+export TOOL2_ID=$(echo $TOOLS | jq -r '.[1].id')
+
+# 2. Create virtual server with multiple gateways
+SERVER_RESPONSE=$(curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+  "server": {
+    "name": "my-virtual-server",
+    "description": "Composed server with multiple tools",
+    "associated_tools": ["'$TOOL1_ID'", "'$TOOL2_ID'"]
+    }
+  }' \
+  $BASE_URL/servers)
+
+export SERVER_ID=$(echo $SERVER_RESPONSE | jq -r '.id')
+echo "Server ID: $SERVER_ID"
+```
+
+### List Server Tools
+
+```bash
+# Get all tools available through a server
+curl -s -H "Authorization: Bearer $TOKEN" \
+  $BASE_URL/servers/$SERVER_ID/tools | jq '.'
+```
+
+### List Server Resources
+
+```bash
+# Get all resources available through a server
+curl -s -H "Authorization: Bearer $TOKEN" \
+  $BASE_URL/servers/$SERVER_ID/resources | jq '.'
+```
+
+### List Server Prompts
+
+```bash
+# Get all prompts available through a server
+curl -s -H "Authorization: Bearer $TOKEN" \
+  $BASE_URL/servers/$SERVER_ID/prompts | jq '.'
+```
+
+### Connect to Server via SSE
+
+```bash
+# Connect to server using Server-Sent Events
+curl -N -H "Authorization: Bearer $TOKEN" \
+  $BASE_URL/servers/$SERVER_ID/sse
+```
+
+### Update Server
+
+```bash
+# Update virtual server
+curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "updated-server",
+    "description": "Updated description",
+    "enabled": true
+  }' \
+  $BASE_URL/servers/$SERVER_ID | jq '.'
+```
+
+### Enable/Disable Server
+
+```bash
+# Toggle server enabled status
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  $BASE_URL/servers/$SERVER_ID/state?activate=false | jq '.'
+```
+
+### Delete Server
+
+```bash
+# Delete virtual server
+curl -s -X DELETE -H "Authorization: Bearer $TOKEN" \
+  $BASE_URL/servers/$SERVER_ID | jq '.'
+```
+
+## Resource Management
+
+Resources are data sources (files, documents, database queries) exposed by MCP servers.
+
+### List All Resources
+
+```bash
+# First page - List all available resources (paginated response - default)
+curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/resources | jq '.'
+```
+
+**Paginated Response:**
+```json
+{
+  "resources": [
+    {
+      "uri": "file:///data/config.json",
+      "name": "Application Config",
+      "mimeType": "application/json",
+      ...
+    }
+  ],
+  "nextCursor": "eyJjcmVhdGVkX2F0IjogIjIwMjQtMDEtMDFUMTI6MDA6MDBaIiwgImlkIjogInJlczEyMyJ9"
+}
+```
+
+```bash
+# Second page - Use cursor from first response
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/resources?cursor=eyJjcmVhdGVkX2F0IjogIjIwMjQtMDEtMDFUMTI6MDA6MDBaIiwgImlkIjogInJlczEyMyJ9" | jq '.'
+```
+
+**Non-Paginated:**
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/resources?include_pagination=false" | jq '.'
+```
+
+#### Filtering and Pagination
+
+The `/resources` endpoint supports several query parameters for filtering and pagination:
+
+| Parameter | Description |
+|-----------|-------------|
+| `gateway_id` | Filter by gateway ID. Use `null` to match resources without a gateway. |
+| `tags` | Comma-separated list of tags to filter by (matches any). |
+| `visibility` | Filter by visibility: `private`, `team`, or `public`. |
+| `team_id` | Filter by team ID. |
+| `include_inactive` | Include disabled resources (default: `false`). |
+| `limit` | Maximum resources to return. Use `0` for all resources (no limit). Default: 50. |
+| `cursor` | Pagination cursor for fetching the next page. |
+| `include_pagination` | Return paginated format with cursor (default: `true`). Set to `false` for array only. |
+
+**Examples:**
+
+```bash
+# Filter by gateway (all resources from a specific gateway)
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/resources?gateway_id=<gateway-id>" | jq '.'
+
+# Get resources not associated with any gateway
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/resources?gateway_id=null" | jq '.'
+
+# Filter by visibility
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/resources?visibility=public" | jq '.'
+
+# Filter by tags
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/resources?tags=config,database" | jq '.'
+
+# Get ALL resources (no pagination - returns all as array)
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/resources?limit=0&include_pagination=false" | jq '.'
+```
+
+### Register a Resource
+
+```bash
+# Register a new resource
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '
+  {"resource":
+    {
+      "name": "config-file",
+      "uri": "file:///etc/config.json",
+      "description": "Application configuration file",
+      "mime_type": "application/json",
+      "content": "{'key': 'value'}"
+    }
+  }' \
+  $BASE_URL/resources | jq '.'
+```
+
+!!! note "Resource URI uniqueness"
+    `uri` is the resource identifier and must be unique within the scope the resource is created in; `name` is a human-readable display label and **may repeat**. Registering a resource whose URI already exists in that scope returns `409 Conflict`. The scope depends on `visibility` — see [Resource URI uniqueness](../architecture/multitenancy.md#resource-uri-uniqueness) for the exact keys.
+
+**Error responses:**
+
+| Status | Condition |
+|--------|-----------|
+| `409 Conflict` | A resource with this URI already exists in the target scope. |
+| `422 Unprocessable Entity` | Payload failed schema or resource validation. |
+| `400 Bad Request` | Other resource errors (for example, `visibility=team` without a `team_id`). |
+
+`409` bodies use the standard FastAPI shape:
+
+```json
+{
+  "detail": "Public resource already exists with URI: file:///etc/config.json — resource URIs must be unique within this scope (names may repeat)."
+}
+```
+
+### Get Resource Details
+
+```bash
+# Get specific resource
+export RESOURCE_ID="your-resource-id"
+curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/resources/$RESOURCE_ID | jq '.'
+```
+
+**Response:**
+```json
+{
+  "id": "res123",
+  "name": "config-file",
+  "uri": "file:///etc/config.json",
+  "mimeType": "application/json"
+}
+```
+
+
+### Read Resource Content
+
+```bash
+# Get resource content
+curl -s -H "Authorization: Bearer $TOKEN" \
+  $BASE_URL/resources/$RESOURCE_ID | jq '.text'
+```
+
+### Subscribe to Resource Updates
+
+```bash
+# Subscribe to resource change notifications
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  $BASE_URL/resources/subscribe/$RESOURCE_ID | jq '.'
+```
+
+### List Resource Templates
+
+```bash
+# Get available resource templates
+curl -s -H "Authorization: Bearer $TOKEN" \
+  $BASE_URL/resources/templates/list | jq '.'
+```
+
+### Update Resource
+
+```bash
+# Update resource metadata
+curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "description": "Updated description",
+    "mime_type": "text/plain"
+  }' \
+  $BASE_URL/resources/$RESOURCE_ID | jq '.'
+```
+
+**Error responses:**
+
+| Status | Condition |
+|--------|-----------|
+| `409 Conflict` | The new `uri` collides with an existing resource in the target scope, or a database uniqueness constraint was violated. |
+| `422 Unprocessable Entity` | Payload failed schema or resource validation. |
+| `413 Payload Too Large` | Resource content exceeded the configured size limit. |
+| `415 Unsupported Media Type` | MIME type is not in the allowed list. |
+| `400 Bad Request` | Other resource errors, including a concurrent-update lock conflict. |
+
+### Enable/Disable Resource
+
+```bash
+# Toggle resource enabled status
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  $BASE_URL/resources/$RESOURCE_ID/state?activate=false | jq '.'
+```
+
+### Delete Resource
+
+```bash
+# Delete resource
+curl -s -X DELETE -H "Authorization: Bearer $TOKEN" \
+  $BASE_URL/resources/$RESOURCE_ID | jq '.'
+```
+
+## Prompt Management
+
+Prompts are reusable templates with arguments for AI interactions.
+
+### List All Prompts
+
+```bash
+# First page - List all available prompts (paginated response - default)
+curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/prompts | jq '.'
+```
+
+**Paginated Response:**
+```json
+{
+  "prompts": [
+    {
+      "name": "code_review",
+      "description": "Review code for best practices",
+      "arguments": [...],
+      ...
+    }
+  ],
+  "nextCursor": "eyJjcmVhdGVkX2F0IjogIjIwMjQtMDEtMDFUMTI6MDA6MDBaIiwgImlkIjogInByb21wdDEyMyJ9"
+}
+```
+
+```bash
+# Second page - Use cursor from first response
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/prompts?cursor=eyJjcmVhdGVkX2F0IjogIjIwMjQtMDEtMDFUMTI6MDA6MDBaIiwgImlkIjogInByb21wdDEyMyJ9" | jq '.'
+```
+
+**Non-Paginated:**
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/prompts?include_pagination=false" | jq '.'
+```
+
+#### Filtering and Pagination
+
+The `/prompts` endpoint supports several query parameters for filtering and pagination:
+
+| Parameter | Description |
+|-----------|-------------|
+| `gateway_id` | Filter by gateway ID. Use `null` to match prompts without a gateway. |
+| `tags` | Comma-separated list of tags to filter by (matches any). |
+| `visibility` | Filter by visibility: `private`, `team`, or `public`. |
+| `team_id` | Filter by team ID. |
+| `include_inactive` | Include disabled prompts (default: `false`). |
+| `limit` | Maximum prompts to return. Use `0` for all prompts (no limit). Default: 50. |
+| `cursor` | Pagination cursor for fetching the next page. |
+| `include_pagination` | Return paginated format with cursor (default: `true`). Set to `false` for array only. |
+
+**Examples:**
+
+```bash
+# Filter by gateway (all prompts from a specific gateway)
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/prompts?gateway_id=<gateway-id>" | jq '.'
+
+# Get prompts not associated with any gateway
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/prompts?gateway_id=null" | jq '.'
+
+# Filter by visibility
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/prompts?visibility=public" | jq '.'
+
+# Filter by tags
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/prompts?tags=template,greeting" | jq '.'
+
+# Get ALL prompts (no pagination - returns all as array)
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/prompts?limit=0&include_pagination=false" | jq '.'
+```
+
+### Register a Prompt
+
+```bash
+# Register a new prompt template
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"prompt": {
+      "name": "code-review",
+      "description": "Review code for best practices",
+      "template": "Review the following code and suggest improvements:\n\n{{code}}",
+      "arguments": [
+        {
+          "name": "code",
+          "description": "Code to review",
+          "required": true
+        }
+      ]
+    }
+  }' \
+  $BASE_URL/prompts | jq '.'
+```
+
+### Get Prompt Details
+
+```bash
+# Get specific prompt
+export PROMPT_ID="your-prompt-id"
+curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/prompts/$PROMPT_ID | jq '.'
+```
+
+**Response:**
+```json
+{
+  "id": "prompt123",
+  "name": "code-review",
+  "template": "Review code: {{code}}",
+  "arguments": [{"name": "code", "required": true}]
+}
+```
+
+### Execute Prompt (Get Rendered Content)
+
+```bash
+# Execute prompt with arguments
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "code": "def hello():\n    print(\"Hello\")"
+  }' \
+  $BASE_URL/prompts/$PROMPT_ID | jq '.'
+```
+
+### Update Prompt
+
+```bash
+# Update prompt template
+curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "description": "Updated prompt description",
+    "content": "New template: {{variable}}"
+  }' \
+  $BASE_URL/prompts/$PROMPT_ID | jq '.'
+```
+
+### Enable/Disable Prompt
+
+```bash
+# Toggle prompt enabled status
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  $BASE_URL/prompts/$PROMPT_ID/state?activate=false | jq '.'
+```
+
+### Delete Prompt
+
+```bash
+# Delete prompt
+curl -s -X DELETE -H "Authorization: Bearer $TOKEN" \
+  $BASE_URL/prompts/$PROMPT_ID | jq '.'
+```
+
+## LLM Settings Management
+
+LLM Settings Management endpoints configure language model providers and models. The feature is available only when `LLMCHAT_ENABLED=true`; when it is `false`, the LLM routers are never mounted (`api/v1/__init__.py`'s `_assemble_routers` skips them entirely), so every LLM route path is simply absent and any request to it gets the framework's default `404 Not Found` — not a feature-gate check that returns 404 from within a handler. These endpoints are exposed through two route families that use different CSRF protection schemes:
+
+- **`/v1/llm/providers`, `/v1/llm/models`** — Write operations protected by `CSRFMiddleware` (HMAC-based tokens); read operations (GET/HEAD/OPTIONS) are safe methods and skip CSRF validation. The canonical prefix is `/v1/`; unprefixed legacy aliases (`/llm/providers`, `/llm/models`) also resolve when `LEGACY_API_ENABLED=true`, but are hidden from `/openapi.json`.
+- **`/v1/admin/llm/*`** — Write operations for the Admin UI, protected by `enforce_admin_csrf` dependency (double-submit with plain token comparison). These routes are validated by **both** CSRF schemes (the `/admin` prefix does not exempt `/v1/admin/*` paths from `CSRFMiddleware`).
+- **`/admin/llm/*` (legacy)**  — Legacy unprefixed aliases of the admin routes, also protected by `enforce_admin_csrf` but **exempt from `CSRFMiddleware`** due to the `/admin` prefix exemption. Only the `enforce_admin_csrf` dependency is applied.
+
+### Path-Based CSRF Validation Matrix
+
+The middleware's exemption for the `/admin` prefix is prefix-matched on the raw request path, affecting which CSRF schemes apply:
+
+| Request Path | CSRFMiddleware | enforce_admin_csrf | Total Schemes |
+|---|---|---|---|
+| `/admin/llm/*` (legacy) | Exempt | Applied | 1 (admin only) |
+| `/v1/admin/llm/*` (versioned) | Applied | Applied | 2 (double validation) |
+
+**Consequence**: Versioned admin routes at `/v1/admin/llm/*` validate against both CSRF schemes simultaneously. Legacy routes at `/admin/llm/*` use only the admin dependency's double-submit scheme. The legacy mount is hidden from `/openapi.json` and exists for backward compatibility; do not assume the versioned `/v1/` prefix is strictly safer to prefer — see the known issue below before choosing between them for new code.
+
+!!! warning "Known Issue: mounts disagree right after login (#5978)"
+    The intended contract is that `/admin/llm/*` and `/v1/admin/llm/*` behave identically for CSRF purposes — the extra `CSRFMiddleware` pass on the versioned mount is meant to be redundant with `enforce_admin_csrf`, not stricter. In practice, there is a narrow window where they disagree: `admin_login_handler` sets the CSRF cookie as an opaque, non-HMAC token, and only the first dashboard load (`GET /admin/`) rotates it to its real HMAC-bound value. A write issued between login and that first dashboard load presents the opaque cookie, which satisfies `enforce_admin_csrf`'s plain double-submit comparison but fails `CSRFMiddleware`'s HMAC validation. The result: the identical request is accepted at `/admin/llm/*` and rejected with `CSRF_TOKEN_INVALID` at `/v1/admin/llm/*`. Tracked at [IBM/mcp-context-forge#5978](https://github.com/IBM/mcp-context-forge/issues/5978); until it is fixed, do not rely on either mount being strictly more permissive or more correct than the other in this window.
+
+The Admin UI itself calls the unprefixed `/admin/llm/*` form, not `/v1/admin/llm/*` — which is why this divergence has gone unnoticed in practice; only direct callers of the versioned mount are affected.
+
+### CSRF Protection Detail
+
+The two LLM route families use independent CSRF implementations (a third, `enforce_fetch_tools_csrf`, exists in `mcpgateway/routers/oauth_router.py` for the unrelated `/oauth/fetch-tools` endpoint — see [CSRF Protection](configuration.md#csrf-protection) in the configuration reference for the full picture):
+
+| Aspect | `/v1/llm/*` (CSRFMiddleware) | `/v1/admin/llm/*` (enforce_admin_csrf) |
+|--------|------------------------------|----------------------------------------|
+| Cookie name | `settings.csrf_cookie_name` (configurable) | `mcpgateway_csrf_token` (hardcoded) |
+| Header name | `settings.csrf_token_name` (configurable, default `X-CSRF-Token`) | `x-csrf-token` (hardcoded) |
+| Token scheme | HMAC over `user_id:session_id:window` | Plain double-submit: `compare_digest(header, cookie)` |
+| Origin check | Via `CSRF_CHECK_REFERER` setting + `CSRF_TRUSTED_ORIGINS` | Always, via `Origin`/`Referer` header validation |
+| Bearer-token bypass | Yes — middleware skips token check for `Authorization: Bearer` | Yes — dependency returns early when no `jwt_token` cookie is present |
+| Form field fallback | Not supported | `csrf_token` form field (for form-encoded requests) |
+
+**Bearer-token API callers** do not need CSRF tokens on either family. Form-encoded POST requests to `/v1/admin/llm/*` may carry the token in the `csrf_token` form field instead of a header.
+
+### List LLM Providers
+
+```bash
+# Bearer-token auth (CSRF not required for GET requests)
+curl -s -H "Authorization: Bearer $TOKEN" \
+  $BASE_URL/v1/llm/providers | jq '.'
+```
+
+**Response:**
+```json
+{
+  "providers": [
+    {
+      "id": "provider-123",
+      "name": "openai",
+      "slug": "openai",
+      "provider_type": "openai",
+      "api_base": "https://api.openai.com/v1",
+      "enabled": true,
+      "health_status": "healthy",
+      "model_count": 8
+    }
+  ],
+  "total": 1,
+  "page": 1,
+  "page_size": 50
+}
+```
+
+### List LLM Models
+
+```bash
+# Bearer-token auth (CSRF not required for GET requests)
+curl -s -H "Authorization: Bearer $TOKEN" \
+  $BASE_URL/v1/llm/models | jq '.'
+```
+
+**Response:**
+```json
+{
+  "models": [
+    {
+      "id": "model-456",
+      "model_id": "gpt-4",
+      "model_name": "GPT-4",
+      "provider_id": "provider-123",
+      "provider_name": "openai",
+      "supports_chat": true,
+      "supports_streaming": true,
+      "enabled": true
+    }
+  ],
+  "total": 1,
+  "page": 1,
+  "page_size": 50
+}
+```
+
+### Update Provider State
+
+Toggle a provider's enabled status. Returns an HTML fragment of the updated provider row for HTMX.
+
+```bash
+# Bearer-token auth (CSRF not required)
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  $BASE_URL/v1/admin/llm/providers/provider-123/state
+
+# Cookie + CSRF token auth (Admin UI form)
+# Note: enforce_admin_csrf requires Origin or Referer header
+curl -s -X POST \
+  -b "jwt_token=$JWT_COOKIE; mcpgateway_csrf_token=$CSRF_COOKIE" \
+  -H "X-CSRF-Token: $CSRF_COOKIE" \
+  -H "Origin: http://localhost:8000" \
+  $BASE_URL/v1/admin/llm/providers/provider-123/state
+```
+
+### Check Provider Health
+
+Verify provider API connectivity and response time.
+
+```bash
+# Bearer-token auth
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  $BASE_URL/v1/admin/llm/providers/provider-123/health | jq '.'
+
+# Cookie + CSRF token auth
+curl -s -X POST \
+  -b "jwt_token=$JWT_COOKIE; mcpgateway_csrf_token=$CSRF_COOKIE" \
+  -H "X-CSRF-Token: $CSRF_COOKIE" \
+  -H "Origin: http://localhost:8000" \
+  $BASE_URL/v1/admin/llm/providers/provider-123/health | jq '.'
+```
+
+**Response:**
+```json
+{
+  "status": "healthy",
+  "provider_id": "provider-123",
+  "latency_ms": 245,
+  "error": null
+}
+```
+
+### Delete Provider
+
+Remove a provider and all associated models. Returns HTTP 200 with an empty body for HTMX row removal.
+
+```bash
+# Bearer-token auth
+curl -s -X DELETE -H "Authorization: Bearer $TOKEN" \
+  $BASE_URL/v1/admin/llm/providers/provider-123
+
+# Cookie + CSRF token auth
+curl -s -X DELETE \
+  -b "jwt_token=$JWT_COOKIE; mcpgateway_csrf_token=$CSRF_COOKIE" \
+  -H "X-CSRF-Token: $CSRF_COOKIE" \
+  -H "Origin: http://localhost:8000" \
+  $BASE_URL/v1/admin/llm/providers/provider-123
+```
+
+### Update Model State
+
+Toggle a model's enabled status. Returns an HTML fragment of the updated model row for HTMX.
+
+```bash
+# Bearer-token auth
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  $BASE_URL/v1/admin/llm/models/model-456/state
+
+# Cookie + CSRF token auth
+curl -s -X POST \
+  -b "jwt_token=$JWT_COOKIE; mcpgateway_csrf_token=$CSRF_COOKIE" \
+  -H "X-CSRF-Token: $CSRF_COOKIE" \
+  -H "Origin: http://localhost:8000" \
+  $BASE_URL/v1/admin/llm/models/model-456/state
+```
+
+### Delete Model
+
+Remove a model. Returns HTTP 200 with an empty body for HTMX row removal.
+
+```bash
+# Bearer-token auth
+curl -s -X DELETE -H "Authorization: Bearer $TOKEN" \
+  $BASE_URL/v1/admin/llm/models/model-456
+
+# Cookie + CSRF token auth
+curl -s -X DELETE \
+  -b "jwt_token=$JWT_COOKIE; mcpgateway_csrf_token=$CSRF_COOKIE" \
+  -H "X-CSRF-Token: $CSRF_COOKIE" \
+  -H "Origin: http://localhost:8000" \
+  $BASE_URL/v1/admin/llm/models/model-456
+```
+
+### Test LLM Provider
+
+Test a provider's API connectivity and LLM response. Accepts JSON request bodies only.
+
+```bash
+# Bearer-token auth
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "test_type": "models"
+  }' \
+  $BASE_URL/v1/admin/llm/test | jq '.'
+
+# Cookie + CSRF token auth (JSON submission)
+curl -s -X POST \
+  -b "jwt_token=$JWT_COOKIE; mcpgateway_csrf_token=$CSRF_COOKIE" \
+  -H "X-CSRF-Token: $CSRF_COOKIE" \
+  -H "Origin: http://localhost:8000" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "test_type": "models"
+  }' \
+  $BASE_URL/v1/admin/llm/test | jq '.'
+```
+
+**Response (models list):**
+```json
+{
+  "success": true,
+  "test_type": "models",
+  "data": {
+    "object": "list",
+    "data": [
+      {"id": "gpt-4", "owned_by": "openai"},
+      {"id": "gpt-4-turbo", "owned_by": "openai"}
+    ]
+  },
+  "metrics": {
+    "duration": 125,
+    "modelCount": 2
+  }
+}
+```
+
+### Fetch Models from Provider
+
+Retrieve available models from a provider's API.
+
+```bash
+# Bearer-token auth
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  $BASE_URL/v1/admin/llm/providers/provider-123/fetch-models | jq '.'
+
+# Cookie + CSRF token auth
+curl -s -X POST \
+  -b "jwt_token=$JWT_COOKIE; mcpgateway_csrf_token=$CSRF_COOKIE" \
+  -H "X-CSRF-Token: $CSRF_COOKIE" \
+  -H "Origin: http://localhost:8000" \
+  $BASE_URL/v1/admin/llm/providers/provider-123/fetch-models | jq '.'
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "models": [
+    {
+      "id": "gpt-4",
+      "name": "GPT-4",
+      "owned_by": "openai",
+      "created": 1687882411
+    },
+    {
+      "id": "gpt-4-turbo",
+      "name": "GPT-4 Turbo",
+      "owned_by": "openai",
+      "created": 1694767999
+    }
+  ],
+  "count": 2
+}
+```
+
+### Sync Models to Database
+
+Import models from a provider's API into the database.
+
+```bash
+# Bearer-token auth
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  $BASE_URL/v1/admin/llm/providers/provider-123/sync-models | jq '.'
+
+# Cookie + CSRF token auth
+curl -s -X POST \
+  -b "jwt_token=$JWT_COOKIE; mcpgateway_csrf_token=$CSRF_COOKIE" \
+  -H "X-CSRF-Token: $CSRF_COOKIE" \
+  -H "Origin: http://localhost:8000" \
+  $BASE_URL/v1/admin/llm/providers/provider-123/sync-models | jq '.'
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "message": "Synced models: 2 added, 5 skipped",
+  "added": 2,
+  "skipped": 5,
+  "total": 7
+}
+```
+
+## Tag Management
+
+Tags organize and categorize gateway resources.
+
+### List All Tags
+
+```bash
+# List all available tags
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/tags?entity_types=gateways%2Cservers%2Ctools%2Cresources%2Cprompts&include_entities=false" \
+| jq '.'
+```
+
+### Get Tag Entities
+
+```bash
+# Get specific tag
+export TAG_NAME="your-tag-name"
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/tags/$TAG_NAME/entities" \
+| jq '.'
+```
+
+## Bulk Operations
+
+### Export Configuration
+
+```bash
+# Export all gateway configuration
+curl -s -H "Authorization: Bearer $TOKEN" \
+  $BASE_URL/export | jq '.' > gateway-export.json
+
+# Export specific entities
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/export?types=tools%2Cgateways" | \
+  jq '.' > partial-export.json
+```
+
+### Import Configuration
+
+```bash
+# Import configuration from file
+payload=$(jq -n \
+  --arg conflict "skip" \
+  --argjson dry_run false \
+  --argjson import_data "$(cat gateway-export.json)" '
+  {
+    conflict_strategy: $conflict,
+    dry_run: $dry_run,
+    import_data: $import_data
+  }')
+
+curl -s -X POST \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d "$payload" \
+  "$BASE_URL/import" | jq '.'
+```
+
+### Bulk Import Tools
+
+```bash
+# Import multiple tools at once
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "conflict_strategy": "update",
+    "dry_run": false,
+    "import_data": {
+      "version": "2025-03-26",
+      "exported_at": "2025-10-24T18:41:55.776238Z",
+      "exported_by": "admin@example.com",
+      "source_gateway": "http://0.0.0.0:4444",
+      "encryption_method": "AES-256-GCM",
+      "entities": {
+        "tools": [
+          {
+            "name": "tool1",
+            "displayName": "tool1",
+            "url": "http://example.com/api1",
+            "integration_type": "REST",
+            "request_type": "POST",
+            "description": "First tool",
+            "headers": {},
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "param": { "type": "string", "description": "Parameter name" }
+              },
+              "required": ["param"]
+            }
+          },
+          {
+            "name": "tool2",
+            "displayName": "tool2",
+            "url": "http://example.com/api2",
+            "integration_type": "REST",
+            "request_type": "GET",
+            "description": "Second tool",
+            "headers": {},
+            "input_schema": {
+              "type": "object",
+              "properties": {
+                "query": { "type": "string", "description": "Query string" }
+              },
+              "required": ["query"]
+            }
+          }
+        ]
+      }
+    },
+    "rekey_secret": null
+  }' \
+  "$BASE_URL/import" | jq '.'
+```
+
+## A2A Agent Management
+
+A2A (Agent-to-Agent) enables integration with external AI agents.
+
+!!! note "A2A Feature Flag"
+    A2A features must be enabled via `MCPGATEWAY_A2A_ENABLED=true` in your `.env` file.
+
+### List All A2A Agents
+
+```bash
+# First page - List registered A2A agents (paginated response - default)
+curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/a2a | jq '.'
+```
+
+**Paginated Response:**
+```json
+{
+  "agents": [
+    {
+      "id": "agent123",
+      "name": "data-analyzer",
+      "url": "https://agent.example.com/v1",
+      ...
+    }
+  ],
+  "nextCursor": "eyJjcmVhdGVkX2F0IjogIjIwMjQtMDEtMDFUMTI6MDA6MDBaIiwgImlkIjogImFnZW50MTIzIn0"
+}
+```
+
+```bash
+# Second page - Use cursor from first response
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/a2a?cursor=eyJjcmVhdGVkX2F0IjogIjIwMjQtMDEtMDFUMTI6MDA6MDBaIiwgImlkIjogImFnZW50MTIzIn0" | jq '.'
+```
+
+**Non-Paginated:**
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/a2a?include_pagination=false" | jq '.'
+```
+
+### Register A2A Agent
+
+```bash
+# Register an OpenAI agent
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"agent": {
+      "name": "openai-assistant",
+      "agent_type": "openai",
+      "endpoint_url": "https://api.openai.com/v1/chat/completions",
+      "description": "OpenAI GPT-4 assistant",
+      "auth_type": "bearer",
+      "auth_value": "OPENAI_API_KEY"
+    }
+  }' \
+  $BASE_URL/a2a | jq '.'
+```
+
+### Get A2A Agent Details
+
+```bash
+# Get specific agent
+export A2A_ID="your-agent-id"
+curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/a2a/$A2A_ID | jq '.'
+```
+
+### Invoke A2A Agent
+
+```bash
+# Execute agent with message
+export A2A_NAME="openai-assistant"
+
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "message": "Explain quantum computing in simple terms"
+  }' \
+  $BASE_URL/a2a/$A2A_NAME/invoke | jq '.'
+```
+
+### Update A2A Agent
+
+```bash
+# Update agent configuration
+curl -s -X PUT -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "gpt-4-turbo",
+    "description": "Updated to use GPT-4 Turbo"
+  }' \
+  $BASE_URL/a2a/$A2A_ID | jq '.'
+```
+
+### Enable/Disable A2A Agent
+
+```bash
+# Deactivate an A2A agent (also deactivates its associated tool)
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  $BASE_URL/a2a/$A2A_ID/state?activate=false | jq '.'
+
+# Reactivate an A2A agent (also reactivates its associated tool)
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  $BASE_URL/a2a/$A2A_ID/state?activate=true | jq '.'
+```
+
+!!! note "State Cascade"
+    Toggling an A2A agent's state automatically cascades to its associated MCP tool. Deactivating an agent removes its tool from virtual server listings; reactivating restores it. This is consistent with gateway deactivation, which cascades to all child tools, prompts, and resources.
+
+### Delete A2A Agent
+
+```bash
+# Delete A2A agent
+curl -s -X DELETE -H "Authorization: Bearer $TOKEN" \
+  $BASE_URL/a2a/$A2A_ID | jq '.'
+```
+
+## Team Management
+
+Teams are the unit of multi-tenancy in ContextForge. Endpoints require a valid Bearer token and the caller must hold the `teams.create` or `teams.read` RBAC permission respectively.
+
+### Create Team
+
+```bash
+POST /teams
+Authorization: Bearer $TOKEN
+Content-Type: application/json
+```
+
+**Request body (`TeamCreateRequest`):**
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `name` | string | ✓ | – | Display name (1–255 chars, letters/numbers/spaces/`_`/`.`/`-`). |
+| `slug` | string | – | auto-generated | URL-friendly identifier (`[a-z0-9-]+`, 2–255 chars). |
+| `description` | string | – | `null` | Team description (max 1 000 chars). |
+| `visibility` | `"private"` \| `"public"` | – | `"private"` | Who can see the team. |
+| `max_members` | int ≥ 1 | – | global setting | Per-team member cap. Omit to inherit `MAX_MEMBERS_PER_TEAM`. |
+| `members` | array of `TeamMemberSeed` | – | `null` | Up to `MAX_TEAM_MEMBER_SEEDS` (500) addresses to seed. |
+
+Each `TeamMemberSeed` object:
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `email` | string (email) | ✓ | – | Address to add or invite. Normalised to lowercase. |
+| `role` | `"owner"` \| `"member"` | – | `"member"` | Role to assign. |
+
+**Seed routing rules (server-decided, not caller-controlled):**
+
+- An address that matches an **active** `EmailUser` record is added as a direct member.
+- Any other address (unknown, or known but deactivated) receives an invitation.
+- The creator's own address is silently skipped — team creation already makes the creator an owner.
+- Email addresses are normalised to lowercase before lookup; `ALICE@example.com` and `alice@example.com` are treated as the same address.
+- Duplicate addresses (case-insensitive) in a single request are rejected with a row-indexed error.
+- The whole operation is **atomic**: a failure on any seed rolls back the team and all prior seeds.
+- Deleting a team also deactivates its **pending invitations**, so an invitation cannot outlive (or be revived alongside) the team it points at.
+
+**Configuration notes:**
+
+| Setting | Default | Effect on `POST /teams` |
+|---------|---------|------------------------|
+| `ALLOW_TEAM_CREATION` | `true` | When `false`, non-admin callers receive `403`. Platform admins bypass this flag. |
+| `ALLOW_TEAM_INVITATIONS` | `true` | When `false`, seeded addresses that would normally become invitations instead fail the whole request with `400`. |
+| `MAX_TEAM_MEMBER_SEEDS` | `500` | Hard ceiling on the `members` array length (validated before any write). |
+| `MAX_MEMBERS_PER_TEAM` | `100` | Seed count + creator must not exceed this limit (or the per-team `max_members` override). |
+
+**Minimal create (no members):**
+
+```bash
+curl -s -X POST \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name": "Engineering", "visibility": "private"}' \
+  $BASE_URL/teams | jq '.'
+```
+
+**Create with seeded members:**
+
+```bash
+curl -s -X POST \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "Engineering",
+    "visibility": "private",
+    "members": [
+      {"email": "alice@example.com", "role": "owner"},
+      {"email": "external@partner.com"}
+    ]
+  }' \
+  $BASE_URL/teams | jq '.'
+```
+
+**Response (`TeamCreateResponse`):**
+
+`TeamCreateResponse` extends `TeamResponse` through Pydantic subclassing, so it is a strict superset: every `TeamResponse` field is present unchanged, plus two extra arrays that report how each seeded member was resolved. Both arrays are always present (empty when no members were seeded), so clients that only care about the team itself can ignore them.
+
+```json
+{
+  "id": "team-abc123",
+  "name": "Engineering",
+  "slug": "engineering",
+  "description": null,
+  "created_by": "admin@example.com",
+  "is_personal": false,
+  "visibility": "private",
+  "max_members": null,
+  "member_count": 2,
+  "created_at": "2026-01-15T10:00:00Z",
+  "updated_at": "2026-01-15T10:00:00Z",
+  "is_active": true,
+  "members_added": [
+    {"email": "alice@example.com", "role": "owner"}
+  ],
+  "invitations_sent": [
+    {"email": "external@partner.com", "role": "member", "invitation_id": "inv-xyz789"}
+  ]
+}
+```
+
+`members_added` entries (`SeededMemberResponse`):
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `email` | string | Canonical lowercase email of the user added directly. |
+| `role` | `"owner"` \| `"member"` | Role assigned. |
+
+`invitations_sent` entries (`SeededInvitationResponse`):
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `email` | string | Canonical lowercase email the invitation was sent to. |
+| `role` | `"owner"` \| `"member"` | Role the invitee will hold after accepting. |
+| `invitation_id` | string | UUID of the created invitation record. |
+
+**Error responses:**
+
+| HTTP status | Condition | Example `detail` |
+|-------------|-----------|-----------------|
+| `400` | Duplicate email in `members` | `members[1] (alice@example.com): duplicate address, already listed at members[0]` |
+| `400` | Seed count + 1 exceeds capacity | `Team would start with 6 members, exceeding the maximum of 5` |
+| `400` | Invalid role value | `Input should be 'owner' or 'member'` |
+| `400` | Invitations disabled and unknown address seeded | `members[1] (external@partner.com): invitations are currently disabled` |
+| `403` | `ALLOW_TEAM_CREATION=false` and caller is not admin | `Team creation is currently disabled` |
+| `422` | `members` array exceeds 500 entries | Pydantic validation error |
+
+### List Teams
+
+The `GET /teams` endpoint lists the teams visible to the caller and is the same endpoint that backs the Admin UI Teams page and the team switcher.
+
+Visibility follows the two-layer security model:
+
+- **Platform admins** see all **non-personal** teams plus **their own personal team**. They do *not* see other users' personal teams. (This matches the `/admin/teams/partial` admin view.)
+- **Regular users** see only the teams they are a member of (including their own personal team).
+
+The caller's own personal team is derived from the authenticated identity, never from client input, so this endpoint cannot be used to enumerate other users' personal teams.
+
+```bash
+# List teams visible to the caller (non-paginated response - default)
+curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/teams | jq '.'
+```
+
+**Response (`TeamListResponse`):**
+```json
+{
+  "teams": [
+    {
+      "id": "team123",
+      "name": "Engineering",
+      "slug": "engineering",
+      "description": "Engineering team",
+      "created_by": "admin@example.com",
+      "is_personal": false,
+      "visibility": "private",
+      "max_members": 100,
+      "member_count": 7,
+      "is_active": true
+    }
+  ],
+  "total": 1
+}
+```
+
+### Pagination
+
+`GET /teams` supports the same query parameters as other main API endpoints:
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `skip` | int | `0` | Number of teams to skip (offset). |
+| `limit` | int | `50` | Maximum number of teams to return (capped by `PAGINATION_MAX_PAGE_SIZE`). |
+| `cursor` | string | – | Opaque cursor for cursor-based pagination. |
+| `include_pagination` | bool | `false` | When `true`, return cursor metadata instead of a total count. |
+
+```bash
+# Offset-based pagination
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/teams?skip=50&limit=50" | jq '.'
+
+# Cursor-based pagination (returns CursorPaginatedTeamsResponse)
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/teams?include_pagination=true" | jq '.'
+```
+
+**Response with `include_pagination=true` (`CursorPaginatedTeamsResponse`):**
+```json
+{
+  "teams": [ ... ],
+  "nextCursor": "eyJjcmVhdGVkX2F0IjogIjIwMjQtMDEtMDFUMTI6MDA6MDBaIiwgImlkIjogInRlYW0xMjMifQ"
+}
+```
+
+```bash
+# Fetch the next page using the returned cursor
+CURSOR=$(curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/teams?include_pagination=true" | jq -r '.nextCursor')
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/teams?include_pagination=true&cursor=$CURSOR" | jq '.'
+```
+
+## OpenAPI Specification
+
+### Get OpenAPI Schema
+
+```bash
+# Get full OpenAPI specification
+curl -s -H "Authorization: Bearer $TOKEN" \
+  $BASE_URL/openapi.json | jq '.'
+
+# Save OpenAPI spec to file
+curl -s -H "Authorization: Bearer $TOKEN" \
+  $BASE_URL/openapi.json > openapi.json
+```
+
+### Interactive API Documentation
+
+Access interactive Swagger UI documentation:
+
+```
+$BASE_URL/docs
+```
+
+Access ReDoc documentation:
+
+```
+$BASE_URL/redoc
+```
+
+!!! tip "Docs authentication"
+    `/docs`, `/redoc`, and `/openapi.json` are JWT-protected by default. Log in to the Admin UI to get a session cookie, or enable `DOCS_ALLOW_BASIC_AUTH=true` and use Basic auth in the browser.
+
+## End-to-End Workflow Example
+
+This complete example demonstrates a typical workflow: registering a gateway, discovering tools, and invoking them.
+
+```bash
+#!/bin/bash
+
+# Configuration
+export BASE_URL="http://localhost:4444"
+# export BASE_URL="http://localhost:8080"  # docker-compose with nginx
+# export BASE_URL="http://localhost:8000"  # make dev (uvicorn)
+export TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
+  --username admin@example.com \
+  --exp 10080 \
+  --secret my-test-key-but-now-longer-than-32-bytes 2>/dev/null | head -1)
+
+echo "=== ContextForge E2E Test ==="
+echo
+
+# 1. Check health
+echo "1. Checking gateway health..."
+curl -s $BASE_URL/health | jq '.'
+echo
+
+# 2. Register a new gateway
+echo "2. Registering MCP server gateway..."
+GATEWAY=$(curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "name": "test-server",
+    "url": "http://localhost:9000/mcp",
+    "description": "Test MCP server",
+    "transport": "STREAMABLEHTTP"
+  }' \
+  $BASE_URL/gateways)
+
+export GATEWAY_ID=$(echo $GATEWAY | jq -r '.id')
+echo "Gateway ID: $GATEWAY_ID"
+echo
+
+# 3. List all gateways
+echo "3. Listing all gateways..."
+curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/gateways | \
+  jq '.[] | {id: .id, name: .name, enabled: .enabled}'
+echo
+
+# 4. Discover tools from the gateway
+echo "4. Discovering tools..."
+sleep 2  # Wait for gateway to sync
+TOOLS=$(curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/tools)
+export TOOL_ID=$(echo $TOOLS | jq -r '.[0].id')
+export TOOL_NAME=$(echo $TOOLS | jq -r '.[0].name')
+echo "Found tools:"
+echo $TOOLS | jq '.[] | {name: .name, description: .description}' | head -20
+echo
+
+# 5. Get tool details
+echo "5. Getting tool details for: $TOOL_ID"
+TOOL_DETAILS=$(curl -s -H "Authorization: Bearer $TOKEN" \
+  $BASE_URL/tools/$TOOL_ID)
+echo $TOOL_DETAILS | jq '{name: .name, description: .description, inputSchema: .inputSchema}'
+echo
+
+# 6. Invoke the tool
+echo "6. Invoking tool: $TOOL_NAME"
+RESULT=$(jq -n --arg name "$TOOL_NAME" --argjson args '{"param1":"test_value"}' \
+  '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":$name,"arguments":$args}}' |
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d @- "$BASE_URL/rpc")
+echo $RESULT | jq '.'
+echo
+
+# 7. Create a virtual server
+echo "7. Creating virtual server..."
+SERVER=$(curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+  "server": {
+    "name": "test-virtual-server",
+    "description": "Unified server for testing",
+    "associated_tools": ["'$TOOL_ID'"]
+    }
+  }' \
+  $BASE_URL/servers)
+
+export SERVER_ID=$(echo $SERVER | jq -r '.id')
+echo "Server ID: $SERVER_ID"
+echo
+
+# 8. List server tools
+echo "8. Listing tools available through virtual server..."
+curl -s -H "Authorization: Bearer $TOKEN" \
+  $BASE_URL/servers/$SERVER_ID/tools | \
+  jq '.[] | {name: .name}' | head -10
+echo
+
+# 9. Export configuration
+echo "9. Exporting gateway configuration..."
+curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/export | \
+  jq '{gateways: .entities.gateways | length, tools: .entities.tools | length}' > export-summary.json
+cat export-summary.json
+echo
+
+echo "=== E2E Test Complete ==="
+```
+
+## Error Handling
+
+### Common Error Responses
+
+#### 401 Unauthorized
+
+```json
+{
+  "detail": "Authorization token required"
+}
+```
+
+**Solution**: Ensure you're sending the `Authorization: Bearer $TOKEN` header.
+
+#### 404 Not Found
+
+```json
+{
+  "detail": "Tool not found"
+}
+```
+
+**Solution**: Verify the resource ID exists using the list endpoint.
+
+#### 409 Conflict
+
+```json
+{
+  "detail": "Public resource already exists with URI: file:///etc/config.json — resource URIs must be unique within this scope (names may repeat)."
+}
+```
+
+**Solution**: The identifier already exists in the scope you are writing to. For resources the identifier is `uri` (not `name` — names may repeat); for gateways it is the URL or name. Choose a different identifier, or update the existing record instead of creating a new one.
+
+#### 422 Validation Error
+
+```json
+{
+  "detail": [
+    {
+      "loc": ["body", "name"],
+      "msg": "field required",
+      "type": "value_error.missing"
+    }
+  ]
+}
+```
+
+**Solution**: Check request payload matches the required schema.
+
+### Debug Mode
+
+Enable verbose output for troubleshooting:
+
+```bash
+# Show full request/response including headers
+curl -v -H "Authorization: Bearer $TOKEN" $BASE_URL/tools
+
+# Save full response with headers
+curl -i -H "Authorization: Bearer $TOKEN" $BASE_URL/tools > response.txt
+```
+
+## Best Practices
+
+1. **Token Management**
+
+    - Store tokens securely, never commit to version control
+    - Use short expiration times in production
+    - Rotate tokens regularly
+
+2. **Error Handling**
+
+    - Always check HTTP status codes
+    - Parse error messages from response body
+    - Implement retry logic for transient failures
+
+3. **Performance**
+
+    - Use pagination for large result sets
+    - Cache frequently accessed data
+    - Leverage HTTP compression (automatically enabled)
+
+4. **Security**
+
+    - Use HTTPS in production (not HTTP)
+    - Validate SSL certificates
+    - Never log sensitive tokens or API keys
+
+5. **Testing**
+
+    - Test against development server first
+    - Use unique names for test resources
+    - Clean up test data after experiments
+
+## Advanced Usage
+
+### Using jq for Advanced Filtering
+
+```bash
+# Get only enabled tools
+curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/tools | \
+  jq '[.[] | select(.enabled == true)]'
+
+# Count tools by gateway
+curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/tools | \
+  jq 'group_by(.gatewaySlug) | map({gateway: .[0].gatewaySlug, count: length})'
+
+# Extract specific fields
+curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/tools | \
+  jq '[.[] | {id, name, description, enabled}]'
+```
+
+### Batch Operations Script
+
+```bash
+#!/bin/bash
+# batch-enable-tools.sh - Enable all tools from a specific gateway
+
+export TOKEN="your-token"
+export BASE_URL="http://localhost:4444"
+# export BASE_URL="http://localhost:8080"  # docker-compose with nginx
+# export BASE_URL="http://localhost:8000"  # make dev (uvicorn)
+export GATEWAY_SLUG="my-gateway"
+
+# Get all tools from the gateway
+TOOLS=$(curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/tools | \
+  jq -r '.[] | select(.gatewaySlug == "'$GATEWAY_SLUG'") | .id')
+
+# Enable each tool
+for TOOL_ID in $TOOLS; do
+  echo "Enabling tool: $TOOL_ID"
+  curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+    $BASE_URL/tools/$TOOL_ID/state > /dev/null
+done
+
+echo "Done!"
+```
+
+## React App Authentication
+
+The React client uses cookie-based authentication with CSRF protection for secure session management.
+
+### Login
+
+```bash
+# Login with email and password
+curl -s -X POST \
+  -H "Content-Type: application/json" \
+  -d '{
+    "email": "user@example.com",
+    "password": "your-password"
+  }' \
+  $BASE_URL/app/auth/login | jq '.'
+```
+
+**Response:**
+```json
+{
+  "user": {
+    "email": "user@example.com",
+    "is_admin": false,
+    "created_at": "2024-01-01T00:00:00Z",
+    "updated_at": "2024-01-01T00:00:00Z"
+  },
+  "csrf_token": "abc123...xyz"
+}
+```
+
+**Cookies Set:**
+- `jwt_token` - httpOnly JWT token (XSS protection)
+- `csrf_token` - non-httpOnly CSRF token (path=/app, readable by JS for double-submit pattern)
+
+### Get Current User
+
+```bash
+# Get current user from session cookie
+curl -s -H "Cookie: jwt_token=<token>" \
+  $BASE_URL/app/auth/me | jq '.'
+```
+
+**Response:**
+```json
+{
+  "email": "user@example.com",
+  "is_admin": false,
+  "created_at": "2024-01-01T00:00:00Z",
+  "updated_at": "2024-01-01T00:00:00Z"
+}
+```
+
+### Logout
+
+```bash
+# Logout (requires CSRF token from login response)
+curl -s -X POST \
+  -H "Cookie: jwt_token=<token>; csrf_token=<csrf>" \
+  -H "X-CSRF-Token: <csrf-token-from-login>" \
+  $BASE_URL/app/auth/logout | jq '.'
+```
+
+**Response:**
+```json
+{
+  "message": "Logged out successfully"
+}
+```
+
+### Security Features
+
+**httpOnly Cookies:**
+- JWT token stored in httpOnly cookie (not accessible via JavaScript)
+- Protects against XSS attacks
+
+**CSRF Protection:**
+- Synchronizer token pattern
+- CSRF token in non-httpOnly cookie + X-CSRF-Token header (double-submit pattern; JS reads the cookie value)
+- Required for state-changing operations (logout)
+
+**Cookie Configuration:**
+- `httpOnly=true` - Prevents JavaScript access
+- `secure=true` - HTTPS only (production)
+- `samesite=strict` - CSRF cookie (prevents cross-site requests)
+- `samesite=lax` - JWT cookie (allows navigation)
+- `path=/app` - CSRF cookie scoped to app namespace
+
+### Cross-Tab Session Persistence
+
+Sessions are shared across browser tabs via cookies:
+
+```bash
+# Tab 1: Login — save cookies to jar (-c) so jwt_token is preserved (it's httpOnly)
+LOGIN_RESPONSE=$(curl -s -c /tmp/cookiejar -X POST \
+  -H "Content-Type: application/json" \
+  -d '{"email": "user@example.com", "password": "password"}' \
+  $BASE_URL/app/auth/login)
+
+# Extract CSRF token from response body (jwt_token is httpOnly — not in body, only in cookie jar)
+CSRF_TOKEN=$(echo $LOGIN_RESPONSE | jq -r '.csrf_token')
+
+# Tab 2: Use same cookie jar (browser shares cookies automatically across tabs)
+curl -s -b /tmp/cookiejar \
+  $BASE_URL/app/auth/me | jq '.'
+```
+
+### Error Responses
+
+**401 Unauthorized:**
+```json
+{
+  "detail": "Invalid email or password"
+}
+```
+
+**403 Forbidden (CSRF):**
+```json
+{
+  "detail": "CSRF token missing from header"
+}
+```
+
+## Related Documentation
+
+- [Configuration Guide](configuration.md) - Environment variables and settings
+- [Bulk Import](bulk-import.md) - Import large datasets
+- [Export/Import](export-import.md) - Backup and migration
+- [Securing the Gateway](securing.md) - Security best practices
+- [OAuth Configuration](oauth.md) - OAuth 2.0 setup
+- [SSO Integration](sso.md) - Single Sign-On setup
+
+## Support
+
+For issues or questions:
+
+- [GitHub Issues](https://github.com/IBM/mcp-context-forge/issues)
+- [Documentation](https://mcpgateway.org)
+- API Reference: `$BASE_URL/openapi.json`
