@@ -382,26 +382,12 @@ warning explaining the consequence.
 
 #### Docker Compose
 
-### Exposing TLS Cipher Suite and Protocol Version Constraints
-
-To enforce stronger security on the gateway's direct HTTPS listener (Option 1 architecture), you can optionally restrict the allowed SSL/TLS cipher suites and minimum protocol version using the following environment variables:
-
-| Variable | Default | Purpose |
-|----------|---------|---------|
-| `SSL_CIPHERS` | (empty — Python defaults) | Colon-separated list of allowed OpenSSL cipher suites |
-| `SSL_VERSION` | (empty — library default) | Minimum TLS version selector (`5` or `ssl.PROTOCOL_TLSv1_2` → TLS 1.2 minimum) |
-
-#### Recommended Production Configuration
-
-To restrict the gateway to secure modern ciphers and enforce a minimum TLS version, configure these variables in your `.env` or `docker-compose.yml`:
-
 ```yaml
 gateway:
   environment:
     - SSL=true
     - CERT_FILE=/app/certs/cert.pem
     - KEY_FILE=/app/certs/key.pem
-<<<<<<< HEAD
     - CA_CERTS=/app/certs/client/ca-cert.pem
     - CERT_REQS=2
     - LOOPBACK_CLIENT_CERT=/app/certs/client/client-cert.pem
@@ -441,6 +427,25 @@ HTTP loopback. For enforced mTLS in front of the nginx stack, configure `ssl_cli
 The credentials from `make certs-client` are for testing. `certs/client/ca-key.pem` is a real CA
 key — use your own PKI in production.
 
+### Exposing TLS Cipher Suite and Protocol Version Constraints
+
+To enforce stronger security on the gateway's direct HTTPS listener (Option 1 architecture), you can optionally restrict the allowed SSL/TLS cipher suites and minimum protocol version using the following environment variables:
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `SSL_CIPHERS` | (empty — Python defaults) | Colon-separated list of allowed OpenSSL cipher suites |
+| `SSL_VERSION` | (empty — library default) | Minimum TLS version selector (`5` or `ssl.PROTOCOL_TLSv1_2` → TLS 1.2 minimum) |
+
+#### Recommended Production Configuration
+
+To restrict the gateway to secure modern ciphers and enforce a minimum TLS version, configure these variables in your `.env` or `docker-compose.yml`:
+
+```yaml
+gateway:
+  environment:
+    - SSL=true
+    - CERT_FILE=/app/certs/cert.pem
+    - KEY_FILE=/app/certs/key.pem
     # Recommended secure cipher suites (restricts to high-strength modern ciphers)
     - SSL_CIPHERS=ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305
     # Enforce a TLS 1.2 minimum (same as ssl.PROTOCOL_TLSv1_2)
