@@ -600,6 +600,18 @@ The catalog now supports:
 
 ---
 
+## Optional: Tool Outcome Attestation (TOA) before register
+
+Catalog registration and health checks cover discovery and reachability.
+[TOA](https://github.com/Carmel-Labs-Inc/toa) (`toa/0.1`) is adjacent delivery
+evidence you can verify offline before promoting a catalog server into
+production. Optional and off by default. No AgentStatus account is required to
+verify.
+
+See [Optional TOA verify before register / promote](../howto/toa-optional-register-gate.md).
+
+---
+
 ## See Also
 
 - [Configuration Reference](./index.md) - Complete configuration guide
