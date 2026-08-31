@@ -469,7 +469,7 @@ echo "────────────────────────�
 cmd=(
     gunicorn
     -c gunicorn.config.py
-    --worker-class gunicorn.config.py:ContextForgeUvicornWorker
+    --worker-class uvicorn.workers.UvicornWorker
     --workers              "${GUNICORN_WORKERS}"
     --timeout              "${GUNICORN_TIMEOUT}"
     --max-requests         "${GUNICORN_MAX_REQUESTS}"

@@ -447,7 +447,7 @@ key — use your own PKI in production.
     - SSL_VERSION=5
 ```
 
-`SSL_CIPHERS` is forwarded to Gunicorn's `--ciphers` flag. `SSL_VERSION` is also forwarded to `--ssl-version`, but Gunicorn 26 deprecates and ignores that setting, so [`ssl_context()`](mcp-context-forge/gunicorn.config.py:77) applies the effective minimum TLS version on the final `SSLContext`.
+`SSL_CIPHERS` is forwarded to Gunicorn's `--ciphers` flag. `SSL_VERSION` is forwarded to Gunicorn's `--ssl-version` flag, and normalized in [`gunicorn.config.py`](mcp-context-forge/gunicorn.config.py) so Uvicorn creates the corresponding `ssl.SSLContext`.
 
 ### Mount Certificates
 
