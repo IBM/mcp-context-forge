@@ -7178,3 +7178,60 @@ class TestAuthJwtRoutingReturn:
             result = await handler._auth_jwt(token="unused")
 
         assert result is False
+
+
+class TestUserFromCachedDictFullShape:
+    """Regression: cache entries must preserve all security-sensitive fields.
+
+    A partial user dict (missing auth_provider, password_change_required, etc.)
+    silently gets wrong defaults from _user_from_cached_dict, masking SSO
+    identities and bypassing forced password changes.
+    """
+
+    def test_full_dict_round_trips_all_fields(self):
+        """A full 10-field cache dict produces an EmailUser with every field intact."""
+        # First-Party
+        from mcpgateway.auth import _user_from_cached_dict  # pylint: disable=import-outside-toplevel
+
+        now = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        user_dict = {
+            "email": "sso@corp.com",
+            "password_hash": "hashed",
+            "full_name": "SSO User",
+            "is_admin": False,
+            "is_active": True,
+            "auth_provider": "okta",
+            "password_change_required": True,
+            "email_verified_at": now,
+            "created_at": now,
+            "updated_at": now,
+        }
+
+        user = _user_from_cached_dict(user_dict)
+
+        assert user.auth_provider == "okta", "auth_provider must not default to 'local'"
+        assert user.password_change_required is True, "password_change_required must not default to False"
+        assert user.password_hash == "hashed"
+        assert user.full_name == "SSO User"
+        assert user.email_verified_at == now
+        assert user.created_at == now
+        assert user.updated_at == now
+
+    def test_partial_dict_exposes_wrong_defaults(self):
+        """A 3-field dict (the old bug shape) would produce wrong defaults.
+
+        This test documents the _user_from_cached_dict contract: callers MUST
+        supply all fields.  The fallback defaults exist only for forward
+        compatibility when new fields are added, not to silently paper over
+        missing security-sensitive data.
+        """
+        # First-Party
+        from mcpgateway.auth import _user_from_cached_dict  # pylint: disable=import-outside-toplevel
+
+        partial_dict = {"email": "sso@corp.com", "is_admin": False, "is_active": True}
+        user = _user_from_cached_dict(partial_dict)
+
+        # These are the WRONG values a partial dict produces — documenting the
+        # contract that writers must not rely on these defaults for existing fields.
+        assert user.auth_provider == "local", "default masks real provider"
+        assert user.password_change_required is False, "default skips forced change"
