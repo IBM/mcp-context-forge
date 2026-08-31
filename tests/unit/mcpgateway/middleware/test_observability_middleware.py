@@ -7,7 +7,7 @@ Unit tests for observability middleware.
 """
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 from starlette.requests import Request
 from starlette.responses import Response
 from mcpgateway.middleware.observability_middleware import ObservabilityMiddleware
@@ -53,6 +53,46 @@ async def test_dispatch_health_check_skipped(mock_request, mock_call_next):
     mock_request.url.path = "/health"
     response = await middleware.dispatch(mock_request, mock_call_next)
     assert response.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_dispatch_reads_user_email_from_user_object(mock_request, mock_call_next):
+    """start_trace() receives the email from request.state.user.email (#6473)."""
+    from types import SimpleNamespace
+
+    middleware = ObservabilityMiddleware(app=None, enabled=True)
+    mock_request.state = SimpleNamespace(user=SimpleNamespace(email="user@example.com"))
+    with (
+        patch.object(middleware.service, "start_trace", return_value="trace123") as mock_start_trace,
+        patch.object(middleware.service, "start_span", return_value="span123"),
+        patch.object(middleware.service, "end_span"),
+        patch.object(middleware.service, "end_trace"),
+        patch("mcpgateway.middleware.observability_middleware.attach_trace_to_session"),
+        patch("mcpgateway.middleware.observability_middleware.parse_traceparent", return_value=None),
+        patch("mcpgateway.middleware.observability_middleware.should_skip_observability", return_value=False),
+    ):
+        await middleware.dispatch(mock_request, mock_call_next)
+    assert mock_start_trace.call_args.kwargs["user_email"] == "user@example.com"
+
+
+@pytest.mark.asyncio
+async def test_dispatch_falls_back_to_request_state_user_email(mock_request, mock_call_next):
+    """The JWT and API-token paths only set request.state.user_email (#6473)."""
+    from types import SimpleNamespace
+
+    middleware = ObservabilityMiddleware(app=None, enabled=True)
+    mock_request.state = SimpleNamespace(user_email="token-user@example.com")
+    with (
+        patch.object(middleware.service, "start_trace", return_value="trace123") as mock_start_trace,
+        patch.object(middleware.service, "start_span", return_value="span123"),
+        patch.object(middleware.service, "end_span"),
+        patch.object(middleware.service, "end_trace"),
+        patch("mcpgateway.middleware.observability_middleware.attach_trace_to_session"),
+        patch("mcpgateway.middleware.observability_middleware.parse_traceparent", return_value=None),
+        patch("mcpgateway.middleware.observability_middleware.should_skip_observability", return_value=False),
+    ):
+        await middleware.dispatch(mock_request, mock_call_next)
+    assert mock_start_trace.call_args.kwargs["user_email"] == "token-user@example.com"
 
 
 @pytest.mark.asyncio
