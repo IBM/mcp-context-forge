@@ -291,8 +291,8 @@ class TestOnStartingHook:
         cfg_module.on_starting(mock_server)
         mock_cfg.set.assert_called_once_with("ssl_version", ssl.PROTOCOL_TLSv1_2)
 
-    def test_on_starting_unrecognized_ssl_version_does_not_crash(self, monkeypatch):
-        """Test that unrecognized string ssl_version does not set and does not crash."""
+    def test_on_starting_unrecognized_ssl_version_logs_warning_and_does_not_crash(self, monkeypatch):
+        """Test that unrecognized string ssl_version logs a warning, does not set, and does not crash."""
         monkeypatch.setenv("SSL", "true")
         cfg_module = _load_gunicorn_config()
 
@@ -303,6 +303,9 @@ class TestOnStartingHook:
 
         cfg_module.on_starting(mock_server)
         mock_cfg.set.assert_not_called()
+        assert mock_server.log.warning.called
+        warning_call_args = mock_server.log.warning.call_args
+        assert "Unrecognized SSL_VERSION value" in str(warning_call_args)
 
     def test_on_starting_exception_in_normalization_logs_warning(self, monkeypatch):
         """Test that exceptions during normalization log a warning and don't crash."""

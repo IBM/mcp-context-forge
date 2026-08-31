@@ -104,6 +104,8 @@ def on_starting(server):
                     server.cfg.set("ssl_version", int(ssl_ver))
                 elif ssl_ver.startswith("PROTOCOL_") and hasattr(_ssl, ssl_ver):
                     server.cfg.set("ssl_version", getattr(_ssl, ssl_ver))
+                else:
+                    server.log.warning("Unrecognized SSL_VERSION value %r; leaving unchanged (boot may fail downstream)", ssl_ver)
         except Exception as e:
             server.log.warning("Failed to normalize Gunicorn ssl_version setting: %s", e)
 
