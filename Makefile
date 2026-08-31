@@ -6111,7 +6111,7 @@ compose-test-hardened: compose-validate
 # help: ibmcloud-deploy             - Deploy (or update) container image in Code Engine
 # help: ibmcloud-ce-logs            - Stream logs for the deployed application
 # help: ibmcloud-ce-status          - Get deployment status
-# help: ibmcloud-ce-rm              - Delete the Code Engine application
+# help: ibmcloud-ce-rm              - Delete the Code Engine application and its env secret
 
 .PHONY: ibmcloud-check-env ibmcloud-cli-install ibmcloud-login ibmcloud-ce-login \
 	ibmcloud-list-containers ibmcloud-tag ibmcloud-push ibmcloud-deploy \
@@ -6253,19 +6253,29 @@ ibmcloud-push:
 .PHONY: ibmcloud-deploy
 ibmcloud-deploy:
 	@echo "🚀 Deploying image to Code Engine as '$(IBMCLOUD_CODE_ENGINE_APP)' using registry secret $(IBMCLOUD_REGISTRY_SECRET)..."
+	@# Create the runtime env secret from .env if it does not exist yet
+	@if ! ibmcloud ce secret get --name $(IBMCLOUD_CODE_ENGINE_APP)-env > /dev/null 2>&1; then \
+		echo "🔐 Creating runtime env secret from .env..."; \
+		ibmcloud ce secret create --name $(IBMCLOUD_CODE_ENGINE_APP)-env --from-env-file .env; \
+	else \
+		echo "🔐 Updating runtime env secret from .env..."; \
+		ibmcloud ce secret update --name $(IBMCLOUD_CODE_ENGINE_APP)-env --from-env-file .env; \
+	fi
 	@if ibmcloud ce application get --name $(IBMCLOUD_CODE_ENGINE_APP) > /dev/null 2>&1; then \
 		echo "🔁 Updating existing app..."; \
 		ibmcloud ce application update --name $(IBMCLOUD_CODE_ENGINE_APP) \
 			--image $(IBMCLOUD_IMAGE_NAME) \
 			--cpu $(IBMCLOUD_CPU) --memory $(IBMCLOUD_MEMORY) \
-			--registry-secret $(IBMCLOUD_REGISTRY_SECRET); \
+			--registry-secret $(IBMCLOUD_REGISTRY_SECRET) \
+			--env-from-secret $(IBMCLOUD_CODE_ENGINE_APP)-env; \
 	else \
 		echo "🆕 Creating new app..."; \
 		ibmcloud ce application create --name $(IBMCLOUD_CODE_ENGINE_APP) \
 			--image $(IBMCLOUD_IMAGE_NAME) \
 			--cpu $(IBMCLOUD_CPU) --memory $(IBMCLOUD_MEMORY) \
 			--port 4444 \
-			--registry-secret $(IBMCLOUD_REGISTRY_SECRET); \
+			--registry-secret $(IBMCLOUD_REGISTRY_SECRET) \
+			--env-from-secret $(IBMCLOUD_CODE_ENGINE_APP)-env; \
 	fi
 
 .PHONY: ibmcloud-ce-logs
@@ -6282,6 +6292,8 @@ ibmcloud-ce-status:
 ibmcloud-ce-rm:
 	@echo "🗑️  Deleting Code Engine app: $(IBMCLOUD_CODE_ENGINE_APP)..."
 	@ibmcloud ce application delete --name $(IBMCLOUD_CODE_ENGINE_APP) -f
+	@echo "🗑️  Deleting runtime env secret: $(IBMCLOUD_CODE_ENGINE_APP)-env..."
+	@ibmcloud ce secret delete --name $(IBMCLOUD_CODE_ENGINE_APP)-env -f 2>/dev/null || true
 
 
 # =============================================================================
