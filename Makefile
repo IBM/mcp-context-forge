@@ -6111,7 +6111,7 @@ compose-test-hardened: compose-validate
 # help: ibmcloud-deploy             - Deploy (or update) container image in Code Engine
 # help: ibmcloud-ce-logs            - Stream logs for the deployed application
 # help: ibmcloud-ce-status          - Get deployment status
-# help: ibmcloud-ce-rm              - Delete the Code Engine application
+# help: ibmcloud-ce-rm              - Delete the Code Engine application and its env secret
 
 .PHONY: ibmcloud-check-env ibmcloud-cli-install ibmcloud-login ibmcloud-ce-login \
 	ibmcloud-list-containers ibmcloud-tag ibmcloud-push ibmcloud-deploy \
@@ -6292,6 +6292,8 @@ ibmcloud-ce-status:
 ibmcloud-ce-rm:
 	@echo "🗑️  Deleting Code Engine app: $(IBMCLOUD_CODE_ENGINE_APP)..."
 	@ibmcloud ce application delete --name $(IBMCLOUD_CODE_ENGINE_APP) -f
+	@echo "🗑️  Deleting runtime env secret: $(IBMCLOUD_CODE_ENGINE_APP)-env..."
+	@ibmcloud ce secret delete --name $(IBMCLOUD_CODE_ENGINE_APP)-env -f 2>/dev/null || true
 
 
 # =============================================================================

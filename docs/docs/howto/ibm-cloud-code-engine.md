@@ -15,6 +15,7 @@ This guide covers two supported deployment paths for the **ContextForge**:
 | Docker **or** Podman | Builds the production container image locally                      |
 | IBM Cloud CLI ≥ 2.16 | Installed automatically with `make ibmcloud-cli-install`           |
 | Code Engine project  | Create or select one in the IBM Cloud console                      |
+| IAM permissions      | Editor or higher on Code Engine; Writer or higher on Container Registry in the resource group |
 | `.env` file          | Runtime secrets & config for the gateway                           |
 | `.env.ce` file       | Deployment credentials & metadata for Code Engine / Container Reg. |
 
@@ -153,7 +154,7 @@ grep -q JWT_SECRET_KEY .env && echo "OK: JWT_SECRET_KEY set" || echo "WARNING: J
 | `ibmcloud-deploy`           | Create **or** update the app; syncs `.env` to a Code Engine secret (`<app>-env`), sets CPU/MEM, attaches registry secret, exposes port 4444. |
 | `ibmcloud-ce-status`        | `ibmcloud ce application get` - see route URL, revisions, health.                    |
 | `ibmcloud-ce-logs`          | `ibmcloud ce application logs --follow` - live log stream.                           |
-| `ibmcloud-ce-rm`            | Delete the application entirely.                                                     |
+| `ibmcloud-ce-rm`            | Delete the application and its `<app>-env` runtime secret.                           |
 
 **Typical first deploy**
 
@@ -211,6 +212,12 @@ podman build -t "$IBMCLOUD_IMG_PROD" .
 podman tag "$IBMCLOUD_IMG_PROD" "$IBMCLOUD_IMAGE_NAME"
 
 # 5 - Push image to ICR
+#
+# Note: if you are deploying to a region other than us-south (e.g. eu-de, jp-tok),
+# set the Container Registry region first:
+#   ibmcloud cr region-set <region>   (e.g. ibmcloud cr region-set eu-de)
+# Without this step `ibmcloud cr login` will authenticate to the wrong endpoint
+# and the push will fail with authentication errors.
 ibmcloud cr login
 ibmcloud cr namespaces       # Ensure your namespace exists
 podman push "$IBMCLOUD_IMAGE_NAME"
@@ -227,16 +234,23 @@ ibmcloud cr images --restrict "$(echo "$IBMCLOUD_IMAGE_NAME" | cut -d/ -f2)"
 
 ```bash
 # 6 - Create registry secret (first time)
-ibmcloud ce registry create-secret --name "$IBMCLOUD_REGISTRY_SECRET" \
+ibmcloud ce secret create --name "$IBMCLOUD_REGISTRY_SECRET" \
+    --format registry \
     --server "$(echo "$IBMCLOUD_IMAGE_NAME" | cut -d/ -f1)" \
     --username iamapikey --password "$IBMCLOUD_API_KEY"
 ibmcloud ce secret list # list every secret (generic, registry, SSH, TLS, etc.)
 ibmcloud ce secret get --name "$IBMCLOUD_REGISTRY_SECRET"         # add --decode to see clear-text values
 
-# 6b - Create a runtime environment secret from .env (first time only)
+# 6b - Create a runtime environment secret from .env
 # Code Engine has no access to your local .env file — upload it as a secret.
 # The secret name is derived from the app name to keep naming consistent.
+#
+# First time:
 ibmcloud ce secret create --name "${IBMCLOUD_CODE_ENGINE_APP}-env" --from-env-file .env
+#
+# To update later (e.g. rotating credentials or changing config):
+# ibmcloud ce secret update --name "${IBMCLOUD_CODE_ENGINE_APP}-env" --from-env-file .env
+# ibmcloud ce application update --name "$IBMCLOUD_CODE_ENGINE_APP"
 
 # 7 - Deploy / update (attach the env secret so the container sees your config)
 if ibmcloud ce application get --name "$IBMCLOUD_CODE_ENGINE_APP" >/dev/null 2>&1; then
