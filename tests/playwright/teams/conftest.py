@@ -38,15 +38,30 @@ def _make_jwt(email: str, is_admin: bool = False, teams=None) -> str:
 
 
 def _post_with_retry(ctx: APIRequestContext, url: str, data: dict | None, ok_statuses: tuple, attempts: int = 3):
-    """POST with bounded retry for transient (5xx) failures under parallel test load.
+    """POST with bounded retry for transient (5xx) and rate-limited (429) failures.
 
-    Only retries server-side errors; 4xx responses fail immediately since
-    those indicate a real client-side problem, not contention.
+    5xx retries with a short backoff. 429 retries honoring the server's
+    Retry-After header: the invitations endpoint sits in the CRITICAL_INVITATION
+    tier (10 req/min, no burst), which this suite's many invite_and_accept calls
+    can legitimately trip across a full test run, so a 429 here is contention,
+    not a real client error. Other 4xx responses fail immediately since those
+    indicate a real client-side problem.
     """
     resp = None
     for attempt in range(attempts):
         resp = ctx.post(url, data=data) if data is not None else ctx.post(url)
-        if resp.status in ok_statuses or resp.status < 500:
+        if resp.status in ok_statuses:
+            break
+        if resp.status == 429:
+            if attempt < attempts - 1:
+                try:
+                    retry_after = float(resp.headers.get("retry-after", "60"))
+                except (TypeError, ValueError):
+                    retry_after = 60.0
+                time.sleep(retry_after)
+                continue
+            break
+        if resp.status < 500:
             break
         if attempt < attempts - 1:
             time.sleep(0.5 * (attempt + 1))
