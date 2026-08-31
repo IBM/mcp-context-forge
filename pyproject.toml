@@ -17,6 +17,8 @@ required-version = ">=0.6.9"
 exclude-newer = "10 days"
 
 [tool.uv.exclude-newer-package]
+mcp = "2026-07-29T23:59:59Z"
+mcp-types = "2026-07-29T23:59:59Z"
 cpex = "2026-08-24T23:59:59Z"
 cpex-url-reputation = "2026-08-24T23:59:59Z"
 cpex-rate-limiter = "2026-08-24T23:59:59Z"
@@ -27,6 +29,8 @@ cpex-secrets-detection = "2026-08-24T23:59:59Z"
 cpex-sql-sanitizer = "2026-08-24T23:59:59Z"
 # additional packages below this: remove before next upgrade cycle starts
 
+[tool.uv.sources]
+cpex = { git = "https://github.com/contextforge-org/cpex", branch = "0.1.x-mcp-2.0.0" }
 
 # ----------------------------------------------------------------
 # 📦 Core project metadata (PEP 621)
@@ -72,7 +76,8 @@ dependencies = [
     "base58>=2.1.1",
     "brotli>=1.2.0",
     "click>=8.4.2", # Transitive pin
-    "cpex>=0.1.2",
+    "cpex",
+    # "cpex>=0.1.2",
     "cryptography>=50.0.0",
     "fastapi>=0.140.0",
     "filelock>=3.32.0,<3.33.0", # 3.30.0 added fork-safety guard that raises on pre-fork lock reuse; gateway_service.py:5351 rebuilds per-PID (fix from #5654). primary_worker.py and bootstrap_db.py create FileLock post-fork so are unaffected. Ceiling bumped to 3.32.x: 3.30.x–3.32.x have zero runtime changes (CI matrix, packaging, platform support only). Advance ceiling after verifying next minor release.
@@ -86,7 +91,8 @@ dependencies = [
     "jsonpath-ng>=1.8.0",
     "jsonschema>=4.26.0",
     "Mako>=1.4.1", # Transitive pin (alembic)
-    "mcp>=1.28.1,<2",
+    "mcp>=2.0.0",
+    "mcp-types>=2.0.0",
     "msgpack>=1.2.1",
     "orjson>=3.11.9",
     "parse>=1.22.1",
