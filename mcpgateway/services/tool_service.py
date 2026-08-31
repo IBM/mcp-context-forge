@@ -39,6 +39,7 @@ from cpex.framework import (
     HttpHeaderPayload,
     PluginContextTable,
     PluginError,
+    PluginMode,
     PluginViolationError,
     ToolHookType,
     ToolPostInvokePayload,
@@ -61,6 +62,7 @@ from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.common.models import Gateway as PydanticGateway
 from mcpgateway.common.models import TextContent
 from mcpgateway.common.models import Tool as PydanticTool
+from mcpgateway.common.models import ToolAnnotations
 from mcpgateway.common.models import ToolResult
 from mcpgateway.common.validators import pin_url_to_resolved_ip, SecurityValidator
 from mcpgateway.config import settings
@@ -73,7 +75,7 @@ from mcpgateway.db import ToolMetric, ToolMetricsHourly
 from mcpgateway.observability import create_child_span, create_span, inject_trace_context_headers, otel_context_active, set_span_attribute, set_span_error
 from mcpgateway.plugins.control_telemetry import ControlTelemetryAccumulator, record_control_telemetry
 from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
-from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolMetrics, ToolRead, ToolUpdate, TopPerformer
+from mcpgateway.schemas import AuthenticationValues, ToolCreate, ToolMetrics, ToolPreviewResponse, ToolPreviewTarget, ToolPreviewWarning, ToolRead, ToolUpdate, TopPerformer
 from mcpgateway.services.a2a_protocol import prepare_a2a_invocation, prepare_pinned_a2a_invocation
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.base_service import BaseService
@@ -470,7 +472,10 @@ def _decrypt_tool_headers_for_runtime(headers: Optional[Dict[str, Any]]) -> Dict
     """
     if not isinstance(headers, dict):
         return {}
-    return {key: _decrypt_tool_header_value(value) for key, value in headers.items()}
+    # Strip invisible Unicode format characters left over in a header value stored
+    # before this validation existed, so runtime outbound requests self-heal without
+    # requiring a manual re-save.
+    return {key: SecurityValidator.sanitize_credential_value(_decrypt_tool_header_value(value)) for key, value in headers.items()}
 
 
 #: Top-level keys that the MCP ``CallToolResult`` envelope admits (including
@@ -4421,17 +4426,7 @@ class ToolService(BaseService):
         tool_timeout_ms = tool_payload.get("timeout_ms")
         effective_timeout = (tool_timeout_ms / 1000) if tool_timeout_ms else settings.tool_timeout
 
-        # Resolve per-tool context_id for plugin manager (same pattern as invoke_tool)
-        # First-Party
-        from mcpgateway.plugins.gateway_plugin_manager import make_context_id  # pylint: disable=import-outside-toplevel
-
-        _tool_team_id = tool_payload.get("team_id")
-        # Use name (the gateway-scoped unique identifier, e.g. "mac-fs-read-file") as the binding key.
-        # original_name (e.g. "read_file") is only unique per gateway, so two gateways in the same
-        # team can share the same original_name — making it ambiguous as a binding key.
-        # name is enforced unique per team by DB constraint uq_team_owner_email_name_tool.
-        _binding_tool_name = tool_payload.get("name") or name
-        plugin_context_id = make_context_id(str(_tool_team_id), _binding_tool_name) if _tool_team_id else server_id
+        plugin_context_id = self._derive_plugin_context_id(tool_payload, name, server_id)
         plugin_manager = await self._get_plugin_manager(plugin_context_id)
         has_pre_invoke = plugin_manager and plugin_manager.has_hooks_for(ToolHookType.TOOL_PRE_INVOKE)
         has_post_invoke = plugin_manager and plugin_manager.has_hooks_for(ToolHookType.TOOL_POST_INVOKE)
@@ -4570,6 +4565,10 @@ class ToolService(BaseService):
                 )
                 raise ToolInvocationError(f"Credential storage unavailable for gateway '{gateway_name}'. Tool invocation refused to protect per-user credential isolation.") from vault_err
             headers = vault_headers or (decode_auth(gateway_auth_value) if gateway_auth_value else {})
+            # Strip invisible Unicode format characters left over in a credential stored
+            # before this validation existed, so tool invocation self-heals without
+            # requiring a manual re-save.
+            headers = {k: SecurityValidator.sanitize_credential_value(v) for k, v in headers.items()}
 
         if request_headers:
             # B3: when the gateway uses token-exchange, the exchanged Authorization header
@@ -4727,6 +4726,82 @@ class ToolService(BaseService):
             hook_global_context.metadata[GATEWAY_METADATA] = gateway_metadata
         return hook_global_context
 
+    def _get_dispatchable_hook_refs(self, plugin_manager: Optional[Any], hook_type: str, payload: Any, global_context: Any) -> List[Any]:
+        """Return hook refs cpex's own live dispatch (``_group_by_mode``) would consider eligible.
+
+        cpex's aggregate ``invoke_hook`` path applies three gates before running a hook:
+        ``PluginMode.DISABLED``, runtime-disabled (auto-tripped after repeated ``on_error:
+        disable`` errors), and unmatched ``conditions``. ``invoke_hook_for_plugin`` (the
+        single-plugin bypass) and a raw ``_registry.get_hook_refs_for_hook`` call apply none
+        of them. This method reproduces all three so any caller invoking hooks outside the
+        normal aggregate path stays consistent with what live traffic would actually run.
+
+        Reaches into ``PluginManager._registry``/``._runtime_disabled`` (private, no public
+        equivalent exists in cpex as of this writing); wrapped so a future cpex internal-shape
+        change degrades to "no hooks known" (a debug log line, not a test failure or alert)
+        rather than crashing the caller. Longer-term this eligibility logic belongs in cpex
+        itself as a real dry-run/preview primitive on ``PluginManager``, not reimplemented
+        (and re-drifted, per #5629 review) from outside it -- this method is a stopgap.
+
+        Args:
+            plugin_manager: The resolved plugin manager, or None.
+            hook_type: The hook type to look up (e.g. ``ToolHookType.TOOL_PRE_INVOKE``).
+            payload: The payload to evaluate ``conditions`` against.
+            global_context: The context to evaluate ``conditions`` against.
+
+        Returns:
+            List[Any]: Hook refs (cpex ``HookRef``) cpex's live dispatch would also consider.
+        """
+        if plugin_manager is None:
+            return []
+        try:
+            # Third-Party
+            from cpex.framework.utils import payload_matches  # pylint: disable=import-outside-toplevel
+
+            all_refs = plugin_manager._registry.get_hook_refs_for_hook(hook_type)  # pylint: disable=protected-access
+            runtime_disabled = getattr(plugin_manager, "_runtime_disabled", frozenset())  # pylint: disable=protected-access
+            eligible = []
+            for ref in all_refs:
+                if ref.plugin_ref.mode == PluginMode.DISABLED:
+                    continue
+                if ref.plugin_ref.name in runtime_disabled:
+                    continue
+                if ref.plugin_ref.conditions and not payload_matches(payload, hook_type, ref.plugin_ref.conditions, global_context):
+                    continue
+                eligible.append(ref)
+            return eligible
+        except Exception:  # pylint: disable=broad-except  # noqa: S110 - see docstring: degrade to no-hooks-known
+            logger.debug("Unable to enumerate dispatchable hooks for %s; treating as none", hook_type, exc_info=True)
+            return []
+
+    def _derive_plugin_context_id(self, tool_payload: Dict[str, Any], name: str, server_id: Optional[str]) -> Optional[str]:
+        """Resolve the per-tool/team plugin ``context_id`` used to look up a scoped plugin manager.
+
+        Team-scoped tools bind via ``make_context_id(team_id, tool_name)`` so team-scoped
+        ``ToolPluginBinding``s apply; tools with no team fall back to ``server_id``. Single
+        source of truth for this derivation -- it was independently duplicated three times
+        (``invoke_tool``, ``prepare_rust_mcp_tool_execution``, ``preview_tool_invocation``)
+        and drifted once already (#5629 review).
+
+        Args:
+            tool_payload: Flattened tool payload (from ``_resolve_tool_for_invocation`` or
+                the tool cache).
+            name: The name the caller looked the tool up by (fallback binding key).
+            server_id: Virtual server ID, used when the tool has no team.
+
+        Returns:
+            Optional[str]: The ``context_id`` to pass to ``_get_plugin_manager``.
+        """
+        # First-Party
+        from mcpgateway.plugins.gateway_plugin_manager import make_context_id  # pylint: disable=import-outside-toplevel
+
+        tool_team_id = tool_payload.get("team_id")
+        # Use name (the gateway-scoped unique identifier), not original_name: original_name is
+        # only unique per gateway, so two gateways in the same team could share one, making it
+        # an ambiguous binding key. name is enforced unique per team by a DB constraint.
+        binding_tool_name = tool_payload.get("name") or name
+        return make_context_id(str(tool_team_id), binding_tool_name) if tool_team_id else server_id
+
     def _build_rust_native_tool_post_invoke_retry_policy(
         self,
         plugin_manager: Optional[Any],
@@ -4750,21 +4825,9 @@ class ToolService(BaseService):
         if not plugin_manager or not plugin_manager.has_hooks_for(ToolHookType.TOOL_POST_INVOKE):
             return (None, False)
 
-        # Third-Party
-        from cpex.framework import PluginMode  # pylint: disable=import-outside-toplevel
-        from cpex.framework.utils import payload_matches  # pylint: disable=import-outside-toplevel
-
         global_context = hook_global_context or GlobalContext(request_id=get_correlation_id() or uuid.uuid4().hex)
         payload = ToolPostInvokePayload(name=tool_name, result={})
-        hook_refs = plugin_manager._registry.get_hook_refs_for_hook(hook_type=ToolHookType.TOOL_POST_INVOKE)  # pylint: disable=protected-access
-
-        active_hook_refs = []
-        for hook_ref in hook_refs:
-            if hook_ref.plugin_ref.mode == PluginMode.DISABLED:
-                continue
-            if hook_ref.plugin_ref.conditions and not payload_matches(payload, ToolHookType.TOOL_POST_INVOKE, hook_ref.plugin_ref.conditions, global_context):
-                continue
-            active_hook_refs.append(hook_ref)
+        active_hook_refs = self._get_dispatchable_hook_refs(plugin_manager, ToolHookType.TOOL_POST_INVOKE, payload, global_context)
 
         if not active_hook_refs:
             return (None, False)
@@ -5399,18 +5462,9 @@ class ToolService(BaseService):
         # This prevents lazy loading during HTTP calls
         tool_metadata: Optional[PydanticTool] = None
         gateway_metadata: Optional[PydanticGateway] = None
-        # Resolve per-tool context_id so DB plugin bindings (ToolPluginBinding) are applied.
-        # Lazy import avoids circular: gateway_plugin_manager → services.__init__ → tool_service.
-        # First-Party
-        from mcpgateway.plugins.gateway_plugin_manager import make_context_id  # pylint: disable=import-outside-toplevel
-
+        # team_id also feeds payload_tenant_id below (post-db.close()), independent of context_id.
         _tool_team_id = tool_payload.get("team_id")
-        # Use name (the gateway-scoped unique identifier, e.g. "mac-fs-read-file") as the binding key.
-        # original_name (e.g. "read_file") is only unique per gateway, so two gateways in the same
-        # team can share the same original_name — making it ambiguous as a binding key.
-        # name is enforced unique per team by DB constraint uq_team_owner_email_name_tool.
-        _binding_tool_name = tool_payload.get("name") or name
-        plugin_context_id = make_context_id(str(_tool_team_id), _binding_tool_name) if _tool_team_id else server_id
+        plugin_context_id = self._derive_plugin_context_id(tool_payload, name, server_id)
         plugin_manager = await self._get_plugin_manager(plugin_context_id)
         logger.debug("invoke_tool: plugin_context_id=%r plugin_manager=%r", plugin_context_id, plugin_manager)
         if plugin_manager:
@@ -5611,6 +5665,10 @@ class ToolService(BaseService):
                             raise ToolInvocationError(f"OAuth authentication failed: {str(e)}")
                     else:
                         credentials = decode_auth(tool_auth_value) if tool_auth_value else {}
+                        # Strip invisible Unicode format characters left over in a credential
+                        # stored before this validation existed, so tool invocation self-heals
+                        # without requiring a manual re-save.
+                        credentials = {k: SecurityValidator.sanitize_credential_value(v) for k, v in credentials.items()}
                         # Filter out empty header names/values to avoid "Illegal header name" errors
                         filtered_credentials = {k: v for k, v in credentials.items() if k and v}
                         headers.update(filtered_credentials)
@@ -6054,6 +6112,10 @@ class ToolService(BaseService):
                             )
                             raise ToolInvocationError(f"Credential storage unavailable for gateway '{gateway_name}'. Tool invocation refused to protect per-user credential isolation.") from vault_err
                         headers = vault_headers or (decode_auth(gateway_auth_value) if gateway_auth_value else {})
+                        # Strip invisible Unicode format characters left over in a credential
+                        # stored before this validation existed, so tool invocation self-heals
+                        # without requiring a manual re-save.
+                        headers = {k: SecurityValidator.sanitize_credential_value(v) for k, v in headers.items()}
 
                     # Use cached passthrough headers (no DB query needed)
                     if request_headers:
@@ -7192,6 +7254,146 @@ class ToolService(BaseService):
                 # Track performance with threshold checking
                 with perf_tracker.track_operation("tool_invocation", name):
                     pass  # Duration already captured above
+
+    @staticmethod
+    def _is_preview_safe(hook_ref: Any) -> bool:
+        """True when a hook ref's plugin is tagged ``preview_safe`` (#5629).
+
+        No plugin ships with this tag today, so callers filtering by this predicate get
+        an empty result in practice until a plugin author opts in — that is expected,
+        not a bug; see plugins/AGENTS.md.
+
+        Args:
+            hook_ref: A cpex ``HookRef`` as returned by :meth:`_get_dispatchable_hook_refs`.
+
+        Returns:
+            bool: True if the hook's plugin config declares the ``preview_safe`` tag.
+        """
+        return "preview_safe" in (hook_ref.plugin_ref.tags or [])
+
+    async def preview_tool_invocation(
+        self,
+        db: Session,
+        name: str,
+        arguments: Dict[str, Any],
+        user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
+        server_id: Optional[str] = None,
+        request_headers: Optional[Dict[str, str]] = None,
+    ) -> ToolPreviewResponse:
+        """Validate and resolve a tool invocation without executing it (#5629).
+
+        Dry-run counterpart to :meth:`invoke_tool`, sharing its resolution/RBAC path via
+        :meth:`_resolve_tool_for_invocation` so the two can never disagree about whether a
+        tool exists or is accessible. Never dispatches: no REST/MCP/A2A/gRPC call is made
+        (federated tools resolve to ``target.kind == "federated"`` with no wire call to the
+        remote gateway, regardless of the tool's annotations), and TOOL_POST_INVOKE never runs.
+
+        Only plugins tagged ``preview_safe`` have their TOOL_PRE_INVOKE hook actually run, and
+        only when they'd also be dispatch-eligible live (see :meth:`_get_dispatchable_hook_refs`
+        for the three gates applied: not statically disabled, not runtime-disabled, and matching
+        ``conditions``); every other hook that clears those same three gates is reported in
+        ``warnings`` instead (see :meth:`_is_preview_safe` and plugins/AGENTS.md).
+
+        Args:
+            db: Database session.
+            name: Name of tool to preview.
+            arguments: Candidate arguments to validate against the tool's input schema.
+            user_email: User email for authorization checks. None = unauthenticated request.
+            token_teams: Team IDs from JWT token for authorization. None = unrestricted admin,
+                [] = public-only, [...] = team-scoped.
+            server_id: Virtual server ID for server scoping enforcement, if previewing through
+                a virtual server context.
+            request_headers: The caller's inbound request headers, forwarded into the
+                ``preview_safe`` hook payload as-is for condition/logic evaluation. This is
+                *not* equivalent to what a live dispatch would see: it excludes tool-configured
+                static headers, resolved auth headers, and passthrough-merged headers, since
+                building those would require preview to resolve gateway/tool secrets it
+                otherwise never touches (#5629 federation policy).
+
+        Returns:
+            ToolPreviewResponse: The dry-run envelope described in #5629.
+
+        Raises:
+            ToolNotFoundError: If tool not found or access denied (same as invoke_tool).
+        """
+        resolved = await self._resolve_tool_for_invocation(db, name, None, user_email, token_teams, server_id, False, False)
+        tool_payload = resolved.tool_payload
+        warnings: List[ToolPreviewWarning] = []
+
+        # Input-schema validation: reuse the same validator invoke_tool already uses for
+        # *output* schemas (_validate_with_cached_schema, tool_service.py). No behavior
+        # change to invoke_tool itself — arguments are never validated against the input
+        # schema on the live path either; see #5629 planning notes.
+        validated = True
+        input_schema = tool_payload.get("input_schema")
+        if input_schema:
+            try:
+                _validate_with_cached_schema(arguments, input_schema)
+            except (jsonschema.exceptions.ValidationError, jsonschema.exceptions.SchemaError) as exc:
+                validated = False
+                warnings.append(ToolPreviewWarning(code="invalid_arguments", message=str(exc)))
+
+        # Federation policy (#5629): local dry-run only, regardless of annotations.
+        # Never surface the gateway's URL, transport, or credentials -- name only.
+        gateway_id = tool_payload.get("gateway_id")
+        if gateway_id:
+            gateway_name = (resolved.gateway_payload or {}).get("name")
+            target = ToolPreviewTarget(kind="federated", gateway_name=gateway_name)
+        else:
+            target = ToolPreviewTarget(kind="local")
+
+        annotations = ToolAnnotations.model_validate(tool_payload.get("annotations") or {})
+
+        # Plugin pre-invoke hooks: only preview_safe-tagged plugins that are also
+        # dispatch-eligible (not disabled, not runtime-disabled, conditions match) actually
+        # run; every other dispatch-eligible hook is reported as a warning instead.
+        pre_hooks_run: List[str] = []
+        _tool_team_id = tool_payload.get("team_id")
+        plugin_context_id = self._derive_plugin_context_id(tool_payload, name, server_id)
+        plugin_manager = await self._get_plugin_manager(plugin_context_id)
+        if plugin_manager and plugin_manager.has_hooks_for(ToolHookType.TOOL_PRE_INVOKE):
+            # server_id mirrors invoke_tool's fallback-context derivation so server-scoped
+            # plugin conditions evaluate the same way in preview as they would live.
+            context_server_id = gateway_id if gateway_id and isinstance(gateway_id, str) else "unknown"
+            global_context = GlobalContext(request_id=get_correlation_id() or uuid.uuid4().hex, server_id=context_server_id, tenant_id=_extract_tenant_id_from_payload(_tool_team_id), user=user_email)
+            payload = ToolPreInvokePayload(name=name, args=arguments, headers=HttpHeaderPayload(root=request_headers) if request_headers else None)
+
+            all_refs = self._get_dispatchable_hook_refs(plugin_manager, ToolHookType.TOOL_PRE_INVOKE, payload, global_context)
+            preview_safe_refs = [ref for ref in all_refs if self._is_preview_safe(ref)]
+            skipped_refs = [ref for ref in all_refs if not self._is_preview_safe(ref)]
+
+            for ref in preview_safe_refs:
+                try:
+                    await plugin_manager.invoke_hook_for_plugin(
+                        name=ref.plugin_ref.name, hook_type=ToolHookType.TOOL_PRE_INVOKE, payload=payload, context=global_context, violations_as_exceptions=True
+                    )
+                    pre_hooks_run.append(ref.plugin_ref.name)
+                except PluginViolationError as exc:
+                    warnings.append(ToolPreviewWarning(code="preview_hook_violation", hook=ref.plugin_ref.name, message=str(exc)))
+                except PluginError as exc:
+                    warnings.append(ToolPreviewWarning(code="preview_hook_error", hook=ref.plugin_ref.name, message=str(exc)))
+
+            for ref in skipped_refs:
+                warnings.append(
+                    ToolPreviewWarning(
+                        code="hook_not_previewed",
+                        hook=ref.plugin_ref.name,
+                        message=f"Plugin '{ref.plugin_ref.name}' is not tagged preview_safe; live invocation will run this hook but preview did not.",
+                    )
+                )
+
+        # No db.commit()/close() here -- no HTTP call follows, and the session belongs to the caller.
+
+        # resolved_arguments mirrors the input as-is; hook modified_payload is not applied back.
+        return ToolPreviewResponse(
+            validated=validated,
+            resolved_arguments=arguments,
+            target=target,
+            annotations=annotations,
+            pre_hooks_run=pre_hooks_run,
+            warnings=warnings,
+        )
 
     @staticmethod
     def _form_value_to_str(v: Any) -> str:

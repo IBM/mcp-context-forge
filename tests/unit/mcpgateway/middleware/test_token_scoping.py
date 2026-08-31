@@ -483,6 +483,13 @@ class TestTokenScopingMiddleware:
         assert result is False, "GET /catalog should be denied when token lacks servers.read"
 
     @pytest.mark.asyncio
+    async def test_gateway_impact_preview_requires_gateways_read(self, middleware):
+        """Gateway impact preview follows the gateway read scope for both API mounts."""
+        for path in ("/gateways/gateway-1/impact-preview", "/v1/gateways/gateway-1/impact-preview"):
+            assert middleware._check_permission_restrictions(path, "GET", [Permissions.GATEWAYS_READ]) is True
+            assert middleware._check_permission_restrictions(path, "GET", [Permissions.GATEWAYS_UPDATE]) is False
+
+    @pytest.mark.asyncio
     async def test_catalog_register_endpoint_requires_servers_create(self, middleware):
         """POST /catalog/{id}/register is gated on servers.create, with /v1 normalization.
 
@@ -962,6 +969,12 @@ class TestTokenScopingMiddleware:
 
         assert middleware._check_permission_restrictions("/v1/chat/completions", "POST", [Permissions.LLM_INVOKE]) is True
         assert middleware._check_permission_restrictions("/v1/chat/completions", "POST", [Permissions.LLM_READ]) is False
+
+    def test_transfer_ownership_requires_gateway_update_permission(self, middleware):
+        """Ownership transfer must be covered by the gateway update token scope."""
+        path = "/admin/gateways/gw-1/transfer-ownership"
+        assert middleware._check_permission_restrictions(path, "POST", [Permissions.GATEWAYS_UPDATE]) is True
+        assert middleware._check_permission_restrictions(path, "POST", [Permissions.GATEWAYS_READ]) is False
 
     def test_permission_restrictions_llm_proxy_custom_prefix(self, middleware, monkeypatch):
         """LLM proxy path mapping should follow settings.llm_api_prefix."""

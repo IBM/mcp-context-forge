@@ -449,8 +449,7 @@ mcpContextForge:
     # Cloud metadata endpoints (169.254.169.254, etc.) are ALWAYS blocked by default.
     # Helm testing registration uses private in-cluster Service DNS names by default:
     #   fast-time: http://<release>-mcp-fast-time-server:80/http
-    #   fast-test: http://<release>-fast-test-server:8880/mcp
-    # With strict defaults, those targets are rejected with HTTP 422 during gateway registration.
+    # With strict defaults, the target is rejected with HTTP 422 during gateway registration.
     SSRF_PROTECTION_ENABLED: "true"            # master switch for SSRF protection
     SSRF_ALLOW_LOCALHOST: "false"              # block localhost/loopback by default
     SSRF_ALLOW_PRIVATE_NETWORKS: "false"       # block RFC 1918 private IPs by default
@@ -1862,7 +1861,7 @@ monitoring:
         memory: 256Mi
 
 ########################################################################
-# TESTING PROFILE - fast-test server, A2A echo agent, locust, auto-register
+# TESTING PROFILE - fast-time server, A2A echo agent, locust, auto-register
 ########################################################################
 testing:
   enabled: false
@@ -1894,53 +1893,6 @@ testing:
       virtualServerName: Fast Time Server
       virtualServerDescription: Virtual server exposing Fast Time MCP tools/resources/prompts
 
-  fastTestServer:
-    enabled: true
-    image:
-      repository: mcpgateway/fast-test-server
-      tag: latest
-      pullPolicy: Always
-    service:
-      type: ClusterIP
-      port: 8880
-    env:
-      BIND_ADDRESS: 0.0.0.0:8880
-      RUST_LOG: info
-    resources:
-      limits:
-        cpu: "2"
-        memory: 1Gi
-      requests:
-        cpu: 500m
-        memory: 128Mi
-    probes:
-      readiness:
-        type: http
-        path: /health
-        port: 8880
-        initialDelaySeconds: 10
-        periodSeconds: 30
-        timeoutSeconds: 5
-        successThreshold: 1
-        failureThreshold: 3
-      liveness:
-        type: http
-        path: /health
-        port: 8880
-        initialDelaySeconds: 10
-        periodSeconds: 30
-        timeoutSeconds: 5
-        successThreshold: 1
-        failureThreshold: 3
-
-  fastTest:
-    register:
-      enabled: true
-      # Uses in-cluster Service URL: http://<release>-fast-test-server:8880/mcp
-      # Requires SSRF_ALLOW_PRIVATE_NETWORKS=true OR SSRF_ALLOWED_NETWORKS to include cluster CIDR.
-      gatewayName: fast_test
-      gatewayPath: /mcp
-      transport: STREAMABLEHTTP
 
   a2aEchoAgent:
     enabled: true

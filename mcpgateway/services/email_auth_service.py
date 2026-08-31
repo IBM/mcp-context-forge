@@ -49,6 +49,7 @@ from mcpgateway.db import (
     EmailTeamMember,
     EmailTeamMemberHistory,
     EmailUser,
+    Gateway as DbGateway,
     PasswordResetToken,
     PendingUserApproval,
     Role,
@@ -2054,7 +2055,16 @@ class EmailAuthService:
                 for team in teams_owned:
                     # Find other team owners who can take ownership
                     potential_owners_stmt = (
-                        select(EmailTeamMember).where(EmailTeamMember.team_id == team.id, EmailTeamMember.user_email != email, EmailTeamMember.role == "owner").order_by(EmailTeamMember.role.desc())
+                        select(EmailTeamMember)
+                        .join(EmailUser, EmailUser.email == EmailTeamMember.user_email)
+                        .where(
+                            EmailTeamMember.team_id == team.id,
+                            EmailTeamMember.user_email != email,
+                            EmailTeamMember.role == "owner",
+                            EmailTeamMember.is_active == True,  # noqa: E712  # pylint: disable=singleton-comparison
+                            EmailUser.is_active == True,  # noqa: E712  # pylint: disable=singleton-comparison
+                        )
+                        .order_by(EmailTeamMember.user_email)
                     )
 
                     potential_owners = self.db.execute(potential_owners_stmt).scalars().all()
@@ -2088,6 +2098,72 @@ class EmailAuthService:
                         else:
                             # Multi-member team with no other owners - cannot delete user
                             raise ValueError(f"Cannot delete user {email}: owns team '{team.name}' with {len(all_members)} members but no other owners to transfer ownership to")
+
+            # ----------------------------------------------------------------
+            # Transfer owned gateways to prevent orphaned resources
+            # ----------------------------------------------------------------
+            owned_gateways = self.db.execute(select(DbGateway).where(DbGateway.owner_email == email)).scalars().all()
+
+            for gw in owned_gateways:
+                new_owner_email: str | None = None
+
+                # Team gateways: prefer another active team member
+                if gw.visibility == "team" and gw.team_id:
+                    alternate = (
+                        self.db.execute(
+                            select(EmailTeamMember)
+                            .join(EmailUser, EmailUser.email == EmailTeamMember.user_email)
+                            .where(
+                                EmailTeamMember.team_id == gw.team_id,
+                                EmailTeamMember.user_email != email,
+                                EmailTeamMember.is_active == True,  # noqa: E712  # pylint: disable=singleton-comparison
+                                EmailUser.is_active == True,  # noqa: E712  # pylint: disable=singleton-comparison
+                            )
+                            .order_by(EmailTeamMember.user_email)
+                        )
+                        .scalars()
+                        .first()
+                    )
+                    if alternate:
+                        new_owner_email = alternate.user_email
+
+                # Fallback: active platform admin
+                if not new_owner_email:
+                    admin_email = (settings.platform_admin_email or "").strip()
+                    if admin_email and admin_email != email:
+                        admin_user = self.db.execute(
+                            select(EmailUser).where(
+                                EmailUser.email == admin_email,
+                                EmailUser.is_active == True,  # noqa: E712  # pylint: disable=singleton-comparison
+                            )
+                        ).scalar_one_or_none()
+                        if admin_user:
+                            new_owner_email = admin_user.email
+
+                if not new_owner_email:
+                    raise ValueError(f"Cannot delete user {email}: gateway {gw.id} would become orphaned and no fallback owner is available")
+
+                # Transfer gateway ownership
+                gw.owner_email = new_owner_email
+
+                # Transfer linked tools, resources, and prompts
+                for tool in gw.tools:
+                    if tool.owner_email == email:
+                        tool.owner_email = new_owner_email
+                for resource in gw.resources:
+                    if resource.owner_email == email:
+                        resource.owner_email = new_owner_email
+                for prompt in gw.prompts:
+                    if prompt.owner_email == email:
+                        prompt.owner_email = new_owner_email
+
+                logger.info(
+                    "Transferred gateway '%s' (%s) ownership from %s to %s",
+                    SecurityValidator.sanitize_log_message(gw.name),
+                    gw.id,
+                    SecurityValidator.sanitize_log_message(email),
+                    SecurityValidator.sanitize_log_message(new_owner_email),
+                )
 
             # Delete all role assignments for the user
             try:

@@ -41,6 +41,7 @@ from mcpgateway.services.encryption_service import get_encryption_service
 from mcpgateway.services.gateway_service import (
     GatewayCatalogSyncResult,
     GatewayConnectionError,
+    GatewayCredentialError,
     GatewayDuplicateConflictError,
     GatewayError,
     GatewayLookupConflictError,
@@ -51,6 +52,7 @@ from mcpgateway.services.gateway_service import (
     OAuthToolValidationError,
 )
 from mcpgateway.services.mcp_apps import MCP_UI_EXTENSION
+from mcpgateway.utils.services_auth import encode_auth
 
 # ---------------------------------------------------------------------------
 # Helpers & global monkey-patches
@@ -795,6 +797,47 @@ class TestGatewayService:
         test_db.rollback.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_initialize_gateway_unicode_encode_error_becomes_credential_error(self, gateway_service):
+        """A UnicodeEncodeError raised while building outbound headers is reported as
+        GatewayCredentialError, not the generic GatewayConnectionError -- so it isn't
+        mistaken for a network/connectivity failure."""
+        bad_char_error = UnicodeEncodeError("ascii", "⁠", 0, 1, "ordinal not in range(128)")
+        gateway_service.connect_to_sse_server = AsyncMock(side_effect=bad_char_error)
+
+        with pytest.raises(GatewayCredentialError) as exc_info:
+            await gateway_service._initialize_gateway("https://example.com/mcp", authentication={"Authorization": "Bearer clean-token"}, transport="SSE", auth_type="bearer")
+
+        assert not isinstance(exc_info.value, GatewayConnectionError)
+        assert "\\u2060" in str(exc_info.value) or "ascii" in str(exc_info.value)
+
+    @pytest.mark.asyncio
+    async def test_initialize_gateway_self_heals_stored_credential_with_invisible_char(self, gateway_service):
+        """A previously-stored credential containing an invisible Unicode format character
+        (a copy/paste artifact) is silently cleaned before use, so a gateway that was
+        contaminated before this fix recovers without requiring a manual re-save."""
+        contaminated = encode_auth({"Authorization": "Bearer " + "A" * 48 + "⁠" + "B" * 20})
+        gateway_service.connect_to_sse_server = AsyncMock(return_value=({}, [], [], [], []))
+
+        await gateway_service._initialize_gateway("https://example.com/mcp", authentication=contaminated, transport="SSE", auth_type="bearer")
+
+        used_headers = gateway_service.connect_to_sse_server.call_args.args[1]
+        assert used_headers["Authorization"] == "Bearer " + "A" * 48 + "B" * 20
+
+    @pytest.mark.asyncio
+    async def test_initialize_gateway_leaves_other_non_ascii_stored_credential_untouched(self, gateway_service):
+        """A previously-stored credential containing genuine non-ASCII content (not a safely
+        strippable format character) is passed through unchanged -- only invisible format
+        characters are stripped, matching the project's existing support for international
+        text in credentials/headers."""
+        contaminated = encode_auth({"Authorization": "Bearer café-token"})  # pragma: allowlist secret
+        gateway_service.connect_to_sse_server = AsyncMock(return_value=({}, [], [], [], []))
+
+        await gateway_service._initialize_gateway("https://example.com/mcp", authentication=contaminated, transport="SSE", auth_type="bearer")
+
+        used_headers = gateway_service.connect_to_sse_server.call_args.args[1]
+        assert used_headers["Authorization"] == "Bearer café-token"
+
+    @pytest.mark.asyncio
     async def test_register_gateway_integrity_error(self, gateway_service, test_db):
         """Test IntegrityError during gateway registration."""
         # Third-Party
@@ -1348,6 +1391,53 @@ class TestGatewayService:
             await gateway_service.get_gateway(test_db, 999)
 
     @pytest.mark.asyncio
+    async def test_get_gateway_impact_preview_returns_only_visible_unique_servers(self, gateway_service, test_db):
+        """Impact preview de-duplicates associations and filters hidden servers."""
+        gateway_service.get_gateway = AsyncMock(return_value=SimpleNamespace(id="gateway-1"))
+        visible_server = SimpleNamespace(id="server-1", name="Visible server")
+        hidden_server = SimpleNamespace(id="server-2", name="Hidden server")
+        test_db.execute = Mock(
+            side_effect=[
+                _make_execute_result(scalars_list=["server-1", "server-2"]),
+                _make_execute_result(scalars_list=["server-1"]),
+                _make_execute_result(scalars_list=[]),
+                _make_execute_result(scalars_list=[visible_server, hidden_server]),
+            ]
+        )
+
+        with patch("mcpgateway.services.gateway_service.server_service._check_server_access", new=AsyncMock(side_effect=[True, False])) as mock_access:
+            result = await gateway_service.get_gateway_impact_preview(test_db, "gateway-1", user_email="user@example.com", token_teams=["team-1"])
+
+        assert result.gateway_id == "gateway-1"
+        assert [(server.id, server.name) for server in result.servers] == [("server-1", "Visible server")]
+        gateway_service.get_gateway.assert_awaited_once_with(test_db, "gateway-1", user_email="user@example.com", token_teams=["team-1"])
+        assert test_db.execute.call_count == 4
+        assert mock_access.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_get_gateway_impact_preview_empty(self, gateway_service, test_db):
+        """Gateway without associated entities returns an empty preview."""
+        gateway_service.get_gateway = AsyncMock(return_value=SimpleNamespace(id="gateway-1"))
+        test_db.execute = Mock(side_effect=[_make_execute_result(), _make_execute_result(), _make_execute_result()])
+
+        result = await gateway_service.get_gateway_impact_preview(test_db, "gateway-1", user_email="user@example.com", token_teams=[])
+
+        assert result.gateway_id == "gateway-1"
+        assert result.servers == []
+        assert test_db.execute.call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_get_gateway_impact_preview_hidden_gateway_fails_closed(self, gateway_service, test_db):
+        """A hidden gateway is reported as missing without querying associations."""
+        gateway_service.get_gateway = AsyncMock(side_effect=GatewayNotFoundError("Gateway not found: hidden"))
+        test_db.execute = Mock()
+
+        with pytest.raises(GatewayNotFoundError):
+            await gateway_service.get_gateway_impact_preview(test_db, "hidden", user_email="user@example.com", token_teams=[])
+
+        test_db.execute.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_get_gateway_by_name_falls_back_after_id_miss(self, gateway_service, mock_gateway, test_db):
         """Name lookup works when identifier is not an ID."""
         mock_gateway.masked = Mock(return_value=mock_gateway)
@@ -1694,6 +1784,34 @@ class TestGatewayService:
         test_db.rollback.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_update_gateway_url_credential_error_preserves_type_and_rolls_back(self, gateway_service, mock_gateway, test_db):
+        """A connection-affecting change (URL) combined with a malformed stored credential
+        must propagate GatewayCredentialError -- not be silently persisted, and not be
+        relabeled as a generic GatewayConnectionError -- so the API can return 422 for a
+        bad credential rather than a misleading 502."""
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=mock_gateway))
+        test_db.commit = Mock()
+        test_db.rollback = Mock()
+        test_db.refresh = Mock()
+        test_db.query = Mock(return_value=Mock(filter=Mock(return_value=Mock(first=Mock(return_value=None)))))
+
+        gateway_service._initialize_gateway = AsyncMock(side_effect=GatewayCredentialError("Stored credential contains invalid characters"))
+        gateway_service._notify_gateway_updated = AsyncMock()
+        url = GatewayService.normalize_url("http://example.com/bad-url")
+        gateway_update = GatewayUpdate(url=url)
+
+        mock_gateway_read = MagicMock()
+        mock_gateway_read.masked.return_value = mock_gateway_read
+
+        with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
+            with pytest.raises(GatewayCredentialError) as exc_info:
+                await gateway_service.update_gateway(test_db, 1, gateway_update)
+
+        assert not isinstance(exc_info.value, GatewayConnectionError)
+        test_db.commit.assert_not_called()
+        test_db.rollback.assert_called_once()
+
+    @pytest.mark.asyncio
     async def test_update_gateway_url_generic_exception_wraps_and_sanitizes(self, gateway_service, mock_gateway, test_db):
         """Generic Exception on re-init with connection-affecting change wraps into GatewayConnectionError.
 
@@ -1723,6 +1841,45 @@ class TestGatewayService:
         assert "secret123" not in str(exc_info.value)
         test_db.commit.assert_not_called()
         test_db.rollback.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_update_gateway_cosmetic_change_tolerates_credential_error(self, gateway_service, mock_gateway, test_db):
+        """A cosmetic-only change (visibility, no URL/auth change) whose best-effort re-init
+        hits a pre-existing malformed stored credential must still commit -- matching the
+        existing GatewayConnectionError precedent for cosmetic updates -- instead of raising."""
+        mock_gateway.visibility = "public"
+        mock_gateway.auth_type = "bearer"
+        mock_gateway.oauth_config = None
+        mock_gateway.auth_query_params = None
+        mock_gateway.slug = "test_gateway"
+        mock_gateway.tools = []
+        mock_gateway.resources = []
+        mock_gateway.prompts = []
+
+        test_db.execute = Mock(return_value=_make_execute_result(scalar=mock_gateway))
+        test_db.commit = Mock()
+        test_db.rollback = Mock()
+        test_db.refresh = Mock()
+        mock_query = Mock()
+        mock_query.filter.return_value = mock_query
+        mock_query.first.return_value = None
+        mock_query.all.return_value = []
+        test_db.query = Mock(return_value=mock_query)
+
+        gateway_service._initialize_gateway = AsyncMock(side_effect=GatewayCredentialError("Stored credential contains invalid characters"))
+        gateway_service._notify_gateway_updated = AsyncMock()
+
+        gateway_update = GatewayUpdate(visibility="private")
+
+        mock_gateway_read = MagicMock()
+        mock_gateway_read.masked.return_value = mock_gateway_read
+
+        with patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read):
+            await gateway_service.update_gateway(test_db, 1, gateway_update)
+
+        assert mock_gateway.visibility == "private"
+        test_db.commit.assert_called_once()
+        test_db.rollback.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_update_gateway_visibility_propagates_when_init_fails(self, gateway_service, mock_gateway, test_db):
@@ -2480,7 +2637,7 @@ class TestGatewayService:
         mock_gateway.resources = []
         mock_gateway.prompts = []
 
-        registry_cache = SimpleNamespace(invalidate_gateways=AsyncMock())
+        registry_cache = SimpleNamespace(invalidate_gateways=AsyncMock(), invalidate_catalog=AsyncMock())
         tool_lookup_cache = SimpleNamespace(invalidate_gateway=AsyncMock())
         monkeypatch.setattr(settings, "gateway_async_lifecycle_enabled", True)
         monkeypatch.setattr("mcpgateway.services.gateway_service._get_registry_cache", lambda: registry_cache)
@@ -2499,6 +2656,7 @@ class TestGatewayService:
         test_db.refresh.assert_called_once_with(mock_gateway)
         test_db.expire.assert_not_called()
         registry_cache.invalidate_gateways.assert_awaited_once()
+        registry_cache.invalidate_catalog.assert_not_awaited()
         tool_lookup_cache.invalidate_gateway.assert_awaited_once_with("gw-1")
         assert mock_gateway.status == "deleting"
         assert mock_gateway.status_message == "Gateway deletion accepted and pending cleanup"
@@ -4314,7 +4472,7 @@ def test_gateway_service_singleton_and_cache_helpers(monkeypatch):
     # First-Party
     import mcpgateway.services.gateway_service as gs
 
-    gs._gateway_service_instance = None
+    monkeypatch.setattr(gs, "_gateway_service_instance", None)
     instance = gs.gateway_service
     assert isinstance(instance, GatewayService)
     assert gs.gateway_service is instance
@@ -4327,10 +4485,11 @@ def test_gateway_service_singleton_and_cache_helpers(monkeypatch):
         invalidate_resources=AsyncMock(),
         invalidate_prompts=AsyncMock(),
         invalidate_gateways=AsyncMock(),
+        invalidate_catalog=AsyncMock(),
     )
     tool_sentinel = SimpleNamespace(invalidate_gateway=AsyncMock())
-    gs._REGISTRY_CACHE = None
-    gs._TOOL_LOOKUP_CACHE = None
+    monkeypatch.setattr(gs, "_REGISTRY_CACHE", None)
+    monkeypatch.setattr(gs, "_TOOL_LOOKUP_CACHE", None)
 
     monkeypatch.setitem(sys.modules, "mcpgateway.cache.registry_cache", SimpleNamespace(registry_cache=registry_sentinel))
     monkeypatch.setitem(sys.modules, "mcpgateway.cache.tool_lookup_cache", SimpleNamespace(tool_lookup_cache=tool_sentinel))
@@ -5853,7 +6012,7 @@ class TestDeleteGateway:
 
     @pytest.fixture
     def _mock_caches(self, monkeypatch):
-        registry_cache = SimpleNamespace(invalidate_gateways=AsyncMock())
+        registry_cache = SimpleNamespace(invalidate_gateways=AsyncMock(), invalidate_catalog=AsyncMock())
         tool_lookup_cache = SimpleNamespace(invalidate_gateway=AsyncMock())
         monkeypatch.setattr("mcpgateway.services.gateway_service._get_registry_cache", lambda: registry_cache)
         monkeypatch.setattr("mcpgateway.services.gateway_service._get_tool_lookup_cache", lambda: tool_lookup_cache)
@@ -5862,6 +6021,7 @@ class TestDeleteGateway:
 
     @pytest.mark.asyncio
     async def test_delete_gateway_success(self, gateway_service, _mock_caches):
+        registry_cache, _ = _mock_caches
         gw = MagicMock()
         gw.id = "gw-1"
         gw.name = "test-gw"
@@ -5879,6 +6039,7 @@ class TestDeleteGateway:
 
         await gateway_service.delete_gateway(db, "gw-1")
         db.commit.assert_called()
+        registry_cache.invalidate_catalog.assert_awaited_once()
         gateway_service._event_service.publish_event.assert_awaited()
 
     @pytest.mark.asyncio
@@ -6198,6 +6359,117 @@ class TestCheckSingleGatewayHealth:
 
         await gateway_service._check_single_gateway_health(gw)
         gateway_service._handle_gateway_failure.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_health_check_cleans_invisible_char_in_stored_credential(self, gateway_service, monkeypatch):
+        """A stored credential contaminated with an invisible Unicode format character is
+        cleaned before the health-check request is sent, instead of failing the check."""
+        gw = _make_gateway(
+            id="gw-1",
+            name="sse-gw",
+            url="http://example.com/sse",
+            enabled=True,
+            reachable=True,
+            transport="sse",
+            auth_type="bearer",
+            auth_value={"Authorization": "Bearer " + "A" * 10 + "⁠" + "B" * 10},
+            auth_query_params=None,
+            ca_certificate=None,
+            ca_certificate_sig=None,
+            oauth_config=None,
+            last_refresh_at=None,
+            refresh_interval_seconds=None,
+        )
+
+        mock_response = AsyncMock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status = MagicMock()
+        mock_stream_response = AsyncMock()
+        mock_stream_response.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_stream_response.__aexit__ = AsyncMock(return_value=False)
+
+        mock_client = MagicMock()
+        mock_client.stream = MagicMock(return_value=mock_stream_response)
+
+        mock_ctx = AsyncMock()
+        mock_ctx.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_ctx.__aexit__ = AsyncMock(return_value=False)
+        monkeypatch.setattr("mcpgateway.services.gateway_service.get_isolated_http_client", lambda **kw: mock_ctx)
+        monkeypatch.setattr("mcpgateway.services.gateway_service.fresh_db_session", MagicMock())
+        monkeypatch.setattr(
+            "mcpgateway.services.gateway_service.settings",
+            MagicMock(
+                enable_ed25519_signing=False,
+                health_check_timeout=5,
+                auto_refresh_servers=False,
+                httpx_admin_read_timeout=5,
+                mcp_session_pool_enabled=False,
+            ),
+        )
+        monkeypatch.setattr("mcpgateway.services.gateway_service.create_span", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False))))
+        gateway_service._handle_gateway_failure = AsyncMock()
+
+        await gateway_service._check_single_gateway_health(gw)
+
+        gateway_service._handle_gateway_failure.assert_not_called()
+        used_headers = mock_client.stream.call_args.kwargs["headers"]
+        assert used_headers["Authorization"] == "Bearer " + "A" * 10 + "B" * 10
+
+    @pytest.mark.asyncio
+    async def test_health_check_leaves_other_non_ascii_credential_untouched(self, gateway_service, monkeypatch):
+        """A stored credential with genuine non-ASCII content (not a safely strippable
+        format character) is sent as-is -- only invisible format characters are stripped,
+        matching the project's existing support for international text in credentials."""
+        gw = _make_gateway(
+            id="gw-1",
+            name="sse-gw",
+            url="http://example.com/sse",
+            enabled=True,
+            reachable=True,
+            transport="sse",
+            auth_type="bearer",
+            auth_value={"Authorization": "Bearer café-token"},  # pragma: allowlist secret
+            auth_query_params=None,
+            ca_certificate=None,
+            ca_certificate_sig=None,
+            oauth_config=None,
+            last_refresh_at=None,
+            refresh_interval_seconds=None,
+        )
+
+        mock_response = AsyncMock()
+        mock_response.status_code = 200
+        mock_response.raise_for_status = MagicMock()
+        mock_stream_response = AsyncMock()
+        mock_stream_response.__aenter__ = AsyncMock(return_value=mock_response)
+        mock_stream_response.__aexit__ = AsyncMock(return_value=False)
+
+        mock_client = MagicMock()
+        mock_client.stream = MagicMock(return_value=mock_stream_response)
+
+        mock_ctx = AsyncMock()
+        mock_ctx.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_ctx.__aexit__ = AsyncMock(return_value=False)
+        monkeypatch.setattr("mcpgateway.services.gateway_service.get_isolated_http_client", lambda **kw: mock_ctx)
+        monkeypatch.setattr("mcpgateway.services.gateway_service.fresh_db_session", MagicMock())
+        monkeypatch.setattr(
+            "mcpgateway.services.gateway_service.settings",
+            MagicMock(
+                enable_ed25519_signing=False,
+                health_check_timeout=5,
+                auto_refresh_servers=False,
+                httpx_admin_read_timeout=5,
+                mcp_session_pool_enabled=False,
+            ),
+        )
+        monkeypatch.setattr("mcpgateway.services.gateway_service.create_span", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False))))
+        gateway_service._handle_gateway_failure = AsyncMock()
+
+        await gateway_service._check_single_gateway_health(gw)
+
+        gateway_service._handle_gateway_failure.assert_not_called()
+        used_headers = mock_client.stream.call_args.kwargs["headers"]
+        assert used_headers["Authorization"] == "Bearer café-token"
 
     @pytest.mark.asyncio
     async def test_health_check_oauth_client_credentials(self, gateway_service, monkeypatch):
@@ -9722,3 +9994,64 @@ class TestStaleCatalogPruning:
 
         assert result.tools_removed == 1
         assert gateway.tools == [user_made]  # ui-created row survives the prune
+
+
+class TestGatewayImpactPreviewTeamResolution:
+    """Regression tests for impact-preview team-membership resolution."""
+
+    @pytest.mark.asyncio
+    async def test_resolves_fallback_teams_once(self, gateway_service, test_db):
+        """Impact preview preloads fallback team memberships once for all servers."""
+        gateway_service.get_gateway = AsyncMock(return_value=SimpleNamespace(id="gateway-1"))
+        impacted_servers = [
+            SimpleNamespace(id="server-1", name="First server"),
+            SimpleNamespace(id="server-2", name="Second server"),
+        ]
+        test_db.execute = Mock(
+            side_effect=[
+                _make_execute_result(scalars_list=["server-1", "server-2"]),
+                _make_execute_result(scalars_list=[]),
+                _make_execute_result(scalars_list=[]),
+                _make_execute_result(scalars_list=impacted_servers),
+            ]
+        )
+        team_service = MagicMock()
+        team_service.get_user_teams = AsyncMock(return_value=[SimpleNamespace(id="team-1")])
+
+        with (
+            patch("mcpgateway.services.gateway_service.is_admin_bypass_granted", return_value=False),
+            patch("mcpgateway.services.gateway_service.TeamManagementService", return_value=team_service) as mock_team_service,
+            patch("mcpgateway.services.gateway_service.server_service._check_server_access", new=AsyncMock(return_value=True)) as mock_access,
+        ):
+            result = await gateway_service.get_gateway_impact_preview(test_db, "gateway-1", user_email="user@example.com", token_teams=None)
+
+        assert len(result.servers) == 2
+        mock_team_service.assert_called_once_with(test_db)
+        team_service.get_user_teams.assert_awaited_once_with("user@example.com")
+        assert mock_access.await_count == 2
+        assert all(access_call.kwargs["resolved_team_ids"] == ["team-1"] for access_call in mock_access.await_args_list)
+
+    @pytest.mark.asyncio
+    async def test_preserves_admin_bypass(self, gateway_service, test_db):
+        """Impact preview does not replace admin bypass with resolved team memberships."""
+        gateway_service.get_gateway = AsyncMock(return_value=SimpleNamespace(id="gateway-1"))
+        impacted_server = SimpleNamespace(id="server-1", name="Team server")
+        test_db.execute = Mock(
+            side_effect=[
+                _make_execute_result(scalars_list=["server-1"]),
+                _make_execute_result(scalars_list=[]),
+                _make_execute_result(scalars_list=[]),
+                _make_execute_result(scalars_list=[impacted_server]),
+            ]
+        )
+
+        with (
+            patch("mcpgateway.services.gateway_service.is_admin_bypass_granted", return_value=True),
+            patch("mcpgateway.services.gateway_service.TeamManagementService") as mock_team_service,
+            patch("mcpgateway.services.gateway_service.server_service._check_server_access", new=AsyncMock(return_value=True)) as mock_access,
+        ):
+            result = await gateway_service.get_gateway_impact_preview(test_db, "gateway-1", user_email="admin@example.com", token_teams=None)
+
+        assert len(result.servers) == 1
+        mock_team_service.assert_not_called()
+        mock_access.assert_awaited_once_with(test_db, impacted_server, "admin@example.com", None, resolved_team_ids=None)

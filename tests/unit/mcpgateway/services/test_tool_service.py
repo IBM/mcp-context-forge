@@ -984,6 +984,22 @@ class TestToolService:
         assert _protect_tool_headers_for_storage("not-a-dict") is None
         assert _decrypt_tool_headers_for_runtime(None) == {}
 
+    def test_decrypt_tool_headers_for_runtime_strips_invisible_unicode(self, monkeypatch: pytest.MonkeyPatch):
+        """A custom tool header stored before credential-sanitization existed should
+        self-heal (invisible Unicode format characters stripped) when decrypted for a
+        runtime outbound request."""
+        monkeypatch.setattr(
+            "mcpgateway.services.tool_service.decode_auth",
+            lambda _payload: {"data": "custom⁠value"},
+        )
+        result = _decrypt_tool_headers_for_runtime(
+            {
+                "X-Custom": {"_mcpgateway_encrypted_header_value_v1": "ciphertext"},
+                "X-Plain": "already⁠contaminated",
+            }
+        )
+        assert result == {"X-Custom": "customvalue", "X-Plain": "alreadycontaminated"}
+
     @pytest.mark.asyncio
     async def test_create_tool_from_a2a_agent_passes_scope_fields(self, tool_service, test_db):
         """Ensure A2A tool creation carries team/owner/visibility to register_tool."""
@@ -2803,6 +2819,36 @@ class TestToolService:
         request_headers = tool_service._http_client.request.call_args.kwargs["headers"]
         assert request_headers["Authorization"] == "Bearer runtime-secret"
         assert request_headers["X-Trace-Id"] == "trace-1"
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_rest_self_heals_stored_auth_value_with_invisible_char(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """A tool's stored auth_value contaminated with an invisible Unicode format
+        character (a copy/paste artifact) should self-heal before it reaches the
+        outbound REST request, so a tool configured before this validation existed
+        recovers without requiring a manual re-save."""
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "POST"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_type = "bearer"
+        mock_tool.auth_value = "encoded-contaminated-auth"
+        mock_tool.headers = {}
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.json = Mock(return_value={"result": "REST tool response"})
+        tool_service._http_client.request.return_value = mock_response
+
+        with (
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer contaminated⁠token"}),
+            patch("mcpgateway.services.tool_service.extract_using_jq", return_value={"result": "REST tool response"}),
+        ):
+            await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
+
+        request_headers = tool_service._http_client.request.call_args.kwargs["headers"]
+        assert request_headers["Authorization"] == "Bearer contaminatedtoken"
 
     @pytest.mark.asyncio
     async def test_invoke_tool_rest_parameter_substitution(self, tool_service, mock_tool, mock_global_config_obj, test_db):

@@ -1148,6 +1148,21 @@ class GatewaysPage(BasePage):
         """Query param fields in edit modal."""
         return self.page.locator("#auth-query_param-fields-gw-edit")
 
+    @property
+    def edit_modal_oauth_grant_type_select(self) -> Locator:
+        """Grant type select in the edit modal's OAuth fields."""
+        return self.page.locator("#oauth-grant-type-gw-edit")
+
+    @property
+    def edit_modal_oauth_username_input(self) -> Locator:
+        """Username input in the edit modal's OAuth fields (password grant)."""
+        return self.page.locator("#oauth-username-gw-edit")
+
+    @property
+    def edit_modal_oauth_password_input(self) -> Locator:
+        """Password input in the edit modal's OAuth fields (password grant)."""
+        return self.page.locator("#oauth-password-gw-edit")
+
     # ==================== Pagination Elements ====================
 
     @property
