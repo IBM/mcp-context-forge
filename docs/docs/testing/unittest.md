@@ -384,7 +384,6 @@ The remaining ~93% is DOM manipulation, fetch calls, Chart.js rendering, and HTM
 | tests/unit/mcpgateway/test_version.py                                                           |     21 |       0 |       21 |
 | tests/unit/mcpgateway/test_validate_env.py                                                      |      2 |       0 |        2 |
 | tests/unit/mcpgateway/test_well_known.py                                                        |     35 |       0 |       35 |
-| tests/unit/mcpgateway/test_wrapper.py                                                           |     50 |       0 |       50 |
 | tests/unit/mcpgateway/tools/builder/test_cli.py                                                 |     37 |       0 |       37 |
 | tests/unit/mcpgateway/tools/builder/test_common.py                                              |     38 |       0 |       38 |
 | tests/unit/mcpgateway/tools/builder/test_python_deploy.py                                       |     15 |       0 |       15 |
@@ -639,5 +638,4 @@ The remaining ~93% is DOM manipulation, fetch calls, Chart.js rendering, and HTM
 | mcpgateway/validation/jsonrpc.py                                               |       58 |        0 |       34 |        0 |    100% |           |
 | mcpgateway/validation/tags.py                                                  |       72 |        3 |       38 |        3 |     95% |167, 257, 265 |
 | mcpgateway/version.py                                                          |      137 |       16 |       24 |        3 |     87% |84-85, 89-96, 835-840, 845-853 |
-| mcpgateway/wrapper.py                                                          |      307 |        0 |      134 |        0 |    100% |           |
 | **TOTAL**                                                                      | **51431** | **1792** | **15600** | **1308** | **95%** |           |

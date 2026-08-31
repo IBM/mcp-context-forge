@@ -8,6 +8,10 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- **stdio wrapper removed in favour of FastMCP** - `mcpgateway/wrapper.py` (`python -m mcpgateway.wrapper`) and the Rust `crates/wrapper/` binary are removed. Clients that already speak Streamable HTTP need no bridge — point them at `/servers/<server_id>/mcp/` directly. For stdio clients such as Claude Desktop, use FastMCP's bridge (`uvx fastmcp-remote`); see [`docs/docs/using/clients/`](docs/docs/using/clients/) for per-client configuration.
+
 ### Fixed
 
 - **Catalog registration ownership and visibility** - Catalog registrations now default to private, attribute ownership to the authenticated caller, enforce token/team scope, and preserve ownership during gateway transfer and user deletion ([#6036](https://github.com/IBM/mcp-context-forge/issues/6036)).

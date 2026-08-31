@@ -184,7 +184,6 @@ mcp-context-forge/
 - **SSE Transport**: Server-Sent Events for streaming
 - **WebSocket Transport**: Bidirectional real-time communication
 - **HTTP Transport**: Standard JSON-RPC over HTTP
-- **Stdio Wrapper**: Bridge for stdio-based MCP clients
 
 #### 3. Plugin System
 - **Hook-based**: Pre/post request/response hooks
@@ -507,9 +506,6 @@ export MCP_AUTH="Bearer $(python3 -m mcpgateway.utils.create_jwt_token --usernam
 
 # Launch Inspector with SSE (direct)
 npx @modelcontextprotocol/inspector
-
-# Launch with stdio wrapper
-npx @modelcontextprotocol/inspector python3 -m mcpgateway.wrapper
 
 # Open browser to http://localhost:5173
 # Add server: http://localhost:4444/servers/UUID/sse

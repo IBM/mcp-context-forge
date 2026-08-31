@@ -13,9 +13,7 @@ reachable and the required credentials are present.
 # Standard
 import base64
 from datetime import datetime
-import json
 import os
-from pathlib import Path
 import subprocess
 import sys
 import time
@@ -27,18 +25,14 @@ import pytest
 
 # Local
 from ..helpers.mcp_test_helpers import ADMIN_EMAIL
-from ..helpers.mcp_test_helpers import build_initialize as _build_initialize
-from ..helpers.mcp_test_helpers import build_wrapper_env as _build_wrapper_env
 from ..helpers.mcp_test_helpers import JWT_SECRET
 from ..helpers.mcp_test_helpers import TOKEN_EXPIRY
-from ..helpers.mcp_test_helpers import WRAPPER_PYTHON
-from ..helpers.mcp_test_helpers import get_response_by_id as _get_response_by_id
-from ..helpers.mcp_test_helpers import run_mcp_cli as _run_mcp_cli
-from ..helpers.mcp_test_helpers import send_jsonrpc_via_wrapper as _send_jsonrpc_via_wrapper
-from ..helpers.mcp_test_helpers import skip_no_mcp_cli
 
 BASE_URL = os.getenv("MCP_CLI_BASE_URL", "http://localhost:8080")
 LANGFUSE_URL = os.getenv("LANGFUSE_URL", "http://localhost:3100").rstrip("/")
+
+# Matches the version negotiated by the rest of tests/live_gateway/.
+MCP_PROTOCOL_VERSION = "2025-03-26"
 
 
 def _resolve_langfuse_auth() -> str:
@@ -109,17 +103,51 @@ def _lookup_server_id(jwt_token: str, server_name: str) -> str:
 
 
 def _send_jsonrpc_http(jwt_token: str, path: str, payload: dict[str, Any]) -> dict[str, Any]:
-    """Send a direct JSON-RPC request to a live MCP HTTP endpoint."""
-    response = httpx.post(
-        f"{BASE_URL}{path}",
-        headers={
-            **_gateway_api_headers(jwt_token),
-            "Content-Type": "application/json",
-            "mcp-protocol-version": "2025-11-25",
+    """Send a JSON-RPC request to a live MCP Streamable HTTP endpoint.
+
+    Streamable HTTP is session-oriented: the server issues an ``mcp-session-id``
+    during ``initialize`` and rejects later calls that omit it with
+    ``-32600 Bad Request: Missing session ID``. This helper performs the
+    handshake, then replays the caller's payload on the resulting session.
+
+    Issuing a session id is a spec-level MAY, so a gateway that omits it is
+    still compliant and the payload is simply replayed without the header.
+
+    Args:
+        jwt_token: Bearer token for the live gateway.
+        path: Gateway-relative MCP endpoint path, e.g. ``/servers/<id>/mcp/``.
+        payload: JSON-RPC request to send once the session is established.
+
+    Returns:
+        Parsed JSON-RPC response for ``payload``.
+    """
+    url = f"{BASE_URL}{path}"
+    headers = {
+        **_gateway_api_headers(jwt_token),
+        "Accept": "application/json, text/event-stream",
+        "Content-Type": "application/json",
+        "mcp-protocol-version": MCP_PROTOCOL_VERSION,
+    }
+
+    init = httpx.post(
+        url,
+        headers=headers,
+        json={
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {"protocolVersion": MCP_PROTOCOL_VERSION, "capabilities": {}, "clientInfo": {"name": "langfuse-e2e", "version": "1.0"}},
         },
-        json=payload,
         timeout=20,
     )
+    init.raise_for_status()
+
+    session_id = init.headers.get("mcp-session-id")
+    if session_id:
+        headers["mcp-session-id"] = session_id
+        httpx.post(url, headers=headers, json={"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}}, timeout=20)
+
+    response = httpx.post(url, headers=headers, json=payload, timeout=20)
     response.raise_for_status()
     return response.json()
 
@@ -213,28 +241,6 @@ def admin_jwt_token() -> str:
     return result.stdout.strip().strip('"')
 
 
-@pytest.fixture(scope="module")
-def config_file(jwt_token: str, tmp_path_factory: pytest.TempPathFactory) -> Path:
-    """Build an mcp-cli config that targets the live gateway through the wrapper."""
-    config = {
-        "mcpServers": {
-            "contextforge": {
-                "command": WRAPPER_PYTHON,
-                "args": ["-m", "mcpgateway.wrapper"],
-                "env": {
-                    "MCP_AUTH": f"Bearer {jwt_token}",
-                    "MCP_SERVER_URL": BASE_URL,
-                    "MCP_TOOL_CALL_TIMEOUT": "30",
-                },
-            }
-        }
-    }
-    tmp_dir = tmp_path_factory.mktemp("langfuse_trace_smoke")
-    config_path = tmp_dir / "server_config.json"
-    config_path.write_text(json.dumps(config, indent=2), encoding="utf-8")
-    return config_path
-
-
 @skip_no_gateway
 @skip_no_langfuse
 @skip_no_langfuse_auth
@@ -249,77 +255,15 @@ def test_langfuse_public_traces_endpoint_returns_trace_list():
 @skip_no_langfuse
 @skip_no_langfuse_auth
 @pytest.mark.e2e
-def test_langfuse_trace_export_eventually_contains_initialize_trace(jwt_token: str):
-    """A raw MCP initialize should export a Langfuse trace for the session-core path."""
-    triggered_after = time.time() - 1
-    responses = _send_jsonrpc_via_wrapper(
-        _build_wrapper_env(jwt_token),
-        [_build_initialize(1)],
-        settle_seconds=2.0,
-    )
-    init_response = _get_response_by_id(responses, 1)
-    assert init_response is not None, f"No initialize response: {responses}"
-    assert "error" not in init_response, f"initialize returned error: {init_response}"
-
-    trace = _wait_for_fresh_trace(
-        triggered_after,
-        lambda candidate: _is_admin_jwt_trace(candidate) and (candidate.get("name") == "mcp.initialize" or _trace_attributes(candidate).get("langfuse.trace.name") == "mcp.initialize"),
-    )
-    trace_attrs = _trace_attributes(trace)
-
-    assert trace.get("userId") == ADMIN_EMAIL
-    assert isinstance(trace.get("tags"), list)
-    assert "auth:jwt" in trace.get("tags", [])
-    assert trace_attrs.get("langfuse.user.id") == ADMIN_EMAIL
-    assert trace_attrs.get("langfuse.trace.name") == "mcp.initialize"
-
-
-@skip_no_gateway
-@skip_no_langfuse
-@skip_no_langfuse_auth
-@skip_no_mcp_cli
-@pytest.mark.e2e
-def test_langfuse_trace_export_eventually_contains_fresh_mcp_cli_tool_list_trace(config_file: Path):
-    """A fresh MCP CLI tool listing should expose Langfuse trace metadata."""
-    triggered_after = time.time() - 1
-    result = _run_mcp_cli(config_file, "tools", "--raw")
-    assert result.returncode == 0, f"mcp-cli tools --raw failed: {result.stderr}"
-
-    trace = _wait_for_fresh_trace(
-        triggered_after,
-        lambda candidate: _is_admin_jwt_trace(candidate) and candidate.get("name") in {"tool.list", "Tools"},
-    )
-    metadata = trace.get("metadata") or {}
-    resource_attrs = metadata.get("resourceAttributes") or {}
-    trace_attrs = metadata.get("attributes") or {}
-
-    assert resource_attrs.get("service.name") == "contextforge-gateway"
-    assert trace.get("userId") == ADMIN_EMAIL
-    assert isinstance(trace.get("tags"), list)
-    assert "auth:jwt" in trace.get("tags", [])
-    assert any(isinstance(tag, str) and tag.startswith("env:") for tag in trace.get("tags", []))
-    assert trace_attrs.get("langfuse.user.id") == ADMIN_EMAIL
-    assert "auth:jwt" in str(trace_attrs.get("langfuse.trace.tags"))
-    assert trace_attrs.get("langfuse.trace.name")
-
-
-@skip_no_gateway
-@skip_no_langfuse
-@skip_no_langfuse_auth
-@pytest.mark.e2e
 def test_langfuse_trace_export_eventually_contains_resource_list_trace(jwt_token: str):
     """A raw resources/list should export a Langfuse resource-list trace."""
+    fast_time_server_id = _lookup_server_id(jwt_token, "Fast Time Server")
     triggered_after = time.time() - 1
-    responses = _send_jsonrpc_via_wrapper(
-        _build_wrapper_env(jwt_token),
-        [
-            _build_initialize(1),
-            {"jsonrpc": "2.0", "id": 2, "method": "resources/list", "params": {}},
-        ],
-        settle_seconds=4.0,
+    list_response = _send_jsonrpc_http(
+        jwt_token,
+        f"/servers/{fast_time_server_id}/mcp/",
+        {"jsonrpc": "2.0", "id": 2, "method": "resources/list", "params": {}},
     )
-    list_response = _get_response_by_id(responses, 2)
-    assert list_response is not None, f"No resources/list response: {responses}"
     assert "error" not in list_response, f"resources/list returned error: {list_response}"
 
     trace = _wait_for_fresh_trace(
@@ -398,17 +342,13 @@ def test_langfuse_trace_export_eventually_contains_root_list_trace(admin_jwt_tok
 @pytest.mark.e2e
 def test_langfuse_trace_export_eventually_contains_tool_call_input(jwt_token: str):
     """A raw tool call should export Langfuse input data for the invoked tool."""
+    fast_time_server_id = _lookup_server_id(jwt_token, "Fast Time Server")
     triggered_after = time.time() - 1
-    responses = _send_jsonrpc_via_wrapper(
-        _build_wrapper_env(jwt_token),
-        [
-            _build_initialize(1),
-            {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "fast-time-get-system-time", "arguments": {"timezone": "UTC"}}},
-        ],
-        settle_seconds=4.0,
+    call_response = _send_jsonrpc_http(
+        jwt_token,
+        f"/servers/{fast_time_server_id}/mcp/",
+        {"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {"name": "fast-time-get-system-time", "arguments": {"timezone": "UTC"}}},
     )
-    call_response = _get_response_by_id(responses, 2)
-    assert call_response is not None, f"No tools/call response: {responses}"
     assert "error" not in call_response, f"tools/call returned error: {call_response}"
 
     trace = _wait_for_fresh_trace(
@@ -438,17 +378,13 @@ def test_langfuse_trace_export_eventually_contains_prompt_render_linkage(jwt_tok
         "to_timezones": "America/New_York,Europe/Dublin",
         "include_context": "true",
     }
+    fast_time_server_id = _lookup_server_id(jwt_token, "Fast Time Server")
     triggered_after = time.time() - 1
-    responses = _send_jsonrpc_via_wrapper(
-        _build_wrapper_env(jwt_token),
-        [
-            _build_initialize(1),
-            {"jsonrpc": "2.0", "id": 2, "method": "prompts/get", "params": {"name": "fast-time-convert-time-detailed", "arguments": prompt_args}},
-        ],
-        settle_seconds=4.0,
+    prompt_response = _send_jsonrpc_http(
+        jwt_token,
+        f"/servers/{fast_time_server_id}/mcp/",
+        {"jsonrpc": "2.0", "id": 2, "method": "prompts/get", "params": {"name": "fast-time-convert-time-detailed", "arguments": prompt_args}},
     )
-    prompt_response = _get_response_by_id(responses, 2)
-    assert prompt_response is not None, f"No prompts/get response: {responses}"
     assert "error" not in prompt_response, f"prompts/get returned error: {prompt_response}"
 
     trace = _wait_for_fresh_trace(
@@ -476,18 +412,14 @@ def test_langfuse_trace_export_eventually_contains_prompt_render_linkage(jwt_tok
 @pytest.mark.e2e
 def test_langfuse_trace_export_eventually_contains_sanitized_prompt_error(jwt_token: str):
     """Prompt failures should export sanitized Langfuse error metadata."""
-    bad_prompt_name = "https://prompt.example.com/item?api_key=supersecret"
+    bad_prompt_name = "https://prompt.example.com/item?api_key=supersecret"  # pragma: allowlist secret
+    fast_time_server_id = _lookup_server_id(jwt_token, "Fast Time Server")
     triggered_after = time.time() - 1
-    responses = _send_jsonrpc_via_wrapper(
-        _build_wrapper_env(jwt_token),
-        [
-            _build_initialize(1),
-            {"jsonrpc": "2.0", "id": 2, "method": "prompts/get", "params": {"name": bad_prompt_name}},
-        ],
-        settle_seconds=4.0,
+    prompt_response = _send_jsonrpc_http(
+        jwt_token,
+        f"/servers/{fast_time_server_id}/mcp/",
+        {"jsonrpc": "2.0", "id": 2, "method": "prompts/get", "params": {"name": bad_prompt_name}},
     )
-    prompt_response = _get_response_by_id(responses, 2)
-    assert prompt_response is not None, f"No prompts/get response: {responses}"
     assert "error" in prompt_response, f"prompts/get unexpectedly succeeded: {prompt_response}"
 
     trace = _wait_for_fresh_trace(

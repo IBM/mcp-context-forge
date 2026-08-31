@@ -79,14 +79,6 @@ python3 -m mcpgateway.translate \
   --port 8002
 ```
 
-### **Testing with Wrapper**
-```bash
-# Test through mcpgateway.wrapper
-export MCP_AUTH=$MCPGATEWAY_BEARER_TOKEN
-export MCP_SERVER_URL="$BASE_URL/servers/UUID_OF_SERVER_1"
-python3 -m mcpgateway.wrapper
-```
-
 ---
 
 ## 🛠 Development Guidelines
@@ -179,7 +171,6 @@ We're particularly interested in:
 
 ### **Gateway Documentation**
 - [ContextForge Gateway](../../index.md)
-- [mcpgateway.wrapper Usage](../mcpgateway-wrapper.md)
 - [mcpgateway.translate Bridge](../mcpgateway-translate.md)
 
 ### **Development Tools**
