@@ -121,7 +121,28 @@ Plugin entry fields:
 - `mode` - Execution mode
 - `priority` - Execution order (lower = earlier)
 - `conditions` - Selective execution filters
+- `tags` - Searchable metadata; also carries the `preview_safe` convention below
 - `config` - Plugin-specific settings
+
+### `preview_safe` tag (tool preview, #5629)
+
+`POST /tools/preview/{name}` dry-runs a tool invocation without dispatching it. A
+`tool_pre_invoke` hook only runs during preview if its plugin config's `tags` list
+includes `"preview_safe"`:
+
+```yaml
+plugins:
+  - name: "ArgumentNormalizer"
+    kind: "plugins.argument_normalizer.argument_normalizer.ArgumentNormalizer"
+    hooks: ["tool_pre_invoke"]
+    tags: ["preview_safe"]
+```
+
+Any `tool_pre_invoke` hook without this tag is skipped during preview (not run, not
+denied) and reported in the response's `warnings[]` with code `hook_not_previewed`,
+so the caller knows live invocation may still run logic preview didn't exercise. No
+plugin ships with this tag by default — mark a hook `preview_safe` only if it has no
+side effects and doesn't need to reach an external system to do its job.
 
 ## External Plugins (MCP)
 

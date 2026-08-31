@@ -269,6 +269,40 @@ The body is optional; `name` and `api_key` override the catalog defaults. Respon
 `200` with `success: false` and a descriptive `message` for connectivity or auth failures,
 `200` with `success: true` on registration (OAuth servers register disabled until configured).
 
+#### Visibility and ownership
+
+Catalog registrations default to `private` when `visibility` is omitted. To
+create a team-scoped gateway, send `visibility: "team"` together with a
+`team_id`; the authenticated caller must be an active member of that team.
+Public visibility for a team-scoped registration is rejected when
+`ALLOW_PUBLIC_VISIBILITY=false`.
+
+```bash
+curl -X POST -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"visibility":"team","team_id":"TEAM_ID"}' \
+  http://localhost:4444/v1/catalog/asana/register
+```
+
+Changing these defaults does not rewrite existing catalog gateways. Review
+existing registrations before relying on their visibility or ownership.
+
+Administrators can transfer a gateway and its linked tools, resources, and
+prompts with:
+
+```bash
+curl -X POST -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"target_owner_email":"owner@example.com","target_team_id":"TEAM_ID"}' \
+  http://localhost:4444/admin/gateways/GATEWAY_ID/transfer-ownership
+```
+
+The target user must be active. When `target_team_id` is supplied, the target
+user must also be an active member of that team. Private gateways and linked
+resources become team-visible when assigned to a team. Missing gateways return
+`404`; invalid targets or team membership return `400`; insufficient
+permission returns `403`.
+
 ### Filtering by Tags
 
 ```bash

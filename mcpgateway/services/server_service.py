@@ -999,6 +999,8 @@ class ServerService(BaseService):
         server: DbServer,
         user_email: Optional[str],
         token_teams: Optional[List[str]],
+        *,
+        resolved_team_ids: Optional[List[str]] = None,
     ) -> bool:
         """Check whether the caller is allowed to view *server* under Layer 1 visibility.
 
@@ -1007,6 +1009,7 @@ class ServerService(BaseService):
             server: The ORM ``DbServer`` instance (must expose ``visibility``, ``team_id``, ``owner_email``).
             user_email: Requesting user email; ``None`` combined with ``token_teams=None`` is admin bypass.
             token_teams: JWT-scoped team list; ``None``=admin bypass, ``[]``=public-only, ``[...]``=team-scoped.
+            resolved_team_ids: Optional preloaded DB team memberships for an unscoped non-admin caller.
 
         Returns:
             ``True`` when the caller can see the server, ``False`` otherwise.
@@ -1040,6 +1043,8 @@ class ServerService(BaseService):
         if server_team_id and visibility in ("team", "public"):
             if token_teams is not None:
                 team_ids = token_teams
+            elif resolved_team_ids is not None:
+                team_ids = resolved_team_ids
             else:
                 team_service = TeamManagementService(db)
                 user_teams = await team_service.get_user_teams(user_email)
