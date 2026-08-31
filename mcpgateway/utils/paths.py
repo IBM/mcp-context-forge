@@ -3,7 +3,7 @@
 Copyright contributors to the MCP-CONTEXT-FORGE project
 SPDX-License-Identifier: Apache-2.0
 
-Shared root-path resolution utility for ContextForge.
+Shared request-path utilities for ContextForge.
 
 Some embedded/proxy deployments do not populate ``scope["root_path"]``
 consistently.  This module provides a single canonical helper that checks
@@ -31,6 +31,43 @@ logger = logging.getLogger(__name__)
 # scheme markers, query/fragment delimiters, and whitespace other than
 # leading/trailing (which is stripped before this check).
 _UNSAFE_ROOT_PATH_RE: re.Pattern[str] = re.compile(r"[\x00-\x1f\x7f?#]|://")
+
+# Public product-language aliases map to the established internal route names.
+# Keep this as the single source of truth so security and transport middleware
+# cannot drift when aliases are added or renamed.
+_API_PATH_ALIASES: tuple[tuple[str, str], ...] = (
+    ("/v1/virtual-servers", "/servers"),
+    ("/v1/mcp-servers", "/gateways"),
+)
+
+
+def replace_api_path_alias(path: str) -> str:
+    """Replace a public API path alias with its internal route name.
+
+    Only complete path segments are translated. The suffix, including a
+    trailing slash, is preserved so callers can continue to apply their own
+    endpoint-specific matching rules.
+
+    Args:
+        path: Application-relative request path.
+
+    Returns:
+        Internal path for a known alias, otherwise ``path`` unchanged.
+
+    Examples:
+        >>> replace_api_path_alias("/v1/virtual-servers/server-1/prompts")
+        '/servers/server-1/prompts'
+        >>> replace_api_path_alias("/v1/mcp-servers/gateway-1")
+        '/gateways/gateway-1'
+        >>> replace_api_path_alias("/v1/virtual-servers-extra")
+        '/v1/virtual-servers-extra'
+    """
+    for alias_prefix, canonical_prefix in _API_PATH_ALIASES:
+        if path == alias_prefix:
+            return canonical_prefix
+        if path.startswith(f"{alias_prefix}/"):
+            return f"{canonical_prefix}{path[len(alias_prefix) :]}"
+    return path
 
 
 def _validate_root_path(value: str) -> str:

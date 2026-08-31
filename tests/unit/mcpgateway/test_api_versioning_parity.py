@@ -55,16 +55,15 @@ def test_legacy_prefixes_match_assembled_routers():
     test_router = APIRouter()
 
     # Create minimal mock routers with at least one route each
-    # Use the actual prefix names from main.py (plural forms)
     mock_routers = {}
     router_prefixes = {
         "protocol": "/protocol",
         "tool": "/tools",           # Note: router name is singular, prefix is plural
         "resource": "/resources",
         "prompt": "/prompts",
-        "gateway": "/gateways",
+        "gateway": "",
         "root": "/roots",
-        "server": "/servers",
+        "server": "",
         "metrics": "/metrics",
         "tag": "/tags",
         "a2a": "/a2a",
