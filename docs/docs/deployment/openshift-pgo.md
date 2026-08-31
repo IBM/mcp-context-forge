@@ -79,7 +79,7 @@ If you don't need HA or automated backups (dev/test, POCs, teams without cluster
 
 The following tools must be installed locally before you begin:
 
-1. **`oc` CLI** — with cluster access (developer or admin). Log in before running any commands:
+1. **`oc` CLI** — with **cluster-admin** (or equivalent) privileges. The setup playbook runs `oc adm policy add-scc-to-user nonroot-v2` to grant the Redis pod permission to run as UID 999 — this requires cluster-admin. Log in before running any commands:
    ```bash
    oc login <api-url>
    oc whoami   # verify
@@ -167,6 +167,9 @@ testing:
 ## Deployment steps
 
 The Make commands below wrap Ansible playbooks (`ansible/ocp/playbooks/`). You can also run the playbooks directly — see [ansible/ocp/README.md](https://github.com/IBM/mcp-context-forge/blob/main/ansible/ocp/README.md) for details.
+
+**Prerequisite: Create a namespace**
+`oc new-project <namespace-change-me>`
 
 **Step 1 — Create Docker Hub pull secret** (one-time per namespace):
 
