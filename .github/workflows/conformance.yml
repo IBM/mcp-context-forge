@@ -14,23 +14,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  acknowledge:
-    name: acknowledge command
-    if: >-
-      github.event.issue.pull_request &&
-      github.event.comment.body == '/conformance' &&
-      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
-    permissions:
-      issues: write
-    runs-on: ubuntu-latest
-    steps:
-      - name: Acknowledge the command
-        env:
-          COMMENT_ID: ${{ github.event.comment.id }}
-          GH_TOKEN: ${{ github.token }}
-          REPOSITORY: ${{ github.repository }}
-        run: gh api --method POST "repos/$REPOSITORY/issues/comments/$COMMENT_ID/reactions" -f content=eyes
-
   conformance:
     name: conformance
     if: >-
@@ -95,30 +78,3 @@ jobs:
           if-no-files-found: warn
           include-hidden-files: true
           retention-days: 7
-
-  report:
-    name: report conformance result
-    if: >-
-      always() &&
-      needs.conformance.result != 'skipped'
-    needs: conformance
-    permissions:
-      issues: write
-    runs-on: ubuntu-latest
-    steps:
-      - name: Report the result
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.issue.number }}
-          REPOSITORY: ${{ github.repository }}
-          RESULT: ${{ needs.conformance.result }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: |
-          case "$RESULT" in
-            success) marker="✅" ;;
-            failure) marker="❌" ;;
-            cancelled) marker="⚪" ;;
-            *) marker="⚠️" ;;
-          esac
-          body="$marker Conformance **$RESULT** — [view workflow run]($RUN_URL)."
-          gh api --method POST "repos/$REPOSITORY/issues/$PR_NUMBER/comments" -f body="$body"
