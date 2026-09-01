@@ -35,6 +35,10 @@ spec:
         - name: register-fast-time
           image: {{ $registrationImage | quote }}
           imagePullPolicy: {{ .Values.testing.registration.image.pullPolicy }}
+          envFrom:
+            - secretRef:
+                name: {{ include "mcp-stack.fullname" . }}-gateway-secret
+                optional: true
           command: ["/bin/sh", "-c"]
           args:
             - |
@@ -62,7 +66,7 @@ spec:
                       raise SystemExit(f"{name} failed health check: {url}")
               PY
 
-              export TOKEN="$(python3 -m mcpgateway.utils.create_jwt_token --username {{ .Values.testing.registration.jwt.username | quote }} --exp {{ .Values.testing.registration.jwt.expirationMinutes | quote }} --secret {{ .Values.testing.registration.jwt.secret | quote }} --algo HS256 2>/dev/null)"
+              export TOKEN="$(python3 -m mcpgateway.utils.create_jwt_token --username {{ .Values.testing.registration.jwt.username | quote }} --exp {{ .Values.testing.registration.jwt.expirationMinutes | quote }} --secret {{ .Values.testing.registration.jwt.secret | quote }} --algo HS256)"
 
               python3 - <<'PY'
               import json
@@ -178,6 +182,10 @@ spec:
         - name: register-a2a-echo
           image: {{ $registrationImage | quote }}
           imagePullPolicy: {{ .Values.testing.registration.image.pullPolicy }}
+          envFrom:
+            - secretRef:
+                name: {{ include "mcp-stack.fullname" . }}-gateway-secret
+                optional: true
           command: ["/bin/sh", "-c"]
           args:
             - |
@@ -205,7 +213,7 @@ spec:
                       raise SystemExit(f"{name} failed health check: {url}")
               PY
 
-              export TOKEN="$(python3 -m mcpgateway.utils.create_jwt_token --username {{ .Values.testing.registration.jwt.username | quote }} --exp {{ .Values.testing.registration.jwt.expirationMinutes | quote }} --secret {{ .Values.testing.registration.jwt.secret | quote }} --algo HS256 2>/dev/null)"
+              export TOKEN="$(python3 -m mcpgateway.utils.create_jwt_token --username {{ .Values.testing.registration.jwt.username | quote }} --exp {{ .Values.testing.registration.jwt.expirationMinutes | quote }} --secret {{ .Values.testing.registration.jwt.secret | quote }} --algo HS256)"
 
               python3 - <<'PY'
               import json
@@ -288,6 +296,10 @@ spec:
         - name: register-benchmark
           image: {{ $registrationImage | quote }}
           imagePullPolicy: {{ .Values.testing.registration.image.pullPolicy }}
+          envFrom:
+            - secretRef:
+                name: {{ include "mcp-stack.fullname" . }}-gateway-secret
+                optional: true
           command: ["/bin/sh", "-c"]
           args:
             - |
@@ -312,7 +324,7 @@ spec:
 
               sleep 5
 
-              export TOKEN="$(python3 -m mcpgateway.utils.create_jwt_token --username {{ .Values.testing.registration.jwt.username | quote }} --exp {{ .Values.testing.registration.jwt.expirationMinutes | quote }} --secret {{ .Values.testing.registration.jwt.secret | quote }} --algo HS256 2>/dev/null)"
+              export TOKEN="$(python3 -m mcpgateway.utils.create_jwt_token --username {{ .Values.testing.registration.jwt.username | quote }} --exp {{ .Values.testing.registration.jwt.expirationMinutes | quote }} --secret {{ .Values.testing.registration.jwt.secret | quote }} --algo HS256)"
 
               python3 - <<'PY'
               import json
