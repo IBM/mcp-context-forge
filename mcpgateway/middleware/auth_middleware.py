@@ -145,7 +145,7 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
 
         # [REACH_DEBUG] Log every request that enters CF Python — proves request passed Cloudflare
         if "/oauth/" in request.url.path:
-            logger.warning(
+            logger.info(
                 "[REACH_DEBUG] oauth request reached CF | path=%s | method=%s | client=%s | "
                 "cookies=%s | has_auth_header=%s",
                 request.url.path,

@@ -436,7 +436,7 @@ class SecurityLogger:
             entries = self._memory_failures.setdefault(key, deque())
             entries.append(now)
             import logging as _logging  # pylint: disable=import-outside-toplevel
-            _logging.getLogger(__name__).warning(
+            _logging.getLogger(__name__).info(
                 "[SECURITY_DEBUG] memory_failure recorded | key=%s | total_in_deque=%d | all_keys=%s",
                 key,
                 len(entries),
