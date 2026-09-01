@@ -1,0 +1,124 @@
+name: Conformance
+run-name: Conformance for PR #${{ github.event.issue.number }}
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: conformance-pr-${{ github.event.issue.number }}
+  cancel-in-progress: true
+
+jobs:
+  acknowledge:
+    name: acknowledge command
+    if: >-
+      github.event.issue.pull_request &&
+      github.event.comment.body == '/conformance' &&
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
+    permissions:
+      issues: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Acknowledge the command
+        env:
+          COMMENT_ID: ${{ github.event.comment.id }}
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: gh api --method POST "repos/$REPOSITORY/issues/comments/$COMMENT_ID/reactions" -f content=eyes
+
+  conformance:
+    name: conformance
+    if: >-
+      github.event.issue.pull_request &&
+      github.event.comment.body == '/conformance' &&
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Check out control plane
+        uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: refs/pull/${{ github.event.issue.number }}/merge
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Build the exact control-plane image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          file: Containerfile
+          platforms: linux/amd64
+          load: true
+          push: false
+          tags: mcpgateway/mcpgateway:conformance
+          cache-from: |
+            type=gha,scope=containerfile-lite-amd64
+            type=gha,scope=cf-integration-conformance
+          cache-to: type=gha,mode=max,scope=cf-integration-conformance
+
+      - name: Install cargo-binstall
+        uses: taiki-e/install-action@7769b73c2ec98c38dfcf2e18c83cfd4880c038c1 # v2.75.27
+        with:
+          tool: cargo-binstall
+
+      - name: Install cf-integration 0.2.0 binary
+        run: cargo binstall cf-integration@0.2.0 --no-confirm
+
+      - name: Install Node.js 22
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: 22
+
+      - name: Run legacy and modern conformance
+        env:
+          CF_COMPOSE_BUILD: "false"
+          CF_CONTROLPLANE_IMAGE: mcpgateway/mcpgateway:conformance
+          CF_CONTROLPLANE_PULL_POLICY: never
+        run: make conformance
+
+      - name: Upload conformance diagnostics
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: conformance-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            .integration/conformance/
+            .integration/reports/
+          if-no-files-found: warn
+          include-hidden-files: true
+          retention-days: 7
+
+  report:
+    name: report conformance result
+    if: >-
+      always() &&
+      needs.conformance.result != 'skipped'
+    needs: conformance
+    permissions:
+      issues: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report the result
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.issue.number }}
+          REPOSITORY: ${{ github.repository }}
+          RESULT: ${{ needs.conformance.result }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          case "$RESULT" in
+            success) marker="✅" ;;
+            failure) marker="❌" ;;
+            cancelled) marker="⚪" ;;
+            *) marker="⚠️" ;;
+          esac
+          body="$marker Conformance **$RESULT** — [view workflow run]($RUN_URL)."
+          gh api --method POST "repos/$REPOSITORY/issues/$PR_NUMBER/comments" -f body="$body"
