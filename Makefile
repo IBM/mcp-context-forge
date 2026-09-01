@@ -945,30 +945,22 @@ conformance: ## Run legacy→legacy and modern→modern MCP conformance through 
 		echo "Tracked control-plane changes are not committed; commit or stash them before conformance."; \
 		exit 1; \
 	fi
-	@CF_INTEGRATION_DIR="$(CF_INTEGRATION_DIR)" \
-	CF_CONTROLPLANE_REPO="$(CF_CONTROLPLANE_REPO)" \
-	CF_CONTROLPLANE_REF="$(CF_CONTROLPLANE_REF)" \
-	CF_CONTROLPLANE_IMAGE="$(CF_CONTROLPLANE_IMAGE)" \
-	CF_CONTROLPLANE_PULL_POLICY="$(CF_CONTROLPLANE_PULL_POLICY)" \
-	CF_COMPOSE_BUILD="$(CF_COMPOSE_BUILD)" \
-	"$(CF_INTEGRATION)" conformance run \
-		--client-era legacy \
-		--server-era legacy \
-		--lane built-in-data-plane \
-		--baseline-dir "$(CONFORMANCE_BASELINE_DIR)" \
-		--output-dir "$(CF_INTEGRATION_DIR)/reports"
-	@CF_INTEGRATION_DIR="$(CF_INTEGRATION_DIR)" \
-	CF_CONTROLPLANE_REPO="$(CF_CONTROLPLANE_REPO)" \
-	CF_CONTROLPLANE_REF="$(CF_CONTROLPLANE_REF)" \
-	CF_CONTROLPLANE_IMAGE="$(CF_CONTROLPLANE_IMAGE)" \
-	CF_CONTROLPLANE_PULL_POLICY="$(CF_CONTROLPLANE_PULL_POLICY)" \
-	CF_COMPOSE_BUILD="$(CF_COMPOSE_BUILD)" \
-	"$(CF_INTEGRATION)" conformance run \
-		--client-era modern \
-		--server-era modern \
-		--lane built-in-data-plane \
-		--baseline-dir "$(CONFORMANCE_BASELINE_DIR)" \
-		--output-dir "$(CF_INTEGRATION_DIR)/reports"
+	@status=0; \
+	for era in legacy modern; do \
+		CF_INTEGRATION_DIR="$(CF_INTEGRATION_DIR)" \
+		CF_CONTROLPLANE_REPO="$(CF_CONTROLPLANE_REPO)" \
+		CF_CONTROLPLANE_REF="$(CF_CONTROLPLANE_REF)" \
+		CF_CONTROLPLANE_IMAGE="$(CF_CONTROLPLANE_IMAGE)" \
+		CF_CONTROLPLANE_PULL_POLICY="$(CF_CONTROLPLANE_PULL_POLICY)" \
+		CF_COMPOSE_BUILD="$(CF_COMPOSE_BUILD)" \
+		"$(CF_INTEGRATION)" conformance run \
+			--client-era "$${era}" \
+			--server-era "$${era}" \
+			--lane built-in-data-plane \
+			--baseline-dir "$(CONFORMANCE_BASELINE_DIR)" \
+			--output-dir "$(CF_INTEGRATION_DIR)/reports" || status=$$?; \
+	done; \
+	exit $$status
 
 conformance-bless: ## Run both era pairs and atomically update their baselines
 	@if ! command -v "$(CF_INTEGRATION)" >/dev/null 2>&1; then \
@@ -979,32 +971,33 @@ conformance-bless: ## Run both era pairs and atomically update their baselines
 		echo "Tracked control-plane changes are not committed; commit or stash them before conformance."; \
 		exit 1; \
 	fi
-	@CF_INTEGRATION_DIR="$(CF_INTEGRATION_DIR)" \
-	CF_CONTROLPLANE_REPO="$(CF_CONTROLPLANE_REPO)" \
-	CF_CONTROLPLANE_REF="$(CF_CONTROLPLANE_REF)" \
-	CF_CONTROLPLANE_IMAGE="$(CF_CONTROLPLANE_IMAGE)" \
-	CF_CONTROLPLANE_PULL_POLICY="$(CF_CONTROLPLANE_PULL_POLICY)" \
-	CF_COMPOSE_BUILD="$(CF_COMPOSE_BUILD)" \
-	"$(CF_INTEGRATION)" conformance run \
-		--client-era legacy \
-		--server-era legacy \
-		--lane built-in-data-plane \
-		--baseline-dir "$(CONFORMANCE_BASELINE_DIR)" \
-		--output-dir "$(CF_INTEGRATION_DIR)/reports" \
-		--bless
-	@CF_INTEGRATION_DIR="$(CF_INTEGRATION_DIR)" \
-	CF_CONTROLPLANE_REPO="$(CF_CONTROLPLANE_REPO)" \
-	CF_CONTROLPLANE_REF="$(CF_CONTROLPLANE_REF)" \
-	CF_CONTROLPLANE_IMAGE="$(CF_CONTROLPLANE_IMAGE)" \
-	CF_CONTROLPLANE_PULL_POLICY="$(CF_CONTROLPLANE_PULL_POLICY)" \
-	CF_COMPOSE_BUILD="$(CF_COMPOSE_BUILD)" \
-	"$(CF_INTEGRATION)" conformance run \
-		--client-era modern \
-		--server-era modern \
-		--lane built-in-data-plane \
-		--baseline-dir "$(CONFORMANCE_BASELINE_DIR)" \
-		--output-dir "$(CF_INTEGRATION_DIR)/reports" \
-		--bless
+	@mkdir -p "$(CF_INTEGRATION_DIR)"; \
+	staging="$$(mktemp -d "$(CF_INTEGRATION_DIR)/baseline-bless.XXXXXX")"; \
+	trap 'rm -rf "$$staging"' EXIT; \
+	if [ -d "$(CONFORMANCE_BASELINE_DIR)" ]; then \
+		cp -R "$(CONFORMANCE_BASELINE_DIR)/." "$$staging/"; \
+	fi; \
+	status=0; \
+	for era in legacy modern; do \
+		CF_INTEGRATION_DIR="$(CF_INTEGRATION_DIR)" \
+		CF_CONTROLPLANE_REPO="$(CF_CONTROLPLANE_REPO)" \
+		CF_CONTROLPLANE_REF="$(CF_CONTROLPLANE_REF)" \
+		CF_CONTROLPLANE_IMAGE="$(CF_CONTROLPLANE_IMAGE)" \
+		CF_CONTROLPLANE_PULL_POLICY="$(CF_CONTROLPLANE_PULL_POLICY)" \
+		CF_COMPOSE_BUILD="$(CF_COMPOSE_BUILD)" \
+		"$(CF_INTEGRATION)" conformance run \
+			--client-era "$${era}" \
+			--server-era "$${era}" \
+			--lane built-in-data-plane \
+			--baseline-dir "$$staging" \
+			--output-dir "$(CF_INTEGRATION_DIR)/reports" \
+			--bless || status=$$?; \
+	done; \
+	if [ "$$status" -ne 0 ]; then \
+		exit "$$status"; \
+	fi; \
+	mkdir -p "$(CONFORMANCE_BASELINE_DIR)"; \
+	cp -R "$$staging/." "$(CONFORMANCE_BASELINE_DIR)/"
 
 smoketest:
 	@echo "🚀 Running smoketest..."
