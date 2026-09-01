@@ -10375,7 +10375,6 @@ mod unit_tests {
     use reqwest::Url;
     use serde_json::{Value, json};
     use std::collections::HashMap;
-    use std::sync::Once;
     use std::{
         convert::Infallible,
         fs,
@@ -10388,18 +10387,18 @@ mod unit_tests {
     use tracing::warn;
     use uuid::Uuid;
 
-    static TEST_AUTH_SECRET_INIT: Once = Once::new();
-
     fn ensure_test_auth_secret() {
-        TEST_AUTH_SECRET_INIT.call_once(|| {
-            // SAFETY: tests initialize this process-wide env var once before runtime state is built.
+        if std::env::var("AUTH_ENCRYPTION_SECRET")
+            .map(|v| v.trim().is_empty())
+            .unwrap_or(true)
+        {
             unsafe {
                 std::env::set_var(
                     "AUTH_ENCRYPTION_SECRET",
                     "contextforge-rust-runtime-test-secret-1234567890",
                 );
             }
-        });
+        }
     }
 
     fn generate_test_root_cert_pem() -> Option<String> {

@@ -33,7 +33,7 @@ cpex-sql-sanitizer = "2026-08-24T23:59:59Z"
 # ----------------------------------------------------------------
 [project]
 name = "mcp-contextforge-gateway"
-version = "1.0.8"
+version = "1.0.9"
 description = "ContextForge AI Gateway — an AI gateway, registry, and proxy for MCP, A2A, and REST/gRPC APIs. Exposes a unified control plane with centralized governance, discovery, and observability. Optimizes agent and tool calling, and supports plugins."
 keywords = ["MCP","API","gateway","proxy","tools",
   "agents","agentic ai","model context protocol","multi-agent","fastapi",
@@ -285,11 +285,11 @@ grpc = [
 
 # Convenience meta-extras
 all = [
-    "mcp-contextforge-gateway[redis]>=1.0.8",
+    "mcp-contextforge-gateway[redis]>=1.0.9",
 ]
 
 dev-all = [
-    "mcp-contextforge-gateway[redis,dev,plugins]>=1.0.8",
+    "mcp-contextforge-gateway[redis,dev,plugins]>=1.0.9",
 ]
 
 # --------------------------------------------------------------------
