@@ -475,7 +475,7 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
     token is None,
     len(token) if token else 0,
     token[:20] if token else "(empty)",
-    dict(request.cookies),    # ← what CF actually sees
+    {key: f"{value[:30]}…" if len(value) > 30 else value for key, value in request.cookies.items()},
 )
     if not token:
         # For browser requests (HTML Accept header or HTMX), redirect to login
