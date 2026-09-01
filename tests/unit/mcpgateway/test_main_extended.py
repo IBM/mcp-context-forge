@@ -88,7 +88,6 @@ from mcpgateway.main import (
     handle_internal_mcp_session_delete,
     handle_internal_mcp_tools_call,
     handle_internal_mcp_tools_call_metric,
-    handle_internal_mcp_tools_call_resolve,
     handle_internal_mcp_tools_list,
     handle_internal_mcp_tools_list_authz,
     handle_rpc,
@@ -8038,44 +8037,6 @@ class TestRpcHandling:
         mock_db.commit.assert_called_once()
         mock_db.close.assert_called()
 
-    async def test_handle_internal_mcp_tools_call_resolve_returns_jsonrpc_not_found(self):
-        request = self._make_request({"jsonrpc": "2.0", "id": "resolve-1", "method": "tools/call", "params": {"name": "missing-tool", "arguments": {}}})
-        request.headers = {
-            "x-contextforge-mcp-runtime": "rust",
-            "x-contextforge-auth-context": base64.urlsafe_b64encode(
-                json.dumps(
-                    {
-                        "email": "user@example.com",
-                        "teams": ["team-a"],
-                        "is_authenticated": True,
-                        "is_admin": False,
-                        "permission_is_admin": False,
-                        "scoped_permissions": ["tools.execute"],
-                    }
-                ).encode()
-            )
-            .decode()
-            .rstrip("="),
-        }
-        request.client = SimpleNamespace(host="127.0.0.1")
-        mock_db = MagicMock()
-        mock_db.is_active = True
-        mock_db.in_transaction.return_value = object()
-
-        with (
-            patch("mcpgateway.main.SessionLocal", return_value=mock_db),
-            patch("mcpgateway.main._ensure_rpc_permission", new=AsyncMock()),
-            patch("mcpgateway.main.tool_service.prepare_rust_mcp_tool_execution", new=AsyncMock(side_effect=ToolNotFoundError("Tool not found: missing-tool"))),
-        ):
-            response = await handle_internal_mcp_tools_call_resolve(request)
-
-        assert response.status_code == 404
-        payload = json.loads(response.body)
-        assert payload["jsonrpc"] == "2.0"
-        assert payload["id"] == "resolve-1"
-        assert payload["error"]["code"] == -32601
-        assert "Tool not found: missing-tool" in payload["error"]["message"]
-        mock_db.close.assert_called()
 
     async def test_handle_internal_mcp_initialize_non_dict_params_returns_internal_error(self, monkeypatch):
         # First-Party
@@ -8666,61 +8627,7 @@ class TestRpcHandling:
 
         mock_db.invalidate.assert_called_once()
 
-    async def test_handle_internal_mcp_tools_call_resolve_returns_jsonrpc_error_and_rolls_back(self):
-        request = self._make_request({"jsonrpc": "2.0", "id": "resolve-2", "method": "tools/call", "params": {"name": "echo"}})
-        request.headers = {
-            "x-contextforge-mcp-runtime": "rust",
-            "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com", "is_authenticated": True}).encode()).decode().rstrip("="),
-        }
-        request.client = SimpleNamespace(host="127.0.0.1")
-        mock_db = MagicMock()
-        mock_db.is_active = True
-        mock_db.in_transaction.return_value = object()
 
-        with (
-            patch("mcpgateway.main.SessionLocal", return_value=mock_db),
-            patch("mcpgateway.main._ensure_rpc_permission", new=AsyncMock(side_effect=JSONRPCError(-32003, "Access denied", {"method": "tools/call"}))),
-        ):
-            response = await handle_internal_mcp_tools_call_resolve(request)
-
-        assert response.status_code == 403
-        payload = json.loads(response.body.decode())
-        assert payload["jsonrpc"] == "2.0"
-        assert payload["id"] == "resolve-2"
-        assert payload["error"]["code"] == -32003
-        assert payload["error"]["message"] == "Access denied"
-        assert payload["error"]["data"] == {"method": "tools/call"}
-
-    async def test_handle_internal_mcp_tools_call_resolve_commits_success_and_invalidates_on_error(self):
-        request = self._make_request({"jsonrpc": "2.0", "id": "resolve-3", "method": "tools/call", "params": {"name": "echo"}})
-        request.headers = {
-            "x-contextforge-mcp-runtime": "rust",
-            "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com", "is_authenticated": True}).encode()).decode().rstrip("="),
-        }
-        request.client = SimpleNamespace(host="127.0.0.1")
-
-        success_db = MagicMock()
-        success_db.is_active = True
-        success_db.in_transaction.return_value = object()
-        with (
-            patch("mcpgateway.main.SessionLocal", return_value=success_db),
-            patch("mcpgateway.main._ensure_rpc_permission", new=AsyncMock()),
-            patch("mcpgateway.main.tool_service.prepare_rust_mcp_tool_execution", new=AsyncMock(return_value={"eligible": True})),
-        ):
-            response = await handle_internal_mcp_tools_call_resolve(request)
-        assert response.status_code == 200
-        success_db.commit.assert_called_once()
-
-        error_db = MagicMock()
-        error_db.rollback.side_effect = RuntimeError("rollback failed")
-        with (
-            patch("mcpgateway.main.SessionLocal", return_value=error_db),
-            patch("mcpgateway.main._ensure_rpc_permission", new=AsyncMock()),
-            patch("mcpgateway.main.tool_service.prepare_rust_mcp_tool_execution", new=AsyncMock(side_effect=RuntimeError("resolve boom"))),
-        ):
-            with pytest.raises(RuntimeError, match="resolve boom"):
-                await handle_internal_mcp_tools_call_resolve(request)
-        error_db.invalidate.assert_called_once()
 
     async def test_handle_internal_mcp_rpc_rolls_back_and_invalidates_on_error(self):
         request = self._make_request({"jsonrpc": "2.0", "id": "rpc-rollback", "method": "tools/list", "params": {}})
@@ -8839,116 +8746,8 @@ class TestRpcHandling:
             # Verify close() was called twice (once succeeded, once failed but ignored)
             assert mock_db.close.call_count == 2
 
-    async def test_handle_internal_mcp_tools_call_resolve_rejects_parse_error_invalid_method_missing_name_and_tool_error(self):
-        base_headers = {
-            "x-contextforge-mcp-runtime": "rust",
-            "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com", "is_authenticated": True}).encode()).decode().rstrip("="),
-        }
 
-        parse_request = MagicMock(spec=Request)
-        parse_request.body = AsyncMock(return_value=b"{bad")
-        parse_request.headers = base_headers
-        parse_request.query_params = {}
-        parse_request.state = MagicMock()
-        parse_request.client = SimpleNamespace(host="127.0.0.1")
-        parse_response = await handle_internal_mcp_tools_call_resolve(parse_request)
-        assert parse_response.status_code == 400
-        assert json.loads(parse_response.body.decode())["error"]["code"] == -32700
 
-        invalid_request = self._make_request({"jsonrpc": "2.0", "id": "bad-method", "method": "tools/list", "params": {}})
-        invalid_request.headers = base_headers
-        invalid_request.client = parse_request.client
-        invalid_response = await handle_internal_mcp_tools_call_resolve(invalid_request)
-        assert invalid_response.status_code == 400
-        assert json.loads(invalid_response.body.decode())["error"]["code"] == -32600
-
-        missing_name_request = self._make_request({"jsonrpc": "2.0", "id": "missing-name", "method": "tools/call", "params": []})
-        missing_name_request.headers = base_headers
-        missing_name_request.client = parse_request.client
-        missing_name_response = await handle_internal_mcp_tools_call_resolve(missing_name_request)
-        assert missing_name_response.status_code == 400
-        assert json.loads(missing_name_response.body.decode())["error"]["code"] == -32602
-
-        tool_error_request = self._make_request({"jsonrpc": "2.0", "id": "tool-error", "method": "tools/call", "params": {"name": "echo"}})
-        tool_error_request.headers = base_headers
-        tool_error_request.client = parse_request.client
-        mock_db = MagicMock()
-        with (
-            patch("mcpgateway.main.SessionLocal", return_value=mock_db),
-            patch("mcpgateway.main._ensure_rpc_permission", new=AsyncMock()),
-            patch("mcpgateway.main.tool_service.prepare_rust_mcp_tool_execution", new=AsyncMock(side_effect=ToolError("tool boom"))),
-        ):
-            tool_error_response = await handle_internal_mcp_tools_call_resolve(tool_error_request)
-        assert tool_error_response.status_code == 400
-        assert json.loads(tool_error_response.body.decode())["error"]["code"] == -32000
-
-    async def test_handle_internal_mcp_tools_call_resolve_scope_and_filter_context_variants(self):
-        request = self._make_request({"jsonrpc": "2.0", "id": "resolve-scope", "method": "tools/call", "params": {"name": "echo"}})
-        request.headers = {
-            "x-contextforge-mcp-runtime": "rust",
-            "x-contextforge-server-id": "srv-1",
-            "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "admin@example.com", "is_authenticated": True}).encode()).decode().rstrip("="),
-        }
-        request.client = SimpleNamespace(host="127.0.0.1")
-
-        admin_db = MagicMock()
-        admin_db.is_active = True
-        admin_db.in_transaction.return_value = object()
-        with (
-            patch("mcpgateway.main.SessionLocal", return_value=admin_db),
-            patch("mcpgateway.main._ensure_rpc_permission", new=AsyncMock()),
-            patch("mcpgateway.main._enforce_internal_mcp_server_scope"),
-            patch("mcpgateway.main.get_rpc_filter_context", return_value=("admin@example.com", None, True)),
-            patch("mcpgateway.main.tool_service.prepare_rust_mcp_tool_execution", new=AsyncMock(return_value={"eligible": True})),
-        ):
-            response = await handle_internal_mcp_tools_call_resolve(request)
-        assert response.status_code == 200
-
-        public_db = MagicMock()
-        public_db.rollback.side_effect = RuntimeError("rollback failed")
-        public_db.invalidate.side_effect = RuntimeError("invalidate failed")
-        request_no_scope = self._make_request({"jsonrpc": "2.0", "id": "resolve-scope-2", "method": "tools/call", "params": {"name": "echo"}})
-        request_no_scope.headers = {
-            "x-contextforge-mcp-runtime": "rust",
-            "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com", "is_authenticated": True}).encode()).decode().rstrip("="),
-        }
-        request_no_scope.client = SimpleNamespace(host="127.0.0.1")
-        with (
-            patch("mcpgateway.main.SessionLocal", return_value=public_db),
-            patch("mcpgateway.main._ensure_rpc_permission", new=AsyncMock()),
-            patch("mcpgateway.main.get_rpc_filter_context", return_value=("user@example.com", None, False)),
-            patch("mcpgateway.main.tool_service.prepare_rust_mcp_tool_execution", new=AsyncMock(side_effect=RuntimeError("resolve boom"))),
-        ):
-            with pytest.raises(RuntimeError, match="resolve boom"):
-                await handle_internal_mcp_tools_call_resolve(request_no_scope)
-        public_db.invalidate.assert_called_once()
-
-    async def test_internal_mcp_tools_call_resolve_returns_jsonrpc_plugin_errors_and_ignores_close_failures(self):
-        request = self._make_request({"jsonrpc": "2.0", "id": "plugin-err", "method": "tools/call", "params": {"name": "echo"}})
-        request.headers = {
-            "x-contextforge-mcp-runtime": "rust",
-            "x-contextforge-auth-context": base64.urlsafe_b64encode(json.dumps({"email": "user@example.com", "is_authenticated": True}).encode()).decode().rstrip("="),
-        }
-        request.client = SimpleNamespace(host="127.0.0.1")
-        mock_db = MagicMock()
-        mock_db.close.side_effect = RuntimeError("close failed")
-
-        with (
-            patch("mcpgateway.main.SessionLocal", return_value=mock_db),
-            patch("mcpgateway.main._ensure_rpc_permission", new=AsyncMock()),
-            patch("mcpgateway.main.tool_service.prepare_rust_mcp_tool_execution", new=AsyncMock(side_effect=PluginError(MagicMock(message="plugin boom")))),
-        ):
-            response = await handle_internal_mcp_tools_call_resolve(request)
-            # Verify JSON-RPC format is returned (not exception re-raised)
-            assert response.status_code == 500  # PluginError defaults to 500
-            content = json.loads(response.body)
-            assert content["jsonrpc"] == "2.0"
-            assert "error" in content
-            assert content["error"]["code"] == -32603  # Internal error for PluginError
-            assert "plugin boom" in content["error"]["message"]
-            assert content["id"] == "plugin-err"  # ID from request
-            # Verify close() was called (and failure was ignored)
-            assert mock_db.close.call_count == 1
 
     async def test_server_scoped_authz_missing_server_scope_and_jsonrpc_error(self):
         request = self._make_request({"jsonrpc": "2.0", "id": "authz", "method": "noop", "params": {}})

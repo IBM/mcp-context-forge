@@ -4867,9 +4867,9 @@ async def _set_proxy_user_context(proxy_user: str) -> dict[str, Any] | None:
 def get_streamable_http_auth_context() -> dict[str, Any]:
     """Return the current StreamableHTTP auth context for trusted internal forwarding.
 
-    The Rust MCP proxy uses this to carry already-authenticated MCP request context
-    across the Python -> Rust -> Python seam so the internal dispatcher does not
-    need to repeat JWT verification and team normalization on the hot path.
+    Trusted internal dispatch uses this to carry already-authenticated MCP request
+    context so the internal dispatcher does not need to repeat JWT verification and
+    team normalization on the hot path.
 
     Returns:
         A shallow copy of the trusted auth context fields that may be forwarded
