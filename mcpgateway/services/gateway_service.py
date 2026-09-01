@@ -4554,7 +4554,12 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 db_gateway = update_db.execute(select(DbGateway).where(DbGateway.id == gateway_id)).scalar_one_or_none()
                 if db_gateway:
                     db_gateway.last_seen = datetime.now(timezone.utc)
-                    db_gateway.last_error = None
+                    # Only clear the outage reason for enabled gateways. Disabled
+                    # gateways are still probed (include_inactive=True), and a
+                    # successful probe must not silently wipe why the operator
+                    # sees the gateway as down (its recorded outage reason).
+                    if gateway_enabled:
+                        db_gateway.last_error = None
                     update_db.commit()
         except Exception as update_error:
             logger.warning("Failed to update last_seen for gateway %s: %s", gateway_name, update_error)

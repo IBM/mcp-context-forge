@@ -6175,8 +6175,31 @@ class TestHandleGatewayFailureThreshold:
 
 class TestMarkGatewayReachableErrorCleanup:
     @pytest.mark.asyncio
-    async def test_recovery_clears_last_error(self, gateway_service, monkeypatch):
-        """A successful health check removes the previous outage reason."""
+    async def test_recovery_clears_last_error_for_enabled_gateway(self, gateway_service, monkeypatch):
+        """A successful probe of an enabled gateway removes the previous outage reason."""
+        recovered = SimpleNamespace(last_seen=None, last_error="certificate has expired")
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = recovered
+        db.__enter__ = MagicMock(return_value=db)
+        db.__exit__ = MagicMock(return_value=False)
+        monkeypatch.setattr("mcpgateway.services.gateway_service.fresh_db_session", MagicMock(return_value=db))
+        # Enabled + currently-unreachable also takes the reactivation branch.
+        monkeypatch.setattr("mcpgateway.services.gateway_service.SessionLocal", MagicMock(return_value=db))
+        monkeypatch.setattr(gateway_service, "set_gateway_state", AsyncMock())
+
+        await gateway_service._mark_gateway_reachable("gw-1", "test", True, False)
+
+        assert recovered.last_error is None
+        assert recovered.last_seen is not None
+        db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_recovery_preserves_last_error_for_disabled_gateway(self, gateway_service, monkeypatch):
+        """A successful probe of a disabled gateway keeps its recorded outage reason.
+
+        Disabled gateways are still probed (include_inactive=True), so without
+        this a successful probe silently wipes why the operator sees it as down.
+        """
         recovered = SimpleNamespace(last_seen=None, last_error="certificate has expired")
         db = MagicMock()
         db.execute.return_value.scalar_one_or_none.return_value = recovered
@@ -6186,7 +6209,7 @@ class TestMarkGatewayReachableErrorCleanup:
 
         await gateway_service._mark_gateway_reachable("gw-1", "test", False, True)
 
-        assert recovered.last_error is None
+        assert recovered.last_error == "certificate has expired"
         assert recovered.last_seen is not None
         db.commit.assert_called_once()
 
