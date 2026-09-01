@@ -4084,6 +4084,241 @@ async def test_get_plugin_contexts_returns_none_without_request_context():
     assert _get_plugin_contexts_or_none() == (None, None)
 
 
+def _malformed_scope_cases():
+    """Enumerate the scope shapes the type guards in the helper must reject.
+
+    Returns:
+        list: ``(case_id, scope, expect_global, expect_table)`` tuples where the
+        two ``expect_*`` flags say whether the corresponding slot should survive.
+    """
+    # Third-Party
+    from cpex.framework import GlobalContext
+    from cpex.framework.models import PluginContext
+
+    good_global = GlobalContext(request_id="req-3879")
+    good_table = {"AuthPlugin": PluginContext(global_context=good_global)}
+
+    return [
+        # ``scope`` is not a mapping at all - e.g. a transport that is not ASGI driven.
+        ("scope_not_a_dict", object(), False, False),
+        # ``state`` absent: an ASGI server that does not support lifespan state.
+        ("state_missing", {"type": "http"}, False, False),
+        # ``state`` present but not a mapping.
+        ("state_not_a_dict", {"type": "http", "state": ["not", "a", "dict"]}, False, False),
+        # Wrong type in one slot must not poison the other.
+        ("global_context_wrong_type", {"type": "http", "state": {"plugin_global_context": "not-a-context", "plugin_context_table": good_table}}, False, True),
+        ("context_table_wrong_type", {"type": "http", "state": {"plugin_global_context": good_global, "plugin_context_table": ["not", "a", "table"]}}, True, False),
+        # Explicit ``None`` values are the normal "no pre-request hooks ran" case.
+        ("both_none", {"type": "http", "state": {"plugin_global_context": None, "plugin_context_table": None}}, False, False),
+    ]
+
+
+@pytest.mark.parametrize("case_id,scope,expect_global,expect_table", _malformed_scope_cases(), ids=[c[0] for c in _malformed_scope_cases()])
+def test_get_plugin_contexts_rejects_malformed_scope_state(case_id, scope, expect_global, expect_table):
+    """Malformed ``scope["state"]`` must degrade to ``None`` instead of leaking junk.
+
+    The helper feeds ``invoke_tool`` directly, which in turn hands the values to
+    the plugin manager. Passing a wrongly typed object through would surface as
+    an opaque failure deep inside a hook, so each slot is type-guarded
+    independently - a bad ``plugin_global_context`` must not discard an
+    otherwise valid ``plugin_context_table``.
+    """
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import _get_plugin_contexts_or_none, mcp_app
+
+    mock_ctx = MagicMock()
+    mock_ctx.request.scope = scope
+
+    type(mcp_app).request_context = property(lambda self: mock_ctx)
+    try:
+        global_context, context_table = _get_plugin_contexts_or_none()
+    finally:
+        type(mcp_app).request_context = property(lambda self: (_ for _ in ()).throw(LookupError))
+
+    assert (global_context is not None) is expect_global, f"{case_id}: unexpected global context {global_context!r}"
+    assert (context_table is not None) is expect_table, f"{case_id}: unexpected context table {context_table!r}"
+
+
+@pytest.mark.asyncio
+async def test_call_tool_cross_hook_sharing_end_to_end_with_real_plugin(monkeypatch):
+    """End-to-end reproduction of #3879 driving a real ``PluginManager``.
+
+    The issue's repro is a custom authorization plugin that writes state in
+    ``HTTP_PRE_REQUEST`` and reads it back in ``TOOL_PRE_INVOKE`` over ``/mcp``.
+    The other tests in this file assert *which objects* ``call_tool`` forwards;
+    this one asserts those objects are actually sufficient for the real plugin
+    manager to resolve cross-hook state, using the shared
+    ``CrossHookContextPlugin`` fixture which raises ``ValueError`` the moment a
+    hook cannot see what an earlier hook stored.
+
+    The ``invoke_tool`` stub stands in for the database-backed tool lookup only;
+    it runs the same ``TOOL_PRE_INVOKE`` dispatch that ``ToolService`` performs,
+    so the middleware -> ASGI scope -> ``call_tool`` -> plugin-manager chain is
+    exercised for real.
+    """
+    # Standard
+    from pathlib import Path
+
+    # Third-Party
+    from cpex.framework import HttpAuthCheckPermissionPayload, HttpHeaderPayload, HttpHookType, PluginManager, ToolHookType, ToolPreInvokePayload
+
+    # First-Party
+    from mcpgateway.middleware.http_auth_middleware import run_pre_request_hooks
+    from mcpgateway.transports.streamablehttp_transport import call_tool, mcp_app, tool_service
+
+    config_file = Path(__file__).parent.parent / "plugins" / "fixtures" / "configs" / "cross_hook_context.yaml"
+
+    # ``PluginManager`` is a Borg singleton - reset around the test so the shared
+    # state never leaks into the rest of this module.
+    PluginManager.reset()
+    manager = PluginManager(str(config_file))
+    await manager.initialize()
+
+    try:
+        # 1. HTTP_PRE_REQUEST, exactly as ``HttpAuthMiddleware`` runs it on /mcp.
+        _headers, global_context, context_table = await run_pre_request_hooks(
+            plugin_manager=manager,
+            headers={"authorization": "Bearer test-token"},
+            path="/mcp",
+            method="POST",
+            client_host="127.0.0.1",
+            client_port=54321,
+        )
+        assert global_context is not None and context_table
+
+        # 2. HTTP_AUTH_CHECK_PERMISSION, which the fixture plugin also requires.
+        _perm_result, context_table = await manager.invoke_hook(
+            HttpHookType.HTTP_AUTH_CHECK_PERMISSION,
+            payload=HttpAuthCheckPermissionPayload(user_email="user@example.com", permission="tools.read"),
+            global_context=global_context,
+            local_contexts=context_table,
+        )
+
+        # 3. Hand the contexts over on the ASGI scope, the way the middleware does.
+        mock_ctx = MagicMock()
+        mock_ctx.meta = None
+        mock_ctx.request.scope = {
+            "type": "http",
+            "state": {"plugin_global_context": global_context, "plugin_context_table": context_table},
+        }
+
+        tool_contexts = {}
+
+        async def fake_invoke_tool(**kwargs):
+            """Run TOOL_PRE_INVOKE the way ``ToolService.invoke_tool`` does.
+
+            Args:
+                **kwargs: Arguments forwarded by ``call_tool``.
+
+            Returns:
+                MagicMock: A minimal successful tool result.
+            """
+            _result, table = await manager.invoke_hook(
+                ToolHookType.TOOL_PRE_INVOKE,
+                payload=ToolPreInvokePayload(name=kwargs["name"], args=kwargs["arguments"], headers=HttpHeaderPayload(root={})),
+                global_context=kwargs["plugin_global_context"],
+                local_contexts=kwargs["plugin_context_table"],
+                violations_as_exceptions=True,
+            )
+            tool_contexts.update(table or {})
+
+            tool_result = MagicMock()
+            content = MagicMock()
+            content.type = "text"
+            content.text = "ok"
+            content.annotations = None
+            content.meta = None
+            tool_result.content = [content]
+            tool_result.structured_content = None
+            tool_result.model_dump = lambda by_alias=True: {}
+            return tool_result
+
+        @asynccontextmanager
+        async def fake_get_db():
+            """Yield a stand-in session.
+
+            Yields:
+                MagicMock: Unused by the stubbed ``invoke_tool``.
+            """
+            yield MagicMock()
+
+        monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+        monkeypatch.setattr(
+            "mcpgateway.transports.streamablehttp_transport._get_request_context_or_default",
+            AsyncMock(return_value=("server-1", {}, {})),
+        )
+        monkeypatch.setattr(tool_service, "invoke_tool", fake_invoke_tool)
+
+        # 4. Drive the /mcp tool call. The fixture plugin raises if any earlier
+        #    hook's state is missing, so reaching the assertions is the guarantee.
+        type(mcp_app).request_context = property(lambda self: mock_ctx)
+        try:
+            await call_tool("test_cross_hook_tool", {"foo": "bar"})
+        finally:
+            type(mcp_app).request_context = property(lambda self: (_ for _ in ()).throw(LookupError))
+
+        assert tool_contexts, "TOOL_PRE_INVOKE produced no context table"
+        state = next(iter(tool_contexts.values())).state
+        # State written by HTTP_PRE_REQUEST, HTTP_AUTH_CHECK_PERMISSION and
+        # TOOL_PRE_INVOKE must all be visible on the same plugin context.
+        assert state["http_timestamp"] == "2025-01-01T00:00:00Z"
+        assert state["http_request_path"] == "/mcp"
+        assert state["permission_checked"] is True
+        assert state["tool_name"] == "test_cross_hook_tool"
+        assert global_context.state["shared_request_id"] == global_context.request_id
+    finally:
+        await manager.shutdown()
+        PluginManager.reset()
+
+
+@pytest.mark.asyncio
+async def test_cross_hook_plugin_fails_without_forwarded_contexts():
+    """Negative control: dropping the contexts reproduces the #3879 failure.
+
+    Guards the guard - without this, the end-to-end test above would still pass
+    if the fixture plugin silently stopped checking for earlier hook state.
+    """
+    # Standard
+    from pathlib import Path
+
+    # Third-Party
+    from cpex.framework import HttpHeaderPayload, PluginManager, ToolHookType, ToolPreInvokePayload
+    from cpex.framework.errors import PluginError
+
+    # First-Party
+    from mcpgateway.middleware.http_auth_middleware import run_pre_request_hooks
+
+    config_file = Path(__file__).parent.parent / "plugins" / "fixtures" / "configs" / "cross_hook_context.yaml"
+
+    PluginManager.reset()
+    manager = PluginManager(str(config_file))
+    await manager.initialize()
+
+    try:
+        _headers, global_context, _context_table = await run_pre_request_hooks(
+            plugin_manager=manager,
+            headers={"authorization": "Bearer test-token"},
+            path="/mcp",
+            method="POST",
+        )
+
+        # This is precisely the pre-fix behaviour: TOOL_PRE_INVOKE reached with
+        # ``local_contexts=None`` because /mcp never read them off the scope.
+        with pytest.raises(PluginError) as exc_info:
+            await manager.invoke_hook(
+                ToolHookType.TOOL_PRE_INVOKE,
+                payload=ToolPreInvokePayload(name="test_cross_hook_tool", args={}, headers=HttpHeaderPayload(root={})),
+                global_context=global_context,
+                local_contexts=None,
+                violations_as_exceptions=True,
+            )
+
+        assert "http_timestamp not found in tool hook" in str(exc_info.value)
+    finally:
+        await manager.shutdown()
+        PluginManager.reset()
+
+
 @pytest.mark.asyncio
 async def test_call_tool_apps_client_still_requires_model_visibility(monkeypatch):
     """Apps-capable clients must use AppBridge for app-visible helper tools."""
