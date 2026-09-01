@@ -619,6 +619,11 @@ async def initiate_oauth_flow(
         True
     """
     try:
+        logger.warning(
+            "[REACH_DEBUG] initiate_oauth_flow reached CF route handler | gateway_id=%s | user=%s",
+            gateway_id,
+            getattr(current_user, "email", "unknown"),
+        )
         # Get gateway configuration
         gateway = db.execute(select(Gateway).where(Gateway.id == gateway_id)).scalar_one_or_none()
 

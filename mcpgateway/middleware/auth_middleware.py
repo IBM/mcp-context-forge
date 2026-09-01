@@ -143,6 +143,18 @@ class AuthContextMiddleware(BaseHTTPMiddleware):
         if should_skip_auth_context(request.url.path):
             return await call_next(request)
 
+        # [REACH_DEBUG] Log every request that enters CF Python — proves request passed Cloudflare
+        if "/oauth/" in request.url.path:
+            logger.warning(
+                "[REACH_DEBUG] oauth request reached CF | path=%s | method=%s | client=%s | "
+                "cookies=%s | has_auth_header=%s",
+                request.url.path,
+                request.method,
+                request.client.host if request.client else "unknown",
+                list(request.cookies.keys()),   # cookie NAMES only — no values for security
+                bool(request.headers.get("authorization")),
+            )
+
         # Try to extract token from multiple sources
         token = None
 

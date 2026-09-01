@@ -468,6 +468,15 @@ async def get_current_user_with_permissions(request: Request, credentials: Optio
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    logger.warning(
+    "[OAUTH_DEBUG] rbac_check | path=%s | token_is_none=%s | token_length=%d | "
+    "token_prefix=%s | all_cookies=%s",
+    request.url.path,
+    token is None,
+    len(token) if token else 0,
+    token[:20] if token else "(empty)",
+    dict(request.cookies),    # ← what CF actually sees
+)
     if not token:
         # For browser requests (HTML Accept header or HTMX), redirect to login
         if is_browser_request:
