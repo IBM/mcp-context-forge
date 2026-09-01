@@ -1,0 +1,3 @@
+{"id":"012d1811-b1a5-4bbe-b047-464db15e592f","ts":"2026-05-25T12:41:46.550Z","path":"/Users/gabrielcosta/Projects/mcp-context-forge/mcpgateway/auth.py","version":"1.0.0","taskID":"3febe4c2-acc3-47c3-858d-e134c443b698"}
+{"id":"0e4ecb24-7646-4c01-a0d2-b5485f193e8f","ts":"2026-05-25T12:41:53.942Z","path":"/Users/gabrielcosta/Projects/mcp-context-forge/mcpgateway/transports/streamablehttp_transport.py","version":"1.0.0","taskID":"3febe4c2-acc3-47c3-858d-e134c443b698"}
+{"id":"50d662ca-dabd-4556-abf7-a658141940e7","ts":"2026-05-25T12:45:13.361Z","path":"/Users/gabrielcosta/Projects/mcp-context-forge/mcpgateway/transports/streamablehttp_transport.py","version":"1.0.0","taskID":"3febe4c2-acc3-47c3-858d-e134c443b698"}
