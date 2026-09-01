@@ -435,6 +435,13 @@ class SecurityLogger:
         for key in keys:
             entries = self._memory_failures.setdefault(key, deque())
             entries.append(now)
+            import logging as _logging  # pylint: disable=import-outside-toplevel
+            _logging.getLogger(__name__).warning(
+                "[SECURITY_DEBUG] memory_failure recorded | key=%s | total_in_deque=%d | all_keys=%s",
+                key,
+                len(entries),
+                list(self._memory_failures.keys()),
+            )
 
     def _calculate_auth_threat_score(self, success: bool, failed_attempts: int, auth_method: str) -> float:  # pylint: disable=unused-argument
         """Calculate threat score for authentication attempt.

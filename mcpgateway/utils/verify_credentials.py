@@ -1026,12 +1026,28 @@ async def require_auth(request: Request, credentials: Optional[HTTPAuthorization
 
     # Standard JWT authentication flow - prioritize manual cookie reading
     token = None
+    logger.warning(
+    "[OAUTH_DEBUG] require_auth ENTRY | path=%s | "
+    "all_cookies=%s | cookie_count=%d",
+    request.url.path,
+    {k: (v[:30] + "…" if v and len(v) > 30 else v)
+     for k, v in dict(request.cookies).items()},   # truncated values, safe to log
+    len(request.cookies),
+)
+# 
 
     # 1. First try manual cookie reading (most reliable)
     if hasattr(request, "cookies") and request.cookies:
         manual_token = request.cookies.get("jwt_token")
         if manual_token:
             token = manual_token
+        logger.warning(
+    "[OAUTH_DEBUG] cookie_read | jwt_token_found=%s | "
+    "jwt_token_length=%d | jwt_token_prefix=%s",
+    manual_token is not None,
+    len(manual_token) if manual_token else 0,
+    manual_token[:30] if manual_token else "(none)",
+)    
 
     # 2. Then try Authorization header
     if not token and credentials and credentials.credentials:
@@ -1040,7 +1056,15 @@ async def require_auth(request: Request, credentials: Optional[HTTPAuthorization
     # 3. Finally try FastAPI Cookie dependency (fallback)
     if not token and jwt_token:
         token = jwt_token
-
+        logger.warning(
+    "[OAUTH_DEBUG] token_resolved | source=%s | token_length=%d | "
+    "token_prefix=%s",
+    "cookie" if (hasattr(request, "cookies") and request.cookies.get("jwt_token"))
+    else ("header" if (credentials and credentials.credentials) else
+          ("fastapi_cookie" if jwt_token else "none")),
+    len(token) if token else 0,
+    token[:30] if token else "(empty)",
+)
     if settings.auth_required and not token:
         _raise_auth_401("Not authenticated")
 
