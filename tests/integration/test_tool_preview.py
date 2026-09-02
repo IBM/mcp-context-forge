@@ -26,6 +26,7 @@ from __future__ import annotations
 # Standard
 import os
 import tempfile
+import uuid
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
@@ -38,6 +39,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 # First-Party
+import mcpgateway.db as db_mod
 from mcpgateway.auth import get_current_user
 from mcpgateway.config import settings
 from mcpgateway.main import app
@@ -91,6 +93,34 @@ def _sample_local_response() -> ToolPreviewResponse:
         annotations=ToolAnnotations(),
         pre_hooks_run=[],
         warnings=[],
+    )
+
+
+def _make_team_tool(name: str, team_id: str) -> db_mod.Tool:
+    """Build an unpersisted team-visibility Tool row for the wrong-team deny-path test.
+
+    Args:
+        name: Unique original name for the tool (also becomes its lookup slug).
+        team_id: Team the tool belongs to.
+
+    Returns:
+        An unpersisted ``db_mod.Tool`` instance scoped to ``team_id``.
+    """
+    return db_mod.Tool(
+        id=uuid.uuid4().hex,
+        original_name=name,
+        url="http://example.com/tool",
+        owner_email="team-tool-owner@example.com",
+        team_id=team_id,
+        visibility="team",
+        integration_type="REST",
+        request_type="GET",
+        input_schema={},
+        output_schema={},
+        enabled=True,
+        deprecated=False,
+        created_by="team-tool-owner@example.com",
+        tags=[],
     )
 
 
@@ -358,6 +388,58 @@ class TestToolPreviewIntegration:
 
         assert response.status_code == 404
         mock_preview.assert_not_awaited()
+
+
+class TestToolPreviewWrongTeamIntegration:
+    """Layer-1 token-team mismatch must 404, matching the live invoke path (#5629 AC).
+
+    Unlike the other error-path tests above, this exercises the real
+    ``tool_service.preview_tool_invocation`` -> ``_resolve_tool_for_invocation`` ->
+    ``_check_tool_access`` chain against a real DB row, rather than mocking the
+    service call, so it actually proves the Layer-1 scope check -- not just that
+    a ``ToolNotFoundError`` maps to 404.
+    """
+
+    def test_wrong_team_token_returns_404(self, _auth_client):
+        """A team-visibility tool owned by "team-a" must 404 for a token scoped to "team-b"."""
+        client, auth_headers = _auth_client
+
+        session = db_mod.SessionLocal()
+        try:
+            session.add(_make_team_tool("preview-wrong-team-tool", team_id="team-a"))
+            session.commit()
+        finally:
+            session.close()
+
+        with patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("integration-test-user@example.com", ["team-b"])):
+            response = client.post(
+                "/tools/preview/preview-wrong-team-tool",
+                json={"arguments": {}},
+                headers=auth_headers,
+            )
+
+        assert response.status_code == 404
+
+    def test_matching_team_token_returns_200(self, _auth_client):
+        """Sanity check: the same tool is reachable when the token is scoped to "team-a"."""
+        client, auth_headers = _auth_client
+
+        session = db_mod.SessionLocal()
+        try:
+            session.add(_make_team_tool("preview-matching-team-tool", team_id="team-a"))
+            session.commit()
+        finally:
+            session.close()
+
+        with patch("mcpgateway.main.get_scoped_resource_access_context", return_value=("integration-test-user@example.com", ["team-a"])):
+            response = client.post(
+                "/tools/preview/preview-matching-team-tool",
+                json={"arguments": {}},
+                headers=auth_headers,
+            )
+
+        assert response.status_code == 200
+        assert response.json()["validated"] is True
 
 
 # ---------------------------------------------------------------------------
