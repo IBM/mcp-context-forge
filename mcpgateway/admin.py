@@ -178,6 +178,7 @@ from mcpgateway.services.gateway_service import (
     GatewayLookupConflictError,
     GatewayNameConflictError,
     GatewayNotFoundError,
+    GatewayToolNameConflictError,
     GatewayService,
     test_gateway_connectivity,
 )
@@ -12913,6 +12914,8 @@ async def admin_add_gateway(
     except GatewayDuplicateConflictError as ex:
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
     except GatewayNameConflictError as ex:
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
+    except GatewayToolNameConflictError as ex:
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=409)
     except RuntimeError as ex:
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=500)
