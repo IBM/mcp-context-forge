@@ -1491,9 +1491,9 @@ dependencies = [
     { name = "grpcio" },
     { name = "protobuf" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/cd/84/5db47abe1b8b946e8edcfcf7fb2116c7a4ab839e23126680a984c88eb424/grpcio_health_checking-1.83.0.tar.gz", hash = "sha256:ad6bc4d5a1103ad704d25ccd82def300dfa27996b185cab3e4cceeef2c6867d4", size = 17107, upload-time = "2026-07-23T15:24:16.466Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/cd/84/5db47abe1b8b946e8edcfcf7fb2116c7a4ab839e23126680a984c88eb424/grpcio_health_checking-1.83.0.tar.gz", hash = "sha256:ad6bc4d5a1103ad704d25ccd82def300dfa27996b185cab3e4cceeef2c6867d4", size = 17061, upload-time = "2026-07-23T15:24:23.019Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/c6/9c/8922f2a529bf49361b4f70d6d07adfadc07d1a93eb5ee07f6f66a54445e8/grpcio_health_checking-1.83.0-py3-none-any.whl", hash = "sha256:7d8b47a5bfbc699d4aee0fc7a27f5d0265eb23a6a64db5ac2d8b749a0f8a9911", size = 19120, upload-time = "2026-07-23T15:24:14.873Z" },
+    { url = "https://files.pythonhosted.org/packages/c6/9c/8922f2a529bf49361b4f70d6d07adfadc07d1a93eb5ee07f6f66a54445e8/grpcio_health_checking-1.83.0-py3-none-any.whl", hash = "sha256:7d8b47a5bfbc699d4aee0fc7a27f5d0265eb23a6a64db5ac2d8b749a0f8a9911", size = 19085, upload-time = "2026-07-23T15:24:07.792Z" },
 ]
 
 [[package]]
@@ -2633,6 +2633,9 @@ llmchat = [
     { name = "langgraph" },
     { name = "langsmith" },
 ]
+mysql = [
+    { name = "pymysql" },
+]
 observability = [
     { name = "opentelemetry-api" },
     { name = "opentelemetry-exporter-otlp-proto-grpc" },
@@ -2804,6 +2807,7 @@ requires-dist = [
     { name = "pydantic", extras = ["email"], specifier = ">=2.13.4" },
     { name = "pydantic-settings", specifier = ">=2.15.0" },
     { name = "pyjwt", specifier = ">=2.13.0" },
+    { name = "pymysql", marker = "extra == 'mysql'", specifier = ">=1.1.2" },
     { name = "python-json-logger", specifier = ">=4.1.0" },
     { name = "python-multipart", specifier = ">=0.0.32" },
     { name = "pyyaml", specifier = ">=6.0.3" },
@@ -2820,7 +2824,7 @@ requires-dist = [
     { name = "urllib3", specifier = ">=2.7.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.51.0" },
 ]
-provides-extras = ["redis", "redis-pure", "postgres", "llmchat", "observability", "aiosqlite", "asyncpg", "profiling", "templating", "plugins", "grpc", "all", "dev-all"]
+provides-extras = ["redis", "redis-pure", "postgres", "mysql", "llmchat", "observability", "aiosqlite", "asyncpg", "profiling", "templating", "plugins", "grpc", "all", "dev-all"]
 
 [package.metadata.requires-dev]
 dev = [
