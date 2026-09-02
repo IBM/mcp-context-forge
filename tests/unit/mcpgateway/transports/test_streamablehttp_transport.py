@@ -3962,6 +3962,621 @@ async def test_call_tool_with_request_context_no_meta(monkeypatch):
         type(mcp_app).request_context = property(lambda self: (_ for _ in ()).throw(LookupError))
 
 
+def _plugin_context_scope():
+    """Build a request whose ASGI scope carries the pre-request plugin contexts.
+
+    Returns:
+        tuple: ``(mock_ctx, global_context, context_table)`` where ``mock_ctx``
+        mimics ``mcp_app.request_context`` for a request that already went
+        through ``HttpAuthMiddleware``.
+    """
+    # Third-Party
+    from cpex.framework import GlobalContext
+    from cpex.framework.models import PluginContext
+
+    global_context = GlobalContext(request_id="req-3879")
+    context_table = {"AuthPlugin": PluginContext(global_context=global_context, state={"user_token": "abc"})}
+
+    mock_ctx = MagicMock()
+    mock_ctx.meta = None
+    mock_ctx.request.scope = {
+        "type": "http",
+        "state": {"plugin_global_context": global_context, "plugin_context_table": context_table},
+    }
+    return mock_ctx, global_context, context_table
+
+
+@pytest.mark.asyncio
+async def test_call_tool_forwards_plugin_contexts_from_scope(monkeypatch):
+    """Regression guard for #3879 - /mcp tool calls must carry cross-hook plugin state.
+
+    ``HttpAuthMiddleware`` records the HTTP_PRE_REQUEST contexts on the ASGI
+    scope. Without forwarding them, TOOL_PRE_INVOKE hooks reached through the
+    streamable HTTP transport see an empty context, unlike the REST paths.
+    """
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import call_tool, mcp_app, tool_service
+
+    mock_db = MagicMock()
+    mock_result = MagicMock()
+    mock_content = MagicMock()
+    mock_content.type = "text"
+    mock_content.text = "hello"
+    mock_content.annotations = None
+    mock_content.meta = None
+    mock_result.content = [mock_content]
+    mock_result.structured_content = None
+    mock_result.model_dump = lambda by_alias=True: {}
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._get_request_context_or_default",
+        AsyncMock(return_value=("server-1", {}, {})),
+    )
+    monkeypatch.setattr(tool_service, "invoke_tool", AsyncMock(return_value=mock_result))
+
+    mock_ctx, global_context, context_table = _plugin_context_scope()
+
+    type(mcp_app).request_context = property(lambda self: mock_ctx)
+    try:
+        await call_tool("mytool", {"foo": "bar"})
+    finally:
+        type(mcp_app).request_context = property(lambda self: (_ for _ in ()).throw(LookupError))
+
+    kwargs = tool_service.invoke_tool.await_args.kwargs
+    assert kwargs["plugin_global_context"] is global_context
+    assert kwargs["plugin_context_table"] is context_table
+
+
+@pytest.mark.asyncio
+async def test_call_tool_passes_none_when_scope_has_no_plugin_contexts(monkeypatch):
+    """Requests without pre-request hooks keep the previous behaviour."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import call_tool, mcp_app, tool_service
+
+    mock_db = MagicMock()
+    mock_result = MagicMock()
+    mock_content = MagicMock()
+    mock_content.type = "text"
+    mock_content.text = "hello"
+    mock_content.annotations = None
+    mock_content.meta = None
+    mock_result.content = [mock_content]
+    mock_result.structured_content = None
+    mock_result.model_dump = lambda by_alias=True: {}
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._get_request_context_or_default",
+        AsyncMock(return_value=("server-1", {}, {})),
+    )
+    monkeypatch.setattr(tool_service, "invoke_tool", AsyncMock(return_value=mock_result))
+
+    mock_ctx = MagicMock()
+    mock_ctx.meta = None
+    mock_ctx.request.scope = {"type": "http", "state": {}}
+
+    type(mcp_app).request_context = property(lambda self: mock_ctx)
+    try:
+        await call_tool("mytool", {"foo": "bar"})
+    finally:
+        type(mcp_app).request_context = property(lambda self: (_ for _ in ()).throw(LookupError))
+
+    kwargs = tool_service.invoke_tool.await_args.kwargs
+    assert kwargs["plugin_global_context"] is None
+    assert kwargs["plugin_context_table"] is None
+
+
+@pytest.mark.asyncio
+async def test_get_plugin_contexts_returns_none_without_request_context():
+    """The helper degrades to ``(None, None)`` outside an HTTP request."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import _get_plugin_contexts_or_none
+
+    assert _get_plugin_contexts_or_none() == (None, None)
+
+
+def _malformed_scope_cases():
+    """Enumerate the scope shapes the type guards in the helper must reject.
+
+    Returns:
+        list: ``(case_id, scope, expect_global, expect_table)`` tuples where the
+        two ``expect_*`` flags say whether the corresponding slot should survive.
+    """
+    # Third-Party
+    from cpex.framework import GlobalContext
+    from cpex.framework.models import PluginContext
+
+    good_global = GlobalContext(request_id="req-3879")
+    good_table = {"AuthPlugin": PluginContext(global_context=good_global)}
+
+    return [
+        # ``scope`` is not a mapping at all - e.g. a transport that is not ASGI driven.
+        ("scope_not_a_dict", object(), False, False),
+        # ``state`` absent: an ASGI server that does not support lifespan state.
+        ("state_missing", {"type": "http"}, False, False),
+        # ``state`` present but not a mapping.
+        ("state_not_a_dict", {"type": "http", "state": ["not", "a", "dict"]}, False, False),
+        # Wrong type in one slot must not poison the other.
+        ("global_context_wrong_type", {"type": "http", "state": {"plugin_global_context": "not-a-context", "plugin_context_table": good_table}}, False, True),
+        ("context_table_wrong_type", {"type": "http", "state": {"plugin_global_context": good_global, "plugin_context_table": ["not", "a", "table"]}}, True, False),
+        # Explicit ``None`` values are the normal "no pre-request hooks ran" case.
+        ("both_none", {"type": "http", "state": {"plugin_global_context": None, "plugin_context_table": None}}, False, False),
+    ]
+
+
+_MALFORMED_SCOPE_CASES = _malformed_scope_cases()
+
+
+@pytest.mark.parametrize("case_id,scope,expect_global,expect_table", _MALFORMED_SCOPE_CASES, ids=[c[0] for c in _MALFORMED_SCOPE_CASES])
+def test_get_plugin_contexts_rejects_malformed_scope_state(case_id, scope, expect_global, expect_table):
+    """Malformed ``scope["state"]`` must degrade to ``None`` instead of leaking junk.
+
+    The helper feeds the service layer directly, which in turn hands the values
+    to the plugin manager. Passing a wrongly typed object through would surface
+    as an opaque failure deep inside a hook, so each slot is type-guarded
+    independently - a bad ``plugin_global_context`` must not discard an
+    otherwise valid ``plugin_context_table``.
+    """
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import _get_plugin_contexts_or_none, mcp_app
+
+    mock_ctx = MagicMock()
+    mock_ctx.request.scope = scope
+
+    type(mcp_app).request_context = property(lambda self: mock_ctx)
+    try:
+        global_context, context_table = _get_plugin_contexts_or_none()
+    finally:
+        type(mcp_app).request_context = property(lambda self: (_ for _ in ()).throw(LookupError))
+
+    assert (global_context is not None) is expect_global, f"{case_id}: unexpected global context {global_context!r}"
+    assert (context_table is not None) is expect_table, f"{case_id}: unexpected context table {context_table!r}"
+
+
+def test_get_plugin_contexts_swallows_unexpected_request_context_errors(caplog):
+    """A non-``LookupError`` while resolving the request context degrades to ``(None, None)``.
+
+    ``LookupError`` is the documented "no active request" signal; anything else
+    is a defect somewhere below the transport. The helper must never turn that
+    into a 500 on ``/mcp`` - it logs at debug level and behaves exactly as if no
+    pre-request hooks had run.
+    """
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import _get_plugin_contexts_or_none, mcp_app
+
+    def _explode(self):
+        raise RuntimeError("request context unavailable")
+
+    type(mcp_app).request_context = property(_explode)
+    try:
+        with caplog.at_level("DEBUG", logger="mcpgateway.transports.streamablehttp_transport"):
+            result = _get_plugin_contexts_or_none()
+    finally:
+        type(mcp_app).request_context = property(lambda self: (_ for _ in ()).throw(LookupError))
+
+    assert result == (None, None)
+    assert "request context unavailable" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_get_prompt_forwards_plugin_contexts_from_scope(monkeypatch):
+    """``get_prompt`` on /mcp must carry cross-hook plugin state like ``call_tool``.
+
+    Same gap as #3879 for ``PROMPT_PRE_FETCH``: the REST handler forwards the
+    contexts, the streamable HTTP transport did not.
+    """
+    # Third-Party
+    from mcp.types import PromptMessage, TextContent
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import get_prompt, mcp_app, prompt_service
+
+    mock_result = MagicMock()
+    mock_result.messages = [PromptMessage(role="user", content=TextContent(type="text", text="hi"))]
+    mock_result.description = "desc"
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield MagicMock()
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._get_request_context_or_default",
+        AsyncMock(return_value=("server-1", {}, {})),
+    )
+    monkeypatch.setattr(prompt_service, "get_prompt", AsyncMock(return_value=mock_result))
+
+    mock_ctx, global_context, context_table = _plugin_context_scope()
+
+    type(mcp_app).request_context = property(lambda self: mock_ctx)
+    try:
+        await get_prompt("my_prompt", {"a": "b"})
+    finally:
+        type(mcp_app).request_context = property(lambda self: (_ for _ in ()).throw(LookupError))
+
+    kwargs = prompt_service.get_prompt.await_args.kwargs
+    assert kwargs["plugin_global_context"] is global_context
+    assert kwargs["plugin_context_table"] is context_table
+
+
+@pytest.mark.asyncio
+async def test_read_resource_forwards_plugin_contexts_from_scope(monkeypatch):
+    """``read_resource`` on /mcp must carry cross-hook plugin state like ``call_tool``.
+
+    Same gap as #3879 for ``RESOURCE_PRE_FETCH``: the REST handler forwards the
+    contexts, the streamable HTTP transport did not.
+    """
+    # Third-Party
+    from pydantic import AnyUrl
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import mcp_app, read_resource, resource_service
+
+    mock_result = MagicMock()
+    mock_result.text = "resource content"
+    mock_result.blob = None
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield MagicMock()
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._get_request_context_or_default",
+        AsyncMock(return_value=("server-1", {}, {})),
+    )
+    monkeypatch.setattr(resource_service, "read_resource", AsyncMock(return_value=mock_result))
+
+    mock_ctx, global_context, context_table = _plugin_context_scope()
+
+    type(mcp_app).request_context = property(lambda self: mock_ctx)
+    try:
+        await read_resource(AnyUrl("file:///test.txt"))
+    finally:
+        type(mcp_app).request_context = property(lambda self: (_ for _ in ()).throw(LookupError))
+
+    kwargs = resource_service.read_resource.await_args.kwargs
+    assert kwargs["plugin_global_context"] is global_context
+    assert kwargs["plugin_context_table"] is context_table
+
+
+# ---------------------------------------------------------------------------
+# End-to-end reproduction of #3879 against a real PluginManager.
+#
+# The forwarding tests above assert *which objects* the transport hands to the
+# service layer. The tests below assert those objects are actually sufficient
+# for the real plugin manager to resolve cross-hook state, using the shared
+# ``CrossHookContextPlugin`` fixture - it raises ``ValueError`` the moment a
+# hook cannot see what an earlier hook stored, so reaching the assertions is
+# the guarantee.
+# ---------------------------------------------------------------------------
+
+_CROSS_HOOK_CONFIG = "plugins/fixtures/configs/cross_hook_context.yaml"
+
+
+@asynccontextmanager
+async def _cross_hook_plugin_session():
+    """Run the HTTP hooks of ``CrossHookContextPlugin`` and expose their contexts.
+
+    Mirrors what ``HttpAuthMiddleware`` and the RBAC layer do before the MCP SDK
+    takes over: ``HTTP_PRE_REQUEST`` then ``HTTP_AUTH_CHECK_PERMISSION``, with
+    the resulting contexts stashed on the ASGI scope.
+
+    Yields:
+        tuple: ``(manager, mock_ctx, global_context, context_table)`` where
+        ``mock_ctx`` mimics ``mcp_app.request_context`` for that request.
+    """
+    # Standard
+    from pathlib import Path
+
+    # Third-Party
+    from cpex.framework import HttpAuthCheckPermissionPayload, HttpHookType, PluginManager
+
+    # First-Party
+    from mcpgateway.middleware.http_auth_middleware import run_pre_request_hooks
+
+    config_file = Path(__file__).parent.parent / _CROSS_HOOK_CONFIG
+
+    # ``PluginManager`` is a Borg singleton - reset around the session so the
+    # shared state never leaks into the rest of this module.
+    PluginManager.reset()
+    manager = PluginManager(str(config_file))
+    await manager.initialize()
+    try:
+        _headers, global_context, context_table = await run_pre_request_hooks(
+            plugin_manager=manager,
+            headers={"authorization": "Bearer test-token"},
+            path="/mcp",
+            method="POST",
+            client_host="127.0.0.1",
+            client_port=54321,
+        )
+        assert global_context is not None and context_table
+
+        _perm_result, context_table = await manager.invoke_hook(
+            HttpHookType.HTTP_AUTH_CHECK_PERMISSION,
+            payload=HttpAuthCheckPermissionPayload(user_email="user@example.com", permission="tools.read"),
+            global_context=global_context,
+            local_contexts=context_table,
+        )
+
+        mock_ctx = MagicMock()
+        mock_ctx.meta = None
+        mock_ctx.request.scope = {
+            "type": "http",
+            "state": {"plugin_global_context": global_context, "plugin_context_table": context_table},
+        }
+        yield manager, mock_ctx, global_context, context_table
+    finally:
+        await manager.shutdown()
+        PluginManager.reset()
+
+
+def _e2e_transport_patches(monkeypatch):
+    """Stub the database session and request-context resolution for the e2e tests.
+
+    Args:
+        monkeypatch: The pytest monkeypatch fixture.
+    """
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield MagicMock()
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._get_request_context_or_default",
+        AsyncMock(return_value=("server-1", {}, {})),
+    )
+
+
+async def _dispatch_pre_hook(manager, hook_type, payload, kwargs, sink):
+    """Invoke a pre-hook with the contexts a transport handler forwarded.
+
+    This is the same dispatch the service layer performs (see
+    ``ToolService.invoke_tool``, ``PromptService.get_prompt`` and
+    ``ResourceService.read_resource``); only the database-backed lookup around
+    it is stubbed out.
+
+    Args:
+        manager: The initialised ``PluginManager``.
+        hook_type: Which pre-hook to run.
+        payload: The hook payload.
+        kwargs: Keyword arguments captured from the transport handler.
+        sink: Dict that receives the context table the hook produced.
+    """
+    _result, table = await manager.invoke_hook(
+        hook_type,
+        payload=payload,
+        global_context=kwargs["plugin_global_context"],
+        local_contexts=kwargs["plugin_context_table"],
+        violations_as_exceptions=True,
+    )
+    sink.update(table or {})
+
+
+def _assert_http_state_visible(contexts, global_context):
+    """Assert the state written by the HTTP hooks reached the MCP hook.
+
+    Args:
+        contexts: Context table produced by the MCP pre-hook.
+        global_context: The global context shared by every hook of the request.
+
+    Returns:
+        dict: The plugin state, for hook-specific assertions.
+    """
+    assert contexts, "the MCP pre-hook produced no context table"
+    state = next(iter(contexts.values())).state
+    assert state["http_timestamp"] == "2025-01-01T00:00:00Z"
+    assert state["http_request_path"] == "/mcp"
+    assert state["permission_checked"] is True
+    assert global_context.state["shared_request_id"] == global_context.request_id
+    return state
+
+
+@pytest.mark.asyncio
+async def test_call_tool_cross_hook_sharing_end_to_end_with_real_plugin(monkeypatch):
+    """The issue's own repro: HTTP_PRE_REQUEST state must reach TOOL_PRE_INVOKE over /mcp."""
+    # Third-Party
+    from cpex.framework import HttpHeaderPayload, ToolHookType, ToolPreInvokePayload
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import call_tool, mcp_app, tool_service
+
+    _e2e_transport_patches(monkeypatch)
+    tool_contexts = {}
+
+    async with _cross_hook_plugin_session() as (manager, mock_ctx, global_context, _table):
+
+        async def fake_invoke_tool(**kwargs):
+            """Stand in for the DB-backed tool lookup; run the real pre-hook.
+
+            Args:
+                **kwargs: Arguments forwarded by ``call_tool``.
+
+            Returns:
+                MagicMock: A minimal successful tool result.
+            """
+            await _dispatch_pre_hook(
+                manager,
+                ToolHookType.TOOL_PRE_INVOKE,
+                ToolPreInvokePayload(name=kwargs["name"], args=kwargs["arguments"], headers=HttpHeaderPayload(root={})),
+                kwargs,
+                tool_contexts,
+            )
+            tool_result = MagicMock()
+            content = MagicMock()
+            content.type = "text"
+            content.text = "ok"
+            content.annotations = None
+            content.meta = None
+            tool_result.content = [content]
+            tool_result.structured_content = None
+            tool_result.model_dump = lambda by_alias=True: {}
+            return tool_result
+
+        monkeypatch.setattr(tool_service, "invoke_tool", fake_invoke_tool)
+
+        type(mcp_app).request_context = property(lambda self: mock_ctx)
+        try:
+            await call_tool("test_cross_hook_tool", {"foo": "bar"})
+        finally:
+            type(mcp_app).request_context = property(lambda self: (_ for _ in ()).throw(LookupError))
+
+        state = _assert_http_state_visible(tool_contexts, global_context)
+        assert state["tool_name"] == "test_cross_hook_tool"
+
+
+@pytest.mark.asyncio
+async def test_get_prompt_cross_hook_sharing_end_to_end_with_real_plugin(monkeypatch):
+    """HTTP_PRE_REQUEST state must reach PROMPT_PRE_FETCH over /mcp."""
+    # Third-Party
+    from cpex.framework import PromptHookType, PromptPrehookPayload
+    from mcp.types import PromptMessage, TextContent
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import get_prompt, mcp_app, prompt_service
+
+    _e2e_transport_patches(monkeypatch)
+    prompt_contexts = {}
+
+    async with _cross_hook_plugin_session() as (manager, mock_ctx, global_context, _table):
+
+        async def fake_get_prompt(**kwargs):
+            """Stand in for the DB-backed prompt lookup; run the real pre-hook.
+
+            Args:
+                **kwargs: Arguments forwarded by ``get_prompt``.
+
+            Returns:
+                MagicMock: A minimal successful prompt result.
+            """
+            await _dispatch_pre_hook(
+                manager,
+                PromptHookType.PROMPT_PRE_FETCH,
+                PromptPrehookPayload(prompt_id=kwargs["prompt_id"], args=kwargs["arguments"]),
+                kwargs,
+                prompt_contexts,
+            )
+            prompt_result = MagicMock()
+            prompt_result.messages = [PromptMessage(role="user", content=TextContent(type="text", text="hi"))]
+            prompt_result.description = "desc"
+            return prompt_result
+
+        monkeypatch.setattr(prompt_service, "get_prompt", fake_get_prompt)
+
+        type(mcp_app).request_context = property(lambda self: mock_ctx)
+        try:
+            await get_prompt("test_cross_hook_prompt", {"a": "b"})
+        finally:
+            type(mcp_app).request_context = property(lambda self: (_ for _ in ()).throw(LookupError))
+
+        state = _assert_http_state_visible(prompt_contexts, global_context)
+        assert state["prompt_id"] == "test_cross_hook_prompt"
+
+
+@pytest.mark.asyncio
+async def test_read_resource_cross_hook_sharing_end_to_end_with_real_plugin(monkeypatch):
+    """HTTP_PRE_REQUEST state must reach RESOURCE_PRE_FETCH over /mcp."""
+    # Third-Party
+    from cpex.framework import ResourceHookType, ResourcePreFetchPayload
+    from pydantic import AnyUrl
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import mcp_app, read_resource, resource_service
+
+    _e2e_transport_patches(monkeypatch)
+    resource_contexts = {}
+
+    async with _cross_hook_plugin_session() as (manager, mock_ctx, global_context, _table):
+
+        async def fake_read_resource(**kwargs):
+            """Stand in for the DB-backed resource lookup; run the real pre-hook.
+
+            Args:
+                **kwargs: Arguments forwarded by ``read_resource``.
+
+            Returns:
+                MagicMock: A minimal successful text resource.
+            """
+            await _dispatch_pre_hook(
+                manager,
+                ResourceHookType.RESOURCE_PRE_FETCH,
+                ResourcePreFetchPayload(uri=kwargs["resource_uri"], metadata={}),
+                kwargs,
+                resource_contexts,
+            )
+            resource_result = MagicMock()
+            resource_result.text = "resource content"
+            resource_result.blob = None
+            return resource_result
+
+        monkeypatch.setattr(resource_service, "read_resource", fake_read_resource)
+
+        type(mcp_app).request_context = property(lambda self: mock_ctx)
+        try:
+            await read_resource(AnyUrl("file:///cross-hook.txt"))
+        finally:
+            type(mcp_app).request_context = property(lambda self: (_ for _ in ()).throw(LookupError))
+
+        state = _assert_http_state_visible(resource_contexts, global_context)
+        assert state["resource_uri"] == "file:///cross-hook.txt"
+
+
+def _pre_fix_failure_cases():
+    """Enumerate the MCP pre-hooks and the error each raises without forwarded contexts.
+
+    Returns:
+        list: ``(hook_type, payload_factory, expected_message)`` tuples.
+    """
+    # Third-Party
+    from cpex.framework import HttpHeaderPayload, PromptHookType, PromptPrehookPayload, ResourceHookType, ResourcePreFetchPayload, ToolHookType, ToolPreInvokePayload
+
+    return [
+        (ToolHookType.TOOL_PRE_INVOKE, lambda: ToolPreInvokePayload(name="t", args={}, headers=HttpHeaderPayload(root={})), "http_timestamp not found in tool hook"),
+        (PromptHookType.PROMPT_PRE_FETCH, lambda: PromptPrehookPayload(prompt_id="p", args={}), "http_timestamp not found in prompt hook"),
+        (ResourceHookType.RESOURCE_PRE_FETCH, lambda: ResourcePreFetchPayload(uri="file:///r.txt", metadata={}), "http_timestamp not found in resource hook"),
+    ]
+
+
+_PRE_FIX_FAILURE_CASES = _pre_fix_failure_cases()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("hook_type,payload_factory,expected_message", _PRE_FIX_FAILURE_CASES, ids=[str(c[0]) for c in _PRE_FIX_FAILURE_CASES])
+async def test_cross_hook_plugin_fails_without_forwarded_contexts(hook_type, payload_factory, expected_message):
+    """Negative control: dropping the contexts reproduces the #3879 failure for every hook.
+
+    Guards the guard - without this, the end-to-end tests above would still pass
+    if the fixture plugin silently stopped checking for earlier hook state.
+    This is precisely the pre-fix behaviour: the MCP pre-hook reached with
+    ``local_contexts=None`` because /mcp never read them off the scope.
+    """
+    # Third-Party
+    from cpex.framework.errors import PluginError
+
+    async with _cross_hook_plugin_session() as (manager, _mock_ctx, global_context, _table):
+        with pytest.raises(PluginError) as exc_info:
+            await manager.invoke_hook(
+                hook_type,
+                payload=payload_factory(),
+                global_context=global_context,
+                local_contexts=None,
+                violations_as_exceptions=True,
+            )
+
+        assert expected_message in str(exc_info.value)
+
+
 @pytest.mark.asyncio
 async def test_call_tool_apps_client_still_requires_model_visibility(monkeypatch):
     """Apps-capable clients must use AppBridge for app-visible helper tools."""
