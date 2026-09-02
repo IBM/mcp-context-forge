@@ -69,6 +69,7 @@ from mcpgateway._security_constants import MIN_ENTROPY as _MIN_ENTROPY
 from mcpgateway._security_constants import MIN_SECRET_LENGTH as _MIN_SECRET_LENGTH
 from mcpgateway._security_constants import WEAK_VALUES as _CANONICAL_WEAK_VALUES
 from mcpgateway._security_constants import calculate_entropy
+from mcpgateway.utils.origin import is_exact_https_origin
 
 # Only configure basic logging if no handlers exist yet
 # This prevents conflicts with LoggingService while ensuring config logging works
@@ -999,6 +1000,28 @@ class Settings(BaseSettings):
             "the upstream MCP server to validate ``aud``."
         ),
     )
+    oauth_redirect_allowed_origin: Optional[str] = Field(
+        default=None,
+        description="Exact HTTPS origin allowed for post-OAuth redirects outside APP_DOMAIN.",
+    )
+
+    @field_validator("oauth_redirect_allowed_origin")
+    @classmethod
+    def validate_oauth_redirect_allowed_origin(cls, origin: Optional[str]) -> Optional[str]:
+        """Require the external post-OAuth redirect entry to be an exact HTTPS origin.
+
+        Args:
+            origin: Configured external redirect origin.
+
+        Returns:
+            Validated origin.
+
+        Raises:
+            ValueError: If the entry is not an exact HTTPS origin.
+        """
+        if origin is not None and not is_exact_https_origin(origin):
+            raise ValueError(f"OAuth redirect allowlist entry must be an exact HTTPS origin: {origin}")
+        return origin
 
     # ===================================
     # Dynamic Client Registration (DCR) - Client Mode

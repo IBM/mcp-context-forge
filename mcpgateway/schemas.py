@@ -43,6 +43,7 @@ from mcpgateway.common.validators import SecurityValidator, validate_core_url
 from mcpgateway.config import settings
 from mcpgateway.utils.base_models import BaseModelWithConfigDict
 from mcpgateway.utils.jq_guard import assert_safe_jq_filter
+from mcpgateway.utils.origin import is_allowed_redirect, origin_from_url
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
 from mcpgateway.validation.tags import validate_tags_field
 
@@ -154,6 +155,12 @@ def _validate_oauth_config_urls(v: Optional[Dict[str, Any]]) -> Optional[Dict[st
         if not isinstance(raw_value, str):
             raise ValueError(f"oauth_config.{field_name} must be a string URL")
         validate_core_url(raw_value, f"OAuth config {field_name}")
+    if "redirect_uri_after_oauth" in v:
+        redirect_after_oauth = v["redirect_uri_after_oauth"]
+        if not isinstance(redirect_after_oauth, str) or not redirect_after_oauth.strip():
+            raise ValueError("oauth_config.redirect_uri_after_oauth must be a non-empty string URL")
+        if not is_allowed_redirect(redirect_after_oauth, str(settings.app_domain), settings.oauth_redirect_allowed_origin):
+            raise ValueError(f"oauth_config.redirect_uri_after_oauth must use this gateway origin ({origin_from_url(str(settings.app_domain))}) or the origin in OAUTH_REDIRECT_ALLOWED_ORIGIN")
     raw_servers = v.get("authorization_servers")
     if raw_servers in (None, ""):
         return v

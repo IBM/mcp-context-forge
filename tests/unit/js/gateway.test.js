@@ -1118,6 +1118,7 @@ describe("editGateway - auth types", () => {
       <input id="oauth-token-url-gw-edit" />
       <input id="oauth-authorization-url-gw-edit" />
       <input id="oauth-redirect-uri-gw-edit" />
+      <input id="oauth-redirect-after-success-gw-edit" />
       <input id="oauth-scopes-gw-edit" />
       <input id="oauth-resource-gw-edit" />
       <div id="oauth-auth-code-fields-gw-edit" style="display:none"></div>
@@ -1200,6 +1201,7 @@ describe("editGateway - auth types", () => {
             client_id: "cid",
             token_url: "http://auth/token",
             scopes: ["api"],
+            redirect_uri_after_oauth: "https://app.example.com/oauth-complete",
           },
           tags: [],
         }),
@@ -1211,6 +1213,9 @@ describe("editGateway - auth types", () => {
     expect(document.getElementById("oauth-client-id-gw-edit").value).toBe("cid");
     expect(document.getElementById("oauth-token-url-gw-edit").value).toBe("http://auth/token");
     expect(document.getElementById("oauth-scopes-gw-edit").value).toBe("api");
+    expect(
+      document.getElementById("oauth-redirect-after-success-gw-edit").value
+    ).toBe("https://app.example.com/oauth-complete");
     expect(document.getElementById("edit-gateway-visibility-private").checked).toBe(true);
   });
 
