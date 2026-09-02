@@ -24812,7 +24812,7 @@ class TestAdminCsrfProtection:
         # function falls through to return False and CSRF validation fails.
         monkeypatch.setattr("mcpgateway.admin.settings.allowed_origins", {"will-explode://bad"})
 
-        real_normalize = admin_mod._normalize_origin_parts
+        real_normalize = admin_mod.normalize_origin_parts
 
         def _boom_on_bad(scheme, netloc):
             if netloc == "bad":
@@ -24829,7 +24829,7 @@ class TestAdminCsrfProtection:
             cookies={"jwt_token": "jwt", admin_mod.ADMIN_CSRF_COOKIE_NAME: "expected"},
             form_data={admin_mod.ADMIN_CSRF_FORM_FIELD: "expected"},
         )
-        with patch.object(admin_mod, "_normalize_origin_parts", side_effect=_boom_on_bad):
+        with patch.object(admin_mod, "normalize_origin_parts", side_effect=_boom_on_bad):
             with pytest.raises(HTTPException, match="CSRF origin validation failed"):
                 await admin_mod.enforce_admin_csrf(request)
 

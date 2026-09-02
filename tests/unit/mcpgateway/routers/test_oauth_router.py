@@ -270,6 +270,40 @@ class TestEnforceFetchToolsCsrf:
 class TestOAuthRouter:
     """Test cases for OAuth router endpoints."""
 
+    def test_custom_redirect_after_callback_allows_configured_external_origin(self):
+        """Configured external redirect returns no-referrer response without cookies."""
+        from mcpgateway.routers.oauth_router import custom_redirect_after_callback
+
+        with patch("mcpgateway.routers.oauth_router.settings") as mock_settings:
+            mock_settings.app_domain = "https://gateway.example.com"
+            mock_settings.oauth_redirect_allowed_origin = "https://app.example.org"
+            response = custom_redirect_after_callback("https://app.example.org/oauth-complete?gateway_id=123", 302)
+
+        assert response.headers["location"] == "https://app.example.org/oauth-complete?gateway_id=123"
+        assert response.headers["referrer-policy"] == "no-referrer"
+        assert response.headers.getlist("set-cookie") == []
+
+    def test_custom_redirect_after_callback_rejects_unconfigured_external_origin(self):
+        """Unconfigured external redirect remains fail-closed at callback time."""
+        from mcpgateway.routers.oauth_router import custom_redirect_after_callback
+
+        with patch("mcpgateway.routers.oauth_router.settings") as mock_settings:
+            mock_settings.app_domain = "https://gateway.example.com"
+            mock_settings.oauth_redirect_allowed_origin = "https://app.example.org"
+            with pytest.raises(OAuthError, match="OAUTH_REDIRECT_ALLOWED_ORIGIN"):
+                custom_redirect_after_callback("https://evil.example/oauth-complete", 302)
+
+    @pytest.mark.parametrize("url", ["//evil.example", "///evil.example", "////evil.example", "\\\\evil.example", "https://[::1"])
+    def test_custom_redirect_after_callback_rejects_network_path_bypasses(self, url):
+        """Browser-resolved network paths must not bypass the external allowlist."""
+        from mcpgateway.routers.oauth_router import custom_redirect_after_callback
+
+        with patch("mcpgateway.routers.oauth_router.settings") as mock_settings:
+            mock_settings.app_domain = "https://gateway.example.com"
+            mock_settings.oauth_redirect_allowed_origin = None
+            with pytest.raises(OAuthError, match="OAUTH_REDIRECT_ALLOWED_ORIGIN"):
+                custom_redirect_after_callback(url, 302)
+
     @pytest.fixture
     def mock_db(self):
         """Create mock database session."""
@@ -732,6 +766,66 @@ class TestOAuthRouter:
                 call_args = mock_oauth_manager.complete_authorization_code_flow.call_args
                 oauth_config_passed = call_args[0][3]  # 4th positional arg is credentials
                 assert oauth_config_passed["resource"] == "https://mcp.example.com"  # Normalized URL
+
+    @pytest.mark.asyncio
+    async def test_oauth_callback_redirects_to_allowed_external_origin_without_cookies(self, mock_db, mock_request, mock_gateway):
+        """Successful callback redirects externally without gateway-scoped cookies."""
+        from mcpgateway.routers.oauth_router import oauth_callback
+
+        mock_gateway.oauth_config["redirect_uri_after_oauth"] = "https://app.example.org/oauth-complete?gateway_id=123"
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+        token_result = {
+            "user_id": "oauth_user_123",
+            "expires_at": "2024-01-01T12:00:00",
+            "token_aud": None,
+            "state_data": {"app_user_email": "test@example.com", "team_id": None},
+        }
+
+        with patch("mcpgateway.routers.oauth_router.settings.app_domain", "https://gateway.example.com"), \
+             patch("mcpgateway.routers.oauth_router.settings.oauth_redirect_allowed_origin", "https://app.example.org"), \
+             patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_manager_class, \
+             patch("mcpgateway.routers.oauth_router.TokenStorageService"):
+            mock_oauth_manager = Mock()
+            mock_oauth_manager.resolve_gateway_id_from_state = AsyncMock(return_value="gateway123")
+            mock_oauth_manager.complete_authorization_code_flow = AsyncMock(return_value=token_result)
+            mock_oauth_manager_class.return_value = mock_oauth_manager
+
+            response = await oauth_callback(code="auth_code_123", state="state-token", request=mock_request, db=mock_db)
+
+        assert isinstance(response, RedirectResponse)
+        assert response.status_code == 302
+        assert response.headers["location"] == "https://app.example.org/oauth-complete?gateway_id=123"
+        assert response.headers["referrer-policy"] == "no-referrer"
+        assert response.headers.getlist("set-cookie") == []
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("redirect", ["/oauth-complete", "/\\evil.example/oauth-complete"])
+    async def test_oauth_callback_rejects_relative_redirect(self, mock_db, mock_request, mock_gateway, redirect):
+        """Callback rejects all relative redirect targets."""
+        from mcpgateway.routers.oauth_router import oauth_callback
+
+        mock_gateway.oauth_config["redirect_uri_after_oauth"] = redirect
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+        token_result = {
+            "user_id": "oauth_user_123",
+            "expires_at": "2024-01-01T12:00:00",
+            "token_aud": None,
+            "state_data": {"app_user_email": "test@example.com", "team_id": None},
+        }
+
+        with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_manager_class, \
+             patch("mcpgateway.routers.oauth_router.TokenStorageService"):
+            mock_oauth_manager = Mock()
+            mock_oauth_manager.resolve_gateway_id_from_state = AsyncMock(return_value="gateway123")
+            mock_oauth_manager.complete_authorization_code_flow = AsyncMock(return_value=token_result)
+            mock_oauth_manager_class.return_value = mock_oauth_manager
+
+            response = await oauth_callback(code="auth_code_123", state="state-token", request=mock_request, db=mock_db)
+
+        assert isinstance(response, HTMLResponse)
+        assert response.status_code == 400
+        assert "OAuth Authorization Failed" in response.body.decode()
+        mock_oauth_manager.complete_authorization_code_flow.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_oauth_callback_resource_string_persisted_as_is(self, mock_db, mock_request):
@@ -3273,7 +3367,8 @@ class TestOAuthRouterPopupMode:
         mock_gateway.oauth_config = {
             "client_id": "test-client",
             "authorization_url": "https://oauth.example.com/authorize",
-            "token_url": "https://oauth.example.com/token"
+            "token_url": "https://oauth.example.com/token",
+            "redirect_uri_after_oauth": "https://app.example.org/oauth-complete",
         }
         mock_gateway.ca_certificate = None
         mock_gateway.client_cert = None
@@ -3321,6 +3416,7 @@ class TestOAuthRouterPopupMode:
 
                     # Verify no legacy admin UI elements
                     assert 'Fetch Tools from MCP Server' not in body
+                    assert "location" not in result.headers
 
     @pytest.mark.asyncio
     async def test_oauth_callback_with_popup_state_provider_error(self, mock_db):

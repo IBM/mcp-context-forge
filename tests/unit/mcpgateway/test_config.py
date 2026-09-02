@@ -52,6 +52,30 @@ def test_parse_allowed_origins_json_and_csv():
     assert s_csv.allowed_origins == {"https://x.com", "https://y.com"}
 
 
+def test_oauth_redirect_allowed_origin_accepts_exact_https_origin():
+    """OAuth redirect allowlist accepts one exact HTTPS origin."""
+    settings = Settings(oauth_redirect_allowed_origin="https://a.com:8443", environment="development", _env_file=None)
+    assert settings.oauth_redirect_allowed_origin == "https://a.com:8443"
+
+
+@pytest.mark.parametrize(
+    "origin",
+    [
+        "*",
+        "http://app.example.com",
+        "https://user@app.example.com",
+        "https://app.example.com/path",
+        "https://app.example.com?query=value",
+        "https://app.example.com\\path",
+        "https://[::1",
+    ],
+)
+def test_oauth_redirect_allowed_origin_rejects_non_origins(origin):
+    """OAuth redirect allowlist rejects unsafe or non-origin entries."""
+    with pytest.raises(ValueError, match="OAuth redirect"):
+        Settings(oauth_redirect_allowed_origin=origin, environment="development", _env_file=None)
+
+
 @pytest.mark.parametrize(
     ("url", "message"),
     [

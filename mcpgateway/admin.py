@@ -213,6 +213,7 @@ from mcpgateway.utils.security_cookies import clear_auth_cookie, CookieTooLargeE
 from mcpgateway.utils.services_auth import encode_auth
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 from mcpgateway.utils.validate_signature import sign_data
+from mcpgateway.utils.origin import is_allowed_redirect, normalize_origin_parts, origin_from_url
 from mcpgateway.utils.verify_credentials import verify_jwt_token_cached
 
 # Conditional imports for gRPC support (only if grpcio is installed)
@@ -985,6 +986,7 @@ async def _assemble_oauth_config_from_fields(fields: Any, *, encrypt_secret: boo
     oauth_token_url = str(fields.get("oauth_token_url", ""))
     oauth_authorization_url = str(fields.get("oauth_authorization_url", ""))
     oauth_redirect_uri = str(fields.get("oauth_redirect_uri", ""))
+    oauth_redirect_uri_after_oauth = str(fields.get("redirect_uri_after_success", "")).strip()
     oauth_client_id = str(fields.get("oauth_client_id", ""))
     oauth_client_secret = str(fields.get("oauth_client_secret", ""))
     oauth_username = str(fields.get("oauth_username", ""))
@@ -1007,6 +1009,10 @@ async def _assemble_oauth_config_from_fields(fields: Any, *, encrypt_secret: boo
         oauth_config["authorization_url"] = oauth_authorization_url
     if oauth_redirect_uri:
         oauth_config["redirect_uri"] = oauth_redirect_uri
+    if oauth_redirect_uri_after_oauth:
+        if not is_allowed_redirect(oauth_redirect_uri_after_oauth, str(settings.app_domain), settings.oauth_redirect_allowed_origin):
+            raise ValueError(f"redirect_uri_after_oauth must use this gateway origin ({origin_from_url(str(settings.app_domain))}) or the origin in OAUTH_REDIRECT_ALLOWED_ORIGIN")
+        oauth_config["redirect_uri_after_oauth"] = oauth_redirect_uri_after_oauth
     if oauth_client_id:
         oauth_config["client_id"] = oauth_client_id
     if oauth_client_secret:
@@ -1712,25 +1718,6 @@ def _admin_cookie_path(request: Request) -> str:
     return root_path or "/"
 
 
-def _normalize_origin_parts(scheme: str, netloc: str) -> tuple[str, str, int]:
-    """Normalize origin components for exact same-origin comparisons.
-
-    Args:
-        scheme: URL scheme (for example ``http`` or ``https``).
-        netloc: URL authority component (host and optional port).
-
-    Returns:
-        Tuple of normalized scheme, hostname, and resolved port.
-    """
-    parsed = urllib.parse.urlparse(f"{scheme}://{netloc}")
-    normalized_scheme = (parsed.scheme or scheme or "http").lower()
-    normalized_host = (parsed.hostname or "").lower()
-    normalized_port = parsed.port
-    if normalized_port is None:
-        normalized_port = 443 if normalized_scheme == "https" else 80
-    return normalized_scheme, normalized_host, normalized_port
-
-
 def _request_origin_matches(request: Request) -> bool:
     """Return ``True`` when Origin/Referer matches this request origin.
 
@@ -1773,8 +1760,8 @@ def _request_origin_matches(request: Request) -> bool:
     request_scheme = (forwarded_proto.split(",")[0].strip() if forwarded_proto else request.url.scheme) or "http"
     request_netloc = (forwarded_host.split(",")[0].strip() if forwarded_host else request.headers.get("host")) or request.url.netloc
 
-    candidate_parts = _normalize_origin_parts(parsed_candidate.scheme, parsed_candidate.netloc)
-    request_parts = _normalize_origin_parts(request_scheme, request_netloc)
+    candidate_parts = normalize_origin_parts(parsed_candidate.scheme, parsed_candidate.netloc)
+    request_parts = normalize_origin_parts(request_scheme, request_netloc)
     if candidate_parts == request_parts:
         return True
 
@@ -1792,7 +1779,7 @@ def _request_origin_matches(request: Request) -> bool:
             allowed_parsed = urllib.parse.urlparse(allowed_normalized if "://" in allowed_normalized else f"https://{allowed_normalized}")
             if not allowed_parsed.scheme or not allowed_parsed.netloc:
                 continue
-            if candidate_parts == _normalize_origin_parts(allowed_parsed.scheme, allowed_parsed.netloc):
+            if candidate_parts == normalize_origin_parts(allowed_parsed.scheme, allowed_parsed.netloc):
                 return True
         except Exception:  # nosec B112 - malformed allowed_origins entry should not crash
             continue
@@ -4285,6 +4272,7 @@ async def admin_ui(
             "require_token_expiration": getattr(settings, "require_token_expiration", True),
             "sri_hashes": load_sri_hashes(),
             "max_members_per_team": settings.max_members_per_team,
+            "oauth_redirect_allowed_origin": settings.oauth_redirect_allowed_origin,
         },
     )
 
@@ -13256,14 +13244,24 @@ async def admin_edit_gateway(
                 LOGGER.info(f"✅ Assembled OAuth config from UI form fields (edit): grant_type={oauth_config.get('grant_type')}, issuer={oauth_config.get('issuer')}")
 
         user_email = get_user_email(user)
+        # Fetch existing gateway once to preserve team_id and any oauth_config fields that
+        # the UI edit form does not expose (e.g. redirect_uri_after_oauth).
+        existing_gateway = db.get(DbGateway, gateway_id)
+
         # Preserve existing gateway's team_id when no explicit team_id is provided.
         # Without this guard, verify_team_for_user() falls back to the user's
         # personal team, silently reassigning the gateway on every edit.
         if not team_id:
-            existing_gateway = db.get(DbGateway, gateway_id)
             existing_team = getattr(existing_gateway, "team_id", None) if existing_gateway else None
             if isinstance(existing_team, str) and existing_team:
                 team_id = existing_team
+
+        # Preserve redirect_uri_after_oauth when this deployment does not render the
+        # field. A rendered but blank field explicitly disables the redirect.
+        if oauth_config is not None and existing_gateway is not None:
+            existing_oauth: dict = existing_gateway.oauth_config or {}
+            if "redirect_uri_after_success" not in form and "redirect_uri_after_oauth" not in oauth_config and "redirect_uri_after_oauth" in existing_oauth:
+                oauth_config["redirect_uri_after_oauth"] = existing_oauth["redirect_uri_after_oauth"]
 
         team_service = TeamManagementService(db)
         team_id = await team_service.verify_team_for_user(user_email, team_id)
