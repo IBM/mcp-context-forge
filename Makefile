@@ -215,7 +215,7 @@ export UV_BIN
 # Targets in this Makefile deliberately split how they use `uv`:
 #
 #   * Execution: invoke tools via `$(VENV_DIR)/bin/<tool>` directly (e.g.
-#     pytest, black, ruff, pylint, python). `uv run` — even with `--active` —
+#     pytest, ruff, pylint, python). `uv run` — even with `--active` —
 #     has historically resolved against an unexpected environment when the
 #     caller has already `source`d the project venv, producing confusing
 #     "works on my machine" failures. Direct invocation removes the ambiguity:
@@ -232,7 +232,7 @@ export UV_BIN
 # If you add a new target: use `$(VENV_DIR)/bin/<tool>` to *run* something and
 # `uv pip ...` to *install* something. Do not reintroduce `uv run`.
 #
-# Exception — tools invoked via `uvx`: `black`, `isort`, `ruff`, `pylint`,
+# Exception — tools invoked via `uvx`: `isort`, `ruff`, `pylint`,
 # `vulture`, `interrogate`, `radon`, `yamllint`, `tomlcheck`, and
 # `detect-secrets` are invoked through `uv tool run <spec>` with pinned
 # versions (see the pins just below). This isolates the tool versions from
@@ -244,7 +244,7 @@ export UV_BIN
 # to PyPI — see DETECT_SECRETS_SPEC below.
 #
 # Sub-exception — pylint needs project context: unlike the pure-AST tools
-# (ruff, black, isort, vulture, interrogate, radon), pylint does deep type
+# (ruff, isort, vulture, interrogate, radon), pylint does deep type
 # inference via astroid and relies on being able to *import* the project
 # modules and their runtime dependencies (pydantic, fastapi, …) to avoid
 # false positives like E1133 (not-an-iterable) and spurious W0246
@@ -263,7 +263,6 @@ export UV_BIN
 # Bump these in lockstep with the lower bounds in pyproject.toml's dev group
 # so editors (which typically use the venv-installed version) and Makefile
 # targets (which use these pins via uvx) stay aligned.
-BLACK_VERSION           ?= 26.3.1
 ISORT_VERSION           ?= 6.1.0
 RUFF_VERSION            ?= 0.15.20
 PYLINT_VERSION          ?= 3.3.9
@@ -3338,11 +3337,10 @@ images:
 # help:   make lint                    - Run all linters on default targets (mcpgateway)
 # help:   make lint TARGET=myfile.py   - Run file-aware linters on specific file
 # help:   make lint myfile.py          - Run file-aware linters on a file (shortcut)
-# help:   make lint-quick myfile.py    - Fast linters only (ruff, black, isort)
+# help:   make lint-quick myfile.py    - Fast linters only (ruff, isort)
 # help:   make lint-fix myfile.py      - Auto-fix formatting issues
 # help:   make lint-changed            - Lint only git-changed files
 # help: lint                 - Run the full linting suite (see targets below)
-# help: black                - Reformat code with black (CHECK=1 for dry-run)
 # help: autoflake            - Remove unused imports / variables with autoflake
 # help: isort                - Organise & sort imports with isort (CHECK=1 for dry-run)
 # help: pylint               - Pylint static analysis
@@ -3409,10 +3407,10 @@ LINTERS := isort pylint mypy bandit pydocstyle pycodestyle \
 		pytype check-manifest markdownlint vulture
 
 # Linters that work well with individual files/directories
-FILE_AWARE_LINTERS := isort black pylint mypy bandit pydocstyle \
+FILE_AWARE_LINTERS := isort pylint mypy bandit pydocstyle \
 	pycodestyle ruff pyright vulture markdownlint
 
-.PHONY: lint $(LINTERS) pyright-pr black black-check isort-check ruff-check ruff-fix ruff-format autoflake lint-py lint-yaml lint-json lint-md lint-strict \
+.PHONY: lint $(LINTERS) pyright-pr black isort-check ruff-check ruff-fix ruff-format autoflake lint-py lint-yaml lint-json lint-md lint-strict \
 	lint-count-errors lint-report lint-changed lint-staged lint-commit \
 	lint-parallel lint-cache-clear lint-stats \
 	lint-complexity lint-watch lint-watch-quick \
@@ -3476,7 +3474,7 @@ lint-all:
 ##  Convenience targets
 ## --------------------------------------------------------------------------- ##
 
-# Quick lint - only fast linters (ruff, black, isort)
+# Quick lint - only fast linters (ruff, isort)
 .PHONY: lint-quick
 lint-quick:
 	@# Handle file arguments
@@ -3486,9 +3484,9 @@ lint-quick:
 	else \
 		actual_target="$(TARGET)"; \
 	fi; \
-	echo "⚡ Quick lint of $$actual_target (ruff + black + isort)..."; \
+	echo "⚡ Quick lint of $$actual_target (ruff + isort)..."; \
 	$(MAKE) --no-print-directory ruff RUFF_MODE=check TARGET="$$actual_target"; \
-	$(MAKE) --no-print-directory black CHECK=1 TARGET="$$actual_target"; \
+	$(MAKE) --no-print-directory ruff RUFF_MODE=format CHECK=1 TARGET="$$actual_target"; \
 	$(MAKE) --no-print-directory isort CHECK=1 TARGET="$$actual_target"
 
 # Fix formatting issues
@@ -3508,7 +3506,7 @@ lint-fix:
 		fi; \
 	done; \
 	echo "🔧 Fixing lint issues in $$actual_target..."; \
-	$(MAKE) --no-print-directory black TARGET="$$actual_target"; \
+	$(MAKE) --no-print-directory ruff RUFF_MODE=format TARGET="$$actual_target"; \
 	$(MAKE) --no-print-directory isort TARGET="$$actual_target"; \
 	$(MAKE) --no-print-directory ruff RUFF_MODE=fix TARGET="$$actual_target"
 
@@ -3763,13 +3761,10 @@ autoflake:                          ## 🧹  Strip unused imports / vars
 
 CHECK ?=
 
-# Deprecated, replaced by Ruff
-black: uv                           ## 🎨  Reformat code with black (CHECK=1 for dry-run)
-	@if [ -n "$(call is_true,$(CHECK))" ]; then \
-		echo "🎨  black --check $(TARGET)..." && $(UV_BIN) tool run black==$(BLACK_VERSION) -l 200 --check --diff $(TARGET); \
-	else \
-		echo "🎨  black $(TARGET)..." && $(UV_BIN) tool run black==$(BLACK_VERSION) -l 200 $(TARGET); \
-	fi
+# Deprecated alias: formatting is handled by ruff (RUFF_MODE=format)
+black:                              ## 🎨  Deprecated alias for ruff format (CHECK=1 for dry-run)
+	$(call deprecated_target,black,make ruff RUFF_MODE=format,1.2.0)
+	@$(MAKE) --no-print-directory ruff RUFF_MODE=format CHECK="$(CHECK)" TARGET="$(TARGET)"
 
 isort: uv                           ## 🔀  Sort imports (CHECK=1 for dry-run)
 	@if [ -n "$(call is_true,$(CHECK))" ]; then \
@@ -3779,12 +3774,7 @@ isort: uv                           ## 🔀  Sort imports (CHECK=1 for dry-run)
 	fi
 
 # --- Deprecated aliases (use CHECK=1 instead) ---
-# deprecated: black-check       - Use "make black CHECK=1" instead (v1.2.0)
 # deprecated: isort-check       - Use "make isort CHECK=1" instead (v1.2.0)
-black-check:
-	$(call deprecated_target,black-check,make black CHECK=1,1.2.0)
-	@$(MAKE) --no-print-directory black CHECK=1 TARGET="$(TARGET)"
-
 isort-check:
 	$(call deprecated_target,isort-check,make isort CHECK=1,1.2.0)
 	@$(MAKE) --no-print-directory isort CHECK=1 TARGET="$(TARGET)"
@@ -3968,7 +3958,12 @@ ruff: uv                            ## ⚡  Ruff linter (RUFF_MODE=check|fix|for
 	case "$(RUFF_MODE)" in \
 		check)  ruff_cmd="check" ;; \
 		fix)    ruff_cmd="check --fix" ;; \
-		format) ruff_cmd="format" ;; \
+		format) \
+			if [ -n "$(call is_true,$(CHECK))" ]; then \
+				ruff_cmd="format --check"; \
+			else \
+				ruff_cmd="format"; \
+			fi ;; \
 		*)      printf 'ERROR: RUFF_MODE must be check, fix, or format (got "%s")\n' '$(RUFF_MODE)'; exit 1 ;; \
 	esac; \
 	select_flag=""; \
@@ -4392,7 +4387,7 @@ lint-parallel:							## 🚀 Run linters in parallel
 		$(UV_BIN) pip install -q pytest-xdist"
 	@# Run fast linters in parallel
 	@$(MAKE) --no-print-directory ruff RUFF_MODE=check TARGET="$(TARGET)" & \
-	$(MAKE) --no-print-directory black CHECK=1 TARGET="$(TARGET)" & \
+	$(MAKE) --no-print-directory ruff RUFF_MODE=format CHECK=1 TARGET="$(TARGET)" & \
 	$(MAKE) --no-print-directory isort CHECK=1 TARGET="$(TARGET)" & \
 	wait
 	@echo "✅ Parallel linting completed!"

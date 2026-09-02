@@ -408,7 +408,7 @@
 
 ???+ tip "🧑🎓 What code style and CI tools are used?"
 
-    - Pre-commit: `ruff`, `black`, `mypy`, `isort`
+    - Pre-commit: `ruff`, `mypy`, `isort`
     - Run `make lint` before PRs
 
 ???+ tip "💬 Where can I chat or ask questions?"
