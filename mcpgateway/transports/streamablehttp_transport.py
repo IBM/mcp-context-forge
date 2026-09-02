@@ -44,6 +44,7 @@ from uuid import uuid4
 
 # Third-Party
 import anyio
+from cpex.framework import GlobalContext, PluginContextTable
 from fastapi import HTTPException
 from fastapi.security.utils import get_authorization_scheme_param
 import httpx
@@ -1682,6 +1683,58 @@ def _truthy_is_error(result: Any) -> bool:
     return getattr(result, "is_error", False) is True or getattr(result, "isError", False) is True
 
 
+def _get_plugin_contexts_or_none() -> Tuple[Optional[GlobalContext], Optional[PluginContextTable]]:
+    """Retrieves the plugin contexts recorded by the HTTP_PRE_REQUEST hooks.
+
+    ``HttpAuthMiddleware`` stores the ``GlobalContext`` and the
+    ``PluginContextTable`` produced by ``HTTP_PRE_REQUEST`` on ``request.state``
+    (backed by the ASGI ``scope["state"]`` dictionary) so that later hooks can
+    read state written by earlier ones. The REST handlers in
+    ``mcpgateway/main.py`` forward both into the service layer; without the same
+    hand-off here, ``TOOL_PRE_INVOKE``, ``PROMPT_PRE_FETCH`` and
+    ``RESOURCE_PRE_FETCH`` hooks reached through ``/mcp`` always see an empty
+    context.
+
+    Reading from the ASGI scope rather than from a ``ContextVar`` mirrors path 2
+    of :func:`_get_request_context_or_default` and survives the task-group
+    boundaries introduced by the MCP SDK.
+
+    Returns:
+        Tuple[Optional[GlobalContext], Optional[PluginContextTable]]: The global
+        context and context table left behind by the pre-request hooks, or
+        ``(None, None)`` when no request context is active, the transport is not
+        driven by an ASGI scope, or the plugin manager recorded nothing.
+
+    Examples:
+        >>> _get_plugin_contexts_or_none()
+        (None, None)
+    """
+    try:
+        request = mcp_app.request_context.request
+    except LookupError:
+        return None, None
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.debug("Failed to resolve request context for plugin contexts: %s", exc)
+        return None, None
+
+    scope = getattr(request, "scope", None)
+    if not isinstance(scope, dict):
+        return None, None
+
+    state = scope.get("state")
+    if not isinstance(state, dict):
+        return None, None
+
+    global_context = state.get("plugin_global_context")
+    context_table = state.get("plugin_context_table")
+    # ``PluginContextTable`` is an alias for ``dict[str, PluginContext]``, so the
+    # runtime check is against ``dict``.
+    return (
+        global_context if isinstance(global_context, GlobalContext) else None,
+        context_table if isinstance(context_table, dict) else None,
+    )
+
+
 @mcp_app.call_tool(validate_input=False)
 async def call_tool(
     name: str, arguments: dict
@@ -1702,6 +1755,10 @@ async def call_tool(
     This function supports the MCP protocol's tool calling with structured content validation.
     In direct_proxy mode, returns the raw CallToolResult from the remote server.
     In normal mode, converts ToolResult to CallToolResult with content normalization.
+
+    Plugin contexts recorded by ``HTTP_PRE_REQUEST`` are read from the ASGI scope via
+    :func:`_get_plugin_contexts_or_none` and forwarded to ``invoke_tool`` so that
+    ``TOOL_PRE_INVOKE`` hooks share state with earlier hooks.
 
     Args:
         name (str): The name of the tool to invoke.
@@ -1914,6 +1971,9 @@ async def call_tool(
             # Pool not initialized - execute locally
             pass
 
+    # Cross-hook plugin state sharing on /mcp (issue #3879).
+    plugin_global_context, plugin_context_table = _get_plugin_contexts_or_none()
+
     try:
         async with get_db() as db:
             # Use tool service for all tool invocations (handles direct_proxy internally)
@@ -1928,6 +1988,8 @@ async def call_tool(
                 server_id=server_id,
                 meta_data=meta_data,
                 require_model_visible=True,
+                plugin_global_context=plugin_global_context,
+                plugin_context_table=plugin_context_table,
             )
             if not result or not result.content:
                 logger.warning("No content returned by tool: %s", name)
@@ -2582,6 +2644,10 @@ async def get_prompt(prompt_id: str, arguments: dict[str, str] | None = None) ->
     """
     Retrieves a prompt by ID, optionally substituting arguments.
 
+    Plugin contexts recorded by ``HTTP_PRE_REQUEST`` are read from the ASGI scope via
+    :func:`_get_plugin_contexts_or_none` and forwarded to ``get_prompt`` so that
+    ``PROMPT_PRE_FETCH`` hooks share state with earlier hooks.
+
     Args:
         prompt_id (str): The ID of the prompt to retrieve.
         arguments (Optional[dict[str, str]]): Optional dictionary of arguments to substitute into the prompt.
@@ -2635,6 +2701,9 @@ async def get_prompt(prompt_id: str, arguments: dict[str, str] | None = None) ->
         # request_context might not be active in some edge cases (e.g. tests)
         logger.debug("No active request context found")
 
+    # Cross-hook plugin state sharing on /mcp (issue #3879).
+    plugin_global_context, plugin_context_table = _get_plugin_contexts_or_none()
+
     try:
         async with get_db() as db:
             try:
@@ -2646,6 +2715,8 @@ async def get_prompt(prompt_id: str, arguments: dict[str, str] | None = None) ->
                     server_id=server_id,
                     token_teams=token_teams,
                     _meta_data=meta_data,
+                    plugin_global_context=plugin_global_context,
+                    plugin_context_table=plugin_context_table,
                 )
             except Exception as e:
                 logger.exception("Error getting prompt '%s': %s", prompt_id, e)
@@ -2760,6 +2831,11 @@ async def read_resource(resource_uri: str) -> Union[str, bytes, Iterable[ReadRes
     """
     Reads the content of a resource specified by its URI.
 
+    Plugin contexts recorded by ``HTTP_PRE_REQUEST`` are read from the ASGI scope via
+    :func:`_get_plugin_contexts_or_none` and forwarded to ``read_resource`` so that
+    ``RESOURCE_PRE_FETCH`` hooks share state with earlier hooks. The direct-proxy
+    branch bypasses the gateway-side resource hooks and is unaffected.
+
     Args:
         resource_uri (str): The URI of the resource to read.
 
@@ -2812,6 +2888,9 @@ async def read_resource(resource_uri: str) -> Union[str, bytes, Iterable[ReadRes
         # request_context might not be active in some edge cases (e.g. tests)
         logger.debug("No active request context found")
 
+    # Cross-hook plugin state sharing on /mcp (issue #3879).
+    plugin_global_context, plugin_context_table = _get_plugin_contexts_or_none()
+
     try:
         async with get_db() as db:
             # Check for X-Context-Forge-Gateway-Id header first for direct proxy mode
@@ -2860,6 +2939,8 @@ async def read_resource(resource_uri: str) -> Union[str, bytes, Iterable[ReadRes
                     token_teams=token_teams,
                     meta_data=meta_data,
                     request_headers=request_headers,
+                    plugin_global_context=plugin_global_context,
+                    plugin_context_table=plugin_context_table,
                 )
             except (ResourceError, ResourceNotFoundError):
                 raise
