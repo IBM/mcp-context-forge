@@ -298,6 +298,22 @@ class GatewayError(Exception):
     """
 
 
+class GatewayToolNameConflictError(GatewayError):
+    """Raised when a federated tool would shadow a tool in its visibility scope."""
+
+    message = "Gateway tool name conflicts with an existing tool"
+
+    def __init__(self, invocation_name: str):
+        """Store only normalized conflicting invocation name for safe diagnostics."""
+        super().__init__(self.message)
+        self.invocation_name = invocation_name
+
+
+def _build_gateway_tool_invocation_name(gateway_name: str, tool_name: str) -> str:
+    """Return gateway-prefixed invocation name using ORM naming semantics."""
+    return slugify(gateway_name) + settings.gateway_tool_name_separator + slugify(tool_name)
+
+
 class GatewayNotFoundError(GatewayError):
     """Raised when a requested gateway is not found.
 
@@ -1773,6 +1789,17 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 initialize_timeout=initialize_timeout,
             )
 
+            tools = [tool for tool in tools if tool is not None]
+            self._validate_tool_name_collisions(
+                db,
+                gateway_name=gateway.name,
+                gateway_id=None,
+                gateway_team_id=team_id,
+                gateway_owner_email=owner_email,
+                gateway_visibility=visibility,
+                tools=tools,
+            )
+
             if gateway.one_time_auth:
                 # For one-time auth, clear auth_type and auth_value after initialization
                 auth_type = "one_time_auth"
@@ -2131,6 +2158,12 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             if validation_errors:
                 logger.warning(f"Gateway '{db_gateway.name}' registered successfully but {len(validation_errors)} tool(s) were skipped due to validation errors: {validation_errors}")
             return gateway_read
+        except* GatewayToolNameConflictError as conflict:  # pragma: no mutate
+            if TYPE_CHECKING:
+                conflict: ExceptionGroup[GatewayToolNameConflictError]
+            db.rollback()
+            logger.warning("Gateway tool name collision during registration: %s", conflict.exceptions[0].invocation_name)
+            raise conflict.exceptions[0]
         except* GatewayConnectionError as ge:  # pragma: no mutate
             if TYPE_CHECKING:
                 ge: ExceptionGroup[GatewayConnectionError]
@@ -2420,6 +2453,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
             return {"capabilities": capabilities, "tools": tools, "resources": resources, "prompts": prompts}
 
+        except GatewayToolNameConflictError:
+            db.rollback()
+            raise
         except GatewayConnectionError as gce:
             db.rollback()
             # Surface validation or depth-related failures directly to the user
@@ -2761,6 +2797,20 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             if gateway.enabled or include_inactive:
                 if getattr(settings, "gateway_async_lifecycle_enabled", False) is True and getattr(gateway, "status", None) == "pending":
                     return self.convert_gateway_to_read(gateway)
+
+                gateway_name_changed = gateway_update.name is not None and gateway_update.name != gateway.name
+                if gateway_name_changed:
+                    self._validate_tool_name_collisions(
+                        db,
+                        gateway_name=gateway_update.name,
+                        gateway_id=str(gateway.id),
+                        gateway_team_id=gateway.team_id,
+                        gateway_owner_email=gateway.owner_email,
+                        gateway_visibility=gateway_update.visibility or gateway.visibility,
+                        tools=list(gateway.tools),
+                        existing_tools_by_original_name={tool.original_name: tool for tool in gateway.tools},
+                        project_gateway_rename=True,
+                    )
 
                 # Check for name conflicts if name is being changed
                 if gateway_update.name is not None and gateway_update.name != gateway.name:
@@ -3242,6 +3292,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         prompts=prompts,
                         created_via="update",
                         update_visibility=_vis_changed,
+                        project_gateway_rename=gateway_name_changed,
                     )
                     self._reconcile_gateway_catalog(
                         db,
@@ -3261,6 +3312,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     self._active_gateways.discard(gateway.url)
                     self._active_gateways.add(gateway.url)
                     reinit_succeeded = True
+                except GatewayToolNameConflictError:
+                    raise
                 except (GatewayConnectionError, GatewayCredentialError) as gce:
                     if init_affecting_changed:
                         # Do NOT persist the broken update — propagate so the outer handler
@@ -3381,6 +3434,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 return self.convert_gateway_to_read(gateway)
             # Gateway is inactive and include_inactive is False → skip update, return None
             return None
+        except GatewayToolNameConflictError:
+            db.rollback()
+            raise
         except GatewayNameConflictError as ge:
             logger.error("GatewayNameConflictError in group: %s", ge)
             db.rollback()
@@ -3738,6 +3794,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
             # Update status if it's different
             if (gateway.enabled != activate) or (gateway.reachable != reachable):
+                was_active = gateway.url in self._active_gateways
                 gateway.enabled = activate
                 gateway.reachable = reachable
                 gateway.updated_at = datetime.now(timezone.utc)
@@ -3813,6 +3870,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         register_gateway_capabilities_for_notifications(gateway.id, capabilities)
 
                         gateway.last_seen = datetime.now(timezone.utc)
+                    except GatewayToolNameConflictError:
+                        if not was_active:
+                            self._active_gateways.discard(gateway.url)
+                        raise
                     except Exception as e:
                         logger.warning("Failed to initialize reactivated gateway: %s", e)
                 else:
@@ -3926,6 +3987,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
             return self.convert_gateway_to_read(gateway)
 
+        except GatewayToolNameConflictError:
+            db.rollback()
+            raise
         except PermissionError as e:
             db.rollback()
 
@@ -6290,6 +6354,79 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         return prompts_to_add
 
+    def _validate_tool_name_collisions(
+        self,
+        db: Session,
+        *,
+        gateway_name: str,
+        gateway_id: str | None,
+        gateway_team_id: str | None,
+        gateway_owner_email: str | None,
+        gateway_visibility: str,
+        tools: list[Any],
+        existing_tools_by_original_name: dict[str, DbTool] | None = None,
+        update_visibility: bool = False,
+        project_gateway_rename: bool = False,
+    ) -> None:
+        """Reject federated tool names that collide in their persisted visibility scope.
+
+        This intentionally mirrors local tool namespace rules.  It is a
+        validation guard, not a replacement for a database uniqueness constraint;
+        concurrent writers remain outside this operation's transaction-level scope.
+        """
+        if any(tool is None for tool in tools):
+            raise ValueError("Gateway catalog contains invalid tool entry")
+
+        existing_tools_by_original_name = existing_tools_by_original_name or {}
+        projected: list[tuple[str, str, str | None, str | None]] = []
+        for tool in tools:
+            original_name = tool.original_name if isinstance(tool, DbTool) else tool.name
+            existing = existing_tools_by_original_name.get(original_name)
+            if existing is not None:
+                if project_gateway_rename:
+                    custom_name_slug = existing.custom_name_slug or slugify(existing.custom_name or existing.original_name)
+                    candidate_name = slugify(gateway_name) + settings.gateway_tool_name_separator + custom_name_slug
+                else:
+                    candidate_name = existing.name
+                visibility = getattr(tool, "visibility", None) if update_visibility else None
+                projected.append((candidate_name, visibility or existing.visibility, existing.team_id, existing.owner_email))
+            else:
+                projected.append(
+                    (
+                        _build_gateway_tool_invocation_name(gateway_name, original_name),
+                        getattr(tool, "visibility", None) or gateway_visibility,
+                        gateway_team_id,
+                        gateway_owner_email,
+                    )
+                )
+
+        by_name: dict[str, int] = {}
+        for name, _visibility, _team_id, _owner_email in projected:
+            by_name[name] = by_name.get(name, 0) + 1
+        duplicates = sorted(name for name, count in by_name.items() if count > 1)
+        if duplicates:
+            raise GatewayToolNameConflictError(duplicates[0])
+
+        candidate_names = sorted(by_name)
+        if not candidate_names:
+            return
+
+        with db.no_autoflush:
+            matching_tools = db.execute(select(DbTool).where(DbTool.name.in_(candidate_names))).scalars().all()
+
+        for candidate_name, visibility, team_id, owner_email in sorted(projected, key=lambda item: item[0]):
+            for existing in matching_tools:
+                if gateway_id is not None and str(existing.gateway_id) == str(gateway_id):
+                    continue
+                if existing.name != candidate_name:
+                    continue
+                if visibility == "public" and existing.visibility == "public":
+                    raise GatewayToolNameConflictError(candidate_name)
+                if visibility == "team" and existing.visibility == "team" and existing.team_id == team_id:
+                    raise GatewayToolNameConflictError(candidate_name)
+                if visibility == "private" and existing.visibility == "private" and existing.owner_email == owner_email:
+                    raise GatewayToolNameConflictError(candidate_name)
+
     def _sync_gateway_catalog(
         self,
         db: Session,
@@ -6302,8 +6439,25 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         update_visibility: bool = False,
         include_resources: bool = True,
         include_prompts: bool = True,
+        project_gateway_rename: bool = False,
     ) -> GatewayCatalogSyncResult:
         """Update/create fetched catalog rows inside caller transaction."""
+        tools = [tool for tool in tools if tool is not None]
+        resources = [resource for resource in resources if resource is not None]
+        prompts = [prompt for prompt in prompts if prompt is not None]
+        existing_tools_by_original_name = {tool.original_name: tool for tool in gateway.tools}
+        self._validate_tool_name_collisions(
+            db,
+            gateway_name=gateway.name,
+            gateway_id=str(gateway.id),
+            gateway_team_id=gateway.team_id,
+            gateway_owner_email=gateway.owner_email,
+            gateway_visibility=gateway.visibility,
+            tools=tools,
+            existing_tools_by_original_name=existing_tools_by_original_name,
+            update_visibility=update_visibility,
+            project_gateway_rename=project_gateway_rename,
+        )
         return GatewayCatalogSyncResult(
             new_tool_names=[tool.name for tool in tools],
             new_resource_uris=[resource.uri for resource in resources] if include_resources else None,

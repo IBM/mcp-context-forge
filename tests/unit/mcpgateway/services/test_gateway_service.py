@@ -47,9 +47,12 @@ from mcpgateway.services.gateway_service import (
     GatewayNameConflictError,
     GatewayNotFoundError,
     GatewayService,
+    GatewayToolNameConflictError,
     OAuthToolValidationError,
+    _build_gateway_tool_invocation_name,
 )
 from mcpgateway.services.mcp_apps import MCP_UI_EXTENSION
+from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.services_auth import encode_auth
 
 # ---------------------------------------------------------------------------
@@ -85,6 +88,73 @@ def _make_execute_result(*, scalar: _R | None = None, scalars_list: list[_R] | N
     result.scalars.return_value = scalars_proxy
     result.rowcount = rowcount
     return result
+
+
+class TestGatewayToolNameCollisions:
+    """Gateway catalog tool-name collision guards."""
+
+    @pytest.mark.parametrize("separator", ["-", "--", "_", "."])
+    def test_candidate_name_uses_gateway_orm_format(self, monkeypatch, separator):
+        """Candidate names use configured separator and same slug normalization as ORM."""
+        monkeypatch.setattr(settings, "gateway_tool_name_separator", separator)
+        assert _build_gateway_tool_invocation_name("Prod API", "API Search") == f"{slugify('Prod API')}{separator}{slugify('API Search')}"
+
+    def test_public_collision_is_rejected(self):
+        """Public tool namespace ignores owner identity."""
+        service = GatewayService()
+        db = MagicMock()
+        db.execute.return_value = _make_execute_result(
+            scalars_list=[SimpleNamespace(name="prod-api-search", visibility="public", team_id=None, owner_email="other@example.com", gateway_id="other")]
+        )
+
+        with pytest.raises(GatewayToolNameConflictError, match="Gateway tool name conflicts with an existing tool") as error:
+            service._validate_tool_name_collisions(
+                db,
+                gateway_name="prod",
+                gateway_id=None,
+                gateway_team_id=None,
+                gateway_owner_email="owner@example.com",
+                gateway_visibility="public",
+                tools=[SimpleNamespace(name="api-search")],
+            )
+
+        assert error.value.invocation_name == "prod-api-search"
+
+    def test_team_collision_requires_same_team(self):
+        """Same tool name remains allowed across different team namespaces."""
+        service = GatewayService()
+        db = MagicMock()
+        db.execute.return_value = _make_execute_result(
+            scalars_list=[SimpleNamespace(name="prod-api-search", visibility="team", team_id="team-two", owner_email="other@example.com", gateway_id="other")]
+        )
+
+        service._validate_tool_name_collisions(
+            db,
+            gateway_name="prod",
+            gateway_id=None,
+            gateway_team_id="team-one",
+            gateway_owner_email="owner@example.com",
+            gateway_visibility="team",
+            tools=[SimpleNamespace(name="api-search")],
+        )
+
+    def test_incoming_normalized_duplicates_are_rejected_before_query(self):
+        """One incoming gateway catalog cannot expose duplicate invocation names."""
+        service = GatewayService()
+        db = MagicMock()
+
+        with pytest.raises(GatewayToolNameConflictError):
+            service._validate_tool_name_collisions(
+                db,
+                gateway_name="prod",
+                gateway_id=None,
+                gateway_team_id=None,
+                gateway_owner_email="owner@example.com",
+                gateway_visibility="public",
+                tools=[SimpleNamespace(name="api-search"), SimpleNamespace(name="api search")],
+            )
+
+        db.execute.assert_not_called()
 
 
 def _make_gateway(**overrides):
@@ -253,6 +323,7 @@ class TestGatewayService:
         test_db.execute = Mock(
             side_effect=[
                 _make_execute_result(scalar=None),  # name-conflict check
+                _make_execute_result(scalars_list=[]),  # federated tool collision check
                 _make_execute_result(scalars_list=[]),  # tool lookup
             ]
         )
@@ -512,6 +583,7 @@ class TestGatewayService:
         test_db.execute = Mock(
             side_effect=[
                 _make_execute_result(scalar=None),  # name-conflict check
+                _make_execute_result(scalars_list=[]),  # federated tool collision check
                 _make_execute_result(scalars_list=[]),  # tool lookup
             ]
         )
@@ -1623,8 +1695,8 @@ class TestGatewayService:
         mock_gateway.visibility = "public"
         mock_gateway.team_id = 1  # Ensure team_id is a real value
         conflicting = MagicMock(spec=DbGateway, id=2, name="existing_gateway", slug="existing-gateway", visibility="public", is_active=True)
-        # First call returns the gateway to update (with selectinload), second returns the conflicting one
-        execute_results = [_make_execute_result(scalar=mock_gateway), _make_execute_result(scalar=conflicting)]
+        # Gateway rename now first validates projected linked tool names, then checks gateway slug conflicts.
+        execute_results = [_make_execute_result(scalar=mock_gateway), _make_execute_result(scalars_list=[]), _make_execute_result(scalar=conflicting)]
         test_db.execute = Mock(side_effect=execute_results)
         test_db.rollback = Mock()
 
@@ -2516,6 +2588,7 @@ class TestGatewayService:
         test_db.execute = Mock(
             side_effect=[
                 _make_execute_result(scalar=mock_gateway),  # SELECT
+                _make_execute_result(scalars_list=[]),  # federated tool collision check
                 Mock(),  # DELETE ToolMetric (stale-tool)
                 Mock(),  # DELETE server_tool_association
                 Mock(),  # DELETE DbTool
@@ -3388,7 +3461,7 @@ class TestGatewayRefresh:
         # Mock fresh_db_session to return our mock session
         with patch("mcpgateway.services.gateway_service.fresh_db_session", return_value=mock_db_session):
             # Mock _initialize_gateway to return new data
-            new_tools = [MagicMock(name="tool1")]
+            new_tools = [SimpleNamespace(name="tool1")]
             new_resources = [MagicMock(uri="res1")]
             new_prompts = [MagicMock(name="prompt1")]
 
@@ -5172,11 +5245,17 @@ async def test_fetch_tools_after_oauth_cleanup_and_adds_items(gateway_service, m
     gateway.name = "gw"
     gateway.oauth_config = {"grant_type": "authorization_code"}
     gateway.transport = "sse"
-    gateway.tools = [SimpleNamespace(id=1, original_name="old-tool"), SimpleNamespace(id=2, original_name="keep-tool")]
+    gateway.tools = [
+        SimpleNamespace(id=1, original_name="old-tool", name="gw-old-tool", visibility="public", team_id=None, owner_email=None),
+        SimpleNamespace(id=2, original_name="keep-tool", name="gw-keep-tool", visibility="public", team_id=None, owner_email=None),
+    ]
     gateway.resources = [SimpleNamespace(id=3, uri="old://res"), SimpleNamespace(id=4, uri="keep://res")]
     gateway.prompts = [SimpleNamespace(id=5, original_name="old-prompt"), SimpleNamespace(id=6, original_name="keep-prompt")]
     gateway.capabilities = {}
     gateway.last_seen = None
+    gateway.visibility = "public"
+    gateway.team_id = None
+    gateway.owner_email = None
 
     db = MagicMock()
     # Mock EmailUser and EmailTeamMember queries for user_context building
