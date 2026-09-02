@@ -39,7 +39,6 @@ from dataclasses import dataclass
 from enum import Enum
 import re
 from typing import Any, assert_never, AsyncGenerator, ContextManager, Dict, Iterable, List, Optional, Pattern, Tuple, Union
-from urllib.parse import urlsplit, urlunsplit
 from uuid import uuid4
 
 # Third-Party
@@ -74,7 +73,6 @@ from mcpgateway.db import SessionLocal
 from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG
 from mcpgateway.observability import create_span
 from mcpgateway.services.completion_service import CompletionService
-from mcpgateway.services.http_client_service import get_http_client, get_http_limits
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.mcp_apps import (
     apply_resource_meta,
@@ -384,9 +382,6 @@ def _resolve_authorization_servers(oauth_config: Dict[str, Any]) -> List[str]:
 
 
 _shared_session_registry: Optional[Any] = None
-_rust_event_store_client: Optional[httpx.AsyncClient] = None
-_rust_event_store_client_lock = asyncio.Lock()
-_RUST_EVENT_STORE_DEFAULT_KEY_PREFIX = "mcpgw:eventstore"
 
 # ------------------------------ Event store ------------------------------
 
@@ -683,128 +678,6 @@ class InMemoryEventStore(EventStore):
             await send_callback(EventMessage(entry.message, entry.event_id))
 
         return last_event.stream_id
-
-
-class RustEventStore(EventStore):
-    """Rust-backed event store that delegates resumable stream state to the sidecar."""
-
-    def __init__(self, max_events_per_stream: int = 100, ttl: int = 3600, key_prefix: str = _RUST_EVENT_STORE_DEFAULT_KEY_PREFIX):
-        """Initialize the Rust-backed event store wrapper.
-
-        Args:
-            max_events_per_stream: Maximum number of events retained per stream.
-            ttl: Event retention time in seconds.
-            key_prefix: Redis key prefix shared with the Rust sidecar.
-        """
-        self.max_events_per_stream = max_events_per_stream
-        self.ttl = ttl
-        self.key_prefix = key_prefix.rstrip(":")
-
-    async def store_event(self, stream_id: StreamId, message: JSONRPCMessage | None) -> EventId:
-        """Store an event in the Rust-backed resumable event store.
-
-        Args:
-            stream_id: Stream that owns the event.
-            message: JSON-RPC payload to persist for replay.
-
-        Returns:
-            The generated event identifier returned by the Rust sidecar.
-
-        Raises:
-            RuntimeError: If the Rust sidecar event store is unavailable or returns invalid data.
-        """
-        client = await _get_rust_event_store_client()
-        message_dict = None if message is None else (message.model_dump() if hasattr(message, "model_dump") else dict(message))
-        response = await client.post(
-            _build_rust_runtime_internal_url("/_internal/event-store/store"),
-            json={
-                "streamId": stream_id,
-                "message": message_dict,
-                "keyPrefix": self.key_prefix,
-                "maxEventsPerStream": self.max_events_per_stream,
-                "ttlSeconds": self.ttl,
-            },
-            timeout=httpx.Timeout(settings.experimental_rust_mcp_runtime_timeout_seconds),
-            follow_redirects=False,
-        )
-        response.raise_for_status()
-        payload = response.json()
-        event_id = payload.get("eventId")
-        if not isinstance(event_id, str) or not event_id:
-            raise RuntimeError("Rust event store returned an invalid eventId")
-        return event_id
-
-    async def replay_events_after(self, last_event_id: EventId, send_callback: EventCallback) -> Union[StreamId, None]:
-        """Replay events newer than ``last_event_id`` through the provided callback.
-
-        Args:
-            last_event_id: Last event acknowledged by the reconnecting client.
-            send_callback: Callback invoked for each replayed event payload.
-
-        Returns:
-            The associated stream identifier when replay succeeds, else ``None``.
-        """
-        client = await _get_rust_event_store_client()
-        response = await client.post(
-            _build_rust_runtime_internal_url("/_internal/event-store/replay"),
-            json={
-                "lastEventId": last_event_id,
-                "keyPrefix": self.key_prefix,
-            },
-            timeout=httpx.Timeout(settings.experimental_rust_mcp_runtime_timeout_seconds),
-            follow_redirects=False,
-        )
-        response.raise_for_status()
-        payload = response.json()
-        stream_id = payload.get("streamId")
-        if not isinstance(stream_id, str) or not stream_id:
-            return None
-        for event in payload.get("events", []):
-            if not isinstance(event, dict):
-                continue
-            await send_callback(event.get("message"))
-        return stream_id
-
-
-async def _get_rust_event_store_client() -> httpx.AsyncClient:
-    """Return the HTTP client used for Python -> Rust event-store calls.
-
-    Returns:
-        An async HTTP client configured for Rust event-store access.
-    """
-    global _rust_event_store_client  # pylint: disable=global-statement
-
-    uds_path = settings.experimental_rust_mcp_runtime_uds
-    if not uds_path:
-        return await get_http_client()
-
-    if _rust_event_store_client is not None:
-        return _rust_event_store_client
-
-    async with _rust_event_store_client_lock:
-        if _rust_event_store_client is None:
-            _rust_event_store_client = httpx.AsyncClient(
-                transport=httpx.AsyncHTTPTransport(uds=uds_path),
-                limits=get_http_limits(),
-                timeout=httpx.Timeout(settings.experimental_rust_mcp_runtime_timeout_seconds),
-                follow_redirects=False,
-            )
-        return _rust_event_store_client
-
-
-def _build_rust_runtime_internal_url(path: str) -> str:
-    """Build a Rust sidecar internal URL for UDS or loopback HTTP transport.
-
-    Args:
-        path: Internal Rust runtime path to append to the configured base URL.
-
-    Returns:
-        Absolute URL targeting the Rust sidecar over HTTP or UDS-backed transport.
-    """
-    base = urlsplit(settings.experimental_rust_mcp_runtime_url)
-    base_path = base.path.rstrip("/")
-    target_path = f"{base_path}{path}" if base_path else path
-    return urlunsplit((base.scheme, base.netloc, target_path, "", ""))
 
 
 # ------------------------------ Streamable HTTP Transport ------------------------------
@@ -1324,9 +1197,6 @@ async def _validate_streamable_session_access(
         return True, 200, ""
 
     if not _should_enforce_streamable_rbac(user_context):
-        return True, 200, ""
-
-    if isinstance(user_context, dict) and user_context.get("_rust_session_validated") is True:
         return True, 200, ""
 
     # Initialize establishes a new session and is authorized separately.
@@ -3989,14 +3859,8 @@ class SessionManagerWrapper:
         """
 
         if settings.use_stateful_sessions:
-            if settings.experimental_rust_mcp_runtime_enabled and settings.experimental_rust_mcp_session_auth_reuse_enabled and settings.experimental_rust_mcp_event_store_enabled:
-                event_store = RustEventStore(
-                    max_events_per_stream=settings.streamable_http_max_events_per_stream,
-                    ttl=settings.streamable_http_event_ttl,
-                )
-                logger.debug("Using RustEventStore for stateful sessions")
             # Use Redis event store for single-worker stateful deployments
-            elif settings.cache_type == "redis" and settings.redis_url:
+            if settings.cache_type == "redis" and settings.redis_url:
                 event_store = RedisEventStore(max_events_per_stream=settings.streamable_http_max_events_per_stream, ttl=settings.streamable_http_event_ttl)
                 logger.debug("Using RedisEventStore for stateful sessions (single-worker)")
             else:
@@ -5003,9 +4867,9 @@ async def _set_proxy_user_context(proxy_user: str) -> dict[str, Any] | None:
 def get_streamable_http_auth_context() -> dict[str, Any]:
     """Return the current StreamableHTTP auth context for trusted internal forwarding.
 
-    The Rust MCP proxy uses this to carry already-authenticated MCP request context
-    across the Python -> Rust -> Python seam so the internal dispatcher does not
-    need to repeat JWT verification and team normalization on the hot path.
+    Trusted internal dispatch uses this to carry already-authenticated MCP request
+    context so the internal dispatcher does not need to repeat JWT verification and
+    team normalization on the hot path.
 
     Returns:
         A shallow copy of the trusted auth context fields that may be forwarded
