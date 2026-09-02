@@ -5900,7 +5900,7 @@ async def create_tool(
 async def preview_tool(
     name: str,
     request: Request,
-    body: ToolPreviewRequest = ToolPreviewRequest(),
+    body: Optional[ToolPreviewRequest] = Body(default=None),
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
 ) -> ToolPreviewResponse:
@@ -5929,6 +5929,7 @@ async def preview_tool(
     if not settings.mcpgateway_tool_preview_enabled:
         raise HTTPException(status_code=404, detail="Tool preview is disabled")
 
+    body = body or ToolPreviewRequest()
     auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
     try:
         return await tool_service.preview_tool_invocation(
