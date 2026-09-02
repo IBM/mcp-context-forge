@@ -21,7 +21,7 @@ from datetime import datetime, timedelta, UTC
 from typing import List, Optional, Union
 
 # Third-Party
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from fastapi.security import HTTPBearer
 from sqlalchemy.orm import Session
 
@@ -128,13 +128,15 @@ def get_user_agent(request: Request) -> str:
     return request.headers.get("User-Agent", "unknown")
 
 
-async def create_access_token(user: EmailUser, token_scopes: Optional[dict] = None, jti: Optional[str] = None) -> tuple[str, int]:
+async def create_access_token(user: EmailUser, token_scopes: Optional[dict] = None, jti: Optional[str] = None, extra_claims: Optional[dict] = None) -> tuple[str, int]:
     """Create JWT access token for user with enhanced scoping.
 
     Args:
         user: EmailUser instance
         token_scopes: Optional token scoping information
         jti: Optional JWT ID for revocation tracking
+        extra_claims: Optional additional claims merged into the payload; cannot
+            override the reserved claims set by this function (sub, exp, jti, ...)
 
     Returns:
         Tuple of (token_string, expires_in_seconds)
@@ -146,6 +148,7 @@ async def create_access_token(user: EmailUser, token_scopes: Optional[dict] = No
     issued_at = int(now.timestamp())
     # Create JWT payload — session token (teams resolved server-side at request time)
     payload = {
+        **(extra_claims or {}),
         # Standard JWT claims
         "sub": str(user.id),
         "iss": settings.jwt_issuer,
@@ -789,54 +792,6 @@ async def update_user(user_email: str, user_request: AdminUserUpdateRequest, cur
     Raises:
         HTTPException: If user not found or update fails
     """
-    return await update_user_delegate(user_email, user_request, current_user_ctx, db)
-
-
-# ----------------------> [#2754] remove after Sun, 16 Aug 2026 23:59:59 UTC and replace update_user as directed in the docstring of update_user_delegate
-@email_auth_router.put("/admin/users/{user_email}", response_model=EmailUserResponse, deprecated=True)
-@require_permission("admin.user_management")
-async def update_user_deprecated(
-    user_email: str, user_request: AdminUserUpdateRequest, response: Response, current_user_ctx: dict = Depends(get_current_user_with_permissions), db: Session = Depends(get_db)
-):
-    """Update user information (admin only). Deprecated: use PATCH instead.
-
-    Args:
-        user_email: Email of user to update
-        user_request: Updated user information
-        current_user_ctx: Currently authenticated user context with permissions
-        db: Database session
-        response: FastAPI Response object to manipulate the headers
-
-    Returns:
-        EmailUserResponse: Updated user information
-
-    Raises:
-        HTTPException: If user not found or update fails
-    """
-    result = await update_user_delegate(user_email, user_request, current_user_ctx, db)
-    deprecation_date = "@" + str(int(datetime(2026, 3, 31, 23, 59, 59, tzinfo=UTC).timestamp()))
-    response.headers["Deprecation"] = deprecation_date
-    response.headers["Sunset"] = "Sun, 16 Aug 2026 23:59:59 GMT"
-    return result
-
-
-async def update_user_delegate(user_email: str, user_request: AdminUserUpdateRequest, current_user_ctx: dict, db: Session):
-    """Update user information. Common function for both update_user and update_user_deprecated.
-    Helps in reducing duplicate code and consistent behaviour. Move this entire code back to update_user after
-    Sun, 16 Aug 2026 23:59:59 UTC.
-
-    Args:
-        user_email: Email of user to update
-        user_request: Updated user information
-        current_user_ctx: Currently authenticated user context with permissions
-        db: Database session
-
-    Returns:
-        EmailUserResponse: Updated user information
-
-    Raises:
-        HTTPException: If user not found or update fails
-    """
     auth_service = EmailAuthService(db)
 
     try:
@@ -867,9 +822,6 @@ async def update_user_delegate(user_email: str, user_request: AdminUserUpdateReq
     except Exception as e:
         logger.error(f"Error updating user {SecurityValidator.sanitize_log_message(user_email)}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to update user")
-
-
-# -------------------------->
 
 
 @email_auth_router.delete("/admin/users/{user_email}", response_model=SuccessResponse)
@@ -910,6 +862,11 @@ async def delete_user(user_email: str, current_user_ctx: dict = Depends(get_curr
 
     except HTTPException:
         raise  # Re-raise HTTP exceptions as-is (401, 403, 404, etc.)
+    except ValueError as e:
+        error_msg = str(e)
+        status_code = status.HTTP_404_NOT_FOUND if "not found" in error_msg.lower() else status.HTTP_409_CONFLICT
+        logger.warning(f"Cannot delete user {SecurityValidator.sanitize_log_message(user_email)}: {e}")
+        raise HTTPException(status_code=status_code, detail=error_msg)
     except Exception as e:
         logger.error(f"Error deleting user {SecurityValidator.sanitize_log_message(user_email)}: {e}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to delete user")

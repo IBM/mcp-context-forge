@@ -282,6 +282,10 @@ DETECT_SECRETS_SPEC     ?= git+https://github.com/ibm/detect-secrets.git@076672a
 
 .PHONY: venv
 venv: uv
+	@if [ -d "$(VENV_DIR)" ] && [ ! -e "$(VENV_DIR)/bin/python3" ]; then \
+		echo "⚠️  Cached virtual env has a broken Python interpreter symlink; recreating."; \
+		rm -rf "$(VENV_DIR)"; \
+	fi
 	@if [ ! -d "$(VENV_DIR)" ]; then \
 		$(UV_BIN) venv "$(VENV_DIR)"; \
 		echo -e "✅  Virtual env created.\n💡  Enter it with:\n    . $(VENV_DIR)/bin/activate\n"; \
@@ -331,8 +335,7 @@ install-dev: venv
 	@echo "🔑  Next step — choose one:"
 	@echo "    make setup           # recommended: auto-creates .env and patches secrets in-place"
 	@echo "    make init-secrets    # writes secrets to .env.secrets so you can review before copying"
-	@echo "    JWT_SECRET_KEY must be strong in every environment."
-	@echo "    AUTH_ENCRYPTION_SECRET: weak values (e.g. my-test-salt) are allowed in ENVIRONMENT=development."
+	@echo "    The gateway will not start until JWT_SECRET_KEY and AUTH_ENCRYPTION_SECRET are set."
 
 # help: build-ui              - Build Admin UI CSS and JS bundles (requires npm; set SKIP_UI_BUILD=1 to bypass)
 .PHONY: build-ui
@@ -356,6 +359,11 @@ build-ui:
 		exit 1; \
 	fi
 
+# help: catalog-icons         - Fetch and bundle catalog icons as local static PNG assets
+.PHONY: catalog-icons
+catalog-icons:
+	@$(UV_BIN) run python scripts/fetch_catalog_icons.py
+
 .PHONY: update
 update:
 	@echo "⬆️   Updating installed dependencies..."
@@ -376,7 +384,7 @@ check-env-dev:
 
 # help: init-secrets          - Generate secrets → .env.secrets for manual review; copy values into .env when ready
 # help: init-secrets-force    - Regenerate .env.secrets unconditionally (no prompt)
-# help: init-secrets-patch-env - Patch JWT_SECRET_KEY/BASIC_AUTH_PASSWORD into .env; AUTH_ENCRYPTION_SECRET written to .env.secrets only
+# help: init-secrets-patch-env - Write generated secrets directly into .env (in-place, preserves other values)
 .PHONY: init-secrets init-secrets-force init-secrets-patch-env
 init-secrets:                   ## 🔑 Generate secrets → .env.secrets (prompts if file exists)
 	$(UV_BIN) run python3 -m mcpgateway.scripts.init_secrets
@@ -384,7 +392,7 @@ init-secrets:                   ## 🔑 Generate secrets → .env.secrets (promp
 init-secrets-force:             ## 🔑 Regenerate .env.secrets unconditionally (--force)
 	$(UV_BIN) run python3 -m mcpgateway.scripts.init_secrets --force
 
-init-secrets-patch-env:         ## 🔑 Patch JWT_SECRET_KEY into .env; AUTH_ENCRYPTION_SECRET written to .env.secrets only (--patch-env)
+init-secrets-patch-env:         ## 🔑 Patch weak/placeholder secrets directly into .env (--patch-env)
 	$(UV_BIN) run python3 -m mcpgateway.scripts.init_secrets --patch-env .env
 
 # First-time setup: works before make dev, make serve, and make compose-up.
@@ -426,7 +434,9 @@ setup:                          ## 🚀 First-time setup: copy .env.example → 
 # help: certs-mcp-plugin     - Generate plugin server certificate (requires PLUGIN_NAME=name)
 # help: certs-mcp-all        - Generate complete MCP mTLS infrastructure (reads plugins from config.yaml)
 # help: certs-mcp-check      - Check expiry dates of MCP certificates
+# help: certs-client         - Generate a client CA and test client cert for inbound mTLS
 # help: serve-ssl            - Run Gunicorn behind HTTPS on :4444 (uses ./certs)
+# help: serve-ssl-mtls       - Run Gunicorn with HTTPS + inbound mTLS (requires CA_CERTS=...)
 # help: dev                  - Run fast-reload dev server (uvicorn)
 # help: dev-echo             - Run dev server with SQL query logging (N+1 debugging)
 # help: dev-remote           - Run dev server with remote debugging (debugpy on port 5678)
@@ -435,8 +445,8 @@ setup:                          ## 🚀 First-time setup: copy .env.example → 
 # help: stop-serve           - Stop gunicorn production server (port 4444)
 # help: run                  - Execute helper script ./run.sh
 
-.PHONY: serve serve-ssl dev dev-remote stop stop-dev stop-serve run \
-        certs certs-jwt certs-jwt-ecdsa certs-all certs-mcp-ca certs-mcp-gateway certs-mcp-plugin certs-mcp-all certs-mcp-check \
+.PHONY: serve serve-ssl serve-ssl-mtls dev dev-remote stop stop-dev stop-serve run \
+        certs certs-client certs-jwt certs-jwt-ecdsa certs-all certs-mcp-ca certs-mcp-gateway certs-mcp-plugin certs-mcp-all certs-mcp-check \
         js-build
 
 ## --- JS build ----------------------------------------------------------------
@@ -453,6 +463,22 @@ serve: install js-build                  ## Run production server with Gunicorn 
 
 serve-ssl: js-build certs        ## Run Gunicorn with TLS enabled
 	SSL=true CERT_FILE=certs/cert.pem KEY_FILE=certs/key.pem ./run-gunicorn.sh
+
+# CERT_REQS defaults to 2 (required) but is expanded with $(or ...) rather than
+# shell-style ${CERT_REQS:-2}: Make expands ${...} first and would silently
+# resolve the latter to the empty string, which run-gunicorn.sh then defaults to
+# 0 - i.e. mTLS quietly disabled while the target claims to enforce it.
+serve-ssl-mtls: js-build certs   ## Run Gunicorn with TLS and inbound client certificate auth
+	@if [ -z "$(CA_CERTS)" ]; then \
+		echo "❌  CA_CERTS is required. Example:"; \
+		echo "   make certs-client && make serve-ssl-mtls CA_CERTS=certs/client/ca-cert.pem"; \
+		exit 1; \
+	fi
+	SSL=true CERT_FILE=certs/cert.pem KEY_FILE=certs/key.pem \
+	CA_CERTS=$(CA_CERTS) CERT_REQS=$(or $(CERT_REQS),2) \
+	LOOPBACK_CLIENT_CERT=$(or $(LOOPBACK_CLIENT_CERT),certs/client/client-cert.pem) \
+	LOOPBACK_CLIENT_KEY=$(or $(LOOPBACK_CLIENT_KEY),certs/client/client-key.pem) \
+	./run-gunicorn.sh
 
 dev:
 	@echo "🚀 Starting development server with CSS watch..."
@@ -539,6 +565,35 @@ certs:                           ## Generate ./certs/cert.pem & ./certs/key.pem 
 	@sudo chgrp 0 certs/key.pem certs/cert.pem || \
 		(echo "⚠️  Warning: Could not set group to 0 (container may not be able to read key)" && \
 		 echo "   Run manually: sudo chgrp 0 certs/key.pem certs/cert.pem")
+
+.PHONY: certs-client
+certs-client:                    ## Generate client CA + test client cert for inbound mTLS (idempotent)
+	@if [ -f certs/client/ca-cert.pem ] && [ -f certs/client/client-cert.pem ]; then \
+		echo "🔏  Existing client certificates found in ./certs/client - skipping generation."; \
+		echo "    Delete ./certs/client to regenerate (this invalidates any running server's trust chain)."; \
+	else \
+		echo "🔏  Generating client CA and test client certificate (1 year)..."; \
+		mkdir -p certs/client; \
+		openssl req -x509 -newkey rsa:4096 -sha256 -days 365 -nodes \
+			-keyout certs/client/ca-key.pem -out certs/client/ca-cert.pem \
+			-subj "/CN=ContextForge Client CA"; \
+		openssl req -newkey rsa:4096 -nodes \
+			-keyout certs/client/client-key.pem -out certs/client/client-csr.pem \
+			-subj "/CN=test-client"; \
+		openssl x509 -req -in certs/client/client-csr.pem \
+			-CA certs/client/ca-cert.pem -CAkey certs/client/ca-key.pem \
+			-CAcreateserial -out certs/client/client-cert.pem -days 365 -sha256; \
+		rm -f certs/client/client-csr.pem; \
+		echo "✅  Client CA and client certificate written to ./certs/client/"; \
+	fi
+	@echo "🔐  Setting file permissions..."
+	@chmod 644 certs/client/ca-cert.pem certs/client/client-cert.pem
+	@chmod 640 certs/client/ca-key.pem certs/client/client-key.pem
+	@echo ""
+	@echo "⚠️   These are TEST credentials. certs/client/ca-key.pem is a real CA key -"
+	@echo "    use your own PKI in production."
+	@echo "💡  Start the gateway with inbound mTLS:"
+	@echo "    make serve-ssl-mtls CA_CERTS=certs/client/ca-cert.pem"
 
 .PHONY: certs-passphrase
 certs-passphrase:                ## Generate self-signed cert with passphrase-protected key
@@ -801,18 +856,14 @@ clean:
 # =============================================================================
 # help: 🧪 TESTING
 # help: smoketest            - Run smoketest.py --verbose (build container, add MCP server, test endpoints)
-# help: test-protocol-compliance - MCP protocol compliance harness: full (target, transport) matrix across reference + gateway (K=<filter> to pick one)
-# help: test-protocol-compliance-reference - Protocol compliance harness, reference server only (fast, always-on)
-# help: test-protocol-compliance-gateway - Protocol compliance harness, gateway-proxy + gateway-virtual targets (requires working gateway boot)
-# help: test-protocol-compliance-matrix - Protocol compliance matrix across every runnable engine; summary table (pass MATRIX_ARGS='--format markdown --out X' to override)
-# help: test-mcp-protocol-e2e - MCP protocol E2E via FastMCP client against live gateway (K=<filter> to pick one; MCP_E2E_CLIENT_TIMEOUT env to extend the 5s client timeout)
+# help: test-mcp-protocol-e2e - MCP protocol E2E via mcp SDK client against live gateway (K=<filter> to pick one; MCP_E2E_CLIENT_TIMEOUT env to extend the 5s client timeout)
 # help: test-mcp-cli         - [DEPRECATED] Alias for test-mcp-protocol-e2e (accepts same K=<filter>)
 # help: test-bats            - Run bats tests for git tooling (tests/bash; requires bats)
 # help: test-mcp-rbac        - RBAC + multi-transport MCP protocol tests (needs live gateway + SSE)
 # help: test-mcp-access-matrix - MCP role/access matrix (Rust transport, edge/full mode)
 # help: test-mcp-plugin-parity - MCP plugin parity E2E for current Python or Rust stack
 # help: test-mcp-session-isolation - MCP session/auth isolation tests for Rust public transport
-# help: test-e2e-sso         - E2E tests requiring a live SSO identity provider (Keycloak or Entra ID)
+# help: test-live-gateway    - Run ALL live-gateway tests (mcp + sso + e2e_rust)
 # help: test-live-gateway    - Run ALL live-gateway tests (mcp + sso + protocol_compliance + e2e_rust)
 # help: test-plugin-integration - Self-contained plugin E2E tests (boots gateway; PLUGIN=<name> ENFORCEMENT=static|binding|both)
 # help: test-plugin-secrets-detection  - Plugin E2E: SecretsDetection
@@ -861,12 +912,11 @@ clean:
 
 # Dirs/files always excluded from standard pytest runs.
 # tests/live_gateway/ — see tests/live_gateway/README.md. Subsuites need
-# a running gateway (`make testing-up`), Keycloak/Entra (sso/), the Rust
-# transport (e2e_rust/), or specific protocol setup (protocol_compliance/).
+# a running gateway (`make testing-up`), Keycloak/Entra (sso/), or the Rust
+# transport (e2e_rust/).
 # Invoke via `make test-live-gateway` (everything) or a targeted helper
 # (test-mcp-protocol-e2e, test-mcp-rbac, test-mcp-plugin-parity,
-# test-mcp-access-matrix, test-mcp-session-isolation, test-e2e-sso,
-# test-protocol-compliance{,-reference,-gateway}).
+# test-mcp-access-matrix, test-mcp-session-isolation, test-e2e-sso).
 PYTEST_IGNORE := tests/fuzz tests/manual test.py \
     tests/live_gateway
 
@@ -880,9 +930,10 @@ smoketest:
 	@$(VENV_DIR)/bin/python ./smoketest.py --verbose || { echo "❌ Smoketest failed!"; exit 1; }
 	@echo "✅ Smoketest passed!"
 
-test-mcp-protocol-e2e: uv  ## MCP protocol E2E via FastMCP client (K=<filter> to pick one)
+test-mcp-protocol-e2e: uv  ## MCP protocol E2E via mcp SDK client (K=<filter> to pick one)
 	@echo "🔌 Running MCP protocol E2E tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
 	@echo "   Env: MCP_CLI_BASE_URL (gateway URL)  JWT_SECRET_KEY  PLATFORM_ADMIN_EMAIL"
+	@echo "   MCP Apps: set MCPGATEWAY_MCP_APPS_ENABLED=true for both testing-up and this target"
 	@echo "   Timeout: $${MCP_E2E_CLIENT_TIMEOUT:-5.0}s per client operation (override MCP_E2E_CLIENT_TIMEOUT)"
 	@if [ -n "$(K)" ]; then echo "   Filter: -k \"$(K)\""; fi
 	@$(UV_BIN) run pytest tests/live_gateway/mcp/test_mcp_protocol_e2e.py $(if $(K),-k "$(K)") -v -s --tb=short \
@@ -905,28 +956,6 @@ test-bats:                     ## 🧪  Run bats tests for git tooling (tests/ba
 	}
 	@echo "🧪  Running bats tests for git tooling (tests/bash)..."
 	@bats tests/bash/ && echo "✅  bats tests passed!" || { echo "❌  bats tests failed!"; exit 1; }
-
-test-protocol-compliance: uv  ## MCP protocol compliance harness — full (target, transport) matrix (K=<filter> to pick one)
-	@echo "📜 Running MCP protocol compliance harness (tests/live_gateway/protocol_compliance)..."
-	@if [ -n "$(K)" ]; then echo "   Filter: -k \"$(K)\""; fi
-	@$(UV_BIN) run pytest tests/live_gateway/protocol_compliance $(if $(K),-k "$(K)") -v --tb=short \
-		|| { echo "❌ protocol compliance harness failed!"; exit 1; }
-	@echo "✅ protocol compliance harness passed!"
-
-test-protocol-compliance-reference: uv  ## Protocol compliance harness — reference server only (fast, always-on)
-	@echo "📜 Running MCP protocol compliance harness (reference target only)..."
-	@$(UV_BIN) run pytest tests/live_gateway/protocol_compliance -k "reference-stdio" -v --tb=short \
-		|| { echo "❌ reference-target compliance harness failed!"; exit 1; }
-	@echo "✅ reference-target compliance harness passed!"
-
-test-protocol-compliance-gateway: uv  ## Protocol compliance harness — gateway-proxy + gateway-virtual (needs in-process gateway boot to succeed)
-	@echo "📜 Running MCP protocol compliance harness (gateway targets)..."
-	@$(UV_BIN) run pytest tests/live_gateway/protocol_compliance -k "gateway_proxy or gateway_virtual" -v --tb=short \
-		|| { echo "❌ gateway-target compliance harness failed!"; exit 1; }
-	@echo "✅ gateway-target compliance harness passed!"
-
-test-protocol-compliance-matrix: uv  ## MCP compliance matrix across every runnable engine (reference, python, rust_edge, rust_full) with aggregated summary
-	@$(UV_BIN) run python scripts/compliance_matrix.py $(MATRIX_ARGS)
 
 test-mcp-rbac: uv  ## RBAC + multi-transport MCP protocol tests (needs live gateway + SSE)
 	@echo "🔐 Running RBAC + multi-transport MCP protocol tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
@@ -968,16 +997,16 @@ test-mcp-session-isolation: uv  ## MCP session/auth isolation tests for the Rust
 		|| { echo "❌ MCP session/auth isolation tests failed!"; exit 1; }
 	@echo "✅ MCP session/auth isolation tests passed!"
 
-test-e2e-sso: uv  ## E2E tests requiring a live SSO identity provider (Keycloak or Entra ID)
+test-e2e-sso: uv  ## E2E tests requiring a live Keycloak SSO identity provider
 	@echo "🔐 Running SSO-dependent E2E tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
-	@echo "   Requires one of:"
-	@echo "     - Keycloak: 'docker compose --profile sso up -d' (for test_oauth_jwks_e2e.py)"
-	@echo "     - Entra ID: AZURE_CLIENT_ID/AZURE_CLIENT_SECRET/AZURE_TENANT_ID env vars (for test_entra_id_integration.py)"
+	@echo "   Requires: Keycloak via 'docker compose --profile sso up -d' (for test_oauth_jwks_e2e.py)"
+	@echo "   Note: the Entra ID integration test now lives at tests/integration/test_entra_id_integration.py"
+	@echo "         and runs (skipping when AZURE_* creds are absent) as part of the default 'make test'."
 	@$(UV_BIN) run pytest -p playwright tests/live_gateway/sso/ -v -s --tb=short \
 		|| { echo "❌ SSO E2E tests failed!"; exit 1; }
 	@echo "✅ SSO E2E tests passed!"
 
-test-live-gateway: uv  ## Run ALL live-gateway tests (mcp + sso + protocol_compliance)
+test-live-gateway: uv  ## Run ALL live-gateway tests (mcp + sso)
 	@echo "🌐 Running all tests in tests/live_gateway/ ..."
 	@echo "   Requires: live ContextForge gateway (typically 'make testing-up') and any"
 	@echo "             extra services per subsuite — see tests/live_gateway/README.md."
@@ -1606,10 +1635,9 @@ langfuse-up:                               ## Start Langfuse LLM observability s
 	$(LANGFUSE_COMPOSE) up -d --force-recreate gateway
 	@# Nginx resolves gateway backends when it starts; recreate it after gateway churn.
 	$(LANGFUSE_COMPOSE) up -d --no-deps --force-recreate nginx
-	@# Bring up the same lightweight MCP/A2A test targets used by the live smoke
-	@# suites so Langfuse runs can generate real end-to-end tool traffic without
-	@# depending on stale registrations from the testing profile.
-	$(LANGFUSE_COMPOSE) up -d fast_test_server register_fast_test a2a_echo_agent register_a2a_echo
+	@# Bring up the Fast Time and A2A test targets used by live smoke suites
+	@# so Langfuse runs can generate real end-to-end traffic.
+	$(LANGFUSE_COMPOSE) up -d fast_time_server register_fast_time a2a_echo_agent register_a2a_echo
 	$(VERIFY_LANGFUSE_GATEWAY_EXPORT)
 	@echo "⏳ Waiting for Langfuse to be ready..."
 	@for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do \
@@ -1725,8 +1753,8 @@ langfuse-monitoring-down:                  ## Stop Langfuse + monitoring stack
 	@echo "✅ Langfuse + monitoring stack stopped."
 
 # =============================================================================
-# help: 🧪 TESTING STACK (Locust + A2A echo + fast_test_server)
-# help: testing-up            - Start testing stack (Locust + A2A echo + fast_test_server)
+# help: 🧪 TESTING STACK (Locust + A2A echo)
+# help: testing-up            - Start testing stack (Locust + A2A echo)
 # help: testing-down          - Stop testing stack
 # help: testing-status        - Show status of testing services
 # help: testing-logs          - Show testing stack logs
@@ -1738,8 +1766,8 @@ HOST_UID ?= $(shell id -u 2>/dev/null || echo 1000)
 HOST_GID ?= $(shell id -g 2>/dev/null || echo 1000)
 
 .PHONY: testing-up
-testing-up:                                ## Start testing stack (Locust + A2A echo + fast_test_server)
-	@echo "🧪 Starting testing stack (fast_test_server)..."
+testing-up:                                ## Start testing stack (Locust + Fast Time + A2A echo)
+	@echo "🧪 Starting testing stack..."
 	@echo "   🦗 Locust workers: $(TESTING_LOCUST_WORKERS) (override: TESTING_LOCUST_WORKERS=4 make testing-up)"
 	@# Fail early if port 8080 is already bound (nginx needs it)
 	@if lsof -Pi :8080 -sTCP:LISTEN >/dev/null 2>&1 || ss -tlnp 2>/dev/null | grep -q ':8080'; then \
@@ -1759,7 +1787,7 @@ testing-up:                                ## Start testing stack (Locust + A2A 
 	@echo "──────────────────────────────────────────────────────────────────────────"
 	@echo "Gateway (nginx)      http://localhost:8080         API proxy"
 	@echo "Locust Web UI        http://localhost:8089         Load testing (master+workers)"
-	@echo "Fast Test Server     http://localhost:8880         MCP benchmark target"
+	@echo "Fast Time Server     http://localhost:8888         MCP benchmark target"
 	@echo "A2A Echo Agent       http://localhost:9100         A2A protocol target"
 	@echo "MCP Inspector        http://localhost:6274         Interactive MCP client"
 	@echo "Keycloak             http://localhost:8180         SSO / OAuth 2.1 provider (realm: mcp-gateway)"
@@ -1767,7 +1795,7 @@ testing-up:                                ## Start testing stack (Locust + A2A 
 	@echo "   🔒 For DAST security scanning, also start ZAP: make testing-zap-up"
 	@echo ""
 	@echo "   📝 Auto-registered:"
-	@echo "      • MCP gateway: fast_test (from fast_test_server)"
+	@echo "      • MCP gateway: fast_time (from fast_time_server)"
 	@echo "      • A2A agent:   a2a-echo-agent"
 	@echo ""
 	@echo "   Next:"
@@ -1815,7 +1843,7 @@ testing-down:                              ## Stop testing stack
 .PHONY: testing-status
 testing-status:                            ## Show status of testing services
 	@echo "🧪 Testing stack status:"
-	@$(COMPOSE_CMD_MONITOR) ps | grep -E "(fast_test|a2a_echo_agent|locust|mcp_inspector)" || \
+	@$(COMPOSE_CMD_MONITOR) ps | grep -E "(fast_time_server|register_fast_time|a2a_echo_agent|locust|mcp_inspector)" || \
 		echo "   No testing services running. Start with 'make testing-up'"
 	@WORKERS=$$($(COMPOSE_CMD_MONITOR) ps | grep -c "locust_worker" || true); \
 		echo "   🦗 Locust workers: $$WORKERS"
@@ -2722,7 +2750,11 @@ MCP_BENCHMARK_WORKERS ?= 4
 MCP_BENCHMARK_MIXED_MASTER_PORT ?= 5567
 MCP_BENCHMARK_TOOLS_MASTER_PORT ?= 5569
 MCP_BENCHMARK_LOCUST_LOG_LEVEL ?= ERROR
-MCP_BENCHMARK_WORKER_LOG_DIR ?= reports/mcp_benchmark_workers
+MCP_BENCHMARK_TOOL_POOL_SIZE ?= 0
+MCP_BENCHMARK_TOOL_DENYLIST ?= schema_error,flaky
+MCP_BENCHMARK_WORKER_LOG_DIR      ?= reports/mcp_benchmark_workers
+MCP_BENCHMARK_TOOLS_HTML_REPORT   ?= reports/benchmark_mcp_tools.html
+MCP_BENCHMARK_TOOLS_CSV_PREFIX    ?= reports/benchmark_mcp_tools
 RL_LIMIT_PER_MIN ?= 30
 
 load-test-mcp-protocol:                    ## MCP Streamable HTTP protocol test (150 users, 2min)
@@ -2774,6 +2806,8 @@ benchmark-mcp-mixed:                        ## Quick mixed MCP benchmark against
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
 	@/bin/bash -eu -o pipefail -c 'source $(VENV_DIR)/bin/activate && \
 		LOCUST_LOG_LEVEL=$(MCP_BENCHMARK_LOCUST_LOG_LEVEL) MCP_SERVER_ID=$(MCP_BENCHMARK_SERVER_ID) \
+		MCP_BENCHMARK_TOOL_POOL_SIZE=$(MCP_BENCHMARK_TOOL_POOL_SIZE) \
+		MCP_BENCHMARK_TOOL_DENYLIST=$(MCP_BENCHMARK_TOOL_DENYLIST) \
 		locust -f $(MCP_PROTOCOL_LOCUSTFILE) \
 			--host=$(MCP_BENCHMARK_HOST) \
 			--users=$(MCP_BENCHMARK_USERS) \
@@ -2789,16 +2823,24 @@ benchmark-mcp-tools:                        ## Quick tools-only MCP benchmark ag
 	@echo "   Server: $(MCP_BENCHMARK_SERVER_ID)"
 	@echo "   Users: $(MCP_BENCHMARK_USERS), Spawn: $(MCP_BENCHMARK_SPAWN_RATE)/s, Duration: $(MCP_BENCHMARK_RUN_TIME)"
 	@test -d "$(VENV_DIR)" || $(MAKE) venv
+	@mkdir -p reports
 	@/bin/bash -eu -o pipefail -c 'source $(VENV_DIR)/bin/activate && \
 		LOCUST_LOG_LEVEL=$(MCP_BENCHMARK_LOCUST_LOG_LEVEL) MCP_SERVER_ID=$(MCP_BENCHMARK_SERVER_ID) \
+		MCP_BENCHMARK_TOOL_POOL_SIZE=$(MCP_BENCHMARK_TOOL_POOL_SIZE) \
+		MCP_BENCHMARK_TOOL_DENYLIST=$(MCP_BENCHMARK_TOOL_DENYLIST) \
 		locust -f $(MCP_PROTOCOL_LOCUSTFILE) \
 			--host=$(MCP_BENCHMARK_HOST) \
 			--users=$(MCP_BENCHMARK_USERS) \
 			--spawn-rate=$(MCP_BENCHMARK_SPAWN_RATE) \
 			--run-time=$(MCP_BENCHMARK_RUN_TIME) \
 			--headless \
+			--html=$(MCP_BENCHMARK_TOOLS_HTML_REPORT) \
+			--csv=$(MCP_BENCHMARK_TOOLS_CSV_PREFIX) \
 			--only-summary \
 			MCPToolCallerUser'
+	@echo ""
+	@echo "📄 HTML Report: $(MCP_BENCHMARK_TOOLS_HTML_REPORT)"
+	@echo "📊 CSV Reports: $(MCP_BENCHMARK_TOOLS_CSV_PREFIX)_stats.csv"
 
 # help: benchmark-rate-limiter   - Rate limiter correctness test: unique users, controlled pacing
 .PHONY: benchmark-rate-limiter
@@ -2917,6 +2959,8 @@ benchmark-mcp-mixed-300:                    ## Distributed 300-user mixed MCP be
 		trap cleanup EXIT INT TERM; \
 		for i in $$(seq 1 $(MCP_BENCHMARK_WORKERS)); do \
 			LOCUST_LOG_LEVEL=$(MCP_BENCHMARK_LOCUST_LOG_LEVEL) MCP_SERVER_ID=$(MCP_BENCHMARK_SERVER_ID) \
+			MCP_BENCHMARK_TOOL_POOL_SIZE=$(MCP_BENCHMARK_TOOL_POOL_SIZE) \
+			MCP_BENCHMARK_TOOL_DENYLIST=$(MCP_BENCHMARK_TOOL_DENYLIST) \
 			locust -f $(MCP_PROTOCOL_LOCUSTFILE) \
 				--worker \
 				--master-host=127.0.0.1 \
@@ -2925,6 +2969,8 @@ benchmark-mcp-mixed-300:                    ## Distributed 300-user mixed MCP be
 			pids="$$pids $$!"; \
 		done; \
 		LOCUST_LOG_LEVEL=$(MCP_BENCHMARK_LOCUST_LOG_LEVEL) MCP_SERVER_ID=$(MCP_BENCHMARK_SERVER_ID) \
+		MCP_BENCHMARK_TOOL_POOL_SIZE=$(MCP_BENCHMARK_TOOL_POOL_SIZE) \
+		MCP_BENCHMARK_TOOL_DENYLIST=$(MCP_BENCHMARK_TOOL_DENYLIST) \
 		locust -f $(MCP_PROTOCOL_LOCUSTFILE) \
 			--host=$(MCP_BENCHMARK_HOST) \
 			--master \
@@ -2953,6 +2999,8 @@ benchmark-mcp-tools-300:                    ## Distributed 300-user tools-only M
 		trap cleanup EXIT INT TERM; \
 		for i in $$(seq 1 $(MCP_BENCHMARK_WORKERS)); do \
 			LOCUST_LOG_LEVEL=$(MCP_BENCHMARK_LOCUST_LOG_LEVEL) MCP_SERVER_ID=$(MCP_BENCHMARK_SERVER_ID) \
+			MCP_BENCHMARK_TOOL_POOL_SIZE=$(MCP_BENCHMARK_TOOL_POOL_SIZE) \
+			MCP_BENCHMARK_TOOL_DENYLIST=$(MCP_BENCHMARK_TOOL_DENYLIST) \
 			locust -f $(MCP_PROTOCOL_LOCUSTFILE) \
 				--worker \
 				--master-host=127.0.0.1 \
@@ -2961,6 +3009,8 @@ benchmark-mcp-tools-300:                    ## Distributed 300-user tools-only M
 			pids="$$pids $$!"; \
 		done; \
 		LOCUST_LOG_LEVEL=$(MCP_BENCHMARK_LOCUST_LOG_LEVEL) MCP_SERVER_ID=$(MCP_BENCHMARK_SERVER_ID) \
+		MCP_BENCHMARK_TOOL_POOL_SIZE=$(MCP_BENCHMARK_TOOL_POOL_SIZE) \
+		MCP_BENCHMARK_TOOL_DENYLIST=$(MCP_BENCHMARK_TOOL_DENYLIST) \
 		locust -f $(MCP_PROTOCOL_LOCUSTFILE) \
 			--host=$(MCP_BENCHMARK_HOST) \
 			--master \
@@ -4784,8 +4834,9 @@ deps-update:
 # =============================================================================
 .PHONY: dist wheel sdist verify publish publish-testpypi
 
-dist: clean uv               ## Build wheel + sdist into ./dist (optionally includes Rust)
+dist: uv                     ## Build wheel + sdist into ./dist (optionally includes Rust)
 	@echo "📦 Building Python package..."
+	@rm -rf dist build *.egg-info
 	@BUILD_UI_ASSETS=true $(UV_BIN) build
 	@if [ "$(ENABLE_RUST_BUILD)" = "1" ]; then \
 		echo "🦀 Building Rust..."; \
@@ -4966,7 +5017,7 @@ container-build:
 	if [ "$(ENABLE_FIPS_BUILD)" = "true" ] || [ "$(ENABLE_FIPS_BUILD)" = "1" ]; then \
 		echo "🔐 Building container WITH FedRAMP/FIPS compliance (UBI 9 stack)..."; \
 		FIPS_ARG="--build-arg ENABLE_FIPS=true \
-			--build-arg PYTHON_VERSION=3.11 \
+			--build-arg PYTHON_VERSION=3.12 \
 			--build-arg UBI_BASE=registry.access.redhat.com/ubi9/ubi:latest \
 			--build-arg NODEJS_IMAGE=registry.access.redhat.com/ubi9/nodejs-20:latest \
 			--build-arg UBI_MINIMAL=registry.access.redhat.com/ubi9/ubi-minimal:latest"; \
@@ -5568,6 +5619,10 @@ docker-shell:
 # help: compose-tls-logs      - Tail logs from TLS stack
 # help: compose-test-hardened - 🔒 Test hardened runtime (read_only + cap_drop + runtime/default seccomp)
 # help: compose-tls-ps        - Show TLS stack status
+# help: compose-gateway-tls  - 🔐 Gateway-side TLS only (HTTPS:4444, no nginx TLS)
+# help: compose-tls-e2e      - 🔐 End-to-end TLS: nginx TLS + gateway TLS (HTTPS:8443 → HTTPS:4444)
+# help: compose-tls-e2e-down - Stop end-to-end TLS stack
+# help: compose-tls-e2e-logs - Tail logs from end-to-end TLS stack
 # help: compose-siem-up       - 🛡️  Start stack with local OpenSearch SIEM sink (docker-compose.siem-opensearch.yml)
 # help: compose-siem-down     - 🛑 Stop SIEM test stack and remove SIEM containers
 # help: compose-siem-logs     - 📜 Tail logs for gateway + OpenSearch SIEM services
@@ -5893,7 +5948,7 @@ compose-up-safe: compose-validate compose-up
 # ─────────────────────────────────────────────────────────────────────────────
 # TLS Profile - Zero-config HTTPS via Nginx
 # ─────────────────────────────────────────────────────────────────────────────
-.PHONY: compose-tls compose-tls-https compose-tls-down compose-tls-logs compose-tls-ps
+.PHONY: compose-tls compose-tls-https compose-tls-down compose-tls-logs compose-tls-ps compose-gateway-tls compose-tls-e2e compose-tls-e2e-down compose-tls-e2e-logs
 
 compose-tls: compose-validate
 	@echo "🔐 Starting stack with TLS enabled..."
@@ -5934,6 +5989,28 @@ compose-tls-logs:
 	$(COMPOSE_CMD) -f $(COMPOSE_FILE) --profile tls logs -f
 
 compose-tls-ps:
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Gateway TLS / End-to-End TLS (docker-compose.gateway-tls.yml override)
+# ─────────────────────────────────────────────────────────────────────────────
+
+compose-gateway-tls: compose-validate
+	@echo "🔐 Starting stack with gateway TLS enabled (HTTPS on port 4444)..."
+	@echo "   Run 'make certs' first if ./certs/ is empty."
+	IMAGE_LOCAL=$(call get_image_name) $(COMPOSE_CMD) -f $(COMPOSE_FILE) -f docker-compose.gateway-tls.yml up -d --scale nginx=0 --scale gateway=1
+	@echo "✅ Gateway TLS started. Test: curl -fk https://localhost:4444/health"
+
+compose-tls-e2e: compose-validate
+	@echo "🔐 Starting end-to-end TLS (nginx HTTPS:8443 → gateway HTTPS:4444)..."
+	@echo "   Run 'make certs' first if ./certs/ is empty."
+	IMAGE_LOCAL=$(call get_image_name) $(COMPOSE_CMD) -f $(COMPOSE_FILE) -f docker-compose.gateway-tls.yml --profile tls up -d --scale nginx=0 --scale gateway=1
+	@echo "✅ End-to-end TLS started. Test: curl -sk https://localhost:8443/health"
+
+compose-tls-e2e-down:
+	$(COMPOSE_CMD) -f $(COMPOSE_FILE) -f docker-compose.gateway-tls.yml --profile tls down --remove-orphans
+
+compose-tls-e2e-logs:
+	$(COMPOSE_CMD) -f $(COMPOSE_FILE) -f docker-compose.gateway-tls.yml --profile tls logs -f
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Hardened Runtime Testing - Verify security constraints work in practice
@@ -7441,8 +7518,7 @@ interrogate: uv                     ## 📝 Docstring coverage
 pip-audit:                          ## 🔒 Audit Python dependencies for CVEs
 	@echo "🔒  pip-audit vulnerability scan..."
 	@echo ""
-	@echo "  ⚠️  NOTE: --skip-editable is active. Two editable installs are expected to be skipped:"
-	@echo "       • compliance-reference-server   (mcp-servers/ dev install)"
+	@echo "  ⚠️  NOTE: --skip-editable is active. One editable install is expected to be skipped:"
 	@echo "       • mcp-contextforge-gateway      (main gateway dev install)"
 	@echo ""
 	@echo "  🚨 If ANY OTHER package appears in the skip table → STOP and investigate."

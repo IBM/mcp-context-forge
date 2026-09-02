@@ -120,7 +120,7 @@ Run from the worktree root, in order. Each must pass (or have a documented waive
 | 2 | `make test` | Full pytest suite |
 | 3 | `make coverage diff-cover` | Coverage of changed lines vs. base |
 | 4 | `make docker-nuke docker-prod-rust testing-up RUST_MCP_MODE=` | Rebuilds and launches the production-style gateway stack |
-| 5 | `make test-mcp-protocol-e2e test-mcp-rbac test-protocol-compliance` | MCP protocol E2E, RBAC, and compliance against the live gateway |
+| 5 | `make test-mcp-protocol-e2e test-mcp-rbac` | MCP protocol E2E and RBAC against the live gateway |
 | 6 | `make detect-secrets-scan` | No new secrets in files changed vs `main`; exits non-zero on live/unaudited findings (jq merge preserves out-of-scope audited entries; remediate with `make detect-secrets-audit`) |
 
 Distinct from the per-edit hygiene chain in *Essential Commands → Code Quality* (`make autoflake isort black pre-commit`, then `make ruff bandit interrogate pylint verify`): hygiene runs continuously; this gate runs once before declaring a PR ready.
@@ -169,6 +169,7 @@ ContextForge implements a **two-layer security model**:
 **Key behaviors:**
 
 - **API/legacy tokens**: Missing `teams` key = public-only access (secure default). Admin bypass requires BOTH `teams: null` AND `is_admin: true`. `normalize_token_teams()` in `mcpgateway/auth.py` is the single source of truth.
+- **Token creation defaults to the creator's personal team**: `POST /tokens` (and admin-delegated creation) with no `team_id` no longer mints a `teams: null` (public-only) token for non-admin callers. `TokenCatalogService.get_default_team_id()` resolves the caller's (or, for admin delegation, the target's) personal team and `routers/tokens.py::create_token` uses it when the caller belongs to that team; it falls back to single-team inheritance, then to `team_id=None` plus a `TokenCreateResponse.warnings` entry only when neither applies (no personal team and multiple/zero teams). Un-narrowed admins are exempt — `team_id=None` for them is a deliberate global-scope token. The permission-containment check (`_get_caller_permissions`) still uses the *requested* `team_id`, not the defaulted one, so this does not raise the ceiling on what `scope.permissions` a caller may request. Separately, `derive_token_team_id()` in `mcpgateway/auth.py` — the function that turns a single-team token's claim into `request.state.team_id` for RBAC/rate-limit/routing context — excludes personal teams, since a personal team auto-grants `team_admin`; a personal-team-scoped token instead falls through to `check_any_team`, matching how `PermissionService._get_user_roles` already treats personal teams.
 - **Session tokens**: Admin bypass is determined by the DB `is_admin` flag, not the JWT `teams` claim. Non-admin sessions can be narrowed via JWT `teams`. `resolve_session_teams()` in `mcpgateway/auth.py` is the single policy point.
 - **Layer 1 only**: Token scoping controls visibility (what you can see). RBAC (Layer 2) is evaluated independently — session-token narrowing does not restrict which team roles are checked for permissions.
 - **External IdP tokens**: identities provisioned from trusted external SSO providers (see `SSO_API_TOKEN_AUTH_ENABLED`) are dispatched through the session-token table above (`resolve_session_teams()`), not the API/legacy table — `is_admin`/`teams` come from the persisted local user record, never from the external token's claims.
@@ -301,7 +302,7 @@ JWT_SECRET_KEY=your-secret-key
 BASIC_AUTH_USER=admin
 BASIC_AUTH_PASSWORD=changeme
 AUTH_REQUIRED=true                   # Set false ONLY for development
-AUTH_ENCRYPTION_SECRET=my-test-salt  # For encrypting stored secrets
+AUTH_ENCRYPTION_SECRET=             # REQUIRED: generate with: make init-secrets-patch-env
 
 # Features
 MCPGATEWAY_UI_ENABLED=false          # .env.example sets true
@@ -353,6 +354,35 @@ python -m mcpgateway.translate --stdio "uvx mcp-server-git" --port 9000
 2. Register: `POST /gateways`
 3. Create virtual server: `POST /servers`
 4. Access via SSE/WebSocket endpoints
+
+## ContextForge Web UI (Experimental)
+
+A BFF-style frontend for the gateway API, separate from the built-in Admin UI (`MCPGATEWAY_UI_ENABLED`). Source and docs: https://github.com/contextforge-org/contextforge-web-ui
+
+- Runs as `web_ui` + a dedicated `web_ui_redis` session store in `docker-compose.yml`.
+- Enabled via `--profile experimental` (or `--profile testing`, which pulls it in too).
+- `web_ui` depends on `gateway` and `web_ui_redis` being healthy before it starts.
+
+```bash
+# Start the gateway plus the web UI
+docker compose --profile experimental up -d
+
+# Access
+open http://localhost:${WEB_UI_PORT:-3001}
+```
+
+Configuration (see the commented `WEB_UI_*` block in `.env.example`):
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `WEB_UI_IMAGE` | `ghcr.io/contextforge-org/contextforge-web-ui:latest` | Image to pull |
+| `WEB_UI_PORT` | `3001` | Host **and** container port (the image reads `PORT` at startup, so both sides of the mapping stay in sync) |
+| `WEB_UI_HOST` | `0.0.0.0` | Bind address inside the container — must stay `0.0.0.0` in Docker |
+| `WEB_UI_CONTEXTFORGE_URL` | `http://gateway:4444` | Gateway API base URL the UI talks to (internal compose network) |
+| `WEB_UI_COOKIE_SECURE` | `false` | Set `true` once the UI is served over HTTPS |
+| `WEB_UI_REDIS_URL` | `redis://web_ui_redis:6379/0` | Session store, separate from the gateway's cache `redis` service |
+
+Refer to the [contextforge-web-ui repo](https://github.com/contextforge-org/contextforge-web-ui) for feature docs, auth flow details, and upstream configuration options beyond what's wired into this compose file.
 
 ## Technology Stack
 
@@ -502,6 +532,7 @@ exempt.
 - **Conventional Commits**: `feat:`, `fix:`, `docs:`, `refactor:`, `chore:`
 - **Link issues**: `Closes #123`
 - Include tests for behavior changes
+- Every PR whose behavior can be exercised through a live gateway must include a full black-box test against a running gateway; see [`tests/live_gateway/`](tests/live_gateway/) for examples
 - Require green lint and tests before PR
 - Don't push until asked.
 

@@ -66,6 +66,67 @@ def test_parse_allowed_origins_json_and_csv():
     assert s_csv.allowed_origins == {"https://x.com", "https://y.com"}
 
 
+@pytest.mark.parametrize(
+    ("url", "message"),
+    [
+        ("https://user:password@ui.example.com", "credentials"),  # pragma: allowlist secret
+        ("https://ui.example.com/app?tenant=one", "query string"),
+        ("https://ui.example.com/app#fragment", "fragment"),
+    ],
+)
+def test_ui_base_url_rejects_unsafe_components(url, message):
+    """Frontend base URL must not carry credentials or URL suffix state."""
+    with pytest.raises(ValueError, match=message):
+        Settings(ui_base_url=url, environment="development", _env_file=None)
+
+
+def test_ui_base_url_allows_path_prefix():
+    """Frontend base URL may include a deployment path prefix."""
+    configured = Settings(ui_base_url="https://ui.example.com/contextforge", environment="development", _env_file=None)
+    assert str(configured.ui_base_url) == "https://ui.example.com/contextforge"
+
+
+def test_ui_base_url_treats_blank_string_as_unset():
+    """Blank environment override preserves gateway UI fallback behavior."""
+    configured = Settings(ui_base_url="", environment="development", _env_file=None)
+    assert configured.ui_base_url is None
+
+
+@pytest.mark.parametrize(
+    ("admin_api_enabled", "expected_password_route"),
+    [
+        (True, "legacy /admin routes"),
+        (False, "frontend /forgot-password and /reset-password/{token} routes"),
+    ],
+)
+def test_smtp_without_ui_base_url_warns_about_frontend_routes(caplog, admin_api_enabled, expected_password_route):
+    """SMTP fallback warning describes active invitation and password routes."""
+    caplog.set_level(logging.WARNING, logger="mcpgateway.config")
+
+    Settings(smtp_enabled=True, ui_base_url=None, mcpgateway_admin_api_enabled=admin_api_enabled, environment="development", _env_file=None)
+
+    warnings = [record.getMessage() for record in caplog.records]
+    assert any("SMTP_ENABLED=true while UI_BASE_URL is unset" in message for message in warnings)
+    assert any("/accept-invitation/{token}" in message for message in warnings)
+    assert any(expected_password_route in message for message in warnings)
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"smtp_enabled": False, "ui_base_url": None},
+        {"smtp_enabled": True, "ui_base_url": "https://ui.example.com/contextforge"},
+    ],
+)
+def test_frontend_route_warning_only_for_smtp_fallback(caplog, overrides):
+    """Configured UI links and disabled SMTP do not produce fallback warnings."""
+    caplog.set_level(logging.WARNING, logger="mcpgateway.config")
+
+    Settings(environment="development", _env_file=None, **overrides)
+
+    assert not any("SMTP_ENABLED=true while UI_BASE_URL is unset" in record.getMessage() for record in caplog.records)
+
+
 # --------------------------------------------------------------------------- #
 #                         SSO field validators                            #
 # --------------------------------------------------------------------------- #
@@ -2120,30 +2181,15 @@ def test_primary_worker_heartbeat_warns_at_exact_boundary(caplog):
 
 
 def test_placeholder_secret_raises_in_development():
-    """__REPLACE_ME__ placeholder is rejected in development for jwt_secret_key.
-
-    For auth_encryption_secret the placeholder is permitted in development
-    (emits a WARNING) — consistent with all other non-compliant values.
-    """
+    """__REPLACE_ME__ placeholder is rejected even in development."""
     from mcpgateway.config import SecurityConfigurationError
 
-    # jwt_secret_key placeholder always hard-fails
     with pytest.raises(SecurityConfigurationError, match="unset placeholder"):
         Settings(
             jwt_secret_key="__REPLACE_ME__run_init-secrets_before_starting",
             environment="development",
             _env_file=None,
         )
-
-    # auth_encryption_secret placeholder in dev — warns and proceeds
-    strong_jwt = "a-strong-jwt-secret-that-is-long-enough-and-unique-xxxx"  # nosec B105
-    s = Settings(
-        jwt_secret_key=strong_jwt,
-        auth_encryption_secret="__REPLACE_ME__run_init-secrets_before_starting",
-        environment="development",
-        _env_file=None,
-    )
-    assert s.auth_encryption_secret.get_secret_value() == "__REPLACE_ME__run_init-secrets_before_starting"
 
 
 def test_placeholder_secret_raises_in_staging():
@@ -2186,46 +2232,57 @@ def test_weak_secret_raises_in_staging():
         )
 
 
-def test_weak_auth_encryption_secret_allowed_in_development():
-    """Known-weak auth_encryption_secret is downgraded to a warning in development mode.
+def test_weak_auth_encryption_secret_raises_in_development():
+    """Known-weak auth_encryption_secret is rejected unconditionally (including development).
 
-    When ENVIRONMENT=development, short/weak/low-entropy values for
-    auth_encryption_secret no longer raise SecurityConfigurationError — they
-    emit a logger.warning and startup proceeds.  This enables PoC / local-dev
-    convenience (e.g. AUTH_ENCRYPTION_SECRET=my-test-salt).
-    jwt_secret_key is NOT affected and still hard-fails unconditionally.
-    """
-    strong_jwt = "a-strong-jwt-secret-that-is-long-enough-and-unique-xxxx"  # nosec B105
-    s = Settings(
-        jwt_secret_key=strong_jwt,
-        auth_encryption_secret="my-test-salt",  # nosec B106  # pragma: allowlist secret
-        environment="development",
-        _env_file=None,
-    )
-    assert s.auth_encryption_secret.get_secret_value() == "my-test-salt"  # pragma: allowlist secret
-
-
-def test_weak_auth_encryption_secret_raises_outside_development():
-    """Known-weak auth_encryption_secret is still rejected in staging and production.
-
-    The dev-mode leniency must not bleed into non-development environments.
-    Uses a value that is long enough to pass the length floor so it reaches the
-    weak-value check rather than the too-short check.
+    ``"my-test-salt"`` is 12 chars — below the 32-char length floor — so ``"too short"``
+    fires before the weak-value check.  The test accepts either rejection reason.
     """
     from mcpgateway.config import SecurityConfigurationError
 
-    strong_jwt = "a-strong-jwt-secret-that-is-long-enough-and-unique-xxxx"  # nosec B105
-    # "my-test-key-but-now-longer-than-32-bytes" is in WEAK_VALUES and is ≥ 32 chars
-    weak_enc = "my-test-key-but-now-longer-than-32-bytes"  # nosec B106  # pragma: allowlist secret
+    with pytest.raises(SecurityConfigurationError) as exc_info:
+        Settings(
+            auth_encryption_secret="my-test-salt",  # nosec B106  # pragma: allowlist secret
+            environment="development",
+            _env_file=None,
+        )
+    msg = str(exc_info.value)
+    assert "too short" in msg or "known-weak/default value" in msg
 
-    for env in ("staging", "production"):
-        with pytest.raises(SecurityConfigurationError, match="known-weak"):
-            Settings(
-                jwt_secret_key=strong_jwt,
-                auth_encryption_secret=weak_enc,
-                environment=env,
-                _env_file=None,
-            )
+
+def test_weak_auth_encryption_secret_long_enough_raises_in_development():
+    """Known-weak auth_encryption_secret that is ≥32 chars is still rejected in development.
+
+    Exercises the ``is_weak`` branch of ``validate_security_combinations`` for
+    ``auth_encryption_secret``.  ``"my-test-key-but-now-longer-than-32-bytes"`` is in
+    ``WEAK_VALUES`` and is long enough to pass the length floor, so the rejection reason
+    must be ``"known-weak/default value"``, not ``"too short"``.
+    """
+    from mcpgateway.config import SecurityConfigurationError
+
+    with pytest.raises(SecurityConfigurationError, match="known-weak/default value"):
+        Settings(
+            auth_encryption_secret="my-test-key-but-now-longer-than-32-bytes",  # nosec B106  # pragma: allowlist secret
+            environment="development",
+            _env_file=None,
+        )
+
+
+def test_placeholder_auth_encryption_secret_raises_in_development():
+    """__REPLACE_ME__ placeholder on auth_encryption_secret is rejected in development.
+
+    Exercises the ``is_placeholder`` branch of ``validate_security_combinations`` for
+    ``auth_encryption_secret`` specifically.  Uses a value ≥32 chars so the length floor
+    is not hit first.
+    """
+    from mcpgateway.config import SecurityConfigurationError
+
+    with pytest.raises(SecurityConfigurationError, match="unset placeholder"):
+        Settings(
+            auth_encryption_secret="__REPLACE_ME__padding-to-reach-32-chars-x",  # nosec B106
+            environment="development",
+            _env_file=None,
+        )
 
 
 def test_strong_secrets_accepted_in_all_envs():
@@ -2257,13 +2314,7 @@ def test_empty_secret_raises():
 
 
 def test_init_secrets_patch_mode_writes_strong_values(tmp_path):
-    """ensure_env_file_secrets patches JWT_SECRET_KEY but NOT AUTH_ENCRYPTION_SECRET.
-
-    AUTH_ENCRYPTION_SECRET is intentionally excluded from auto-patching so that
-    operators set it deliberately.  A weak value like my-test-salt is allowed
-    in ENVIRONMENT=development.  Strong values are still written to .env.secrets
-    by the --output / --stdout paths, just not auto-patched into .env.
-    """
+    """init_secrets ensure_env_file_secrets replaces placeholder values with strong ones."""
     env_file = tmp_path / ".env"
     env_file.write_text("JWT_SECRET_KEY=__REPLACE_ME__run_init-secrets_before_starting\n" "AUTH_ENCRYPTION_SECRET=__REPLACE_ME__run_init-secrets_before_starting\n")
 
@@ -2271,7 +2322,7 @@ def test_init_secrets_patch_mode_writes_strong_values(tmp_path):
 
     from mcpgateway.scripts.init_secrets import ensure_env_file_secrets
 
-    # Isolate from any real env vars
+    # Patch os.environ to isolate the test
     env_backup_jwt = _os.environ.pop("JWT_SECRET_KEY", None)
     env_backup_enc = _os.environ.pop("AUTH_ENCRYPTION_SECRET", None)
     try:
@@ -2282,20 +2333,24 @@ def test_init_secrets_patch_mode_writes_strong_values(tmp_path):
         if env_backup_enc is not None:
             _os.environ["AUTH_ENCRYPTION_SECRET"] = env_backup_enc
 
-    # JWT_SECRET_KEY must be patched
     assert "JWT_SECRET_KEY" in generated
+    assert "AUTH_ENCRYPTION_SECRET" in generated
+
     new_jwt = generated["JWT_SECRET_KEY"]
+    new_enc = generated["AUTH_ENCRYPTION_SECRET"]
+
+    # Generated values must be non-trivially long (token_urlsafe(32) → 43 chars)
     assert len(new_jwt) >= 32
+    assert len(new_enc) >= 32
+
+    # Must not be placeholder or known-weak
     assert not new_jwt.lower().startswith("__replace_me__")
     assert new_jwt.lower() != "changeme"
 
-    # AUTH_ENCRYPTION_SECRET must NOT be patched into .env
-    assert "AUTH_ENCRYPTION_SECRET" not in generated
-
-    # The generated JWT must work with Settings (using a dev-mode enc secret is fine)
+    # Running Settings() with the generated values must succeed
     s = Settings(
         jwt_secret_key=new_jwt,
-        auth_encryption_secret="my-test-salt",  # nosec B106  # pragma: allowlist secret
+        auth_encryption_secret=new_enc,
         environment="development",
         _env_file=None,
     )
@@ -2405,3 +2460,35 @@ def test_csrf_secret_key_is_a_secret_and_falls_back_to_jwt_secret():
         environment="development",
     )
     assert cfg2.csrf_secret_key.get_secret_value() == explicit
+
+
+def test_min_secret_length_below_floor_raises_validation_error():
+    """Regression: MIN_SECRET_LENGTH=0 (or any value < 32) must raise ValidationError at
+    Settings() construction time, not silently pass through to validate_security_combinations().
+
+    The field uses Field(ge=_MIN_SECRET_LENGTH) so the guard lives at the Pydantic layer —
+    the error is ValidationError, not SecurityConfigurationError.
+    """
+    # Standard
+    import os
+
+    # Third-Party
+    from pydantic import ValidationError
+
+    # First-Party
+    from mcpgateway.config import Settings
+
+    strong = "a" * 8 + "B" * 8 + "1" * 8 + "!" * 8  # 32 chars, mixed entropy
+    import secrets as _secrets
+    strong = _secrets.token_urlsafe(32)
+
+    with pytest.raises(ValidationError) as exc_info:
+        Settings(
+            jwt_secret_key=strong,
+            auth_encryption_secret=strong,
+            min_secret_length=0,
+            database_url="sqlite:///:memory:",
+            environment="development",
+        )
+    # Confirm the error is about min_secret_length, not some other field
+    assert "min_secret_length" in str(exc_info.value).lower() or "greater than or equal" in str(exc_info.value).lower()

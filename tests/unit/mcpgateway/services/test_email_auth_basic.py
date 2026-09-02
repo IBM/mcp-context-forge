@@ -26,6 +26,7 @@ from mcpgateway.db import (
     EmailTeamMember,
     EmailTeamMemberHistory,
     EmailUser,
+    Gateway,
     PasswordResetToken,
     PendingUserApproval,
     Role,
@@ -223,17 +224,37 @@ class TestEmailAuthBasic:
             # without exposing the method or checking database calls
             assert True  # Just verify no exception was raised
 
-    def test_build_password_reset_urls(self, service):
-        """Build forgot/reset URLs from app settings."""
-        with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
+    @pytest.mark.parametrize(
+        ("admin_api_enabled", "expected_forgot_url", "expected_reset_url"),
+        [
+            (True, "https://gateway.example.com/root/admin/forgot-password", "https://gateway.example.com/root/admin/reset-password/tok%20en"),
+            (False, "https://gateway.example.com/root/forgot-password", "https://gateway.example.com/root/reset-password/tok%20en"),
+        ],
+    )
+    def test_build_password_reset_urls(self, service, admin_api_enabled, expected_forgot_url, expected_reset_url):
+        """Unset React base uses Admin UI only when its routes are mounted."""
+        with patch("mcpgateway.services.email_notification_service.settings") as mock_settings:
+            mock_settings.ui_base_url = None
             mock_settings.app_domain = "https://gateway.example.com/"
             mock_settings.app_root_path = "/root/"
+            mock_settings.mcpgateway_admin_api_enabled = admin_api_enabled
 
             forgot_url = service._build_forgot_password_url()
             reset_url = service._build_reset_password_url("tok en")
 
-        assert forgot_url == "https://gateway.example.com/root/admin/forgot-password"
-        assert reset_url.endswith("/admin/reset-password/tok%20en")
+        assert forgot_url == expected_forgot_url
+        assert reset_url == expected_reset_url
+
+    def test_build_password_reset_urls_use_configured_ui_base(self, service):
+        """Configured React base URL preserves its path prefix."""
+        with patch("mcpgateway.services.email_notification_service.settings") as mock_settings:
+            mock_settings.ui_base_url = "https://ui.example.com/contextforge/"
+
+            forgot_url = service._build_forgot_password_url()
+            reset_url = service._build_reset_password_url("tok/en")
+
+        assert forgot_url == "https://ui.example.com/contextforge/forgot-password"
+        assert reset_url == "https://ui.example.com/contextforge/reset-password/tok%2Fen"
 
     def test_recent_password_reset_request_count(self, service, mock_db):
         """Count helper returns integer count from query scalar."""
@@ -2671,7 +2692,10 @@ class TestEmailAuthServiceUserDeletion:
         mock_teams_result = MagicMock()
         mock_teams_result.scalars.return_value.all.return_value = []
 
-        mock_db.execute.side_effect = [mock_user_result, mock_teams_result, MagicMock(), MagicMock()]
+        mock_no_gateways = MagicMock()
+        mock_no_gateways.scalars.return_value.all.return_value = []
+
+        mock_db.execute.side_effect = [mock_user_result, mock_teams_result, mock_no_gateways, MagicMock(), MagicMock()]
 
         query_mocks = {}
 
@@ -2751,7 +2775,10 @@ class TestEmailAuthServiceUserDeletion:
         # Fifth execute: team members (empty)
         mock_empty_result = MagicMock()
 
-        mock_db.execute.side_effect = [mock_user_result, mock_teams_result, mock_members_result, mock_empty_result, mock_empty_result]
+        mock_no_gateways = MagicMock()
+        mock_no_gateways.scalars.return_value.all.return_value = []
+
+        mock_db.execute.side_effect = [mock_user_result, mock_teams_result, mock_members_result, mock_no_gateways, mock_empty_result, mock_empty_result]
 
         mock_role_svc = MagicMock()
         mock_role_svc.delete_all_user_roles = AsyncMock(return_value=0)
@@ -2798,6 +2825,9 @@ class TestEmailAuthServiceUserDeletion:
         mock_delete_team_members_all = MagicMock()
         mock_delete_auth_events = MagicMock()
 
+        mock_no_gateways = MagicMock()
+        mock_no_gateways.scalars.return_value.all.return_value = []
+
         mock_db.execute.side_effect = [
             mock_user_result,
             mock_teams_result,
@@ -2805,6 +2835,7 @@ class TestEmailAuthServiceUserDeletion:
             mock_single_member,  # Just the user as member
             mock_delete_history,  # Delete team member history records
             mock_delete_team_members_for_team,  # Delete team members (for the team)
+            mock_no_gateways,  # No owned gateways
             mock_delete_team_members_all,  # Delete team members (remove user from all teams)
             mock_delete_auth_events,  # Delete auth events
         ]
@@ -2899,6 +2930,9 @@ class TestEmailAuthServiceUserDeletion:
         mock_single_member.scalars.return_value.all.return_value = [single_member]
 
         mock_empty = MagicMock()
+        mock_no_gateways = MagicMock()
+        mock_no_gateways.scalars.return_value.all.return_value = []
+
         mock_db.execute.side_effect = [
             mock_user_result,
             mock_teams_result,
@@ -2906,6 +2940,7 @@ class TestEmailAuthServiceUserDeletion:
             mock_single_member,
             mock_empty,  # delete history
             mock_empty,  # delete team members
+            mock_no_gateways,  # no owned gateways
             mock_empty,  # delete user memberships
             mock_empty,  # delete auth events
         ]
@@ -2953,6 +2988,213 @@ class TestEmailAuthServiceUserDeletion:
 
         with pytest.raises(Exception):
             await service.delete_user("test@example.com")
+
+        mock_db.rollback.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_delete_user_transfers_team_gateway_to_alternate_member(self, service, mock_db, mock_user):
+        """Gateway owned by deleted user transfers to another active team member."""
+        tool_mock = MagicMock(owner_email="test@example.com")
+        resource_mock = MagicMock(owner_email="test@example.com")
+        prompt_mock = MagicMock(owner_email="test@example.com")
+
+        gw = MagicMock(spec=Gateway)
+        gw.id = "gw-1"
+        gw.name = "Team GW"
+        gw.owner_email = "test@example.com"
+        gw.visibility = "team"
+        gw.team_id = "t1"
+        gw.tools = [tool_mock]
+        gw.resources = [resource_mock]
+        gw.prompts = [prompt_mock]
+
+        alt_member = MagicMock(spec=EmailTeamMember)
+        alt_member.user_email = "alt@x.com"
+
+        mock_user_result = MagicMock()
+        mock_user_result.scalar_one_or_none.return_value = mock_user
+
+        mock_no_teams = MagicMock()
+        mock_no_teams.scalars.return_value.all.return_value = []
+
+        mock_gateways = MagicMock()
+        mock_gateways.scalars.return_value.all.return_value = [gw]
+
+        mock_alt = MagicMock()
+        mock_alt.scalars.return_value.first.return_value = alt_member
+
+        # execute calls: user, teams, gateways, alternate member, team member delete, auth event delete
+        mock_db.execute.side_effect = [mock_user_result, mock_no_teams, mock_gateways, mock_alt, MagicMock(), MagicMock()]
+
+        def _build_query():
+            q = MagicMock()
+            q.filter.return_value = q
+            q.order_by.return_value = q
+            q.update.return_value = 0
+            q.delete.return_value = 0
+            q.first.return_value = None
+            return q
+
+        mock_db.query.side_effect = lambda *a: _build_query()
+
+        mock_role_svc = MagicMock()
+        mock_role_svc.delete_all_user_roles = AsyncMock(return_value=0)
+
+        def _close_task(coro):
+            coro.close()
+            return None
+
+        with patch.object(type(service), "role_service", new_callable=lambda: property(lambda self: mock_role_svc)):
+            with patch("asyncio.create_task", side_effect=_close_task):
+                result = await service.delete_user("test@example.com")
+
+        assert result is True
+        assert gw.owner_email == "alt@x.com"
+        assert tool_mock.owner_email == "alt@x.com"
+        assert resource_mock.owner_email == "alt@x.com"
+        assert prompt_mock.owner_email == "alt@x.com"
+
+    @pytest.mark.asyncio
+    async def test_delete_user_transfers_gateway_to_platform_admin_fallback(self, service, mock_db, mock_user):
+        """Public gateway falls back to platform_admin_email when no team alternate."""
+        gw = MagicMock(spec=Gateway)
+        gw.id = "gw-2"
+        gw.name = "Public GW"
+        gw.owner_email = "test@example.com"
+        gw.visibility = "public"
+        gw.team_id = None
+        gw.tools = []
+        gw.resources = []
+        gw.prompts = []
+
+        mock_user_result = MagicMock()
+        mock_user_result.scalar_one_or_none.return_value = mock_user
+
+        mock_no_teams = MagicMock()
+        mock_no_teams.scalars.return_value.all.return_value = []
+
+        mock_gateways = MagicMock()
+        mock_gateways.scalars.return_value.all.return_value = [gw]
+
+        mock_admin_result = MagicMock()
+        mock_admin_result.scalar_one_or_none.return_value = MagicMock(email="admin@x.com", is_active=True)
+
+        # execute calls: user, teams, gateways, active platform admin, team member delete, auth event delete
+        mock_db.execute.side_effect = [mock_user_result, mock_no_teams, mock_gateways, mock_admin_result, MagicMock(), MagicMock()]
+
+        def _build_query():
+            q = MagicMock()
+            q.filter.return_value = q
+            q.order_by.return_value = q
+            q.update.return_value = 0
+            q.delete.return_value = 0
+            q.first.return_value = None
+            return q
+
+        mock_db.query.side_effect = lambda *a: _build_query()
+
+        mock_role_svc = MagicMock()
+        mock_role_svc.delete_all_user_roles = AsyncMock(return_value=0)
+
+        def _close_task(coro):
+            coro.close()
+            return None
+
+        with patch.object(type(service), "role_service", new_callable=lambda: property(lambda self: mock_role_svc)):
+            with patch("asyncio.create_task", side_effect=_close_task):
+                with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
+                    mock_settings.platform_admin_email = "admin@x.com"
+                    result = await service.delete_user("test@example.com")
+
+        assert result is True
+        assert gw.owner_email == "admin@x.com"
+
+    @pytest.mark.asyncio
+    async def test_delete_user_rejects_missing_platform_admin_fallback(self, service, mock_db, mock_user):
+        """Reject deletion when the configured platform admin has no active user row."""
+        gw = MagicMock(spec=Gateway)
+        gw.id = "gw-4"
+        gw.name = "Stale Admin GW"
+        gw.owner_email = "test@example.com"
+        gw.visibility = "public"
+        gw.team_id = None
+        gw.tools = []
+        gw.resources = []
+        gw.prompts = []
+
+        mock_user_result = MagicMock()
+        mock_user_result.scalar_one_or_none.return_value = mock_user
+
+        mock_no_teams = MagicMock()
+        mock_no_teams.scalars.return_value.all.return_value = []
+
+        mock_gateways = MagicMock()
+        mock_gateways.scalars.return_value.all.return_value = [gw]
+
+        # The active-user lookup returns no row for missing or inactive configured admins.
+        mock_missing_admin = MagicMock()
+        mock_missing_admin.scalar_one_or_none.return_value = None
+        mock_db.execute.side_effect = [mock_user_result, mock_no_teams, mock_gateways, mock_missing_admin, MagicMock()]
+
+        def _build_query():
+            q = MagicMock()
+            q.filter.return_value = q
+            q.order_by.return_value = q
+            q.update.return_value = 0
+            q.delete.return_value = 0
+            q.first.return_value = None
+            return q
+
+        mock_db.query.side_effect = lambda *a: _build_query()
+
+        mock_role_svc = MagicMock()
+        mock_role_svc.delete_all_user_roles = AsyncMock(return_value=0)
+
+        def _close_task(coro):
+            coro.close()
+
+        with patch.object(type(service), "role_service", new_callable=lambda: property(lambda self: mock_role_svc)):
+            with patch("asyncio.create_task", side_effect=_close_task):
+                with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
+                    mock_settings.platform_admin_email = "stale-admin@x.com"
+                    with pytest.raises(ValueError, match="orphaned"):
+                        await service.delete_user("test@example.com")
+
+        mock_db.rollback.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_delete_user_raises_if_gateway_would_be_orphaned(self, service, mock_db, mock_user):
+        """Raise ValueError when gateway would be orphaned (no alternate, no admin)."""
+        gw = MagicMock(spec=Gateway)
+        gw.id = "gw-3"
+        gw.name = "Orphan GW"
+        gw.owner_email = "test@example.com"
+        gw.visibility = "public"
+        gw.team_id = None
+        gw.tools = []
+        gw.resources = []
+        gw.prompts = []
+
+        mock_user_result = MagicMock()
+        mock_user_result.scalar_one_or_none.return_value = mock_user
+
+        mock_no_teams = MagicMock()
+        mock_no_teams.scalars.return_value.all.return_value = []
+
+        mock_gateways = MagicMock()
+        mock_gateways.scalars.return_value.all.return_value = [gw]
+
+        mock_db.execute.side_effect = [mock_user_result, mock_no_teams, mock_gateways]
+
+        def _close_task(coro):
+            coro.close()
+            return None
+
+        with patch("asyncio.create_task", side_effect=_close_task):
+            with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
+                mock_settings.platform_admin_email = None
+                with pytest.raises(ValueError, match="orphaned"):
+                    await service.delete_user("test@example.com")
 
         mock_db.rollback.assert_called()
 

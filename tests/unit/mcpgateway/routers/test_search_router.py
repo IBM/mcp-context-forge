@@ -51,6 +51,7 @@ def patched_search(monkeypatch):
         "teams": AsyncMock(return_value={"teams": [], "count": 0}),
         "users": AsyncMock(return_value={"users": [{"id": "user-1"}], "count": 1}),
         "roots": AsyncMock(return_value={"roots": [], "count": 0}),
+        "catalog": AsyncMock(return_value={"catalog": [{"id": "cloudflare-docs", "name": "Cloudflare Docs"}], "count": 1}),
     }
     for name, mock in mocks.items():
         monkeypatch.setattr(f"mcpgateway.admin.admin_search_{name}", mock)
@@ -180,6 +181,22 @@ async def test_authenticated_http_request_returns_200_grouped(mock_db, patched_s
     body = resp.json()
     assert body["entity_types"] == ["tools"]
     assert body["results"]["tools"][0]["id"] == "tool-1"
+
+
+@pytest.mark.asyncio
+async def test_authenticated_http_request_supports_explicit_catalog(mock_db, patched_search):
+    """GET /search accepts catalog when explicitly requested."""
+    app = FastAPI()
+    app.include_router(search_router)
+    app.dependency_overrides[get_current_user_with_permissions] = lambda: USER
+    app.dependency_overrides[get_db] = lambda: mock_db
+
+    response = TestClient(app).get("/search", params={"q": "cloudflare", "entity_types": "catalog"})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["entity_types"] == ["catalog"]
+    assert body["results"]["catalog"][0]["id"] == "cloudflare-docs"
 
 
 # ---------------------------------------------------------------------------

@@ -206,6 +206,60 @@ docker compose logs -f gateway
 - 🔧 **Admin Tools** —— 用于数据库管理的 pgAdmin、Redis Insight
 - 🌐 **Nginx 代理** —— 8080 端口的缓存反向代理
 
+### ☸️ Kubernetes (Helm)
+
+```bash
+# Add Helm repository (when available)
+# helm repo add mcp-context-forge https://ibm.github.io/mcp-context-forge
+# helm repo update
+
+# For now, use local chart
+git clone https://github.com/IBM/mcp-context-forge.git
+cd mcp-context-forge/charts/mcp-stack
+
+# Generate secrets first
+python3 -m mcpgateway.scripts.init_secrets
+JWT_SECRET=$(grep '^JWT_SECRET_KEY=' .env.secrets | cut -d= -f2)
+ENC_SECRET=$(grep '^AUTH_ENCRYPTION_SECRET=' .env.secrets | cut -d= -f2)
+
+# Install with PostgreSQL (default)
+# IMPORTANT: replace <strong-password> with a real password — do not use 'changeme' in production
+helm install mcp-gateway . \
+  --set mcpContextForge.secret.PLATFORM_ADMIN_EMAIL=admin@yourcompany.com \
+  --set mcpContextForge.secret.PLATFORM_ADMIN_PASSWORD=<strong-password> \
+  --set mcpContextForge.secret.BASIC_AUTH_PASSWORD=<strong-password> \
+  --set "mcpContextForge.secret.JWT_SECRET_KEY=${JWT_SECRET}" \
+  --set "mcpContextForge.secret.AUTH_ENCRYPTION_SECRET=${ENC_SECRET}"
+
+# Check deployment status
+kubectl get pods -l app.kubernetes.io/name=mcp-context-forge
+
+# Port forward to access Admin UI
+kubectl port-forward svc/mcp-gateway-mcp-context-forge 4444:80
+# Access: http://localhost:4444/admin
+
+# Generate API token (reads JWT_SECRET_KEY from the pod's environment)
+kubectl exec deployment/mcp-gateway-mcp-context-forge -- \
+  python3 -m mcpgateway.utils.create_jwt_token \
+  --username admin@yourcompany.com --exp 10080 --secret "${JWT_SECRET}"
+```
+
+> SSRF note: Helm defaults to strict SSRF settings (`SSRF_ALLOW_PRIVATE_NETWORKS=false`).
+> If you register in-cluster tool URLs, allow only your cluster CIDRs via
+> `mcpContextForge.config.SSRF_ALLOWED_NETWORKS` or, for local-only benchmark
+> setups, temporarily set `SSRF_ALLOW_PRIVATE_NETWORKS=true`.
+> See `docs/docs/manage/configuration.md#ssrf-protection` and `docs/docs/deployment/helm.md`.
+
+**Enterprise Features:**
+- 🔄 **Auto-scaling** - HPA with CPU/memory targets
+- 🗄️ **Database Choice** - PostgreSQL (prod), SQLite (dev)
+- 📊 **Observability** - Prometheus metrics, OpenTelemetry tracing
+- 🔒 **Security** - RBAC, network policies, secret management
+- 🚀 **High Availability** - Multi-replica deployments with Redis clustering
+- 📈 **Monitoring** - Built-in Grafana dashboards and alerting
+
+---
+
 ### 🐳 Docker（单容器）
 
 ```bash

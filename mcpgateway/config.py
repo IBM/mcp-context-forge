@@ -50,7 +50,6 @@ Examples:
 from functools import lru_cache
 from importlib.resources import files
 import logging
-import math
 import os
 from pathlib import Path, PurePosixPath
 import re
@@ -66,7 +65,10 @@ from pydantic import AliasChoices, Field, field_validator, HttpUrl, model_valida
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 # First-Party
+from mcpgateway._security_constants import MIN_ENTROPY as _MIN_ENTROPY
+from mcpgateway._security_constants import MIN_SECRET_LENGTH as _MIN_SECRET_LENGTH
 from mcpgateway._security_constants import WEAK_VALUES as _CANONICAL_WEAK_VALUES
+from mcpgateway._security_constants import calculate_entropy
 
 # Only configure basic logging if no handlers exist yet
 # This prevents conflicts with LoggingService while ensuring config logging works
@@ -168,22 +170,6 @@ UI_HIDE_SECTION_ALIASES = {
 
 class SecurityConfigurationError(Exception):
     """Exception for critical security configuration issues."""
-
-
-def calculate_entropy(text: str) -> float:
-    """
-    Calculate Shannon entropy to detect low-randomness secrets.
-
-    Args:
-        text (str): The secret string to evaluate.
-
-    Returns:
-        float: The calculated entropy score.
-    """
-    if not text:
-        return 0.0
-    probabilities = [text.count(c) / len(text) for c in set(text)]
-    return -sum(p * math.log2(p) for p in probabilities)
 
 
 class Settings(BaseSettings):
@@ -387,6 +373,23 @@ class Settings(BaseSettings):
     # Idle timeout configuration
     token_idle_timeout: int = Field(default=60, ge=5, le=1440, description="Maximum idle time in minutes before token requires refresh (5-1440).")  # 60 minutes
 
+    # Session lifecycle configuration (enforced by POST /auth/refresh; surfaced to UI clients via GET /auth/validate)
+    session_max_lifetime: int = Field(
+        default=480,
+        ge=0,
+        le=10080,
+        description="Absolute maximum session lifetime in minutes, enforced at refresh (0 disables the cap). A session cannot be extended past this age regardless of activity.",
+    )
+    session_refresh_rate_limit: int = Field(
+        default=10, ge=1, le=600, description="Maximum POST /auth/refresh requests per minute per client dimension (IP/user/team), enforced by RateLimitMiddleware."
+    )
+    session_warning_time: int = Field(default=60, ge=10, le=3600, description="Seconds before session expiry at which UI clients should warn the user (client-behavior hint).")
+    session_refresh_buffer: int = Field(default=300, ge=30, le=3600, description="Seconds before token expiry at which UI clients should silently refresh the session (client-behavior hint).")
+    session_activity_tracking: bool = Field(
+        default=True,
+        description="Whether UI clients should track user activity to drive idle detection (client-behavior hint; server-side idle enforcement is TOKEN_IDLE_TIMEOUT).",
+    )
+
     # Token blocklist cleanup
     token_blocklist_cleanup_hours: int = Field(default=24, ge=1, le=168, description="Hours to retain expired tokens in blocklist before cleanup (1-168).")
 
@@ -423,12 +426,16 @@ class Settings(BaseSettings):
             "/health",
             "/auth/login",
             "/auth/logout",
-            "/auth/refresh",
+            # /auth/refresh is NOT exempt: cookie-authenticated refresh requires a CSRF token
             "/auth/email/login",
             "/auth/email/register",
             "/auth/email/forgot-password",
             "/auth/email/reset-password",
-            "/admin",  # Exempt: all admin routes use per-route enforce_admin_csrf dependency
+            # Exempt: admin routes carry the per-route enforce_admin_csrf dependency
+            # instead. Enforced by tests/unit/mcpgateway/middleware/
+            # test_admin_csrf_binding.py::test_all_admin_write_routes_enforce_admin_csrf
+            # — do not mount a state-changing router under /admin without it.
+            "/admin",
             "/admin/login",
             "/admin/forgot-password",
             "/admin/reset-password",
@@ -504,10 +511,6 @@ class Settings(BaseSettings):
 
     # Security Validation & Sanitization
     experimental_validate_io: bool = Field(default=False, description="Enable experimental input validation and output sanitization")
-    experimental_rust_request_logging_masking_enabled: bool = Field(
-        default=False,
-        description="Enable experimental Rust native extension for request logging sensitive-data masking",
-    )
     validation_middleware_enabled: bool = Field(default=False, description="Deprecated. Enable validation middleware for all requests")
     client_disconnect_middleware_enabled: bool = Field(default=True, description="Enable client disconnect middleware to cancel handlers on connection close")
     validation_strict: bool = Field(default=True, description="Strict validation mode - reject on violations")
@@ -646,6 +649,56 @@ class Settings(BaseSettings):
     auth_encryption_secret: SecretStr = Field(
         default=SecretStr("__REPLACE_ME__run_init-secrets_before_starting"),
         description="Encryption key for stored credentials. MUST be set explicitly in staging/production. Generate with: python -m mcpgateway.scripts.init_secrets --stdout",
+    )
+
+    # ===================================
+    # OAuth Token Storage Backend
+    # ===================================
+    # Pluggable token storage: 'database' (default) or 'vault' (HashiCorp Vault)
+
+    oauth_token_backend: str = Field(
+        default="database",
+        description="Token storage backend: 'database' or 'vault'. Unknown values raise ValueError at startup.",
+    )
+
+    # Vault Connection Settings (only used when oauth_token_backend='vault')
+    vault_addr: str = Field(
+        default="http://127.0.0.1:8200",
+        description="Vault server URL (e.g., https://vault.acme.com:8200).",
+    )
+    vault_token: Optional[SecretStr] = Field(
+        default=None,
+        description="Vault authentication token (Phase 1: static token; Phase 2: AppRole). Required when oauth_token_backend='vault'.",
+    )
+    vault_namespace: str = Field(
+        default="",
+        description="Vault namespace (Enterprise only; leave empty for CE).",
+    )
+    vault_kv_mount: str = Field(
+        default="secret",
+        description="Vault KV v2 mount path.",
+    )
+    vault_kv_path_prefix: str = Field(
+        default="contextforge/oauth",
+        description="Path prefix within KV mount. Full path: {mount}/data/{prefix}/{team_id}/{server_id}/{email}",
+    )
+    vault_tls_verify: bool = Field(
+        default=True,
+        description="Verify Vault TLS certificate (set false for local dev only).",
+    )
+
+    # Vault Token Cache (optional, Vault backend only)
+    vault_token_cache_enabled: bool = Field(
+        default=False,
+        description="Enable in-memory token cache to reduce Vault API calls. Reduces read latency from ~25ms to ~0.5ms on cache hits.",
+    )
+    vault_token_cache_ttl: int = Field(
+        default=300,
+        description="Cache TTL in seconds. Tokens may be stale within this window if rotated externally.",
+    )
+    vault_token_cache_max_size: int = Field(
+        default=10000,
+        description="Max cached entries before LRU eviction. Each entry ≈ 1 KB → 10 MB at default size.",
     )
 
     # Query Parameter Authentication (INSECURE - disabled by default)
@@ -1264,6 +1317,49 @@ class Settings(BaseSettings):
 
     # Domain configuration
     app_domain: HttpUrl = Field(default=HttpUrl("http://localhost:4444"))
+    ui_base_url: Optional[HttpUrl] = Field(
+        default=None,
+        description="Trusted base URL for browser-facing UI links. Falls back to APP_DOMAIN plus APP_ROOT_PATH when unset.",
+    )
+
+    @field_validator("ui_base_url", mode="before")
+    @classmethod
+    def normalize_ui_base_url(cls, value: object) -> object:
+        """Treat an empty environment override as unset.
+
+        Args:
+            value: Raw configured frontend base URL.
+
+        Returns:
+            object: ``None`` for blank strings, otherwise the original value.
+        """
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
+    @field_validator("ui_base_url")
+    @classmethod
+    def validate_ui_base_url(cls, value: Optional[HttpUrl]) -> Optional[HttpUrl]:
+        """Reject URL components unsuitable for a trusted frontend base.
+
+        Args:
+            value: Configured frontend base URL.
+
+        Returns:
+            Optional[HttpUrl]: Validated frontend base URL.
+
+        Raises:
+            ValueError: If credentials, query parameters, or fragments are present.
+        """
+        if value is None:
+            return None
+        if value.username or value.password:
+            raise ValueError("UI_BASE_URL must not contain credentials")
+        if value.query:
+            raise ValueError("UI_BASE_URL must not contain a query string")
+        if value.fragment:
+            raise ValueError("UI_BASE_URL must not contain a fragment")
+        return value
 
     # Security settings
     secure_cookies: bool = Field(default=True)
@@ -1318,7 +1414,7 @@ class Settings(BaseSettings):
     }
 
     # Security validation thresholds
-    min_secret_length: int = 32
+    min_secret_length: int = Field(default=_MIN_SECRET_LENGTH, ge=_MIN_SECRET_LENGTH)
     min_password_length: int = 12
     require_strong_secrets: bool = Field(
         default=False,
@@ -1583,19 +1679,14 @@ class Settings(BaseSettings):
     def validate_security_combinations(self) -> Self:
         """Validate security setting combinations and raise on unsafe secrets.
 
-        ``jwt_secret_key`` is rejected unconditionally in every environment
-        (development, staging, and production) when it is empty, a placeholder,
-        known-weak, too short, or low-entropy.  Some compose sibling containers
+        Placeholder and weak/known secrets are rejected unconditionally in every
+        environment (development, staging, and production alike).  Some compose
+        sibling containers (e.g. ``register_fast_time``, ``prometheus_token``)
         sign tokens with the raw ``JWT_SECRET_KEY`` environment variable outside
         this validator, so per-process random generation cannot be used as a
         fallback — gateway and sibling containers must share the same secret.
-
-        ``auth_encryption_secret`` follows the same rules in staging and
-        production.  In ``ENVIRONMENT=development``, weak/short/low-entropy
-        values are downgraded to a loud WARNING so local PoC workflows can use
-        a simple value like ``AUTH_ENCRYPTION_SECRET=my-test-salt``.  The
-        ``__REPLACE_ME__`` placeholder is still rejected unconditionally for
-        both fields in every environment — it has no runtime meaning.
+        The only safe option is an unconditional hard-fail that forces operators
+        to provide a real secret before the process will start.
 
         Run ``python -m mcpgateway.scripts.init_secrets`` (or ``make init-secrets``
         for interactive use, ``make init-secrets-patch-env`` to write directly into
@@ -1605,91 +1696,59 @@ class Settings(BaseSettings):
             Itself.
 
         Raises:
-            SecurityConfigurationError: If either secret is empty (both fields,
-                all environments), or if ``jwt_secret_key`` is the
-                ``__REPLACE_ME__`` placeholder, known-weak, too short, or has
-                low per-character entropy (all environments).
-                ``auth_encryption_secret`` only warns for ALL of these in
-                ``ENVIRONMENT=development`` — including the placeholder.
-                Full enforcement applies to ``auth_encryption_secret`` in
-                staging and production.
+            SecurityConfigurationError: If jwt_secret_key or auth_encryption_secret
+                is unset (placeholder), matches a known-weak value, is shorter than
+                ``min_secret_length`` characters, or has low per-character entropy.
         """
+        # client_mode is intentionally NOT exempted — secret-strength enforcement
+        # is always active regardless of deployment profile.
         weak_secrets = {v.lower() for v in self.WEAK_VALUES}
         env = str(self.environment).lower()
-        is_dev = env == "development"
-
-        # jwt_secret_key:          unconditional hard-fail in every environment.
-        # auth_encryption_secret:  ALL non-compliant values (placeholder, insufficient
-        #                          length, known-default, low entropy) are WARNING-only
-        #                          in ENVIRONMENT=development. Full enforcement in
-        #                          staging and production.
         for field_name, secret_field in (
             ("jwt_secret_key", self.jwt_secret_key),
             ("auth_encryption_secret", self.auth_encryption_secret),
         ):
             val = secret_field.get_secret_value()
 
+            # For auth_encryption_secret failures, append the secrets rotation guide URL
+            # so operators upgrading from 1.0.7 know how to re-encrypt stored credentials.
+            rotation_hint = (
+                "\nIf you have stored credentials encrypted under the old key, "
+                "you must rotate them before starting the gateway.\n"
+                "Rotation guide: docs/docs/operations/auth-encryption-secret-rotation.md"
+                if field_name == "auth_encryption_secret"
+                else ""
+            )
+
             if not val.strip():
+                raise SecurityConfigurationError(f"{field_name}: secret is empty. Set a real value (run 'python -m mcpgateway.scripts.init_secrets').")
+
+            effective_min = max(self.min_secret_length, _MIN_SECRET_LENGTH)
+            if len(val) < effective_min:
                 raise SecurityConfigurationError(
-                    f"{field_name}: secret is empty. "
-                    "To fix, choose one of:\n"
-                    "  make setup                  # recommended: auto-creates .env and patches secrets in-place\n"
-                    "  make init-secrets           # writes secrets to .env.secrets for review, then copy into .env\n"
-                    "  make init-secrets-patch-env # patches secrets directly into an existing .env"
+                    f"{field_name}: too short ({len(val)} chars, minimum {effective_min}). "
+                    "Run 'python -m mcpgateway.scripts.init_secrets' to generate strong values, "
+                    "or use 'make init-secrets-patch-env' to write them directly into .env." + rotation_hint
                 )
 
             is_placeholder = val.lower().startswith("__replace_me__")
             is_weak = val.lower() in weak_secrets
             entropy = calculate_entropy(val)
-            is_low_entropy = entropy < 3.5
-            is_too_short = len(val) < self.min_secret_length
+            is_low_entropy = entropy < _MIN_ENTROPY
 
-            # auth_encryption_secret in development: ALL non-compliant values are
-            # downgraded to a WARNING — including the __REPLACE_ME__ placeholder.
-            # Production and staging always enforce full cryptographic strength.
-            if field_name == "auth_encryption_secret" and is_dev:
-                if is_placeholder or is_too_short or is_weak or is_low_entropy:
-                    logger.warning(
-                        "🔓 SECURITY WARNING - %s: value does not meet minimum cryptographic "
-                        "strength requirements (placeholder, insufficient length, known-default, "
-                        "or low entropy). Permitted only in ENVIRONMENT=development for local "
-                        "PoC use. This configuration MUST NOT be used in staging or production "
-                        "— replace with a cryptographically secure value before any "
-                        "non-development deployment.",
-                        field_name,
-                    )
-                continue
-
-            # For jwt_secret_key and auth_encryption_secret outside development:
-            # placeholder, too-short, weak, and low-entropy all hard-fail.
-            if is_placeholder:
-                raise SecurityConfigurationError(
-                    f"{field_name}: unset placeholder (__REPLACE_ME__) rejected in every environment (including '{env}'). "
-                    "To fix, choose one of:\n"
-                    "  make setup                  # recommended: auto-creates .env and patches secrets in-place\n"
-                    "  make init-secrets           # writes secrets to .env.secrets for review, then copy into .env\n"
-                    "  make init-secrets-patch-env # patches secrets directly into an existing .env"
-                )
-
-            if is_too_short:
-                raise SecurityConfigurationError(
-                    f"{field_name}: too short ({len(val)} chars, minimum {self.min_secret_length}). "
-                    "To fix, choose one of:\n"
-                    "  make setup                  # recommended: auto-creates .env and patches secrets in-place\n"
-                    "  make init-secrets           # writes secrets to .env.secrets for review, then copy into .env\n"
-                    "  make init-secrets-patch-env # patches secrets directly into an existing .env"
-                )
-
-            if is_weak or is_low_entropy:
-                reason = "known-weak/default value" if is_weak else f"low entropy (score {entropy:.2f} < 3.5)"
+            if is_placeholder or is_weak or is_low_entropy:
+                if is_placeholder:
+                    reason = "unset placeholder (__REPLACE_ME__)"
+                elif is_weak:
+                    reason = "known-weak/default value"
+                else:
+                    reason = f"low entropy (score {entropy:.2f} < {_MIN_ENTROPY})"
                 raise SecurityConfigurationError(
                     f"{field_name}: {reason} rejected in every environment (including '{env}'). "
                     "Cross-process token consistency requires operators to supply a real secret before startup — "
                     "no per-process random fallback is generated. "
-                    "To fix, choose one of:\n"
-                    "  make setup                  # recommended: auto-creates .env and patches secrets in-place\n"
-                    "  make init-secrets           # writes secrets to .env.secrets for review, then copy into .env\n"
-                    "  make init-secrets-patch-env # patches secrets directly into an existing .env"
+                    "Run 'python -m mcpgateway.scripts.init_secrets' to generate strong values, "
+                    "or use 'make init-secrets-patch-env' to write them directly into .env." + rotation_hint
                 )
 
         if not self.client_mode:
@@ -1702,6 +1761,18 @@ class Settings(BaseSettings):
 
             if self.debug and not self.dev_mode:
                 logger.warning("🐛 SECURITY WARNING: Debug mode is enabled in non-dev mode. This may leak sensitive information! Set DEBUG=false for production.")
+
+            if self.smtp_enabled and self.ui_base_url is None:
+                password_route_warning = (
+                    "Password-recovery links will use legacy /admin routes because MCPGATEWAY_ADMIN_API_ENABLED=true."
+                    if self.mcpgateway_admin_api_enabled
+                    else "Password-recovery links will use frontend /forgot-password and /reset-password/{token} routes because MCPGATEWAY_ADMIN_API_ENABLED=false."
+                )
+                logger.warning(
+                    "SMTP_ENABLED=true while UI_BASE_URL is unset. Invitation links will use APP_DOMAIN plus "
+                    "APP_ROOT_PATH and require /accept-invitation/{token}. %s Configure UI_BASE_URL for the React client.",
+                    password_route_warning,
+                )
 
         # CSRF secret key fallback to JWT secret key.
         # NOTE: SecretStr("") is truthy, so the emptiness check must go through
@@ -2137,8 +2208,7 @@ class Settings(BaseSettings):
     plugin_metrics_max_numeric_per_call: int = Field(default=16, ge=0, description="Max numeric ObservabilityMetric rows written per invoke_hook() call, across all plugins")
 
     # CPEX control-execution telemetry (G2: ControlExecutionRecord -> observability).
-    # Enabled only when the installed CPEX version exposes ControlExecutionRecord (>=0.1.2).
-    # A no-op when execution_records_supported() returns False (older CPEX build).
+    # Requires CPEX >= 0.1.2 (declared minimum since #5785).
     cpex_control_telemetry_enabled: bool = Field(
         default=False,
         description=(
@@ -2146,7 +2216,6 @@ class Settings(BaseSettings):
             "Disabled by default — each traced tool call creates up to 1 summary + "
             "CPEX_CONTROL_TELEMETRY_MAX_RESULTS result DB spans. Enable only after "
             "reviewing storage and cardinality implications. "
-            "No-op when CPEX execution records are unavailable (CPEX < 0.1.2). "
             "Env: CPEX_CONTROL_TELEMETRY_ENABLED."
         ),
     )
@@ -2649,6 +2718,24 @@ class Settings(BaseSettings):
         description="Maximum length of response text to return for non-JSON REST API responses. "
         "Longer responses are truncated to prevent exposing excessive sensitive data. "
         "Default: 5000 characters. Range: 1000-100000.",
+    )
+    # jq filter sandbox — see docs/superpowers/specs/2026-08-11-jq-env-disclosure-design.md
+    jq_filter_execution: Literal["subprocess", "inprocess"] = Field(
+        default="subprocess",
+        description="Execution mode for tool jsonpath_filter jq programs. 'subprocess' runs each filter in a forked worker with a cleared environment and a wall-clock limit. "
+        "'inprocess' removes both protections and is unsafe; it exists only for platforms where fork is unavailable.",
+    )
+    jq_filter_timeout_seconds: float = Field(
+        default=2.0,
+        gt=0,
+        le=60,
+        description="Wall-clock limit for a single jq filter run. Exceeding it kills the worker and returns a filter error. Default: 2.0 seconds.",
+    )
+    jq_filter_workers: int = Field(
+        default=2,
+        ge=1,
+        le=16,
+        description="Number of forked jq worker processes per gateway worker. Default: 2.",
     )
 
     # Content Security - Size Limits

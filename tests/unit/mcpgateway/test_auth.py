@@ -2869,7 +2869,11 @@ class TestCachePathBranches:
         monkeypatch.setattr(settings, "auth_cache_enabled", True)
         monkeypatch.setattr(settings, "require_user_in_db", False)
 
-        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)), patch("mcpgateway.cache.auth_cache.auth_cache.get_auth_context", AsyncMock(return_value=cached_ctx)):
+        with (
+            patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)),
+            patch("mcpgateway.cache.auth_cache.auth_cache.get_auth_context", AsyncMock(return_value=cached_ctx)),
+            patch("mcpgateway.auth._is_personal_team_sync", return_value=False),
+        ):
             user = await get_current_user(credentials=credentials, request=request)
 
         assert request.state.team_id == "team-1"
@@ -3025,7 +3029,11 @@ class TestBatchedPathBranches:
         monkeypatch.setattr(settings, "auth_cache_enabled", False)
         monkeypatch.setattr(settings, "auth_cache_batch_queries", True)
 
-        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)), patch("mcpgateway.auth._get_auth_context_batched_sync", return_value=auth_ctx):
+        with (
+            patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)),
+            patch("mcpgateway.auth._get_auth_context_batched_sync", return_value=auth_ctx),
+            patch("mcpgateway.auth._is_personal_team_sync", return_value=False),
+        ):
             user = await get_current_user(credentials=credentials, request=request)
 
         assert request.state.team_id == "team-1"
@@ -3239,6 +3247,7 @@ class TestFallbackPathWithRequest:
             patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=payload)),
             patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user),
             patch("mcpgateway.auth._get_personal_team_sync", return_value=None),
+            patch("mcpgateway.auth._is_personal_team_sync", return_value=False),
         ):
             user = await get_current_user(credentials=credentials, request=request)  # pragma: allowlist secret
 
@@ -4365,6 +4374,158 @@ async def test_resolve_trace_team_name_uses_preresolved_name_before_claims(monke
     )
 
     assert resolved == "Batched Team"
+
+
+class TestIsPersonalTeamSync:
+    """Tests for the _is_personal_team_sync classification helper."""
+
+    def test_no_team_id_returns_false_without_db_call(self):
+        """A falsy team_id short-circuits to False without touching the DB."""
+        # First-Party
+        from mcpgateway.auth import _is_personal_team_sync
+
+        with patch("mcpgateway.auth.fresh_db_session") as mock_fresh_session:
+            assert _is_personal_team_sync(None) is False
+            assert _is_personal_team_sync("") is False
+            mock_fresh_session.assert_not_called()
+
+    def test_returns_true_for_personal_team(self):
+        """An active personal team row classifies as personal."""
+        # First-Party
+        from mcpgateway.auth import _is_personal_team_sync
+
+        mock_db = MagicMock()
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = True
+        mock_db.execute.return_value = mock_result
+
+        with patch("mcpgateway.auth.fresh_db_session") as mock_fresh_session:
+            mock_fresh_session.return_value.__enter__.return_value = mock_db
+            mock_fresh_session.return_value.__exit__.return_value = None
+
+            assert _is_personal_team_sync("team-personal") is True
+
+    def test_returns_false_for_non_personal_team(self):
+        """A shared (non-personal) team row classifies as not personal."""
+        # First-Party
+        from mcpgateway.auth import _is_personal_team_sync
+
+        mock_db = MagicMock()
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = False
+        mock_db.execute.return_value = mock_result
+
+        with patch("mcpgateway.auth.fresh_db_session") as mock_fresh_session:
+            mock_fresh_session.return_value.__enter__.return_value = mock_db
+            mock_fresh_session.return_value.__exit__.return_value = None
+
+            assert _is_personal_team_sync("team-shared") is False
+
+    def test_returns_false_when_team_not_found(self):
+        """A team_id with no matching active row classifies as not personal."""
+        # First-Party
+        from mcpgateway.auth import _is_personal_team_sync
+
+        mock_db = MagicMock()
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = None
+        mock_db.execute.return_value = mock_result
+
+        with patch("mcpgateway.auth.fresh_db_session") as mock_fresh_session:
+            mock_fresh_session.return_value.__enter__.return_value = mock_db
+            mock_fresh_session.return_value.__exit__.return_value = None
+
+            assert _is_personal_team_sync("team-unknown") is False
+
+
+class TestDeriveTokenTeamId:
+    """Tests for derive_token_team_id — the RBAC team-context policy point (issue #5993)."""
+
+    @pytest.mark.asyncio
+    async def test_admin_bypass_returns_none(self):
+        """teams=None (admin bypass) never derives a team context."""
+        # First-Party
+        from mcpgateway.auth import derive_token_team_id
+
+        assert await derive_token_team_id(None, "api") is None
+
+    @pytest.mark.asyncio
+    async def test_session_token_returns_none(self):
+        """Session tokens never derive a team context here — DB resolution owns that."""
+        # First-Party
+        from mcpgateway.auth import derive_token_team_id
+
+        assert await derive_token_team_id(["team-1"], "session") is None
+
+    @pytest.mark.asyncio
+    async def test_multi_team_returns_none(self):
+        """Multi-team tokens never derive a single team context."""
+        # First-Party
+        from mcpgateway.auth import derive_token_team_id
+
+        assert await derive_token_team_id(["team-1", "team-2"], "api") is None
+
+    @pytest.mark.asyncio
+    async def test_dict_entry_without_id_returns_none(self):
+        """A malformed team claim entry (dict with no id) yields no team context."""
+        # First-Party
+        from mcpgateway.auth import derive_token_team_id
+
+        assert await derive_token_team_id([{"name": "no-id-team"}], "api") is None
+
+    @pytest.mark.asyncio
+    async def test_excludes_personal_team(self, monkeypatch):
+        """A single-team token scoped to a personal team falls back to check_any_team (None).
+
+        Regression guard for the fix in issue #5993: honouring a personal team
+        here would silently grant the token's RBAC context team_admin, since
+        personal teams auto-grant that role to their creator.
+        """
+        # First-Party
+        from mcpgateway.auth import derive_token_team_id
+
+        monkeypatch.setattr("mcpgateway.auth._is_personal_team_sync", lambda team_id: True)
+
+        assert await derive_token_team_id(["team-personal"], "api") is None
+
+    @pytest.mark.asyncio
+    async def test_keeps_non_personal_single_team(self, monkeypatch):
+        """A single-team token scoped to a non-personal team keeps that team as context."""
+        # First-Party
+        from mcpgateway.auth import derive_token_team_id
+
+        monkeypatch.setattr("mcpgateway.auth._is_personal_team_sync", lambda team_id: False)
+
+        assert await derive_token_team_id(["team-shared"], "api") == "team-shared"
+
+    @pytest.mark.asyncio
+    async def test_dict_team_entry_extracts_id(self, monkeypatch):
+        """A dict-shaped team claim entry (legacy format) extracts its id."""
+        # First-Party
+        from mcpgateway.auth import derive_token_team_id
+
+        monkeypatch.setattr("mcpgateway.auth._is_personal_team_sync", lambda team_id: False)
+
+        assert await derive_token_team_id([{"id": "team-shared"}], "api") == "team-shared"
+
+    @pytest.mark.asyncio
+    async def test_classification_error_fails_closed_and_returns_none(self, monkeypatch):
+        """A classification failure (DB unavailable) fails closed to check_any_team (None).
+
+        Retaining team_id on an indeterminate lookup could route RBAC context
+        into a team never verified as non-personal, silently exposing that
+        team's auto-granted team_admin role. Falling back to None only
+        narrows the caller's effective permissions, never expands them.
+        """
+        # First-Party
+        from mcpgateway.auth import derive_token_team_id
+
+        def _raise(team_id):
+            raise RuntimeError("db unavailable")
+
+        monkeypatch.setattr("mcpgateway.auth._is_personal_team_sync", _raise)
+
+        assert await derive_token_team_id(["team-shared"], "api") is None
 
 
 # =============================================================================
@@ -7017,3 +7178,60 @@ class TestAuthJwtRoutingReturn:
             result = await handler._auth_jwt(token="unused")
 
         assert result is False
+
+
+class TestUserFromCachedDictFullShape:
+    """Regression: cache entries must preserve all security-sensitive fields.
+
+    A partial user dict (missing auth_provider, password_change_required, etc.)
+    silently gets wrong defaults from _user_from_cached_dict, masking SSO
+    identities and bypassing forced password changes.
+    """
+
+    def test_full_dict_round_trips_all_fields(self):
+        """A full 10-field cache dict produces an EmailUser with every field intact."""
+        # First-Party
+        from mcpgateway.auth import _user_from_cached_dict  # pylint: disable=import-outside-toplevel
+
+        now = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        user_dict = {
+            "email": "sso@corp.com",
+            "password_hash": "hashed",
+            "full_name": "SSO User",
+            "is_admin": False,
+            "is_active": True,
+            "auth_provider": "okta",
+            "password_change_required": True,
+            "email_verified_at": now,
+            "created_at": now,
+            "updated_at": now,
+        }
+
+        user = _user_from_cached_dict(user_dict)
+
+        assert user.auth_provider == "okta", "auth_provider must not default to 'local'"
+        assert user.password_change_required is True, "password_change_required must not default to False"
+        assert user.password_hash == "hashed"
+        assert user.full_name == "SSO User"
+        assert user.email_verified_at == now
+        assert user.created_at == now
+        assert user.updated_at == now
+
+    def test_partial_dict_exposes_wrong_defaults(self):
+        """A 3-field dict (the old bug shape) would produce wrong defaults.
+
+        This test documents the _user_from_cached_dict contract: callers MUST
+        supply all fields.  The fallback defaults exist only for forward
+        compatibility when new fields are added, not to silently paper over
+        missing security-sensitive data.
+        """
+        # First-Party
+        from mcpgateway.auth import _user_from_cached_dict  # pylint: disable=import-outside-toplevel
+
+        partial_dict = {"email": "sso@corp.com", "is_admin": False, "is_active": True}
+        user = _user_from_cached_dict(partial_dict)
+
+        # These are the WRONG values a partial dict produces — documenting the
+        # contract that writers must not rely on these defaults for existing fields.
+        assert user.auth_provider == "local", "default masks real provider"
+        assert user.password_change_required is False, "default skips forced change"

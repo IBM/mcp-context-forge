@@ -68,9 +68,9 @@ def _assemble_routers(  # noqa: C901 — deliberate single-function assembly, co
         tool_router: Inline tools router from main.py.
         resource_router: Inline resources router from main.py.
         prompt_router: Inline prompts router from main.py.
-        gateway_router: Inline gateways router from main.py.
+        gateway_router: Prefix-free inline gateways router from main.py.
         root_router: Inline roots router from main.py.
-        server_router: Inline servers router from main.py.
+        server_router: Prefix-free inline servers router from main.py.
         metrics_router: Inline metrics router from main.py.
         tag_router: Inline tags router from main.py.
         export_import_router: Inline export/import router from main.py.
@@ -84,9 +84,9 @@ def _assemble_routers(  # noqa: C901 — deliberate single-function assembly, co
     target_router.include_router(tool_router)
     target_router.include_router(resource_router)
     target_router.include_router(prompt_router)
-    target_router.include_router(gateway_router)
+    target_router.include_router(gateway_router, prefix="/gateways")
     target_router.include_router(root_router)
-    target_router.include_router(server_router)
+    target_router.include_router(server_router, prefix="/servers")
     target_router.include_router(metrics_router)
     target_router.include_router(tag_router)
     target_router.include_router(export_import_router)
@@ -106,6 +106,15 @@ def _assemble_routers(  # noqa: C901 — deliberate single-function assembly, co
 
     target_router.include_router(search_router)
     logger.info("Unified search router included (/search)")
+
+    # Observability metrics summaries — always mounted, unlike the full observability
+    # router below (Group C): when OBSERVABILITY_ENABLED=false the handlers return
+    # empty series so the home dashboard renders its "enable observability" state.
+    # First-Party
+    from mcpgateway.routers.observability import observability_metrics_router  # pylint: disable=import-outside-toplevel
+
+    target_router.include_router(observability_metrics_router)
+    logger.info("Observability metrics summary router included (/observability/metrics)")
 
     # -------------------------------------------------------------------------
     # Group B — always-tried optional router (tool plugin bindings)
@@ -284,7 +293,7 @@ def _assemble_routers(  # noqa: C901 — deliberate single-function assembly, co
 
         try:
             # First-Party
-            from mcpgateway.admin import admin_router, set_logging_service, validate_section_permissions  # pylint: disable=import-outside-toplevel
+            from mcpgateway.admin import admin_router, enforce_admin_csrf, set_logging_service, validate_section_permissions  # pylint: disable=import-outside-toplevel
 
             set_logging_service(logging_service)
             target_router.include_router(admin_router)
@@ -294,7 +303,10 @@ def _assemble_routers(  # noqa: C901 — deliberate single-function assembly, co
             # First-Party
             from mcpgateway.routers.runtime_admin_router import runtime_admin_router  # pylint: disable=import-outside-toplevel
 
-            target_router.include_router(runtime_admin_router, prefix="/admin/runtime", tags=["Runtime Admin"])
+            # enforce_admin_csrf is required, not optional: /admin is in
+            # settings.csrf_exempt_paths, so CSRFMiddleware never runs on the legacy
+            # mount and this dependency is the only CSRF control these PATCH routes get.
+            target_router.include_router(runtime_admin_router, prefix="/admin/runtime", tags=["Runtime Admin"], dependencies=[Depends(enforce_admin_csrf)])
 
             # Only the /admin/well-known status endpoint belongs in the versioned
             # router.  The full well_known router (which owns /.well-known/* paths)
@@ -366,6 +378,10 @@ def build_v1_router(
         export_import_router=export_import_router,
         a2a_router=a2a_router,
     )
+
+    # Product-language aliases for the existing gateway and virtual-server APIs.
+    v1_router.include_router(gateway_router, prefix="/mcp-servers")
+    v1_router.include_router(server_router, prefix="/virtual-servers")
 
     # First-Party
     from mcpgateway.routers.catalog import router as catalog_router  # pylint: disable=import-outside-toplevel

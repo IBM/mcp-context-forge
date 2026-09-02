@@ -61,6 +61,7 @@ spec:
           image: "{{ .Values.mcpContextForge.image.repository }}:{{ .Values.mcpContextForge.image.tag }}"
           imagePullPolicy: {{ .Values.mcpContextForge.image.pullPolicy }}
           {{- $pluginsConfigFile := default "plugins/config.yaml" .Values.mcpContextForge.config.PLUGINS_CONFIG_FILE }}
+          {{- $tls := default dict .Values.mcpContextForge.tls }}
 
           # Gateway's internal port
           ports:
@@ -199,6 +200,23 @@ spec:
               value: ""
               {{- end }}
 
+            # ---------- GATEWAY TLS (direct HTTPS on pod) ----------
+            {{- if $tls.enabled }}
+            - name: SSL
+              value: "true"
+            - name: CERT_FILE
+              value: {{ $tls.certFile | quote }}
+            - name: KEY_FILE
+              value: {{ $tls.keyFile | quote }}
+            {{- with $tls.keyFilePasswordSecret }}
+            - name: KEY_FILE_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ required "mcpContextForge.tls.keyFilePasswordSecret.name is required" .name }}
+                  key: {{ .key | default "keyFilePassword" }}
+            {{- end }}
+            {{- end }}
+
             # ---------- EXTRA ENV (user-defined) ----------
 
             # ---------- RATE LIMITER REDIS (Optional) ----------
@@ -299,18 +317,18 @@ spec:
           {{- else }}
           {{- with .Values.mcpContextForge.probes.startup }}
           startupProbe:
-{{- include "helpers.renderProbe" (dict "probe" . "root" $) | nindent 12 }}
+{{- include "helpers.renderProbeWithTLS" (dict "probe" . "tlsEnabled" $tls.enabled "root" $) | nindent 12 }}
           {{- end }}
           {{- end }}
 
           {{- with .Values.mcpContextForge.probes.readiness }}
           readinessProbe:
-{{- include "helpers.renderProbe" (dict "probe" . "root" $) | nindent 12 }}
+{{- include "helpers.renderProbeWithTLS" (dict "probe" . "tlsEnabled" $tls.enabled "root" $) | nindent 12 }}
           {{- end }}
 
           {{- with .Values.mcpContextForge.probes.liveness }}
           livenessProbe:
-{{- include "helpers.renderProbe" (dict "probe" . "root" $) | nindent 12 }}
+{{- include "helpers.renderProbeWithTLS" (dict "probe" . "tlsEnabled" $tls.enabled "root" $) | nindent 12 }}
           {{- end }}
 
           # Resource requests / limits
@@ -325,6 +343,11 @@ spec:
               mountPath: /app/{{ $pluginsConfigFile }}
               subPath: config.yaml
           {{- end }}
+          {{- if $tls.enabled }}
+            - name: gateway-tls-certs
+              mountPath: {{ $tls.mountPath | quote }}
+              readOnly: true
+          {{- end }}
       volumes:
         - name: tmp
           emptyDir: {}
@@ -335,4 +358,9 @@ spec:
             items:
               - key: config.yaml
                 path: config.yaml
+      {{- end }}
+      {{- if $tls.enabled }}
+        - name: gateway-tls-certs
+          secret:
+            secretName: {{ required "mcpContextForge.tls.secretName is required when mcpContextForge.tls.enabled=true" $tls.secretName }}
       {{- end }}

@@ -10,6 +10,7 @@ Be careful not to overfit production-grade assumptions onto the design.
 
 # Standard
 import asyncio
+from collections.abc import Sequence
 from collections import defaultdict
 import logging
 import os
@@ -62,15 +63,26 @@ class BackendConfig(TypedDict):
 
     name: str
     url: str
-    transport: str
     passthrough_headers: list[str]
     add_headers: dict[str, str]
     remove_headers: list[str]
     capabilities: dict[str, Any]
     allowed_tool_names: list[str]
+    tool_schemas: dict[str, dict[str, Any]]
     allowed_resource_names: list[str]
     allowed_resource_uris: list[str]
     allowed_prompt_names: list[str]
+
+
+class GatewayBaseConfig(TypedDict):
+    """Gateway connection fields shared by every virtual-host backend."""
+
+    name: str
+    url: str
+    passthrough_headers: list[str]
+    add_headers: dict[str, str]
+    remove_headers: list[str]
+    capabilities: dict[str, Any]
 
 
 class VirtualHostConfig(TypedDict):
@@ -85,7 +97,27 @@ class UserConfig(TypedDict):
     virtual_hosts: dict[str, VirtualHostConfig]
 
 
-BackendItems = dict[str, list[str]]
+class BackendItems(TypedDict):
+    """Database identifiers associated with one server backend."""
+
+    tools: list[str]
+    resources: list[str]
+    prompts: list[str]
+
+
+class PublishedBackendItems(BackendItems):
+    """User-filtered backend items enriched with tool input schemas."""
+
+    tool_schemas: dict[str, dict[str, Any]]
+
+
+class ToolMetadata(TypedDict):
+    """Tool fields needed to publish dataplane routing configuration."""
+
+    name: str
+    input_schema: dict[str, Any]
+
+
 BackendItemsByServer = dict[str, dict[str, BackendItems]]
 
 
@@ -130,7 +162,7 @@ class DataplanePublisherService:
         self.task = None
         logger.info("Dataplane publisher stopped.")
 
-    async def fetch_payload(self) -> dict[str, dict[str, dict[str, Any]]] | None:
+    async def fetch_payload(self) -> dict[str, UserConfig] | None:
         """Fetch the payload to publish to Redis. Returns None on error."""
         user_data = await self.get_data_from_db()
         if user_data is None:
@@ -229,14 +261,13 @@ class DataplanePublisherService:
 
             prompt_map = {prompt["id"]: prompt["name"] for prompt in prompts}
 
-            # The dataplane proxies streamable-HTTP upstreams only. Legacy
-            # HTTP+SSE gateways are excluded so the published config never
-            # advertises a backend the dataplane cannot serve.
-            gateway_base = {
+            # The dataplane proxies streamable-HTTP upstreams only. Exclude
+            # every other transport before building its transport-agnostic
+            # backend config.
+            gateway_base: dict[str, GatewayBaseConfig] = {
                 gateway["id"]: {
                     "name": gateway["name"],
                     "url": gateway["url"],
-                    "transport": gateway["transport"],
                     "passthrough_headers": gateway["passthrough_headers"] or [],
                     "add_headers": gateway.get("add_headers") or {},
                     "remove_headers": gateway.get("remove_headers") or [],
@@ -263,8 +294,14 @@ class DataplanePublisherService:
                         continue
 
                     backends[gateway_id] = {
-                        **gateway_config,
+                        "name": gateway_config["name"],
+                        "url": gateway_config["url"],
+                        "passthrough_headers": gateway_config["passthrough_headers"],
+                        "add_headers": gateway_config["add_headers"],
+                        "remove_headers": gateway_config["remove_headers"],
+                        "capabilities": gateway_config["capabilities"],
                         "allowed_tool_names": backend_items["tools"],
+                        "tool_schemas": backend_items["tool_schemas"],
                         "allowed_resource_names": allowed_resource_names,
                         "allowed_resource_uris": allowed_resource_uris,
                         "allowed_prompt_names": allowed_prompt_names,
@@ -328,7 +365,7 @@ class DataplanePublisherService:
                         DbResource.uri_template.is_(None),
                     )
                 ).all()
-                tool_rows = db.execute(select(DbTool.id, DbTool.original_name, DbTool.owner_email, DbTool.team_id, DbTool.visibility).where(DbTool.enabled.is_(True))).all()
+                tool_rows = db.execute(select(DbTool.id, DbTool.original_name, DbTool.input_schema, DbTool.owner_email, DbTool.team_id, DbTool.visibility).where(DbTool.enabled.is_(True))).all()
                 backend_items_by_server = self._get_backend_items_by_server(db)
 
                 return {
@@ -355,21 +392,31 @@ class DataplanePublisherService:
         user_email: str,
         team_ids: set[str],
         is_admin: bool,
-        server_rows: list[Any],
-        gateway_rows: list[Any],
-        prompt_rows: list[Any],
-        resource_rows: list[Any],
-        tool_rows: list[Any],
+        server_rows: Sequence[Any],
+        gateway_rows: Sequence[Any],
+        prompt_rows: Sequence[Any],
+        resource_rows: Sequence[Any],
+        tool_rows: Sequence[Any],
         backend_items_by_server: BackendItemsByServer,
     ) -> dict[str, Any]:
         """Build already-filtered dataplane data for one user."""
-        tool_name_by_id = {tool.id: tool.original_name for tool in tool_rows if self._filter_for_user(tool, user_email, team_ids, is_admin=is_admin)}
+        tool_by_id: dict[str, ToolMetadata] = {}
+        for tool in tool_rows:
+            if not self._filter_for_user(tool, user_email, team_ids, is_admin=is_admin):
+                continue
+            if not isinstance(tool.input_schema, dict):
+                logger.warning("Excluding tool %s from the dataplane snapshot because its input schema is not an object", tool.id)
+                continue
+            tool_by_id[tool.id] = {
+                "name": tool.original_name,
+                "input_schema": tool.input_schema,
+            }
 
         return {
             "servers": [
                 {
                     "id": server.id,
-                    "backend_items": self._filter_backend_items_for_user(backend_items_by_server.get(server.id, {}), tool_name_by_id),
+                    "backend_items": self._filter_backend_items_for_user(backend_items_by_server.get(server.id, {}), tool_by_id),
                 }
                 for server in server_rows
                 if self._filter_for_user(server, user_email, team_ids, is_admin=is_admin)
@@ -405,11 +452,12 @@ class DataplanePublisherService:
         return row.team_id in team_ids and visibility == "team"
 
     @staticmethod
-    def _filter_backend_items_for_user(backend_items_by_gateway: dict[str, BackendItems], tool_name_by_id: dict[str, str]) -> dict[str, BackendItems]:
-        """Filter backend tool IDs for one user and convert visible tools to names."""
+    def _filter_backend_items_for_user(backend_items_by_gateway: dict[str, BackendItems], tool_by_id: dict[str, ToolMetadata]) -> dict[str, PublishedBackendItems]:
+        """Filter backend tool IDs for one user and publish visible names with schemas."""
         return {
             gateway_id: {
-                "tools": [tool_name_by_id[tool_id] for tool_id in backend_items["tools"] if tool_id in tool_name_by_id],
+                "tools": [tool_by_id[tool_id]["name"] for tool_id in backend_items["tools"] if tool_id in tool_by_id],
+                "tool_schemas": {tool_by_id[tool_id]["name"]: tool_by_id[tool_id]["input_schema"] for tool_id in backend_items["tools"] if tool_id in tool_by_id},
                 "resources": list(backend_items["resources"]),
                 "prompts": list(backend_items["prompts"]),
             }

@@ -385,7 +385,7 @@ make test-mcp-rbac test-mcp-protocol-e2e
 | Target | What it tests |
 |--------|---------------|
 | `test-mcp-rbac` | RBAC enforcement and multi-transport MCP protocol compliance |
-| `test-mcp-protocol-e2e` | MCP protocol via FastMCP client against the gateway |
+| `test-mcp-protocol-e2e` | MCP protocol via the official mcp SDK client against the gateway |
 
 ### 5.5 Load testing
 
@@ -433,7 +433,7 @@ Bring up the full stack with the testing profile and verify all services are hea
 make testing-down compose-clean testing-up
 ```
 
-This starts the gateway along with Locust, A2A echo server, fast test server, and MCP Inspector. Verify all services are healthy:
+This starts the gateway along with Locust, A2A echo server, the fast-time server, and MCP Inspector. Verify all services are healthy:
 
 ```bash
 make compose-ps

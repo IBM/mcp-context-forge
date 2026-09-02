@@ -27,26 +27,21 @@ Kubernetes: `>=1.21.0-0`
 
 ## SSRF and In-Cluster Tool Registration
 
-By default, this project's intranet release profile keeps SSRF validation enabled while allowing
-local and private MCP backends:
+By default, the chart uses strict SSRF settings:
 
-- `mcpContextForge.config.SSRF_PROTECTION_ENABLED="true"`
-- `mcpContextForge.config.SSRF_ALLOW_LOCALHOST="true"`
-- `mcpContextForge.config.SSRF_ALLOW_PRIVATE_NETWORKS="true"`
+- `mcpContextForge.config.SSRF_ALLOW_LOCALHOST="false"`
+- `mcpContextForge.config.SSRF_ALLOW_PRIVATE_NETWORKS="false"`
 - `mcpContextForge.config.SSRF_ALLOWED_NETWORKS="[]"`
-- `mcpContextForge.config.SSRF_DNS_FAIL_CLOSED="true"`
-- `mcpContextForge.config.MCPGATEWAY_GRPC_ENABLED="true"`
 
-When you enable testing registration jobs (`testing.fastTime.register.enabled` or
-`testing.fastTest.register.enabled`), those jobs create gateways that point to
-in-cluster service URLs:
+This is the recommended production baseline.
+When you enable the Fast Time testing registration job (`testing.fastTime.register.enabled`), it creates a gateway that points to the in-cluster service URL:
 
 - `fast-time`: `http://<release>-mcp-fast-time-server:80/http`
-- `fast-test`: `http://<release>-fast-test-server:8880/mcp`
 
-Those destinations are private cluster addresses and work with the default intranet profile.
+That destination is a private cluster address and will be blocked under strict SSRF defaults.
 
-### Example: Stricter deployment allowing only expected cluster CIDRs
+
+### Example: Allow only expected cluster CIDRs (preferred)
 
 ```yaml
 mcpContextForge:
@@ -58,16 +53,15 @@ mcpContextForge:
     SSRF_DNS_FAIL_CLOSED: "true"
 ```
 
-### Default intranet profile
+### Example: Local benchmark profile (broader allowance)
 
 ```yaml
 mcpContextForge:
   config:
     SSRF_PROTECTION_ENABLED: "true"
-    SSRF_ALLOW_LOCALHOST: "true"
+    SSRF_ALLOW_LOCALHOST: "false"
     SSRF_ALLOW_PRIVATE_NETWORKS: "true"
     SSRF_DNS_FAIL_CLOSED: "true"
-    MCPGATEWAY_GRPC_ENABLED: "true"
 ```
 
 If registration fails with `422` and mentions blocked private network addresses, update SSRF values and
@@ -469,8 +463,8 @@ For detailed guidance on resource limits and process management, see `docs/docs/
 | mcpContextForge.config.INSECURE_ALLOW_QUERYPARAM_AUTH | string | `"false"` |  |
 | mcpContextForge.config.INSECURE_QUERYPARAM_AUTH_ALLOWED_HOSTS | string | `"[]"` |  |
 | mcpContextForge.config.SSRF_PROTECTION_ENABLED | string | `"true"` |  |
-| mcpContextForge.config.SSRF_ALLOW_LOCALHOST | string | `"true"` |  |
-| mcpContextForge.config.SSRF_ALLOW_PRIVATE_NETWORKS | string | `"true"` |  |
+| mcpContextForge.config.SSRF_ALLOW_LOCALHOST | string | `"false"` |  |
+| mcpContextForge.config.SSRF_ALLOW_PRIVATE_NETWORKS | string | `"false"` |  |
 | mcpContextForge.config.SSRF_ALLOWED_NETWORKS | string | `"[]"` |  |
 | mcpContextForge.config.SSRF_DNS_FAIL_CLOSED | string | `"true"` |  |
 | mcpContextForge.config.LOG_LEVEL | string | `"INFO"` |  |
@@ -762,7 +756,7 @@ For detailed guidance on resource limits and process management, see `docs/docs/
 | mcpContextForge.secret.REQUIRE_TOKEN_EXPIRATION | string | `"true"` |  |
 | mcpContextForge.secret.REQUIRE_JTI | string | `"true"` |  |
 | mcpContextForge.secret.REQUIRE_USER_IN_DB | string | `"false"` |  |
-| mcpContextForge.secret.AUTH_ENCRYPTION_SECRET | string | `"my-test-salt"` |  |
+| mcpContextForge.secret.AUTH_ENCRYPTION_SECRET | string | `""` |  |
 | mcpContextForge.secret.EMAIL_AUTH_ENABLED | string | `"true"` |  |
 | mcpContextForge.secret.PROTECT_ALL_ADMINS | string | `"true"` |  |
 | mcpContextForge.secret.PLATFORM_ADMIN_EMAIL | string | `"admin@example.com"` |  |
@@ -1430,38 +1424,6 @@ When `RATELIMITER_REDIS_URL` is not set during start time, the gateway automatic
 | testing.fastTime.register.virtualServerId | string | `"9779b6698cbd4b4995ee04a4fab38737"` |  |
 | testing.fastTime.register.virtualServerName | string | `"Fast Time Server"` |  |
 | testing.fastTime.register.virtualServerDescription | string | `"Virtual server exposing Fast Time MCP tools/resources/prompts"` |  |
-| testing.fastTestServer.enabled | bool | `true` |  |
-| testing.fastTestServer.image.repository | string | `"mcpgateway/fast-test-server"` |  |
-| testing.fastTestServer.image.tag | string | `"latest"` |  |
-| testing.fastTestServer.image.pullPolicy | string | `"IfNotPresent"` |  |
-| testing.fastTestServer.service.type | string | `"ClusterIP"` |  |
-| testing.fastTestServer.service.port | int | `8880` |  |
-| testing.fastTestServer.env.BIND_ADDRESS | string | `"0.0.0.0:8880"` |  |
-| testing.fastTestServer.env.RUST_LOG | string | `"info"` |  |
-| testing.fastTestServer.resources.limits.cpu | string | `"2"` |  |
-| testing.fastTestServer.resources.limits.memory | string | `"1Gi"` |  |
-| testing.fastTestServer.resources.requests.cpu | string | `"500m"` |  |
-| testing.fastTestServer.resources.requests.memory | string | `"128Mi"` |  |
-| testing.fastTestServer.probes.readiness.type | string | `"http"` |  |
-| testing.fastTestServer.probes.readiness.path | string | `"/health"` |  |
-| testing.fastTestServer.probes.readiness.port | int | `8880` |  |
-| testing.fastTestServer.probes.readiness.initialDelaySeconds | int | `10` |  |
-| testing.fastTestServer.probes.readiness.periodSeconds | int | `30` |  |
-| testing.fastTestServer.probes.readiness.timeoutSeconds | int | `5` |  |
-| testing.fastTestServer.probes.readiness.successThreshold | int | `1` |  |
-| testing.fastTestServer.probes.readiness.failureThreshold | int | `3` |  |
-| testing.fastTestServer.probes.liveness.type | string | `"http"` |  |
-| testing.fastTestServer.probes.liveness.path | string | `"/health"` |  |
-| testing.fastTestServer.probes.liveness.port | int | `8880` |  |
-| testing.fastTestServer.probes.liveness.initialDelaySeconds | int | `10` |  |
-| testing.fastTestServer.probes.liveness.periodSeconds | int | `30` |  |
-| testing.fastTestServer.probes.liveness.timeoutSeconds | int | `5` |  |
-| testing.fastTestServer.probes.liveness.successThreshold | int | `1` |  |
-| testing.fastTestServer.probes.liveness.failureThreshold | int | `3` |  |
-| testing.fastTest.register.enabled | bool | `true` |  |
-| testing.fastTest.register.gatewayName | string | `"fast_test"` |  |
-| testing.fastTest.register.gatewayPath | string | `"/mcp"` |  |
-| testing.fastTest.register.transport | string | `"STREAMABLEHTTP"` |  |
 | testing.a2aEchoAgent.enabled | bool | `true` |  |
 | testing.a2aEchoAgent.image.repository | string | `"mcpgateway/a2a-echo-agent"` |  |
 | testing.a2aEchoAgent.image.tag | string | `"latest"` |  |

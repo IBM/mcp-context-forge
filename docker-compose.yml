@@ -16,11 +16,13 @@
 #  Default (no profile):  Gateway + Postgres + Redis + Nginx (HTTP only)
 #  --profile sso:         Adds Keycloak + testing + inspector (full dev SSO stack, via docker-compose.sso.yml)
 #  --profile monitoring:  Adds Prometheus, Grafana, Loki, exporters
-#  --profile testing:     Adds Locust (web UI), A2A echo agent, fast_test_server + auto-registration
+#  --profile testing:     Adds Locust (web UI) and A2A echo agent
 #  --profile resilience:  Adds slow_time_server for timeout, circuit breaker, and resilience testing
 #  --profile benchmark:   Adds benchmark MCP servers for load testing
 #  --profile tls:         Enables HTTPS via nginx_tls (auto-generates certs)
 #  --profile inspector:   Adds MCP Inspector client (http://localhost:6274)
+#  --profile experimental: Adds the ContextForge web UI (web_ui) + its Redis session store
+#                          (web_ui is also included in --profile testing)
 #
 #  Compose overlays (separate files):
 #  docker-compose.with-phoenix.yml:   Phoenix observability (OTEL traces)
@@ -59,6 +61,7 @@ volumes:                # Named volumes survive podman-compose down/up
   locust_token:
   prometheus_token:
   keycloakdata:
+  web_ui_redis_data:
 
 ###############################################################################
 #  CORE SERVICE - ContextForge
@@ -229,6 +232,8 @@ services:
       - A2A_RUST_EVENT_STORE_TTL_SECS=${A2A_RUST_EVENT_STORE_TTL_SECS:-3600}
       - A2A_RUST_EVENT_FLUSH_INTERVAL_MS=${A2A_RUST_EVENT_FLUSH_INTERVAL_MS:-1000}
       - A2A_RUST_EVENT_FLUSH_BATCH_SIZE=${A2A_RUST_EVENT_FLUSH_BATCH_SIZE:-100}
+      # MCP Apps UI support (disabled by default; opt-in only)
+      - MCPGATEWAY_MCP_APPS_ENABLED=${MCPGATEWAY_MCP_APPS_ENABLED:-false}
       # WebSocket transport features (disabled by default; opt-in only)
       - MCPGATEWAY_WS_RELAY_ENABLED=${MCPGATEWAY_WS_RELAY_ENABLED:-false}
       - MCPGATEWAY_REVERSE_PROXY_ENABLED=${MCPGATEWAY_REVERSE_PROXY_ENABLED:-false}
@@ -350,8 +355,8 @@ services:
       # Admin UI uses email/password authentication
       - EMAIL_AUTH_ENABLED=true
       - PROTECT_ALL_ADMINS=${PROTECT_ALL_ADMINS:-true}
-      - PLATFORM_ADMIN_EMAIL=admin@example.com
-      - PLATFORM_ADMIN_PASSWORD=changeme
+      - PLATFORM_ADMIN_EMAIL=${PLATFORM_ADMIN_EMAIL:-admin@example.com}
+      - PLATFORM_ADMIN_PASSWORD=${PLATFORM_ADMIN_PASSWORD:-changeme}
       # Compose default off so /admin/* REST works without bootstrap redirect; override for production.
       - PASSWORD_CHANGE_ENFORCEMENT_ENABLED=${PASSWORD_CHANGE_ENFORCEMENT_ENABLED:-true}
       - ACCOUNT_LOCKOUT_NOTIFICATION_ENABLED=${ACCOUNT_LOCKOUT_NOTIFICATION_ENABLED:-true}
@@ -467,6 +472,16 @@ services:
       # For passphrase-protected keys: run `make certs-passphrase` and use:
       # - KEY_FILE=/app/certs/key-encrypted.pem
       # - KEY_FILE_PASSWORD=${KEY_FILE_PASSWORD}
+      ## Uncomment to require client certificates as well (inbound mTLS).
+      ## Run `make certs-client` first. Requires SSL=true above.
+      ## NOTE: the gateway healthcheck below must also be switched to the
+      ## client-certificate variant, or the container is marked unhealthy.
+      # - CA_CERTS=/app/certs/client/ca-cert.pem
+      # - CERT_REQS=2
+      ## Client certificate for the gateway's own loopback /rpc self-calls.
+      ## Required when CERT_REQS=2, or SSE and WebSocket break.
+      # - LOOPBACK_CLIENT_CERT=/app/certs/client/client-cert.pem
+      # - LOOPBACK_CLIENT_KEY=/app/certs/client/client-key.pem
       # Uncomment to enable plugins
       - PLUGINS_ENABLED=true
       - PLUGINS_CONFIG_FILE=${PLUGINS_CONFIG_FILE:-plugins/config.yaml}
@@ -744,6 +759,11 @@ services:
       # test: ["CMD", "curl", "-f", "https://localhost:4444/health"]
       # HTTPS healthcheck with SSL validation skipped (self-signed certs)
       # test: ["CMD", "curl", "-fk", "https://localhost:4444/health"]
+      ## Uncomment for HTTPS + inbound mTLS (CERT_REQS=1 or 2). None of the
+      ## variants above present a client certificate, so they all fail once the
+      ## gateway requires one - and an unhealthy gateway blocks every service
+      ## that depends_on it with condition: service_healthy.
+      # test: ["CMD", "curl", "-fk", "--cert", "/app/certs/client/client-cert.pem", "--key", "/app/certs/client/client-key.pem", "https://localhost:4444/health"]
       interval: 30s
       timeout: 10s
       retries: 5
@@ -1056,6 +1076,7 @@ services:
       - BASIC_AUTH_USER=${BASIC_AUTH_USER:-admin}
       - BASIC_AUTH_PASSWORD=${BASIC_AUTH_PASSWORD:-changeme}
       - PLATFORM_ADMIN_EMAIL=${PLATFORM_ADMIN_EMAIL:-admin@example.com}
+      - PLATFORM_ADMIN_PASSWORD=${PLATFORM_ADMIN_PASSWORD:-changeme}
       - AUTH_REQUIRED=${AUTH_REQUIRED:-true}
       - "AUTH_ENCRYPTION_SECRET=${AUTH_ENCRYPTION_SECRET:?AUTH_ENCRYPTION_SECRET is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
@@ -1147,6 +1168,57 @@ services:
         reservations:
           cpus: '1'
           memory: 1G
+
+###############################################################################
+#  CONTEXTFORGE WEB UI (enabled with --profile testing or --profile experimental)
+#  Usage: docker compose --profile experimental up -d
+#  Access: http://localhost:${WEB_UI_PORT:-3001}
+###############################################################################
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Redis - dedicated session store for the web UI's BFF (separate from the
+  # gateway's cache `redis` service above; this one is persisted to a volume)
+  # ──────────────────────────────────────────────────────────────────────
+  web_ui_redis:
+    image: redis:latest
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - web_ui_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    networks: [mcpnet]
+    profiles: ["testing", "experimental"]
+
+  # ──────────────────────────────────────────────────────────────────────
+  # Web UI - BFF-style frontend for the gateway API
+  # ──────────────────────────────────────────────────────────────────────
+  web_ui:
+    image: ${WEB_UI_IMAGE:-ghcr.io/contextforge-org/contextforge-web-ui:latest}
+    restart: unless-stopped
+    ports:
+      # Host and container port tied together on purpose - the image reads
+      # PORT at startup and listens on it, so both sides must match.
+      - "${WEB_UI_PORT:-3001}:${WEB_UI_PORT:-3001}"
+    networks: [mcpnet]
+    environment:
+      - PORT=${WEB_UI_PORT:-3001}
+      # Bind address - must be 0.0.0.0 inside Docker or other containers cannot connect
+      - HOST=${WEB_UI_HOST:-0.0.0.0}
+      # Gateway API base URL - points at this compose's gateway service (internal network address:port)
+      - CONTEXTFORGE_URL=${WEB_UI_CONTEXTFORGE_URL:-http://gateway:4444}
+      - COOKIE_SECURE=${WEB_UI_COOKIE_SECURE:-false}
+      - REDIS_URL=${WEB_UI_REDIS_URL:-redis://web_ui_redis:6379/0}
+    depends_on:
+      gateway:
+        condition: service_healthy
+      web_ui_redis:
+        condition: service_healthy
+    profiles: ["testing", "experimental"]
 
 ###############################################################################
 #  MONITORING STACK (enabled with --profile monitoring)
@@ -1474,11 +1546,19 @@ services:
 
   ###############################################################################
   # Fast Time Server - High-performance time/timezone service for MCP
-  # Defaults to the published GHCR image. Override FAST_TIME_IMAGE when building locally:
-  #   FAST_TIME_IMAGE=mcpgateway/fast-time-server:local docker compose build fast_time_server
+  # Pinned by digest so `docker compose pull` cannot change the tool inventory
+  # under the benchmarks. Digest resolved 2026-08-07 (== commit tag
+  # 9b97731fab3cce083d09fe48b4d4760a38d17248); 8 tools exposed:
+  #   echo, flaky, get_system_time, convert_time, schema_error, schema_success,
+  #   get_stats, verify-protocol
+  # When bumping this digest: re-run `tools/list` against the new image and
+  # update MCP_BENCHMARK_TOOL_DENYLIST in the Makefile if new failure fixtures
+  # were added (see tests/loadtest/locustfile_mcp_protocol.py).
+  # Override for local builds:
+  #   FAST_TIME_IMAGE=mcpgateway/fast-time-server:local docker compose up fast_time_server
   ###############################################################################
   fast_time_server:
-    image: ${FAST_TIME_IMAGE:-ghcr.io/ibm/cfex-mcp-fast-time-server:latest}
+    image: ${FAST_TIME_IMAGE:-ghcr.io/ibm/cfex-mcp-fast-time-server@sha256:2f095509d535a0769449f3b9417858f5c233dc74b1e09de335b48b7591d995a1}
     restart: unless-stopped
     networks: [mcpnet]
     ports:
@@ -1502,6 +1582,7 @@ services:
     environment:
       - "JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY is not set. Run: make setup (first time) or make init-secrets-patch-env (if .env exists)}"
       - "AUTH_ENCRYPTION_SECRET=${AUTH_ENCRYPTION_SECRET:?AUTH_ENCRYPTION_SECRET is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
+      - "GATEWAY_URL=${GATEWAY_URL:-http://gateway:4444}"
 
     # This is a one-shot container that exits after registration
     restart: "no"
@@ -1515,13 +1596,24 @@ services:
 
         # Wait for gateway to be ready using Python
         python3 -c "
+        import os
+        import ssl
         import time
-        import urllib.request
         import urllib.error
+        import urllib.request
+
+        gateway_url = os.environ.get('GATEWAY_URL', 'http://gateway:4444').rstrip('/')
+        ca_cert = os.environ.get('GATEWAY_CA_CERT')
+        ssl_context = ssl.create_default_context(cafile=ca_cert) if ca_cert else None
+        if ssl_context is not None:
+            ssl_context.check_hostname = False
 
         for i in range(1, 61):
             try:
-                with urllib.request.urlopen('http://gateway:4444/health', timeout=2) as response:
+                request_kwargs = {'timeout': 2}
+                if ssl_context is not None:
+                    request_kwargs['context'] = ssl_context
+                with urllib.request.urlopen(f'{gateway_url}/health', **request_kwargs) as response:
                     if response.status == 200:
                         print('✅ gateway is healthy')
                         break
@@ -1572,24 +1664,37 @@ services:
 
         # Use Python to make HTTP requests
         python3 -c "
-        import urllib.request
-        import urllib.error
         import json
-        import sys
         import os
+        import ssl
+        import sys
         import time
+        import urllib.error
+        import urllib.request
 
         token = os.environ.get('MCPGATEWAY_BEARER_TOKEN', '')
+        gateway_url = os.environ.get('GATEWAY_URL', 'http://gateway:4444').rstrip('/')
+        ca_cert = os.environ.get('GATEWAY_CA_CERT')
+        ssl_context = ssl.create_default_context(cafile=ca_cert) if ca_cert else None
+        if ssl_context is not None:
+            ssl_context.check_hostname = False
+
+        def open_url(request, timeout):
+            request_kwargs = {'timeout': timeout}
+            if ssl_context is not None:
+                request_kwargs['context'] = ssl_context
+            return urllib.request.urlopen(request, **request_kwargs)
+
 
         def api_request(method, path, data=None):
             '''Helper to make authenticated API requests.'''
-            url = f'http://gateway:4444{path}'
+            url = f'{gateway_url}{path}'
             req = urllib.request.Request(url, method=method)
             req.add_header('Authorization', f'Bearer {token}')
             req.add_header('Content-Type', 'application/json')
             if data:
                 req.data = json.dumps(data).encode('utf-8')
-            with urllib.request.urlopen(req, timeout=60) as response:
+            with open_url(req, 60) as response:
                 return json.loads(response.read().decode('utf-8'))
 
         def api_request_with_retry(method, path, data=None, retries=30, delay=2, retry_statuses=(401, 502, 503)):
@@ -1861,203 +1966,6 @@ services:
         echo "✅ Registration complete!"
     profiles: ["resilience"]
 
-  ###############################################################################
-  # Fast Test Server - Ultra-fast Rust MCP server for performance testing
-  # Provides: echo, get_system_time, get_stats tools via MCP Streamable HTTP
-  # Also exposes REST API endpoints for baseline comparison
-  # Usage: docker compose --profile testing up -d
-  ###############################################################################
-  fast_test_server:
-    image: ghcr.io/ibm/cfex-mcp-fast-time-server:latest
-    restart: unless-stopped
-    networks: [mcpnet]
-    ports:
-      - "8880:8880"    # Port 8880 (avoids conflict with benchmark servers on 9000+)
-    environment:
-      - BIND_ADDRESS=0.0.0.0:8880
-      - RUST_LOG=info
-    # TCP kernel tuning for high-concurrency load testing
-    sysctls:
-      - net.ipv4.tcp_fin_timeout=15          # Faster cleanup of FIN_WAIT2 sockets
-      - net.ipv4.ip_local_port_range=1024 65535  # More ephemeral ports
-      - net.core.somaxconn=65535             # Max listen backlog
-    ulimits:
-      nofile:
-        soft: 65535
-        hard: 65535
-      nproc:
-        soft: 5000
-        hard: 5000
-    healthcheck:
-      test: ["CMD", "curl", "-sf", "http://localhost:8880/health"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 10s
-    deploy:
-      resources:
-        limits:
-          cpus: '4'
-          memory: 2G
-        reservations:
-          cpus: '1'
-          memory: 512M
-    profiles: ["testing", "monitoring", "sso"]
-
-  ###############################################################################
-  # Auto-registration service - registers fast_test_server with gateway
-  ###############################################################################
-  register_fast_test:
-    image: ${IMAGE_LOCAL:-mcpgateway/mcpgateway:latest}
-    networks: [mcpnet]
-    depends_on:
-      gateway:
-        condition: service_healthy
-      fast_test_server:
-        condition: service_healthy
-    environment:
-      - "JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY is not set. Run: make setup (first time) or make init-secrets-patch-env (if .env exists)}"
-      - "AUTH_ENCRYPTION_SECRET=${AUTH_ENCRYPTION_SECRET:?AUTH_ENCRYPTION_SECRET is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
-    restart: "no"
-    entrypoint: ["/bin/sh", "-c"]
-    command:
-      - |
-        set -e
-        echo "Registering fast_test_server with gateway..."
-
-        # Generate JWT token
-        export MCPGATEWAY_BEARER_TOKEN=$$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --admin --exp 10080 --secret $$JWT_SECRET_KEY --algo HS256 2>/dev/null)
-
-        # Register using Python
-        python3 -c "
-        import urllib.error
-        import urllib.request
-        import json
-        import os
-        import time
-
-        token = os.environ.get('MCPGATEWAY_BEARER_TOKEN', '')
-
-        def api_request(method, path, data=None):
-            url = f'http://gateway:4444{path}'
-            req = urllib.request.Request(url, method=method)
-            req.add_header('Authorization', f'Bearer {token}')
-            req.add_header('Content-Type', 'application/json')
-            if data:
-                req.data = json.dumps(data).encode('utf-8')
-            with urllib.request.urlopen(req, timeout=60) as response:
-                return json.loads(response.read().decode('utf-8'))
-
-        def api_request_with_retry(method, path, data=None, retries=30, delay=2, retry_statuses=(401, 403, 502, 503)):
-            for attempt in range(1, retries + 1):
-                try:
-                    return api_request(method, path, data)
-                except urllib.error.HTTPError as exc:
-                    if exc.code in retry_statuses and attempt < retries:
-                        print(f'Retrying {method} {path} after HTTP {exc.code} ({attempt}/{retries})')
-                        time.sleep(delay)
-                        continue
-                    raise
-                except Exception:
-                    if attempt < retries:
-                        print(f'Retrying {method} {path} after transient error ({attempt}/{retries})')
-                        time.sleep(delay)
-                        continue
-                    raise
-
-        print('Waiting for authenticated gateway readiness...')
-        for i in range(1, 61):
-            try:
-                gateways = api_request('GET', '/gateways')
-                print(f'✅ Authenticated gateway readiness confirmed ({len(gateways)} gateways visible)')
-                break
-            except urllib.error.HTTPError as exc:
-                print(f'Authenticated readiness not ready yet ({i}/60): HTTP {exc.code}')
-            except Exception as exc:
-                print(f'Authenticated readiness not ready yet ({i}/60): {exc}')
-            time.sleep(2)
-        else:
-            print('❌ Gateway authenticated readiness check failed')
-            exit(1)
-
-        # Delete existing gateway if present
-        try:
-            gateways = api_request_with_retry('GET', '/gateways')
-            for gw in gateways:
-                if gw.get('name') == 'fast_test':
-                    print(f'Deleting existing gateway {gw[\"id\"]}...')
-                    api_request_with_retry('DELETE', f'/gateways/{gw[\"id\"]}')
-        except Exception as e:
-            print(f'Note: {e}')
-
-        VIRTUAL_SERVER_ID = 'b8e3f1a2c4d5e6f7a1b2c3d4e5f6a7b8'
-
-        # Delete existing virtual server if present
-        try:
-            api_request_with_retry('DELETE', f'/servers/{VIRTUAL_SERVER_ID}')
-            print(f'Deleted existing virtual server {VIRTUAL_SERVER_ID}')
-        except Exception as e:
-            print(f'Note: No existing virtual server to delete (or error: {e})')
-
-        # Register the gateway
-        try:
-            result = api_request_with_retry('POST', '/gateways', {
-                'name': 'fast_test',
-                'url': 'http://fast_test_server:8880/mcp',
-                'transport': 'STREAMABLEHTTP'
-            })
-            gateway_id = result.get('id', '')
-            print(f'✅ Registered fast_test_server (gateway_id: {gateway_id})')
-        except Exception as e:
-            print(f'❌ Registration failed: {e}')
-            exit(1)
-
-        # Wait for tools to sync from the gateway
-        print('Waiting for tools to sync...')
-        for i in range(30):
-            time.sleep(1)
-            try:
-                tools = api_request_with_retry('GET', '/tools')
-                fast_test_tools = [t for t in tools if t.get('gatewayId') == gateway_id]
-                if fast_test_tools:
-                    print(f'Found {len(fast_test_tools)} tools from fast_test gateway')
-                    break
-            except Exception:
-                pass
-            print(f'Waiting for sync... ({i+1}/30)')
-        else:
-            print('Warning: No tools synced, continuing anyway...')
-
-        # Collect tool IDs from the fast_test gateway
-        tool_ids = []
-        try:
-            tools = api_request_with_retry('GET', '/tools')
-            tool_ids = [t['id'] for t in tools if t.get('gatewayId') == gateway_id]
-            print(f'Tools: {[t[\"name\"] for t in tools if t.get(\"gatewayId\") == gateway_id]}')
-        except Exception as e:
-            print(f'Failed to fetch tools: {e}')
-
-        # Create virtual server
-        print('Creating virtual server...')
-        try:
-            server_payload = {
-                'server': {
-                    'id': VIRTUAL_SERVER_ID,
-                    'name': 'Fast Test Server',
-                    'description': 'Virtual server exposing Fast Test MCP tools (echo, time, stats)',
-                    'associated_tools': tool_ids,
-                    'associated_resources': [],
-                    'associated_prompts': []
-                }
-            }
-            result = api_request_with_retry('POST', '/servers', server_payload)
-            print(f'✅ Virtual server created: {VIRTUAL_SERVER_ID} with {len(tool_ids)} tools')
-        except Exception as e:
-            print(f'❌ Failed to create virtual server: {e}')
-            exit(1)
-        "
-        echo "✅ Registration complete!"
-    profiles: ["testing", "monitoring", "sso"]
 
   ###############################################################################
   # A2A Echo Agent - Lightweight A2A-compatible agent for end-to-end testing
@@ -2489,7 +2397,7 @@ services:
         apt-get install -y --no-install-recommends openssl
         rm -rf /var/lib/apt/lists/*
         # Check if we have an encrypted key that needs decryption
-        if [ -f /certs/key-encrypted.pem ] && [ -n "${KEY_FILE_PASSWORD}" ]; then
+        if [ -f /certs/key-encrypted.pem ] && [ -n "$${KEY_FILE_PASSWORD}" ]; then
           # Validate: encrypted key requires matching certificate
           if [ ! -f /certs/cert.pem ]; then
             echo "❌ Found key-encrypted.pem but cert.pem is missing"
@@ -2546,6 +2454,8 @@ services:
     environment:
       # Set to "true" to force all HTTP requests to redirect to HTTPS
       - NGINX_FORCE_HTTPS=${NGINX_FORCE_HTTPS:-false}
+      # Backend protocol; gateway TLS override changes this to HTTPS.
+      - GATEWAY_SCHEME=${GATEWAY_SCHEME:-http}
     depends_on:
       gateway:
         condition: service_healthy

@@ -12,6 +12,7 @@ Enhanced with additional test cases for better coverage.
 # Standard
 from datetime import datetime, timedelta, timezone
 import json
+import logging
 from pathlib import Path
 import socket
 from types import SimpleNamespace
@@ -152,6 +153,7 @@ from mcpgateway.admin import (  # admin_get_metrics,
     admin_reset_metrics,
     admin_resources_partial_html,
     admin_search_a2a_agents,
+    admin_search_catalog,
     admin_search_gateways,
     admin_search_prompts,
     admin_search_resources,
@@ -254,6 +256,7 @@ from mcpgateway.admin import (  # admin_get_metrics,
     save_observability_query,
     serialize_datetime,
     track_query_usage,
+    transfer_gateway_ownership,
     UI_HIDE_SECTIONS_COOKIE_NAME,
     update_global_passthrough_headers,
     update_observability_query,
@@ -261,6 +264,7 @@ from mcpgateway.admin import (  # admin_get_metrics,
 from mcpgateway.config import settings, UI_HIDABLE_HEADER_ITEMS, UI_HIDABLE_SECTIONS, UI_HIDE_SECTION_ALIASES
 from mcpgateway.middleware.request_logging_middleware import RequestLoggingMiddleware
 from mcpgateway.schemas import (
+    GatewayOwnershipTransferRequest,
     GatewayRead,
     GatewayTestRequest,
     GlobalConfigRead,
@@ -274,8 +278,9 @@ from mcpgateway.schemas import (
     ToolMetrics,
 )
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
+from mcpgateway.services.catalog_service import CatalogRegistrationPermissionError
 from mcpgateway.services.export_service import ExportError, ExportService
-from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayLookupConflictError, GatewayNotFoundError, GatewayService
+from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayCredentialError, GatewayLookupConflictError, GatewayNotFoundError, GatewayService
 from mcpgateway.services.import_service import ImportError as ImportServiceError
 from mcpgateway.services.import_service import ImportService
 from mcpgateway.services.logging_service import LoggingService
@@ -6803,7 +6808,7 @@ class TestLoggingEndpoints:
         # Mock file exists and reading
         with patch("pathlib.Path.exists", return_value=True), patch("pathlib.Path.stat") as mock_stat, patch("builtins.open", mock_open(read_data=b"test log content")):
             mock_stat.return_value.st_size = 16
-            result = await admin_get_log_file(filename=None, user={"email": "test-user", "db": mock_db})
+            result = await admin_get_log_file(request=SimpleNamespace(headers={}), filename=None, user={"email": "test-user", "db": mock_db})
 
             assert isinstance(result, Response)
             assert result.media_type == "application/octet-stream"
@@ -6819,7 +6824,7 @@ class TestLoggingEndpoints:
         mock_settings.log_file = None
 
         with pytest.raises(HTTPException) as excinfo:
-            await admin_get_log_file(filename=None, user={"email": "test-user@example.com", "db": mock_db})
+            await admin_get_log_file(request=SimpleNamespace(headers={}), filename=None, user={"email": "test-user@example.com", "db": mock_db})
 
         assert excinfo.value.status_code == 404
         assert "File logging is not enabled" in str(excinfo.value.detail)
@@ -7472,6 +7477,7 @@ class TestOAuthFunctionality:
         cases = [
             (GatewayDuplicateConflictError(duplicate_gateway), 409),
             (GatewayNameConflictError("name"), 409),
+            (GatewayCredentialError("Stored credential contains invalid characters"), 422),
             (ValueError("bad"), 400),
             (ValidationError.from_exception_data("test", error_details), 422),
             (IntegrityError("stmt", {}, Exception("constraint")), 409),
@@ -7500,6 +7506,7 @@ class TestOAuthFunctionality:
         cases = [
             (PermissionError("nope"), 403),
             (GatewayConnectionError("down"), 502),
+            (GatewayCredentialError("Stored credential contains invalid characters"), 422),
             (ValueError("bad"), 400),
             (RuntimeError("boom"), 500),
             (ValidationError.from_exception_data("test", error_details), 422),
@@ -7984,6 +7991,33 @@ class TestErrorHandlingPaths:
         body = json.loads(result.body)
         assert body["success"] is False
         assert "Connection failed" in body["message"]
+
+    @patch.object(GatewayService, "update_gateway")
+    async def test_admin_update_gateway_rest_credential_error(self, mock_update_gateway, mock_request, mock_db):
+        """Test updating gateway with a malformed stored credential returns 422, not a generic 500."""
+        from mcpgateway.admin import admin_update_gateway_rest
+
+        existing_gateway = MagicMock()
+        existing_gateway.owner_email = "owner@example.com"
+        existing_gateway.team_id = "team-123"
+        mock_db.get = MagicMock(return_value=existing_gateway)
+
+        mock_request.json = AsyncMock(return_value={"name": "updated-gateway", "url": "https://updated.example.com"})
+        mock_request.headers = {"content-type": "application/json"}
+
+        mock_update_gateway.side_effect = GatewayCredentialError("Stored credential contains invalid characters")
+
+        team_service = MagicMock()
+        team_service.verify_team_for_user = AsyncMock(return_value="team-123")
+
+        with patch("mcpgateway.admin.TeamManagementService", lambda db: team_service):
+            result = await admin_update_gateway_rest("gateway-123", mock_request, mock_db, user={"email": "test-user", "db": mock_db})
+
+        assert isinstance(result, JSONResponse)
+        assert result.status_code == 422
+        body = json.loads(result.body)
+        assert body["success"] is False
+        assert "Stored credential contains invalid characters" in body["message"]
 
     @patch.object(GatewayService, "update_gateway")
     async def test_admin_update_gateway_rest_runtime_error(self, mock_update_gateway, mock_request, mock_db):
@@ -8613,7 +8647,7 @@ class TestAdminNonMemberTeamBanner:
 class TestSetLoggingService:
     """Test the logging service setup functionality."""
 
-    def test_set_logging_service(self):
+    def test_set_logging_service(self, monkeypatch):
         """Test setting the logging service."""
         # First-Party
         from mcpgateway.admin import set_logging_service
@@ -8623,13 +8657,20 @@ class TestSetLoggingService:
         mock_logger = MagicMock()
         mock_service.get_logger.return_value = mock_logger
 
+        # First-Party
+        from mcpgateway import admin
+
+        # admin.LOGGER/admin.logging_service are module globals; set_logging_service()
+        # reassigns them directly rather than through a fixture, so without monkeypatch
+        # restoring them, every test running later in this session would keep seeing
+        # this MagicMock logger instead of a real one.
+        monkeypatch.setattr(admin, "logging_service", admin.logging_service, raising=False)
+        monkeypatch.setattr(admin, "LOGGER", admin.LOGGER, raising=False)
+
         # Set the logging service
         set_logging_service(mock_service)
 
         # Verify global variables were updated
-        # First-Party
-        from mcpgateway import admin
-
         assert admin.logging_service == mock_service
         assert admin.LOGGER == mock_logger
         mock_service.get_logger.assert_called_with("mcpgateway.admin")
@@ -13759,6 +13800,71 @@ async def test_admin_search_endpoints_support_tags_without_query(monkeypatch, mo
 
 
 @pytest.mark.asyncio
+async def test_admin_search_catalog_returns_open_catalog_matches(monkeypatch, mock_db, allow_permission):
+    catalog_search = AsyncMock(return_value=SimpleNamespace(servers=[SimpleNamespace(id="cloudflare-docs", name="Cloudflare Docs", description="Cloudflare documentation")]))
+    access_context = MagicMock(return_value=("user@example.com", ["team-1"]))
+    monkeypatch.setattr("mcpgateway.admin.catalog_service.get_catalog_servers", catalog_search)
+    monkeypatch.setattr("mcpgateway.admin.get_scoped_resource_access_context", access_context)
+    request = MagicMock(spec=Request)
+    user = {"email": "user@example.com", "db": mock_db}
+
+    result = await admin_search_catalog(
+        q=" Cloudflare ",
+        limit=5,
+        db=mock_db,
+        user=user,
+        request=request,
+    )
+
+    assert result["catalog"] == [{"id": "cloudflare-docs", "name": "Cloudflare Docs", "description": "Cloudflare documentation"}]
+    catalog_call = catalog_search.await_args
+    assert catalog_call is not None
+    catalog_request = catalog_call.args[0]
+    assert catalog_request.search == "cloudflare"
+    assert catalog_request.auth_type == "Open"
+    assert catalog_request.limit == 5
+    assert catalog_call.kwargs == {"user_email": "user@example.com", "token_teams": ["team-1"]}
+    access_context.assert_called_once_with(request, user)
+
+
+@pytest.mark.asyncio
+async def test_admin_search_catalog_preserves_admin_scope_bypass(monkeypatch, mock_db, allow_permission):
+    catalog_search = AsyncMock(return_value=SimpleNamespace(servers=[]))
+    monkeypatch.setattr("mcpgateway.admin.catalog_service.get_catalog_servers", catalog_search)
+    monkeypatch.setattr("mcpgateway.admin.get_scoped_resource_access_context", MagicMock(return_value=("admin@example.com", None)))
+
+    await admin_search_catalog(
+        q="cloudflare",
+        limit=5,
+        db=mock_db,
+        user={"email": "admin@example.com", "is_admin": True},
+        request=MagicMock(spec=Request),
+    )
+
+    catalog_call = catalog_search.await_args
+    assert catalog_call is not None
+    assert catalog_call.kwargs == {"user_email": "admin@example.com", "token_teams": None}
+
+
+@pytest.mark.asyncio
+async def test_admin_search_catalog_disabled_returns_empty(monkeypatch, mock_db, allow_permission):
+    catalog_search = AsyncMock()
+    monkeypatch.setattr(settings, "mcpgateway_catalog_enabled", False)
+    monkeypatch.setattr("mcpgateway.admin.catalog_service.get_catalog_servers", catalog_search)
+
+    result = await admin_search_catalog(
+        q="cloudflare",
+        limit=5,
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db, "_cached_team_ids": []},
+        request=MagicMock(spec=Request),
+    )
+
+    assert result["catalog"] == []
+    catalog_search.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_admin_unified_search_aggregates_results(monkeypatch, mock_db, allow_permission):
     monkeypatch.setattr("mcpgateway.admin.admin_search_servers", AsyncMock(return_value={"servers": [{"id": "srv-1", "name": "Server 1"}], "count": 1}))
     monkeypatch.setattr("mcpgateway.admin.admin_search_gateways", AsyncMock(return_value={"gateways": [{"id": "gw-1", "name": "Gateway 1"}], "count": 1}))
@@ -13807,7 +13913,9 @@ async def test_admin_unified_search_default_excludes_users(monkeypatch, mock_db,
     monkeypatch.setattr("mcpgateway.admin.admin_search_a2a_agents", AsyncMock(return_value={"agents": [], "count": 0}))
     monkeypatch.setattr("mcpgateway.admin.admin_search_teams", AsyncMock(return_value={"teams": [], "count": 0}))
     users_search = AsyncMock(return_value={"users": [{"id": "user-1"}], "count": 1})
+    catalog_search = AsyncMock(return_value={"catalog": [{"id": "catalog-1"}], "count": 1})
     monkeypatch.setattr("mcpgateway.admin.admin_search_users", users_search)
+    monkeypatch.setattr("mcpgateway.admin.admin_search_catalog", catalog_search)
 
     result = await admin_unified_search(
         q="core",
@@ -13823,6 +13931,47 @@ async def test_admin_unified_search_default_excludes_users(monkeypatch, mock_db,
     assert "users" not in result["entity_types"]
     assert "users" not in result["results"]
     users_search.assert_not_called()
+    assert "catalog" not in result["entity_types"]
+    catalog_search.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_admin_unified_search_catalog_is_explicit_and_permission_safe(monkeypatch, mock_db, allow_permission):
+    setup_team_service(monkeypatch, ["team-1"])
+    catalog_search = AsyncMock(return_value={"catalog": [{"id": "catalog-1", "name": "Catalog 1"}], "count": 1})
+    monkeypatch.setattr("mcpgateway.admin.admin_search_catalog", catalog_search)
+
+    result = await admin_unified_search(
+        q="catalog",
+        tags=None,
+        entity_types="catalog",
+        include_inactive=False,
+        limit=5,
+        gateway_id=None,
+        team_id=None,
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db},
+    )
+
+    assert result["entity_types"] == ["catalog"]
+    assert result["results"]["catalog"] == [{"id": "catalog-1", "name": "Catalog 1"}]
+    assert result["items"][0]["entity_type"] == "catalog"
+    assert catalog_search.await_args.kwargs["user"]["_cached_team_ids"] == ["team-1"]
+
+    catalog_search.side_effect = HTTPException(status_code=403, detail="forbidden")
+    denied = await admin_unified_search(
+        q="catalog",
+        tags=None,
+        entity_types="catalog",
+        include_inactive=False,
+        limit=5,
+        gateway_id=None,
+        team_id=None,
+        db=mock_db,
+        user={"email": "user@example.com", "db": mock_db},
+    )
+    assert denied["results"]["catalog"] == []
+    assert denied["count"] == 0
 
 
 @pytest.mark.asyncio
@@ -14421,7 +14570,7 @@ class TestAdminAdditionalCoverage:
         mock_settings.log_folder = str(log_dir)
         mock_settings.log_rotation_enabled = True
 
-        result = await admin_get_log_file(filename=None, user={"email": "admin@example.com", "db": mock_db})
+        result = await admin_get_log_file(request=SimpleNamespace(headers={}), filename=None, user={"email": "admin@example.com", "db": mock_db})
 
         assert result["total"] >= 2
         types = {entry["type"] for entry in result["files"]}
@@ -14444,7 +14593,7 @@ class TestAdminAdditionalCoverage:
         monkeypatch.setattr("mcpgateway.admin.Path.glob", _boom, raising=True)
 
         with pytest.raises(HTTPException) as excinfo:
-            await admin_get_log_file(filename=None, user={"email": "admin@example.com", "db": mock_db})
+            await admin_get_log_file(request=SimpleNamespace(headers={}), filename=None, user={"email": "admin@example.com", "db": mock_db})
         assert excinfo.value.status_code == 500
 
     @patch("mcpgateway.admin.settings")
@@ -14459,7 +14608,7 @@ class TestAdminAdditionalCoverage:
         mock_settings.log_folder = str(log_dir)
         mock_settings.log_rotation_enabled = False
 
-        result = await admin_get_log_file(filename=None, user={"email": "admin@example.com", "db": mock_db})
+        result = await admin_get_log_file(request=SimpleNamespace(headers={}), filename=None, user={"email": "admin@example.com", "db": mock_db})
         types = {entry["type"] for entry in result["files"]}
         assert "main" in types
         assert "storage" in types
@@ -14477,25 +14626,30 @@ class TestAdminAdditionalCoverage:
         mock_settings.log_folder = str(log_dir)
         mock_settings.log_rotation_enabled = False
 
-        response = await admin_get_log_file(filename="app.log", user={"email": "admin@example.com", "db": mock_db})
+        response = await admin_get_log_file(request=SimpleNamespace(headers={}), filename="app.log", user={"email": "admin@example.com", "db": mock_db})
         assert isinstance(response, Response)
         assert "app.log" in response.headers.get("content-disposition", "")
 
+        # Consume the streamed body to exercise the fd-backed generator itself.
+        body = b"".join([chunk async for chunk in response.body_iterator])
+        assert body == b"main"
+
+        # Rejected by the pre-join input filter (".." component), before any path join.
         with pytest.raises(HTTPException) as excinfo:
-            await admin_get_log_file(filename="../secret.log", user={"email": "admin@example.com", "db": mock_db})
+            await admin_get_log_file(request=SimpleNamespace(headers={}), filename="../secret.log", user={"email": "admin@example.com", "db": mock_db})
         assert excinfo.value.status_code == 400
 
         with pytest.raises(HTTPException) as excinfo:
-            await admin_get_log_file(filename="missing.log", user={"email": "admin@example.com", "db": mock_db})
+            await admin_get_log_file(request=SimpleNamespace(headers={}), filename="missing.log", user={"email": "admin@example.com", "db": mock_db})
         assert excinfo.value.status_code == 404
 
         with pytest.raises(HTTPException) as excinfo:
-            await admin_get_log_file(filename="random.txt", user={"email": "admin@example.com", "db": mock_db})
+            await admin_get_log_file(request=SimpleNamespace(headers={}), filename="random.txt", user={"email": "admin@example.com", "db": mock_db})
         assert excinfo.value.status_code == 403
 
     @patch("mcpgateway.admin.settings")
-    async def test_admin_get_log_file_download_stat_filenotfound(self, mock_settings, tmp_path, mock_db):
-        """Cover FileNotFoundError handling when preparing the FileResponse."""
+    async def test_admin_get_log_file_sets_cache_validator_headers(self, mock_settings, tmp_path, mock_db):
+        """A full download must carry Accept-Ranges/ETag/Last-Modified like the FileResponse it replaced."""
         log_dir = tmp_path
         (log_dir / "app.log").write_text("main")
 
@@ -14504,14 +14658,267 @@ class TestAdminAdditionalCoverage:
         mock_settings.log_folder = str(log_dir)
         mock_settings.log_rotation_enabled = False
 
-        with patch("mcpgateway.admin.FileResponse", side_effect=FileNotFoundError("gone")):
+        response = await admin_get_log_file(request=SimpleNamespace(headers={}), filename="app.log", user={"email": "admin@example.com", "db": mock_db})
+        assert response.status_code == 200
+        assert response.headers.get("accept-ranges") == "bytes"
+        assert response.headers.get("etag", "").startswith('"')
+        assert response.headers.get("last-modified")
+        assert response.headers.get("content-length") == "4"
+
+    @patch("mcpgateway.admin.settings")
+    async def test_admin_get_log_file_serves_single_range(self, mock_settings, tmp_path, mock_db):
+        """A Range request returns a 206 partial response with the requested byte span."""
+        log_dir = tmp_path
+        (log_dir / "app.log").write_text("0123456789")
+
+        mock_settings.log_to_file = True
+        mock_settings.log_file = "app.log"
+        mock_settings.log_folder = str(log_dir)
+        mock_settings.log_rotation_enabled = False
+
+        response = await admin_get_log_file(request=SimpleNamespace(headers={"range": "bytes=2-5"}), filename="app.log", user={"email": "admin@example.com", "db": mock_db})
+        assert response.status_code == 206
+        assert response.headers.get("content-range") == "bytes 2-5/10"
+        assert response.headers.get("content-length") == "4"
+        body = b"".join([chunk async for chunk in response.body_iterator])
+        assert body == b"2345"
+
+    @patch("mcpgateway.admin.settings")
+    async def test_admin_get_log_file_serves_suffix_range(self, mock_settings, tmp_path, mock_db):
+        """A suffix range (``bytes=-N``) returns the last N bytes of the file."""
+        log_dir = tmp_path
+        (log_dir / "app.log").write_text("0123456789")
+
+        mock_settings.log_to_file = True
+        mock_settings.log_file = "app.log"
+        mock_settings.log_folder = str(log_dir)
+        mock_settings.log_rotation_enabled = False
+
+        response = await admin_get_log_file(request=SimpleNamespace(headers={"range": "bytes=-3"}), filename="app.log", user={"email": "admin@example.com", "db": mock_db})
+        assert response.status_code == 206
+        assert response.headers.get("content-range") == "bytes 7-9/10"
+        body = b"".join([chunk async for chunk in response.body_iterator])
+        assert body == b"789"
+
+    @patch("mcpgateway.admin.settings")
+    async def test_admin_get_log_file_rejects_malformed_range(self, mock_settings, tmp_path, mock_db):
+        """A syntactically invalid Range header is rejected with 400, not silently ignored."""
+        log_dir = tmp_path
+        (log_dir / "app.log").write_text("0123456789")
+
+        mock_settings.log_to_file = True
+        mock_settings.log_file = "app.log"
+        mock_settings.log_folder = str(log_dir)
+        mock_settings.log_rotation_enabled = False
+
+        with pytest.raises(HTTPException) as excinfo:
+            await admin_get_log_file(request=SimpleNamespace(headers={"range": "not-a-range"}), filename="app.log", user={"email": "admin@example.com", "db": mock_db})
+        assert excinfo.value.status_code == 400
+
+    @pytest.mark.parametrize("unit", ["Bytes", "BYTES", "  bytes  "])
+    @patch("mcpgateway.admin.settings")
+    async def test_admin_get_log_file_range_unit_is_case_insensitive(self, mock_settings, unit, tmp_path, mock_db):
+        """The range-unit token is case-insensitive per RFC 7233; the FileResponse
+        parser this handler replaced accepted ``Bytes=``/``BYTES=`` and so must this one."""
+        log_dir = tmp_path
+        (log_dir / "app.log").write_text("0123456789")
+
+        mock_settings.log_to_file = True
+        mock_settings.log_file = "app.log"
+        mock_settings.log_folder = str(log_dir)
+        mock_settings.log_rotation_enabled = False
+
+        response = await admin_get_log_file(request=SimpleNamespace(headers={"range": f"{unit}=2-5"}), filename="app.log", user={"email": "admin@example.com", "db": mock_db})
+        assert response.status_code == 206
+        assert response.headers.get("content-range") == "bytes 2-5/10"
+
+    @patch("mcpgateway.admin.settings")
+    async def test_admin_get_log_file_rejects_unsatisfiable_range(self, mock_settings, tmp_path, mock_db):
+        """A range starting beyond EOF is rejected with 416 and a Content-Range header."""
+        log_dir = tmp_path
+        (log_dir / "app.log").write_text("0123456789")
+
+        mock_settings.log_to_file = True
+        mock_settings.log_file = "app.log"
+        mock_settings.log_folder = str(log_dir)
+        mock_settings.log_rotation_enabled = False
+
+        with pytest.raises(HTTPException) as excinfo:
+            await admin_get_log_file(request=SimpleNamespace(headers={"range": "bytes=100-200"}), filename="app.log", user={"email": "admin@example.com", "db": mock_db})
+        assert excinfo.value.status_code == 416
+        assert excinfo.value.headers.get("Content-Range") == "bytes */10"
+
+    @patch("mcpgateway.admin.settings")
+    async def test_admin_get_log_file_ignores_stale_if_range(self, mock_settings, tmp_path, mock_db):
+        """An If-Range validator that doesn't match the current ETag/Last-Modified falls back to a full 200 response."""
+        log_dir = tmp_path
+        (log_dir / "app.log").write_text("0123456789")
+
+        mock_settings.log_to_file = True
+        mock_settings.log_file = "app.log"
+        mock_settings.log_folder = str(log_dir)
+        mock_settings.log_rotation_enabled = False
+
+        response = await admin_get_log_file(
+            request=SimpleNamespace(headers={"range": "bytes=2-5", "if-range": '"stale-etag"'}), filename="app.log", user={"email": "admin@example.com", "db": mock_db}
+        )
+        assert response.status_code == 200
+        body = b"".join([chunk async for chunk in response.body_iterator])
+        assert body == b"0123456789"
+
+    @patch("mcpgateway.admin.settings")
+    async def test_admin_get_log_file_background_task_closes_fd_if_never_streamed(self, mock_settings, tmp_path, mock_db):
+        """The fd opened by open_confined() must be closed even if the StreamingResponse
+        body generator is cancelled before it is ever iterated (e.g. an immediate client
+        disconnect) — this is what the BackgroundTask fallback covers."""
+        log_dir = tmp_path
+        (log_dir / "app.log").write_text("main")
+
+        mock_settings.log_to_file = True
+        mock_settings.log_file = "app.log"
+        mock_settings.log_folder = str(log_dir)
+        mock_settings.log_rotation_enabled = False
+
+        response = await admin_get_log_file(request=SimpleNamespace(headers={}), filename="app.log", user={"email": "admin@example.com", "db": mock_db})
+
+        # Simulate Starlette cancelling the response before the generator is ever advanced:
+        # the background task is the only thing that runs.
+        assert response.background is not None
+        await response.background()
+
+        with pytest.raises(ValueError):
+            # The underlying fd is closed; reading through the (now-closed) handle raises.
+            async for _ in response.body_iterator:
+                pass
+
+    @patch("mcpgateway.admin.settings")
+    async def test_admin_get_log_file_rejects_sibling_prefix_directory(self, mock_settings, tmp_path, mock_db):
+        """A sibling directory sharing LOG_FOLDER's textual prefix must not be readable.
+
+        ``/tmp/.../logs_secret`` shares a string prefix with the ``/tmp/.../logs`` log
+        directory, so a ``startswith`` confinement check would wrongly allow it.
+        """
+        log_dir = tmp_path / "logs"
+        log_dir.mkdir()
+        (log_dir / "app.log").write_text("main")
+
+        secret_dir = tmp_path / "logs_secret"
+        secret_dir.mkdir()
+        canary = "CANARY-SIBLING-PREFIX-MUST-NOT-LEAK"
+        (secret_dir / "creds.json").write_text('{"secret": "%s"}' % canary)  # pragma: allowlist secret
+
+        mock_settings.log_to_file = True
+        mock_settings.log_file = "app.log"
+        mock_settings.log_folder = str(log_dir)
+        mock_settings.log_rotation_enabled = False
+
+        for payload in ("../logs_secret/creds.json", "sub/../../logs_secret/creds.json", "./../logs_secret/creds.json"):
             with pytest.raises(HTTPException) as excinfo:
-                await admin_get_log_file(filename="app.log", user={"email": "admin@example.com", "db": mock_db})
+                await admin_get_log_file(request=SimpleNamespace(headers={}), filename=payload, user={"email": "admin@example.com", "db": mock_db})
+            assert excinfo.value.status_code == 400
+            assert canary not in str(excinfo.value.detail)
+
+    @patch("mcpgateway.admin.settings")
+    async def test_admin_get_log_file_rejects_symlink_escaping_log_dir(self, mock_settings, tmp_path, mock_db):
+        """A symlink planted inside LOG_FOLDER must not read outside it.
+
+        This payload contains no ``..`` component, so it reaches the post-resolve
+        confinement check — the primary control — rather than the input filter.
+        """
+        log_dir = tmp_path / "logs"
+        log_dir.mkdir()
+        (log_dir / "app.log").write_text("main")
+
+        secret_dir = tmp_path / "logs_secret"
+        secret_dir.mkdir()
+        secret_file = secret_dir / "creds.json"
+        secret_file.write_text('{"secret": "CANARY-SYMLINK-MUST-NOT-LEAK"}')  # pragma: allowlist secret
+
+        link = log_dir / "escape.json"
+        try:
+            link.symlink_to(secret_file)
+        except (OSError, NotImplementedError):
+            pytest.skip("symlinks not supported on this platform")
+
+        mock_settings.log_to_file = True
+        mock_settings.log_file = "app.log"
+        mock_settings.log_folder = str(log_dir)
+        mock_settings.log_rotation_enabled = False
+
+        with pytest.raises(HTTPException) as excinfo:
+            await admin_get_log_file(request=SimpleNamespace(headers={}), filename="escape.json", user={"email": "admin@example.com", "db": mock_db})
+        assert excinfo.value.status_code == 403
+
+    @patch("mcpgateway.admin.settings")
+    async def test_admin_get_log_file_rejects_absolute_and_nul_filenames(self, mock_settings, tmp_path, mock_db):
+        """Absolute paths and NUL bytes are rejected before the path join."""
+        log_dir = tmp_path / "logs"
+        log_dir.mkdir()
+        (log_dir / "app.log").write_text("main")
+
+        mock_settings.log_to_file = True
+        mock_settings.log_file = "app.log"
+        mock_settings.log_folder = str(log_dir)
+        mock_settings.log_rotation_enabled = False
+
+        for payload in ("/etc/passwd", "/var/log/syslog.log", "app.log\x00.png"):
+            with pytest.raises(HTTPException) as excinfo:
+                await admin_get_log_file(request=SimpleNamespace(headers={}), filename=payload, user={"email": "admin@example.com", "db": mock_db})
+            assert excinfo.value.status_code == 400
+
+    @patch("mcpgateway.admin.settings")
+    async def test_admin_get_log_file_resolve_failure_is_rejected(self, mock_settings, tmp_path, mock_db):
+        """An OS-level failure while resolving the path is rejected, never allowed through."""
+        log_dir = tmp_path / "logs"
+        log_dir.mkdir()
+        (log_dir / "app.log").write_text("main")
+
+        mock_settings.log_to_file = True
+        mock_settings.log_file = "app.log"
+        mock_settings.log_folder = str(log_dir)
+        mock_settings.log_rotation_enabled = False
+
+        with patch("mcpgateway.admin.Path.resolve", side_effect=OSError("ELOOP")):
+            with pytest.raises(HTTPException) as excinfo:
+                await admin_get_log_file(request=SimpleNamespace(headers={}), filename="app.log", user={"email": "admin@example.com", "db": mock_db})
+        assert excinfo.value.status_code == 400
+
+    @patch("mcpgateway.admin.settings")
+    async def test_admin_get_log_file_allows_nested_file_inside_log_dir(self, mock_settings, tmp_path, mock_db):
+        """Confinement must not be so tight that legitimate nested log files break."""
+        log_dir = tmp_path / "logs"
+        (log_dir / "archive").mkdir(parents=True)
+        (log_dir / "app.log").write_text("main")
+        (log_dir / "archive" / "app.log").write_text("rotated")
+
+        mock_settings.log_to_file = True
+        mock_settings.log_file = "app.log"
+        mock_settings.log_folder = str(log_dir)
+        mock_settings.log_rotation_enabled = False
+
+        response = await admin_get_log_file(request=SimpleNamespace(headers={}), filename="archive/app.log", user={"email": "admin@example.com", "db": mock_db})
+        assert isinstance(response, Response)
+        assert "app.log" in response.headers.get("content-disposition", "")
+
+    @patch("mcpgateway.admin.settings")
+    async def test_admin_get_log_file_download_stat_filenotfound(self, mock_settings, tmp_path, mock_db):
+        """Cover FileNotFoundError handling when opening the verified fd."""
+        log_dir = tmp_path
+        (log_dir / "app.log").write_text("main")
+
+        mock_settings.log_to_file = True
+        mock_settings.log_file = "app.log"
+        mock_settings.log_folder = str(log_dir)
+        mock_settings.log_rotation_enabled = False
+
+        with patch("mcpgateway.admin.open_confined", side_effect=FileNotFoundError("gone")):
+            with pytest.raises(HTTPException) as excinfo:
+                await admin_get_log_file(request=SimpleNamespace(headers={}), filename="app.log", user={"email": "admin@example.com", "db": mock_db})
         assert excinfo.value.status_code == 404
 
     @patch("mcpgateway.admin.settings")
     async def test_admin_get_log_file_download_stat_generic_error(self, mock_settings, tmp_path, mock_db):
-        """Cover generic exception handling when preparing the FileResponse."""
+        """Cover generic exception handling when opening the verified fd."""
         log_dir = tmp_path
         (log_dir / "app.log").write_text("main")
 
@@ -14520,10 +14927,125 @@ class TestAdminAdditionalCoverage:
         mock_settings.log_folder = str(log_dir)
         mock_settings.log_rotation_enabled = False
 
-        with patch("mcpgateway.admin.FileResponse", side_effect=RuntimeError("boom")):
+        with patch("mcpgateway.admin.open_confined", side_effect=RuntimeError("boom")):
             with pytest.raises(HTTPException) as excinfo:
-                await admin_get_log_file(filename="app.log", user={"email": "admin@example.com", "db": mock_db})
+                await admin_get_log_file(request=SimpleNamespace(headers={}), filename="app.log", user={"email": "admin@example.com", "db": mock_db})
         assert excinfo.value.status_code == 500
+
+    @patch("mcpgateway.admin.settings")
+    async def test_admin_get_log_file_rejects_symlinked_file(self, mock_settings, tmp_path, mock_db):
+        """A symlink at the final path component must be rejected even when its target is inside the log dir."""
+        log_dir = tmp_path
+        (log_dir / "real.log").write_text("main")
+        (log_dir / "app.log").symlink_to(log_dir / "real.log")
+
+        mock_settings.log_to_file = True
+        mock_settings.log_file = "app.log"
+        mock_settings.log_folder = str(log_dir)
+        mock_settings.log_rotation_enabled = False
+
+        with pytest.raises(HTTPException) as excinfo:
+            await admin_get_log_file(request=SimpleNamespace(headers={}), filename="app.log", user={"email": "admin@example.com", "db": mock_db})
+        assert excinfo.value.status_code == 403
+
+    @patch("mcpgateway.admin.settings")
+    async def test_admin_get_log_file_falls_back_without_dir_fd_support(self, mock_settings, tmp_path, mock_db):
+        """On a platform without dir_fd/O_NOFOLLOW support (e.g. Windows), the download must
+        still succeed via the per-component reparse-point-checking fallback rather than fail."""
+        log_dir = tmp_path
+        (log_dir / "app.log").write_text("main")
+
+        mock_settings.log_to_file = True
+        mock_settings.log_file = "app.log"
+        mock_settings.log_folder = str(log_dir)
+        mock_settings.log_rotation_enabled = False
+
+        with patch("mcpgateway.utils.paths._SUPPORTS_CONFINED_OPENAT", False):
+            response = await admin_get_log_file(request=SimpleNamespace(headers={}), filename="app.log", user={"email": "admin@example.com", "db": mock_db})
+        assert response.status_code == 200
+
+    @patch("mcpgateway.admin.settings")
+    async def test_admin_get_log_file_fallback_rejects_symlinked_file(self, mock_settings, tmp_path, mock_db):
+        """The non-atomic fallback used without dir_fd/O_NOFOLLOW support must still reject a
+        symlink at the final path component, even though the check isn't atomic with the open."""
+        log_dir = tmp_path
+        (log_dir / "real.log").write_text("main")
+        (log_dir / "app.log").symlink_to(log_dir / "real.log")
+
+        mock_settings.log_to_file = True
+        mock_settings.log_file = "app.log"
+        mock_settings.log_folder = str(log_dir)
+        mock_settings.log_rotation_enabled = False
+
+        with patch("mcpgateway.utils.paths._SUPPORTS_CONFINED_OPENAT", False):
+            with pytest.raises(HTTPException) as excinfo:
+                await admin_get_log_file(request=SimpleNamespace(headers={}), filename="app.log", user={"email": "admin@example.com", "db": mock_db})
+        assert excinfo.value.status_code == 403
+
+    @patch("mcpgateway.admin.settings")
+    async def test_admin_get_log_file_multi_range_falls_back_to_full_response(self, mock_settings, tmp_path, mock_db):
+        """A multi-range Range header (multipart/byteranges) isn't implemented; the handler
+        must serve the full entity as 200 rather than reject it with 400."""
+        log_dir = tmp_path
+        (log_dir / "app.log").write_text("0123456789")
+
+        mock_settings.log_to_file = True
+        mock_settings.log_file = "app.log"
+        mock_settings.log_folder = str(log_dir)
+        mock_settings.log_rotation_enabled = False
+
+        response = await admin_get_log_file(request=SimpleNamespace(headers={"range": "bytes=0-1,4-5"}), filename="app.log", user={"email": "admin@example.com", "db": mock_db})
+        assert response.status_code == 200
+        body = b"".join([chunk async for chunk in response.body_iterator])
+        assert body == b"0123456789"
+
+    @patch("mcpgateway.admin.settings")
+    async def test_admin_get_log_file_rejects_oversized_range_value(self, mock_settings, tmp_path, mock_db):
+        """A Range value with more digits than Python's int/str conversion limit allows
+        must be rejected with 400, not escape as an uncaught 500 with the fd left open."""
+        log_dir = tmp_path
+        (log_dir / "app.log").write_text("0123456789")
+
+        mock_settings.log_to_file = True
+        mock_settings.log_file = "app.log"
+        mock_settings.log_folder = str(log_dir)
+        mock_settings.log_rotation_enabled = False
+
+        oversized = "9" * 5000
+        with pytest.raises(HTTPException) as excinfo:
+            await admin_get_log_file(request=SimpleNamespace(headers={"range": f"bytes={oversized}-"}), filename="app.log", user={"email": "admin@example.com", "db": mock_db})
+        assert excinfo.value.status_code == 400
+
+    @patch("mcpgateway.admin.settings")
+    async def test_admin_get_log_file_access_denied_log_is_sanitized(self, mock_settings, tmp_path, mock_db, caplog):
+        """Filename and exception text logged on access-denied must have CR/LF stripped so
+        a crafted filename can't forge additional log lines.
+
+        The filename itself carries the CR/LF payload (a real symlink is created on disk
+        using that literal name), so this test actually exercises sanitize_for_log(): it
+        would fail if sanitization were removed, unlike asserting against a plain filename
+        that never contained a control character to begin with.
+        """
+        log_dir = tmp_path
+        (log_dir / "real.log").write_text("main")
+        crlf_name = "app.log\r\nCRITICAL:root:INJECTED-FAKE-LOG-LINE"
+        (log_dir / crlf_name).symlink_to(log_dir / "real.log")
+
+        mock_settings.log_to_file = True
+        mock_settings.log_file = "app.log"
+        mock_settings.log_folder = str(log_dir)
+        mock_settings.log_rotation_enabled = False
+
+        with caplog.at_level(logging.WARNING, logger="mcpgateway.admin"):
+            with pytest.raises(HTTPException):
+                await admin_get_log_file(request=SimpleNamespace(headers={}), filename=crlf_name, user={"email": "admin@example.com", "db": mock_db})
+
+        assert caplog.records
+        for record in caplog.records:
+            message = record.getMessage()
+            assert "\n" not in message
+            assert "\r" not in message
+            assert "INJECTED-FAKE-LOG-LINE" in message
 
     async def test_admin_export_logs_json_csv(self, mock_db, monkeypatch):
         """Export logs in JSON and CSV formats."""
@@ -16165,6 +16687,7 @@ async def test_get_plugin_details_exception(monkeypatch, mock_request, mock_db, 
 async def test_catalog_partial(monkeypatch, mock_request, mock_db):
     monkeypatch.setattr(settings, "mcpgateway_catalog_enabled", True)
     monkeypatch.setattr(settings, "mcpgateway_catalog_page_size", 2)
+    monkeypatch.setattr("mcpgateway.admin.get_scoped_resource_access_context", MagicMock(return_value=("u@example.com", ["team-a"])))
 
     server_page = SimpleNamespace(category="Dev", auth_type="api_key", provider="X", is_registered=True)
     server_all = SimpleNamespace(category="Ops", auth_type="oauth", provider="Y", is_registered=False)
@@ -16177,6 +16700,9 @@ async def test_catalog_partial(monkeypatch, mock_request, mock_db):
 
     response = await catalog_partial(mock_request, category="Dev", auth_type="api_key", search=None, page=1, db=mock_db, _user={"email": "u@example.com", "db": mock_db})
     assert isinstance(response, HTMLResponse)
+    assert mock_get_catalog.await_count == 2
+    for catalog_call in mock_get_catalog.await_args_list:
+        assert catalog_call.kwargs == {"user_email": "u@example.com", "token_teams": ["team-a"]}
     template_call = mock_request.app.state.templates.TemplateResponse.call_args
     stats = template_call[0][2]["stats"]
     assert stats["total_servers"] == 2
@@ -16612,7 +17138,7 @@ async def test_admin_test_gateway_rejects_private_ssrf_target(monkeypatch, mock_
     response = await admin_test_gateway(request, None, user={"email": "user@example.com", "db": mock_db}, db=mock_db)
 
     assert response.status_code == 400
-    assert response.body["error"] == "Invalid gateway URL"
+    assert response.body["error"] == "The MCP server URL is not allowed for testing. Confirm the URL is correct and the host is permitted by your test policy."
     assert "details" not in response.body
 
 
@@ -16624,7 +17150,7 @@ async def test_admin_test_gateway_oauth_missing_token(monkeypatch, mock_db):
 
     token_storage = MagicMock()
     token_storage.get_user_token = AsyncMock(return_value=None)
-    monkeypatch.setattr("mcpgateway.services.token_storage_service.TokenStorageService", lambda db: token_storage, raising=True)
+    monkeypatch.setattr("mcpgateway.services.token_storage_service.TokenStorageService", lambda db, user_context=None: token_storage, raising=True)
 
     request = GatewayTestRequest(base_url="https://api.example.com", path="/test", method="GET", headers={}, body=None)
     response = await admin_test_gateway(request, None, user={"email": "user@example.com", "db": mock_db}, db=mock_db)
@@ -16638,13 +17164,13 @@ async def test_admin_test_gateway_oauth_authorization_code_missing_user_email(mo
     gateway = SimpleNamespace(id="gw-1", name="GW", auth_type="oauth", oauth_config={"grant_type": "authorization_code"})
     mock_db.execute.return_value.scalars.return_value.first.return_value = gateway
     monkeypatch.setattr("mcpgateway.auth_context.get_user_email", lambda _user: "", raising=True)
-    monkeypatch.setattr("mcpgateway.services.token_storage_service.TokenStorageService", lambda _db: MagicMock(), raising=True)
+    monkeypatch.setattr("mcpgateway.services.token_storage_service.TokenStorageService", lambda _db, user_context=None: MagicMock(), raising=True)
 
     request = GatewayTestRequest(base_url="https://api.example.com", path="/test", method="GET", headers={}, body=None)
     # Satisfy RBAC wrapper ("email" key must exist) while still exercising admin_test_gateway's missing-email branch.
     response = await admin_test_gateway(request, None, user={"email": "user@example.com", "db": mock_db}, db=mock_db)
     assert response.status_code == 401
-    assert "authentication required" in (response.body.get("error") or "").lower()
+    assert "email-bound account" in (response.body.get("error") or "").lower()
 
 
 @pytest.mark.asyncio
@@ -16683,7 +17209,7 @@ async def test_admin_test_gateway_oauth_authorization_code_token_success_sets_he
 
     token_storage = MagicMock()
     token_storage.get_user_token = AsyncMock(return_value="tok")
-    monkeypatch.setattr("mcpgateway.services.token_storage_service.TokenStorageService", lambda db: token_storage, raising=True)
+    monkeypatch.setattr("mcpgateway.services.token_storage_service.TokenStorageService", lambda db, user_context=None: token_storage, raising=True)
 
     request = GatewayTestRequest(base_url="https://api.example.com", path="/test", method="GET", headers={}, body=None)
     response = await admin_test_gateway(request, None, user={"email": "user@example.com", "db": mock_db}, db=mock_db)
@@ -16703,7 +17229,7 @@ async def test_admin_test_gateway_oauth_authorization_code_token_exception_retur
 
     token_storage = MagicMock()
     token_storage.get_user_token = AsyncMock(side_effect=RuntimeError("boom"))
-    monkeypatch.setattr("mcpgateway.services.token_storage_service.TokenStorageService", lambda db: token_storage, raising=True)
+    monkeypatch.setattr("mcpgateway.services.token_storage_service.TokenStorageService", lambda db, user_context=None: token_storage, raising=True)
 
     request = GatewayTestRequest(base_url="https://api.example.com", path="/test", method="GET", headers={}, body=None)
     response = await admin_test_gateway(request, None, user={"email": "user@example.com", "db": mock_db}, db=mock_db)
@@ -17262,9 +17788,15 @@ async def test_get_gateways_section(monkeypatch, mock_db):
     gateway_service.list_gateways = AsyncMock(return_value=([gateway_a, gateway_b, GatewayModel()], None))
     monkeypatch.setattr("mcpgateway.admin.GatewayService", lambda: gateway_service)
 
-    response = await get_gateways_section(team_id="team-1", db=mock_db, user={"email": "admin@example.com", "db": mock_db})
+    mock_request = MagicMock()
+    mock_request.state = MagicMock()
+    mock_request.state.token_teams = []
+    response = await get_gateways_section(request=mock_request, team_id="team-1", db=mock_db, user={"email": "admin@example.com", "db": mock_db})
     payload = response.body.decode()
     assert "gateways" in payload
+    # The filtering must happen in the service: assert the scope is forwarded, not
+    # re-derived here. Dropping any of these kwargs silently restores the bug.
+    gateway_service.list_gateways.assert_called_once_with(mock_db, include_inactive=True, user_email="admin@example.com", token_teams=[], team_id="team-1")
 
 
 @pytest.mark.asyncio
@@ -17274,7 +17806,10 @@ async def test_get_gateways_section_exception_returns_500(monkeypatch, mock_db, 
     gateway_service.list_gateways = AsyncMock(side_effect=RuntimeError("boom"))
     monkeypatch.setattr("mcpgateway.admin.GatewayService", lambda: gateway_service)
 
-    response = await get_gateways_section(team_id="team-1", db=mock_db, user={"email": "admin@example.com", "db": mock_db})
+    mock_request = MagicMock()
+    mock_request.state = MagicMock()
+    mock_request.state.token_teams = []
+    response = await get_gateways_section(request=mock_request, team_id="team-1", db=mock_db, user={"email": "admin@example.com", "db": mock_db})
     assert response.status_code == 500
     payload = json.loads(response.body)
     assert "boom" in payload["error"]
@@ -17873,6 +18408,9 @@ async def test_get_resources_section_team_filter(mock_list, mock_db, allow_permi
     payload = json.loads(response.body)
     assert payload["team_id"] == "team-1"
     assert len(payload["resources"]) == 1
+    # The filtering must happen in the service: assert the scope is forwarded, not
+    # re-derived here. Dropping any of these kwargs silently restores the bug.
+    mock_list.assert_called_once_with(mock_db, include_inactive=True, user_email="u@example.com", token_teams=[], team_id="team-1")
 
 
 @pytest.mark.asyncio
@@ -17902,6 +18440,9 @@ async def test_get_resources_section_team_filter_with_tuple_result(mock_list, mo
     payload = json.loads(response.body)
     assert payload["team_id"] == "team-1"
     assert len(payload["resources"]) == 1
+    # The filtering must happen in the service: assert the scope is forwarded, not
+    # re-derived here. Dropping any of these kwargs silently restores the bug.
+    mock_list.assert_called_once_with(mock_db, include_inactive=True, user_email="u@example.com", token_teams=[], team_id="team-1")
 
 
 @pytest.mark.asyncio
@@ -17944,6 +18485,9 @@ async def test_get_prompts_section_team_filter(mock_list, mock_db, allow_permiss
     payload = json.loads(response.body)
     assert payload["team_id"] == "team-2"
     assert len(payload["prompts"]) == 1
+    # The filtering must happen in the service: assert the scope is forwarded, not
+    # re-derived here. Dropping any of these kwargs silently restores the bug.
+    mock_list.assert_called_once_with(mock_db, include_inactive=True, user_email="u@example.com", token_teams=[], team_id="team-2")
 
 
 @pytest.mark.asyncio
@@ -17973,6 +18517,9 @@ async def test_get_prompts_section_team_filter_with_tuple_result(mock_list, mock
     payload = json.loads(response.body)
     assert payload["team_id"] == "team-2"
     assert len(payload["prompts"]) == 1
+    # The filtering must happen in the service: assert the scope is forwarded, not
+    # re-derived here. Dropping any of these kwargs silently restores the bug.
+    mock_list.assert_called_once_with(mock_db, include_inactive=True, user_email="u@example.com", token_teams=[], team_id="team-2")
 
 
 @pytest.mark.asyncio
@@ -18005,10 +18552,16 @@ async def test_get_servers_section_team_filter(mock_list, mock_db, allow_permiss
             visibility="private",
         )
     ]
-    response = await get_servers_section(team_id="team-3", include_inactive=True, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    mock_request = MagicMock()
+    mock_request.state = MagicMock()
+    mock_request.state.token_teams = []
+    response = await get_servers_section(request=mock_request, team_id="team-3", include_inactive=True, db=mock_db, user={"email": "u@example.com", "db": mock_db})
     payload = json.loads(response.body)
     assert payload["team_id"] == "team-3"
     assert len(payload["servers"]) == 1
+    # The filtering must happen in the service: assert the scope is forwarded, not
+    # re-derived here. Dropping any of these kwargs silently restores the bug.
+    mock_list.assert_called_once_with(mock_db, include_inactive=True, user_email="u@example.com", token_teams=[], team_id="team-3")
 
 
 @pytest.mark.asyncio
@@ -18028,10 +18581,16 @@ async def test_get_servers_section_team_filter_with_tuple_result(mock_list, mock
         ],
         None,
     )
-    response = await get_servers_section(team_id="team-3", include_inactive=True, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    mock_request = MagicMock()
+    mock_request.state = MagicMock()
+    mock_request.state.token_teams = []
+    response = await get_servers_section(request=mock_request, team_id="team-3", include_inactive=True, db=mock_db, user={"email": "u@example.com", "db": mock_db})
     payload = json.loads(response.body)
     assert payload["team_id"] == "team-3"
     assert len(payload["servers"]) == 1
+    # The filtering must happen in the service: assert the scope is forwarded, not
+    # re-derived here. Dropping any of these kwargs silently restores the bug.
+    mock_list.assert_called_once_with(mock_db, include_inactive=True, user_email="u@example.com", token_teams=[], team_id="team-3")
 
 
 @pytest.mark.asyncio
@@ -18039,7 +18598,10 @@ async def test_get_servers_section_team_filter_with_tuple_result(mock_list, mock
 async def test_get_servers_section_exception_returns_500(mock_list, mock_db, allow_permission):
     """Cover get_servers_section exception handler."""
     mock_list.side_effect = RuntimeError("boom")
-    response = await get_servers_section(team_id="team-3", include_inactive=True, db=mock_db, user={"email": "u@example.com", "db": mock_db})
+    mock_request = MagicMock()
+    mock_request.state = MagicMock()
+    mock_request.state.token_teams = []
+    response = await get_servers_section(request=mock_request, team_id="team-3", include_inactive=True, db=mock_db, user={"email": "u@example.com", "db": mock_db})
     assert response.status_code == 500
     payload = json.loads(response.body)
     assert "boom" in payload["error"]
@@ -20514,12 +21076,15 @@ class TestCatalogEndpoints:
     @pytest.mark.asyncio
     async def test_list_catalog_servers_success(self, monkeypatch, mock_db):
         monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_catalog_enabled", True, raising=False)
+        monkeypatch.setattr("mcpgateway.admin.get_scoped_resource_access_context", MagicMock(return_value=("admin@test.com", None)))
         mock_result = MagicMock()
-        monkeypatch.setattr("mcpgateway.admin.catalog_service.get_catalog_servers", AsyncMock(return_value=mock_result))
+        mock_get_catalog = AsyncMock(return_value=mock_result)
+        monkeypatch.setattr("mcpgateway.admin.catalog_service.get_catalog_servers", mock_get_catalog)
 
         request = MagicMock(spec=Request)
         result = await list_catalog_servers(request, tags=[], db=mock_db, _user={"email": "admin@test.com"})
         assert result == mock_result
+        assert mock_get_catalog.await_args.kwargs == {"user_email": "admin@test.com", "token_teams": None}
 
     @pytest.mark.asyncio
     async def test_register_catalog_server_disabled(self, monkeypatch, mock_db):
@@ -20534,6 +21099,7 @@ class TestCatalogEndpoints:
         monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_catalog_enabled", True, raising=False)
         reg_result = SimpleNamespace(success=True, message="Registered", oauth_required=False, error=None)
         monkeypatch.setattr("mcpgateway.admin.catalog_service.register_catalog_server", AsyncMock(return_value=reg_result))
+        monkeypatch.setattr("mcpgateway.admin.get_scoped_resource_access_context", MagicMock(return_value=("admin@test.com", None)))
 
         request = MagicMock(spec=Request)
         request.headers = {}
@@ -20545,6 +21111,7 @@ class TestCatalogEndpoints:
         monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_catalog_enabled", True, raising=False)
         reg_result = SimpleNamespace(success=True, message="Registered OK", oauth_required=False, error=None)
         monkeypatch.setattr("mcpgateway.admin.catalog_service.register_catalog_server", AsyncMock(return_value=reg_result))
+        monkeypatch.setattr("mcpgateway.admin.get_scoped_resource_access_context", MagicMock(return_value=("admin@test.com", None)))
 
         request = MagicMock(spec=Request)
         request.headers = {"HX-Request": "true"}
@@ -20575,8 +21142,9 @@ class TestCatalogEndpoints:
         from mcpgateway.schemas import CatalogBulkRegisterRequest
 
         req = CatalogBulkRegisterRequest(server_ids=["a", "b"])
+        http_request = MagicMock(spec=Request)
         with pytest.raises(HTTPException) as exc_info:
-            await bulk_register_catalog_servers(req, db=mock_db, _user={"email": "admin@test.com"})
+            await bulk_register_catalog_servers(http_request, req, db=mock_db, _user={"email": "admin@test.com"})
         assert exc_info.value.status_code == 404
 
     @pytest.mark.asyncio
@@ -20584,12 +21152,14 @@ class TestCatalogEndpoints:
         monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_catalog_enabled", True, raising=False)
         bulk_result = MagicMock()
         monkeypatch.setattr("mcpgateway.admin.catalog_service.bulk_register_servers", AsyncMock(return_value=bulk_result))
+        monkeypatch.setattr("mcpgateway.admin.get_scoped_resource_access_context", MagicMock(return_value=("admin@test.com", None)))
 
         # First-Party
         from mcpgateway.schemas import CatalogBulkRegisterRequest
 
         req = CatalogBulkRegisterRequest(server_ids=["a", "b"])
-        result = await bulk_register_catalog_servers(req, db=mock_db, _user={"email": "admin@test.com"})
+        http_request = MagicMock(spec=Request)
+        result = await bulk_register_catalog_servers(http_request, req, db=mock_db, _user={"email": "admin@test.com"})
         assert result == bulk_result
 
 
@@ -26550,3 +27120,217 @@ class TestParseGatewayDataOAuthResource:
             }
         )
         assert data["oauth_config"] == {"resource": "https://api.example.com"}
+
+
+# ============================================================================ #
+#  GROUP: Gateway ownership transfer & catalog permission-error branches       #
+# ============================================================================ #
+
+
+class TestTransferGatewayOwnership:
+    """Tests for the transfer_gateway_ownership admin endpoint."""
+
+    @pytest.fixture
+    def mock_db(self):
+        return MagicMock(spec=Session)
+
+    @pytest.fixture
+    def allow_permission(self, monkeypatch):
+        mock_perm_service = MagicMock()
+        mock_perm_service.check_permission = AsyncMock(return_value=True)
+        mock_perm_service.check_admin_permission = AsyncMock(return_value=True)
+        monkeypatch.setattr("mcpgateway.middleware.rbac.PermissionService", lambda db: mock_perm_service)
+        monkeypatch.setattr("mcpgateway.admin.PermissionService", lambda db: mock_perm_service)
+        monkeypatch.setattr("mcpgateway.admin.is_unrestricted_platform_admin", AsyncMock(return_value=True))
+        monkeypatch.setattr("mcpgateway.plugins.get_plugin_manager", AsyncMock(return_value=None))
+        return mock_perm_service
+
+    @pytest.mark.asyncio
+    async def test_transfer_gateway_ownership_success(self, monkeypatch, allow_permission, mock_db):
+        expected = MagicMock(spec=GatewayRead)
+        monkeypatch.setattr(
+            "mcpgateway.admin.gateway_service.transfer_gateway_ownership",
+            AsyncMock(return_value=expected),
+        )
+        monkeypatch.setattr("mcpgateway.admin.get_user_email", MagicMock(return_value="admin@x.com"))
+
+        result = await transfer_gateway_ownership(
+            gateway_id="gw-1",
+            transfer=GatewayOwnershipTransferRequest(target_owner_email="new@x.com"),
+            db=mock_db,
+            _user={"email": "admin@x.com", "is_admin": True},
+        )
+        assert result is expected
+
+    @pytest.mark.asyncio
+    async def test_transfer_gateway_ownership_passes_token_team_scope(self, monkeypatch, allow_permission, mock_db):
+        """Transfer route forwards the normalized token-team scope to the service."""
+        expected = MagicMock(spec=GatewayRead)
+        transfer_service = AsyncMock(return_value=expected)
+        monkeypatch.setattr("mcpgateway.admin.gateway_service.transfer_gateway_ownership", transfer_service)
+        monkeypatch.setattr("mcpgateway.admin.get_user_email", MagicMock(return_value="admin@x.com"))
+
+        result = await transfer_gateway_ownership(
+            gateway_id="gw-1",
+            transfer=GatewayOwnershipTransferRequest(target_owner_email="new@x.com", target_team_id="team-1"),
+            db=mock_db,
+            _user={"email": "admin@x.com", "is_admin": True, "token_teams": ["team-1"]},
+        )
+
+        assert result is expected
+        transfer_service.assert_awaited_once_with(
+            db=mock_db,
+            gateway_id="gw-1",
+            target_owner_email="new@x.com",
+            actor_email="admin@x.com",
+            target_team_id="team-1",
+            token_teams=["team-1"],
+        )
+
+
+    @pytest.mark.asyncio
+    async def test_transfer_gateway_ownership_not_found(self, monkeypatch, allow_permission, mock_db):
+        monkeypatch.setattr(
+            "mcpgateway.admin.gateway_service.transfer_gateway_ownership",
+            AsyncMock(side_effect=GatewayNotFoundError("not found")),
+        )
+        monkeypatch.setattr("mcpgateway.admin.get_user_email", MagicMock(return_value="admin@x.com"))
+
+        with pytest.raises(HTTPException) as exc_info:
+            await transfer_gateway_ownership(
+                gateway_id="gw-1",
+                transfer=GatewayOwnershipTransferRequest(target_owner_email="new@x.com"),
+                db=mock_db,
+                _user={"email": "admin@x.com", "is_admin": True},
+            )
+        assert exc_info.value.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_transfer_gateway_ownership_value_error(self, monkeypatch, allow_permission, mock_db):
+        monkeypatch.setattr(
+            "mcpgateway.admin.gateway_service.transfer_gateway_ownership",
+            AsyncMock(side_effect=ValueError("bad input")),
+        )
+        monkeypatch.setattr("mcpgateway.admin.get_user_email", MagicMock(return_value="admin@x.com"))
+
+        with pytest.raises(HTTPException) as exc_info:
+            await transfer_gateway_ownership(
+                gateway_id="gw-1",
+                transfer=GatewayOwnershipTransferRequest(target_owner_email="new@x.com"),
+                db=mock_db,
+                _user={"email": "admin@x.com", "is_admin": True},
+            )
+        assert exc_info.value.status_code == 400
+
+    @pytest.mark.asyncio
+    async def test_transfer_gateway_ownership_non_admin_denied(self, monkeypatch, mock_db):
+        """require_admin_permission() must block non-admin callers with 403."""
+        mock_perm_service = MagicMock()
+        mock_perm_service.check_admin_permission = AsyncMock(return_value=False)
+        monkeypatch.setattr("mcpgateway.middleware.rbac.PermissionService", lambda db: mock_perm_service)
+        monkeypatch.setattr("mcpgateway.admin.PermissionService", lambda db: mock_perm_service)
+        monkeypatch.setattr("mcpgateway.admin.is_unrestricted_platform_admin", AsyncMock(return_value=False))
+        monkeypatch.setattr("mcpgateway.plugins.get_plugin_manager", AsyncMock(return_value=None))
+
+        with pytest.raises(HTTPException) as exc_info:
+            await transfer_gateway_ownership(
+                gateway_id="gw-1",
+                transfer=GatewayOwnershipTransferRequest(target_owner_email="new@x.com"),
+                db=mock_db,
+                _user={"email": "user@x.com", "is_admin": False, "db": mock_db},
+            )
+        assert exc_info.value.status_code == 403
+
+
+class TestCatalogPermissionErrorBranches:
+    """Tests for CatalogRegistrationPermissionError handling in catalog endpoints."""
+
+    @pytest.fixture
+    def mock_db(self):
+        return MagicMock(spec=Session)
+
+    @pytest.fixture
+    def allow_permission(self, monkeypatch):
+        mock_perm_service = MagicMock()
+        mock_perm_service.check_permission = AsyncMock(return_value=True)
+        monkeypatch.setattr("mcpgateway.middleware.rbac.PermissionService", lambda db: mock_perm_service)
+        monkeypatch.setattr("mcpgateway.admin.PermissionService", lambda db: mock_perm_service)
+        monkeypatch.setattr("mcpgateway.admin.is_unrestricted_platform_admin", AsyncMock(return_value=True))
+        monkeypatch.setattr("mcpgateway.plugins.get_plugin_manager", AsyncMock(return_value=None))
+        return mock_perm_service
+
+    @pytest.mark.asyncio
+    async def test_admin_register_catalog_permission_error(self, monkeypatch, allow_permission, mock_db):
+        monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_catalog_enabled", True, raising=False)
+        monkeypatch.setattr(
+            "mcpgateway.admin.catalog_service.register_catalog_server",
+            AsyncMock(side_effect=CatalogRegistrationPermissionError("forbidden")),
+        )
+        monkeypatch.setattr(
+            "mcpgateway.admin.get_scoped_resource_access_context",
+            MagicMock(return_value=("admin@test.com", None)),
+        )
+
+        request = MagicMock(spec=Request)
+        request.headers = {}
+        with pytest.raises(HTTPException) as exc_info:
+            await register_catalog_server("srv-1", request, db=mock_db, _user={"email": "admin@test.com"})
+        assert exc_info.value.status_code == 403
+
+
+    @pytest.mark.asyncio
+    async def test_admin_register_catalog_requires_gateways_create(self, monkeypatch, allow_permission, mock_db):
+        """Catalog registration must require gateway creation permission too."""
+        monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_catalog_enabled", True, raising=False)
+        allow_permission.check_permission = AsyncMock(side_effect=[True, False])
+        monkeypatch.setattr(
+            "mcpgateway.admin.catalog_service.register_catalog_server",
+            AsyncMock(return_value=MagicMock()),
+        )
+
+        request = MagicMock(spec=Request)
+        request.headers = {}
+        with pytest.raises(HTTPException) as exc_info:
+            await register_catalog_server("srv-1", request, db=mock_db, _user={"email": "admin@test.com"})
+
+        assert exc_info.value.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_admin_bulk_register_catalog_requires_gateways_create(self, monkeypatch, allow_permission, mock_db):
+        """Bulk catalog registration must require gateway creation permission too."""
+        monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_catalog_enabled", True, raising=False)
+        allow_permission.check_permission = AsyncMock(side_effect=[True, False])
+
+        from mcpgateway.schemas import CatalogBulkRegisterRequest
+
+        request = MagicMock(spec=Request)
+        with pytest.raises(HTTPException) as exc_info:
+            await bulk_register_catalog_servers(
+                request,
+                CatalogBulkRegisterRequest(server_ids=["srv-1"]),
+                db=mock_db,
+                _user={"email": "admin@test.com"},
+            )
+
+        assert exc_info.value.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_admin_bulk_register_catalog_permission_error(self, monkeypatch, allow_permission, mock_db):
+        monkeypatch.setattr("mcpgateway.admin.settings.mcpgateway_catalog_enabled", True, raising=False)
+        monkeypatch.setattr(
+            "mcpgateway.admin.catalog_service.bulk_register_servers",
+            AsyncMock(side_effect=CatalogRegistrationPermissionError("forbidden")),
+        )
+        monkeypatch.setattr(
+            "mcpgateway.admin.get_scoped_resource_access_context",
+            MagicMock(return_value=("admin@test.com", None)),
+        )
+
+        # First-Party
+        from mcpgateway.schemas import CatalogBulkRegisterRequest
+
+        req = CatalogBulkRegisterRequest(server_ids=["a", "b"])
+        http_request = MagicMock(spec=Request)
+        with pytest.raises(HTTPException) as exc_info:
+            await bulk_register_catalog_servers(http_request, req, db=mock_db, _user={"email": "admin@test.com"})
+        assert exc_info.value.status_code == 403

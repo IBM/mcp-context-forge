@@ -1,0 +1,40 @@
+; Coverage config for the "Run pytest" step in .github/workflows/pytest.yml only.
+;
+; That step passes --cov-branch on the CLI, but coverage.py's own fork-safety
+; hook (registered because pyproject.toml sets concurrency = ["thread",
+; "multiprocessing"]) gives each process forked during the run its own
+; coverage session, and that session reads its mode from whatever on-disk
+; config it finds -- not from the parent's CLI flags. pyproject.toml's
+; [tool.coverage.run] has no `branch` setting, so a forked child ends up
+; writing statement-only data while the CLI-driven parent writes branch data,
+; and `coverage combine()` then raises:
+;   DataError: Can't combine statement coverage data with branch data
+;
+; This file is deliberately NOT a change to pyproject.toml: the doctest
+; coverage step in the same workflow shares that file and has its own
+; threshold calibrated against statement-mode measurement, so making
+; branch=true the global default would push it below its gate. Passing
+; --cov-config=<this file> to only the "Run pytest" step keeps the fix scoped
+; to the one step that forks real processes under coverage instrumentation.
+[run]
+source = mcpgateway
+parallel = true
+branch = true
+concurrency = thread, multiprocessing
+omit =
+    mcpgateway/alembic/*
+    mcpgateway/tools/builder/*
+    */tests/*
+    */test_*.py
+
+[report]
+exclude_lines =
+    pragma: no cover
+    def __repr__
+    if self.debug
+    if TYPE_CHECKING:
+    raise AssertionError
+    raise NotImplementedError
+    if 0:
+    if __name__ == .__main__.
+ignore_errors = true

@@ -66,7 +66,7 @@ Logical groups that:
 | `team_admin` | team | admin.dashboard, admin.overview, gateways.read, gateways.create, gateways.update, gateways.delete, servers.read, servers.use, servers.create, servers.update, servers.delete, teams.read, teams.update, teams.join, teams.delete, teams.manage_members, tools.read, tools.create, tools.update, tools.delete, tools.execute, plugins.read, resources.read, resources.create, resources.update, resources.delete, prompts.read, prompts.create, prompts.update, prompts.delete, a2a.read, a2a.create, a2a.update, a2a.delete, a2a.invoke, llm.read, llm.invoke, tokens.create, tokens.read, tokens.update, tokens.revoke |
 | `developer` | team | admin.dashboard, admin.overview, gateways.read, gateways.create, gateways.update, gateways.delete, servers.read, servers.use, servers.create, servers.update, servers.delete, teams.read, teams.join, tools.read, tools.create, tools.update, tools.delete, tools.execute, plugins.read, resources.read, resources.create, resources.update, resources.delete, prompts.read, prompts.create, prompts.update, prompts.delete, a2a.read, a2a.create, a2a.update, a2a.delete, a2a.invoke, llm.read, llm.invoke, tokens.create, tokens.read, tokens.update, tokens.revoke |
 | `viewer` | team | admin.dashboard, admin.overview, gateways.read, servers.read, servers.use, teams.read, teams.join, tools.read, tools.execute, resources.read, prompts.read, a2a.read, llm.read, tokens.create, tokens.read, tokens.update, tokens.revoke |
-| `platform_viewer` | global | admin.dashboard, admin.overview, gateways.read, servers.read, servers.use, teams.read, teams.join, tools.read, resources.read, prompts.read, a2a.read, llm.read, tokens.create, tokens.read, tokens.update, tokens.revoke |
+| `platform_viewer` | global | admin.dashboard, admin.overview, gateways.read, servers.read, servers.use, teams.read, teams.join, tools.read, resources.read, prompts.read, a2a.read, llm.read, metrics:read, tokens.create, tokens.read, tokens.update, tokens.revoke |
 
 !!! info "Default Role Assignment"
     **New users automatically receive up to two roles upon creation:**
@@ -490,10 +490,35 @@ Permissions are defined in the `Permissions` class and control what actions user
 | **Prompts** | prompts.create, prompts.read, prompts.update, prompts.delete, prompts.execute |
 | **Servers** | servers.create, servers.read, servers.use, servers.update, servers.delete, servers.manage |
 | **Tokens** | tokens.create, tokens.read, tokens.update, tokens.revoke |
-| **Admin** | admin.system_config, admin.user_management, admin.security_audit, admin.overview, admin.dashboard, admin.events, admin.grpc, admin.plugins |
+| **Admin** | admin.system_config, admin.user_management, admin.security_audit, admin.overview, admin.dashboard, admin.events, admin.grpc, admin.plugins, admin.oauth_clients:read, admin.oauth_clients:delete |
 | **A2A** | a2a.create, a2a.read, a2a.update, a2a.delete, a2a.invoke |
 | **Tags** | tags.read, tags.create, tags.update, tags.delete |
 | **Wildcard** | `*` (all permissions) |
+
+!!! note "Registered OAuth clients require un-narrowed admin scope"
+    `admin.oauth_clients:read` and `admin.oauth_clients:delete` gate the DCR management routes
+    (`GET /oauth/registered-clients`, `GET /oauth/registered-clients/{gateway_id}`,
+    `DELETE /oauth/registered-clients/{client_id}`). Registered clients are stored globally with no
+    team column, so these routes additionally require an admin identity whose token is **not**
+    team-narrowed — a constraint that cannot be expressed as a permission. Admin bypass is disabled
+    on these routes, so the caller's roles must carry the permission — directly, via `*`, or through
+    role inheritance. The DB `is_admin` flag alone is not sufficient.
+
+    Scoped API tokens cannot yet carry `admin.oauth_clients:read` / `admin.oauth_clients:delete`:
+    `TokenScopeRequest`'s permission-format validator only accepts plain `resource.action` or `*` —
+    colon-form and wildcard-suffix permissions are rejected at token-creation time. So today only
+    session tokens and `*`-scoped tokens reach these routes via Layer 1; the Layer 1 mapping for the
+    colon-form permissions is defensive rather than reachable today, matching the existing
+    `<category>.*` wildcard delegation precedent described in `token_scope_grants()`'s docstring in
+    `mcpgateway/middleware/rbac.py`.
+
+    Grant `admin.oauth_clients:read` / `admin.oauth_clients:delete` via a **global**-scope role
+    (such as `platform_admin`) rather than a team-scoped role. Registered OAuth clients are global
+    resources with no team ownership, so all three routes pass `global_only=True` to
+    `require_permission()`: team derivation is skipped entirely and only global/personal roles
+    (plus team roles with `scope_id=NULL`, i.e. roles that apply to every team) are evaluated. A
+    role granted on a specific team does **not** satisfy the permission on any of these routes,
+    even for a gateway owned by that team.
 
 ### Token Scope Semantics
 
@@ -724,6 +749,75 @@ If an admin token is unexpectedly restricted:
 2. **Verify `is_admin` flag**: Must be `true` in JWT or database user
 3. **Check middleware logs**: Look for "token_teams" in debug output
 
+### Registered OAuth Client Routes Return 403 After Upgrade
+
+The `/oauth/registered-clients*` routes require `admin.oauth_clients:read` /
+`admin.oauth_clients:delete` with admin bypass disabled, so the DB `is_admin` flag alone no longer
+grants access — the caller's roles must carry the permission (directly, via `*`, or through role
+inheritance).
+
+Every supported path to `is_admin = true` also assigns `DEFAULT_ADMIN_ROLE` (default
+`platform_admin`, permissions `["*"]`), so most deployments are unaffected. Two cases are not
+covered: an `is_admin` flag set by direct SQL, and a custom `DEFAULT_ADMIN_ROLE` with no inherited
+path to `*`.
+
+This query lists every affected admin. It expands role inheritance, so a custom role inheriting
+`platform_admin` is correctly excluded. A user is **excluded** from the affected list only if they
+hold `*` outright, or hold **both** `:read` and `:delete` (possibly from two different role
+assignments) — holding only one of the two still leaves them 403'd on the route gated by the other,
+so they must stay on the list. Because all three routes now enforce `global_only=True` (team
+derivation skipped; see the note above), a role is only counted if it's global, personal, or a
+team role with no specific team (`scope_id IS NULL`) — a role scoped to one specific team no longer
+satisfies the permission on these routes and must not count toward compatibility here either:
+
+```sql
+WITH RECURSIVE effective(role_id, cur_id, perms) AS (
+    SELECT r.id, r.id, r.permissions FROM roles r WHERE r.is_active
+    UNION ALL
+    SELECT e.role_id, p.id, p.permissions
+    FROM effective e
+    JOIN roles c ON c.id = e.cur_id
+    JOIN roles p ON p.id = c.inherits_from AND p.is_active
+),
+user_perm_flags AS (
+    SELECT
+        ur.user_email,
+        MAX(CASE WHEN e.perms LIKE '%"*"%' THEN 1 ELSE 0 END) AS has_wildcard,
+        MAX(CASE WHEN e.perms LIKE '%admin.oauth_clients:read%' THEN 1 ELSE 0 END) AS has_read,
+        MAX(CASE WHEN e.perms LIKE '%admin.oauth_clients:delete%' THEN 1 ELSE 0 END) AS has_delete
+    FROM user_roles ur
+    JOIN effective e ON e.role_id = ur.role_id
+    WHERE ur.is_active
+      AND (ur.expires_at IS NULL OR ur.expires_at > CURRENT_TIMESTAMP)
+      AND (ur.scope IN ('global', 'personal') OR (ur.scope = 'team' AND ur.scope_id IS NULL))
+    GROUP BY ur.user_email
+)
+SELECT u.email
+FROM email_users u
+LEFT JOIN user_perm_flags f ON f.user_email = u.email
+WHERE u.is_admin
+  AND COALESCE(f.has_wildcard, 0) = 0
+  AND NOT (COALESCE(f.has_read, 0) = 1 AND COALESCE(f.has_delete, 0) = 1);
+```
+
+The query above targets SQLite (the default `DATABASE_URL=sqlite:///./mcp.db`) — bare boolean
+columns (`r.is_active`, `u.is_admin`, ...) work identically on SQLite and PostgreSQL, so no `= 1`
+comparisons are needed. `Role.permissions` is a plain `json` column (not `jsonb`) on PostgreSQL, so
+the `?` containment operator does **not** apply here. On PostgreSQL, add a `::text` cast around
+every `e.perms` reference instead: `e.perms::text LIKE '%"*"%'`,
+`e.perms::text LIKE '%admin.oauth_clients:read%'`, and
+`e.perms::text LIKE '%admin.oauth_clients:delete%'` (SQLite does not understand `::text`, so keep
+the bare `LIKE` form above for SQLite). The recursion terminates because role creation rejects
+inheritance cycles.
+
+An empty result means no user loses access. For each row returned, either assign a role carrying
+the permissions or add `admin.oauth_clients:read` and `admin.oauth_clients:delete` to the role the
+user already holds.
+
+One case the query cannot report, because it has no `email_users` row: a development gateway
+running with `AUTH_REQUIRED=false` and `ALLOW_UNAUTHENTICATED_ADMIN=true` where
+`PLATFORM_ADMIN_EMAIL` was never seeded. That identity resolves to no roles and receives 403.
+
 ### Inconsistent Results Between Endpoints
 
 If REST and RPC endpoints return different results:
@@ -790,6 +884,7 @@ Create a JSON file containing an array of role definitions:
 | Prompts | `prompts.create`, `prompts.read`, `prompts.update`, `prompts.delete` |
 | Servers | `servers.create`, `servers.read`, `servers.use`, `servers.update`, `servers.delete`, `servers.manage` |
 | Gateways | `gateways.create`, `gateways.read`, `gateways.update`, `gateways.delete` |
+| OAuth clients | `admin.oauth_clients:read`, `admin.oauth_clients:delete` |
 | Teams | `teams.create`, `teams.read`, `teams.update`, `teams.delete`, `teams.join` |
 
 ### Docker Compose Example

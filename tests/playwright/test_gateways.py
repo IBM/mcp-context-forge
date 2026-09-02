@@ -247,7 +247,11 @@ class TestGatewaysPage:
         # Verify grant type options
         expect(grant_type_select.locator('option[value="authorization_code"]')).to_be_attached()
         expect(grant_type_select.locator('option[value="client_credentials"]')).to_be_attached()
-        expect(grant_type_select.locator('option[value="password"]')).to_be_attached()
+
+        # Password grant is deprecated for new gateways and is only offered
+        # when editing an existing gateway (see TestOAuthGrantTypeSwitching
+        # in test_gateways_extended.py for edit-modal coverage).
+        expect(grant_type_select.locator('option[value="password"]')).not_to_be_attached()
 
     def test_one_time_auth_checkbox(self, gateways_page: GatewaysPage):
         """Test one-time authentication checkbox."""

@@ -12,85 +12,28 @@ build-backend = "setuptools.build_meta"
 build_py = "mcpgateway.tools.builder.build_hooks.BuildPyWithUI"
 
 [tool.uv]
+# 0.6.9 is the minimum version that understands relative exclude-newer durations ("10 days").
+required-version = ">=0.6.9"
 exclude-newer = "10 days"
 
 [tool.uv.exclude-newer-package]
-cpex = "2026-07-30T23:59:59Z"
-# cpex 0.1.2 (2026-07-30T03:08:24Z) is the minimum required version for
-# ControlExecutionRecord support (issue #5785 / consume-cpex-executions).
-# Pinned past its publish timestamp so uv resolves it on Python 3.13 as well.
-# cpex-url-reputation pinned past its normal soak cutoff: 0.3.5 (2026-07-14) is the first
-# release that emits result.metadata["url_reputation"] for resource_pre_fetch, which
-# tests/integration/plugins/test_plugin_metrics_consumer_integration.py and
-# tests/e2e/test_otel_plugin_metadata_e2e.py depend on. Vetted ahead of the usual window for
-# this reason.
-cpex-url-reputation = "2026-07-27T23:59:59Z"
-# cpex-rate-limiter pinned past its normal soak cutoff: 0.1.7 (2026-07-14) is the first
-# release that emits result.metadata["rate_limiter"] for prompt_pre_fetch/tool_pre_invoke, which
-# tests/integration/plugins/test_plugin_metrics_consumer_integration.py and
-# tests/e2e/test_otel_plugin_metadata_e2e.py depend on. Vetted ahead of the usual window for
-# this reason.
-cpex-rate-limiter = "2026-07-27T23:59:59Z"
-# cpex-encoded-exfil-detection pinned past its normal soak cutoff: 0.3.6 (2026-07-14) is the
-# first release that emits result.metadata["encoded_exfil_detection"] for
-# tool_post_invoke/tool_pre_invoke/resource hooks, which
-# tests/integration/plugins/test_plugin_metrics_consumer_integration.py and
-# tests/e2e/test_otel_plugin_metadata_e2e.py depend on. Vetted ahead of the usual window for
-# this reason.
-cpex-encoded-exfil-detection = "2026-07-27T23:59:59Z"
-# cpex-pii-filter pinned past its normal soak cutoff: 0.3.6 (2026-07-07) is the first
-# release that emits result.metadata for tool_post_invoke, which tests/e2e/test_otel_plugin_metadata_e2e.py
-# depends on. Vetted ahead of the usual window for this reason.
-cpex-pii-filter = "2026-07-27T23:59:59Z"
-# cpex-retry-with-backoff pinned past its normal soak cutoff: 0.3.7 (2026-07-15) is required.
-# 0.3.6 first emitted result.metadata["retry_with_backoff"] for tool_post_invoke (which
-# tests/integration/plugins/test_plugin_metrics_consumer_integration.py and
-# tests/e2e/test_otel_plugin_metadata_e2e.py depend on) but shipped a retry-detection
-# regression: is_failure read the tool_post_invoke result via PyDict::get_item (C-level dict
-# storage), which silently misses every key on the gateway's CopyOnWriteDict payload-isolation
-# wrapper (its data lives in a Python-level overlay) -- every retryable failure looked like a
-# success and the plugin never retried. 0.3.7 fixes this by reading through the Python mapping
-# protocol instead. See IBM/cpex-plugins#124 / #137. Vetted ahead of the usual window for both
-# reasons.
-cpex-retry-with-backoff = "2026-07-27T23:59:59Z"
-# cpex-secrets-detection pinned past its normal soak cutoff: 0.3.10 (2026-07-21)
-# preserves secret field names during redaction. 0.3.9 adds field_allowlist and
-# field_denylist support for gateway plugin config.
-# 0.3.7 is the first release that emits result.metadata["secrets_detection"] for
-# tool_post_invoke, which tests/integration/plugins/test_plugin_metrics_consumer_integration.py
-# and tests/e2e/test_otel_plugin_metadata_e2e.py depend on. Vetted ahead of the usual window
-# for these reasons.
-cpex-secrets-detection = "2026-07-27T23:59:59Z"
-# cpex-sql-sanitizer pinned past its normal soak cutoff: 0.1.0 (2026-07-21) is the only
-# release. Without this pin the `exclude-newer = "10 days"` default would resolve the
-# [plugins] extra to nothing and the gateway would fail to load SQLSanitizer at boot.
-# Vetted ahead of the usual window for this reason.
-cpex-sql-sanitizer = "2026-07-21T23:59:59Z"
-cryptography = "2026-08-01T23:59:59Z"
-langgraph = "2026-05-12T23:59:59Z"
-fastapi = "2026-07-27T23:59:59Z"
-filelock = "2026-07-27T23:59:59Z"
-grpcio = "2026-07-27T23:59:59Z"
-grpcio-reflection = "2026-07-27T23:59:59Z"
-grpcio-tools = "2026-07-27T23:59:59Z"
-langchain-core = "2026-07-27T23:59:59Z"
-langchain-openai = "2026-07-27T23:59:59Z"
-langsmith = "2026-07-27T23:59:59Z"
-prometheus-client = "2026-07-27T23:59:59Z"
-prometheus-fastapi-instrumentator = "2026-07-27T23:59:59Z"
-sse-starlette = "2026-07-27T23:59:59Z"
-starlette-compress = "2026-07-27T23:59:59Z"
+cpex = "2026-08-24T23:59:59Z"
+cpex-url-reputation = "2026-08-24T23:59:59Z"
+cpex-rate-limiter = "2026-08-24T23:59:59Z"
+cpex-encoded-exfil-detection = "2026-08-24T23:59:59Z"
+cpex-pii-filter = "2026-08-24T23:59:59Z"
+cpex-retry-with-backoff = "2026-08-24T23:59:59Z"
+cpex-secrets-detection = "2026-08-24T23:59:59Z"
+cpex-sql-sanitizer = "2026-08-24T23:59:59Z"
+# additional packages below this: remove before next upgrade cycle starts
 
-
-[tool.uv.sources]
-compliance-reference-server = { path = "mcp-servers/python/compliance_reference_server", editable = true }
 
 # ----------------------------------------------------------------
 # 📦 Core project metadata (PEP 621)
 # ----------------------------------------------------------------
 [project]
 name = "mcp-contextforge-gateway"
-version = "1.0.7"
+version = "1.0.9"
 description = "ContextForge AI Gateway — an AI gateway, registry, and proxy for MCP, A2A, and REST/gRPC APIs. Exposes a unified control plane with centralized governance, discovery, and observability. Optimizes agent and tool calling, and supports plugins."
 keywords = ["MCP","API","gateway","proxy","tools",
   "agents","agentic ai","model context protocol","multi-agent","fastapi",
@@ -101,7 +44,6 @@ classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Framework :: FastAPI",
@@ -110,7 +52,7 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Application Frameworks"
 ]
 readme = "README.md"
-requires-python = ">=3.11,<3.14"
+requires-python = ">=3.12,<3.14"
 
 # SPDX licence expression + explicit licence file (PEP 639)
 license = "Apache-2.0"
@@ -125,7 +67,7 @@ maintainers = [
 # Runtime dependencies
 # ----------------------------------------------------------------
 dependencies = [
-    "alembic>=1.18.5",
+    "alembic>=1.19.1",
     "argon2-cffi>=25.1.0",
     "base58>=2.1.1",
     "brotli>=1.2.0",
@@ -135,6 +77,7 @@ dependencies = [
     "fastapi>=0.140.0",
     "filelock>=3.32.0,<3.33.0", # 3.30.0 added fork-safety guard that raises on pre-fork lock reuse; gateway_service.py:5351 rebuilds per-PID (fix from #5654). primary_worker.py and bootstrap_db.py create FileLock post-fork so are unaffected. Ceiling bumped to 3.32.x: 3.30.x–3.32.x have zero runtime changes (CI matrix, packaging, platform support only). Advance ceiling after verifying next minor release.
     "gunicorn>=26.0.0",
+    "h2>=4.4.1", # Transitive pin (httpx[http2]); CVE-2026-71554 fixed in 4.4.1
     "httpx>=0.28.1",
     "httpx[http2]>=0.28.1",
     "idna>=3.18",
@@ -142,7 +85,7 @@ dependencies = [
     "jq>=1.12.0",
     "jsonpath-ng>=1.8.0",
     "jsonschema>=4.26.0",
-    "Mako>=1.3.12", # Transitive pin (alembic)
+    "Mako>=1.4.1", # Transitive pin (alembic)
     "mcp>=1.28.1,<2",
     "msgpack>=1.2.1",
     "orjson>=3.11.9",
@@ -152,7 +95,7 @@ dependencies = [
     "psutil>=7.2.2",
     "pydantic>=2.13.4",
     "pydantic[email]>=2.13.4",
-    "pydantic-settings>=2.14.2",
+    "pydantic-settings>=2.15.0",
     "pyjwt>=2.13.0",
     "python-json-logger>=4.1.0",
     "python-multipart>=0.0.32", # Transitive pin (mcp, fastapi); dependabot/81
@@ -160,11 +103,11 @@ dependencies = [
     "redis>=8.0.1",
     "requests>=2.34.2", # Transivite pin (requests-oauthlib)
     "requests-oauthlib>=2.0.0",
-    "sqlalchemy>=2.0.51",
-    "sse-starlette>=3.4.6",
-    "starlette>=1.3.1",
+    "sqlalchemy>=2.0.52",
+    "sse-starlette>=3.4.8",
+    "starlette>=1.6.0",
     "starlette-compress>=1.8.0",
-    "typer>=0.27.0",
+    "typer>=0.27.1",
     "urllib3>=2.7.0", # Transitive pin (requests); dependabot/76
     "uvicorn[standard]>=0.51.0",
 ]
@@ -177,7 +120,6 @@ dev = [
     "a2a-sdk[http-server]",
     "aiohttp>=3.14.3",
     "argparse-manpage>=4.7",
-    "authlib>=1.7.2", # Transitive pin via fastmcp (dev-only test client); 1.7.0 ships security fixes — see tool.uv.exclude-newer-package override
     "autoflake>=2.3.3",
     "bandit>=1.9.4",
     "bump2version>=1.0.1",
@@ -189,8 +131,6 @@ dev = [
     "dodgy>=0.2.1",
     "faker>=40.28.1",
     "fakeredis[lua]>=2.36.2",
-    "compliance-reference-server",
-    "fastmcp>=3.4.2",
     "fawltydeps>=0.20.0",
     "gprof2dot>=2025.4.14",
     "hypothesis>=6.152.1",
@@ -228,10 +168,12 @@ dev = [
     "radon>=6.0.1",
     "redis>=8.0.1",
     "rich>=15.0.0",
+    "Pillow>=12.2.0",
     #"semgrep>=1.136.0",   # conflicts with opentelemetry-sdk
     "settings-doc>=4.3.2",
     "snakeviz>=2.2.2",
     "tomlkit>=0.15.0",
+    "tldextract>=5.3.0",
     "tox>=4.34.1",
     "tox-uv>=1.35.2",
     "twine>=6.2.0",
@@ -350,11 +292,11 @@ grpc = [
 
 # Convenience meta-extras
 all = [
-    "mcp-contextforge-gateway[redis]>=1.0.7",
+    "mcp-contextforge-gateway[redis]>=1.0.9",
 ]
 
 dev-all = [
-    "mcp-contextforge-gateway[redis,dev,plugins]>=1.0.7",
+    "mcp-contextforge-gateway[redis,dev,plugins]>=1.0.9",
 ]
 
 # --------------------------------------------------------------------
@@ -405,6 +347,7 @@ mcpgateway = [
   "static/*.css",
   "static/css/*.css",
   "static/*.js",
+  "static/catalog-icons/*",
   "templates/*.html",
   "*.json",
   "alembic.ini",
@@ -420,7 +363,7 @@ mcpgateway = [
 [tool.pytype]
 # Directory-specific options:
 inputs = ["mcpgateway"]
-python_version = "3.11"          # match default runtime
+python_version = "3.12"          # match default runtime
 
 [tool.pyright]
 typeCheckingMode = "standard"
@@ -439,11 +382,12 @@ ignore = [
     "mcpgateway/static/css/**",
     "mcpgateway/static/chunk-*.js",
     "mcpgateway/static/bundle-*.js",
+    "mcpgateway/static/catalog-icons/*",
 ]
 
 [tool.black]
 line-length = 200
-target-version = ["py310", "py311", "py312"]
+target-version = ["py312"]
 include = "\\.pyi?$"
 exclude = '''
 /(
@@ -495,8 +439,8 @@ exclude = [
 line-length = 200
 indent-width = 4
 
-# Assume Python 3.11
-target-version = "py311"
+# Assume Python 3.12
+target-version = "py312"
 
 
 [tool.ruff.lint]
@@ -691,7 +635,7 @@ skip_glob                  = ["**/__init__.py"]  # leave namespace init files al
 
 [tool.mypy]
 # Target Python version
-python_version = "3.11"
+python_version = "3.12"
 
 # Full strictness and individual checks
 strict = true                           # Enable all strict checks
@@ -773,24 +717,14 @@ markers = [
     "mcp_lifecycle: marks initialize/capability lifecycle checks",
     "mcp_transport_core: marks streamable-http/transport checks",
     "mcp_server_features: marks tools/resources/prompts/logging checks",
-    "mcp_client_features: marks roots/sampling/elicitation checks",
     "mcp_utilities: marks ping/cancel/progress/pagination checks",
     "mcp_tasks: marks tasks capability checks",
     "mcp_auth: marks authorization discovery checks", # pragma: allowlist secret
-    "mcp_security: marks security compliance checks",
     "regression: marks regression tests for previously-fixed bugs",
     "proxy: marks tests that run through a simulated proxy prefix",
     "iframe: marks tests that run inside an iframe host page",
     "owasp_a01: marks OWASP A01:2021 Broken Access Control security tests",
     "owasp_a01_zap: marks OWASP A01 ZAP DAST scan tests (requires ZAP daemon; set ZAP_BASE_URL)",
-    "protocol_compliance: marks black-box MCP protocol compliance harness tests (tests/live_gateway/protocol_compliance)",
-    "target_reference: marks tests that exercise the reference FastMCP server target",
-    "target_gateway_proxy: marks tests that exercise the gateway-as-proxy target",
-    "target_gateway_virtual: marks tests that exercise a gateway virtual-server target",
-    "transport_stdio: marks tests that exercise the stdio transport",
-    "transport_sse: marks tests that exercise the SSE transport",
-    "transport_http: marks tests that exercise the Streamable HTTP transport",
-    "mcp_drift: marks cross-target behavioral-equivalence tests",
 ]
 
 # Playwright-specific test discovery patterns

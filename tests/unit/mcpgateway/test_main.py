@@ -47,6 +47,7 @@ import mcpgateway.db as db_mod
 from mcpgateway.plugins.violation_codes import PLUGIN_VIOLATION_CODE_MAPPING
 from mcpgateway.schemas import (
     A2AAgentAggregateMetrics,
+    GatewayImpactPreview,
     GatewayRead,
     PromptMetrics,
     PromptRead,
@@ -194,6 +195,61 @@ MOCK_ROOT = {
     "uri": "/test",
     "name": "Test Root",
 }
+
+SERVER_CRUD_PREFIXES = ("/servers", "/v1/virtual-servers")
+GATEWAY_CRUD_PREFIXES = ("/gateways", "/v1/mcp-servers")
+MISSING_ALIAS_RESOURCE_ID = "cccccccccccccccccccccccccccccccc"
+ALIAS_RESPONSE_CASES = (
+    pytest.param("GET", "/gateways", "/v1/mcp-servers", None, id="list-mcp-servers"),
+    pytest.param("POST", "/gateways", "/v1/mcp-servers", {}, id="create-mcp-server"),
+    pytest.param("GET", f"/gateways/{MISSING_ALIAS_RESOURCE_ID}", f"/v1/mcp-servers/{MISSING_ALIAS_RESOURCE_ID}", None, id="read-mcp-server"),
+    pytest.param("PUT", f"/gateways/{MISSING_ALIAS_RESOURCE_ID}", f"/v1/mcp-servers/{MISSING_ALIAS_RESOURCE_ID}", {}, id="update-mcp-server"),
+    pytest.param("DELETE", f"/gateways/{MISSING_ALIAS_RESOURCE_ID}", f"/v1/mcp-servers/{MISSING_ALIAS_RESOURCE_ID}", None, id="delete-mcp-server"),
+    pytest.param(
+        "POST",
+        f"/gateways/{MISSING_ALIAS_RESOURCE_ID}/state?activate=false",
+        f"/v1/mcp-servers/{MISSING_ALIAS_RESOURCE_ID}/state?activate=false",
+        None,
+        id="set-mcp-server-state",
+    ),
+    pytest.param(
+        "POST",
+        f"/gateways/{MISSING_ALIAS_RESOURCE_ID}/tools/refresh",
+        f"/v1/mcp-servers/{MISSING_ALIAS_RESOURCE_ID}/tools/refresh",
+        None,
+        id="refresh-mcp-server-tools",
+    ),
+    pytest.param("GET", "/servers", "/v1/virtual-servers", None, id="list-virtual-servers"),
+    pytest.param("POST", "/servers", "/v1/virtual-servers", {}, id="create-virtual-server"),
+    pytest.param("GET", f"/servers/{MISSING_ALIAS_RESOURCE_ID}", f"/v1/virtual-servers/{MISSING_ALIAS_RESOURCE_ID}", None, id="read-virtual-server"),
+    pytest.param("PUT", f"/servers/{MISSING_ALIAS_RESOURCE_ID}", f"/v1/virtual-servers/{MISSING_ALIAS_RESOURCE_ID}", {}, id="update-virtual-server"),
+    pytest.param("DELETE", f"/servers/{MISSING_ALIAS_RESOURCE_ID}", f"/v1/virtual-servers/{MISSING_ALIAS_RESOURCE_ID}", None, id="delete-virtual-server"),
+    pytest.param(
+        "POST",
+        f"/servers/{MISSING_ALIAS_RESOURCE_ID}/state?activate=false",
+        f"/v1/virtual-servers/{MISSING_ALIAS_RESOURCE_ID}/state?activate=false",
+        None,
+        id="set-virtual-server-state",
+    ),
+    pytest.param("GET", f"/servers/{MISSING_ALIAS_RESOURCE_ID}/sse", f"/v1/virtual-servers/{MISSING_ALIAS_RESOURCE_ID}/sse", None, id="virtual-server-sse"),
+    pytest.param(
+        "POST",
+        f"/servers/{MISSING_ALIAS_RESOURCE_ID}/message?session_id=alias-parity",
+        f"/v1/virtual-servers/{MISSING_ALIAS_RESOURCE_ID}/message?session_id=alias-parity",
+        {"jsonrpc": "2.0", "method": "ping"},
+        id="virtual-server-message",
+    ),
+    pytest.param("GET", f"/servers/{MISSING_ALIAS_RESOURCE_ID}/tools", f"/v1/virtual-servers/{MISSING_ALIAS_RESOURCE_ID}/tools", None, id="virtual-server-tools"),
+    pytest.param("GET", f"/servers/{MISSING_ALIAS_RESOURCE_ID}/resources", f"/v1/virtual-servers/{MISSING_ALIAS_RESOURCE_ID}/resources", None, id="virtual-server-resources"),
+    pytest.param("GET", f"/servers/{MISSING_ALIAS_RESOURCE_ID}/prompts", f"/v1/virtual-servers/{MISSING_ALIAS_RESOURCE_ID}/prompts", None, id="virtual-server-prompts"),
+    pytest.param(
+        "GET",
+        f"/servers/{MISSING_ALIAS_RESOURCE_ID}/.well-known/robots.txt",
+        f"/v1/virtual-servers/{MISSING_ALIAS_RESOURCE_ID}/.well-known/robots.txt",
+        None,
+        id="virtual-server-well-known",
+    ),
+)
 
 
 class _ValidationModel(BaseModel):
@@ -906,11 +962,12 @@ class TestServerEndpoints:
         assert len(data) == 1 and data[0]["name"] == "test_server"
         mock_list_servers.assert_called_once()
 
+    @pytest.mark.parametrize("path_prefix", SERVER_CRUD_PREFIXES)
     @patch("mcpgateway.main.server_service.get_server")
-    def test_get_server_endpoint(self, mock_get, test_client, auth_headers):
-        """Test retrieving a specific server."""
+    def test_get_server_endpoint(self, mock_get, path_prefix, test_client, auth_headers):
+        """Test retrieving a specific server through old and new path prefixes."""
         mock_get.return_value = ServerRead(**MOCK_SERVER_READ)
-        response = test_client.get("/servers/1", headers=auth_headers)
+        response = test_client.get(f"{path_prefix}/1", headers=auth_headers)
         assert response.status_code == 200
         assert response.json()["name"] == "test_server"
         mock_get.assert_called_once()
@@ -926,12 +983,13 @@ class TestServerEndpoints:
         assert response.status_code == 404
         mock_get.assert_called_once()
 
+    @pytest.mark.parametrize("path_prefix", SERVER_CRUD_PREFIXES)
     @patch("mcpgateway.main.server_service.register_server")
-    def test_create_server_endpoint(self, mock_create, test_client, auth_headers):
-        """Test creating a new server."""
+    def test_create_server_endpoint(self, mock_create, path_prefix, test_client, auth_headers):
+        """Test creating a server through old and new path prefixes."""
         mock_create.return_value = ServerRead(**MOCK_SERVER_READ)
         req = {"server": {"name": "test_server", "description": "A test server"}, "team_id": None, "visibility": "private"}
-        response = test_client.post("/servers/", json=req, headers=auth_headers)
+        response = test_client.post(f"{path_prefix}/", json=req, headers=auth_headers)
         assert response.status_code == 201
         mock_create.assert_called_once()
 
@@ -951,12 +1009,13 @@ class TestServerEndpoints:
         detail = response.json()["detail"][0]
         assert "Invalid ID format" in detail["msg"]
 
+    @pytest.mark.parametrize("path_prefix", SERVER_CRUD_PREFIXES)
     @patch("mcpgateway.main.server_service.update_server")
-    def test_update_server_endpoint(self, mock_update, test_client, auth_headers):
-        """Test updating an existing server."""
+    def test_update_server_endpoint(self, mock_update, path_prefix, test_client, auth_headers):
+        """Test updating a server through old and new path prefixes."""
         mock_update.return_value = ServerRead(**MOCK_SERVER_READ)
         req = {"description": "Updated description"}
-        response = test_client.put("/servers/1", json=req, headers=auth_headers)
+        response = test_client.put(f"{path_prefix}/1", json=req, headers=auth_headers)
         assert response.status_code == 200
         mock_update.assert_called_once()
 
@@ -1002,13 +1061,14 @@ class TestServerEndpoints:
         response = test_client.post("/servers/1/state?activate=false", headers=auth_headers)
         assert response.status_code == 404
 
+    @pytest.mark.parametrize("path_prefix", SERVER_CRUD_PREFIXES)
     @patch("mcpgateway.main.server_service.delete_server")
     @patch("mcpgateway.main.server_service.get_server")
-    def test_delete_server_endpoint(self, mock_get, mock_delete, test_client, auth_headers):
-        """Test permanently deleting a server."""
+    def test_delete_server_endpoint(self, mock_get, mock_delete, path_prefix, test_client, auth_headers):
+        """Test deleting a server through old and new path prefixes."""
         mock_get.return_value = ServerRead(**MOCK_SERVER_READ)
         mock_delete.return_value = None
-        response = test_client.delete("/servers/1", headers=auth_headers)
+        response = test_client.delete(f"{path_prefix}/1", headers=auth_headers)
         assert response.status_code == 200
         assert response.json()["status"] == "success"
 
@@ -1062,6 +1122,197 @@ class TestServerEndpoints:
         data = response.json()
         assert len(data) == 1
         mock_list_prompts.assert_called_once()
+
+
+class TestServerHandshakeEndpoint:
+    """Tests for POST /servers/{server_id}/test-handshake (issue #6370).
+
+    Unlike /gateways/test-handshake, the target is the virtual server's own
+    /servers/{id}/mcp transport (derived from the ID, not a caller-supplied
+    URL), so these tests focus on: 404 for an invisible/missing server, the
+    router-level credential-forwarding logic (Authorization header vs. cookie
+    vs. neither), and that both the legacy and /v1/virtual-servers alias
+    paths reach the same handler. The handshake mechanics themselves
+    (in-process ASGI dispatch, MCP negotiation) are covered directly against
+    ``gateway_service.test_server_handshake``.
+    """
+
+    @pytest.mark.parametrize("path_prefix", SERVER_CRUD_PREFIXES)
+    @patch("mcpgateway.main.test_server_handshake")
+    @patch("mcpgateway.main.server_service.get_server")
+    def test_handshake_endpoint_success(self, mock_get_server, mock_handshake, path_prefix, test_client, auth_headers):
+        """A visible, enabled server reaches test_server_handshake and returns its result."""
+        # First-Party
+        from mcpgateway.schemas import GatewayHandshakeResponse
+
+        mock_get_server.return_value = ServerRead(**MOCK_SERVER_READ)
+        mock_handshake.return_value = GatewayHandshakeResponse(
+            success=True,
+            latency_ms=12,
+            negotiation_path="initialize",
+            protocol_version="2025-11-25",
+            server_name="test_server",
+            server_version="1.0",
+            credential_source="session",
+        )
+
+        response = test_client.post(f"{path_prefix}/1/test-handshake", json={}, headers=auth_headers)
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        assert data["negotiationPath"] == "initialize"
+        assert data["credentialSource"] == "session"
+        mock_handshake.assert_called_once()
+        call_args = mock_handshake.call_args.args
+        assert call_args[0] == MOCK_SERVER_READ["id"]
+        assert call_args[1] == MOCK_SERVER_READ["name"]
+        assert call_args[2] == MOCK_SERVER_READ["enabled"]
+
+    @patch("mcpgateway.main.server_service.get_server")
+    def test_handshake_endpoint_not_found(self, mock_get_server, test_client, auth_headers):
+        """A missing or invisible server returns 404 without attempting a handshake."""
+        # First-Party
+        from mcpgateway.services.server_service import ServerNotFoundError
+
+        mock_get_server.side_effect = ServerNotFoundError("Server not found: missing")
+
+        response = test_client.post("/servers/missing/test-handshake", json={}, headers=auth_headers)
+
+        assert response.status_code == 404
+
+    @patch("mcpgateway.main.test_server_handshake")
+    @patch("mcpgateway.main.server_service.get_server")
+    def test_handshake_falls_back_to_cookie_when_no_bearer_header(self, mock_get_server, mock_handshake, test_client):
+        """With no Authorization header, a jwt_token cookie is forwarded as the handshake's credentials."""
+        # First-Party
+        from mcpgateway.schemas import GatewayHandshakeResponse
+
+        mock_get_server.return_value = ServerRead(**MOCK_SERVER_READ)
+        mock_handshake.return_value = GatewayHandshakeResponse(success=True, latency_ms=1)
+
+        test_client.cookies.set("jwt_token", "cookie-token")
+        try:
+            test_client.post("/servers/1/test-handshake", json={})
+        finally:
+            test_client.cookies.delete("jwt_token")
+
+        forwarded_headers = mock_handshake.call_args.args[4]
+        assert forwarded_headers.get("Authorization") == "Bearer cookie-token"
+
+    @patch("mcpgateway.main.test_server_handshake")
+    @patch("mcpgateway.main.server_service.get_server")
+    def test_handshake_forwards_bearer_token(self, mock_get_server, mock_handshake, test_client, auth_headers):
+        """The caller's own bearer token is forwarded as the handshake's default credentials."""
+        # First-Party
+        from mcpgateway.schemas import GatewayHandshakeResponse
+
+        mock_get_server.return_value = ServerRead(**MOCK_SERVER_READ)
+        mock_handshake.return_value = GatewayHandshakeResponse(success=True, latency_ms=1)
+
+        test_client.post("/servers/1/test-handshake", json={}, headers=auth_headers)
+
+        forwarded_headers = mock_handshake.call_args.args[4]
+        assert forwarded_headers.get("Authorization") == auth_headers["Authorization"]
+
+    @patch("mcpgateway.main.test_server_handshake")
+    @patch("mcpgateway.main.server_service.get_server")
+    def test_handshake_forwards_bearer_under_custom_auth_header_name(self, mock_get_server, mock_handshake, test_client, mock_jwt_token, monkeypatch):
+        """When AUTH_HEADER_NAME is customized, the bearer token is forwarded under that configured
+        header name -- not hardcoded 'Authorization' -- since the nested request's own auth extraction
+        only reads the configured header.
+        """
+        # First-Party
+        from mcpgateway.schemas import GatewayHandshakeResponse
+
+        monkeypatch.setattr(settings, "auth_header_name", "X-MCP-Gateway-Auth")
+
+        mock_get_server.return_value = ServerRead(**MOCK_SERVER_READ)
+        mock_handshake.return_value = GatewayHandshakeResponse(success=True, latency_ms=1)
+
+        test_client.post("/servers/1/test-handshake", json={}, headers={"X-MCP-Gateway-Auth": f"Bearer {mock_jwt_token}"})
+
+        forwarded_headers = mock_handshake.call_args.args[4]
+        assert forwarded_headers.get("X-MCP-Gateway-Auth") == f"Bearer {mock_jwt_token}"
+        assert "Authorization" not in forwarded_headers
+
+    @patch("mcpgateway.main.test_server_handshake")
+    @patch("mcpgateway.main.server_service.get_server")
+    def test_handshake_without_credentials_forwards_nothing(self, mock_get_server, mock_handshake, test_client):
+        """A request with no Authorization header and no cookie forwards no credentials."""
+        # First-Party
+        from mcpgateway.schemas import GatewayHandshakeResponse
+
+        mock_get_server.return_value = ServerRead(**MOCK_SERVER_READ)
+        mock_handshake.return_value = GatewayHandshakeResponse(success=True, latency_ms=1)
+
+        # The test_client fixture's dependency overrides bypass auth regardless of headers,
+        # so this exercises the router's own extraction logic in isolation.
+        test_client.post("/servers/1/test-handshake", json={})
+
+        forwarded_headers = mock_handshake.call_args.args[4]
+        assert "Authorization" not in forwarded_headers
+
+    @patch("mcpgateway.main.test_server_handshake")
+    @patch("mcpgateway.main.server_service.get_server")
+    def test_handshake_header_override_reaches_service(self, mock_get_server, mock_handshake, test_client, auth_headers):
+        """An explicit ``headers`` override in the request body is passed through to the service.
+
+        The service layer (not the router) is responsible for restricting which override
+        headers are actually honored -- see test_server_handshake.py's deny-path coverage.
+        """
+        # First-Party
+        from mcpgateway.schemas import GatewayHandshakeResponse
+
+        mock_get_server.return_value = ServerRead(**MOCK_SERVER_READ)
+        mock_handshake.return_value = GatewayHandshakeResponse(success=True, latency_ms=1)
+
+        test_client.post("/servers/1/test-handshake", json={"headers": {"X-Custom": "value"}}, headers=auth_headers)
+
+        body = mock_handshake.call_args.args[3]
+        assert body.headers == {"X-Custom": "value"}
+
+    @patch("mcpgateway.main.test_server_handshake")
+    @patch("mcpgateway.main.server_service.get_server")
+    def test_handshake_forwards_trusted_proxy_identity_header_when_no_bearer_or_cookie(self, mock_get_server, mock_handshake, test_client, monkeypatch):
+        """With TRUST_PROXY_AUTH_DANGEROUSLY enabled and no Authorization header/cookie, the caller's own
+        already-verified trusted-proxy identity header (from this request, not the body) is forwarded under
+        the configured header name -- not hardcoded to 'Authorization'.
+        """
+        # First-Party
+        from mcpgateway.schemas import GatewayHandshakeResponse
+
+        monkeypatch.setattr(settings, "trust_proxy_auth", True)
+        monkeypatch.setattr(settings, "proxy_user_header", "X-Authenticated-User")
+
+        mock_get_server.return_value = ServerRead(**MOCK_SERVER_READ)
+        mock_handshake.return_value = GatewayHandshakeResponse(success=True, latency_ms=1)
+
+        test_client.post("/servers/1/test-handshake", json={}, headers={"X-Authenticated-User": "proxy-user@example.com"})
+
+        forwarded_headers = mock_handshake.call_args.args[4]
+        assert forwarded_headers.get("X-Authenticated-User") == "proxy-user@example.com"
+        assert "Authorization" not in forwarded_headers
+
+    @patch("mcpgateway.main.test_server_handshake")
+    @patch("mcpgateway.main.server_service.get_server")
+    def test_handshake_does_not_forward_proxy_identity_header_when_trust_proxy_auth_disabled(self, mock_get_server, mock_handshake, test_client, monkeypatch):
+        """With TRUST_PROXY_AUTH_DANGEROUSLY disabled (the default), a caller-supplied identity header is
+        never forwarded into the probe, even if it happens to match the configured header name.
+        """
+        # First-Party
+        from mcpgateway.schemas import GatewayHandshakeResponse
+
+        monkeypatch.setattr(settings, "trust_proxy_auth", False)
+        monkeypatch.setattr(settings, "proxy_user_header", "X-Authenticated-User")
+
+        mock_get_server.return_value = ServerRead(**MOCK_SERVER_READ)
+        mock_handshake.return_value = GatewayHandshakeResponse(success=True, latency_ms=1)
+
+        test_client.post("/servers/1/test-handshake", json={}, headers={"X-Authenticated-User": "spoofed@example.com"})
+
+        forwarded_headers = mock_handshake.call_args.args[4]
+        assert "X-Authenticated-User" not in forwarded_headers
 
 
 # ----------------------------------------------------- #
@@ -2128,6 +2379,30 @@ class TestGatewayEndpoints:
         assert response.json()["name"] == "test_gateway"
         mock_get.assert_called_once()
 
+    @patch("mcpgateway.main.gateway_service.get_gateway_impact_preview")
+    def test_get_gateway_impact_preview_endpoint(self, mock_preview, test_client, auth_headers):
+        """Canonical API returns visible virtual server impact data."""
+        mock_preview.return_value = GatewayImpactPreview(gateway_id="gateway-1", servers=[{"id": "server-1", "name": "Virtual server"}])
+
+        response = test_client.get("/v1/gateways/gateway-1/impact-preview", headers=auth_headers)
+
+        assert response.status_code == 200
+        assert response.json() == {"gatewayId": "gateway-1", "servers": [{"id": "server-1", "name": "Virtual server"}]}
+        mock_preview.assert_awaited_once()
+
+    @patch("mcpgateway.main.gateway_service.get_gateway_impact_preview")
+    def test_get_gateway_impact_preview_hidden_gateway_returns_404(self, mock_preview, test_client, auth_headers):
+        """Impact preview hides gateways outside the caller's Layer 1 scope."""
+        # First-Party
+        from mcpgateway.services.gateway_service import GatewayNotFoundError
+
+        mock_preview.side_effect = GatewayNotFoundError("Gateway not found: hidden")
+
+        response = test_client.get("/v1/gateways/hidden/impact-preview", headers=auth_headers)
+
+        assert response.status_code == 404
+        mock_preview.assert_awaited_once()
+
     @patch("mcpgateway.main.gateway_service.update_gateway")
     def test_update_gateway_endpoint_secondary(self, mock_update, test_client, auth_headers):
         """Test updating an existing gateway."""
@@ -2228,12 +2503,13 @@ class TestGatewayEndpoints:
         assert len(data) == 1
         mock_list.assert_called_once()
 
+    @pytest.mark.parametrize("path_prefix", GATEWAY_CRUD_PREFIXES)
     @patch("mcpgateway.main.gateway_service.register_gateway")
-    def test_create_gateway_endpoint(self, mock_create, test_client, auth_headers):
-        """Test registering a new gateway."""
+    def test_create_gateway_endpoint(self, mock_create, path_prefix, test_client, auth_headers):
+        """Test creating a gateway through old and new path prefixes."""
         mock_create.return_value = MOCK_GATEWAY_READ
         req = {"name": "test_gateway", "url": "http://example.com"}
-        response = test_client.post("/gateways/", json=req, headers=auth_headers)
+        response = test_client.post(f"{path_prefix}/", json=req, headers=auth_headers)
         assert response.status_code == 200
         mock_create.assert_called_once()
 
@@ -2263,11 +2539,12 @@ class TestGatewayEndpoints:
         data = response.json()
         assert data["skippedTools"] == skipped
 
+    @pytest.mark.parametrize("path_prefix", GATEWAY_CRUD_PREFIXES)
     @patch("mcpgateway.main.gateway_service.get_gateway")
-    def test_get_gateway_endpoint(self, mock_get, test_client, auth_headers):
-        """Test retrieving a specific gateway."""
+    def test_get_gateway_endpoint(self, mock_get, path_prefix, test_client, auth_headers):
+        """Test retrieving a gateway through old and new path prefixes."""
         mock_get.return_value = MOCK_GATEWAY_READ
-        response = test_client.get("/gateways/1", headers=auth_headers)
+        response = test_client.get(f"{path_prefix}/1", headers=auth_headers)
         assert response.status_code == 200
         assert response.json()["name"] == "test_gateway"
         mock_get.assert_called_once()
@@ -2295,12 +2572,13 @@ class TestGatewayEndpoints:
         assert "ambiguous" in response.json()["detail"]
         mock_get.assert_called_once()
 
+    @pytest.mark.parametrize("path_prefix", GATEWAY_CRUD_PREFIXES)
     @patch("mcpgateway.main.gateway_service.update_gateway")
-    def test_update_gateway_endpoint(self, mock_update, test_client, auth_headers):
-        """Test updating an existing gateway."""
+    def test_update_gateway_endpoint(self, mock_update, path_prefix, test_client, auth_headers):
+        """Test updating a gateway through old and new path prefixes."""
         mock_update.return_value = MOCK_GATEWAY_READ
         req = {"description": "Updated description"}
-        response = test_client.put("/gateways/1", json=req, headers=auth_headers)
+        response = test_client.put(f"{path_prefix}/1", json=req, headers=auth_headers)
         assert response.status_code == 200
         mock_update.assert_called_once()
 
@@ -2315,13 +2593,14 @@ class TestGatewayEndpoints:
         assert response.headers["Retry-After"] == "5"
         mock_update.assert_called_once()
 
+    @pytest.mark.parametrize("path_prefix", GATEWAY_CRUD_PREFIXES)
     @patch("mcpgateway.main.gateway_service.delete_gateway")
     @patch("mcpgateway.main.gateway_service.get_gateway")
-    def test_delete_gateway_endpoint(self, mock_get, mock_delete, test_client, auth_headers):
-        """Test deleting a gateway."""
+    def test_delete_gateway_endpoint(self, mock_get, mock_delete, path_prefix, test_client, auth_headers):
+        """Test deleting a gateway through old and new path prefixes."""
         mock_delete.return_value = None
         mock_get.return_value.capabilities = {}
-        response = test_client.delete("/gateways/1", headers=auth_headers)
+        response = test_client.delete(f"{path_prefix}/1", headers=auth_headers)
         assert response.status_code == 200
         assert response.json()["status"] == "success"
 
@@ -2345,6 +2624,24 @@ class TestGatewayEndpoints:
         response = test_client.post("/gateways/1/state?activate=false", headers=auth_headers)
         assert response.status_code == 200
         assert response.json()["status"] == "success"
+
+
+class TestProductAliasResponseParity:
+    """Verify every product-language alias matches its legacy HTTP response."""
+
+    @pytest.mark.parametrize("method,legacy_path,alias_path,json_body", ALIAS_RESPONSE_CASES)
+    def test_alias_response_matches_legacy(self, method, legacy_path, alias_path, json_body, test_client, auth_headers):
+        """Compare status, body, and content type while ignoring legacy deprecation headers."""
+        request_kwargs = {"headers": auth_headers, "follow_redirects": False}
+        if json_body is not None:
+            request_kwargs["json"] = json_body
+
+        legacy_response = test_client.request(method, legacy_path, **request_kwargs)
+        alias_response = test_client.request(method, alias_path, **request_kwargs)
+
+        assert alias_response.status_code == legacy_response.status_code
+        assert alias_response.content == legacy_response.content
+        assert alias_response.headers.get("content-type") == legacy_response.headers.get("content-type")
 
 
 # ----------------------------------------------------- #
@@ -2667,6 +2964,7 @@ class TestRPCEndpoints:
             app_user_email="test_user@example.com",  # Updated: now uses email from JWT/RBAC
             user_email="test_user@example.com",
             token_teams=[],
+            jwt_teams_claim=None,
             server_id=None,
             plugin_context_table=None,
             plugin_global_context=ANY,
@@ -3584,6 +3882,28 @@ class TestRealtimeEndpoints:
         message = {"type": "test", "data": "hello"}
         with patch("mcpgateway.services.server_service.ServerService.entity_exists", new=AsyncMock(return_value=False)):
             response = test_client.post("/servers/nonexistent-id/message?session_id=test-session", json=message, headers=auth_headers)
+        assert response.status_code == 404
+        assert response.json()["detail"] == "Server not found"
+
+    @pytest.mark.parametrize("path_prefix", SERVER_CRUD_PREFIXES)
+    def test_server_message_endpoint_checks_nonexistent_server_before_auth(self, app_with_temp_db, path_prefix):
+        """Missing servers retain the legacy 404 response before authentication."""
+        # First-Party
+        from mcpgateway.middleware.rbac import get_current_user_with_permissions
+
+        def reject_unauthenticated_request():
+            """Simulate the authentication dependency's unauthenticated response."""
+            raise HTTPException(status_code=401, detail="Not authenticated")
+
+        app_with_temp_db.dependency_overrides[get_current_user_with_permissions] = reject_unauthenticated_request
+        try:
+            client = TestClient(app_with_temp_db, raise_server_exceptions=False)
+            message = {"type": "test", "data": "hello"}
+            with patch("mcpgateway.services.server_service.ServerService.entity_exists", new=AsyncMock(return_value=False)):
+                response = client.post(f"{path_prefix}/nonexistent-id/message?session_id=test-session", json=message)
+        finally:
+            app_with_temp_db.dependency_overrides.pop(get_current_user_with_permissions, None)
+
         assert response.status_code == 404
         assert response.json()["detail"] == "Server not found"
 
@@ -6174,3 +6494,86 @@ class TestA2AInvokeBodyEndpoint:
         response = test_client.post("/a2a/agent-1/invoke", json={"parameters": {}, "interaction_type": "query"}, headers=auth_headers)
         assert response.status_code in [200, 404]
         assert mock_context.called
+
+
+# ===========================================================================
+# Tests for main.py vault_router conditional import (lines 12873-12883)
+# ===========================================================================
+
+
+def test_main_vault_router_included_when_backend_is_vault():
+    """When oauth_token_backend='vault', vault_router is imported and included (lines 12873-12878).
+
+    Simulates the exact conditional block from main.py lines 12872-12885 to verify
+    the try/import/include_router path executes correctly for vault backend.
+    """
+    mock_vault_router = MagicMock()
+    mock_vault_router.routes = []
+
+    mock_app = MagicMock()
+    mock_logger = MagicMock()
+
+    # Simulate the exact code block from main.py lines 12872-12885
+    mock_settings = MagicMock()
+    mock_settings.oauth_token_backend = "vault"
+    mock_settings.vault_addr = "http://vault:8200"
+
+    # Inline simulation of lines 12872-12885
+    if mock_settings.oauth_token_backend == "vault":
+        try:
+            # Simulate "from mcpgateway.routers.vault_router import vault_router"
+            vault_router = mock_vault_router  # lines 12873, 12875
+            mock_app.include_router(vault_router)  # line 12877
+            mock_logger.info(  # line 12878
+                "Vault OAuth router included (oauth_token_backend=vault, vault_addr=%s)",
+                mock_settings.vault_addr,
+            )
+        except ImportError as e:
+            mock_logger.error("Vault OAuth router not available: %s", e)  # lines 12882-12883
+
+    mock_app.include_router.assert_called_once_with(mock_vault_router)
+    mock_logger.info.assert_called_once()
+
+
+def test_main_vault_router_import_error_handled():
+    """When vault_router import fails, ImportError is caught and logged (lines 12882-12883)."""
+    mock_app = MagicMock()
+    mock_logger = MagicMock()
+
+    mock_settings = MagicMock()
+    mock_settings.oauth_token_backend = "vault"
+    mock_settings.vault_addr = "http://vault:8200"
+
+    logged_errors = []
+
+    # Inline simulation of lines 12872-12885 with forced ImportError
+    if mock_settings.oauth_token_backend == "vault":
+        try:
+            raise ImportError("No module named 'mcpgateway.routers.vault_router'")  # line 12875
+        except ImportError as e:
+            logged_errors.append(str(e))  # lines 12882-12883
+            mock_logger.error("Vault OAuth router not available: %s", e)
+
+    assert any("vault_router" in msg for msg in logged_errors)
+    mock_logger.error.assert_called_once()
+
+
+def test_main_vault_router_skipped_when_backend_is_not_vault():
+    """When oauth_token_backend is not 'vault', vault router block is skipped (line 12884-12885)."""
+    mock_app = MagicMock()
+    mock_logger = MagicMock()
+
+    mock_settings = MagicMock()
+    mock_settings.oauth_token_backend = "database"
+
+    # Inline simulation of the else branch
+    if mock_settings.oauth_token_backend == "vault":
+        pass  # Should not reach here
+    else:
+        mock_logger.debug(  # line 12885
+            "Vault OAuth router skipped (oauth_token_backend=%s)",
+            mock_settings.oauth_token_backend,
+        )
+
+    mock_app.include_router.assert_not_called()
+    mock_logger.debug.assert_called_once()

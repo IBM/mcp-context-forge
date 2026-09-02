@@ -1,4 +1,4 @@
-import { loadAuthHeaders, updateAuthHeadersJSON } from "./auth.js";
+import { getAuthHeaders, loadAuthHeaders, updateAuthHeadersJSON } from "./auth.js";
 import { MASKED_AUTH_VALUE } from "./constants.js";
 import { closeModal, openModal } from "./modals.js";
 import { initPromptSelect } from "./prompts.js";
@@ -1690,7 +1690,6 @@ const handleGatewayTestSubmit = async function (e) {
       result.statusCode && result.statusCode >= 200 && result.statusCode < 300;
 
     const alertType = isSuccess ? "success" : "error";
-    const icon = isSuccess ? "✅" : "❌";
     const title = isSuccess ? "Connection Successful" : "Connection Failed";
     const statusCode = result.statusCode || "Unknown";
     const latency = result.latencyMs != null ? `${result.latencyMs}ms` : "NA";
@@ -1703,7 +1702,7 @@ const handleGatewayTestSubmit = async function (e) {
 
     responseDiv.innerHTML = `
         <div class="alert alert-${alertType}">
-            <h4><strong>${icon} ${title}</strong></h4>
+            <h4><strong>${title}</strong></h4>
             <p><strong>Status Code:</strong> ${statusCode}</p>
             <p><strong>Response Time:</strong> ${latency}</p>
             ${body}
@@ -1714,7 +1713,7 @@ const handleGatewayTestSubmit = async function (e) {
     if (responseDiv) {
       const errorDiv = document.createElement("div");
       errorDiv.className = "text-red-600 p-4";
-      errorDiv.textContent = `❌ Error: ${error.message}`;
+      errorDiv.textContent = `Error: ${error.message}`;
       responseDiv.innerHTML = "";
       responseDiv.appendChild(errorDiv);
     }
@@ -1812,12 +1811,13 @@ export const refreshGatewayTools = async function (gatewayId, gatewayName, butto
   }
 
   try {
+    const authHeaders = await getAuthHeaders(false);
     const response = await fetch(
       `${window.ROOT_PATH}/gateways/${gatewayId}/tools/refresh`,
       {
         method: "POST",
         credentials: "include", // pragma: allowlist secret
-        headers: { Accept: "application/json" },
+        headers: { Accept: "application/json", ...authHeaders },
       }
     );
 
@@ -1897,6 +1897,7 @@ export const refreshToolsForSelectedGateways = async function(buttonEl) {
   let removed = 0;
   let failed = 0;
 
+  const authHeaders = await getAuthHeaders(false);
   await Promise.allSettled(
     realGwIds.map(async (gid) => {
       try {
@@ -1905,7 +1906,7 @@ export const refreshToolsForSelectedGateways = async function(buttonEl) {
           {
             method: "POST",
             credentials: "include", // pragma: allowlist secret
-            headers: { Accept: "application/json" },
+            headers: { Accept: "application/json", ...authHeaders },
           }
         );
         const data = await res.json();

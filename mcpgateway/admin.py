@@ -23,7 +23,9 @@ import binascii
 from collections import defaultdict
 import csv
 from datetime import datetime, timedelta, timezone
+from email.utils import formatdate
 from functools import lru_cache, wraps
+import hashlib
 import html
 import inspect
 import io
@@ -110,7 +112,7 @@ from mcpgateway.db import Server as DbServer
 from mcpgateway.db import SessionLocal
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import utc_now
-from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, get_current_user_with_permissions, require_any_permission, require_permission
+from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, get_current_user_with_permissions, require_admin_permission, require_any_permission, require_permission
 from mcpgateway.routers.email_auth import create_access_token
 from mcpgateway.schemas import (
     _encode_auth_headers_list,
@@ -125,6 +127,7 @@ from mcpgateway.schemas import (
     CatalogServerRegisterResponse,
     CatalogServerStatusResponse,
     GatewayCreate,
+    GatewayOwnershipTransferRequest,
     GatewayRead,
     GatewayTestRequest,
     GatewayTestResponse,
@@ -160,7 +163,7 @@ from mcpgateway.services.a2a_agent_plugin_binding_service import A2AAgentPluginB
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
 from mcpgateway.services.argon2_service import Argon2PasswordService
 from mcpgateway.services.audit_trail_service import get_audit_trail_service
-from mcpgateway.services.catalog_service import catalog_service
+from mcpgateway.services.catalog_service import catalog_service, CatalogRegistrationPermissionError
 from mcpgateway.services.content_security import ContentSizeError, ContentTypeError, TemplateValidationError
 from mcpgateway.services.csrf_service import get_csrf_service
 from mcpgateway.services.email_auth_service import AuthenticationError, EmailAuthService, PasswordValidationError
@@ -169,6 +172,7 @@ from mcpgateway.services.export_service import ExportError, ExportService
 from mcpgateway.services.gateway_service import (
     gateway_capability_loaders,
     GatewayConnectionError,
+    GatewayCredentialError,
     GatewayDuplicateConflictError,
     GatewayLookupConflictError,
     GatewayNameConflictError,
@@ -180,6 +184,7 @@ from mcpgateway.services.import_service import ConflictStrategy
 from mcpgateway.services.import_service import ImportError as ImportServiceError
 from mcpgateway.services.import_service import ImportService, ImportValidationError
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.observability_service import ensure_timezone_aware
 from mcpgateway.services.openapi_service import fetch_and_extract_schemas
 from mcpgateway.services.password_policy_service import PasswordPolicyService
 from mcpgateway.services.performance_service import get_performance_service
@@ -197,11 +202,13 @@ from mcpgateway.services.tool_service import tool_service as shared_tool_service
 from mcpgateway.services.tool_service import ToolError, ToolLockConflictError, ToolNameConflictError, ToolNotFoundError, ToolService
 from mcpgateway.utils.create_jwt_token import create_jwt_token, get_jwt_token
 from mcpgateway.utils.error_formatter import ErrorFormatter, sanitize_validation_error_for_log
+from mcpgateway.utils.log_sanitizer import sanitize_for_log
 from mcpgateway.utils.metadata_capture import MetadataCapture
 from mcpgateway.utils.oauth_resource import parse_oauth_resource_form
 from mcpgateway.utils.orjson_response import ORJSONResponse
 from mcpgateway.utils.pagination import paginate_query
 from mcpgateway.utils.passthrough_headers import PassthroughHeadersError
+from mcpgateway.utils.paths import is_path_within, open_confined
 from mcpgateway.utils.paths import resolve_root_path as _resolve_root_path
 from mcpgateway.utils.security_cookies import clear_auth_cookie, CookieTooLargeError, set_auth_cookie
 from mcpgateway.utils.services_auth import encode_auth
@@ -1862,10 +1869,15 @@ async def enforce_admin_csrf(request: Request) -> None:
     if request.method.upper() in {"GET", "HEAD", "OPTIONS", "TRACE"}:
         return
 
-    jwt_cookie = request.cookies.get("jwt_token")
-    if not jwt_cookie:
+    session_cookie = request.cookies.get("jwt_token") or request.cookies.get("access_token")
+    request_path = getattr(request.url, "path", "") or ""
+    is_login_post = request_path.rstrip("/").endswith("/admin/login")
+    if not session_cookie and not is_login_post:
         # CSRF is relevant only for browser cookie auth. Token-auth API calls
-        # without session cookies are not subject to browser CSRF.
+        # without session cookies are not subject to browser CSRF. The login
+        # POST is the one exception: it is pre-auth (no session cookie exists
+        # yet) but still a state-changing browser action, so it is validated
+        # against the pre-auth nonce minted by admin_login_page's GET.
         return
 
     if not _request_origin_matches(request):
@@ -4646,8 +4658,15 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
             if needs_password_change:
                 LOGGER.info(f"User {email} requires password change - redirecting to change password page")
 
+                # Mint the session id up front so the CSRF cookie can be HMAC-bound to
+                # the exact JWT we are about to set. Without it the cookie falls back to
+                # an opaque value that passes enforce_admin_csrf but fails
+                # CSRFMiddleware, so /admin/** and /v1/admin/** diverge until the
+                # dashboard rotates the cookie.
+                session_jti = str(uuid.uuid4())
+
                 # Create temporary JWT token for password change process
-                token, _ = await create_access_token(user)
+                token, _ = await create_access_token(user, jti=session_jti)
 
                 # Create redirect response to password change page
                 response = RedirectResponse(url=f"{root_path}/admin/change-password-required", status_code=303)
@@ -4661,11 +4680,16 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
                         status_code=303,
                     )
 
-                _set_admin_csrf_cookie(request, response)
+                _set_admin_csrf_cookie(request, response, user_id=user.email, session_id=session_jti)
                 return response
 
+            # Mint the session id up front so the CSRF cookie is HMAC-bound to this
+            # exact JWT from the first request of the session, matching routers/auth.py
+            # and routers/email_auth.py.
+            session_jti = str(uuid.uuid4())
+
             # Create JWT token with proper audience and issuer claims
-            token, _ = await create_access_token(user)  # expires_seconds not needed here
+            token, _ = await create_access_token(user, jti=session_jti)  # expires_seconds not needed here
 
             # Create redirect response
             response = RedirectResponse(url=f"{root_path}/admin", status_code=303)
@@ -4679,7 +4703,7 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
                     status_code=303,
                 )
 
-            _set_admin_csrf_cookie(request, response)
+            _set_admin_csrf_cookie(request, response, user_id=user.email, session_id=session_jti)
             LOGGER.info(f"Admin user {email} logged in successfully")
             return response
 
@@ -5308,8 +5332,13 @@ async def change_password_required_handler(request: Request, db: Session = Depen
                     LOGGER.error(f"Failed to re-attach user {user_email} to session: {e} - password changed but token creation skipped")
                     return RedirectResponse(url=f"{root_path}/admin/login?message=password_changed", status_code=303)
 
+                # Bind the CSRF cookie to the replacement session. The password change
+                # mints a new jti, which invalidates the HMAC bound to the login-time
+                # jti in admin_login_handler's password-change branch.
+                session_jti = str(uuid.uuid4())
+
                 # Create new JWT token
-                token, _ = await create_access_token(current_user)
+                token, _ = await create_access_token(current_user, jti=session_jti)
 
                 # Create redirect response to admin panel
                 response = RedirectResponse(url=f"{root_path}/admin", status_code=303)
@@ -5322,6 +5351,8 @@ async def change_password_required_handler(request: Request, db: Session = Depen
                         url=f"{root_path}/admin/login?error=token_too_large",
                         status_code=303,
                     )
+
+                _set_admin_csrf_cookie(request, response, user_id=current_user.email, session_id=session_jti)
 
                 LOGGER.info(f"User {current_user.email} successfully changed their expired password")
                 return response
@@ -11574,6 +11605,31 @@ async def admin_search_a2a_agents(
     return _build_search_response(entity_key="agents", entity_type="agents", items=agents, query=search_query, tags=normalized_tags, tag_groups=tag_groups)
 
 
+@require_permission("servers.read", allow_admin_bypass=False)
+async def admin_search_catalog(
+    q: str,
+    limit: int,
+    db: Session,
+    user: Any,
+    request: Request,
+) -> dict[str, Any]:
+    """Search visible open-auth catalog servers by name or description."""
+    search_query = _normalize_search_query(q)
+    if not search_query or not settings.mcpgateway_catalog_enabled:
+        return _build_search_response(entity_key="catalog", entity_type="catalog", items=[], query=search_query, tags="", tag_groups=[])
+
+    user_email, token_teams = get_scoped_resource_access_context(request, user)
+    catalog_request = CatalogListRequest(search=search_query, auth_type="Open", limit=limit)
+    catalog_response = await catalog_service.get_catalog_servers(
+        catalog_request,
+        db,
+        user_email=user_email,
+        token_teams=token_teams,
+    )
+    items = [{"id": server.id, "name": server.name, "description": server.description} for server in catalog_response.servers]
+    return _build_search_response(entity_key="catalog", entity_type="catalog", items=items, query=search_query, tags="", tag_groups=[])
+
+
 async def perform_unified_search(
     *,
     request: Optional[Request] = None,
@@ -11596,7 +11652,7 @@ async def perform_unified_search(
     enforced inside each ``admin_search_*`` call.
 
     Searches servers, gateways, tools, resources, prompts, agents, teams, roots,
-    and optionally users (when the caller has ``admin.user_management`` permission).
+    and optionally catalog entries or users (when explicitly requested and permitted).
 
     Args:
         request: Current request object.
@@ -11604,7 +11660,7 @@ async def perform_unified_search(
         tags (Optional[str]): Tag filter expression (comma=OR, plus=AND).
         entity_types (Optional[str]): Optional comma-separated entity type list.
             Supported values: servers, gateways, tools, resources, prompts,
-            agents, teams, users, roots.
+            agents, teams, users, roots, catalog.
         include_inactive (bool): Whether to include inactive entities.
         limit (int): Default per-entity limit for returned items.
         limit_per_type (Optional[int]): Optional alias overriding ``limit``.
@@ -11624,7 +11680,7 @@ async def perform_unified_search(
     normalized_entity_types = _normalize_tags_query(entity_types)
     tag_groups = _parse_tag_filter_groups(normalized_tags)
 
-    supported_entity_types = ["servers", "gateways", "tools", "resources", "prompts", "agents", "teams", "users", "roots"]
+    supported_entity_types = ["servers", "gateways", "tools", "resources", "prompts", "agents", "teams", "users", "roots", "catalog"]
     default_entity_types = ["servers", "gateways", "tools", "resources", "prompts", "agents", "teams", "roots"]
     selected_entity_types: list[str] = []
     if normalized_entity_types:
@@ -11828,6 +11884,19 @@ async def perform_unified_search(
             user=user,
         )
         grouped_results["roots"] = typing_cast(list[dict[str, Any]], roots_result.get("roots", roots_result.get("items", [])))
+
+    # Catalog does not support tag filtering and remains opt-in for unified search.
+    if "catalog" in selected_entity_types and search_query:
+        catalog_result = await _safe_entity_search(
+            admin_search_catalog,
+            "catalog",
+            request=request,
+            q=search_query,
+            limit=effective_limit,
+            db=db,
+            user=user,
+        )
+        grouped_results["catalog"] = typing_cast(list[dict[str, Any]], catalog_result.get("catalog", catalog_result.get("items", [])))
 
     groups = []
     flat_items: list[dict[str, Any]] = []
@@ -12861,6 +12930,8 @@ async def admin_add_gateway(
 
     except PermissionError as ex:
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=403)
+    except GatewayCredentialError as ex:
+        return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=422)
     except GatewayConnectionError as ex:
         return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=502)
     except GatewayDuplicateConflictError as ex:
@@ -13002,6 +13073,8 @@ async def admin_update_gateway_rest(
     except GatewayNotFoundError as e:
         return ORJSONResponse(content={"message": str(e), "success": False}, status_code=404)
     except Exception as ex:
+        if isinstance(ex, GatewayCredentialError):
+            return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=422)
         if isinstance(ex, GatewayConnectionError):
             return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=502)
         if isinstance(ex, RuntimeError):
@@ -13071,6 +13144,44 @@ async def admin_delete_gateway_rest(
             content={"message": "Failed to delete gateway. Please try again.", "success": False},
             status_code=500,
         )
+
+
+# Ownership transfer endpoint for gateways
+@admin_router.post("/gateways/{gateway_id}/transfer-ownership", response_model=GatewayRead)
+@require_admin_permission()
+async def transfer_gateway_ownership(
+    gateway_id: str,
+    transfer: GatewayOwnershipTransferRequest,
+    db: Session = Depends(get_db),
+    _user=Depends(get_current_user_with_permissions),
+) -> GatewayRead:
+    """Transfer ownership of a gateway to another user.
+
+    Args:
+        gateway_id: The ID of the gateway to transfer.
+        transfer: Transfer request with target owner email and optional team.
+        db: Database session.
+        _user: Authenticated admin user.
+
+    Returns:
+        Updated GatewayRead with new ownership.
+    """
+    actor_email = get_user_email(_user)
+    token_teams = extract_token_team_ids(_user)
+    try:
+        result = await gateway_service.transfer_gateway_ownership(
+            db=db,
+            gateway_id=gateway_id,
+            target_owner_email=transfer.target_owner_email,
+            actor_email=actor_email,
+            target_team_id=transfer.target_team_id,
+            token_teams=token_teams,
+        )
+        return result
+    except GatewayNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 # Legacy POST endpoint for backward compatibility with HTMX UI
@@ -13236,6 +13347,8 @@ async def admin_edit_gateway(
     except HTTPException:
         raise
     except Exception as ex:
+        if isinstance(ex, GatewayCredentialError):
+            return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=422)
         if isinstance(ex, GatewayConnectionError):
             return ORJSONResponse(content={"message": str(ex), "success": False}, status_code=502)
         if isinstance(ex, RuntimeError):
@@ -15388,6 +15501,7 @@ async def admin_stream_logs(
 @admin_router.get("/logs/file")
 @require_permission("admin.system_config", allow_admin_bypass=False)
 async def admin_get_log_file(
+    request: Request,
     filename: Optional[str] = None,
     user=Depends(get_current_user_with_permissions),  # pylint: disable=unused-argument
     _db: Session = Depends(get_db),
@@ -15395,6 +15509,7 @@ async def admin_get_log_file(
     """Download log file.
 
     Args:
+        request: Incoming request, used to read a conditional/range header for resumable downloads.
         filename: Specific log file to download (optional)
         user: Authenticated user
         _db: Database session for permission checks.
@@ -15413,43 +15528,154 @@ async def admin_get_log_file(
     log_dir = Path(settings.log_folder) if settings.log_folder else Path(".")
 
     if filename:
-        # Download specific file
-        file_path = log_dir / filename
-
-        # Security: Ensure file is within log directory
-        try:
-            file_path = file_path.resolve()
-            log_dir_resolved = log_dir.resolve()
-            if not str(file_path).startswith(str(log_dir_resolved)):
-                raise HTTPException(403, _ACCESS_DENIED_MSG)
-        except Exception:
+        # Download specific file.
+        #
+        # Security: the download is confined to LOG_FOLDER by two independent checks.
+        #
+        #   1. Reject obviously hostile input *before* joining it onto the log
+        #      directory: absolute paths and drive/UNC anchors would make ``/`` discard
+        #      log_dir entirely, ``..`` segments walk upwards, and a NUL byte can
+        #      truncate the path at the OS layer.
+        #   2. Resolve the joined path (collapsing symlinks and any remaining relative
+        #      segments) and require it to stay inside the resolved log directory.
+        #
+        # Check 2 is the real control; ``is_path_within`` compares whole path
+        # components, so a sibling directory that merely shares a textual prefix with
+        # LOG_FOLDER is rejected.
+        if "\x00" in filename:
             raise HTTPException(400, "Invalid file path")
 
-        # Check if file exists
-        if not file_path.exists() or not file_path.is_file():
-            raise HTTPException(404, f"Log file not found: {filename}")
+        candidate = Path(filename)
+        if candidate.is_absolute() or candidate.drive or candidate.root or ".." in candidate.parts:
+            raise HTTPException(400, "Invalid file path")
 
-        # Check if it's a log file
+        try:
+            file_path = (log_dir / candidate).resolve()
+            log_dir_resolved = log_dir.resolve()
+        except (OSError, ValueError, RuntimeError):
+            raise HTTPException(400, "Invalid file path")
+
+        if not is_path_within(file_path, log_dir_resolved):
+            raise HTTPException(403, _ACCESS_DENIED_MSG)
+
+        # Check if it's a log file (name check only; no filesystem access yet)
         if not (file_path.suffix in [".log", ".jsonl", ".json"] or file_path.stem.startswith(Path(settings.log_file).stem)):
             raise HTTPException(403, "Not a log file")
 
-        # Return file for download using FileResponse (streams asynchronously)
-        # Pre-stat the file to catch issues early and provide Content-Length
+        # Open the verified fd directly via a component-by-component confined open
+        # instead of handing a pathname to FileResponse, which reopens the path when it
+        # streams. A process able to write into log_dir_resolved could otherwise rename
+        # the checked file away and put a symlink in its place between the confinement
+        # check above and that later reopen (TOCTOU), causing this privileged endpoint
+        # to stream an attacker-chosen target. On POSIX, open_confined() resolves and
+        # opens each path component with O_NOFOLLOW relative to its already-open
+        # parent, so the fd it returns refers to exactly the inode that was validated.
+        # On platforms without that atomic chaining (Windows), it falls back to a
+        # per-component symlink/reparse-point rejection that is not atomic but still
+        # rejects every reparse point present at check time.
         try:
-            file_stat = file_path.stat()
-            LOGGER.info(f"Serving log file download: {file_path.name} ({file_stat.st_size} bytes)")
-            return FileResponse(
-                path=file_path,
-                media_type="application/octet-stream",
-                filename=file_path.name,
-                stat_result=file_stat,
-            )
+            file_fd, file_stat = open_confined(log_dir_resolved, candidate)
         except FileNotFoundError:
-            LOGGER.error(f"Log file disappeared before streaming: {filename}")
             raise HTTPException(404, f"Log file not found: {filename}")
+        except (OSError, ValueError) as e:
+            LOGGER.warning("Log file access denied for %s: %s", sanitize_for_log(filename), sanitize_for_log(e))
+            raise HTTPException(403, _ACCESS_DENIED_MSG)
         except Exception as e:
-            LOGGER.error(f"Error preparing file for download: {e}")
+            LOGGER.error("Error opening log file for download: %s", sanitize_for_log(e))
             raise HTTPException(500, f"Error reading file for download: {e}")
+
+        LOGGER.info(f"Serving log file download: {file_path.name} ({file_stat.st_size} bytes)")
+
+        chunk_size = 64 * 1024
+        quoted_name = urllib.parse.quote(file_path.name)
+        content_disposition = f"attachment; filename*=utf-8''{quoted_name}" if quoted_name != file_path.name else f'attachment; filename="{file_path.name}"'
+
+        file_size = file_stat.st_size
+        last_modified = formatdate(file_stat.st_mtime, usegmt=True)
+        etag = f'"{hashlib.md5(f"{file_stat.st_mtime}-{file_size}".encode(), usedforsecurity=False).hexdigest()}"'  # nosec B324 - cache validator, not a security control
+
+        # file_fd was validated and opened by open_confined() above (see the comment on that
+        # call); wrap it in a Python file object now, outside the generator, so a single owner
+        # (this handle) exists regardless of whether the generator body ever runs. Starlette can
+        # cancel a StreamingResponse before its body generator is first iterated (e.g. the client
+        # disconnects immediately) -- in that case the generator's own `finally` never executes,
+        # so the BackgroundTask below is the fallback that guarantees the fd is closed. handle.close()
+        # is idempotent, so running both paths is safe.
+        handle = os.fdopen(file_fd, "rb")
+
+        headers = {
+            "Content-Disposition": content_disposition,
+            "Accept-Ranges": "bytes",
+            "Last-Modified": last_modified,
+            "ETag": etag,
+        }
+
+        range_header = request.headers.get("range")
+        if_range = request.headers.get("if-range")
+        start, end = 0, file_size
+        status_code = 200
+        if range_header and (if_range is None or if_range in (etag, last_modified)):
+            range_unit, has_value, spec_value = range_header.strip().partition("=")
+            if not has_value or range_unit.strip().lower() != "bytes":
+                handle.close()
+                raise HTTPException(400, "Malformed Range header")
+            if "," in spec_value:
+                # Multiple ranges (e.g. "bytes=0-1,4-5"): multipart/byteranges responses
+                # aren't implemented here. Per RFC 7233 SS3.1, a server may ignore a Range
+                # header it can't satisfy the way the client wants and return the full
+                # entity instead of erroring, so fall through and serve start/end as set
+                # above (0, file_size) rather than rejecting the request outright.
+                pass
+            else:
+                range_match = re.fullmatch(r"(\d*)-(\d*)", spec_value)
+                if not range_match or not (range_match.group(1) or range_match.group(2)):
+                    handle.close()
+                    raise HTTPException(400, "Malformed Range header")
+                range_start, range_end = range_match.group(1), range_match.group(2)
+                try:
+                    if range_start:
+                        start = int(range_start)
+                        end = int(range_end) + 1 if range_end else file_size
+                    else:
+                        # Suffix range (e.g. "bytes=-500"): last N bytes of the file.
+                        start = max(file_size - int(range_end), 0)
+                        end = file_size
+                except ValueError:
+                    # int() enforces sys.get_int_max_str_digits(); an oversized numeric
+                    # range value hits that limit and must not surface as a 500.
+                    handle.close()
+                    raise HTTPException(400, "Malformed Range header")
+                if start >= file_size or start >= end:
+                    handle.close()
+                    raise HTTPException(416, "Requested range not satisfiable", headers={"Content-Range": f"bytes */{file_size}"})
+                end = min(end, file_size)
+                status_code = 206
+                headers["Content-Range"] = f"bytes {start}-{end - 1}/{file_size}"
+
+        headers["Content-Length"] = str(end - start)
+        handle.seek(start)
+        remaining = end - start
+
+        def _iter_log_file():
+            """Yield the requested byte range in chunks, closing the fd when done."""
+            nonlocal remaining
+            try:
+                while remaining > 0:
+                    chunk = handle.read(min(chunk_size, remaining))
+                    if not chunk:
+                        break
+                    remaining -= len(chunk)
+                    yield chunk
+            finally:
+                handle.close()
+
+        return StreamingResponse(
+            _iter_log_file(),
+            status_code=status_code,
+            media_type="application/octet-stream",
+            headers=headers,
+            background=BackgroundTask(handle.close),
+        )
 
     # List available log files
     log_files = []
@@ -17063,16 +17289,13 @@ async def get_resources_section(
         user_email, token_teams = get_scoped_resource_access_context(request, user)
         LOGGER.debug(f"User {user_email} requesting resources section with team_id={team_id}, token_teams={token_teams}")
 
-        # Get all resources with token_teams for proper scoping
-        resources_result = await local_resource_service.list_resources(db, include_inactive=True, user_email=user_email, token_teams=token_teams)
+        # Filter in the service, not here: a strict team_id comparison would drop
+        # globally-public rows owned by other teams.
+        resources_result = await local_resource_service.list_resources(db, include_inactive=True, user_email=user_email, token_teams=token_teams, team_id=team_id)
         if isinstance(resources_result, tuple):
             resources_list = resources_result[0]
         else:
             resources_list = resources_result
-
-        # Apply team filtering if specified
-        if team_id:
-            resources_list = [r for r in resources_list if getattr(r, "team_id", None) == team_id]
 
         # Convert to JSON-serializable format
         resources = []
@@ -17124,16 +17347,13 @@ async def get_prompts_section(
         user_email, token_teams = get_scoped_resource_access_context(request, user)
         LOGGER.debug(f"User {user_email} requesting prompts section with team_id={team_id}, token_teams={token_teams}")
 
-        # Get all prompts with token_teams for proper scoping
-        prompts_result = await local_prompt_service.list_prompts(db, include_inactive=True, user_email=user_email, token_teams=token_teams)
+        # Filter in the service, not here: a strict team_id comparison would drop
+        # globally-public rows owned by other teams.
+        prompts_result = await local_prompt_service.list_prompts(db, include_inactive=True, user_email=user_email, token_teams=token_teams, team_id=team_id)
         if isinstance(prompts_result, tuple):
             prompts_list = prompts_result[0]
         else:
             prompts_list = prompts_result
-
-        # Apply team filtering if specified
-        if team_id:
-            prompts_list = [p for p in prompts_list if getattr(p, "team_id", None) == team_id]
 
         # Convert to JSON-serializable format
         prompts = []
@@ -17165,6 +17385,7 @@ async def get_prompts_section(
 @admin_router.get("/sections/servers")
 @require_permission("servers.read", allow_admin_bypass=False)
 async def get_servers_section(
+    request: Request,
     team_id: Optional[str] = None,
     include_inactive: bool = False,
     db: Session = Depends(get_db),
@@ -17173,6 +17394,7 @@ async def get_servers_section(
     """Get servers data filtered by team.
 
     Args:
+        request: FastAPI request, used to derive the caller's Layer-1 visibility scope
         team_id: Optional team ID to filter by
         include_inactive: Whether to include inactive servers
         db: Database session
@@ -17183,19 +17405,16 @@ async def get_servers_section(
     """
     try:
         local_server_service = ServerService()
-        user_email = get_user_email(user)
-        LOGGER.debug(f"User {user_email} requesting servers section with team_id={team_id}, include_inactive={include_inactive}")
+        user_email, token_teams = get_scoped_resource_access_context(request, user)
+        LOGGER.debug(f"User {user_email} requesting servers section with team_id={team_id}, include_inactive={include_inactive}, token_teams={token_teams}")
 
-        # Get servers with optional include_inactive parameter
-        servers_result = await local_server_service.list_servers(db, include_inactive=include_inactive)
+        # Filter in the service, not here: a strict team_id comparison would drop
+        # globally-public rows owned by other teams.
+        servers_result = await local_server_service.list_servers(db, include_inactive=include_inactive, user_email=user_email, token_teams=token_teams, team_id=team_id)
         if isinstance(servers_result, tuple):
             servers_list = servers_result[0]
         else:
             servers_list = servers_result
-
-        # Apply team filtering if specified
-        if team_id:
-            servers_list = [s for s in servers_list if getattr(s, "team_id", None) == team_id]
 
         # Convert to JSON-serializable format
         servers = []
@@ -17225,6 +17444,7 @@ async def get_servers_section(
 @admin_router.get("/sections/gateways")
 @require_permission("gateways.read", allow_admin_bypass=False)
 async def get_gateways_section(
+    request: Request,
     team_id: Optional[str] = None,
     db: Session = Depends(get_db),
     user=Depends(get_current_user_with_permissions),
@@ -17232,6 +17452,7 @@ async def get_gateways_section(
     """Get gateways data filtered by team.
 
     Args:
+        request: FastAPI request, used to derive the caller's Layer-1 visibility scope
         team_id: Optional team ID to filter by
         db: Database session
         user: Current authenticated user context
@@ -17241,14 +17462,11 @@ async def get_gateways_section(
     """
     try:
         local_gateway_service = GatewayService()
-        get_user_email(user)
+        user_email, token_teams = get_scoped_resource_access_context(request, user)
 
-        # Get all gateways and filter by team
-        gateways_list, _ = await local_gateway_service.list_gateways(db, include_inactive=True)
-
-        # Apply team filtering if specified
-        if team_id:
-            gateways_list = [g for g in gateways_list if g.team_id == team_id]
+        # Filter in the service, not here: a strict team_id comparison would drop
+        # globally-public rows owned by other teams.
+        gateways_list, _ = await local_gateway_service.list_gateways(db, include_inactive=True, user_email=user_email, token_teams=token_teams, team_id=team_id)
 
         # Convert to JSON-serializable format
         gateways = []
@@ -17911,6 +18129,7 @@ async def list_catalog_servers(
     if not settings.mcpgateway_catalog_enabled:
         raise HTTPException(status_code=404, detail="Catalog feature is disabled")
 
+    user_email, token_teams = get_scoped_resource_access_context(_request, _user)
     catalog_request = CatalogListRequest(
         category=category,
         auth_type=auth_type,
@@ -17923,11 +18142,12 @@ async def list_catalog_servers(
         offset=offset,
     )
 
-    return await catalog_service.get_catalog_servers(catalog_request, db)
+    return await catalog_service.get_catalog_servers(catalog_request, db, user_email=user_email, token_teams=token_teams)
 
 
 @admin_router.post("/mcp-registry/{server_id}/register", response_model=CatalogServerRegisterResponse)
 @require_permission("servers.create", allow_admin_bypass=False)
+@require_permission("gateways.create", allow_admin_bypass=False)
 async def register_catalog_server(
     server_id: str,
     http_request: Request,
@@ -17953,7 +18173,19 @@ async def register_catalog_server(
     if not settings.mcpgateway_catalog_enabled:
         raise HTTPException(status_code=404, detail="Catalog feature is disabled")
 
-    result = await catalog_service.register_catalog_server(catalog_id=server_id, request=request, db=db)
+    user_email, token_teams = get_scoped_resource_access_context(http_request, _user)
+
+    try:
+        result = await catalog_service.register_catalog_server(
+            catalog_id=server_id,
+            request=request,
+            db=db,
+            created_by=user_email,
+            owner_email=user_email,
+            token_teams=token_teams,
+        )
+    except CatalogRegistrationPermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
 
     # Check if this is an HTMX request
     is_htmx = http_request.headers.get("HX-Request") == "true"
@@ -18055,7 +18287,9 @@ async def check_catalog_server_status(
 
 @admin_router.post("/mcp-registry/bulk-register", response_model=CatalogBulkRegisterResponse)
 @require_permission("servers.create", allow_admin_bypass=False)
+@require_permission("gateways.create", allow_admin_bypass=False)
 async def bulk_register_catalog_servers(
+    http_request: Request,
     request: CatalogBulkRegisterRequest,
     db: Session = Depends(get_db),
     _user=Depends(get_current_user_with_permissions),
@@ -18063,6 +18297,7 @@ async def bulk_register_catalog_servers(
     """Register multiple catalog servers at once.
 
     Args:
+        http_request: FastAPI request object
         request: Bulk registration request with server IDs
         db: Database session
         _user: Authenticated user
@@ -18071,12 +18306,23 @@ async def bulk_register_catalog_servers(
         Bulk registration response with success/failure details
 
     Raises:
-        HTTPException: If the catalog feature is disabled.
+        HTTPException: If the catalog feature is disabled or scope is invalid.
     """
     if not settings.mcpgateway_catalog_enabled:
         raise HTTPException(status_code=404, detail="Catalog feature is disabled")
 
-    return await catalog_service.bulk_register_servers(request, db)
+    user_email, token_teams = get_scoped_resource_access_context(http_request, _user)
+
+    try:
+        return await catalog_service.bulk_register_servers(
+            request,
+            db,
+            created_by=user_email,
+            owner_email=user_email,
+            token_teams=token_teams,
+        )
+    except CatalogRegistrationPermissionError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
 
 
 @admin_router.get("/mcp-registry/partial")
@@ -18111,6 +18357,7 @@ async def catalog_partial(
         raise HTTPException(status_code=404, detail="Catalog feature is disabled")
 
     root_path = _resolve_root_path(request)
+    user_email, token_teams = get_scoped_resource_access_context(request, _user)
 
     # Calculate pagination
     page_size = settings.mcpgateway_catalog_page_size
@@ -18118,11 +18365,11 @@ async def catalog_partial(
 
     catalog_request = CatalogListRequest(category=category, auth_type=auth_type, search=search, show_available_only=False, limit=page_size, offset=offset)
 
-    response = await catalog_service.get_catalog_servers(catalog_request, db)
+    response = await catalog_service.get_catalog_servers(catalog_request, db, user_email=user_email, token_teams=token_teams)
 
     # Get ALL servers (no filters, no pagination) for counting statistics
     all_servers_request = CatalogListRequest(show_available_only=False, limit=1000, offset=0)
-    all_servers_response = await catalog_service.get_catalog_servers(all_servers_request, db)
+    all_servers_response = await catalog_service.get_catalog_servers(all_servers_request, db, user_email=user_email, token_teams=token_teams)
 
     # Pass filter parameters to template for pagination links
     filter_params = {
@@ -18998,7 +19245,7 @@ def _get_latency_percentiles_postgresql(db: Session, cutoff_time: datetime, inte
     p99_values = []
 
     for row in results:
-        timestamps.append(row.bucket.isoformat() if row.bucket else "")
+        timestamps.append(ensure_timezone_aware(row.bucket).astimezone(timezone.utc).isoformat() if row.bucket else "")
         p50_values.append(round(float(row.p50), 2) if row.p50 else 0)
         p90_values.append(round(float(row.p90), 2) if row.p90 else 0)
         p95_values.append(round(float(row.p95), 2) if row.p95 else 0)
@@ -19163,7 +19410,7 @@ def _get_timeseries_metrics_postgresql(db: Session, cutoff_time: datetime, inter
         error = row.error or 0
         error_rate = (error / total * 100) if total > 0 else 0
 
-        timestamps.append(row.bucket.isoformat() if row.bucket else "")
+        timestamps.append(ensure_timezone_aware(row.bucket).astimezone(timezone.utc).isoformat() if row.bucket else "")
         request_counts.append(total)
         success_counts.append(row.success or 0)
         error_counts.append(error)

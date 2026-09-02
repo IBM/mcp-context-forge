@@ -177,13 +177,12 @@ helm install mcp-stack charts/mcp-stack \
 
 See `charts/mcp-stack/values.yaml` for the full list of configurable values.
 
-### SSRF settings for in-cluster fast-time / fast-test registration
+### SSRF settings for in-cluster Fast Time registration
 
-If you enable Helm testing registrations (`testing.fastTime.register.enabled=true`,
-`testing.fastTest.register.enabled=true`), the gateway URLs use in-cluster services:
+If you enable the Helm Fast Time registration (`testing.fastTime.register.enabled=true`),
+the gateway uses the in-cluster service:
 
 - `http://<release>-mcp-fast-time-server:80/http`
-- `http://<release>-fast-test-server:8880/mcp`
 
 The default intranet release profile permits these private destinations. If you harden the chart by
 disabling private-network access, registration jobs can fail with `422` unless the cluster CIDR is allowed.

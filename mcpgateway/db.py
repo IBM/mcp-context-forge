@@ -1329,6 +1329,7 @@ class Permissions:
     TOOLS_UPDATE = "tools.update"
     TOOLS_DELETE = "tools.delete"
     TOOLS_EXECUTE = "tools.execute"
+    TOOLS_PREVIEW = "tools.preview"
     TOOLS_MANAGE_PLUGINS = "tools.manage_plugins"
 
     # Plugin permissions
@@ -1398,6 +1399,10 @@ class Permissions:
     ADMIN_SSO_PROVIDERS_READ = "admin.sso_providers:read"
     ADMIN_SSO_PROVIDERS_UPDATE = "admin.sso_providers:update"
     ADMIN_SSO_PROVIDERS_DELETE = "admin.sso_providers:delete"
+
+    # OAuth DCR registered-client management (global rows, no team scope)
+    ADMIN_OAUTH_CLIENTS_READ = "admin.oauth_clients:read"
+    ADMIN_OAUTH_CLIENTS_DELETE = "admin.oauth_clients:delete"
 
     # Observability and audit read permissions
     LOGS_READ = "logs:read"
@@ -5699,6 +5704,8 @@ class OAuthState(Base):
     state: Mapped[str] = mapped_column(String(500), nullable=False, unique=True)  # The state parameter
     code_verifier: Mapped[Optional[str]] = mapped_column(String(128), nullable=True)  # PKCE code verifier (RFC 7636)
     app_user_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)  # Requesting user context for token association
+    redirect_uri: Mapped[Optional[str]] = mapped_column(String(2048), nullable=True)  # Pinned at authorize time; reused at callback (RFC 6749 §4.1.3)
+    team_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)  # Team ID from JWT for Vault path
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     used: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)

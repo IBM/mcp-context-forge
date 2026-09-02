@@ -8,7 +8,7 @@ Module documentation...
 """
 # tests/unit/mcpgateway/services/test_token_exchange_integration.py
 # Standard
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 import pytest
@@ -1046,3 +1046,59 @@ class TestRestIntegrationB2Wiring:
         pinned_client.aclose.assert_awaited_once()
         svc._token_exchange_cache.invalidate.assert_awaited_once()
         svc._resolve_token_exchange_header.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+class TestGatewayRefreshTokenExchangeSubjectSources:
+    """Issue #5382: manual-refresh resolver accepts the jwt_token cookie as subject source."""
+
+    def _svc(self):
+        """GatewayService with a stubbed exchange and cache-miss token cache."""
+        # First-Party
+        from mcpgateway.services.gateway_service import GatewayService
+
+        svc = GatewayService()
+        svc.oauth_manager = MagicMock()
+        svc.oauth_manager.token_exchange = AsyncMock(return_value={"access_token": "exch-tok", "expires_in": 300})
+        svc._token_exchange_cache = _mock_te_cache(get_return=None)
+        return svc
+
+    async def test_resolve_header_accepts_cookie_jwt(self):
+        """Cookie-only request headers (Admin UI session) must resolve a subject token."""
+        svc = self._svc()
+        header = await svc._resolve_token_exchange_header(
+            dict(_TE_CFG),
+            "gw-1",
+            "gw-name",
+            "admin@example.com",
+            {"cookie": f"jwt_token={_FAKE_JWT}"},
+        )
+        assert header == {"Authorization": "Bearer exch-tok"}
+        assert svc.oauth_manager.token_exchange.await_args.kwargs["subject_token"] == _FAKE_JWT
+
+    async def test_resolve_header_rejects_opaque_cookie(self):
+        """A non-JWT jwt_token cookie must fail closed, never reach the AS."""
+        svc = self._svc()
+        with pytest.raises(GatewayConnectionError):
+            await svc._resolve_token_exchange_header(
+                dict(_TE_CFG),
+                "gw-1",
+                "gw-name",
+                "admin@example.com",
+                {"cookie": "jwt_token=opaque-not-a-jwt"},
+            )
+        svc.oauth_manager.token_exchange.assert_not_awaited()
+
+    async def test_resolve_header_audits_correlation_id(self):
+        """x-correlation-id / x-request-id from inbound headers must reach the audit event."""
+        svc = self._svc()
+        with patch("mcpgateway.services.gateway_service.audit_token_exchange") as mock_audit:
+            await svc._resolve_token_exchange_header(
+                dict(_TE_CFG),
+                "gw-1",
+                "gw-name",
+                "admin@example.com",
+                {"cookie": f"jwt_token={_FAKE_JWT}", "x-correlation-id": "corr-42", "x-request-id": "req-7"},
+            )
+        assert mock_audit.call_args.kwargs["correlation_id"] == "corr-42"
+        assert mock_audit.call_args.kwargs["request_id"] == "req-7"

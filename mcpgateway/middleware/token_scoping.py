@@ -23,7 +23,7 @@ from fastapi import HTTPException, Request, status
 from sqlalchemy import and_, func, select
 
 # First-Party
-from mcpgateway.auth import normalize_token_teams, resolve_session_teams
+from mcpgateway.auth import normalize_token_teams, resolve_session_teams, validate_token_team_membership
 from mcpgateway.auth_context import get_jwt_user_email_from_payload, resolve_jwt_user_email_from_payload
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
@@ -31,6 +31,7 @@ from mcpgateway.db import Permissions
 from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG, _ALL_PERMISSIONS_SCOPE, token_scope_grants
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.utils.orjson_response import ORJSONResponse
+from mcpgateway.utils.paths import replace_api_path_alias
 from mcpgateway.utils.verify_credentials import (
     ConfigurableHTTPBearer,
     get_auth_bearer_token_from_request,
@@ -84,6 +85,7 @@ _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     # Tools permissions
     ("GET", re.compile(r"^/tools(?:$|/)"), Permissions.TOOLS_READ),
     ("POST", re.compile(r"^/tools/?$"), Permissions.TOOLS_CREATE),  # Only exact /tools or /tools/
+    ("POST", re.compile(r"^/tools/preview(?:$|/)"), Permissions.TOOLS_PREVIEW),  # Must precede the /tools/[^/]+/ catch-all below (#5629)
     ("POST", re.compile(r"^/tools/[^/]+/"), Permissions.TOOLS_UPDATE),  # POST to sub-resources (state, toggle)
     ("PUT", re.compile(r"^/tools/[^/]+(?:$|/)"), Permissions.TOOLS_UPDATE),
     ("DELETE", re.compile(r"^/tools/[^/]+(?:$|/)"), Permissions.TOOLS_DELETE),
@@ -128,19 +130,46 @@ _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     ("GET", re.compile(r"^/servers/[^/]+/sse(?:$|/)"), Permissions.SERVERS_USE),  # Server SSE access endpoint
     ("GET", re.compile(r"^/servers(?:$|/)"), Permissions.SERVERS_READ),
     ("POST", re.compile(r"^/servers/?$"), Permissions.SERVERS_CREATE),  # Only exact /servers or /servers/
+    # Handshake probe against the virtual server's own MCP endpoint — read-only, symmetric
+    # with GATEWAYS_READ on the gateway test-handshake endpoint. Must precede the generic
+    # state|toggle sub-resource rule below.
+    ("POST", re.compile(r"^/servers/[^/]+/test-handshake(?:$|/)"), Permissions.SERVERS_READ),
     ("POST", re.compile(r"^/servers/[^/]+/(?:state|toggle)(?:$|/)"), Permissions.SERVERS_UPDATE),  # Server management sub-resources
     ("POST", re.compile(r"^/servers/[^/]+/message(?:$|/)"), Permissions.SERVERS_USE),  # Server message access endpoint
     ("POST", re.compile(r"^/servers/[^/]+/mcp(?:$|/)"), Permissions.SERVERS_USE),  # Server MCP access endpoint
     ("PUT", re.compile(r"^/servers/[^/]+(?:$|/)"), Permissions.SERVERS_UPDATE),
     ("DELETE", re.compile(r"^/servers/[^/]+(?:$|/)"), Permissions.SERVERS_DELETE),
     # Gateway permissions
+    # Connectivity test and handshake probe exposed through the /v1/mcp-servers product alias.
+    # They must precede the generic POST sub-resource rule below.
+    ("POST", re.compile(r"^/gateways/test(?:$|/)"), Permissions.GATEWAYS_READ),
+    ("POST", re.compile(r"^/gateways/test-handshake(?:$|/)"), Permissions.GATEWAYS_READ),
     ("GET", re.compile(r"^/gateways(?:$|/)"), Permissions.GATEWAYS_READ),
     ("POST", re.compile(r"^/gateways/?$"), Permissions.GATEWAYS_CREATE),  # Only exact /gateways or /gateways/
     ("POST", re.compile(r"^/gateways/[^/]+/"), Permissions.GATEWAYS_UPDATE),  # POST to sub-resources (state, toggle, refresh)
     ("PUT", re.compile(r"^/gateways/[^/]+(?:$|/)"), Permissions.GATEWAYS_UPDATE),
     ("DELETE", re.compile(r"^/gateways/[^/]+(?:$|/)"), Permissions.GATEWAYS_DELETE),
-    # MCP Servers REST API (v1 prefix stripped by middleware before matching)
-    ("POST", re.compile(r"^/mcp-servers/test(?:$|/)"), Permissions.GATEWAYS_READ),
+    # Vault OAuth authorize — initiates Authorization Code flow via virtual server ID.
+    # Router is registered only when OAUTH_TOKEN_BACKEND=vault (see main.py); this
+    # pattern is harmless when the router is absent (no matching route exists).
+    # The handler enforces gateway-level access via _enforce_gateway_access, so this
+    # entry adds defence-in-depth only: it ensures a server-scoped API token whose
+    # permissions list does not include gateways.read is rejected at the middleware
+    # layer rather than reaching the handler and failing there.
+    ("GET", re.compile(r"^/vault/authorize/[^/]+(?:$|/)"), Permissions.GATEWAYS_READ),
+    # OAuth DCR registered-client management (oauth_router, prefix="/oauth").
+    # Registered clients are global rows with no team column, so these map to
+    # admin-category permissions; the handlers additionally require an
+    # un-narrowed admin token (see _require_unnarrowed_admin).
+    ("GET", re.compile(r"^/oauth/registered-clients(?:$|/)"), Permissions.ADMIN_OAUTH_CLIENTS_READ),
+    ("DELETE", re.compile(r"^/oauth/registered-clients/[^/]+(?:$|/)"), Permissions.ADMIN_OAUTH_CLIENTS_DELETE),
+    # MCP registry catalog (v1 prefix stripped by middleware before matching)
+    ("GET", re.compile(r"^/catalog(?:$|/)"), Permissions.SERVERS_READ),
+    ("POST", re.compile(r"^/catalog/[^/]+/register(?:$|/)"), Permissions.SERVERS_CREATE),
+    # Observability metrics summaries (v1 prefix stripped by middleware before matching)
+    ("GET", re.compile(r"^/observability/metrics/(?:timeseries|percentiles)(?:$|/)"), Permissions.METRICS_READ),
+    # Recent activity feed (unversioned /api prefix; not subject to /v1 stripping)
+    ("GET", re.compile(r"^/api/logs/activity(?:$|/)"), Permissions.AUDIT_READ),
     # Metrics permissions
     ("GET", re.compile(r"^/metrics(?:$|/)"), Permissions.ADMIN_METRICS),
     ("POST", re.compile(r"^/metrics/reset(?:$|/)"), Permissions.ADMIN_METRICS),
@@ -208,6 +237,7 @@ _ADMIN_PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     ("POST", re.compile(r"^/admin/gateways/?$"), Permissions.GATEWAYS_CREATE),
     ("POST", re.compile(r"^/admin/gateways/[^/]+/delete(?:$|/)"), Permissions.GATEWAYS_DELETE),
     ("POST", re.compile(r"^/admin/gateways/[^/]+/(?:edit|state)(?:$|/)"), Permissions.GATEWAYS_UPDATE),
+    ("POST", re.compile(r"^/admin/gateways/[^/]+/transfer-ownership(?:$|/)"), Permissions.GATEWAYS_UPDATE),
     ("GET", re.compile(r"^/admin/gateways(?:$|/)"), Permissions.GATEWAYS_READ),
     # Server management
     ("POST", re.compile(r"^/admin/servers/?$"), Permissions.SERVERS_CREATE),
@@ -433,6 +463,7 @@ class TokenScopingMiddleware:
         normalized = _normalize_scope_path(request_path or "/", settings.app_root_path or "")
         if not normalized.startswith("/"):
             normalized = f"/{normalized}"
+        normalized = replace_api_path_alias(normalized)
         # Strip the /v1 API version prefix so all patterns match unversioned paths.
         # This ensures scope patterns work identically for /tools and /v1/tools.
         return _strip_v1_prefix(normalized)
@@ -453,8 +484,8 @@ class TokenScopingMiddleware:
         root_path = scope.get("root_path") or settings.app_root_path or ""
         normalized = _normalize_scope_path(scope_path, root_path)
         if not normalized.startswith("/"):
-            return f"/{normalized}"
-        return normalized
+            normalized = f"/{normalized}"
+        return replace_api_path_alias(normalized)
 
     def _extract_jwt_token_from_request(self, request: Request) -> Optional[str]:
         """Extract JWT token from supported cookie names or Bearer auth header.
@@ -877,61 +908,10 @@ class TokenScopingMiddleware:
 
         # Extract team IDs from token (handles both dict and string formats)
         team_ids = [team["id"] if isinstance(team, dict) else team for team in teams]
-
-        # First-Party
-        from mcpgateway.cache.auth_cache import get_auth_cache  # pylint: disable=import-outside-toplevel
-
-        # Check cache first (synchronous in-memory lookup)
-        auth_cache = get_auth_cache()
-        cached_result = auth_cache.get_team_membership_valid_sync(user_email, team_ids)
-        if cached_result is not None:
-            if not cached_result:
-                logger.warning(f"Token invalid (cached): User {SecurityValidator.sanitize_log_message(user_email)} no longer member of teams")
-            return cached_result
-
-        # Cache miss - query database
-        # First-Party
-        from mcpgateway.db import EmailTeamMember, get_db  # pylint: disable=import-outside-toplevel
-
-        # Track if we own the session (and thus must clean it up)
-        owns_session = db is None
-        if owns_session:
-            db = next(get_db())
-
-        try:
-            # Single query for all teams (fixes N+1 pattern)
-            memberships = (
-                db.execute(
-                    select(EmailTeamMember.team_id).where(
-                        EmailTeamMember.team_id.in_(team_ids),
-                        EmailTeamMember.user_email == user_email,
-                        EmailTeamMember.is_active.is_(True),
-                    )
-                )
-                .scalars()
-                .all()
-            )
-
-            # Check if user is member of ALL teams in token
-            valid_team_ids = set(memberships)
-            missing_teams = set(team_ids) - valid_team_ids
-
-            if missing_teams:
-                logger.warning(f"Token invalid: User {SecurityValidator.sanitize_log_message(user_email)} no longer member of teams: {SecurityValidator.sanitize_log_message(str(missing_teams))}")
-                # Cache negative result
-                auth_cache.set_team_membership_valid_sync(user_email, team_ids, False)
-                return False
-
-            # Cache positive result
-            auth_cache.set_team_membership_valid_sync(user_email, team_ids, True)
-            return True
-        finally:
-            # Only commit/close if we created the session
-            if owns_session:
-                try:
-                    db.commit()  # Commit read-only transaction to avoid implicit rollback
-                finally:
-                    db.close()
+        valid = validate_token_team_membership(user_email, team_ids, db=db)
+        if not valid:
+            logger.warning(f"Token invalid: User {SecurityValidator.sanitize_log_message(user_email)} no longer member of teams")
+        return valid
 
     def _is_targeted_missing_resource_delete(self, request_path: str, method: str) -> bool:
         """Return whether request is an exact server or gateway DELETE path."""

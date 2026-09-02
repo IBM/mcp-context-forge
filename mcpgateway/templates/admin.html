@@ -5139,6 +5139,7 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       </button>
 
                       {% if gateway.authType == 'oauth' %}
+                      {% if not (gateway.oauthConfig and gateway.oauthConfig.grant_type == 'token-exchange') %}
                       <!-- Row 2: OAuth Authorize | Fetch Tools -->
                       <a
                         href="{{ root_path }}/oauth/authorize/{{ gateway.id }}"
@@ -5155,6 +5156,17 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       >
                         🔧 Fetch Tools
                       </button>
+                      {% else %}
+                      <!-- Row 2 (token-exchange): no consent flow to authorize — Fetch Tools spans both columns -->
+                      <button
+                        data-action-click="fetchToolsForGateway" data-arg0="{{ gateway.id|tojson_attr }}" data-arg1="{{ gateway.name|tojson_attr }}"
+                        class="col-span-2 flex items-center justify-center px-1 py-1 text-xs font-medium rounded-md text-green-600 hover:text-green-900 hover:bg-green-50 dark:text-green-400 dark:hover:bg-green-900/20 transition-colors"
+                        x-tooltip="'🔧 Fetch Tools from MCP Server'"
+                        id="fetch-tools-te-{{ gateway.id }}"
+                      >
+                        🔧 Fetch Tools
+                      </button>
+                      {% endif %}
 
                       <!-- Row 3: View | Edit -->
                       <button
@@ -5541,9 +5553,6 @@ Hello &#123;&#123; name &#125;&#125;, welcome to &#123;&#123; company &#125;&#12
                       </option>
                       <option value="client_credentials">
                         Client Credentials (Machine-to-Machine)
-                      </option>
-                      <option value="password">
-                        Resource Owner Password Credentials (Keycloak/Legacy)
                       </option>
                     </select>
                   </div>

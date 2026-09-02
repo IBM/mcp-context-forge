@@ -22,7 +22,6 @@ classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Framework :: FastAPI",
@@ -31,7 +30,7 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Application Frameworks"
 ]
 readme = "README.md"
-requires-python = ">=3.11,<3.14"
+requires-python = ">=3.12,<3.14"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 
@@ -46,7 +45,7 @@ authors = [
 dependencies = [
     "httpx>=0.28.1",
     "mcp>=1.28.1,<2",
-    "mcp-contextforge-gateway>=1.0.7",
+    "mcp-contextforge-gateway>=1.0.9",
 ]
 
 # URLs

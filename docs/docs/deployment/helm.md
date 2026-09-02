@@ -293,11 +293,10 @@ flowchart TD
     `SSRF_DNS_FAIL_CLOSED=true`. It also enables `MCPGATEWAY_GRPC_ENABLED=true`.
     Cloud metadata and other hard-blocked destinations remain denied.
 
-    If you enable testing registrations for fast-time / fast-test, the registration jobs use
-    private Service URLs:
+    If you enable the Fast Time testing registration, the job uses the private
+    Service URL:
 
     - `http://<release>-mcp-fast-time-server:80/http`
-    - `http://<release>-fast-test-server:8880/mcp`
 
     These in-cluster destinations work with the default intranet release profile. If a deployment
     overrides the chart with strict SSRF settings, gateway creation can fail with `422`
@@ -320,10 +319,6 @@ flowchart TD
             register:
               enabled: true
               gatewayPath: /http
-          fastTest:
-            register:
-              enabled: true
-              gatewayPath: /mcp
         ```
 
     === "Default intranet profile"
@@ -343,7 +338,6 @@ flowchart TD
         ```bash
         kubectl get jobs -n mcp-private | grep register
         kubectl logs -n mcp-private job/mcp-stack-register-fast-time
-        kubectl logs -n mcp-private job/mcp-stack-register-fast-test
         ```
 
 ---
@@ -671,6 +665,8 @@ flowchart TD
     | `pgadmin.enabled`                            | `false`     | Enable PgAdmin for DB UI                         |
     | `redisCommander.enabled`                     | `false`     | Enable Redis Commander for Redis UI              |
     | `rbac.create`                                | `true`      | Automatically create Role/RoleBinding            |
+    | `mcpContextForge.tls.enabled`                | `false`     | Enable direct HTTPS on the gateway pod           |
+    | `mcpContextForge.tls.secretName`             | `""`        | Name of the pre-created `kubernetes.io/tls` Secret |
 
     📝 For all possible options, see the full [`values.yaml`](https://github.com/IBM/mcp-context-forge/blob/main/charts/mcp-stack/values.yaml) file in the chart repository.
 

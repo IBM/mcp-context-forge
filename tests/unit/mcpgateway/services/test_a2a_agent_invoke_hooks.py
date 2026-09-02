@@ -39,6 +39,23 @@ def service():
     return A2AAgentService()
 
 
+@pytest.fixture(autouse=True)
+def route_isolated_clients_to_patched_shared_client(monkeypatch):
+    """Route isolated A2A HTTP clients through tests' patched shared client."""
+
+    class IsolatedClientCtx:
+        async def __aenter__(self):
+            # First-Party
+            from mcpgateway.services.http_client_service import get_http_client
+
+            return await get_http_client()
+
+        async def __aexit__(self, *_exc):
+            return None
+
+    monkeypatch.setattr("mcpgateway.services.a2a_service.get_isolated_http_client", lambda **_kwargs: IsolatedClientCtx())
+
+
 @pytest.fixture
 def mock_db():
     return MagicMock()
@@ -347,6 +364,70 @@ class TestA2AInvokePreHook:
         headers = call_args.kwargs.get("headers", {})
         assert headers.get("X-Custom") == "value"
         assert headers.get("X-Request-ID") == "plugin-req-123"
+
+    @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
+    @patch("mcpgateway.services.a2a_service.fresh_db_session")
+    @patch("mcpgateway.services.http_client_service.get_http_client")
+    @patch("mcpgateway.services.a2a_service.get_for_update")
+    async def test_pre_invoke_plugin_removed_headers_dropped_from_outbound(
+        self,
+        mock_get_for_update,
+        mock_get_client,
+        mock_fresh_db,
+        mock_metrics_buffer_fn,
+        service,
+        mock_db,
+        mock_agent,
+    ):
+        """When plugin removes a header, it must be dropped from the outbound request (lines 2331-2335)."""
+        # Third-Party
+        from cpex.framework import HttpHeaderPayload
+
+        # Agent has three headers in passthrough whitelist
+        mock_agent.passthrough_headers = ["x-custom", "x-request-id", "x-trace-id"]
+
+        pm = _make_plugin_manager()
+        # Plugin returns only two headers (x-trace-id is REMOVED, e.g., Vault plugin stripping X-Vault-Tokens)
+        modified = SimpleNamespace(
+            modified_payload=SimpleNamespace(
+                parameters=None,
+                headers=HttpHeaderPayload(root={"x-custom": "value1", "x-request-id": "req-123"}),
+            ),
+            retry_delay_ms=0,
+            metadata={},
+        )
+        pm.invoke_hook = AsyncMock(return_value=(modified, {}))
+
+        mock_get_for_update.return_value = mock_agent
+        mock_client = AsyncMock()
+        mock_response = MagicMock(status_code=200)
+        mock_response.json.return_value = {"result": "ok"}
+        mock_client.post.return_value = mock_response
+        mock_get_client.return_value = mock_client
+        mock_ts_db = MagicMock()
+        mock_fresh_db.return_value.__enter__.return_value = mock_ts_db
+        mock_fresh_db.return_value.__exit__.return_value = None
+        mock_metrics_buffer = MagicMock()
+        mock_metrics_buffer_fn.return_value = mock_metrics_buffer
+
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_agent.id
+
+        with patch.object(service, "_get_plugin_manager", AsyncMock(return_value=pm)), patch("mcpgateway.services.a2a_service.get_correlation_id", return_value="test-req-id"):
+            await service.invoke_agent(
+                mock_db,
+                mock_agent.name,
+                {"query": "hello"},
+                request_headers={"x-custom": "value1", "x-request-id": "req-123", "x-trace-id": "trace-456"},
+            )
+
+        # Verify: The outbound HTTP request must NOT include x-trace-id (plugin removed it)
+        call_args = mock_client.post.call_args
+        headers = call_args.kwargs.get("headers", {})
+        assert headers.get("x-custom") == "value1"
+        assert headers.get("x-request-id") == "req-123"
+        # SECURITY: Plugin-removed header must be dropped from outbound request (lines 2331-2335)
+        assert "x-trace-id" not in headers
+        assert "X-Trace-Id" not in headers
 
     @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
     @patch("mcpgateway.services.a2a_service.fresh_db_session")

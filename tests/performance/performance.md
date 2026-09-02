@@ -509,7 +509,7 @@ The MCP protocol load test (`locustfile_mcp_protocol.py`) sends JSON-RPC request
 
 | User Class | Weight | Simulates |
 |------------|--------|-----------|
-| `MCPAgentUser` | 10 | Realistic AI agent with up to 6 tools — init, discover, call 1-3 tools per turn |
+| `MCPAgentUser` | 10 | Realistic AI agent — init, discover, call 1-3 tools per turn from the full discovered pool (cap with MCP_BENCHMARK_TOOL_POOL_SIZE) |
 | `MCPToolCallerUser` | 5 | Heavy `tools/call` in tight loop |
 | `MCPDiscoveryUser` | 3 | Discovery-heavy — `tools/list`, `resources/list`, `prompts/list`, templates |
 | `MCPSessionChurnUser` | 2 | New MCP session every cycle (serverless worst-case) |
@@ -558,7 +558,7 @@ The test requires:
 Start the full testing stack with:
 
 ```bash
-make testing-up      # Starts fast_test_server + locust + MCP inspector
+make testing-up      # Starts fast_time_server + locust + MCP inspector
 ```
 
 ---
@@ -653,7 +653,7 @@ BENCHMARK_SERVER_COUNT=50 make benchmark-up
 
 # 2. Verify registration
 curl -s http://localhost:8080/gateways -H "Authorization: Bearer $TOKEN" | jq 'length'
-# Output: 52 (50 benchmark + fast_time + fast_test)
+# Output: 51 (50 benchmark + fast_time)
 
 # 3. Run load test
 make load-test-ui

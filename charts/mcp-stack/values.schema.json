@@ -1576,6 +1576,25 @@
           },
           "description": "Ingress configuration"
         },
+        "tls": {
+          "type": "object",
+          "description": "Direct TLS configuration for the gateway pod (end-to-end HTTPS)",
+          "properties": {
+            "enabled":    { "type": "boolean", "default": false },
+            "secretName": { "type": "string",  "default": "" },
+            "mountPath":  { "type": "string",  "default": "/app/certs/tls" },
+            "certFile":   { "type": "string",  "default": "/app/certs/tls/tls.crt" },
+            "keyFile":    { "type": "string",  "default": "/app/certs/tls/tls.key" },
+            "keyFilePasswordSecret": {
+              "type": "object",
+              "description": "Reference to a Kubernetes Secret key holding the private-key passphrase",
+              "properties": {
+                "name": { "type": "string" },
+                "key":  { "type": "string", "default": "keyFilePassword" }
+              }
+            }
+          }
+        },
         "metrics": {
           "type": "object",
           "properties": {
@@ -5005,162 +5024,6 @@
         },
         "enabled": {
           "type": "boolean"
-        },
-        "fastTest": {
-          "type": "object",
-          "properties": {
-            "register": {
-              "type": "object",
-              "properties": {
-                "enabled": {
-                  "type": "boolean"
-                },
-                "gatewayName": {
-                  "type": "string"
-                },
-                "gatewayPath": {
-                  "type": "string"
-                },
-                "transport": {
-                  "type": "string"
-                }
-              }
-            }
-          }
-        },
-        "fastTestServer": {
-          "type": "object",
-          "properties": {
-            "enabled": {
-              "type": "boolean"
-            },
-            "env": {
-              "type": "object",
-              "properties": {
-                "BIND_ADDRESS": {
-                  "type": "string"
-                },
-                "RUST_LOG": {
-                  "type": "string"
-                }
-              }
-            },
-            "image": {
-              "type": "object",
-              "properties": {
-                "pullPolicy": {
-                  "type": "string"
-                },
-                "repository": {
-                  "type": "string"
-                },
-                "tag": {
-                  "type": "string"
-                }
-              }
-            },
-            "probes": {
-              "type": "object",
-              "properties": {
-                "liveness": {
-                  "type": "object",
-                  "properties": {
-                    "failureThreshold": {
-                      "type": "integer"
-                    },
-                    "initialDelaySeconds": {
-                      "type": "integer"
-                    },
-                    "path": {
-                      "type": "string"
-                    },
-                    "periodSeconds": {
-                      "type": "integer"
-                    },
-                    "port": {
-                      "type": "integer"
-                    },
-                    "successThreshold": {
-                      "type": "integer"
-                    },
-                    "timeoutSeconds": {
-                      "type": "integer"
-                    },
-                    "type": {
-                      "type": "string"
-                    }
-                  }
-                },
-                "readiness": {
-                  "type": "object",
-                  "properties": {
-                    "failureThreshold": {
-                      "type": "integer"
-                    },
-                    "initialDelaySeconds": {
-                      "type": "integer"
-                    },
-                    "path": {
-                      "type": "string"
-                    },
-                    "periodSeconds": {
-                      "type": "integer"
-                    },
-                    "port": {
-                      "type": "integer"
-                    },
-                    "successThreshold": {
-                      "type": "integer"
-                    },
-                    "timeoutSeconds": {
-                      "type": "integer"
-                    },
-                    "type": {
-                      "type": "string"
-                    }
-                  }
-                }
-              }
-            },
-            "resources": {
-              "type": "object",
-              "properties": {
-                "limits": {
-                  "type": "object",
-                  "properties": {
-                    "cpu": {
-                      "type": "string"
-                    },
-                    "memory": {
-                      "type": "string"
-                    }
-                  }
-                },
-                "requests": {
-                  "type": "object",
-                  "properties": {
-                    "cpu": {
-                      "type": "string"
-                    },
-                    "memory": {
-                      "type": "string"
-                    }
-                  }
-                }
-              }
-            },
-            "service": {
-              "type": "object",
-              "properties": {
-                "port": {
-                  "type": "integer"
-                },
-                "type": {
-                  "type": "string"
-                }
-              }
-            }
-          }
         },
         "fastTime": {
           "type": "object",

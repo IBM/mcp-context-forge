@@ -85,7 +85,7 @@ mcpContextForge:
 
   image:
     repository: ghcr.io/ibm/mcp-context-forge
-    tag: "v1.0.7"                # PRODUCTION: pin a specific immutable tag (e.g. "v1.0.0")
+    tag: "v1.0.9"                # PRODUCTION: pin a specific immutable tag (e.g. "v1.0.0")
     pullPolicy: Always          # Always pull to ensure latest security patches
 
   # Service that fronts the gateway
@@ -180,6 +180,42 @@ mcpContextForge:
     tls:
       enabled: true             # TLS enabled by default for encrypted ingress traffic
       secretName: ""            # Name of the TLS secret (auto-generated if empty)
+
+  # ── Direct Gateway TLS ──────────────────────────────────────────────────────
+  # Enable this to terminate TLS inside the gateway pod itself (direct HTTPS).
+  # Use together with tls.enabled=true (nginx frontend) for end-to-end TLS, or
+  # standalone when there is no reverse proxy in front of the gateway.
+  #
+  # The cert and key are read from a Kubernetes TLS Secret that you pre-create:
+  #   kubectl create secret tls <secretName> --cert=tls.crt --key=tls.key
+  #
+  # Topologies:
+  #   Ingress TLS only (default):  mcpContextForge.tls.enabled=false — nginx/ingress terminates TLS
+  #   End-to-end TLS:              mcpContextForge.tls.enabled=true  — nginx AND gateway pod use TLS
+  tls:
+    enabled: false              # Set true to enable direct HTTPS on the gateway pod
+
+    # Name of a pre-existing kubernetes.io/tls Secret containing tls.crt and tls.key.
+    # The Secret must be in the same namespace as the release.
+    secretName: ""              # e.g. "my-release-gateway-tls"
+
+    # Mount path inside the container where the cert and key will be placed.
+    # Matches the paths passed to SSL env vars below.
+    mountPath: /app/certs/tls   # read-only; do not write other files here
+
+    # Path inside the container to the TLS certificate file.
+    certFile: /app/certs/tls/tls.crt
+
+    # Path inside the container to the TLS private key file.
+    keyFile: /app/certs/tls/tls.key
+
+    # Optional passphrase for an encrypted private key.
+    # Reference a Kubernetes Secret key rather than inlining the value here —
+    # plain strings end up in helm get values, kubectl get pod -o yaml, and CI logs.
+    # Example:
+    #   kubectl create secret generic my-gateway-tls-pass \
+    #     --from-literal=keyFilePassword=my-passphrase
+    keyFilePasswordSecret: {}   # e.g. { name: my-gateway-tls-pass, key: keyFilePassword }
 
   ####################################################################
   # CORE ENVIRONMENT - injected one-by-one as name/value pairs.
@@ -408,23 +444,29 @@ mcpContextForge:
     # IDENTITY_CLAIMS_SECRET: ""               # signing secret (uses JWT_SECRET_KEY if unset)
 
     # ─ SSRF Protection (Server-Side Request Forgery) ─
-    # Intranet release default: allow loopback and RFC 1918 MCP backends while
-    # retaining SSRF validation, fail-closed DNS, and cloud metadata blocklists.
+    # Prevents gateway from accessing internal resources or cloud metadata services.
+    # Default: strict mode (external endpoints only).
+    # Cloud metadata endpoints (169.254.169.254, etc.) are ALWAYS blocked by default.
     # Helm testing registration uses private in-cluster Service DNS names by default:
     #   fast-time: http://<release>-mcp-fast-time-server:80/http
-    #   fast-test: http://<release>-fast-test-server:8880/mcp
+    # With strict defaults, the target is rejected with HTTP 422 during gateway registration.
     SSRF_PROTECTION_ENABLED: "true"            # master switch for SSRF protection
-    SSRF_ALLOW_LOCALHOST: "true"               # allow localhost/loopback backends
-    SSRF_ALLOW_PRIVATE_NETWORKS: "true"        # allow RFC 1918 private backends
+    SSRF_ALLOW_LOCALHOST: "false"              # block localhost/loopback by default
+    SSRF_ALLOW_PRIVATE_NETWORKS: "false"       # block RFC 1918 private IPs by default
     SSRF_ALLOWED_NETWORKS: "[]"                # optional CIDR allowlist when private networks are blocked
     SSRF_DNS_FAIL_CLOSED: "true"               # reject on DNS failure by default
     # SSRF_BLOCKED_NETWORKS: '["169.254.169.254/32","169.254.169.123/32","fd00::1/128","169.254.0.0/16","fe80::/10"]'
     # SSRF_BLOCKED_HOSTS: '["metadata.google.internal","metadata.internal"]'
-    # For stricter deployments, disable broad private access and allow only known CIDRs:
+    # For controlled internal access:
     # SSRF_ALLOW_LOCALHOST: "false"
     # SSRF_ALLOW_PRIVATE_NETWORKS: "false"
     # SSRF_DNS_FAIL_CLOSED: "true"
     # SSRF_ALLOWED_NETWORKS: '["10.20.0.0/16"]'
+    # For local benchmark/testing profiles (broadest allowance):
+    # SSRF_ALLOW_PRIVATE_NETWORKS: "true"
+    # For safer Kubernetes setup, keep private networks blocked and allow only Service CIDRs:
+    # SSRF_ALLOW_PRIVATE_NETWORKS: "false"
+    # SSRF_ALLOWED_NETWORKS: '["10.96.0.0/12"]' # example only, adjust to your cluster CIDR
 
     # ─ Content Security - Size Limits ─
     # Maximum content sizes (bytes) to prevent DoS via oversized uploads.
@@ -814,7 +856,7 @@ mcpContextForge:
     REQUIRE_TOKEN_EXPIRATION: "true"       # require all JWT tokens to have expiration claims
     REQUIRE_JTI: "true"                    # require JTI (JWT ID) claim for revocation support
     REQUIRE_USER_IN_DB: "false"            # require all users to exist in database (disables platform admin bootstrap)
-    AUTH_ENCRYPTION_SECRET: my-test-salt   # passphrase to derive AES key for secure storage
+    AUTH_ENCRYPTION_SECRET: ""             # REQUIRED: passphrase to derive AES key for secure storage — must be set before deploying; generate with: make init-secrets-patch-env
     ALLOW_UNAUTHENTICATED_ADMIN: "false"  # DANGER: grants admin to unauthenticated requests when AUTH_REQUIRED=false
     TRUST_PROXY_AUTH_DANGEROUSLY: "false" # DANGER: trusts proxy identity headers without JWT verification
     PUBLIC_REGISTRATION_ENABLED: "false"  # disable public self-registration (admin must create accounts)
@@ -1020,7 +1062,7 @@ migration:
   # Use same image as mcpgateway
   image:
     repository: ghcr.io/ibm/mcp-context-forge
-    tag: "v1.0.7"                            # Should match mcpContextForge.image.tag
+    tag: "v1.0.9"                            # Should match mcpContextForge.image.tag
     pullPolicy: Always                      # Always pull to ensure latest security patches
 
   # Resource limits for the migration job
@@ -1819,7 +1861,7 @@ monitoring:
         memory: 256Mi
 
 ########################################################################
-# TESTING PROFILE - fast-test server, A2A echo agent, locust, auto-register
+# TESTING PROFILE - fast-time server, A2A echo agent, locust, auto-register
 ########################################################################
 testing:
   enabled: false
@@ -1851,53 +1893,6 @@ testing:
       virtualServerName: Fast Time Server
       virtualServerDescription: Virtual server exposing Fast Time MCP tools/resources/prompts
 
-  fastTestServer:
-    enabled: true
-    image:
-      repository: mcpgateway/fast-test-server
-      tag: latest
-      pullPolicy: Always
-    service:
-      type: ClusterIP
-      port: 8880
-    env:
-      BIND_ADDRESS: 0.0.0.0:8880
-      RUST_LOG: info
-    resources:
-      limits:
-        cpu: "2"
-        memory: 1Gi
-      requests:
-        cpu: 500m
-        memory: 128Mi
-    probes:
-      readiness:
-        type: http
-        path: /health
-        port: 8880
-        initialDelaySeconds: 10
-        periodSeconds: 30
-        timeoutSeconds: 5
-        successThreshold: 1
-        failureThreshold: 3
-      liveness:
-        type: http
-        path: /health
-        port: 8880
-        initialDelaySeconds: 10
-        periodSeconds: 30
-        timeoutSeconds: 5
-        successThreshold: 1
-        failureThreshold: 3
-
-  fastTest:
-    register:
-      enabled: true
-      # Uses in-cluster Service URL: http://<release>-fast-test-server:8880/mcp
-      # Requires SSRF_ALLOW_PRIVATE_NETWORKS=true OR SSRF_ALLOWED_NETWORKS to include cluster CIDR.
-      gatewayName: fast_test
-      gatewayPath: /mcp
-      transport: STREAMABLEHTTP
 
   a2aEchoAgent:
     enabled: true
