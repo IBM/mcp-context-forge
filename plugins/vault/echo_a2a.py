@@ -2,9 +2,11 @@
 """Throwaway A2A echo server for Vault plugin E2E validation.
 
 Runs a minimal FastAPI app that reflects the headers it received back in the JSON
-response body. Point an A2A agent's endpoint_url at http://localhost:8002/invoke so
-we can assert the gateway forwarded the vault-injected Authorization header and
-stripped the X-Vault-Tokens header.
+response body. Point an A2A agent's endpoint_url at http://127.0.0.1:8002/invoke
+(not "localhost" -- this server binds IPv4 only, and the gateway's SSRF-hardening
+DNS pinning connects to whichever address "localhost" resolves to first, which is
+::1 on IPv6-first hosts) so we can assert the gateway forwarded the vault-injected
+Authorization header and stripped the X-Vault-Tokens header.
 
 Run:
     python plugins/vault/echo_a2a.py
