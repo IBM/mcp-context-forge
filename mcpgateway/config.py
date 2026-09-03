@@ -1659,41 +1659,24 @@ class Settings(BaseSettings):
             check_placeholder: Also reject empty and ``__REPLACE_ME__`` values.
             hint: Extra text appended to the error message (e.g. rotation guide URL).
         """
-        remediation = (
-            "Run 'python -m mcpgateway.scripts.init_secrets' to generate strong values, "
-            "or use 'make init-secrets-patch-env' to write them directly into .env."
-        )
+        remediation = "Run 'python -m mcpgateway.scripts.init_secrets' to generate strong values, or use 'make init-secrets-patch-env' to write them directly into .env."
 
         if check_placeholder and not value.strip():
-            raise SecurityConfigurationError(
-                f"{field_name}: secret is empty. {remediation}{hint}"
-            )
+            raise SecurityConfigurationError(f"{field_name}: secret is empty. {remediation}{hint}")
 
         if min_length and len(value) < min_length:
-            raise SecurityConfigurationError(
-                f"{field_name}: too short ({len(value)} chars, minimum {min_length}). "
-                f"{remediation}{hint}"
-            )
+            raise SecurityConfigurationError(f"{field_name}: too short ({len(value)} chars, minimum {min_length}). {remediation}{hint}")
 
         if check_placeholder and value.lower().startswith(("__replace_me__", "replaceme")):
-            raise SecurityConfigurationError(
-                f"{field_name}: unset placeholder (__REPLACE_ME__) rejected. "
-                f"{remediation}{hint}"
-            )
+            raise SecurityConfigurationError(f"{field_name}: unset placeholder (__REPLACE_ME__) rejected. {remediation}{hint}")
 
         if value.lower() in weak_secrets:
-            raise SecurityConfigurationError(
-                f"{field_name}: known-weak/default value rejected. "
-                f"{remediation}{hint}"
-            )
+            raise SecurityConfigurationError(f"{field_name}: known-weak/default value rejected. {remediation}{hint}")
 
         if min_entropy:
             entropy = calculate_entropy(value)
             if entropy < min_entropy:
-                raise SecurityConfigurationError(
-                    f"{field_name}: low entropy (score {entropy:.2f} < {min_entropy}). "
-                    f"{remediation}{hint}"
-                )
+                raise SecurityConfigurationError(f"{field_name}: low entropy (score {entropy:.2f} < {min_entropy}). {remediation}{hint}")
 
     @model_validator(mode="after")
     def validate_security_combinations(self) -> Self:
@@ -1733,9 +1716,13 @@ class Settings(BaseSettings):
                 else ""
             )
             self._enforce_secret_strength(
-                field_name, secret_field.get_secret_value(), weak_secrets,
-                min_length=effective_min, min_entropy=_MIN_ENTROPY,
-                check_placeholder=True, hint=hint,
+                field_name,
+                secret_field.get_secret_value(),
+                weak_secrets,
+                min_length=effective_min,
+                min_entropy=_MIN_ENTROPY,
+                check_placeholder=True,
+                hint=hint,
             )
 
         # Feature-gated: password credentials (empty, placeholder, or weak)
