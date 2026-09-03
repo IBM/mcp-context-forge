@@ -20,7 +20,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.db import EmailTeam, EmailTeamJoinRequest, EmailTeamMember, EmailUser
-from mcpgateway.services.team_management_service import JoinRequestNotFoundError, TeamManagementService, TeamMemberLimitExceededError, get_effective_max_members
+from mcpgateway.services.team_management_service import JoinRequestNotFoundError, TeamManagementError, TeamManagementService, TeamMemberLimitExceededError, get_effective_max_members
 
 
 class TestGetEffectiveMaxMembers:
@@ -296,6 +296,46 @@ class TestTeamManagementService:
             # Verify existing membership was reactivated
             assert mock_existing_membership.role == "owner"
             assert mock_existing_membership.is_active is True
+
+    @pytest.mark.asyncio
+    async def test_create_team_rejects_existing_active_team(self, service, mock_db):
+        """Creating a team whose slug collides with an ACTIVE team raises TeamManagementError.
+
+        Regression for ICA20-1559: an active same-slug team must surface as a clean, catchable
+        conflict (400) rather than leaking an IntegrityError that becomes an opaque 500.
+        """
+        mock_active_team = MagicMock(spec=EmailTeam)
+        mock_active_team.id = "existing_active_team_id"
+        mock_active_team.name = "Existing Active Team"
+        mock_active_team.is_active = True
+
+        # No inactive team (returns None for the first .first() call), then the active-slug check
+        # finds the colliding active team.
+        mock_db.query.return_value.filter.return_value.first.side_effect = [
+            None,
+            mock_active_team,
+        ]
+
+        with (
+            patch("mcpgateway.utils.create_slug.slugify") as mock_slugify,
+            patch("mcpgateway.services.team_management_service.EmailTeam") as MockTeam,
+            patch("mcpgateway.services.team_management_service.EmailTeamMember") as MockMember,
+        ):
+            mock_slugify.return_value = "test-team"
+
+            with pytest.raises(TeamManagementError, match="already exists"):
+                await service.create_team(
+                    name="Existing Active Team",
+                    description="A colliding team",
+                    created_by="admin@example.com",
+                    visibility="private",
+                )
+
+            # The new team must NOT have been inserted
+            MockTeam.assert_not_called()
+            MockMember.assert_not_called()
+            mock_db.add.assert_not_called()
+            mock_db.flush.assert_not_called()
 
     # =========================================================================
     # Team Retrieval Tests
