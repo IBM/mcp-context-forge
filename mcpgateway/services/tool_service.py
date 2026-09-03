@@ -5481,6 +5481,7 @@ class ToolService(BaseService):
         require_app_visible: bool = False,
         require_model_visible: bool = False,
         retry_attempt: int = 0,
+        timeout_override: Optional[float] = None,
     ) -> ToolResult:
         """
         Invoke a registered tool and record execution metrics.
@@ -5510,6 +5511,8 @@ class ToolService(BaseService):
             require_model_visible: When True, deny execution unless the resolved tool is model-visible.
             retry_attempt: Zero-based retry counter; 0 = original call.  Incremented by the retry
                 loop and compared against ``settings.max_tool_retries``.
+            timeout_override: Optional timeout in seconds for trusted internal callers such as
+                the API debugger. Values must be greater than zero and no more than 600 seconds.
 
         Returns:
             Tool invocation result.
