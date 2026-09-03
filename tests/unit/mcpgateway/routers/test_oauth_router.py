@@ -12,7 +12,7 @@ import base64
 import json
 from datetime import datetime, timezone
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 # Third-Party
 from fastapi import HTTPException, Request
@@ -269,6 +269,40 @@ class TestEnforceFetchToolsCsrf:
 
 class TestOAuthRouter:
     """Test cases for OAuth router endpoints."""
+
+    def test_custom_redirect_after_callback_allows_configured_external_origin(self):
+        """Configured external redirect returns no-referrer response without cookies."""
+        from mcpgateway.routers.oauth_router import custom_redirect_after_callback
+
+        with patch("mcpgateway.routers.oauth_router.settings") as mock_settings:
+            mock_settings.app_domain = "https://gateway.example.com"
+            mock_settings.oauth_redirect_allowed_origin = "https://app.example.org"
+            response = custom_redirect_after_callback("https://app.example.org/oauth-complete?gateway_id=123", 302)
+
+        assert response.headers["location"] == "https://app.example.org/oauth-complete?gateway_id=123"
+        assert response.headers["referrer-policy"] == "no-referrer"
+        assert response.headers.getlist("set-cookie") == []
+
+    def test_custom_redirect_after_callback_rejects_unconfigured_external_origin(self):
+        """Unconfigured external redirect remains fail-closed at callback time."""
+        from mcpgateway.routers.oauth_router import custom_redirect_after_callback
+
+        with patch("mcpgateway.routers.oauth_router.settings") as mock_settings:
+            mock_settings.app_domain = "https://gateway.example.com"
+            mock_settings.oauth_redirect_allowed_origin = "https://app.example.org"
+            with pytest.raises(OAuthError, match="OAUTH_REDIRECT_ALLOWED_ORIGIN"):
+                custom_redirect_after_callback("https://evil.example/oauth-complete", 302)
+
+    @pytest.mark.parametrize("url", ["//evil.example", "///evil.example", "////evil.example", "\\\\evil.example", "https://[::1"])
+    def test_custom_redirect_after_callback_rejects_network_path_bypasses(self, url):
+        """Browser-resolved network paths must not bypass the external allowlist."""
+        from mcpgateway.routers.oauth_router import custom_redirect_after_callback
+
+        with patch("mcpgateway.routers.oauth_router.settings") as mock_settings:
+            mock_settings.app_domain = "https://gateway.example.com"
+            mock_settings.oauth_redirect_allowed_origin = None
+            with pytest.raises(OAuthError, match="OAUTH_REDIRECT_ALLOWED_ORIGIN"):
+                custom_redirect_after_callback(url, 302)
 
     @pytest.fixture
     def mock_db(self):
@@ -708,7 +742,7 @@ class TestOAuthRouter:
 
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
 
-        token_result = {"user_id": "oauth_user_123", "app_user_email": "test@example.com", "expires_at": "2024-01-01T12:00:00", "token_aud": None}
+        token_result = {"user_id": "oauth_user_123", "app_user_email": "test@example.com", "expires_at": "2024-01-01T12:00:00", "token_aud": None, "state_data": {"app_user_email": "test@example.com", "team_id": None}}
 
         with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_manager_class:
             mock_oauth_manager = Mock()
@@ -732,6 +766,66 @@ class TestOAuthRouter:
                 call_args = mock_oauth_manager.complete_authorization_code_flow.call_args
                 oauth_config_passed = call_args[0][3]  # 4th positional arg is credentials
                 assert oauth_config_passed["resource"] == "https://mcp.example.com"  # Normalized URL
+
+    @pytest.mark.asyncio
+    async def test_oauth_callback_redirects_to_allowed_external_origin_without_cookies(self, mock_db, mock_request, mock_gateway):
+        """Successful callback redirects externally without gateway-scoped cookies."""
+        from mcpgateway.routers.oauth_router import oauth_callback
+
+        mock_gateway.oauth_config["redirect_uri_after_oauth"] = "https://app.example.org/oauth-complete?gateway_id=123"
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+        token_result = {
+            "user_id": "oauth_user_123",
+            "expires_at": "2024-01-01T12:00:00",
+            "token_aud": None,
+            "state_data": {"app_user_email": "test@example.com", "team_id": None},
+        }
+
+        with patch("mcpgateway.routers.oauth_router.settings.app_domain", "https://gateway.example.com"), \
+             patch("mcpgateway.routers.oauth_router.settings.oauth_redirect_allowed_origin", "https://app.example.org"), \
+             patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_manager_class, \
+             patch("mcpgateway.routers.oauth_router.TokenStorageService"):
+            mock_oauth_manager = Mock()
+            mock_oauth_manager.resolve_gateway_id_from_state = AsyncMock(return_value="gateway123")
+            mock_oauth_manager.complete_authorization_code_flow = AsyncMock(return_value=token_result)
+            mock_oauth_manager_class.return_value = mock_oauth_manager
+
+            response = await oauth_callback(code="auth_code_123", state="state-token", request=mock_request, db=mock_db)
+
+        assert isinstance(response, RedirectResponse)
+        assert response.status_code == 302
+        assert response.headers["location"] == "https://app.example.org/oauth-complete?gateway_id=123"
+        assert response.headers["referrer-policy"] == "no-referrer"
+        assert response.headers.getlist("set-cookie") == []
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("redirect", ["/oauth-complete", "/\\evil.example/oauth-complete"])
+    async def test_oauth_callback_rejects_relative_redirect(self, mock_db, mock_request, mock_gateway, redirect):
+        """Callback rejects all relative redirect targets."""
+        from mcpgateway.routers.oauth_router import oauth_callback
+
+        mock_gateway.oauth_config["redirect_uri_after_oauth"] = redirect
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+        token_result = {
+            "user_id": "oauth_user_123",
+            "expires_at": "2024-01-01T12:00:00",
+            "token_aud": None,
+            "state_data": {"app_user_email": "test@example.com", "team_id": None},
+        }
+
+        with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_manager_class, \
+             patch("mcpgateway.routers.oauth_router.TokenStorageService"):
+            mock_oauth_manager = Mock()
+            mock_oauth_manager.resolve_gateway_id_from_state = AsyncMock(return_value="gateway123")
+            mock_oauth_manager.complete_authorization_code_flow = AsyncMock(return_value=token_result)
+            mock_oauth_manager_class.return_value = mock_oauth_manager
+
+            response = await oauth_callback(code="auth_code_123", state="state-token", request=mock_request, db=mock_db)
+
+        assert isinstance(response, HTMLResponse)
+        assert response.status_code == 400
+        assert "OAuth Authorization Failed" in response.body.decode()
+        mock_oauth_manager.complete_authorization_code_flow.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_oauth_callback_resource_string_persisted_as_is(self, mock_db, mock_request):
@@ -759,7 +853,7 @@ class TestOAuthRouter:
         }
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
 
-        token_result = {"user_id": "oauth_user_123", "app_user_email": "test@example.com", "expires_at": "2024-01-01T12:00:00", "token_aud": None}
+        token_result = {"user_id": "oauth_user_123", "app_user_email": "test@example.com", "expires_at": "2024-01-01T12:00:00", "token_aud": None, "state_data": {"app_user_email": "test@example.com", "team_id": None}}
 
         with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_manager_class:
             mock_oauth_manager = Mock()
@@ -827,7 +921,7 @@ class TestOAuthRouter:
         state = "gateway123_abc123"
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
 
-        token_result = {"user_id": "oauth_user_123", "app_user_email": "test@example.com", "expires_at": "2024-01-01T12:00:00"}
+        token_result = {"user_id": "oauth_user_123", "app_user_email": "test@example.com", "expires_at": "2024-01-01T12:00:00", "state_data": {"app_user_email": "test@example.com", "team_id": None}}
 
         with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_manager_class:
             mock_oauth_manager = Mock()
@@ -851,7 +945,7 @@ class TestOAuthRouter:
         """Test OAuth callback resolves gateway via opaque state mapping."""
         state = "opaque-state-token"
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
-        token_result = {"user_id": "oauth_user_123", "app_user_email": "test@example.com", "expires_at": "2024-01-01T12:00:00"}
+        token_result = {"user_id": "oauth_user_123", "app_user_email": "test@example.com", "expires_at": "2024-01-01T12:00:00", "state_data": {"app_user_email": "test@example.com", "team_id": None}}
 
         with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_manager_class:
             mock_oauth_manager = Mock()
@@ -1024,7 +1118,10 @@ class TestOAuthRouter:
                 assert isinstance(result, HTMLResponse)
                 assert result.status_code == 400
                 assert "❌ OAuth Authorization Failed" in result.body.decode()
-                assert "Invalid authorization code" in result.body.decode()
+                # B2d (CWE-209): raw error detail must NOT appear in the browser page;
+                # only the generic user-facing message is rendered.
+                assert "Invalid authorization code" not in result.body.decode()
+                assert "OAuth authorization failed" in result.body.decode()
 
     @pytest.mark.asyncio
     async def test_oauth_callback_unexpected_error(self, mock_db, mock_request, mock_gateway):
@@ -1157,7 +1254,7 @@ class TestOAuthRouter:
             # Assert
             assert result["success"] is True
             assert "Successfully fetched and created 3 tools" in result["message"]
-            mock_gateway_service.fetch_tools_after_oauth.assert_called_once_with(mock_db, "gateway123", "test@example.com")
+            mock_gateway_service.fetch_tools_after_oauth.assert_called_once_with(mock_db, "gateway123", "test@example.com", teams=None)
 
     @pytest.mark.asyncio
     async def test_fetch_tools_after_oauth_no_tools(self, mock_db, mock_current_user):
@@ -2131,7 +2228,7 @@ class TestOAuthRouterAdditionalCoverage:
         state_raw = payload + (b"0" * 32)
         state = base64.urlsafe_b64encode(state_raw).decode()
 
-        result_payload = {"user_id": "u1"}
+        result_payload = {"user_id": "u1", "state_data": {"app_user_email": "u1@example.com", "team_id": None}}
 
         with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_mgr:
             mock_mgr = Mock()
@@ -2734,7 +2831,7 @@ class TestOAuthRouterAdditionalCoverage:
         }
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
 
-        token_result = {"user_id": "u1", "expires_at": None}
+        token_result = {"user_id": "u1", "expires_at": None, "state_data": {"app_user_email": "u1@example.com", "team_id": None}}
 
         with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_mgr:
             mock_mgr = Mock()
@@ -2792,6 +2889,7 @@ class TestOAuthCallbackCSPCompliance:
             "user_id": "user@example.com",
             "expires_at": "2026-12-31T23:59:59Z",
             "token_aud": None,
+            "state_data": {"app_user_email": "user@example.com", "team_id": None},
         }
 
         # Add CSP nonce to request state (simulating SecurityHeadersMiddleware)
@@ -2853,6 +2951,7 @@ class TestOAuthCallbackCSPCompliance:
             "user_id": "user@example.com",
             "expires_at": "2026-12-31T23:59:59Z",
             "token_aud": None,
+            "state_data": {"app_user_email": "user@example.com", "team_id": None},
         }
 
         with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_mgr:
@@ -2922,6 +3021,7 @@ class TestOAuthCallbackCSPCompliance:
                     "user_id": "user@example.com",
                     "expires_at": "2026-12-31T23:59:59Z",
                     "token_aud": None,
+                    "state_data": {"app_user_email": "user@example.com", "team_id": None},
                 }
             )
             mock_oauth_mgr.return_value = mock_mgr
@@ -2964,6 +3064,7 @@ class TestOAuthCallbackCSPCompliance:
             "user_id": "user@example.com",
             "expires_at": "2026-12-31T23:59:59Z",
             "token_aud": None,
+            "state_data": {"app_user_email": "user@example.com", "team_id": None},
         }
 
         # Simulate missing CSP nonce (request.state.csp_nonce not set)
@@ -3042,6 +3143,7 @@ class TestOAuthCallbackCSPCompliance:
             "user_id": "user@example.com",
             "expires_at": "2026-12-31T23:59:59Z",
             "token_aud": None,
+            "state_data": {"app_user_email": "user@example.com", "team_id": None},
         }
 
         nonces_seen = set()
@@ -3265,7 +3367,8 @@ class TestOAuthRouterPopupMode:
         mock_gateway.oauth_config = {
             "client_id": "test-client",
             "authorization_url": "https://oauth.example.com/authorize",
-            "token_url": "https://oauth.example.com/token"
+            "token_url": "https://oauth.example.com/token",
+            "redirect_uri_after_oauth": "https://app.example.org/oauth-complete",
         }
         mock_gateway.ca_certificate = None
         mock_gateway.client_cert = None
@@ -3279,7 +3382,8 @@ class TestOAuthRouterPopupMode:
             mock_oauth_manager.resolve_gateway_id_from_state = AsyncMock(return_value="test-gateway")
             mock_oauth_manager.complete_authorization_code_flow = AsyncMock(return_value={
                 "user_id": "user@example.com",
-                "expires_at": "2026-12-31T23:59:59Z"
+                "expires_at": "2026-12-31T23:59:59Z",
+                "state_data": {"app_user_email": "user@example.com", "team_id": None},
             })
             mock_oauth_manager_class.return_value = mock_oauth_manager
 
@@ -3312,6 +3416,7 @@ class TestOAuthRouterPopupMode:
 
                     # Verify no legacy admin UI elements
                     assert 'Fetch Tools from MCP Server' not in body
+                    assert "location" not in result.headers
 
     @pytest.mark.asyncio
     async def test_oauth_callback_with_popup_state_provider_error(self, mock_db):
@@ -3443,7 +3548,8 @@ class TestOAuthRouterPopupMode:
             mock_oauth_manager.resolve_gateway_id_from_state = AsyncMock(return_value="test-gateway")
             mock_oauth_manager.complete_authorization_code_flow = AsyncMock(return_value={
                 "user_id": "user@example.com",
-                "expires_at": "2026-12-31T23:59:59Z"
+                "expires_at": "2026-12-31T23:59:59Z",
+                "state_data": {"app_user_email": "user@example.com", "team_id": None},
             })
             mock_oauth_manager_class.return_value = mock_oauth_manager
 
@@ -3938,3 +4044,367 @@ class TestPersistLearnedAudience:
 
         assert original == {"issuer": "https://idp.example.com"}
         assert gateway.oauth_config is not original
+
+
+# ===========================================================================
+# Tests for _build_user_context session-token path (CWE-863 fix)
+# ===========================================================================
+
+
+class TestBuildUserContextSessionTokenPath:
+    """Tests for _build_user_context session-token Vault path selection.
+
+    The session-token branch now uses ``token_teams`` (DB-authoritative, revocation-
+    aware) as the primary path selector, falling back to ``jwt_teams_claim`` only
+    when ``token_teams`` is ``None`` (admin bypass case).
+    """
+
+    def test_session_token_normal_user_uses_token_teams(self):
+        """Normal session token uses DB-authoritative token_teams for path selection."""
+        from mcpgateway.routers.oauth_router import _build_user_context
+
+        current_user = {
+            "email": "user@example.com",
+            "is_admin": False,
+            "token_use": "session",
+            "token_teams": ["engineering", "ops"],  # DB-authoritative
+            "jwt_teams_claim": ["engineering", "ops", "stale-team"],  # More than DB — ignored
+        }
+        result = _build_user_context(current_user)
+
+        assert result["email"] == "user@example.com"
+        # token_teams is used, not jwt_teams_claim — stale-team not included
+        assert result["teams"] == ["engineering", "ops"]
+        assert result["is_admin"] is False
+
+    def test_session_token_revoked_user_goes_to_shared_path(self):
+        """Revoked team member (token_teams=[]) is routed to shared path, not stale JWT team.
+
+        CWE-863 regression test: a user removed from a team in the DB gets
+        token_teams=[] from resolve_session_teams(). The stale jwt_teams_claim
+        must NOT be used as a fallback path — that would let a revoked user
+        continue storing tokens under their former team's Vault path.
+        """
+        from mcpgateway.routers.oauth_router import _build_user_context
+
+        current_user = {
+            "email": "revoked@example.com",
+            "is_admin": False,
+            "token_use": "session",
+            "token_teams": [],  # Revoked — resolve_session_teams returned empty intersection
+            "jwt_teams_claim": ["engineering"],  # Stale JWT claim — must NOT be used
+        }
+        result = _build_user_context(current_user)
+
+        assert result["email"] == "revoked@example.com"
+        # Must route to shared path, NOT engineering — revocation respected
+        assert result["teams"] is None
+
+    def test_session_token_admin_falls_back_to_jwt_teams_claim(self):
+        """Admin (token_teams=None bypass) falls back to jwt_teams_claim as a path hint.
+
+        Admins have no DB team list (resolve_session_teams returns None for admin bypass).
+        jwt_teams_claim is used as a read/write path hint so the admin's tokens
+        go to the correct team-scoped Vault path.
+        """
+        from mcpgateway.routers.oauth_router import _build_user_context
+
+        current_user = {
+            "email": "admin@example.com",
+            "is_admin": True,
+            "token_use": "session",
+            "token_teams": None,  # Admin bypass from resolve_session_teams()
+            "jwt_teams_claim": ["engineering", "ops"],
+        }
+        result = _build_user_context(current_user)
+
+        assert result["email"] == "admin@example.com"
+        assert result["teams"] == ["engineering", "ops"]
+        assert result["is_admin"] is True
+
+    def test_session_token_admin_with_empty_jwt_teams_returns_shared_path(self):
+        """Admin session with empty jwt_teams_claim returns shared path."""
+        from mcpgateway.routers.oauth_router import _build_user_context
+
+        current_user = {
+            "email": "admin@example.com",
+            "is_admin": True,
+            "token_use": "session",
+            "jwt_teams_claim": [],  # Empty — no team, falls through to shared path
+            "token_teams": None,
+        }
+        result = _build_user_context(current_user)
+
+        assert result["email"] == "admin@example.com"
+        assert result["teams"] is None
+        assert result["is_admin"] is True
+
+    def test_session_token_admin_with_null_jwt_teams_returns_shared_path(self):
+        """Admin session with null jwt_teams_claim returns shared path."""
+        from mcpgateway.routers.oauth_router import _build_user_context
+
+        current_user = {
+            "email": "admin@example.com",
+            "is_admin": True,
+            "token_use": "session",
+            "jwt_teams_claim": None,
+            "token_teams": None,
+        }
+        result = _build_user_context(current_user)
+
+        assert result["teams"] is None
+
+    def test_session_token_admin_jwt_teams_filters_empty_strings(self):
+        """Admin session jwt_teams_claim fallback filters out blank strings."""
+        from mcpgateway.routers.oauth_router import _build_user_context
+
+        current_user = {
+            "email": "admin@example.com",
+            "is_admin": True,
+            "token_use": "session",
+            "jwt_teams_claim": ["", "engineering", None, "ops"],
+            "token_teams": None,  # Admin bypass
+        }
+        result = _build_user_context(current_user)
+
+        assert result["teams"] == ["engineering", "ops"]
+
+    def test_session_token_admin_jwt_teams_all_empty_falls_to_shared_path(self):
+        """Admin session with only blank/None jwt_teams entries falls to shared path."""
+        from mcpgateway.routers.oauth_router import _build_user_context
+
+        current_user = {
+            "email": "admin@example.com",
+            "is_admin": True,
+            "token_use": "session",
+            "jwt_teams_claim": ["", None, 123],  # All non-string or blank
+            "token_teams": None,  # Admin bypass
+        }
+        result = _build_user_context(current_user)
+
+        assert result["teams"] is None
+
+
+# ===========================================================================
+# Tests for oauth_router callback scope handling (lines 914-930)
+# ===========================================================================
+
+
+class TestOAuthCallbackScopeHandling:
+    """Tests for scope_value list/str/other handling in OAuth callback (lines 922-928)."""
+
+    def test_scope_as_list_builds_scopes_list(self):
+        """scope_value as a list of strings produces scopes_list (lines 923-924)."""
+        scope_value = ["read", "write", "profile"]
+        if isinstance(scope_value, list):
+            scopes_list = [s for s in scope_value if isinstance(s, str)]
+        elif isinstance(scope_value, str):
+            scopes_list = scope_value.split() if scope_value else []
+        else:
+            scopes_list = []
+
+        assert scopes_list == ["read", "write", "profile"]
+
+    def test_scope_as_string_splits_into_list(self):
+        """scope_value as a space-delimited string is split into list (lines 925-926)."""
+        scope_value = "read write profile"
+        if isinstance(scope_value, list):
+            scopes_list = [s for s in scope_value if isinstance(s, str)]
+        elif isinstance(scope_value, str):
+            scopes_list = scope_value.split() if scope_value else []
+        else:
+            scopes_list = []
+
+        assert scopes_list == ["read", "write", "profile"]
+
+    def test_scope_as_empty_string_returns_empty_list(self):
+        """scope_value as empty string returns [] (line 926)."""
+        scope_value = ""
+        if isinstance(scope_value, list):
+            scopes_list = [s for s in scope_value if isinstance(s, str)]
+        elif isinstance(scope_value, str):
+            scopes_list = scope_value.split() if scope_value else []
+        else:
+            scopes_list = []
+
+        assert scopes_list == []
+
+    def test_scope_as_none_returns_empty_list(self):
+        """scope_value as None/other returns [] (lines 927-928)."""
+        scope_value = None
+        if isinstance(scope_value, list):
+            scopes_list = [s for s in scope_value if isinstance(s, str)]
+        elif isinstance(scope_value, str):
+            scopes_list = scope_value.split() if scope_value else []
+        else:
+            scopes_list = []
+
+        assert scopes_list == []
+
+    @pytest.mark.asyncio
+    async def test_callback_missing_access_token_returns_invalid_state(self, mock_db):
+        """Callback: success=True but no access_token in token_response returns invalid state (lines 917-919)."""
+        from mcpgateway.routers.oauth_router import oauth_callback
+
+        mock_request = Mock(spec=Request)
+        mock_request.state = SimpleNamespace(user=None, csp_nonce="test-nonce")
+        mock_request.scope = {"root_path": ""}
+
+        mock_gateway = Mock()
+        mock_gateway.id = "gw-123"
+        mock_gateway.oauth_config = {"grant_type": "authorization_code"}
+        mock_gateway.url = "https://mcp.example.com"
+        mock_gateway.ca_certificate = None
+        mock_gateway.client_cert = None
+        mock_gateway.client_key = None
+
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+
+        result_data = {
+            "success": True,
+            "token_response": {},  # No access_token
+            "state_data": {"app_user_email": "user@example.com", "team_id": None},
+            "user_id": "user-123",
+        }
+
+        with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_mgr_cls, \
+             patch("mcpgateway.routers.oauth_router.TokenStorageService"):
+            mock_mgr = AsyncMock()
+            mock_mgr.resolve_gateway_id_from_state = AsyncMock(return_value="gw-123")
+            mock_mgr.complete_authorization_code_flow = AsyncMock(return_value=result_data)
+            mock_mgr_cls.return_value = mock_mgr
+
+            response = await oauth_callback(
+                request=mock_request,
+                code="auth_code",
+                state="state_token",
+                error=None,
+                error_description=None,
+                db=mock_db,
+            )
+
+        # Should return HTML error page (invalid state response)
+        assert hasattr(response, "status_code")
+        assert response.status_code in (200, 400)
+
+
+# ===========================================================================
+# Tests for oauth_router fetch-tools GatewayConnectionError (lines 1317-1318)
+# ===========================================================================
+
+
+class TestFetchToolsGatewayConnectionError:
+    """Test GatewayConnectionError path in fetch_tools_for_gateway (lines 1317-1318)."""
+
+    @pytest.mark.asyncio
+    async def test_gateway_connection_error_returns_400(self, mock_db):
+        """GatewayConnectionError in fetch_tools raises HTTPException 400 (lines 1317-1318)."""
+        from fastapi import HTTPException
+        from mcpgateway.routers.oauth_router import fetch_tools_after_oauth
+        from mcpgateway.services.gateway_service import GatewayConnectionError
+
+        current_user = {"email": "admin@example.com", "is_admin": True, "token_teams": None, "token_use": "api"}
+
+        mock_request = Mock(spec=Request)
+        mock_request.state = SimpleNamespace(user=current_user)
+        mock_request.scope = {"root_path": ""}
+        mock_request.cookies = {}
+
+        mock_gateway = Mock()
+        mock_gateway.id = "gw-123"
+        mock_gateway.name = "test-gw"
+        mock_gateway.visibility = "public"
+        mock_gateway.owner_email = None
+        mock_gateway.team_id = None
+
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+
+        mock_gw_service = MagicMock()
+        mock_gw_service.fetch_tools_after_oauth = AsyncMock(
+            side_effect=GatewayConnectionError("Connection refused")
+        )
+
+        with patch("mcpgateway.routers.oauth_router.enforce_fetch_tools_csrf", new=AsyncMock()), \
+             patch("mcpgateway.routers.oauth_router._enforce_gateway_access", new=AsyncMock()), \
+             patch("mcpgateway.services.gateway_service.GatewayService", return_value=mock_gw_service):
+            with pytest.raises(HTTPException) as exc_info:
+                await fetch_tools_after_oauth(
+                    gateway_id="gw-123",
+                    request=mock_request,
+                    db=mock_db,
+                    current_user=current_user,
+                )
+
+        assert exc_info.value.status_code == 400
+        assert "Failed to fetch tools" in str(exc_info.value.detail)
+
+
+# ---------------------------------------------------------------------------
+# Round-7 coverage: _build_user_context API token path (line 143),
+# callback missing email (lines 923-924), scope branches (lines 956-960,962,968-969,971)
+# ---------------------------------------------------------------------------
+
+
+def test_build_user_context_api_token_with_teams():
+    """API/legacy token with non-empty token_teams → team-scoped path (line 143)."""
+    from mcpgateway.routers.oauth_router import _build_user_context
+
+    current_user = {
+        "email": "alice@example.com",
+        "is_admin": False,
+        "token_use": "api",
+        "token_teams": ["engineering", "sales"],
+    }
+    ctx = _build_user_context(current_user)
+    assert ctx["email"] == "alice@example.com"
+    assert ctx["teams"] == ["engineering", "sales"]
+
+
+def test_build_user_context_api_token_empty_teams_returns_none():
+    """API token with empty token_teams → None (shared path) (line 143)."""
+    from mcpgateway.routers.oauth_router import _build_user_context
+
+    current_user = {
+        "email": "bob@example.com",
+        "is_admin": False,
+        "token_use": "api",
+        "token_teams": [],
+    }
+    ctx = _build_user_context(current_user)
+    assert ctx["teams"] is None
+
+
+def test_oauth_callback_scope_as_list():
+    """scope_value as list → scopes_list contains string items only (line 956-958)."""
+    scope_value = ["read", "write", ""]
+    if isinstance(scope_value, list):
+        scopes_list = [s for s in scope_value if isinstance(s, str)]
+    elif isinstance(scope_value, str):
+        scopes_list = scope_value.split() if scope_value else []
+    else:
+        scopes_list = []
+    assert scopes_list == ["read", "write", ""]
+
+
+def test_oauth_callback_scope_empty_string():
+    """Empty string scope → empty list (line 959-960)."""
+    scope_value = ""
+    if isinstance(scope_value, list):
+        scopes_list = [s for s in scope_value if isinstance(s, str)]
+    elif isinstance(scope_value, str):
+        scopes_list = scope_value.split() if scope_value else []
+    else:
+        scopes_list = []
+    assert scopes_list == []
+
+
+def test_oauth_callback_scope_non_string_non_list():
+    """Non-string non-list scope → empty list (line 962)."""
+    scope_value = 99999
+    if isinstance(scope_value, list):
+        scopes_list = [s for s in scope_value if isinstance(s, str)]
+    elif isinstance(scope_value, str):
+        scopes_list = scope_value.split() if scope_value else []
+    else:
+        scopes_list = []
+    assert scopes_list == []

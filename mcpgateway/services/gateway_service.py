@@ -85,6 +85,7 @@ from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam as DbEmailTeam
 from mcpgateway.db import EmailTeamMember as DbEmailTeamMember
+from mcpgateway.db import EmailUser as DbEmailUser
 from mcpgateway.db import fresh_db_session
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import get_for_update
@@ -92,6 +93,7 @@ from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import PromptMetric
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import ResourceMetric, ResourceSubscription, server_prompt_association, server_resource_association, server_tool_association, SessionLocal
+from mcpgateway.db import Server as DbServer
 from mcpgateway.db import Tool as DbTool
 from mcpgateway.db import ToolMetric
 from mcpgateway.observability import create_span, set_span_attribute, set_span_error
@@ -100,12 +102,15 @@ from mcpgateway.schemas import (
     GatewayCreate,
     GatewayHandshakeRequest,
     GatewayHandshakeResponse,
+    GatewayImpactPreview,
+    GatewayImpactServer,
     GatewayRead,
     GatewayTestRequest,
     GatewayTestResponse,
     GatewayUpdate,
     PromptCreate,
     ResourceCreate,
+    ServerHandshakeRequest,
     ToolCreate,
 )
 
@@ -118,6 +123,7 @@ from mcpgateway.services.http_client_service import get_default_verify, get_http
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.mcp_apps import merge_mcp_protocol_meta, optional_extension_metadata, validate_extension_metadata, validate_ui_resource
 from mcpgateway.services.oauth_manager import OAuthManager
+from mcpgateway.services.server_service import server_service
 from mcpgateway.services.session_affinity import register_gateway_capabilities_for_notifications
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
@@ -125,6 +131,7 @@ from mcpgateway.services.token_exchange_cache import TokenExchangeCache
 from mcpgateway.utils.admin_check import is_admin_bypass_granted
 from mcpgateway.utils.create_slug import slugify
 from mcpgateway.utils.display_name import generate_display_name
+from mcpgateway.utils.internal_http import internal_loopback_base_url
 from mcpgateway.utils.pagination import unified_paginate
 from mcpgateway.utils.passthrough_headers import get_passthrough_headers
 from mcpgateway.utils.redis_client import get_redis_client
@@ -136,6 +143,7 @@ from mcpgateway.utils.subject_token import extract_subject_jwt
 from mcpgateway.utils.token_exchange_audit import audit_token_exchange
 from mcpgateway.utils.url_auth import apply_query_param_auth, sanitize_exception_message, sanitize_url_for_logging
 from mcpgateway.utils.validate_signature import validate_signature
+from mcpgateway.utils.verify_credentials import _resolve_auth_header_name
 from mcpgateway.validation.tags import validate_tags_field
 
 
@@ -447,6 +455,26 @@ class GatewayConnectionError(GatewayError):
         'Connection failed'
         >>> isinstance(error, GatewayError)
         True
+    """
+
+
+class GatewayCredentialError(GatewayError):
+    """Raised when a stored/decrypted gateway credential is malformed (e.g. contains an
+    invisible Unicode character that cannot be encoded into an HTTP header).
+
+    Kept distinct from GatewayConnectionError so callers can tell "the credential is
+    invalid" apart from "the gateway is unreachable" -- the two were previously
+    conflated, which sent troubleshooting toward the network stack for a problem that
+    was actually a malformed stored value.
+
+    Examples:
+        >>> error = GatewayCredentialError("Credential invalid")
+        >>> str(error)
+        'Credential invalid'
+        >>> isinstance(error, GatewayError)
+        True
+        >>> isinstance(error, GatewayConnectionError)
+        False
     """
 
 
@@ -2210,13 +2238,14 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             db.rollback()
             raise other.exceptions[0]
 
-    async def fetch_tools_after_oauth(self, db: Session, gateway_id: str, app_user_email: str) -> Dict[str, Any]:
+    async def fetch_tools_after_oauth(self, db: Session, gateway_id: str, app_user_email: str, teams: list[str] | None = None) -> Dict[str, Any]:
         """Fetch tools from MCP server after OAuth completion for Authorization Code flow.
 
         Args:
             db: Database session
             gateway_id: ID of the gateway to fetch tools for
             app_user_email: ContextForge user email for token retrieval
+            teams: Token teams from request.state (None = Admin UI/shared path, list = API/team-scoped)
 
         Returns:
             Dict containing capabilities, tools, resources, and prompts
@@ -2247,35 +2276,98 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             if grant_type != "authorization_code":
                 raise ValueError(f"Gateway {gateway_id} is not using Authorization Code flow")
 
-            # Resolve the caller's stored OAuth token into an Authorization header, sharing
-            # the same lookup-and-validate sequence used by manual gateway refresh so the two
-            # call sites can't drift on token-claim validation.
-            oauth_result = await self._resolve_auth_code_refresh_headers(
-                gateway_id=gateway.id,
-                gateway_name=gateway.name,
-                gateway_url=gateway.url,
-                oauth_config=gateway.oauth_config,
-                user_email=app_user_email,
-                db=db,
-            )
-            authentication = oauth_result.headers
-            token_validation_warnings = oauth_result.warnings
+            # Get OAuth tokens for this gateway using team-aware path selection.
+            # SECURITY: Use teams parameter from request.state.token_teams to determine storage path:
+            # - teams=None (Admin UI/no teams claim in JWT) → vault/oauth/shared/...
+            # - teams=[...] (API with JWT teams)           → vault/oauth/{team_id}/...
+            # No fallback between paths — each flow checks ONLY its designated path.
+            # First-Party
+            from mcpgateway.services.token_storage_service import TokenStorageService  # pylint: disable=import-outside-toplevel
+            from mcpgateway.services.token_validation_service import validate_oauth_token_claims  # pylint: disable=import-outside-toplevel
 
-            # Debug: Check if token was decrypted
-            access_token = authentication.get("Authorization", "").removeprefix("Bearer ")
-            if access_token.startswith("Z0FBQUFBQm"):  # Encrypted tokens start with this
-                logger.error("OAuth token decryption may have failed before gateway initialization")
+            # Look up is_admin flag (safe DB query — not for scoping, only for user_context)
+            user = db.execute(select(DbEmailUser).where(DbEmailUser.email == app_user_email)).scalar_one_or_none()
+            is_admin = user.is_admin if user else False
+
+            if teams is None:
+                # Admin UI flow: check ONLY shared path
+                user_context = {
+                    "email": app_user_email,
+                    "teams": None,  # Shared path
+                    "is_admin": is_admin,
+                }
+                token_storage = TokenStorageService(db, user_context=user_context)
+                access_token = await token_storage.get_user_token(gateway.id, app_user_email)
+                token_source = "shared path (Admin UI)"  # nosec B105 - log label, not a password
+
+                if not access_token:
+                    raise GatewayConnectionError(f"No OAuth token found for user {app_user_email} in shared path. Please authorize this gateway via the Admin UI.")
             else:
-                logger.info("Using decrypted OAuth token for gateway %s", gateway.name)
+                # API flow: check ONLY team-scoped path
+                user_context = {
+                    "email": app_user_email,
+                    "teams": teams,
+                    "is_admin": is_admin,
+                }
+                token_storage = TokenStorageService(db, user_context=user_context)
+                access_token = await token_storage.get_user_token(gateway.id, app_user_email)
+                token_source = f"team-scoped (teams: {SecurityValidator.sanitize_log_message(str(teams))})"
 
-            # Use the existing connection logic with validation context for diagnostics
+                if not access_token:
+                    raise GatewayConnectionError(
+                        f"No OAuth token found for user {app_user_email} in team-scoped path (teams: {teams}). Please authorize this gateway via API with the appropriate team context."
+                    )
+
+            logger.info(
+                "Retrieved OAuth token for user=%s, gateway=%s from %s",
+                SecurityValidator.sanitize_log_message(app_user_email),
+                SecurityValidator.sanitize_log_message(gateway.name),
+                SecurityValidator.sanitize_log_message(token_source),
+            )
+
+            # Validate JWT claims (audience, scopes, issuer) before forwarding token.
+            # Mirrors the validation in _resolve_auth_code_refresh_headers so the two
+            # call sites cannot drift on claim-validation behaviour.
+            learned_aud, _learned_iss = await token_storage.get_user_learned_audience(gateway.id, app_user_email)
+            token_validation = validate_oauth_token_claims(
+                access_token=access_token,
+                oauth_config=gateway.oauth_config,
+                gateway_url=gateway.url,
+                gateway_name=gateway.name,
+                learned_aud=learned_aud,
+            )
+            for warning in token_validation.warnings:
+                logger.warning(
+                    "OAuth token validation for gateway %s: %s",
+                    SecurityValidator.sanitize_log_message(gateway.name),
+                    SecurityValidator.sanitize_log_message(warning),
+                )
+
+            blocking = token_validation.blocking_errors
+            if blocking:
+                detail = "; ".join(blocking)
+                raise GatewayConnectionError(f"Refusing to forward OAuth token for gateway '{gateway.name}': {detail}. Fix oauth_config (resource/scopes/issuer) or the IdP token request.")
+
+            authentication = {"Authorization": f"Bearer {access_token}"}
+            token_validation_warnings = token_validation.warnings
+
+            # Debug: check if token survived decryption (Fernet ciphertext prefix)
+            if access_token.startswith("Z0FBQUFBQm"):  # Encrypted tokens start with this prefix
+                logger.debug("OAuth token may be encrypted (decryption may have failed) for gateway %s", SecurityValidator.sanitize_log_message(gateway.name))
+            else:
+                logger.debug("OAuth token appears decrypted for gateway %s", SecurityValidator.sanitize_log_message(gateway.name))
+
+            # Connect to MCP server. No cross-path fallback — issue #5598 explicitly
+            # prohibits dual-backend fallback mode. If the token is rejected the caller
+            # must re-authorize; silently substituting a different credential path
+            # creates an unpredictable security surface and inconsistent behaviour vs
+            # the tool_service.py and resource_service.py invocation paths.
             if gateway.transport.upper() == "SSE":
                 capabilities, tools, resources, prompts, _ = await self._connect_to_sse_server_without_validation(gateway.url, authentication, validation_warnings=token_validation_warnings)
             elif gateway.transport.upper() == "STREAMABLEHTTP":
                 try:
                     capabilities, tools, resources, prompts, _ = await self.connect_to_streamablehttp_server(gateway.url, authentication)
                 except Exception as streamable_err:
-                    # Surface diagnostic context for likely auth rejections (401/403)
                     error_str = str(streamable_err).lower()
                     if token_validation_warnings and ("401" in error_str or "403" in error_str or "unauthorized" in error_str or "forbidden" in error_str):
                         diagnostics = "; ".join(token_validation_warnings)
@@ -2335,8 +2427,21 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             raise GatewayConnectionError(f"Failed to fetch tools after OAuth: {str(gce)}")
         except Exception as e:
             db.rollback()
-            logger.error("Failed to fetch tools after OAuth for gateway %s: %s", SecurityValidator.sanitize_log_message(gateway_id), e)
-            raise GatewayConnectionError(f"Failed to fetch tools after OAuth: {str(e)}")
+            # Extract actual error from TaskGroup or ExceptionGroup if present
+            actual_error = e
+            if hasattr(e, "exceptions") and e.exceptions:  # pylint: disable=no-member
+                actual_error = e.exceptions[0]  # pylint: disable=no-member
+            elif hasattr(e, "__cause__") and e.__cause__:
+                actual_error = e.__cause__
+
+            logger.error(
+                "Failed to fetch tools after OAuth for gateway %s: %s (type: %s)",
+                SecurityValidator.sanitize_log_message(gateway_id),
+                str(actual_error),
+                type(actual_error).__name__,
+                exc_info=True,  # Include full traceback
+            )
+            raise GatewayConnectionError(f"Failed to fetch tools after OAuth: {str(actual_error)}")
 
     async def list_gateways(
         self,
@@ -3114,7 +3219,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         # errors so the outer handler can recognize this as a connection failure
                         # and decide (via init_affecting_changed) whether to propagate as a 502
                         # or swallow as a best-effort cosmetic update (see visibility note ~2256).
-                        if init_affecting_changed and not isinstance(init_err, GatewayConnectionError):
+                        # GatewayCredentialError is excluded from wrapping so a malformed stored
+                        # credential keeps its distinct type (422) instead of being relabeled as
+                        # a generic connection failure (502).
+                        if init_affecting_changed and not isinstance(init_err, (GatewayConnectionError, GatewayCredentialError)):
                             safe_url = sanitize_url_for_logging(gateway.url, auth_query_params_decrypted)
                             safe_msg = sanitize_exception_message(str(init_err), auth_query_params_decrypted)
                             raise GatewayConnectionError(f"Failed to initialize gateway at {safe_url}: {safe_msg}") from init_err
@@ -3153,10 +3261,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     self._active_gateways.discard(gateway.url)
                     self._active_gateways.add(gateway.url)
                     reinit_succeeded = True
-                except GatewayConnectionError as gce:
+                except (GatewayConnectionError, GatewayCredentialError) as gce:
                     if init_affecting_changed:
                         # Do NOT persist the broken update — propagate so the outer handler
-                        # rolls back (nothing committed) and the API returns 502, matching
+                        # rolls back (nothing committed) and the API returns 502/422, matching
                         # POST /gateways behavior.
                         raise
                     logger.warning("Failed to initialize updated gateway: %s", gce)
@@ -3303,7 +3411,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 error=gnfe,
             )
             raise gnfe
-        except GatewayConnectionError as gce:
+        except (GatewayConnectionError, GatewayCredentialError) as gce:
             logger.error("GatewayConnectionError during gateway update: %s", gce)
             db.rollback()
             raise
@@ -3523,6 +3631,65 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             )
 
         raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
+
+    async def get_gateway_impact_preview(
+        self,
+        db: Session,
+        gateway_id: str,
+        user_email: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
+    ) -> GatewayImpactPreview:
+        """Return visible virtual servers associated with a gateway's entities.
+
+        The gateway lookup and every returned virtual server are independently
+        checked using Layer 1 visibility. Associations through tools, resources,
+        and prompts are de-duplicated.
+
+        Args:
+            db: Database session.
+            gateway_id: Gateway ID, exact name, or slug.
+            user_email: Requesting user's email.
+            token_teams: JWT-scoped team list used for Layer 1 visibility.
+
+        Returns:
+            A gateway impact preview containing visible virtual server IDs and names.
+
+        Raises:
+            GatewayNotFoundError: If the gateway is missing or hidden from the caller.
+            GatewayLookupConflictError: If a name or slug matches multiple visible gateways.
+        """
+        gateway = await self.get_gateway(db, gateway_id, user_email=user_email, token_teams=token_teams)
+        canonical_gateway_id = str(gateway.id)
+
+        association_queries = (
+            select(server_tool_association.c.server_id).join(DbTool, server_tool_association.c.tool_id == DbTool.id).where(DbTool.gateway_id == canonical_gateway_id),
+            select(server_resource_association.c.server_id).join(DbResource, server_resource_association.c.resource_id == DbResource.id).where(DbResource.gateway_id == canonical_gateway_id),
+            select(server_prompt_association.c.server_id).join(DbPrompt, server_prompt_association.c.prompt_id == DbPrompt.id).where(DbPrompt.gateway_id == canonical_gateway_id),
+        )
+        server_ids = {str(server_id) for query in association_queries for server_id in db.execute(query).scalars().all()}
+
+        if not server_ids:
+            return GatewayImpactPreview(gateway_id=canonical_gateway_id)
+
+        impacted_servers = db.execute(select(DbServer).where(DbServer.id.in_(server_ids)).order_by(DbServer.name, DbServer.id)).scalars().all()
+        resolved_team_ids = None
+        if token_teams is None and user_email and not is_admin_bypass_granted(db, user_email, token_teams):
+            team_service = TeamManagementService(db)
+            user_teams = await team_service.get_user_teams(user_email)
+            resolved_team_ids = [team.id for team in user_teams]
+
+        visible_servers = []
+        for impacted_server in impacted_servers:
+            if await server_service._check_server_access(  # pylint: disable=protected-access
+                db,
+                impacted_server,
+                user_email,
+                token_teams,
+                resolved_team_ids=resolved_team_ids,
+            ):
+                visible_servers.append(GatewayImpactServer(id=str(impacted_server.id), name=impacted_server.name))
+
+        return GatewayImpactPreview(gateway_id=canonical_gateway_id, servers=visible_servers)
 
     async def set_gateway_state(self, db: Session, gateway_id: str, activate: bool, reachable: bool = True, only_update_reachable: bool = False, user_email: Optional[str] = None) -> GatewayRead:
         """
@@ -4027,6 +4194,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         cache = _get_registry_cache()
         await cache.invalidate_gateways()
+        await cache.invalidate_catalog()
         tool_lookup_cache = _get_tool_lookup_cache()
         await tool_lookup_cache.invalidate_gateway(gateway_id)
 
@@ -4701,22 +4869,33 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             # are treated as "gateway reachable" (handled below in exception logic).
                             try:
                                 # First-Party
-                                from mcpgateway.services.token_storage_service import TokenStorageService  # pylint: disable=import-outside-toplevel
+                                from mcpgateway.services.token_storage_service import TokenStorageService, build_token_user_context  # pylint: disable=import-outside-toplevel
 
-                                # Use fresh session for OAuth token lookup
-                                with fresh_db_session() as token_db:
-                                    token_storage = TokenStorageService(token_db)
-
-                                    # Get user-specific OAuth token (if available)
-                                    if user_email:
+                                # Get user-specific OAuth token only if user_email is provided
+                                if user_email:
+                                    # SECURITY: Health checks run in background without a request-scoped
+                                    # token. Use None (shared path) as the team scope — this is the
+                                    # correct fallback for background processes per AGENTS.md Layer 1
+                                    # invariant. Do NOT query EmailTeamMember here.
+                                    #
+                                    # Known limitation: team-scoped Vault tokens stored under a team
+                                    # path (e.g. engineering/…) will not be found by this lookup
+                                    # because background health checks have no JWT to derive the team
+                                    # from. The health check gracefully degrades to an unauthenticated
+                                    # probe in that case — no credential is leaked and no hard failure
+                                    # occurs. Full fix (jwt_teams_claim threading) is deferred.
+                                    with fresh_db_session() as token_db:
+                                        user_context = build_token_user_context(token_db, user_email, None)
+                                        token_storage = TokenStorageService(token_db, user_context=user_context)
                                         access_token = await token_storage.get_user_token(gateway_id, user_email)
-                                        if access_token:
-                                            headers["Authorization"] = f"Bearer {access_token}"
-                                            logger.debug("Using stored OAuth token for health check of gateway %s", gateway_name)
-                                        else:
-                                            logger.debug("No OAuth token available for user %s on gateway %s, proceeding with unauthenticated health check", user_email, gateway_name)
+
+                                    if access_token:
+                                        headers["Authorization"] = f"Bearer {access_token}"
+                                        logger.debug("Using stored OAuth token for health check of gateway %s", gateway_name)
                                     else:
-                                        logger.debug("No user email provided for authorization_code gateway %s, proceeding with unauthenticated health check", gateway_name)
+                                        logger.debug("No stored OAuth token for user %s on gateway %s, proceeding with unauthenticated health check", user_email, gateway_name)
+                                else:
+                                    logger.debug("No user_email provided for authorization_code gateway %s, proceeding with unauthenticated health check", gateway_name)
                             except Exception as e:
                                 logger.warning("Failed to obtain stored OAuth token for gateway %s, proceeding with unauthenticated health check: %s", gateway_name, e)
                         elif grant_type == "token-exchange":
@@ -4754,6 +4933,12 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             headers = {str(k): str(v) for k, v in auth_data.items()}
                         else:
                             headers = {}
+
+                    if headers:
+                        # Strip invisible Unicode format characters left over in a credential
+                        # stored before this validation existed, so this gateway's health
+                        # checks self-heal without requiring a manual re-save.
+                        headers = {k: SecurityValidator.sanitize_credential_value(v) for k, v in headers.items()}
 
                     # Perform the GET and raise on 4xx/5xx
                     if (gateway_transport).lower() == "sse":
@@ -5145,6 +5330,12 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             validation_errors: list[str] = []
             if auth_type in ("basic", "bearer", "authheaders") and isinstance(authentication, str):
                 authentication = decode_auth(authentication)
+            if authentication:
+                # Strip invisible Unicode format characters left over in a credential stored
+                # before this validation existed. If a genuinely non-ASCII character remains,
+                # it reaches the HTTP client below and is reported distinctly as
+                # GatewayCredentialError rather than a connectivity failure (see except clause).
+                authentication = {k: SecurityValidator.sanitize_credential_value(v) for k, v in authentication.items()}
             if transport.lower() == "sse":
                 capabilities, tools, resources, prompts, validation_errors = await self.connect_to_sse_server(
                     url, authentication, ca_certificate, include_prompts, include_resources, auth_query_params, client_cert=client_cert, client_key=client_key
@@ -5166,14 +5357,22 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     root_cause = root_cause.exceptions[0]
             sanitized_url = sanitize_url_for_logging(url, auth_query_params)
 
-            # If the root cause is already a GatewayConnectionError, re-raise it
-            # with its original chain intact instead of double-wrapping.
-            if isinstance(root_cause, GatewayConnectionError):
+            # If the root cause is already a deliberately-raised GatewayError (e.g. the
+            # GatewayCredentialError above, or a GatewayConnectionError from a nested call),
+            # re-raise it with its original chain intact instead of double-wrapping.
+            if isinstance(root_cause, GatewayError):
                 raise root_cause
 
             raw_error = str(root_cause) or type(root_cause).__name__
             sanitized_error = sanitize_exception_message(raw_error, auth_query_params)
             logger.error("Gateway initialization failed for %s: %s", sanitized_url, sanitized_error, exc_info=True)
+
+            # A header value that reaches the HTTP client encoding step is either an
+            # OAuth-derived value or something else this method didn't sanitize up front.
+            # Report it distinctly so it isn't mistaken for a network/connectivity failure.
+            if isinstance(root_cause, (UnicodeEncodeError, UnicodeDecodeError)):
+                raise GatewayCredentialError(f"Failed to initialize gateway at {sanitized_url}: invalid credential -- {sanitized_error}") from root_cause
+
             raise GatewayConnectionError(f"Failed to initialize gateway at {sanitized_url}: {sanitized_error}") from root_cause
 
     def _get_gateways(self, include_inactive: bool = True) -> list[DbGateway]:
@@ -5559,6 +5758,127 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             "timestamp": datetime.now(timezone.utc).isoformat(),
         }
         await self._publish_event(event)
+
+    async def transfer_gateway_ownership(
+        self,
+        db: Session,
+        gateway_id: str,
+        target_owner_email: str,
+        actor_email: str,
+        target_team_id: Optional[str] = None,
+        token_teams: Optional[List[str]] = None,
+    ) -> GatewayRead:
+        """Transfer gateway ownership to another user.
+
+        Args:
+            db: Database session
+            gateway_id: Gateway to transfer
+            target_owner_email: Email of the new owner
+            actor_email: Email of the user performing the transfer
+            target_team_id: Optional new team ID for the gateway
+            token_teams: Normalized caller team scope; None means unrestricted admin scope
+
+        Returns:
+            GatewayRead with updated ownership
+
+        Raises:
+            GatewayNotFoundError: Gateway does not exist
+            ValueError: Target user invalid, team membership check fails, or gateway is outside scope
+        """
+        # Validate target user exists and is active
+        target_user = db.execute(select(DbEmailUser).where(DbEmailUser.email == target_owner_email, DbEmailUser.is_active == True)).scalar_one_or_none()  # noqa: E712  # pylint: disable=singleton-comparison
+        if not target_user:
+            raise ValueError(f"Target user not found or inactive: {target_owner_email}")
+
+        gateway = get_for_update(db, DbGateway, gateway_id)
+        if not gateway:
+            raise GatewayNotFoundError(f"Gateway not found: {gateway_id}")
+        if token_teams is not None:
+            current_team_id = gateway.team_id
+            if not current_team_id or current_team_id not in token_teams:
+                raise ValueError("Gateway is outside the caller's token team scope")
+            if target_team_id and target_team_id not in token_teams:
+                raise ValueError("Target team is outside the caller's token team scope")
+
+        previous_owner = gateway.owner_email
+        previous_team = gateway.team_id
+
+        # For team-visibility gateways, validate team membership
+        effective_team_id = target_team_id or gateway.team_id
+        if gateway.visibility == "team" and effective_team_id:
+            member = db.execute(
+                select(DbEmailTeamMember).where(
+                    DbEmailTeamMember.team_id == effective_team_id,
+                    DbEmailTeamMember.user_email == target_owner_email,
+                    DbEmailTeamMember.is_active == True,  # noqa: E712  # pylint: disable=singleton-comparison
+                )
+            ).scalar_one_or_none()
+            if not member:
+                raise ValueError(f"Target user {target_owner_email} is not an active member of team {effective_team_id}")
+
+        if target_team_id and gateway.visibility != "team":
+            # Validate target owner is active member of the explicit target team
+            member = db.execute(
+                select(DbEmailTeamMember).where(
+                    DbEmailTeamMember.team_id == target_team_id,
+                    DbEmailTeamMember.user_email == target_owner_email,
+                    DbEmailTeamMember.is_active == True,  # noqa: E712  # pylint: disable=singleton-comparison
+                )
+            ).scalar_one_or_none()
+            if not member:
+                raise ValueError(f"Target user {target_owner_email} is not an active member of target team {target_team_id}")
+
+        def _apply_team_transfer(entity: Any) -> None:
+            """Assign a transferred entity to the target team and expose it to members."""
+            entity.team_id = target_team_id
+            if entity.visibility == "private":
+                entity.visibility = "team"
+
+        # Update gateway ownership
+        gateway.owner_email = target_owner_email
+        if target_team_id:
+            _apply_team_transfer(gateway)
+
+        # Update linked tools
+        tools = db.execute(select(DbTool).where(DbTool.gateway_id == gateway_id)).scalars().all()
+        for tool in tools:
+            tool.owner_email = target_owner_email
+            if target_team_id:
+                _apply_team_transfer(tool)
+
+        # Update linked resources
+        resources = db.execute(select(DbResource).where(DbResource.gateway_id == gateway_id)).scalars().all()
+        for resource in resources:
+            resource.owner_email = target_owner_email
+            if target_team_id:
+                _apply_team_transfer(resource)
+
+        # Update linked prompts
+        prompts = db.execute(select(DbPrompt).where(DbPrompt.gateway_id == gateway_id)).scalars().all()
+        for prompt in prompts:
+            prompt.owner_email = target_owner_email
+            if target_team_id:
+                _apply_team_transfer(prompt)
+
+        db.commit()
+        db.refresh(gateway)
+
+        # Audit log (uses its own session — never pass db)
+        audit = get_audit_trail_service()
+        audit.log_action(
+            action="gateway.transfer_ownership",
+            user_id=actor_email,
+            resource_type="gateway",
+            resource_id=gateway_id,
+            details={
+                "previous_owner": previous_owner,
+                "new_owner": target_owner_email,
+                "previous_team": previous_team,
+                "new_team": target_team_id or gateway.team_id,
+            },
+        )
+
+        return self.convert_gateway_to_read(gateway)
 
     def convert_gateway_to_read(self, gateway: DbGateway) -> GatewayRead:
         """Convert a DbGateway instance to a GatewayRead Pydantic model.
@@ -6115,6 +6435,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         oauth_config: Dict[str, Any],
         user_email: Optional[str],
         db: Optional[Session] = None,
+        user_context: Optional[Dict[str, Any]] = None,
     ) -> AuthCodeRefreshHeaders:
         """Build the Authorization header for refreshing an authorization_code OAuth gateway.
 
@@ -6129,6 +6450,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             user_email: Authenticated caller's email; required to locate the stored token.
             db: Optional caller-owned session to reuse for the token lookup. When omitted, a
                 short-lived ``fresh_db_session()`` is opened and closed here instead.
+            user_context: Optional user context dict (email, teams, is_admin) for Vault path
+                selection. When omitted, TokenStorageService defaults to the shared path which
+                is correct for the database backend but wrong for team-scoped Vault users.
 
         Returns:
             The resolved ``Authorization`` bearer header plus any advisory (non-blocking)
@@ -6147,7 +6471,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         async def _lookup(session: Session) -> tuple:
             """Fetch the stored OAuth token and learned audience for this user/gateway pair."""
-            token_storage = TokenStorageService(session)
+            token_storage = TokenStorageService(session, user_context=user_context)
             token = await token_storage.get_user_token(gateway_id, user_email)
             if not token:
                 raise GatewayConnectionError(
@@ -6188,6 +6512,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         gateway: Optional[DbGateway] = None,
         include_resources: bool = True,
         include_prompts: bool = True,
+        user_context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, int]:
         """Refresh tools, resources, and prompts for a gateway from the background health
         check, a manual API-triggered refresh, or the notification service.
@@ -6211,6 +6536,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             gateway: Optional DbGateway object to avoid redundant DB lookup
             include_resources: Whether to include resources in the refresh
             include_prompts: Whether to include prompts in the refresh
+            user_context: Optional user context dict (email, teams, is_admin) forwarded to
+                token storage for Vault path selection on authorization_code gateways.
 
         Returns:
             Dict with counts: {tools_added, tools_removed, resources_added,
@@ -6376,6 +6703,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     gateway_url=gateway_base_url,
                     oauth_config=gateway_oauth_config,
                     user_email=user_email,
+                    user_context=user_context,
                 )
                 pre_auth_headers = {**(pre_auth_headers or {}), **oauth_result.headers}
 
@@ -6564,6 +6892,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         include_prompts: bool = True,
         user_email: Optional[str] = None,
         request_headers: Optional[Dict[str, str]] = None,
+        user_context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """Manually trigger a refresh of tools/resources/prompts for a gateway.
 
@@ -6577,6 +6906,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             include_prompts: Whether to include prompts in the refresh
             user_email: Email of the user triggering the refresh
             request_headers: Optional request headers for passthrough authentication
+            user_context: Optional user context dict (email, teams, is_admin) forwarded to
+                token storage for Vault path selection on authorization_code gateways.
 
         Returns:
             Dict with counts: {tools_added, tools_updated, tools_removed,
@@ -6669,6 +7000,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 gateway=gateway,
                 include_resources=include_resources,
                 include_prompts=include_prompts,
+                user_context=user_context,
             )
             # Note: last_refresh_at is updated inside _refresh_gateway_tools_resources_prompts on success
 
@@ -7495,6 +7827,252 @@ def _classify_handshake_error(root_cause: BaseException) -> tuple[str, str]:
     return "invalid_response", _HANDSHAKE_INVALID_COPY
 
 
+async def _probe_mcp_session(
+    session: ClientSession,
+    *,
+    credential_source: Literal["stored", "form", "none", "session"],
+    start_time: float,
+    log_context: str,
+) -> GatewayHandshakeResponse:
+    """Run initialize plus first-page component listings on an open MCP session.
+
+    Shared by the gateway-URL handshake and the virtual-server handshake: both
+    open a session by different means (an externally validated, DNS-pinned URL
+    vs. an in-process ASGI call to the gateway's own transport) but negotiate
+    and summarize the result identically.
+
+    Args:
+        session: The connected MCP client session.
+        credential_source: Provenance of the credentials used to open the session.
+        start_time: ``time.monotonic()`` value captured when the handshake attempt began.
+        log_context: Sanitized identifier (URL or server id) used in list-call debug logs.
+
+    Returns:
+        GatewayHandshakeResponse: The successful initialize-path result.
+    """
+    init = await session.initialize()
+    capabilities = init.capabilities.model_dump(by_alias=True, exclude_none=True)
+    component_counts: Dict[str, int] = {}
+    counts_partial = False
+    for capability, list_call, attr in (
+        (init.capabilities.tools, session.list_tools, "tools"),
+        (init.capabilities.resources, session.list_resources, "resources"),
+        (init.capabilities.prompts, session.list_prompts, "prompts"),
+    ):
+        if capability is None:
+            continue
+        try:
+            list_result = await list_call()
+            component_counts[attr] = len(getattr(list_result, attr))
+            if getattr(list_result, "nextCursor", None):
+                counts_partial = True
+        except Exception as list_exc:
+            logger.debug("MCP handshake list_%s failed for %s: %s", attr, log_context, list_exc)
+
+    return GatewayHandshakeResponse(
+        success=True,
+        latency_ms=int((time.monotonic() - start_time) * 1000),
+        negotiation_path="initialize",
+        protocol_version=str(init.protocolVersion),
+        server_name=init.serverInfo.name,
+        server_version=init.serverInfo.version,
+        capabilities=capabilities,
+        component_counts=component_counts or None,
+        counts_partial=counts_partial,
+        credential_source=credential_source,
+        raw_preview=json.dumps(init.model_dump(by_alias=True, exclude_none=True), default=str)[:4096],
+    )
+
+
+# Headers that must never reach the in-process handshake probe, regardless of
+# whether they arrived via the caller's own forwarded credentials or an explicit
+# body override: proxy-identity / client-IP headers a caller could otherwise use
+# to impersonate another principal or spoof their source IP against
+# TRUST_PROXY_AUTH_DANGEROUSLY or IP-scoped token checks, ContextForge-internal
+# routing headers, MCP session headers (must be derived fresh by the SDK), and
+# hop-by-hop headers that are never valid to forward manually.
+_HANDSHAKE_HEADER_DENYLIST: frozenset[str] = frozenset(
+    {
+        "host",
+        "x-real-ip",
+        "mcp-session-id",
+        "connection",
+        "keep-alive",
+        "proxy-connection",
+        "te",
+        "trailer",
+        "upgrade",
+        "content-length",
+        "transfer-encoding",
+    }
+)
+
+
+def _handshake_form_header_allowlist() -> frozenset[str]:
+    """The only header(s) an explicit body override is trusted to set.
+
+    The caller is supplying their own credential for their own probe, so
+    overriding the auth header is safe -- both the literal ``authorization``
+    and, when ``AUTH_HEADER_NAME`` is customized away from the default, the
+    configured auth header name are honored (matching the nested request's
+    own auth extraction, which reads that configured name). Anything else --
+    in particular the configured trusted-proxy identity header -- must never
+    be settable from arbitrary caller-supplied JSON.
+
+    Returns:
+        The set of lowercased header names an explicit body override may set.
+    """
+    return frozenset({"authorization", _resolve_auth_header_name(settings).lower()})
+
+
+def _is_handshake_header_denied(header_name: str, *, allow_proxy_identity: bool) -> bool:
+    """Whether a header must be dropped before it reaches the in-process handshake probe.
+
+    Args:
+        header_name: The header's name (any case).
+        allow_proxy_identity: Whether the configured trusted-proxy identity header
+            (``settings.proxy_user_header``) is allowed through. Only ``True`` for
+            headers sourced from the caller's own already-authenticated request
+            (see ``test_server_mcp_handshake`` in ``main.py``) -- never for an
+            explicit body override, which is arbitrary caller-supplied JSON.
+
+    Returns:
+        True if the header must be stripped.
+    """
+    lowered = header_name.lower()
+    if lowered in _HANDSHAKE_HEADER_DENYLIST:
+        return True
+    if lowered.startswith("x-forwarded-") or lowered.startswith("x-contextforge-"):
+        return True
+    if lowered == settings.proxy_user_header.lower():
+        return not allow_proxy_identity
+    return False
+
+
+async def test_server_handshake(
+    server_id: str,
+    server_name: str,
+    server_enabled: bool,
+    body: ServerHandshakeRequest,
+    forwarded_headers: Dict[str, str],
+) -> GatewayHandshakeResponse:
+    """Test whether a virtual server's own MCP endpoint speaks MCP via a protocol handshake.
+
+    Unlike :func:`test_gateway_handshake`, the target is not an arbitrary
+    caller-supplied URL that must clear the gateway-test SSRF allowlist — it is
+    the gateway's own ``/servers/{server_id}/mcp`` transport endpoint, derived
+    from an ID the caller already had read access to (checked by the router via
+    :meth:`ServerService.get_server` before this is called). Skipping URL
+    validation here is deliberate: that gate exists to keep the process from
+    being used to probe arbitrary/internal hosts, and this target is never
+    anything other than the process's own transport.
+
+    The probe dispatches through an in-process ASGI transport (``httpx.ASGITransport``)
+    rather than a real network round trip, so it works identically behind any
+    reverse proxy/LB and — critically for multi-worker deployments — always lands
+    on this worker rather than being routed to an arbitrary one by the kernel.
+    It still runs the full request through the real ASGI app: auth, RBAC and MCP
+    negotiation are exercised exactly as they would be for a real client, using
+    the caller's own forwarded credentials (or an explicit header override), so
+    the result reflects what an actual client would see.
+
+    Args:
+        server_id: ID of the virtual server to test.
+        server_name: Display name of the virtual server, for error copy.
+        server_enabled: Whether the virtual server is currently enabled.
+        body: Optional header overrides for the handshake request.
+        forwarded_headers: Headers from the caller's original request (typically
+            just ``Authorization``/``Cookie``) to reuse as the handshake's credentials.
+
+    Returns:
+        GatewayHandshakeResponse: The handshake outcome, including negotiation path,
+            server identity, capabilities, component counts, and failure classification.
+    """
+    start_time = time.monotonic()
+
+    if not server_enabled:
+        return GatewayHandshakeResponse(
+            success=False,
+            latency_ms=int((time.monotonic() - start_time) * 1000),
+            failure_class="transport",
+            error=f"Virtual server '{server_name}' is disabled. Enable it before testing the connection.",
+        )
+
+    # SECURITY: forwarded_headers comes from the caller's own already-authenticated
+    # request (Authorization/cookie, or the configured trusted-proxy identity header
+    # -- see test_server_mcp_handshake in main.py) so it may carry that proxy header
+    # through; body.headers is arbitrary caller-supplied JSON and is restricted to a
+    # strict allowlist so it can never be used to inject proxy-identity, client-IP,
+    # session, or hop-by-hop headers into the in-process probe (CWE-287/CWE-807).
+    headers = {key: value for key, value in forwarded_headers.items() if not _is_handshake_header_denied(key, allow_proxy_identity=True)}
+    credential_source: Literal["stored", "form", "none", "session"] = "session" if headers else "none"
+    form_headers = {key: value for key, value in (body.headers or {}).items() if key.lower() in _handshake_form_header_allowlist()}
+    if form_headers:
+        overridden_keys = {key.lower() for key in form_headers}
+        headers = {key: value for key, value in headers.items() if key.lower() not in overridden_keys}
+        headers.update(form_headers)
+        credential_source = "form"
+
+    def _failure(failure_class: Literal["transport", "protocol", "auth", "invalid_response"], error: str) -> GatewayHandshakeResponse:
+        """Build a failed handshake response preserving the resolved credential source."""
+        return GatewayHandshakeResponse(success=False, latency_ms=int((time.monotonic() - start_time) * 1000), credential_source=credential_source, failure_class=failure_class, error=error)
+
+    # Deferred import: `main` imports this module at load time, so importing the
+    # ASGI `app` singleton at module scope here would be circular.
+    from mcpgateway.main import app  # pylint: disable=import-outside-toplevel,cyclic-import
+
+    def get_httpx_client_factory(
+        headers: Optional[Dict[str, str]] = None,
+        timeout: Optional[httpx.Timeout] = None,
+        auth: Optional[httpx.Auth] = None,
+    ) -> httpx.AsyncClient:
+        """Build the SDK's httpx client to dispatch in-process via ASGI transport rather than a real socket.
+
+        Args:
+            headers: Optional headers for the client.
+            timeout: Optional timeout for the client.
+            auth: Optional auth for the client.
+
+        Returns:
+            httpx.AsyncClient: Client wired to the gateway's own ASGI app.
+        """
+        return httpx.AsyncClient(
+            follow_redirects=False,
+            headers=headers,
+            timeout=timeout if timeout else get_http_timeout(),
+            auth=auth,
+            # client=("127.0.0.1", 0) sets scope["client"] to a loopback address, matching
+            # the trust posture of a same-host caller (see post_rpc_in_process precedent).
+            transport=httpx.ASGITransport(app=app, client=("127.0.0.1", 0)),
+        )
+
+    target_url = f"{internal_loopback_base_url()}/servers/{server_id}/mcp"
+
+    try:
+        async with asyncio.timeout(settings.health_check_timeout):
+            try:
+                async with streamablehttp_client(url=target_url, headers=headers, timeout=settings.health_check_timeout, httpx_client_factory=get_httpx_client_factory) as (
+                    read_stream,
+                    write_stream,
+                    _get_session_id,
+                ):
+                    async with ClientSession(read_stream, write_stream) as session:
+                        return await _probe_mcp_session(session, credential_source=credential_source, start_time=start_time, log_context=server_id)
+            except TimeoutError:
+                raise
+            except Exception as e:
+                root_cause: BaseException = e
+                while isinstance(root_cause, BaseExceptionGroup) and root_cause.exceptions:  # pylint: disable=no-member
+                    root_cause = root_cause.exceptions[0]  # pylint: disable=no-member
+                failure_class, copy = _classify_handshake_error(root_cause)
+                if failure_class == "transport":
+                    copy = f"{copy}: {sanitize_exception_message(str(root_cause))}"
+                logger.warning("MCP handshake initialize failed for virtual server %s: %s", server_id, sanitize_exception_message(str(root_cause)))
+                return _failure(failure_class, copy)
+    except TimeoutError:
+        return _failure("transport", _HANDSHAKE_TRANSPORT_COPY)
+
+
 async def test_gateway_connectivity(
     request: GatewayTestRequest,
     team_id: Optional[str],
@@ -7542,6 +8120,7 @@ async def test_gateway_connectivity(
     # SECURITY: the authority comes from the validated URL. Dropping any caller-supplied Host
     # first also prevents a differently-cased key from being sent as a second Host header.
     headers = {key: value for key, value in (request.headers or {}).items() if key.lower() != "host"}
+    caller_supplies_accept = any(key.lower() == "accept" for key in headers)
     headers["Host"] = target["original_authority"]
 
     # Attempt to find a registered gateway matching this URL and team.
@@ -7565,9 +8144,17 @@ async def test_gateway_connectivity(
                 # For Authorization Code flow, try to get stored tokens
                 try:
                     # First-Party
-                    from mcpgateway.services.token_storage_service import TokenStorageService  # pylint: disable=import-outside-toplevel
+                    from mcpgateway.services.token_storage_service import TokenStorageService, build_token_user_context  # pylint: disable=import-outside-toplevel
 
-                    token_storage = TokenStorageService(db)
+                    # SECURITY: Use token_teams from the authenticated user dict — this is
+                    # already resolved by auth middleware and must not be widened by
+                    # re-querying EmailTeamMember (Layer 1 token-scoping invariant).
+                    user_token_teams = user.get("token_teams") if isinstance(user, dict) else None
+                    # jwt_teams_claim is forwarded as a Vault path hint for admin bypass
+                    # (token_teams=None) so store and lookup resolve to the same path.
+                    jwt_teams_hint = user.get("jwt_teams_claim") if isinstance(user, dict) else None
+                    user_context = build_token_user_context(db, user_email, user_token_teams, jwt_teams_hint)
+                    token_storage = TokenStorageService(db, user_context=user_context)
 
                     # Get user-specific OAuth token
                     if not user_email:
@@ -7590,7 +8177,7 @@ async def test_gateway_connectivity(
                             status_code=401, latency_ms=latency_ms, body={"error": f"Authorize '{gateway.name}' before testing. Open /oauth/authorize/{gateway.id} to complete the OAuth flow."}
                         )
                 except Exception as e:
-                    logger.error(f"Failed to obtain stored OAuth token for gateway {gateway.name}: {e}")
+                    logger.error("Failed to obtain stored OAuth token for gateway %s: %s", gateway.name, e)
                     latency_ms = int((time.monotonic() - start_time) * 1000)
                     return GatewayTestResponse(
                         status_code=500,
@@ -7606,7 +8193,7 @@ async def test_gateway_connectivity(
                     )
                     headers["Authorization"] = f"Bearer {access_token}"
                 except Exception as e:
-                    logger.error(f"Failed to obtain OAuth access token for gateway {gateway.name}: {e}")
+                    logger.error("Failed to obtain OAuth access token for gateway %s: %s", gateway.name, e)
                     latency_ms = int((time.monotonic() - start_time) * 1000)
                     return GatewayTestResponse(
                         status_code=502,
@@ -7615,9 +8202,20 @@ async def test_gateway_connectivity(
                     )
         elif gateway and gateway.auth_type in ("basic", "bearer", "authheaders") and gateway.auth_value:
             if isinstance(gateway.auth_value, dict):
-                headers.update(gateway.auth_value)
+                headers.update({key: value for key, value in gateway.auth_value.items() if not caller_supplies_accept or key.lower() != "accept"})
             elif isinstance(gateway.auth_value, str):
-                headers.update(decode_auth(gateway.auth_value))
+                headers.update({key: value for key, value in decode_auth(gateway.auth_value).items() if not caller_supplies_accept or key.lower() != "accept"})
+
+        # MCP streamable HTTP servers can require explicit event-stream support.
+        # Preserve a caller-supplied Accept value, including non-canonical casing.
+        if not caller_supplies_accept:
+            request_method = request.method.upper()
+            if request_method == "GET":
+                headers = {key: value for key, value in headers.items() if key.lower() != "accept"}
+                headers["Accept"] = "text/event-stream"
+            elif request_method == "POST":
+                headers = {key: value for key, value in headers.items() if key.lower() != "accept"}
+                headers["Accept"] = "application/json, text/event-stream"
 
         # Prepare request based on content type
         content_type = getattr(request, "content_type", "application/json")
@@ -7964,38 +8562,7 @@ async def test_gateway_handshake(
                 Returns:
                     GatewayHandshakeResponse: The successful initialize-path result.
                 """
-                init = await session.initialize()
-                capabilities = init.capabilities.model_dump(by_alias=True, exclude_none=True)
-                component_counts: Dict[str, int] = {}
-                counts_partial = False
-                for capability, list_call, attr in (
-                    (init.capabilities.tools, session.list_tools, "tools"),
-                    (init.capabilities.resources, session.list_resources, "resources"),
-                    (init.capabilities.prompts, session.list_prompts, "prompts"),
-                ):
-                    if capability is None:
-                        continue
-                    try:
-                        list_result = await list_call()
-                        component_counts[attr] = len(getattr(list_result, attr))
-                        if getattr(list_result, "nextCursor", None):
-                            counts_partial = True
-                    except Exception as list_exc:
-                        logger.debug("MCP handshake list_%s failed for %s: %s", attr, sanitize_url_for_logging(validated_base_url), list_exc)
-
-                return GatewayHandshakeResponse(
-                    success=True,
-                    latency_ms=_latency_ms(),
-                    negotiation_path="initialize",
-                    protocol_version=str(init.protocolVersion),
-                    server_name=init.serverInfo.name,
-                    server_version=init.serverInfo.version,
-                    capabilities=capabilities,
-                    component_counts=component_counts or None,
-                    counts_partial=counts_partial,
-                    credential_source=credential_source,
-                    raw_preview=json.dumps(init.model_dump(by_alias=True, exclude_none=True), default=str)[:4096],
-                )
+                return await _probe_mcp_session(session, credential_source=credential_source, start_time=start_time, log_context=sanitize_url_for_logging(validated_base_url))
 
             try:
                 # SECURITY: the SDK keeps the validated hostname (it rejects a server-advertised

@@ -22,7 +22,6 @@ classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Framework :: FastAPI",
@@ -31,7 +30,7 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Application Frameworks"
 ]
 readme = "README.md"
-requires-python = ">=3.11,<3.14"
+requires-python = ">=3.12,<3.14"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
 
@@ -46,7 +45,7 @@ authors = [
 dependencies = [
     "cedarpy>=4.8.7",
     "mcp>=1.28.1,<2",
-    "mcp-contextforge-gateway>=1.0.8",
+    "mcp-contextforge-gateway>=1.0.9",
 ]
 
 # URLs
@@ -59,11 +58,6 @@ Changelog = "https://github.com/IBM/mcp-context-forge/blob/main/CHANGELOG.md"
 
 [tool.uv.sources]
 mcp-contextforge-gateway = { git = "https://github.com/IBM/mcp-context-forge.git", rev = "main" }
-
-[tool.uv.exclude-newer-package]
-# cryptography>=50.0.0 is a transitive requirement via mcp-contextforge-gateway.
-# 50.0.0 published 2026-07-31T14:23Z falls outside the rolling 10-day exclude-newer window.
-cryptography = "2026-08-09T23:59:59Z"
 
 # ----------------------------------------------------------------
 # Optional dependency groups (extras)

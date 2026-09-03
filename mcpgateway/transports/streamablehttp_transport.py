@@ -44,6 +44,7 @@ from uuid import uuid4
 
 # Third-Party
 import anyio
+from cpex.framework import GlobalContext, PluginContextTable
 from fastapi import HTTPException
 from fastapi.security.utils import get_authorization_scheme_param
 import httpx
@@ -1682,6 +1683,58 @@ def _truthy_is_error(result: Any) -> bool:
     return getattr(result, "is_error", False) is True or getattr(result, "isError", False) is True
 
 
+def _get_plugin_contexts_or_none() -> Tuple[Optional[GlobalContext], Optional[PluginContextTable]]:
+    """Retrieves the plugin contexts recorded by the HTTP_PRE_REQUEST hooks.
+
+    ``HttpAuthMiddleware`` stores the ``GlobalContext`` and the
+    ``PluginContextTable`` produced by ``HTTP_PRE_REQUEST`` on ``request.state``
+    (backed by the ASGI ``scope["state"]`` dictionary) so that later hooks can
+    read state written by earlier ones. The REST handlers in
+    ``mcpgateway/main.py`` forward both into the service layer; without the same
+    hand-off here, ``TOOL_PRE_INVOKE``, ``PROMPT_PRE_FETCH`` and
+    ``RESOURCE_PRE_FETCH`` hooks reached through ``/mcp`` always see an empty
+    context.
+
+    Reading from the ASGI scope rather than from a ``ContextVar`` mirrors path 2
+    of :func:`_get_request_context_or_default` and survives the task-group
+    boundaries introduced by the MCP SDK.
+
+    Returns:
+        Tuple[Optional[GlobalContext], Optional[PluginContextTable]]: The global
+        context and context table left behind by the pre-request hooks, or
+        ``(None, None)`` when no request context is active, the transport is not
+        driven by an ASGI scope, or the plugin manager recorded nothing.
+
+    Examples:
+        >>> _get_plugin_contexts_or_none()
+        (None, None)
+    """
+    try:
+        request = mcp_app.request_context.request
+    except LookupError:
+        return None, None
+    except Exception as exc:  # pylint: disable=broad-except
+        logger.debug("Failed to resolve request context for plugin contexts: %s", exc)
+        return None, None
+
+    scope = getattr(request, "scope", None)
+    if not isinstance(scope, dict):
+        return None, None
+
+    state = scope.get("state")
+    if not isinstance(state, dict):
+        return None, None
+
+    global_context = state.get("plugin_global_context")
+    context_table = state.get("plugin_context_table")
+    # ``PluginContextTable`` is an alias for ``dict[str, PluginContext]``, so the
+    # runtime check is against ``dict``.
+    return (
+        global_context if isinstance(global_context, GlobalContext) else None,
+        context_table if isinstance(context_table, dict) else None,
+    )
+
+
 @mcp_app.call_tool(validate_input=False)
 async def call_tool(
     name: str, arguments: dict
@@ -1702,6 +1755,10 @@ async def call_tool(
     This function supports the MCP protocol's tool calling with structured content validation.
     In direct_proxy mode, returns the raw CallToolResult from the remote server.
     In normal mode, converts ToolResult to CallToolResult with content normalization.
+
+    Plugin contexts recorded by ``HTTP_PRE_REQUEST`` are read from the ASGI scope via
+    :func:`_get_plugin_contexts_or_none` and forwarded to ``invoke_tool`` so that
+    ``TOOL_PRE_INVOKE`` hooks share state with earlier hooks.
 
     Args:
         name (str): The name of the tool to invoke.
@@ -1914,6 +1971,9 @@ async def call_tool(
             # Pool not initialized - execute locally
             pass
 
+    # Cross-hook plugin state sharing on /mcp (issue #3879).
+    plugin_global_context, plugin_context_table = _get_plugin_contexts_or_none()
+
     try:
         async with get_db() as db:
             # Use tool service for all tool invocations (handles direct_proxy internally)
@@ -1928,6 +1988,8 @@ async def call_tool(
                 server_id=server_id,
                 meta_data=meta_data,
                 require_model_visible=True,
+                plugin_global_context=plugin_global_context,
+                plugin_context_table=plugin_context_table,
             )
             if not result or not result.content:
                 logger.warning("No content returned by tool: %s", name)
@@ -2189,6 +2251,8 @@ async def _get_request_context_or_default() -> Tuple[str, dict[str, Any], dict[s
                 user_ctx = await _normalize_jwt_payload(raw_payload)
             else:
                 user_ctx = {}
+        except HTTPException:
+            raise
         except Exception as e:
             logger.warning("Failed to recover user context in stateful session: %s", e)
             user_ctx = {}
@@ -2198,6 +2262,8 @@ async def _get_request_context_or_default() -> Tuple[str, dict[str, Any], dict[s
     except LookupError:
         # Not in a request context
         return s_id, request_headers_var.get(), user_context_var.get()
+    except HTTPException:
+        raise
     except Exception as e:
         logger.exception("Error recovering context in stateful session: %s", e)
         return s_id, request_headers_var.get(), user_context_var.get()
@@ -2241,12 +2307,130 @@ async def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
     # This ensures SSO-provisioned platform_admins get admin bypass on the fallback
     # stateful-session path, matching the primary _auth_jwt path behavior (issue #4070).
     db_user_is_admin = False
+    auth_cache = None
+    auth_context_resolved = False
+    platform_admin_email = getattr(settings, "platform_admin_email", "")
     if email:
-        # First-Party
-        from mcpgateway.utils.admin_check import is_user_admin  # pylint: disable=import-outside-toplevel
+        jti = payload.get("jti")
+        if settings.auth_cache_enabled:
+            try:
+                # First-Party
+                from mcpgateway.cache.auth_cache import CachedAuthContext, get_auth_cache  # pylint: disable=import-outside-toplevel
 
-        with SessionLocal() as db:
-            db_user_is_admin = is_user_admin(db, email)
+                auth_cache = get_auth_cache()
+                cached_ctx = await auth_cache.get_auth_context(email, jti)
+                if cached_ctx is not None:
+                    if cached_ctx.is_token_revoked:
+                        raise HTTPException(status_code=HTTP_401_UNAUTHORIZED, detail="Token has been revoked")
+                    cached_user = cached_ctx.user
+                    if cached_user and not cached_user.get("is_active", True):
+                        raise HTTPException(status_code=HTTP_401_UNAUTHORIZED, detail="Account disabled")
+                    if cached_user is None and settings.require_user_in_db and email != platform_admin_email:
+                        raise HTTPException(status_code=HTTP_401_UNAUTHORIZED, detail="User not found in database")
+                    if cached_user and settings.require_user_in_db:
+                        # Match the primary auth path: a cached user is not proof
+                        # that the database record still exists in strict mode.
+                        # First-Party
+                        from mcpgateway.auth import _get_user_by_email_sync  # pylint: disable=import-outside-toplevel
+
+                        db_user = await asyncio.to_thread(_get_user_by_email_sync, email)
+                        if db_user is None:
+                            raise HTTPException(status_code=HTTP_401_UNAUTHORIZED, detail="User not found in database")
+                    db_user_is_admin = bool(cached_user and cached_user.get("is_admin", False))
+                    auth_context_resolved = True
+                elif settings.auth_cache_batch_queries:
+                    # First-Party
+                    from mcpgateway.auth import _get_auth_context_batched_sync  # pylint: disable=import-outside-toplevel
+
+                    batched_ctx = await asyncio.to_thread(_get_auth_context_batched_sync, email, jti)
+                    if batched_ctx.get("is_token_revoked", False):
+                        raise HTTPException(status_code=HTTP_401_UNAUTHORIZED, detail="Token has been revoked")
+                    batched_user = batched_ctx.get("user")
+                    if batched_user and not batched_user.get("is_active", True):
+                        raise HTTPException(status_code=HTTP_401_UNAUTHORIZED, detail="Account disabled")
+                    if batched_user is None and settings.require_user_in_db and email != platform_admin_email:
+                        raise HTTPException(status_code=HTTP_401_UNAUTHORIZED, detail="User not found in database")
+                    db_user_is_admin = bool(batched_user and batched_user.get("is_admin", False))
+                    auth_context_resolved = True
+                    try:
+                        await auth_cache.set_auth_context(
+                            email,
+                            jti,
+                            CachedAuthContext(
+                                user=batched_user,
+                                personal_team_id=batched_ctx.get("personal_team_id"),
+                                is_token_revoked=bool(batched_ctx.get("is_token_revoked", False)),
+                            ),
+                        )
+                    except Exception as cache_set_error:
+                        logger.debug("Failed to cache stateful-session auth context for %s: %s", email, cache_set_error)
+            except HTTPException:
+                raise
+            except Exception as cache_error:
+                logger.debug("Stateful-session auth cache lookup failed for %s: %s", email, cache_error)
+
+        if not auth_context_resolved:
+            # First-Party
+            from mcpgateway.auth import _check_token_revoked_sync, _get_user_by_email_sync  # pylint: disable=import-outside-toplevel
+
+            if jti and await asyncio.to_thread(_check_token_revoked_sync, jti):
+                raise HTTPException(status_code=HTTP_401_UNAUTHORIZED, detail="Token has been revoked")
+
+            try:
+                user_record = await asyncio.to_thread(_get_user_by_email_sync, email)
+            except Exception as user_lookup_error:
+                # Preserve the primary auth path's fail-open behavior when the
+                # user status lookup is unavailable; JWT signature validation
+                # has already succeeded.  Keep the legacy admin helper as a
+                # compatibility fallback for deployments that provide it.
+                logger.warning("Stateful-session user lookup failed for %s: %s", email, user_lookup_error)
+                # First-Party
+                from mcpgateway.utils.admin_check import is_user_admin  # pylint: disable=import-outside-toplevel
+
+                with SessionLocal() as db:
+                    db_user_is_admin = is_user_admin(db, email)
+                user_record = None
+            else:
+                if user_record and not getattr(user_record, "is_active", True):
+                    raise HTTPException(status_code=HTTP_401_UNAUTHORIZED, detail="Account disabled")
+                if user_record is None and settings.require_user_in_db and email != platform_admin_email:
+                    raise HTTPException(status_code=HTTP_401_UNAUTHORIZED, detail="User not found in database")
+                db_user_is_admin = bool(user_record and getattr(user_record, "is_admin", False))
+                # Warm the auth cache so subsequent requests on this stateful
+                # session avoid the DB round-trip (mirrors primary path at 5328+).
+                if auth_cache is not None:
+                    try:
+                        # First-Party
+                        from mcpgateway.cache.auth_cache import CachedAuthContext  # pylint: disable=import-outside-toplevel
+
+                        await auth_cache.set_auth_context(
+                            email,
+                            jti,
+                            CachedAuthContext(
+                                user=(
+                                    {
+                                        "email": getattr(user_record, "email", email),
+                                        "password_hash": getattr(user_record, "password_hash", ""),
+                                        "full_name": getattr(user_record, "full_name", None),
+                                        "is_admin": bool(getattr(user_record, "is_admin", False)),
+                                        "is_active": bool(getattr(user_record, "is_active", True)),
+                                        "auth_provider": getattr(user_record, "auth_provider", "local"),
+                                        "password_change_required": bool(getattr(user_record, "password_change_required", False)),
+                                        "email_verified_at": getattr(user_record, "email_verified_at", None),
+                                        "created_at": getattr(user_record, "created_at", None),
+                                        "updated_at": getattr(user_record, "updated_at", None),
+                                    }
+                                    if user_record is not None
+                                    else None
+                                ),
+                                personal_team_id=None,
+                                is_token_revoked=False,
+                            ),
+                        )
+                    except Exception as cache_set_error:
+                        logger.debug("Failed to cache stateful-session auth context for %s: %s", email, cache_set_error)
+    if email == platform_admin_email:
+        db_user_is_admin = True
 
     effective_is_admin = db_user_is_admin or jwt_is_admin
 
@@ -2263,6 +2447,14 @@ async def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
         from mcpgateway.auth import normalize_token_teams  # pylint: disable=import-outside-toplevel
 
         final_teams = normalize_token_teams(payload)
+
+    # SECURITY: API/legacy team claims must still match current active memberships.
+    if token_use != "session" and final_teams and email:
+        # First-Party
+        from mcpgateway.auth import validate_token_team_membership  # pylint: disable=import-outside-toplevel
+
+        if not validate_token_team_membership(email, final_teams):
+            raise HTTPException(status_code=HTTP_403_FORBIDDEN, detail="Token invalid: User is no longer a member of the associated team")
 
     user_ctx: dict[str, Any] = {
         "email": email,
@@ -2452,6 +2644,10 @@ async def get_prompt(prompt_id: str, arguments: dict[str, str] | None = None) ->
     """
     Retrieves a prompt by ID, optionally substituting arguments.
 
+    Plugin contexts recorded by ``HTTP_PRE_REQUEST`` are read from the ASGI scope via
+    :func:`_get_plugin_contexts_or_none` and forwarded to ``get_prompt`` so that
+    ``PROMPT_PRE_FETCH`` hooks share state with earlier hooks.
+
     Args:
         prompt_id (str): The ID of the prompt to retrieve.
         arguments (Optional[dict[str, str]]): Optional dictionary of arguments to substitute into the prompt.
@@ -2505,6 +2701,9 @@ async def get_prompt(prompt_id: str, arguments: dict[str, str] | None = None) ->
         # request_context might not be active in some edge cases (e.g. tests)
         logger.debug("No active request context found")
 
+    # Cross-hook plugin state sharing on /mcp (issue #3879).
+    plugin_global_context, plugin_context_table = _get_plugin_contexts_or_none()
+
     try:
         async with get_db() as db:
             try:
@@ -2516,6 +2715,8 @@ async def get_prompt(prompt_id: str, arguments: dict[str, str] | None = None) ->
                     server_id=server_id,
                     token_teams=token_teams,
                     _meta_data=meta_data,
+                    plugin_global_context=plugin_global_context,
+                    plugin_context_table=plugin_context_table,
                 )
             except Exception as e:
                 logger.exception("Error getting prompt '%s': %s", prompt_id, e)
@@ -2630,6 +2831,11 @@ async def read_resource(resource_uri: str) -> Union[str, bytes, Iterable[ReadRes
     """
     Reads the content of a resource specified by its URI.
 
+    Plugin contexts recorded by ``HTTP_PRE_REQUEST`` are read from the ASGI scope via
+    :func:`_get_plugin_contexts_or_none` and forwarded to ``read_resource`` so that
+    ``RESOURCE_PRE_FETCH`` hooks share state with earlier hooks. The direct-proxy
+    branch bypasses the gateway-side resource hooks and is unaffected.
+
     Args:
         resource_uri (str): The URI of the resource to read.
 
@@ -2682,6 +2888,9 @@ async def read_resource(resource_uri: str) -> Union[str, bytes, Iterable[ReadRes
         # request_context might not be active in some edge cases (e.g. tests)
         logger.debug("No active request context found")
 
+    # Cross-hook plugin state sharing on /mcp (issue #3879).
+    plugin_global_context, plugin_context_table = _get_plugin_contexts_or_none()
+
     try:
         async with get_db() as db:
             # Check for X-Context-Forge-Gateway-Id header first for direct proxy mode
@@ -2730,6 +2939,8 @@ async def read_resource(resource_uri: str) -> Union[str, bytes, Iterable[ReadRes
                     token_teams=token_teams,
                     meta_data=meta_data,
                     request_headers=request_headers,
+                    plugin_global_context=plugin_global_context,
+                    plugin_context_table=plugin_context_table,
                 )
             except (ResourceError, ResourceNotFoundError):
                 raise
@@ -4916,12 +5127,23 @@ class _StreamableHttpAuthHandler:
     can send error responses without threading these values through every call.
     """
 
-    __slots__ = ("scope", "receive", "send")
+    __slots__ = ("scope", "receive", "send", "request_path")
 
-    def __init__(self, scope: Any, receive: Any, send: Any) -> None:
+    def __init__(self, scope: Any, receive: Any, send: Any, *, request_path: str | None = None) -> None:
+        """Initialize the authentication handler.
+
+        Args:
+            scope: Original ASGI request scope.
+            receive: ASGI receive callable.
+            send: ASGI send callable.
+            request_path: Optional app-relative path used only for route checks.
+                The original scope remains unchanged.
+        """
         self.scope = scope
         self.receive = receive
         self.send = send
+        scope_path = scope.get("path", "")
+        self.request_path = request_path if request_path is not None else scope_path
 
     async def _send_error(self, *, detail: str, status_code: int = HTTP_401_UNAUTHORIZED, headers: dict[str, str] | None = None) -> bool:
         """Send an error response and return False (auth rejected).
@@ -4959,7 +5181,7 @@ class _StreamableHttpAuthHandler:
             True if authentication passes or is skipped.
             False if authentication fails and a 401 response is sent.
         """
-        path = self.scope.get("path", "")
+        path = self.request_path
         # Normalize trailing slash for consistent matching
         normalized = path.rstrip("/")
         # Check if this is an MCP-related path that requires authentication.
@@ -5281,48 +5503,17 @@ class _StreamableHttpAuthHandler:
             # are skipped: resolve_session_teams() already resolved teams from
             # DB/cache, so a second membership query would be redundant.
             if token_use != "session" and final_teams and len(final_teams) > 0 and user_email:  # nosec B105
-                # Import lazily to avoid circular imports
                 # First-Party
-                from mcpgateway.cache.auth_cache import get_auth_cache  # pylint: disable=import-outside-toplevel
-                from mcpgateway.db import EmailTeamMember  # pylint: disable=import-outside-toplevel
+                from mcpgateway.auth import validate_token_team_membership  # pylint: disable=import-outside-toplevel
 
-                auth_cache = get_auth_cache()
-
-                # Check cache first (60s TTL)
-                cached_result = auth_cache.get_team_membership_valid_sync(user_email, final_teams)
-                if cached_result is False:
-                    _record_mcp_auth_cache_event("team_membership_cache_reject")
-                    logger.warning("MCP auth rejected: User %s no longer member of teams (cached)", user_email)
+                valid_membership = validate_token_team_membership(
+                    user_email,
+                    final_teams,
+                    on_cache_event=lambda outcome: _record_mcp_auth_cache_event(f"team_membership_cache_{outcome}"),
+                )
+                if not valid_membership:
+                    logger.warning("MCP auth rejected: User %s no longer member of teams", user_email)
                     return await self._send_error(detail="Token invalid: User is no longer a member of the associated team", status_code=HTTP_403_FORBIDDEN)
-
-                if cached_result is None:
-                    _record_mcp_auth_cache_event("team_membership_cache_miss")
-                    # Cache miss - query database
-                    with SessionLocal() as db:
-                        memberships = (
-                            db.execute(
-                                select(EmailTeamMember.team_id).where(
-                                    EmailTeamMember.team_id.in_(final_teams),
-                                    EmailTeamMember.user_email == user_email,
-                                    EmailTeamMember.is_active.is_(True),
-                                )
-                            )
-                            .scalars()
-                            .all()
-                        )
-
-                        valid_team_ids = set(memberships)
-                        missing_teams = set(final_teams) - valid_team_ids
-
-                        if missing_teams:
-                            logger.warning("MCP auth rejected: User %s no longer member of teams: %s", user_email, missing_teams)
-                            auth_cache.set_team_membership_valid_sync(user_email, final_teams, False)
-                            return await self._send_error(detail="Token invalid: User is no longer a member of the associated team", status_code=HTTP_403_FORBIDDEN)
-
-                        # Cache positive result
-                        auth_cache.set_team_membership_valid_sync(user_email, final_teams, True)
-                else:
-                    _record_mcp_auth_cache_event("team_membership_cache_hit")
 
             auth_user_ctx: dict[str, Any] = {
                 "email": user_email,
@@ -5465,7 +5656,7 @@ class _StreamableHttpAuthHandler:
             except jwt.DecodeError:
                 return OAuthAuthResult.NOT_APPLICABLE
 
-        path = self.scope.get("path", "")
+        path = self.request_path
         match = _SERVER_ID_RE.search(path)
         if not match:
             return OAuthAuthResult.NOT_APPLICABLE
@@ -5648,7 +5839,7 @@ class _StreamableHttpAuthHandler:
         return OAuthAuthResult.SUCCESS
 
 
-async def streamable_http_auth(scope: Any, receive: Any, send: Any) -> bool:
+async def streamable_http_auth(scope: Any, receive: Any, send: Any, *, request_path: str | None = None) -> bool:
     """Perform authentication check in middleware context (ASGI scope).
 
     Delegates to :class:`_StreamableHttpAuthHandler` which encapsulates the
@@ -5658,6 +5849,8 @@ async def streamable_http_auth(scope: Any, receive: Any, send: Any) -> bool:
         scope: The ASGI scope dictionary, which includes request metadata.
         receive: ASGI receive callable used to receive events.
         send: ASGI send callable used to send events (e.g. a 401 response).
+        request_path: Optional app-relative path used for authentication route
+            checks without changing ``scope["path"]``.
 
     Returns:
         bool: True if authentication passes or is skipped.
@@ -5672,6 +5865,6 @@ async def streamable_http_auth(scope: Any, receive: Any, send: Any) -> bool:
         >>> import inspect
         >>> sig = inspect.signature(streamable_http_auth)
         >>> list(sig.parameters.keys())
-        ['scope', 'receive', 'send']
+        ['scope', 'receive', 'send', 'request_path']
     """
-    return await _StreamableHttpAuthHandler(scope, receive, send).authenticate()
+    return await _StreamableHttpAuthHandler(scope, receive, send, request_path=request_path).authenticate()

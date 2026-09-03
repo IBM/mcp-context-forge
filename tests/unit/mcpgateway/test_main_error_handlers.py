@@ -19,7 +19,7 @@ from sqlalchemy.exc import IntegrityError
 
 # First-Party
 from mcpgateway.config import settings
-from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayDuplicateConflictError, GatewayNameConflictError, GatewayNotFoundError
+from mcpgateway.services.gateway_service import GatewayConnectionError, GatewayCredentialError, GatewayDuplicateConflictError, GatewayNameConflictError, GatewayNotFoundError
 
 TEST_JWT_SECRET = "unit-test-jwt-secret-key-with-minimum-32-bytes"  # pragma: allowlist secret
 
@@ -152,6 +152,20 @@ class TestGatewayCreateErrorHandlers:
             response = test_client.post("/gateways/", json=gateway_data, headers=auth_headers)
             assert response.status_code == 502
             assert "Connection failed" in response.json()["message"]
+
+    def test_register_gateway_credential_error(self, test_client, auth_headers):
+        """Test GatewayCredentialError handling in register_gateway returns 422, not a generic 500."""
+        with patch("mcpgateway.main.gateway_service.register_gateway", new_callable=AsyncMock) as mock_register:
+            mock_register.side_effect = GatewayCredentialError("Stored credential contains invalid characters")
+
+            gateway_data = {
+                "name": "test-gateway",
+                "url": "http://localhost:9000",
+                "description": "Test gateway",
+            }
+            response = test_client.post("/gateways/", json=gateway_data, headers=auth_headers)
+            assert response.status_code == 422
+            assert "Stored credential contains invalid characters" in response.json()["message"]
 
     def test_register_gateway_value_error(self, test_client, auth_headers):
         """Test ValueError handling in register_gateway."""
@@ -291,6 +305,20 @@ class TestGatewayUpdateErrorHandlers:
             response = test_client.put("/gateways/test-id", json=gateway_data, headers=auth_headers)
             assert response.status_code == 502
             assert "Connection failed" in response.json()["message"]
+
+    def test_update_gateway_credential_error(self, test_client, auth_headers):
+        """Test GatewayCredentialError handling in update_gateway returns 422, not a generic 500."""
+        with patch("mcpgateway.main.gateway_service.update_gateway", new_callable=AsyncMock) as mock_update:
+            mock_update.side_effect = GatewayCredentialError("Stored credential contains invalid characters")
+
+            gateway_data = {
+                "name": "updated-gateway",
+                "url": "http://localhost:9000",
+                "description": "Updated gateway",
+            }
+            response = test_client.put("/gateways/test-id", json=gateway_data, headers=auth_headers)
+            assert response.status_code == 422
+            assert "Stored credential contains invalid characters" in response.json()["message"]
 
     def test_update_gateway_value_error(self, test_client, auth_headers):
         """Test ValueError handling in update_gateway."""

@@ -30,6 +30,7 @@ from sqlalchemy.exc import IntegrityError
 # First-Party
 from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.cache.tool_lookup_cache import tool_lookup_cache
+from mcpgateway.common.validators import pin_url_to_resolved_ip
 from mcpgateway.config import settings
 from mcpgateway.db import Gateway as DbGateway
 from mcpgateway.db import Tool as DbTool
@@ -42,7 +43,6 @@ from mcpgateway.services.tool_service import (
     _encrypt_tool_header_value,
     _get_validator_class_and_check,
     _is_sensitive_tool_header_name,
-    _pin_url_to_resolved_ip,
     _protect_tool_headers_for_storage,
     _sync_meta_traceparent,
     _validate_header_mapping_targets,
@@ -431,6 +431,17 @@ def tool_service(monkeypatch):
     service.get_plugin_manager = AsyncMock()
     # service._plugin_manager = False  # Disable plugin manager to avoid real plugin execution in tests
 
+    class IsolatedClientCtx:
+        async def __aenter__(self):
+            # First-Party
+            from mcpgateway.services.http_client_service import get_http_client
+
+            return await get_http_client()
+
+        async def __aexit__(self, *_exc):
+            return None
+
+    monkeypatch.setattr("mcpgateway.services.tool_service.get_isolated_http_client", lambda **_kwargs: IsolatedClientCtx())
     return service
 
 
@@ -972,6 +983,22 @@ class TestToolService:
         # Non-dict header maps should safely normalize to empty dict
         assert _protect_tool_headers_for_storage("not-a-dict") is None
         assert _decrypt_tool_headers_for_runtime(None) == {}
+
+    def test_decrypt_tool_headers_for_runtime_strips_invisible_unicode(self, monkeypatch: pytest.MonkeyPatch):
+        """A custom tool header stored before credential-sanitization existed should
+        self-heal (invisible Unicode format characters stripped) when decrypted for a
+        runtime outbound request."""
+        monkeypatch.setattr(
+            "mcpgateway.services.tool_service.decode_auth",
+            lambda _payload: {"data": "custom⁠value"},
+        )
+        result = _decrypt_tool_headers_for_runtime(
+            {
+                "X-Custom": {"_mcpgateway_encrypted_header_value_v1": "ciphertext"},
+                "X-Plain": "already⁠contaminated",
+            }
+        )
+        assert result == {"X-Custom": "customvalue", "X-Plain": "alreadycontaminated"}
 
     @pytest.mark.asyncio
     async def test_create_tool_from_a2a_agent_passes_scope_fields(self, tool_service, test_db):
@@ -2444,7 +2471,7 @@ class TestToolService:
 
     def test_pin_url_to_resolved_ip_brackets_ipv6_and_preserves_query(self):
         """Pinned IPv6 netlocs must be bracketed without losing URL parts."""
-        assert _pin_url_to_resolved_ip("https://api.example.com:8443/path?sig=abc", "2001:4860:4860::8888") == "https://[2001:4860:4860::8888]:8443/path?sig=abc"
+        assert pin_url_to_resolved_ip("https://api.example.com:8443/path?sig=abc", "2001:4860:4860::8888") == "https://[2001:4860:4860::8888]:8443/path?sig=abc"
 
     @pytest.mark.asyncio
     async def test_build_pinned_rest_http_client_disables_connection_reuse(self):
@@ -2792,6 +2819,36 @@ class TestToolService:
         request_headers = tool_service._http_client.request.call_args.kwargs["headers"]
         assert request_headers["Authorization"] == "Bearer runtime-secret"
         assert request_headers["X-Trace-Id"] == "trace-1"
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_rest_self_heals_stored_auth_value_with_invisible_char(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """A tool's stored auth_value contaminated with an invisible Unicode format
+        character (a copy/paste artifact) should self-heal before it reaches the
+        outbound REST request, so a tool configured before this validation existed
+        recovers without requiring a manual re-save."""
+        mock_tool.integration_type = "REST"
+        mock_tool.request_type = "POST"
+        mock_tool.jsonpath_filter = ""
+        mock_tool.auth_type = "bearer"
+        mock_tool.auth_value = "encoded-contaminated-auth"
+        mock_tool.headers = {}
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        mock_response = AsyncMock()
+        mock_response.raise_for_status = Mock()
+        mock_response.status_code = 200
+        mock_response.json = Mock(return_value={"result": "REST tool response"})
+        tool_service._http_client.request.return_value = mock_response
+
+        with (
+            patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer contaminated⁠token"}),
+            patch("mcpgateway.services.tool_service.extract_using_jq", return_value={"result": "REST tool response"}),
+        ):
+            await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
+
+        request_headers = tool_service._http_client.request.call_args.kwargs["headers"]
+        assert request_headers["Authorization"] == "Bearer contaminatedtoken"
 
     @pytest.mark.asyncio
     async def test_invoke_tool_rest_parameter_substitution(self, tool_service, mock_tool, mock_global_config_obj, test_db):
@@ -10560,7 +10617,7 @@ class TestRustMcpExecutionPlan:
             patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
             patch("mcpgateway.services.tool_service.global_config_cache", MagicMock(get_passthrough_headers=MagicMock(return_value=[]))),
             patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
-            patch("mcpgateway.services.tool_service.TokenStorageService", return_value=token_storage),
+            patch("mcpgateway.services.token_storage_service.TokenStorageService", return_value=token_storage),
             patch("mcpgateway.services.tool_service.fresh_db_session", _fresh_db_session),
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", side_effect=lambda _request_headers, headers, *_args, **_kwargs: headers),
             patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=None)),
@@ -10600,7 +10657,7 @@ class TestRustMcpExecutionPlan:
             patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
             patch("mcpgateway.services.tool_service.global_config_cache", MagicMock(get_passthrough_headers=MagicMock(return_value=[]))),
             patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
-            patch("mcpgateway.services.tool_service.TokenStorageService", return_value=token_storage),
+            patch("mcpgateway.services.token_storage_service.TokenStorageService", return_value=token_storage),
             patch("mcpgateway.services.tool_service.fresh_db_session", _fresh_db_session),
             patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=None)),
         ):
@@ -10652,7 +10709,7 @@ class TestRustMcpExecutionPlan:
             patch("mcpgateway.services.tool_service.current_trace_id", MagicMock(get=MagicMock(return_value=None))),
             patch("mcpgateway.services.tool_service.global_config_cache", MagicMock(get_passthrough_headers=MagicMock(return_value=[]))),
             patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
-            patch("mcpgateway.services.tool_service.TokenStorageService", return_value=token_storage),
+            patch("mcpgateway.services.token_storage_service.TokenStorageService", return_value=token_storage),
             patch("mcpgateway.services.tool_service.fresh_db_session", _fresh_db_session),
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", side_effect=lambda _request_headers, headers, *_args, **_kwargs: headers),
             patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=mock_pm)),

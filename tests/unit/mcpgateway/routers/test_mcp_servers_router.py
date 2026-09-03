@@ -101,6 +101,14 @@ def configure_allowlist(monkeypatch):
     monkeypatch.setattr("mcpgateway.common.validators.socket.getaddrinfo", mock_getaddrinfo)
 
 
+def _outbound_header(mock_client: AsyncMock, header_name: str) -> str:
+    """Return one case-insensitive outbound request header value."""
+    sent_headers = mock_client.request.call_args.kwargs["headers"]
+    matching_headers = [value for key, value in sent_headers.items() if key.lower() == header_name.lower()]
+    assert len(matching_headers) == 1
+    return matching_headers[0]
+
+
 # ---------------------------------------------------------------------------
 # Tests: POST /test — happy path
 # ---------------------------------------------------------------------------
@@ -134,6 +142,38 @@ async def test_test_endpoint_success(gateway_test_request, user_ctx, db_session)
     assert result.status_code == 200
     assert result.body == {"ok": True}
     assert result.latency_ms >= 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("configure_allowlist")
+@pytest.mark.parametrize(
+    ("method", "headers", "expected_accept"),
+    [
+        ("GET", None, "text/event-stream"),
+        ("POST", None, "application/json, text/event-stream"),
+        ("GET", {"accept": "application/custom"}, "application/custom"),
+    ],
+    ids=["get-default", "post-default", "caller-override"],
+)
+async def test_test_endpoint_uses_mcp_safe_accept_header(method, headers, expected_accept, user_ctx, db_session):
+    """Connectivity checks default Accept for MCP while preserving caller overrides."""
+    db_session.execute.return_value.scalars.return_value.first.return_value = None
+    request = GatewayTestRequest(base_url="http://example.com", path="/mcp", method=method, headers=headers, body={"jsonrpc": "2.0"} if method == "POST" else None)
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_response.json.return_value = {"ok": True}
+    mock_client = AsyncMock()
+    mock_client.request = AsyncMock(return_value=mock_response)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=None)
+
+    with patch("mcpgateway.services.gateway_service.ResilientHttpClient", return_value=mock_client):
+        with patch("mcpgateway.services.gateway_service.get_structured_logger", return_value=MagicMock(log=MagicMock())):
+            result = await check_mcp_server_connectivity(request=request, team_id=None, user=user_ctx, db=db_session)
+
+    assert result.status_code == 200
+    assert _outbound_header(mock_client, "Accept") == expected_accept
 
 
 # ---------------------------------------------------------------------------

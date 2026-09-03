@@ -3084,7 +3084,7 @@ async def test_streamable_http_auth_validates_team_membership_on_cache_miss(monk
 
     with (
         patch("mcpgateway.cache.auth_cache.get_auth_cache", return_value=mock_auth_cache),
-        patch("mcpgateway.transports.streamablehttp_transport.SessionLocal", mock_session_local),
+        patch("mcpgateway.auth.SessionLocal", mock_session_local),
     ):
         result = await streamable_http_auth(scope, None, send)
 
@@ -3960,6 +3960,621 @@ async def test_call_tool_with_request_context_no_meta(monkeypatch):
         assert isinstance(result[0], types.TextContent)
     finally:
         type(mcp_app).request_context = property(lambda self: (_ for _ in ()).throw(LookupError))
+
+
+def _plugin_context_scope():
+    """Build a request whose ASGI scope carries the pre-request plugin contexts.
+
+    Returns:
+        tuple: ``(mock_ctx, global_context, context_table)`` where ``mock_ctx``
+        mimics ``mcp_app.request_context`` for a request that already went
+        through ``HttpAuthMiddleware``.
+    """
+    # Third-Party
+    from cpex.framework import GlobalContext
+    from cpex.framework.models import PluginContext
+
+    global_context = GlobalContext(request_id="req-3879")
+    context_table = {"AuthPlugin": PluginContext(global_context=global_context, state={"user_token": "abc"})}
+
+    mock_ctx = MagicMock()
+    mock_ctx.meta = None
+    mock_ctx.request.scope = {
+        "type": "http",
+        "state": {"plugin_global_context": global_context, "plugin_context_table": context_table},
+    }
+    return mock_ctx, global_context, context_table
+
+
+@pytest.mark.asyncio
+async def test_call_tool_forwards_plugin_contexts_from_scope(monkeypatch):
+    """Regression guard for #3879 - /mcp tool calls must carry cross-hook plugin state.
+
+    ``HttpAuthMiddleware`` records the HTTP_PRE_REQUEST contexts on the ASGI
+    scope. Without forwarding them, TOOL_PRE_INVOKE hooks reached through the
+    streamable HTTP transport see an empty context, unlike the REST paths.
+    """
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import call_tool, mcp_app, tool_service
+
+    mock_db = MagicMock()
+    mock_result = MagicMock()
+    mock_content = MagicMock()
+    mock_content.type = "text"
+    mock_content.text = "hello"
+    mock_content.annotations = None
+    mock_content.meta = None
+    mock_result.content = [mock_content]
+    mock_result.structured_content = None
+    mock_result.model_dump = lambda by_alias=True: {}
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._get_request_context_or_default",
+        AsyncMock(return_value=("server-1", {}, {})),
+    )
+    monkeypatch.setattr(tool_service, "invoke_tool", AsyncMock(return_value=mock_result))
+
+    mock_ctx, global_context, context_table = _plugin_context_scope()
+
+    type(mcp_app).request_context = property(lambda self: mock_ctx)
+    try:
+        await call_tool("mytool", {"foo": "bar"})
+    finally:
+        type(mcp_app).request_context = property(lambda self: (_ for _ in ()).throw(LookupError))
+
+    kwargs = tool_service.invoke_tool.await_args.kwargs
+    assert kwargs["plugin_global_context"] is global_context
+    assert kwargs["plugin_context_table"] is context_table
+
+
+@pytest.mark.asyncio
+async def test_call_tool_passes_none_when_scope_has_no_plugin_contexts(monkeypatch):
+    """Requests without pre-request hooks keep the previous behaviour."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import call_tool, mcp_app, tool_service
+
+    mock_db = MagicMock()
+    mock_result = MagicMock()
+    mock_content = MagicMock()
+    mock_content.type = "text"
+    mock_content.text = "hello"
+    mock_content.annotations = None
+    mock_content.meta = None
+    mock_result.content = [mock_content]
+    mock_result.structured_content = None
+    mock_result.model_dump = lambda by_alias=True: {}
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._get_request_context_or_default",
+        AsyncMock(return_value=("server-1", {}, {})),
+    )
+    monkeypatch.setattr(tool_service, "invoke_tool", AsyncMock(return_value=mock_result))
+
+    mock_ctx = MagicMock()
+    mock_ctx.meta = None
+    mock_ctx.request.scope = {"type": "http", "state": {}}
+
+    type(mcp_app).request_context = property(lambda self: mock_ctx)
+    try:
+        await call_tool("mytool", {"foo": "bar"})
+    finally:
+        type(mcp_app).request_context = property(lambda self: (_ for _ in ()).throw(LookupError))
+
+    kwargs = tool_service.invoke_tool.await_args.kwargs
+    assert kwargs["plugin_global_context"] is None
+    assert kwargs["plugin_context_table"] is None
+
+
+@pytest.mark.asyncio
+async def test_get_plugin_contexts_returns_none_without_request_context():
+    """The helper degrades to ``(None, None)`` outside an HTTP request."""
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import _get_plugin_contexts_or_none
+
+    assert _get_plugin_contexts_or_none() == (None, None)
+
+
+def _malformed_scope_cases():
+    """Enumerate the scope shapes the type guards in the helper must reject.
+
+    Returns:
+        list: ``(case_id, scope, expect_global, expect_table)`` tuples where the
+        two ``expect_*`` flags say whether the corresponding slot should survive.
+    """
+    # Third-Party
+    from cpex.framework import GlobalContext
+    from cpex.framework.models import PluginContext
+
+    good_global = GlobalContext(request_id="req-3879")
+    good_table = {"AuthPlugin": PluginContext(global_context=good_global)}
+
+    return [
+        # ``scope`` is not a mapping at all - e.g. a transport that is not ASGI driven.
+        ("scope_not_a_dict", object(), False, False),
+        # ``state`` absent: an ASGI server that does not support lifespan state.
+        ("state_missing", {"type": "http"}, False, False),
+        # ``state`` present but not a mapping.
+        ("state_not_a_dict", {"type": "http", "state": ["not", "a", "dict"]}, False, False),
+        # Wrong type in one slot must not poison the other.
+        ("global_context_wrong_type", {"type": "http", "state": {"plugin_global_context": "not-a-context", "plugin_context_table": good_table}}, False, True),
+        ("context_table_wrong_type", {"type": "http", "state": {"plugin_global_context": good_global, "plugin_context_table": ["not", "a", "table"]}}, True, False),
+        # Explicit ``None`` values are the normal "no pre-request hooks ran" case.
+        ("both_none", {"type": "http", "state": {"plugin_global_context": None, "plugin_context_table": None}}, False, False),
+    ]
+
+
+_MALFORMED_SCOPE_CASES = _malformed_scope_cases()
+
+
+@pytest.mark.parametrize("case_id,scope,expect_global,expect_table", _MALFORMED_SCOPE_CASES, ids=[c[0] for c in _MALFORMED_SCOPE_CASES])
+def test_get_plugin_contexts_rejects_malformed_scope_state(case_id, scope, expect_global, expect_table):
+    """Malformed ``scope["state"]`` must degrade to ``None`` instead of leaking junk.
+
+    The helper feeds the service layer directly, which in turn hands the values
+    to the plugin manager. Passing a wrongly typed object through would surface
+    as an opaque failure deep inside a hook, so each slot is type-guarded
+    independently - a bad ``plugin_global_context`` must not discard an
+    otherwise valid ``plugin_context_table``.
+    """
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import _get_plugin_contexts_or_none, mcp_app
+
+    mock_ctx = MagicMock()
+    mock_ctx.request.scope = scope
+
+    type(mcp_app).request_context = property(lambda self: mock_ctx)
+    try:
+        global_context, context_table = _get_plugin_contexts_or_none()
+    finally:
+        type(mcp_app).request_context = property(lambda self: (_ for _ in ()).throw(LookupError))
+
+    assert (global_context is not None) is expect_global, f"{case_id}: unexpected global context {global_context!r}"
+    assert (context_table is not None) is expect_table, f"{case_id}: unexpected context table {context_table!r}"
+
+
+def test_get_plugin_contexts_swallows_unexpected_request_context_errors(caplog):
+    """A non-``LookupError`` while resolving the request context degrades to ``(None, None)``.
+
+    ``LookupError`` is the documented "no active request" signal; anything else
+    is a defect somewhere below the transport. The helper must never turn that
+    into a 500 on ``/mcp`` - it logs at debug level and behaves exactly as if no
+    pre-request hooks had run.
+    """
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import _get_plugin_contexts_or_none, mcp_app
+
+    def _explode(self):
+        raise RuntimeError("request context unavailable")
+
+    type(mcp_app).request_context = property(_explode)
+    try:
+        with caplog.at_level("DEBUG", logger="mcpgateway.transports.streamablehttp_transport"):
+            result = _get_plugin_contexts_or_none()
+    finally:
+        type(mcp_app).request_context = property(lambda self: (_ for _ in ()).throw(LookupError))
+
+    assert result == (None, None)
+    assert "request context unavailable" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_get_prompt_forwards_plugin_contexts_from_scope(monkeypatch):
+    """``get_prompt`` on /mcp must carry cross-hook plugin state like ``call_tool``.
+
+    Same gap as #3879 for ``PROMPT_PRE_FETCH``: the REST handler forwards the
+    contexts, the streamable HTTP transport did not.
+    """
+    # Third-Party
+    from mcp.types import PromptMessage, TextContent
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import get_prompt, mcp_app, prompt_service
+
+    mock_result = MagicMock()
+    mock_result.messages = [PromptMessage(role="user", content=TextContent(type="text", text="hi"))]
+    mock_result.description = "desc"
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield MagicMock()
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._get_request_context_or_default",
+        AsyncMock(return_value=("server-1", {}, {})),
+    )
+    monkeypatch.setattr(prompt_service, "get_prompt", AsyncMock(return_value=mock_result))
+
+    mock_ctx, global_context, context_table = _plugin_context_scope()
+
+    type(mcp_app).request_context = property(lambda self: mock_ctx)
+    try:
+        await get_prompt("my_prompt", {"a": "b"})
+    finally:
+        type(mcp_app).request_context = property(lambda self: (_ for _ in ()).throw(LookupError))
+
+    kwargs = prompt_service.get_prompt.await_args.kwargs
+    assert kwargs["plugin_global_context"] is global_context
+    assert kwargs["plugin_context_table"] is context_table
+
+
+@pytest.mark.asyncio
+async def test_read_resource_forwards_plugin_contexts_from_scope(monkeypatch):
+    """``read_resource`` on /mcp must carry cross-hook plugin state like ``call_tool``.
+
+    Same gap as #3879 for ``RESOURCE_PRE_FETCH``: the REST handler forwards the
+    contexts, the streamable HTTP transport did not.
+    """
+    # Third-Party
+    from pydantic import AnyUrl
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import mcp_app, read_resource, resource_service
+
+    mock_result = MagicMock()
+    mock_result.text = "resource content"
+    mock_result.blob = None
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield MagicMock()
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._get_request_context_or_default",
+        AsyncMock(return_value=("server-1", {}, {})),
+    )
+    monkeypatch.setattr(resource_service, "read_resource", AsyncMock(return_value=mock_result))
+
+    mock_ctx, global_context, context_table = _plugin_context_scope()
+
+    type(mcp_app).request_context = property(lambda self: mock_ctx)
+    try:
+        await read_resource(AnyUrl("file:///test.txt"))
+    finally:
+        type(mcp_app).request_context = property(lambda self: (_ for _ in ()).throw(LookupError))
+
+    kwargs = resource_service.read_resource.await_args.kwargs
+    assert kwargs["plugin_global_context"] is global_context
+    assert kwargs["plugin_context_table"] is context_table
+
+
+# ---------------------------------------------------------------------------
+# End-to-end reproduction of #3879 against a real PluginManager.
+#
+# The forwarding tests above assert *which objects* the transport hands to the
+# service layer. The tests below assert those objects are actually sufficient
+# for the real plugin manager to resolve cross-hook state, using the shared
+# ``CrossHookContextPlugin`` fixture - it raises ``ValueError`` the moment a
+# hook cannot see what an earlier hook stored, so reaching the assertions is
+# the guarantee.
+# ---------------------------------------------------------------------------
+
+_CROSS_HOOK_CONFIG = "plugins/fixtures/configs/cross_hook_context.yaml"
+
+
+@asynccontextmanager
+async def _cross_hook_plugin_session():
+    """Run the HTTP hooks of ``CrossHookContextPlugin`` and expose their contexts.
+
+    Mirrors what ``HttpAuthMiddleware`` and the RBAC layer do before the MCP SDK
+    takes over: ``HTTP_PRE_REQUEST`` then ``HTTP_AUTH_CHECK_PERMISSION``, with
+    the resulting contexts stashed on the ASGI scope.
+
+    Yields:
+        tuple: ``(manager, mock_ctx, global_context, context_table)`` where
+        ``mock_ctx`` mimics ``mcp_app.request_context`` for that request.
+    """
+    # Standard
+    from pathlib import Path
+
+    # Third-Party
+    from cpex.framework import HttpAuthCheckPermissionPayload, HttpHookType, PluginManager
+
+    # First-Party
+    from mcpgateway.middleware.http_auth_middleware import run_pre_request_hooks
+
+    config_file = Path(__file__).parent.parent / _CROSS_HOOK_CONFIG
+
+    # ``PluginManager`` is a Borg singleton - reset around the session so the
+    # shared state never leaks into the rest of this module.
+    PluginManager.reset()
+    manager = PluginManager(str(config_file))
+    await manager.initialize()
+    try:
+        _headers, global_context, context_table = await run_pre_request_hooks(
+            plugin_manager=manager,
+            headers={"authorization": "Bearer test-token"},
+            path="/mcp",
+            method="POST",
+            client_host="127.0.0.1",
+            client_port=54321,
+        )
+        assert global_context is not None and context_table
+
+        _perm_result, context_table = await manager.invoke_hook(
+            HttpHookType.HTTP_AUTH_CHECK_PERMISSION,
+            payload=HttpAuthCheckPermissionPayload(user_email="user@example.com", permission="tools.read"),
+            global_context=global_context,
+            local_contexts=context_table,
+        )
+
+        mock_ctx = MagicMock()
+        mock_ctx.meta = None
+        mock_ctx.request.scope = {
+            "type": "http",
+            "state": {"plugin_global_context": global_context, "plugin_context_table": context_table},
+        }
+        yield manager, mock_ctx, global_context, context_table
+    finally:
+        await manager.shutdown()
+        PluginManager.reset()
+
+
+def _e2e_transport_patches(monkeypatch):
+    """Stub the database session and request-context resolution for the e2e tests.
+
+    Args:
+        monkeypatch: The pytest monkeypatch fixture.
+    """
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield MagicMock()
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._get_request_context_or_default",
+        AsyncMock(return_value=("server-1", {}, {})),
+    )
+
+
+async def _dispatch_pre_hook(manager, hook_type, payload, kwargs, sink):
+    """Invoke a pre-hook with the contexts a transport handler forwarded.
+
+    This is the same dispatch the service layer performs (see
+    ``ToolService.invoke_tool``, ``PromptService.get_prompt`` and
+    ``ResourceService.read_resource``); only the database-backed lookup around
+    it is stubbed out.
+
+    Args:
+        manager: The initialised ``PluginManager``.
+        hook_type: Which pre-hook to run.
+        payload: The hook payload.
+        kwargs: Keyword arguments captured from the transport handler.
+        sink: Dict that receives the context table the hook produced.
+    """
+    _result, table = await manager.invoke_hook(
+        hook_type,
+        payload=payload,
+        global_context=kwargs["plugin_global_context"],
+        local_contexts=kwargs["plugin_context_table"],
+        violations_as_exceptions=True,
+    )
+    sink.update(table or {})
+
+
+def _assert_http_state_visible(contexts, global_context):
+    """Assert the state written by the HTTP hooks reached the MCP hook.
+
+    Args:
+        contexts: Context table produced by the MCP pre-hook.
+        global_context: The global context shared by every hook of the request.
+
+    Returns:
+        dict: The plugin state, for hook-specific assertions.
+    """
+    assert contexts, "the MCP pre-hook produced no context table"
+    state = next(iter(contexts.values())).state
+    assert state["http_timestamp"] == "2025-01-01T00:00:00Z"
+    assert state["http_request_path"] == "/mcp"
+    assert state["permission_checked"] is True
+    assert global_context.state["shared_request_id"] == global_context.request_id
+    return state
+
+
+@pytest.mark.asyncio
+async def test_call_tool_cross_hook_sharing_end_to_end_with_real_plugin(monkeypatch):
+    """The issue's own repro: HTTP_PRE_REQUEST state must reach TOOL_PRE_INVOKE over /mcp."""
+    # Third-Party
+    from cpex.framework import HttpHeaderPayload, ToolHookType, ToolPreInvokePayload
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import call_tool, mcp_app, tool_service
+
+    _e2e_transport_patches(monkeypatch)
+    tool_contexts = {}
+
+    async with _cross_hook_plugin_session() as (manager, mock_ctx, global_context, _table):
+
+        async def fake_invoke_tool(**kwargs):
+            """Stand in for the DB-backed tool lookup; run the real pre-hook.
+
+            Args:
+                **kwargs: Arguments forwarded by ``call_tool``.
+
+            Returns:
+                MagicMock: A minimal successful tool result.
+            """
+            await _dispatch_pre_hook(
+                manager,
+                ToolHookType.TOOL_PRE_INVOKE,
+                ToolPreInvokePayload(name=kwargs["name"], args=kwargs["arguments"], headers=HttpHeaderPayload(root={})),
+                kwargs,
+                tool_contexts,
+            )
+            tool_result = MagicMock()
+            content = MagicMock()
+            content.type = "text"
+            content.text = "ok"
+            content.annotations = None
+            content.meta = None
+            tool_result.content = [content]
+            tool_result.structured_content = None
+            tool_result.model_dump = lambda by_alias=True: {}
+            return tool_result
+
+        monkeypatch.setattr(tool_service, "invoke_tool", fake_invoke_tool)
+
+        type(mcp_app).request_context = property(lambda self: mock_ctx)
+        try:
+            await call_tool("test_cross_hook_tool", {"foo": "bar"})
+        finally:
+            type(mcp_app).request_context = property(lambda self: (_ for _ in ()).throw(LookupError))
+
+        state = _assert_http_state_visible(tool_contexts, global_context)
+        assert state["tool_name"] == "test_cross_hook_tool"
+
+
+@pytest.mark.asyncio
+async def test_get_prompt_cross_hook_sharing_end_to_end_with_real_plugin(monkeypatch):
+    """HTTP_PRE_REQUEST state must reach PROMPT_PRE_FETCH over /mcp."""
+    # Third-Party
+    from cpex.framework import PromptHookType, PromptPrehookPayload
+    from mcp.types import PromptMessage, TextContent
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import get_prompt, mcp_app, prompt_service
+
+    _e2e_transport_patches(monkeypatch)
+    prompt_contexts = {}
+
+    async with _cross_hook_plugin_session() as (manager, mock_ctx, global_context, _table):
+
+        async def fake_get_prompt(**kwargs):
+            """Stand in for the DB-backed prompt lookup; run the real pre-hook.
+
+            Args:
+                **kwargs: Arguments forwarded by ``get_prompt``.
+
+            Returns:
+                MagicMock: A minimal successful prompt result.
+            """
+            await _dispatch_pre_hook(
+                manager,
+                PromptHookType.PROMPT_PRE_FETCH,
+                PromptPrehookPayload(prompt_id=kwargs["prompt_id"], args=kwargs["arguments"]),
+                kwargs,
+                prompt_contexts,
+            )
+            prompt_result = MagicMock()
+            prompt_result.messages = [PromptMessage(role="user", content=TextContent(type="text", text="hi"))]
+            prompt_result.description = "desc"
+            return prompt_result
+
+        monkeypatch.setattr(prompt_service, "get_prompt", fake_get_prompt)
+
+        type(mcp_app).request_context = property(lambda self: mock_ctx)
+        try:
+            await get_prompt("test_cross_hook_prompt", {"a": "b"})
+        finally:
+            type(mcp_app).request_context = property(lambda self: (_ for _ in ()).throw(LookupError))
+
+        state = _assert_http_state_visible(prompt_contexts, global_context)
+        assert state["prompt_id"] == "test_cross_hook_prompt"
+
+
+@pytest.mark.asyncio
+async def test_read_resource_cross_hook_sharing_end_to_end_with_real_plugin(monkeypatch):
+    """HTTP_PRE_REQUEST state must reach RESOURCE_PRE_FETCH over /mcp."""
+    # Third-Party
+    from cpex.framework import ResourceHookType, ResourcePreFetchPayload
+    from pydantic import AnyUrl
+
+    # First-Party
+    from mcpgateway.transports.streamablehttp_transport import mcp_app, read_resource, resource_service
+
+    _e2e_transport_patches(monkeypatch)
+    resource_contexts = {}
+
+    async with _cross_hook_plugin_session() as (manager, mock_ctx, global_context, _table):
+
+        async def fake_read_resource(**kwargs):
+            """Stand in for the DB-backed resource lookup; run the real pre-hook.
+
+            Args:
+                **kwargs: Arguments forwarded by ``read_resource``.
+
+            Returns:
+                MagicMock: A minimal successful text resource.
+            """
+            await _dispatch_pre_hook(
+                manager,
+                ResourceHookType.RESOURCE_PRE_FETCH,
+                ResourcePreFetchPayload(uri=kwargs["resource_uri"], metadata={}),
+                kwargs,
+                resource_contexts,
+            )
+            resource_result = MagicMock()
+            resource_result.text = "resource content"
+            resource_result.blob = None
+            return resource_result
+
+        monkeypatch.setattr(resource_service, "read_resource", fake_read_resource)
+
+        type(mcp_app).request_context = property(lambda self: mock_ctx)
+        try:
+            await read_resource(AnyUrl("file:///cross-hook.txt"))
+        finally:
+            type(mcp_app).request_context = property(lambda self: (_ for _ in ()).throw(LookupError))
+
+        state = _assert_http_state_visible(resource_contexts, global_context)
+        assert state["resource_uri"] == "file:///cross-hook.txt"
+
+
+def _pre_fix_failure_cases():
+    """Enumerate the MCP pre-hooks and the error each raises without forwarded contexts.
+
+    Returns:
+        list: ``(hook_type, payload_factory, expected_message)`` tuples.
+    """
+    # Third-Party
+    from cpex.framework import HttpHeaderPayload, PromptHookType, PromptPrehookPayload, ResourceHookType, ResourcePreFetchPayload, ToolHookType, ToolPreInvokePayload
+
+    return [
+        (ToolHookType.TOOL_PRE_INVOKE, lambda: ToolPreInvokePayload(name="t", args={}, headers=HttpHeaderPayload(root={})), "http_timestamp not found in tool hook"),
+        (PromptHookType.PROMPT_PRE_FETCH, lambda: PromptPrehookPayload(prompt_id="p", args={}), "http_timestamp not found in prompt hook"),
+        (ResourceHookType.RESOURCE_PRE_FETCH, lambda: ResourcePreFetchPayload(uri="file:///r.txt", metadata={}), "http_timestamp not found in resource hook"),
+    ]
+
+
+_PRE_FIX_FAILURE_CASES = _pre_fix_failure_cases()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("hook_type,payload_factory,expected_message", _PRE_FIX_FAILURE_CASES, ids=[str(c[0]) for c in _PRE_FIX_FAILURE_CASES])
+async def test_cross_hook_plugin_fails_without_forwarded_contexts(hook_type, payload_factory, expected_message):
+    """Negative control: dropping the contexts reproduces the #3879 failure for every hook.
+
+    Guards the guard - without this, the end-to-end tests above would still pass
+    if the fixture plugin silently stopped checking for earlier hook state.
+    This is precisely the pre-fix behaviour: the MCP pre-hook reached with
+    ``local_contexts=None`` because /mcp never read them off the scope.
+    """
+    # Third-Party
+    from cpex.framework.errors import PluginError
+
+    async with _cross_hook_plugin_session() as (manager, _mock_ctx, global_context, _table):
+        with pytest.raises(PluginError) as exc_info:
+            await manager.invoke_hook(
+                hook_type,
+                payload=payload_factory(),
+                global_context=global_context,
+                local_contexts=None,
+                violations_as_exceptions=True,
+            )
+
+        assert expected_message in str(exc_info.value)
 
 
 @pytest.mark.asyncio
@@ -5419,7 +6034,7 @@ async def test_streamable_http_auth_caches_positive_team_membership(monkeypatch)
 
     with (
         patch("mcpgateway.cache.auth_cache.get_auth_cache", return_value=mock_auth_cache),
-        patch("mcpgateway.transports.streamablehttp_transport.SessionLocal", mock_session_local),
+        patch("mcpgateway.auth.SessionLocal", mock_session_local),
     ):
         result = await streamable_http_auth(scope, None, send)
 
@@ -5472,7 +6087,7 @@ async def test_streamable_http_auth_db_context_manager(monkeypatch):
 
     with (
         patch("mcpgateway.cache.auth_cache.get_auth_cache", return_value=mock_auth_cache),
-        patch("mcpgateway.transports.streamablehttp_transport.SessionLocal", mock_session_local),
+        patch("mcpgateway.auth.SessionLocal", mock_session_local),
     ):
         result = await streamable_http_auth(scope, None, send)
 
@@ -12937,6 +13552,10 @@ async def test_get_request_context_fast_path_no_session_id_falls_through(monkeyp
 
     mock_auth = AsyncMock(return_value={"email": "fallback@test.com", "teams": ["t2"], "is_authenticated": True})
     monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.require_auth_header_first", mock_auth)
+    monkeypatch.setattr(
+        "mcpgateway.transports.streamablehttp_transport._normalize_jwt_payload",
+        AsyncMock(return_value={"email": "fallback@test.com", "teams": ["t2"], "is_authenticated": True}),
+    )
 
     try:
         with patch.object(type(mcp_app), "request_context", new_callable=PropertyMock, return_value=mock_ctx):
@@ -13192,6 +13811,12 @@ async def test_normalize_jwt_payload_api_token(monkeypatch):
     """API token (no token_use or token_use != 'session') uses normalize_token_teams."""
     # First-Party
     from mcpgateway.transports.streamablehttp_transport import _normalize_jwt_payload
+    auth_cache = MagicMock()
+    auth_cache.get_auth_context = AsyncMock(return_value=None)
+    auth_cache.get_team_membership_valid_sync.return_value = True
+    monkeypatch.setattr("mcpgateway.cache.auth_cache.get_auth_cache", lambda: auth_cache)
+    monkeypatch.setattr(tr.settings, "auth_cache_enabled", True)
+    monkeypatch.setattr(tr.settings, "auth_cache_batch_queries", False)
 
     monkeypatch.setattr("mcpgateway.auth.normalize_token_teams", lambda payload: ["team-a"])
 
@@ -13275,6 +13900,100 @@ async def test_normalize_jwt_payload_session_admin_no_email_no_bypass():
     # teams must be [] (public-only), NOT None (admin bypass)
     assert result["teams"] == []
     assert result["is_admin"] is True
+
+
+@pytest.mark.asyncio
+async def test_normalize_jwt_payload_uses_cached_admin_status(monkeypatch):
+    from mcpgateway.cache.auth_cache import CachedAuthContext
+
+    auth_cache = MagicMock()
+    auth_cache.get_auth_context = AsyncMock(
+        return_value=CachedAuthContext(user={"email": "cached@example.com", "is_admin": True})
+    )
+    monkeypatch.setattr("mcpgateway.cache.auth_cache.get_auth_cache", lambda: auth_cache)
+    monkeypatch.setattr(tr.settings, "auth_cache_enabled", True)
+    monkeypatch.setattr(tr.settings, "require_user_in_db", False)
+    session_factory = MagicMock()
+    monkeypatch.setattr(tr, "SessionLocal", session_factory)
+    monkeypatch.setattr(tr, "_resolve_jwt_user_email_for_streamable", AsyncMock(return_value="cached@example.com"))
+
+    with patch("mcpgateway.auth.resolve_session_teams", new_callable=AsyncMock, return_value=None):
+        result = await tr._normalize_jwt_payload({"sub": "cached@example.com", "token_use": "session", "jti": "jti-1"})
+
+    assert result["is_admin"] is True
+    session_factory.assert_not_called()
+    auth_cache.get_auth_context.assert_awaited_once_with("cached@example.com", "jti-1")
+
+
+@pytest.mark.asyncio
+async def test_normalize_jwt_payload_preserves_platform_admin_fast_path(monkeypatch):
+    auth_cache = MagicMock()
+    auth_cache.get_auth_context = AsyncMock(return_value=None)
+    auth_cache.set_auth_context = AsyncMock()
+    monkeypatch.setattr("mcpgateway.cache.auth_cache.get_auth_cache", lambda: auth_cache)
+    monkeypatch.setattr(tr.settings, "auth_cache_enabled", True)
+    monkeypatch.setattr(tr.settings, "auth_cache_batch_queries", True)
+    monkeypatch.setattr(tr.settings, "platform_admin_email", "platform@example.com")
+    monkeypatch.setattr(tr, "_resolve_jwt_user_email_for_streamable", AsyncMock(return_value="platform@example.com"))
+    monkeypatch.setattr(
+        "mcpgateway.auth._get_auth_context_batched_sync",
+        MagicMock(
+            return_value={
+                "user": None,
+                "personal_team_id": None,
+                "is_token_revoked": False,
+            }
+        ),
+    )
+    session_factory = MagicMock()
+    monkeypatch.setattr(tr, "SessionLocal", session_factory)
+
+    with patch("mcpgateway.auth.resolve_session_teams", new_callable=AsyncMock, return_value=None):
+        result = await tr._normalize_jwt_payload({"sub": "platform@example.com", "token_use": "session", "jti": "jti-3"})
+
+    assert result["is_admin"] is True
+    session_factory.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_normalize_jwt_payload_warms_cache_after_batched_miss(monkeypatch):
+    from mcpgateway.cache.auth_cache import CachedAuthContext
+
+    cached = {}
+    auth_cache = MagicMock()
+
+    async def get_auth_context(email, jti):
+        return cached.get((email, jti))
+
+    async def set_auth_context(email, jti, context):
+        cached[(email, jti)] = context
+
+    auth_cache.get_auth_context = AsyncMock(side_effect=get_auth_context)
+    auth_cache.set_auth_context = AsyncMock(side_effect=set_auth_context)
+    monkeypatch.setattr("mcpgateway.cache.auth_cache.get_auth_cache", lambda: auth_cache)
+    monkeypatch.setattr(tr.settings, "auth_cache_enabled", True)
+    monkeypatch.setattr(tr, "_resolve_jwt_user_email_for_streamable", AsyncMock(return_value="batched@example.com"))
+    monkeypatch.setattr(tr.settings, "require_user_in_db", False)
+    batch_lookup = MagicMock(
+        return_value={
+            "user": {"email": "batched@example.com", "is_admin": True, "is_active": True},
+            "personal_team_id": None,
+            "is_token_revoked": False,
+            "team_ids": [],
+            "team_names": {},
+        }
+    )
+    monkeypatch.setattr("mcpgateway.auth._get_auth_context_batched_sync", batch_lookup)
+
+    with patch("mcpgateway.auth.resolve_session_teams", new_callable=AsyncMock, return_value=None):
+        first = await tr._normalize_jwt_payload({"sub": "batched@example.com", "token_use": "session", "jti": "jti-2"})
+        second = await tr._normalize_jwt_payload({"sub": "batched@example.com", "token_use": "session", "jti": "jti-2"})
+
+    assert first["is_admin"] is True
+    assert second["is_admin"] is True
+    batch_lookup.assert_called_once_with("batched@example.com", "jti-2")
+    auth_cache.set_auth_context.assert_awaited_once()
+    assert isinstance(cached[("batched@example.com", "jti-2")], CachedAuthContext)
 
 
 # ---------------------------------------------------------------------------
@@ -14027,6 +14746,37 @@ async def test_streamable_http_auth_rejects_unauthenticated_oauth_server(monkeyp
 
 
 @pytest.mark.asyncio
+async def test_streamable_http_auth_uses_request_path_without_changing_scope(monkeypatch):
+    """An app-relative path enforces OAuth without replacing the root-prefixed scope path."""
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.settings.mcp_require_auth", False)
+
+    mock_server = MagicMock()
+    mock_server.oauth_enabled = True
+
+    mock_db = MagicMock()
+    mock_db.execute.return_value.scalar_one_or_none.return_value = mock_server
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", _make_fake_get_db(mock_db))
+
+    public_path = "/gateway/servers/abc123def/mcp"
+    scope = _make_scope(public_path)
+    scope["root_path"] = "/gateway"
+    called = []
+
+    async def send(msg):
+        called.append(msg)
+
+    token = tr._oauth_checked_var.set(False)
+    try:
+        result = await streamable_http_auth(scope, None, send, request_path="/servers/abc123def/mcp")
+    finally:
+        tr._oauth_checked_var.reset(token)
+
+    assert result is False
+    assert called and called[0]["status"] == 401
+    assert scope["path"] == public_path
+
+
+@pytest.mark.asyncio
 async def test_streamable_http_auth_rejects_unauthenticated_oauth_server_on_get(monkeypatch):
     """#4205 parity guard: GET to an oauth_enabled server must 401, not 405.
 
@@ -14147,7 +14897,9 @@ async def test_oauth_access_token_context_preserves_exp(monkeypatch):
     monkeypatch.setattr("mcpgateway.auth._get_user_by_email_sync", MagicMock(return_value=mock_user))
     monkeypatch.setattr("mcpgateway.auth._resolve_teams_from_db", AsyncMock(return_value=["team-a"]))
 
-    handler = tr._StreamableHttpAuthHandler(scope=_make_scope("/servers/oauth-server/mcp"), receive=AsyncMock(), send=AsyncMock())
+    scope = _make_scope("/gateway/servers/oauth-server/mcp")
+    scope["root_path"] = "/gateway"
+    handler = tr._StreamableHttpAuthHandler(scope=scope, receive=AsyncMock(), send=AsyncMock(), request_path="/servers/oauth-server/mcp")
 
     result = await handler._try_oauth_access_token(
         "oauth-token",
@@ -14156,6 +14908,7 @@ async def test_oauth_access_token_context_preserves_exp(monkeypatch):
 
     assert result is tr.OAuthAuthResult.SUCCESS
     assert tr.user_context_var.get()["exp"] == token_exp
+    assert scope["path"] == "/gateway/servers/oauth-server/mcp"
 
 
 @pytest.mark.asyncio
@@ -15590,6 +16343,12 @@ async def test_normalize_jwt_payload_with_scoped_permissions(monkeypatch):
     """API token with scopes.permissions should include scoped_permissions in context."""
     # First-Party
     from mcpgateway.transports.streamablehttp_transport import _normalize_jwt_payload
+    auth_cache = MagicMock()
+    auth_cache.get_auth_context = AsyncMock(return_value=None)
+    auth_cache.get_team_membership_valid_sync.return_value = True
+    monkeypatch.setattr("mcpgateway.cache.auth_cache.get_auth_cache", lambda: auth_cache)
+    monkeypatch.setattr(tr.settings, "auth_cache_enabled", True)
+    monkeypatch.setattr(tr.settings, "auth_cache_batch_queries", False)
 
     monkeypatch.setattr("mcpgateway.auth.normalize_token_teams", lambda payload: ["team-a"])
 
@@ -17974,3 +18733,337 @@ async def test_list_tools_sso_admin_gets_admin_bypass_at_service_layer(monkeypat
     await list_tools()
 
     assert called["args"] == (None, None)
+
+
+@pytest.mark.asyncio
+async def test_normalize_jwt_payload_rejects_cached_revoked_token(monkeypatch):
+    """Cached revoked tokens must not become authenticated fallback contexts."""
+    from mcpgateway.cache.auth_cache import CachedAuthContext
+
+    auth_cache = MagicMock()
+    auth_cache.get_auth_context = AsyncMock(
+        return_value=CachedAuthContext(
+            user={"email": "revoked@example.com", "is_admin": False, "is_active": True},
+            is_token_revoked=True,
+        )
+    )
+    monkeypatch.setattr("mcpgateway.cache.auth_cache.get_auth_cache", lambda: auth_cache)
+    monkeypatch.setattr(tr.settings, "auth_cache_enabled", True)
+    monkeypatch.setattr(tr.settings, "auth_cache_batch_queries", False)
+    monkeypatch.setattr(tr, "_resolve_jwt_user_email_for_streamable", AsyncMock(return_value="revoked@example.com"))
+
+    with pytest.raises(HTTPException, match="Token has been revoked"):
+        await tr._normalize_jwt_payload({"sub": "revoked@example.com", "jti": "revoked-jti", "token_use": "session"})
+
+
+@pytest.mark.asyncio
+async def test_normalize_jwt_payload_rejects_cached_inactive_user(monkeypatch):
+    """Cached inactive users must not become authenticated fallback contexts."""
+    from mcpgateway.cache.auth_cache import CachedAuthContext
+
+    auth_cache = MagicMock()
+    auth_cache.get_auth_context = AsyncMock(
+        return_value=CachedAuthContext(
+            user={"email": "disabled@example.com", "is_admin": False, "is_active": False},
+            is_token_revoked=False,
+        )
+    )
+    monkeypatch.setattr("mcpgateway.cache.auth_cache.get_auth_cache", lambda: auth_cache)
+    monkeypatch.setattr(tr.settings, "auth_cache_enabled", True)
+    monkeypatch.setattr(tr.settings, "auth_cache_batch_queries", False)
+    monkeypatch.setattr(tr, "_resolve_jwt_user_email_for_streamable", AsyncMock(return_value="disabled@example.com"))
+
+    with pytest.raises(HTTPException, match="Account disabled"):
+        await tr._normalize_jwt_payload({"sub": "disabled@example.com", "jti": "disabled-jti", "token_use": "session"})
+
+
+@pytest.mark.asyncio
+async def test_normalize_jwt_payload_rejects_cached_missing_user_when_required(monkeypatch):
+    """Strict user-in-DB mode must reject a cache hit without a user record."""
+    from mcpgateway.cache.auth_cache import CachedAuthContext
+
+    auth_cache = MagicMock()
+    auth_cache.get_auth_context = AsyncMock(return_value=CachedAuthContext(user=None, is_token_revoked=False))
+    monkeypatch.setattr("mcpgateway.cache.auth_cache.get_auth_cache", lambda: auth_cache)
+    monkeypatch.setattr(tr.settings, "auth_cache_enabled", True)
+    monkeypatch.setattr(tr.settings, "auth_cache_batch_queries", False)
+    monkeypatch.setattr(tr.settings, "require_user_in_db", True)
+    monkeypatch.setattr(tr.settings, "platform_admin_email", "admin@example.com")
+    monkeypatch.setattr(tr, "_resolve_jwt_user_email_for_streamable", AsyncMock(return_value="missing@example.com"))
+
+    with pytest.raises(HTTPException, match="User not found in database"):
+        await tr._normalize_jwt_payload({"sub": "missing@example.com", "jti": "missing-jti", "token_use": "session"})
+
+
+@pytest.mark.asyncio
+async def test_normalize_jwt_payload_rejects_batched_revoked_token(monkeypatch):
+    """Batched revoked tokens must not become authenticated fallback contexts."""
+    auth_cache = MagicMock()
+    auth_cache.get_auth_context = AsyncMock(return_value=None)
+    monkeypatch.setattr("mcpgateway.cache.auth_cache.get_auth_cache", lambda: auth_cache)
+    monkeypatch.setattr(tr.settings, "auth_cache_enabled", True)
+    monkeypatch.setattr(tr.settings, "auth_cache_batch_queries", True)
+    monkeypatch.setattr(tr, "_resolve_jwt_user_email_for_streamable", AsyncMock(return_value="batched-revoked@example.com"))
+    monkeypatch.setattr(
+        "mcpgateway.auth._get_auth_context_batched_sync",
+        MagicMock(
+            return_value={
+                "user": {"email": "batched-revoked@example.com", "is_admin": False, "is_active": True},
+                "is_token_revoked": True,
+                "team_ids": [],
+            }
+        ),
+    )
+
+    with pytest.raises(HTTPException, match="Token has been revoked"):
+        await tr._normalize_jwt_payload({"sub": "batched-revoked@example.com", "jti": "batched-jti", "token_use": "session"})
+
+
+@pytest.mark.asyncio
+async def test_normalize_jwt_payload_rejects_stale_api_token_membership(monkeypatch):
+    """API and legacy team claims must be validated against current membership."""
+    from mcpgateway.cache.auth_cache import CachedAuthContext
+
+    auth_cache = MagicMock()
+    auth_cache.get_auth_context = AsyncMock(
+        return_value=CachedAuthContext(
+            user={"email": "stale@example.com", "is_admin": False, "is_active": True},
+            is_token_revoked=False,
+        )
+    )
+    auth_cache.get_team_membership_valid_sync.return_value = False
+    monkeypatch.setattr("mcpgateway.cache.auth_cache.get_auth_cache", lambda: auth_cache)
+    monkeypatch.setattr(tr.settings, "auth_cache_enabled", True)
+    monkeypatch.setattr(tr.settings, "require_user_in_db", False)
+    monkeypatch.setattr(tr, "_resolve_jwt_user_email_for_streamable", AsyncMock(return_value="stale@example.com"))
+    monkeypatch.setattr("mcpgateway.auth.normalize_token_teams", lambda _payload: ["team-stale"])
+
+    with pytest.raises(HTTPException, match="no longer a member"):
+        await tr._normalize_jwt_payload({"sub": "stale@example.com", "jti": "stale-jti", "token_use": "api", "teams": ["team-stale"]})
+
+
+@pytest.mark.asyncio
+async def test_normalize_jwt_payload_rejects_batched_inactive_user(monkeypatch):
+    """Batched inactive users must not become authenticated fallback contexts."""
+    auth_cache = MagicMock()
+    auth_cache.get_auth_context = AsyncMock(return_value=None)
+    monkeypatch.setattr("mcpgateway.cache.auth_cache.get_auth_cache", lambda: auth_cache)
+    monkeypatch.setattr(tr.settings, "auth_cache_enabled", True)
+    monkeypatch.setattr(tr.settings, "auth_cache_batch_queries", True)
+    monkeypatch.setattr(tr, "_resolve_jwt_user_email_for_streamable", AsyncMock(return_value="batched-disabled@example.com"))
+    monkeypatch.setattr(
+        "mcpgateway.auth._get_auth_context_batched_sync",
+        MagicMock(
+            return_value={
+                "user": {"email": "batched-disabled@example.com", "is_admin": False, "is_active": False},
+                "is_token_revoked": False,
+                "team_ids": [],
+            }
+        ),
+    )
+
+    with pytest.raises(HTTPException, match="Account disabled"):
+        await tr._normalize_jwt_payload({"sub": "batched-disabled@example.com", "jti": "batched-disabled-jti", "token_use": "session"})
+
+
+@pytest.mark.asyncio
+async def test_normalize_jwt_payload_rejects_batched_missing_user_when_required(monkeypatch):
+    """Strict user-in-DB mode must reject a missing batched user."""
+    auth_cache = MagicMock()
+    auth_cache.get_auth_context = AsyncMock(return_value=None)
+    monkeypatch.setattr("mcpgateway.cache.auth_cache.get_auth_cache", lambda: auth_cache)
+    monkeypatch.setattr(tr.settings, "auth_cache_enabled", True)
+    monkeypatch.setattr(tr.settings, "auth_cache_batch_queries", True)
+    monkeypatch.setattr(tr.settings, "require_user_in_db", True)
+    monkeypatch.setattr(tr.settings, "platform_admin_email", "admin@example.com")
+    monkeypatch.setattr(tr, "_resolve_jwt_user_email_for_streamable", AsyncMock(return_value="batched-missing@example.com"))
+    monkeypatch.setattr(
+        "mcpgateway.auth._get_auth_context_batched_sync",
+        MagicMock(return_value={"user": None, "is_token_revoked": False, "team_ids": []}),
+    )
+
+    with pytest.raises(HTTPException, match="User not found in database"):
+        await tr._normalize_jwt_payload({"sub": "batched-missing@example.com", "jti": "batched-missing-jti", "token_use": "session"})
+
+
+@pytest.mark.asyncio
+async def test_normalize_jwt_payload_continues_when_batch_cache_write_fails(monkeypatch):
+    """A cache-write failure must not reject an otherwise valid JWT."""
+    auth_cache = MagicMock()
+    auth_cache.get_auth_context = AsyncMock(return_value=None)
+    auth_cache.set_auth_context = AsyncMock(side_effect=RuntimeError("cache unavailable"))
+    monkeypatch.setattr("mcpgateway.cache.auth_cache.get_auth_cache", lambda: auth_cache)
+    monkeypatch.setattr(tr.settings, "auth_cache_enabled", True)
+    monkeypatch.setattr(tr.settings, "auth_cache_batch_queries", True)
+    monkeypatch.setattr(tr, "_resolve_jwt_user_email_for_streamable", AsyncMock(return_value="cache-write@example.com"))
+    monkeypatch.setattr(
+        "mcpgateway.auth._get_auth_context_batched_sync",
+        MagicMock(
+            return_value={
+                "user": {"email": "cache-write@example.com", "is_admin": False, "is_active": True},
+                "is_token_revoked": False,
+                "team_ids": [],
+            }
+        ),
+    )
+
+    result = await tr._normalize_jwt_payload({"sub": "cache-write@example.com", "jti": "cache-write-jti", "token_use": "api", "teams": []})
+
+    assert result["email"] == "cache-write@example.com"
+    assert result["is_authenticated"] is True
+
+
+@pytest.mark.asyncio
+async def test_normalize_jwt_payload_rejects_direct_revoked_token(monkeypatch):
+    """Direct fallback lookup must reject revoked tokens."""
+    monkeypatch.setattr(tr.settings, "auth_cache_enabled", False)
+    monkeypatch.setattr(tr, "_resolve_jwt_user_email_for_streamable", AsyncMock(return_value="direct-revoked@example.com"))
+    monkeypatch.setattr("mcpgateway.auth._check_token_revoked_sync", MagicMock(return_value=True))
+
+    with pytest.raises(HTTPException, match="Token has been revoked"):
+        await tr._normalize_jwt_payload({"sub": "direct-revoked@example.com", "jti": "direct-revoked-jti", "token_use": "session"})
+
+
+@pytest.mark.asyncio
+async def test_normalize_jwt_payload_rejects_direct_inactive_user(monkeypatch):
+    """Direct fallback lookup must reject inactive users."""
+    monkeypatch.setattr(tr.settings, "auth_cache_enabled", False)
+    monkeypatch.setattr(tr, "_resolve_jwt_user_email_for_streamable", AsyncMock(return_value="direct-disabled@example.com"))
+    monkeypatch.setattr("mcpgateway.auth._check_token_revoked_sync", MagicMock(return_value=False))
+    monkeypatch.setattr("mcpgateway.auth._get_user_by_email_sync", MagicMock(return_value=SimpleNamespace(is_active=False, is_admin=False)))
+
+    with pytest.raises(HTTPException, match="Account disabled"):
+        await tr._normalize_jwt_payload({"sub": "direct-disabled@example.com", "jti": "direct-disabled-jti", "token_use": "session"})
+
+
+@pytest.mark.asyncio
+async def test_normalize_jwt_payload_rejects_direct_missing_user_when_required(monkeypatch):
+    """Strict user-in-DB mode must reject a missing direct user."""
+    monkeypatch.setattr(tr.settings, "auth_cache_enabled", False)
+    monkeypatch.setattr(tr.settings, "require_user_in_db", True)
+    monkeypatch.setattr(tr.settings, "platform_admin_email", "admin@example.com")
+    monkeypatch.setattr(tr, "_resolve_jwt_user_email_for_streamable", AsyncMock(return_value="direct-missing@example.com"))
+    monkeypatch.setattr("mcpgateway.auth._check_token_revoked_sync", MagicMock(return_value=False))
+    monkeypatch.setattr("mcpgateway.auth._get_user_by_email_sync", MagicMock(return_value=None))
+
+    with pytest.raises(HTTPException, match="User not found in database"):
+        await tr._normalize_jwt_payload({"sub": "direct-missing@example.com", "jti": "direct-missing-jti", "token_use": "session"})
+
+
+def _mock_membership_session(monkeypatch, memberships):
+    """Patch membership sessions with deterministic team rows."""
+    db = MagicMock()
+    db.execute.return_value.scalars.return_value.all.return_value = memberships
+    session = MagicMock()
+    session.__enter__.return_value = db
+    session.__exit__.return_value = False
+
+    def _get_db():
+        yield db
+
+    monkeypatch.setattr("mcpgateway.auth.SessionLocal", MagicMock(return_value=session))
+    monkeypatch.setattr("mcpgateway.db.get_db", _get_db)
+
+
+@pytest.mark.asyncio
+async def test_normalize_jwt_payload_validates_membership_on_cache_miss(monkeypatch):
+    """API team claims must be confirmed by the database on cache miss."""
+    auth_cache = MagicMock()
+    auth_cache.get_team_membership_valid_sync.return_value = None
+    monkeypatch.setattr("mcpgateway.cache.auth_cache.get_auth_cache", lambda: auth_cache)
+    monkeypatch.setattr(tr.settings, "auth_cache_enabled", False)
+    monkeypatch.setattr(tr, "_resolve_jwt_user_email_for_streamable", AsyncMock(return_value="member@example.com"))
+    monkeypatch.setattr("mcpgateway.auth._check_token_revoked_sync", MagicMock(return_value=False))
+    monkeypatch.setattr("mcpgateway.auth._get_user_by_email_sync", MagicMock(return_value=SimpleNamespace(is_active=True, is_admin=False)))
+    monkeypatch.setattr("mcpgateway.auth.normalize_token_teams", lambda _payload: ["team-a"])
+    _mock_membership_session(monkeypatch, ["team-a"])
+
+    result = await tr._normalize_jwt_payload({"sub": "member@example.com", "jti": "member-jti", "token_use": "api", "teams": ["team-a"]})
+
+    assert result["teams"] == ["team-a"]
+    auth_cache.set_team_membership_valid_sync.assert_called_once_with("member@example.com", ["team-a"], True)
+
+
+@pytest.mark.asyncio
+async def test_normalize_jwt_payload_rejects_missing_membership_on_cache_miss(monkeypatch):
+    """API team claims must be rejected when the database membership is absent."""
+    auth_cache = MagicMock()
+    auth_cache.get_team_membership_valid_sync.return_value = None
+    monkeypatch.setattr("mcpgateway.cache.auth_cache.get_auth_cache", lambda: auth_cache)
+    monkeypatch.setattr(tr.settings, "auth_cache_enabled", False)
+    monkeypatch.setattr(tr, "_resolve_jwt_user_email_for_streamable", AsyncMock(return_value="former-member@example.com"))
+    monkeypatch.setattr("mcpgateway.auth._check_token_revoked_sync", MagicMock(return_value=False))
+    monkeypatch.setattr("mcpgateway.auth._get_user_by_email_sync", MagicMock(return_value=SimpleNamespace(is_active=True, is_admin=False)))
+    monkeypatch.setattr("mcpgateway.auth.normalize_token_teams", lambda _payload: ["team-removed"])
+    _mock_membership_session(monkeypatch, [])
+
+    with pytest.raises(HTTPException, match="no longer a member"):
+        await tr._normalize_jwt_payload({"sub": "former-member@example.com", "jti": "former-member-jti", "token_use": "api", "teams": ["team-removed"]})
+
+    auth_cache.set_team_membership_valid_sync.assert_called_once_with("former-member@example.com", ["team-removed"], False)
+
+@pytest.mark.asyncio
+async def test_get_request_context_propagates_normalization_http_exception(monkeypatch):
+    """Authentication failures from fallback normalization must reach the caller."""
+    from unittest.mock import PropertyMock
+
+    token = tr.server_id_var.set("default_server_id")
+    mock_request = MagicMock()
+    mock_request.url.path = "/mcp"
+    mock_request.headers = {"authorization": "Bearer token"}
+    mock_request.cookies = {}
+    mock_ctx = MagicMock()
+    mock_ctx.request = mock_request
+
+    monkeypatch.setattr(tr, "require_auth_header_first", AsyncMock(return_value={"sub": "revoked@example.com"}))
+    monkeypatch.setattr(
+        tr,
+        "_normalize_jwt_payload",
+        AsyncMock(side_effect=HTTPException(status_code=tr.HTTP_401_UNAUTHORIZED, detail="Token has been revoked")),
+    )
+
+    try:
+        with patch.object(type(tr.mcp_app), "request_context", new_callable=PropertyMock, return_value=mock_ctx):
+            with pytest.raises(HTTPException, match="Token has been revoked"):
+                await tr._get_request_context_or_default()
+    finally:
+        tr.server_id_var.reset(token)
+
+@pytest.mark.asyncio
+async def test_normalize_jwt_payload_rechecks_cached_user_in_strict_mode(monkeypatch):
+    """Strict user-in-DB mode must reject a deleted user still present in cache."""
+    from mcpgateway.cache.auth_cache import CachedAuthContext
+
+    auth_cache = MagicMock()
+    auth_cache.get_auth_context = AsyncMock(
+        return_value=CachedAuthContext(
+            user={"email": "deleted@example.com", "is_admin": False, "is_active": True},
+            is_token_revoked=False,
+        )
+    )
+    monkeypatch.setattr("mcpgateway.cache.auth_cache.get_auth_cache", lambda: auth_cache)
+    monkeypatch.setattr(tr.settings, "auth_cache_enabled", True)
+    monkeypatch.setattr(tr.settings, "auth_cache_batch_queries", False)
+    monkeypatch.setattr(tr.settings, "require_user_in_db", True)
+    monkeypatch.setattr(tr.settings, "platform_admin_email", "admin@example.com")
+    monkeypatch.setattr(tr, "_resolve_jwt_user_email_for_streamable", AsyncMock(return_value="deleted@example.com"))
+    monkeypatch.setattr("mcpgateway.auth.resolve_session_teams", AsyncMock(return_value=[]))
+    db_lookup = MagicMock(return_value=None)
+    monkeypatch.setattr("mcpgateway.auth._get_user_by_email_sync", db_lookup)
+
+    with pytest.raises(HTTPException, match="User not found in database"):
+        await tr._normalize_jwt_payload({"sub": "deleted@example.com", "jti": "deleted-jti", "token_use": "session"})
+
+    db_lookup.assert_called_once_with("deleted@example.com")
+
+def test_validate_token_team_membership_checks_cache_and_database(monkeypatch):
+    """The shared membership helper validates all claimed teams and caches the result."""
+    from mcpgateway.auth import validate_token_team_membership
+
+    auth_cache = MagicMock()
+    auth_cache.get_team_membership_valid_sync.return_value = None
+    monkeypatch.setattr("mcpgateway.cache.auth_cache.get_auth_cache", lambda: auth_cache)
+    _mock_membership_session(monkeypatch, ["team-a"])
+
+    assert validate_token_team_membership("member@example.com", ["team-a"]) is True
+    auth_cache.set_team_membership_valid_sync.assert_called_once_with("member@example.com", ["team-a"], True)

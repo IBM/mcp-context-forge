@@ -12,12 +12,14 @@ binaries required.
 
 Requirements:
     - Gateway running (default: http://localhost:8080 via docker-compose)
-    - Upstreams ``fast_time_server`` + ``fast_test_server`` registered
+    - Upstream ``fast_time_server`` registered
       (provided by the default compose stack)
     - Environment variables (or defaults):
         MCP_CLI_BASE_URL       Gateway URL (default: http://localhost:8080)
         JWT_SECRET_KEY         JWT signing secret
         PLATFORM_ADMIN_EMAIL   Admin email (default: admin@example.com)
+        MCPGATEWAY_MCP_APPS_ENABLED
+                               Set true in both gateway and test process to run MCP Apps cases
 
 Usage:
     make test-mcp-protocol-e2e
@@ -29,30 +31,31 @@ from __future__ import annotations
 
 # Standard
 import asyncio
+from datetime import timedelta
 import json
 import os
 import subprocess
 import sys
-from datetime import timedelta
 from typing import Any
+import uuid
 
 # Third-Party
 import httpx
-import pytest
 from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 from mcp.shared.exceptions import McpError
 from mcp.types import InitializeResult
+import pytest
 
 # Local
 from ..helpers.mcp_test_helpers import (
     ADMIN_EMAIL,
     BASE_URL,
-    JWT_SECRET,
-    TOKEN_EXPIRY,
     build_initialize,
+    JWT_SECRET,
     skip_no_gateway,
     skip_no_rust_mcp_gateway,
+    TOKEN_EXPIRY,
 )
 
 pytestmark = [pytest.mark.e2e, skip_no_gateway]
@@ -88,6 +91,11 @@ def mcp_url() -> str:
 # fails fast (~5s) instead of hanging on MCP SDK defaults. Override via
 # MCP_E2E_CLIENT_TIMEOUT for slow CI.
 _CLIENT_TIMEOUT = float(os.getenv("MCP_E2E_CLIENT_TIMEOUT", "5.0"))
+_MCP_APPS_E2E_ENABLED = os.getenv("MCPGATEWAY_MCP_APPS_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
+skip_no_mcp_apps = pytest.mark.skipif(
+    not _MCP_APPS_E2E_ENABLED,
+    reason="MCP Apps E2E requires a gateway started with MCPGATEWAY_MCP_APPS_ENABLED=true",
+)
 
 
 class GatewayClientSession(ClientSession):
@@ -300,7 +308,7 @@ class TestToolCalls:
     """tools/call against live upstream servers.
 
     Marked flaky(reruns=1) because these hit live upstream MCP servers
-    (fast_time_server, fast_test_server) which may be transiently unavailable.
+    (fast_time_server) which may be transiently unavailable.
     """
 
     async def test_get_system_time(self, client: GatewayClientSession) -> None:
@@ -311,14 +319,6 @@ class TestToolCalls:
         assert text
         print(f"    -> get-system-time(UTC) = {text}")
 
-    async def test_echo(self, client: GatewayClientSession) -> None:
-        test_message = "hello-from-mcp-protocol-e2e"
-        result = await client.call_tool("fast-test-echo", {"message": test_message})
-        assert result.isError is False, f"echo returned error (upstream may be down): {result.content}"
-        text = result.content[0].text
-        assert test_message in text, f"echo did not return message: {text}"
-        print(f"    -> echo('{test_message}') = {text}")
-
     async def test_convert_time(self, client: GatewayClientSession) -> None:
         result = await client.call_tool(
             "fast-time-convert-time",
@@ -328,56 +328,40 @@ class TestToolCalls:
         assert result.content[0].type == "text"
         print(f"    -> convert-time(UTC->NY) = {result.content[0].text}")
 
+    async def test_echo(self, client: GatewayClientSession) -> None:
+        test_message = "hello-from-mcp-protocol-e2e"
+        result = await client.call_tool("fast-time-echo", {"message": test_message})
+        assert result.isError is False, f"echo returned error (upstream may be down): {result.content}"
+        text = result.content[0].text
+        assert test_message in text, f"echo did not return message: {text}"
+        print(f"    -> echo('{test_message}') = {text}")
+
     async def test_get_stats(self, client: GatewayClientSession) -> None:
-        result = await client.call_tool("fast-test-get-stats", {})
+        result = await client.call_tool("fast-time-get-stats", {})
         assert result.isError is False, f"get-stats returned error (upstream may be down): {result.content}"
         print(f"    -> get-stats = {result.content[0].text[:120]}")
 
     async def test_schema_error_preserves_payload(self, client: GatewayClientSession) -> None:
         """End-to-end regression guard for ContextForge #4202.
 
-        Drives the full MCP-federation path — MCP SDK client -> gateway ->
-        federated Rust fast_test_server -> gateway ingress validator ->
-        gateway egress handler -> back to the client. The upstream
-        ``fast-test-schema-error`` tool declares an ``outputSchema`` of
-        ``{"required": ["recognitionId"], ...}`` and always returns
-        ``isError=true`` with the verbatim user text "You cannot send
-        more than 200 points". Every validator in the chain must honour
-        the spec's "error responses do not require structured content"
-        rule and leave the payload untouched.
-
-        Assertion guards specifically against the pre-fix symptom: a
-        payload substituted with a JSON validation-error dict containing
-        ``"validator"`` or ``"required"`` keys.
-
-        Issue: https://github.com/IBM/mcp-context-forge/issues/4202
-        MCP spec: 2025-11-25 "Error Handling".
+        Drives the full MCP federation path through the retained fast-time
+        server. Error responses with an output schema must preserve the
+        original payload rather than replacing it with a validation error.
         """
-        tool = await self._require_declared_output_schema(client, "fast-test-schema-error")
+        tool = await self._require_declared_output_schema(client, "fast-time-schema-error")
         assert tool is not None
-        result = await client.call_tool("fast-test-schema-error", {})
+        result = await client.call_tool("fast-time-schema-error", {})
         assert result.isError is True, f"expected isError=true, got: {result}"
         text = result.content[0].text if result.content else ""
         assert "200 points" in text, f"expected original error text preserved, got: {text!r}"
-        assert '"validator"' not in text and '"required"' not in text, f"error payload appears to have been replaced by a validation error (regression of #4202): {text!r}"
+        assert '"validator"' not in text and '"required"' not in text, f"error payload appears to have been replaced by a validation error: {text!r}"
         print(f"    -> schema_error isError=true preserved: {text}")
 
     async def test_schema_success_validates_payload(self, client: GatewayClientSession) -> None:
-        """End-to-end positive control for the #4202 fix.
-
-        Proves validation *still runs and succeeds* for legitimate
-        responses — catching any over-broad fix that accidentally
-        disables the success path. The upstream
-        ``fast-test-schema-success`` fixture declares the same
-        ``outputSchema`` as ``schema_error`` but returns
-        ``isError=false`` with ``{"recognitionId": "rec-123", ...}``,
-        which satisfies the schema. Also verifies that
-        ``structuredContent`` propagates to the downstream client on
-        successful validation.
-        """
-        tool = await self._require_declared_output_schema(client, "fast-test-schema-success")
+        """Positive control proving valid output-schema responses still validate."""
+        tool = await self._require_declared_output_schema(client, "fast-time-schema-success")
         assert tool is not None
-        result = await client.call_tool("fast-test-schema-success", {})
+        result = await client.call_tool("fast-time-schema-success", {})
         assert result.isError is False, f"expected success, got: {result}"
         payload = json.loads(result.content[0].text)
         assert payload.get("recognitionId") == "rec-123", f"unexpected payload: {payload}"
@@ -385,6 +369,21 @@ class TestToolCalls:
         assert structured is not None, f"expected structured content on successful validation: {result}"
         assert structured.get("recognitionId") == "rec-123", f"unexpected structured content: {structured}"
         print(f"    -> schema_success validated: {payload}")
+
+    @staticmethod
+    async def _require_declared_output_schema(client: GatewayClientSession, tool_name: str):
+        """Require a synced tool with a declared output schema."""
+        tools = (await client.list_tools()).tools
+        match = next((tool for tool in tools if tool.name == tool_name), None)
+        assert match is not None, (
+            f"Tool {tool_name!r} is not registered in the gateway. "
+            "Check that register_fast_time completed and gateway synchronization finished."
+        )
+        assert match.outputSchema, (
+            f"Tool {tool_name!r} has no outputSchema declared in the gateway: {match}. "
+            "Check that the upstream tool declares an output_schema and gateway synchronization completed successfully."
+        )
+        return match
 
     async def test_nonexistent_tool(self, client: GatewayClientSession) -> None:
         """Calling a nonexistent tool surfaces an error, via either path."""
@@ -395,26 +394,6 @@ class TestToolCalls:
             return
         assert result.isError is True, f"expected error for non-existent tool: {result}"
         print(f"    -> isError=True (expected): {result.content[0].text[:100] if result.content else ''}")
-
-    @staticmethod
-    async def _require_declared_output_schema(client: GatewayClientSession, tool_name: str):
-        """Preflight: assert ``tool_name`` is advertised with a non-empty outputSchema.
-
-        Without this guard, a stale fast_test_server image or an incomplete
-        federation sync would cause the actual ``tools/call`` tests to
-        fail with a misleading assertion. Fails fast with an actionable
-        message.
-        """
-        tools = (await client.list_tools()).tools
-        match = next((t for t in tools if t.name == tool_name), None)
-        assert match is not None, (
-            f"Tool {tool_name!r} is not registered in the gateway. " f"Rebuild the fast_test_server image and restart docker-compose so " f"register_fast_test picks up the new schema fixtures."
-        )
-        schema = match.outputSchema
-        assert schema, (
-            f"Tool {tool_name!r} has no outputSchema declared in the gateway: {match}. " "Check that the upstream tool declares an output_schema and that the gateway sync completed successfully."
-        )
-        return match
 
 
 # ---------------------------------------------------------------------------
@@ -460,6 +439,138 @@ class TestRawJsonRpc:
             payload = bad.text
             assert "error" in payload.lower() or bad.status_code >= 400, f"expected error for invalid method, got {bad.status_code}: {payload}"
             print(f"    -> invalid method -> status={bad.status_code}")
+
+    @skip_no_mcp_apps
+    def test_mcp_apps_capability_advertised_when_enabled(self, jwt_token: str) -> None:
+        """Assert an explicitly enabled gateway advertises the MCP Apps capability."""
+        headers = {
+            "authorization": f"Bearer {jwt_token}",
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-03-26",
+        }
+        with httpx.Client(timeout=10.0) as http:
+            resp = http.post(f"{BASE_URL}/mcp/", headers=headers, json=build_initialize(1))
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        caps = body.get("result", {}).get("capabilities", {})
+        extensions = caps.get("extensions", {})
+        assert "io.modelcontextprotocol/ui" in extensions, f"MCP Apps capability missing from explicitly enabled gateway: {extensions}"
+        ui_cap = extensions["io.modelcontextprotocol/ui"]
+        assert ui_cap.get("version") == "2026-01-26", f"unexpected MCP Apps capability version: {ui_cap}"
+        assert ui_cap.get("resources") == {"schemes": ["ui://"]}, f"unexpected MCP Apps resource capability: {ui_cap}"
+        bridge_methods = ui_cap.get("bridge", {}).get("methods", [])
+        assert "tools/call" in bridge_methods, f"bridge.methods missing tools/call: {bridge_methods}"
+        assert "ping" in bridge_methods, f"bridge.methods missing ping: {bridge_methods}"
+        print(f"    -> MCP Apps capability: version={ui_cap['version']} bridge_methods={bridge_methods}")
+
+    @skip_no_mcp_apps
+    def test_appbridge_session_lifecycle(self, jwt_token: str) -> None:
+        """AppBridge session create + ping round-trip against a live gateway.
+
+        Registers a minimal ``ui://`` resource and virtual server, creates an
+        AppBridge session, and pings through it. All persistent fixtures are
+        cleaned up regardless of outcome.
+        """
+        mcp_headers = {
+            "authorization": f"Bearer {jwt_token}",
+            "accept": "application/json, text/event-stream",
+            "content-type": "application/json",
+            "mcp-protocol-version": "2025-03-26",
+        }
+        with httpx.Client(timeout=10.0) as http:
+            # Step 1: initialize — confirm MCP Apps enabled and capture mcp-session-id.
+            init_resp = http.post(f"{BASE_URL}/mcp/", headers=mcp_headers, json=build_initialize(1))
+            assert init_resp.status_code == 200, init_resp.text
+            body = init_resp.json()
+            caps = body.get("result", {}).get("capabilities", {})
+            assert "io.modelcontextprotocol/ui" in caps.get("extensions", {}), f"MCP Apps capability missing from explicitly enabled gateway: {caps}"
+            mcp_session_id = init_resp.headers.get("mcp-session-id")
+            assert mcp_session_id, "initialize did not return an mcp-session-id header"
+
+            rest_headers = {
+                "authorization": f"Bearer {jwt_token}",
+                "content-type": "application/json",
+                "mcp-session-id": mcp_session_id,
+            }
+
+            uid = uuid.uuid4().hex[:8]
+            resource_id = None
+            server_id = None
+            try:
+                # Step 2: register a minimal ui:// resource.
+                resource_resp = http.post(
+                    f"{BASE_URL}/resources",
+                    headers=rest_headers,
+                    json={
+                        "resource": {
+                            "name": f"mcp-apps-res-{uid}",
+                            "uri": f"ui://mcp-apps-e2e-{uid}/index",
+                            "mimeType": "text/html;profile=mcp-app",
+                            "content": "<div>hello</div>",
+                            "extensionMetadata": {
+                                "io.modelcontextprotocol/ui": {
+                                    "csp": {"connectDomains": ["https://example.com"]},
+                                    "sandbox": ["allow-scripts"],
+                                }
+                            },
+                        },
+                        "visibility": "public",
+                    },
+                )
+                assert resource_resp.status_code in (200, 201), f"Failed to create ui:// resource: {resource_resp.text}"
+                resource_id = resource_resp.json()["id"]
+
+                # Step 3: register a throwaway virtual server bound to the resource.
+                server_resp = http.post(
+                    f"{BASE_URL}/servers",
+                    headers=rest_headers,
+                    json={
+                        "server": {
+                            "name": f"mcp-apps-e2e-{uid}",
+                            "description": "MCP Apps E2E test server",
+                            "associated_resources": [resource_id],
+                        },
+                        "visibility": "public",
+                    },
+                )
+                assert server_resp.status_code in (200, 201), f"Failed to create server: {server_resp.text}"
+                server_id = server_resp.json()["id"]
+
+                # Step 4: create an AppBridge session for that resource.
+                session_resp = http.post(
+                    f"{BASE_URL}/appbridge/sessions",
+                    headers=rest_headers,
+                    json={
+                        "resourceUri": f"ui://mcp-apps-e2e-{uid}/index",
+                        "serverId": server_id,
+                    },
+                )
+                assert session_resp.status_code == 200, f"AppBridge session create failed: {session_resp.text}"
+                session_body = session_resp.json()
+                app_session_id = session_body["appSessionId"]
+                assert session_body.get("resourceUri", "").startswith("ui://"), f"unexpected resourceUri: {session_body}"
+                assert session_body.get("expiresAt"), f"AppBridge session missing expiresAt: {session_body}"
+                print(f"    -> AppBridge session created: {app_session_id}")
+
+                # Step 5: ping through the session — the simplest AppBridge RPC method.
+                ping_resp = http.post(
+                    f"{BASE_URL}/appbridge/sessions/{app_session_id}/rpc",
+                    headers=rest_headers,
+                    json={"jsonrpc": "2.0", "id": 1, "method": "ping", "params": {}},
+                )
+                assert ping_resp.status_code == 200, f"AppBridge ping failed: {ping_resp.text}"
+                ping_body = ping_resp.json()
+                assert "result" in ping_body, f"AppBridge ping returned no result: {ping_body}"
+                assert "error" not in ping_body, f"AppBridge ping returned error: {ping_body}"
+                print(f"    -> AppBridge ping OK: {ping_body['result']}")
+
+            finally:
+                # Best-effort cleanup so the gateway isn't left with test artifacts.
+                if server_id:
+                    http.delete(f"{BASE_URL}/servers/{server_id}", headers=rest_headers)
+                if resource_id:
+                    http.delete(f"{BASE_URL}/resources/{resource_id}", headers=rest_headers)
 
 
 @skip_no_rust_mcp_gateway

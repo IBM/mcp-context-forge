@@ -40,6 +40,7 @@ transports, middleware, and tests all consume them.
     Token claim normalization (canonical per AGENTS.md)
         normalize_token_teams(payload) -> list[str] | None
         resolve_session_teams(...) -> list[str] | None
+        derive_token_team_id(teams, token_use) -> str | None
 
 Private-but-cross-module surface
 --------------------------------
@@ -62,12 +63,13 @@ wrapper or whether the helper genuinely deserves promotion to the public API.
 
 # Standard
 import asyncio
+from contextlib import nullcontext
 from datetime import datetime, timedelta, timezone
 import hashlib
 import logging
 import threading
 import time
-from typing import Any, Dict, Generator, List, Never, Optional
+from typing import Any, Callable, Dict, Generator, List, Never, Optional
 from urllib.parse import urlparse
 import uuid
 
@@ -76,6 +78,7 @@ from cpex.framework import GlobalContext, HttpAuthResolveUserPayload, HttpHeader
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials
 import redis
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 from starlette.requests import Request
 
@@ -83,7 +86,7 @@ from starlette.requests import Request
 from mcpgateway.auth_context import normalize_token_teams
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
-from mcpgateway.db import EmailUser, fresh_db_session, SessionLocal
+from mcpgateway.db import EmailTeam, EmailUser, fresh_db_session, SessionLocal
 from mcpgateway.plugins import get_plugin_manager
 from mcpgateway.plugins.utils import build_request_extensions, record_plugin_metrics
 from mcpgateway.services.observability_service import current_trace_id
@@ -112,7 +115,9 @@ __all__ = [
     "validate_token_user",
     "get_user_team_roles",
     "normalize_token_teams",
+    "validate_token_team_membership",
     "resolve_session_teams",
+    "derive_token_team_id",
 ]
 
 # Module-level logger
@@ -233,11 +238,8 @@ def _get_personal_team_sync(user_email: str) -> Optional[str]:
         The personal team ID, or None if not found.
     """
     with fresh_db_session() as db:
-        # Third-Party
-        from sqlalchemy import select  # pylint: disable=import-outside-toplevel
-
         # First-Party
-        from mcpgateway.db import EmailTeam, EmailTeamMember  # pylint: disable=import-outside-toplevel
+        from mcpgateway.db import EmailTeamMember  # pylint: disable=import-outside-toplevel
 
         result = db.execute(select(EmailTeam).join(EmailTeamMember).where(EmailTeamMember.user_email == user_email, EmailTeam.is_personal.is_(True)))
         personal_team = result.scalar_one_or_none()
@@ -257,19 +259,77 @@ def _get_user_team_ids_sync(email: str) -> List[str]:
         List of team ID strings
     """
     with fresh_db_session() as db:
-        # Third-Party
-        from sqlalchemy import select  # pylint: disable=import-outside-toplevel
-
         # First-Party
         from mcpgateway.db import EmailTeamMember  # pylint: disable=import-outside-toplevel
 
         result = db.execute(
-            select(EmailTeamMember.team_id).where(
+            select(EmailTeamMember.team_id)
+            .where(
                 EmailTeamMember.user_email == email,
                 EmailTeamMember.is_active.is_(True),
             )
+            .order_by(EmailTeamMember.id)  # Stable ordering: teams[0] used as Vault path key
         )
         return [row[0] for row in result.all()]
+
+
+def validate_token_team_membership(
+    user_email: str,
+    team_ids: List[str],
+    db: Optional[Session] = None,
+    *,
+    on_cache_event: Optional[Callable[[str], None]] = None,
+) -> bool:
+    """Return whether a token's claimed teams are active memberships.
+
+    The cache is checked before querying the database. A caller-provided
+    session remains caller-owned; otherwise this helper opens and closes one.
+
+    Args:
+        user_email: Email encoded in the verified token.
+        team_ids: Team IDs claimed by the token.
+        db: Optional caller-owned SQLAlchemy session.
+        on_cache_event: Optional callback receiving ``hit``, ``miss``, or
+            ``reject`` for cache instrumentation.
+
+    Returns:
+        ``True`` when the user belongs to every claimed team.
+    """
+    if not team_ids:
+        return True
+
+    # First-Party
+    from mcpgateway.cache.auth_cache import get_auth_cache  # pylint: disable=import-outside-toplevel
+    from mcpgateway.db import EmailTeamMember  # pylint: disable=import-outside-toplevel
+
+    auth_cache = get_auth_cache()
+    cached_result = auth_cache.get_team_membership_valid_sync(user_email, team_ids)
+    if cached_result is not None:
+        if on_cache_event:
+            on_cache_event("reject" if not cached_result else "hit")
+        return cached_result
+
+    if on_cache_event:
+        on_cache_event("miss")
+
+    owns_session = db is None
+    with SessionLocal() if owns_session else nullcontext(db) as session:
+        memberships = (
+            session.execute(
+                select(EmailTeamMember.team_id).where(
+                    EmailTeamMember.team_id.in_(team_ids),
+                    EmailTeamMember.user_email == user_email,
+                    EmailTeamMember.is_active.is_(True),
+                )
+            )
+            .scalars()
+            .all()
+        )
+        valid = not set(team_ids).difference(memberships)
+        auth_cache.set_team_membership_valid_sync(user_email, team_ids, valid)
+        if owns_session:
+            session.commit()
+        return valid
 
 
 def _get_team_name_by_id_sync(team_id: Optional[str]) -> Optional[str]:
@@ -285,12 +345,6 @@ def _get_team_name_by_id_sync(team_id: Optional[str]) -> Optional[str]:
         return None
 
     with fresh_db_session() as db:
-        # Third-Party
-        from sqlalchemy import select  # pylint: disable=import-outside-toplevel
-
-        # First-Party
-        from mcpgateway.db import EmailTeam  # pylint: disable=import-outside-toplevel
-
         result = db.execute(
             select(EmailTeam.name).where(
                 EmailTeam.id == team_id,
@@ -298,6 +352,91 @@ def _get_team_name_by_id_sync(team_id: Optional[str]) -> Optional[str]:
             )
         )
         return result.scalar_one_or_none()
+
+
+def _is_personal_team_sync(team_id: Optional[str]) -> bool:
+    """Return whether a team ID refers to an active personal team.
+
+    Args:
+        team_id: Team identifier to classify.
+
+    Returns:
+        ``True`` when the team exists, is active, and is a personal team.
+    """
+    if not team_id:
+        return False
+
+    with fresh_db_session() as db:
+        result = db.execute(
+            select(EmailTeam.is_personal).where(
+                EmailTeam.id == team_id,
+                EmailTeam.is_active.is_(True),
+            )
+        )
+        return bool(result.scalar_one_or_none())
+
+
+async def derive_token_team_id(normalized_teams: Optional[List[Any]], token_use: Optional[str]) -> Optional[str]:
+    """Derive the RBAC team context (``request.state.team_id``) for a token.
+
+    A non-``None`` result makes the RBAC layer evaluate permissions with an
+    explicit ``team_id``, which pulls in that team's team-scoped roles. A
+    ``None`` result makes it fall back to ``check_any_team``, which aggregates
+    across the caller's teams while **excluding** personal teams.
+
+    Policy (single source of truth; call this instead of inlining the rule):
+
+    - Session tokens never derive a team context here — session scope is
+      resolved from the database by :func:`resolve_session_teams`.
+    - Only a *single-team* API/legacy token derives a team context. Admin
+      bypass (``None``) and multi-team tokens both yield ``None``.
+    - Personal teams are excluded. They are auto-created for every user and
+      auto-granted ``settings.default_team_owner_role`` (``team_admin`` by
+      default), which carries create/update/delete across every resource
+      type. Honouring them here would silently turn any personal-team-scoped
+      API token into a full-mutate credential — the same reason
+      ``PermissionService._get_user_roles`` already excludes personal teams on
+      its ``check_any_team`` path. Layer 1 visibility is unaffected: the
+      ``token_teams`` claim still scopes what the token can see.
+    - If the personal-team classification lookup itself fails (DB
+      unavailable), this fails closed and returns ``None`` rather than
+      retaining ``team_id``. Retaining an unclassified ``team_id`` would let
+      an indeterminate lookup route ``request.state.team_id`` straight into
+      the explicit-team RBAC path — silently exposing that team's
+      auto-granted ``team_admin`` role if it turns out to be personal.
+      Falling back to ``check_any_team`` only narrows the caller's effective
+      permissions, never expands them, so it is the safe default under a
+      transient DB failure.
+
+    Args:
+        normalized_teams: Teams from :func:`normalize_token_teams` /
+            :func:`resolve_session_teams` — ``None`` for admin bypass,
+            ``[]`` for public-only, otherwise a list of team IDs.
+        token_use: The ``token_use`` JWT claim (``"session"``, ``"api"``, or
+            ``None`` for legacy tokens).
+
+    Returns:
+        The team ID to use as RBAC context, or ``None`` to fall back to
+        ``check_any_team``.
+    """
+    if normalized_teams is None or token_use == "session":  # nosec B105 - Not a password; token_use is a JWT claim type
+        return None
+    if len(normalized_teams) != 1:
+        return None
+
+    entry = normalized_teams[0]
+    team_id = entry if isinstance(entry, str) else entry.get("id")
+    if not team_id:
+        return None
+
+    try:
+        if await asyncio.to_thread(_is_personal_team_sync, team_id):
+            return None
+    except Exception as exc:
+        logger.warning("Failed to classify team_id=%s as personal; failing closed to check_any_team: %s", team_id, exc)
+        return None
+
+    return team_id
 
 
 def _extract_claim_team_name(payload: Dict[str, Any], team_id: Optional[str]) -> Optional[str]:
@@ -638,9 +777,6 @@ def _check_token_revoked_sync(jti: str) -> bool:
         True if the token is revoked, False otherwise.
     """
     with fresh_db_session() as db:
-        # Third-Party
-        from sqlalchemy import select  # pylint: disable=import-outside-toplevel
-
         # First-Party
         from mcpgateway.db import TokenRevocation  # pylint: disable=import-outside-toplevel
 
@@ -660,9 +796,6 @@ def _lookup_api_token_sync(token_hash: str) -> Optional[Dict[str, Any]]:
         Dict with token info if found and active, None otherwise.
     """
     with fresh_db_session() as db:
-        # Third-Party
-        from sqlalchemy import select  # pylint: disable=import-outside-toplevel
-
         # First-Party
         from mcpgateway.db import EmailApiToken, utc_now  # pylint: disable=import-outside-toplevel
 
@@ -859,9 +992,6 @@ def _update_api_token_last_used_sync(jti: str) -> None:
 
             # Update DB and cache
             with fresh_db_session() as db:
-                # Third-Party
-                from sqlalchemy import select  # pylint: disable=import-outside-toplevel
-
                 # First-Party
                 from mcpgateway.db import EmailApiToken, utc_now  # pylint: disable=import-outside-toplevel
 
@@ -891,9 +1021,6 @@ def _update_api_token_last_used_sync(jti: str) -> None:
 
     # Update DB and cache
     with fresh_db_session() as db:
-        # Third-Party
-        from sqlalchemy import select  # pylint: disable=import-outside-toplevel
-
         # First-Party
         from mcpgateway.db import EmailApiToken, utc_now  # pylint: disable=import-outside-toplevel
 
@@ -927,9 +1054,6 @@ def _is_api_token_jti_sync(jti: str) -> bool:
     Returns:
         bool: True if JTI exists in email_api_tokens table OR if lookup fails
     """
-    # Third-Party
-    from sqlalchemy import select  # pylint: disable=import-outside-toplevel
-
     # First-Party
     from mcpgateway.db import EmailApiToken  # pylint: disable=import-outside-toplevel
 
@@ -954,9 +1078,6 @@ def _get_user_by_email_sync(email: str) -> Optional[EmailUser]:
         EmailUser if found, None otherwise.
     """
     with fresh_db_session() as db:
-        # Third-Party
-        from sqlalchemy import select  # pylint: disable=import-outside-toplevel
-
         result = db.execute(select(EmailUser).where(EmailUser.email == email))
         user = result.scalar_one_or_none()
         if user:
@@ -989,9 +1110,6 @@ def _get_email_by_id_sync(user_id: str) -> Optional[str]:
         Email string if found, None otherwise.
     """
     with fresh_db_session() as db:
-        # Third-Party
-        from sqlalchemy import select  # pylint: disable=import-outside-toplevel
-
         result = db.execute(select(EmailUser.email).where(EmailUser.id == user_id))
         return result.scalar_one_or_none()
 
@@ -1064,11 +1182,8 @@ def _get_auth_context_batched_sync(email: str, jti: Optional[str] = None) -> Dic
         >>> # result["is_token_revoked"]  # False if not revoked
     """
     with fresh_db_session() as db:
-        # Third-Party
-        from sqlalchemy import select  # pylint: disable=import-outside-toplevel
-
         # First-Party
-        from mcpgateway.db import EmailTeam, EmailTeamMember, TokenRevocation  # pylint: disable=import-outside-toplevel
+        from mcpgateway.db import EmailTeamMember, TokenRevocation  # pylint: disable=import-outside-toplevel
 
         result = {
             "user": None,
@@ -1119,6 +1234,7 @@ def _get_auth_context_batched_sync(email: str, jti: Optional[str] = None) -> Dic
                     EmailTeamMember.is_active.is_(True),
                     EmailTeam.is_active.is_(True),
                 )
+                .order_by(EmailTeamMember.id)  # Stable ordering: consistent with _get_user_team_ids_sync
             )
             team_rows = team_ids_result.all()
             team_ids: list[str] = []
@@ -1639,14 +1755,14 @@ async def get_current_user(
                             teams = normalize_token_teams(payload)
 
                         request.state.token_teams = teams
+                        # Preserve raw JWT teams claim separately from the RBAC-resolved value.
+                        # Used by OAuth token storage path selection (jwt_teams_claim is the
+                        # authority for which Vault path was used during authorization — admin
+                        # bypass must not collapse it to None for that purpose).
+                        request.state.jwt_teams_claim = payload.get("teams")
 
-                        # Set team_id: only for single-team API tokens
-                        if teams is None:
-                            request.state.team_id = None
-                        elif len(teams) == 1 and token_use != "session":  # nosec B105
-                            request.state.team_id = teams[0] if isinstance(teams[0], str) else teams[0].get("id")
-                        else:
-                            request.state.team_id = None
+                        # Set team_id: only for single-team, non-personal API tokens
+                        request.state.team_id = await derive_token_team_id(teams, token_use)
 
                         request.state.trace_team_name = await resolve_trace_team_name(payload, teams)
 
@@ -1713,19 +1829,16 @@ async def get_current_user(
                     # API token or legacy: use embedded teams
                     teams = normalize_token_teams(payload)
 
-                # Set team_id: only for single-team API tokens
-                if teams is None:
-                    team_id = None
-                elif len(teams) == 1 and token_use != "session":  # nosec B105
-                    team_id = teams[0] if isinstance(teams[0], str) else teams[0].get("id")
-                else:
-                    team_id = None
+                # Set team_id: only for single-team, non-personal API tokens
+                team_id = await derive_token_team_id(teams, token_use)
 
                 if request:
                     request.state.token_teams = teams
                     request.state.team_id = team_id
                     request.state.token_use = token_use
                     request.state.trace_team_name = await resolve_trace_team_name(payload, teams, preresolved_team_names=auth_ctx.get("team_names"))
+                    # Preserve raw JWT teams claim for OAuth storage path selection.
+                    request.state.jwt_teams_claim = payload.get("teams")
                     await _set_auth_method_from_payload(payload)
 
                 # Store in cache for future requests
@@ -1904,19 +2017,16 @@ async def get_current_user(
             # API token or legacy: use embedded teams
             normalized_teams = normalize_token_teams(payload)
 
-        # Set team_id: only for single-team API tokens
-        if normalized_teams is None:
-            team_id = None
-        elif len(normalized_teams) == 1 and token_use != "session":  # nosec B105
-            team_id = normalized_teams[0] if isinstance(normalized_teams[0], str) else normalized_teams[0].get("id")
-        else:
-            team_id = None
+        # Set team_id: only for single-team, non-personal API tokens
+        team_id = await derive_token_team_id(normalized_teams, token_use)
 
         if request:
             request.state.token_teams = normalized_teams
             request.state.team_id = team_id
             request.state.token_use = token_use
             request.state.trace_team_name = await resolve_trace_team_name(payload, normalized_teams)
+            # Preserve raw JWT teams claim for OAuth storage path selection.
+            request.state.jwt_teams_claim = payload.get("teams")
             # Store JTI for use in middleware (e.g., token usage logging)
             if jti:
                 request.state.jti = jti

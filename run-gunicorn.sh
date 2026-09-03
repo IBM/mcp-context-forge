@@ -29,12 +29,20 @@
 #    SSL                          : Enable TLS/SSL (true/false, default: false)
 #    CERT_FILE                    : Path to SSL certificate (default: certs/cert.pem)
 #    KEY_FILE                     : Path to SSL private key (default: certs/key.pem)
+#    CA_CERTS                     : CA bundle used to verify client certificates (inbound mTLS,
+#                                   read only when SSL=true; default: unset = mTLS disabled)
+#    CERT_REQS                    : Client certificate policy (0=none, 1=optional, 2=required;
+#                                   default: 0). Requires CA_CERTS when non-zero.
+#    LOOPBACK_CLIENT_CERT         : Client certificate the gateway presents on its own loopback
+#                                   self-calls to /rpc (needed by SSE/WebSocket under mTLS)
+#    LOOPBACK_CLIENT_KEY          : Private key for LOOPBACK_CLIENT_CERT (set both or neither)
 #    FORCE_START                  : Force start even if another instance is running (default: false)
 #    DISABLE_ACCESS_LOG           : Disable access logging for performance (default: true)
 #
 #  Usage:
 #    ./run-gunicorn.sh                     # Run with defaults
 #    SSL=true ./run-gunicorn.sh            # Run with TLS enabled
+#    SSL=true CA_CERTS=certs/client/ca-cert.pem CERT_REQS=2 ./run-gunicorn.sh  # TLS + inbound mTLS
 #    GUNICORN_WORKERS=16 ./run-gunicorn.sh # Run with 16 workers
 #    GUNICORN_PRELOAD_APP=true ./run-gunicorn.sh # Preload app for memory optimization
 #    GUNICORN_DEV_MODE=true ./run-gunicorn.sh    # Run in developer mode with hot reload
@@ -72,7 +80,7 @@ cd "${SCRIPT_DIR}" || {
 # SECTION 2: Process Lock Check
 # Prevent multiple instances from running simultaneously unless forced
 #────────────────────────────────────────────────────────────────────────────────
-LOCK_FILE="/tmp/mcpgateway-gunicorn.lock"
+LOCK_FILE=${LOCK_FILE:-/tmp/mcpgateway-gunicorn.lock}
 FORCE_START=${FORCE_START:-false}
 
 check_existing_process() {
@@ -289,6 +297,8 @@ CERT_FILE=${CERT_FILE:-certs/cert.pem}  # Path to SSL certificate file
 KEY_FILE=${KEY_FILE:-certs/key.pem}     # Path to SSL private key file
 KEY_FILE_PASSWORD=${KEY_FILE_PASSWORD:-}  # Optional passphrase for encrypted key
 CERT_PASSPHRASE=${CERT_PASSPHRASE:-}      # Alternative name for passphrase
+SSL_CIPHERS=${SSL_CIPHERS:-}              # Colon-separated OpenSSL cipher string (empty = default)
+SSL_VERSION=${SSL_VERSION:-}              # Minimum TLS protocol version constant/name (empty = library default)
 
 # Use CERT_PASSPHRASE if KEY_FILE_PASSWORD is not set (for compatibility)
 if [[ -z "${KEY_FILE_PASSWORD}" && -n "${CERT_PASSPHRASE}" ]]; then
@@ -330,6 +340,87 @@ if [[ "${SSL}" == "true" ]]; then
         export SSL_KEY_PASSWORD="${KEY_FILE_PASSWORD}"
     fi
 
+    # --- Inbound mTLS (client certificate verification) ----------------------
+    # Both variables are declared and validated here, inside the SSL branch, so
+    # a non-TLS launch never reads them. Relative paths resolve against the repo
+    # root because SECTION 1 already cd'd to SCRIPT_DIR.
+    CA_CERTS=${CA_CERTS:-}    # CA bundle used to verify client certificates
+    CERT_REQS=${CERT_REQS:-0} # 0=CERT_NONE, 1=CERT_OPTIONAL, 2=CERT_REQUIRED
+
+    if [[ "${CERT_REQS}" != "0" && "${CERT_REQS}" != "1" && "${CERT_REQS}" != "2" ]]; then
+        echo "❌  FATAL: CERT_REQS must be 0, 1, or 2 (got: ${CERT_REQS})"
+        exit 1
+    fi
+
+    if [[ "${CERT_REQS}" != "0" && -z "${CA_CERTS}" ]]; then
+        echo "❌  FATAL: CERT_REQS=${CERT_REQS} requires CA_CERTS to be set."
+        echo "   Client certificates are verified only against the bundle named by"
+        echo "   CA_CERTS; the system trust store is never loaded. Without it every"
+        echo "   TLS handshake would fail. Set CA_CERTS=/path/to/ca-bundle.pem."
+        exit 1
+    fi
+
+    # The gateway makes real loopback HTTPS calls to its own /rpc for the SSE and
+    # WebSocket transports. Under CERT_REQS=2 those calls must present a client
+    # certificate or the handshake is rejected, taking both transports down.
+    # Validated unconditionally (not just when CA_CERTS is set) so a typo'd path
+    # fails here at boot instead of per-request inside internal_loopback_verify().
+    LOOPBACK_CLIENT_CERT=${LOOPBACK_CLIENT_CERT:-}
+    LOOPBACK_CLIENT_KEY=${LOOPBACK_CLIENT_KEY:-}
+
+    if [[ -n "${LOOPBACK_CLIENT_CERT}" || -n "${LOOPBACK_CLIENT_KEY}" ]]; then
+        if [[ -z "${LOOPBACK_CLIENT_CERT}" || -z "${LOOPBACK_CLIENT_KEY}" ]]; then
+            echo "❌  FATAL: LOOPBACK_CLIENT_CERT and LOOPBACK_CLIENT_KEY must be set together."
+            exit 1
+        fi
+        for _loopback_file in "${LOOPBACK_CLIENT_CERT}" "${LOOPBACK_CLIENT_KEY}"; do
+            if [[ ! -f "${_loopback_file}" ]]; then
+                echo "❌  FATAL: Loopback client credential not found: ${_loopback_file}"
+                exit 1
+            fi
+            if [[ ! -r "${_loopback_file}" ]]; then
+                echo "❌  FATAL: Cannot read loopback client credential: ${_loopback_file}"
+                exit 1
+            fi
+        done
+        unset _loopback_file
+        export LOOPBACK_CLIENT_CERT LOOPBACK_CLIENT_KEY
+    elif [[ "${CERT_REQS}" == "2" ]]; then
+        # CERT_REQS=1 (CERT_OPTIONAL) still admits a certless caller, so the
+        # gateway's own certless self-calls succeed - only CERT_REQS=2 breaks them.
+        echo "⚠️  WARNING: CERT_REQS=2 without LOOPBACK_CLIENT_CERT/KEY."
+        echo "   The gateway's own loopback calls to /rpc present no client certificate,"
+        echo "   so the SSE and WebSocket transports will fail at the TLS handshake."
+        echo "   Set LOOPBACK_CLIENT_CERT and LOOPBACK_CLIENT_KEY (see 'make certs-client')."
+    fi
+
+    if [[ -n "${CA_CERTS}" ]]; then
+        # Validated even when CERT_REQS=0: the CA bundle is loaded whenever it is
+        # passed, so an unreadable file breaks worker boot regardless of policy.
+        if [[ ! -f "${CA_CERTS}" ]]; then
+            echo "❌  FATAL: CA certificate bundle not found: ${CA_CERTS}"
+            exit 1
+        fi
+
+        if [[ ! -r "${CA_CERTS}" ]]; then
+            echo "❌  FATAL: Cannot read CA certificate bundle: ${CA_CERTS}"
+            exit 1
+        fi
+
+        if [[ "${CERT_REQS}" == "0" ]]; then
+            echo "⚠️  WARNING: CA_CERTS is set but CERT_REQS=0 - client certificates"
+            echo "   will NOT be requested or verified. Set CERT_REQS=2 to require them."
+        fi
+
+        echo "🔐  Inbound mTLS configured:"
+        echo "   CA Bundle:  ${CA_CERTS}"
+        echo "   Cert reqs:  ${CERT_REQS} (0=none, 1=optional, 2=required)"
+
+        if [[ -n "${LOOPBACK_CLIENT_CERT}" ]]; then
+            echo "   Loopback:   ${LOOPBACK_CLIENT_CERT} (self-call client certificate)"
+        fi
+    fi
+
     echo "✓  TLS enabled - using:"
     echo "   Certificate: ${CERT_FILE}"
     echo "   Private Key: ${KEY_FILE}"
@@ -337,6 +428,16 @@ if [[ "${SSL}" == "true" ]]; then
         echo "   Passphrase: ******** (protected)"
     else
         echo "   Passphrase: (none)"
+    fi
+    if [[ -n "${SSL_CIPHERS}" ]]; then
+        echo "   Ciphers: ${SSL_CIPHERS}"
+    else
+        echo "   Ciphers: (default)"
+    fi
+    if [[ -n "${SSL_VERSION}" ]]; then
+        echo "   SSL/TLS Version: ${SSL_VERSION}"
+    else
+        echo "   SSL/TLS Version: (default)"
     fi
 else
     echo "🔓  Running without TLS (HTTP only)"
@@ -419,6 +520,16 @@ fi
 if [[ "${SSL}" == "true" ]]; then
     cmd+=( --certfile "${CERT_FILE}" --keyfile "${KEY_FILE}" )
     # If passphrase is set, it will be available to Python via SSL_KEY_PASSWORD env var
+
+    if [[ -n "${CA_CERTS}" ]]; then
+        cmd+=( --ca-certs "${CA_CERTS}" --cert-reqs "${CERT_REQS}" )
+    fi
+    if [[ -n "${SSL_CIPHERS}" ]]; then
+        cmd+=( --ciphers "${SSL_CIPHERS}" )
+    fi
+    if [[ -n "${SSL_VERSION}" ]]; then
+        cmd+=( --ssl-version "${SSL_VERSION}" )
+    fi
 fi
 
 # Add the application module

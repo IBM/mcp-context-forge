@@ -37,11 +37,13 @@ from mcpgateway.common.models import Prompt as MCPPrompt
 from mcpgateway.common.models import Resource as MCPResource
 from mcpgateway.common.models import ResourceContent, TextContent
 from mcpgateway.common.models import Tool as MCPTool
+from mcpgateway.common.models import ToolAnnotations
 from mcpgateway.common.oauth import OAUTH_SENSITIVE_KEYS
 from mcpgateway.common.validators import SecurityValidator, validate_core_url
 from mcpgateway.config import settings
 from mcpgateway.utils.base_models import BaseModelWithConfigDict
 from mcpgateway.utils.jq_guard import assert_safe_jq_filter
+from mcpgateway.utils.origin import is_allowed_redirect, origin_from_url
 from mcpgateway.utils.services_auth import decode_auth, encode_auth
 from mcpgateway.validation.tags import validate_tags_field
 
@@ -153,6 +155,12 @@ def _validate_oauth_config_urls(v: Optional[Dict[str, Any]]) -> Optional[Dict[st
         if not isinstance(raw_value, str):
             raise ValueError(f"oauth_config.{field_name} must be a string URL")
         validate_core_url(raw_value, f"OAuth config {field_name}")
+    if "redirect_uri_after_oauth" in v:
+        redirect_after_oauth = v["redirect_uri_after_oauth"]
+        if not isinstance(redirect_after_oauth, str) or not redirect_after_oauth.strip():
+            raise ValueError("oauth_config.redirect_uri_after_oauth must be a non-empty string URL")
+        if not is_allowed_redirect(redirect_after_oauth, str(settings.app_domain), settings.oauth_redirect_allowed_origin):
+            raise ValueError(f"oauth_config.redirect_uri_after_oauth must use this gateway origin ({origin_from_url(str(settings.app_domain))}) or the origin in OAUTH_REDIRECT_ALLOWED_ORIGIN")
     raw_servers = v.get("authorization_servers")
     if raw_servers in (None, ""):
         return v
@@ -647,6 +655,7 @@ def _encode_auth_headers_list(auth_headers: List[Any]) -> Optional[str]:
             value = ""
         if not isinstance(value, str):
             raise ValueError(f"Invalid header value type for '{key}': '{type(value).__name__}'. Header values must be strings.")
+        value = SecurityValidator.sanitize_credential_value(value)
 
         # Surrounding whitespace is a common copy/paste artifact and is trimmed. Embedded
         # whitespace is not: it produces an invalid HTTP header name that would otherwise be
@@ -723,6 +732,7 @@ def _assemble_tool_authheaders(values: Dict[str, Any]) -> Dict[str, Any]:
     header_key = values.get("auth_header_key", "")
     header_value = values.get("auth_header_value", "")
     if header_key and header_value:
+        header_value = SecurityValidator.sanitize_credential_value(header_value)
         return {"auth_type": "authheaders", "auth_value": encode_auth({header_key: header_value})}
 
     return {"auth_type": "authheaders", "auth_value": None}
@@ -1142,11 +1152,14 @@ class ToolCreate(BaseModel):
         auth_type = values.get("auth_type")
         if auth_type and auth_type.lower() != "one_time_auth":
             if auth_type.lower() == "basic":
-                creds = base64.b64encode(f"{values.get('auth_username', '')}:{values.get('auth_password', '')}".encode("utf-8")).decode()
+                username = SecurityValidator.sanitize_credential_value(values.get("auth_username", ""))
+                password = SecurityValidator.sanitize_credential_value(values.get("auth_password", ""))
+                creds = base64.b64encode(f"{username}:{password}".encode("utf-8")).decode()
                 encoded_auth = encode_auth({"Authorization": f"Basic {creds}"})
                 values["auth"] = {"auth_type": "basic", "auth_value": encoded_auth}
             elif auth_type.lower() == "bearer":
-                encoded_auth = encode_auth({"Authorization": f"Bearer {values.get('auth_token', '')}"})
+                token = SecurityValidator.sanitize_credential_value(values.get("auth_token", ""))
+                encoded_auth = encode_auth({"Authorization": f"Bearer {token}"})
                 values["auth"] = {"auth_type": "bearer", "auth_value": encoded_auth}
             elif auth_type.lower() == "authheaders":
                 values["auth"] = _assemble_tool_authheaders(values)
@@ -1600,11 +1613,14 @@ class ToolUpdate(BaseModelWithConfigDict):
         auth_type = values.get("auth_type")
         if auth_type and auth_type.lower() != "one_time_auth":
             if auth_type.lower() == "basic":
-                creds = base64.b64encode(f"{values.get('auth_username', '')}:{values.get('auth_password', '')}".encode("utf-8")).decode()
+                username = SecurityValidator.sanitize_credential_value(values.get("auth_username", ""))
+                password = SecurityValidator.sanitize_credential_value(values.get("auth_password", ""))
+                creds = base64.b64encode(f"{username}:{password}".encode("utf-8")).decode()
                 encoded_auth = encode_auth({"Authorization": f"Basic {creds}"})
                 values["auth"] = {"auth_type": "basic", "auth_value": encoded_auth}
             elif auth_type.lower() == "bearer":
-                encoded_auth = encode_auth({"Authorization": f"Bearer {values.get('auth_token', '')}"})
+                token = SecurityValidator.sanitize_credential_value(values.get("auth_token", ""))
+                encoded_auth = encode_auth({"Authorization": f"Bearer {token}"})
                 values["auth"] = {"auth_type": "bearer", "auth_value": encoded_auth}
             elif auth_type.lower() == "authheaders":
                 values["auth"] = _assemble_tool_authheaders(values)
@@ -2061,6 +2077,80 @@ class ToolResult(BaseModelWithConfigDict):
     structured_content: Optional[Dict[str, Any]] = None
     is_error: bool = False
     error_message: Optional[str] = None
+
+
+class ToolPreviewRequest(BaseModelWithConfigDict):
+    """Schema for tool preview (dry-run) requests.
+
+    Companion to :class:`ToolInvocation`, minus the ``name`` field (the tool
+    name is a path parameter on the preview route, not part of the body).
+    See #5629.
+
+    Attributes:
+        arguments (Dict[str, Any]): Arguments to validate against the tool's input schema.
+                                   Not executed against the tool; see :class:`ToolPreviewResponse`.
+    """
+
+    arguments: Dict[str, Any] = Field(default_factory=dict, description="Arguments to validate against the tool's input schema")
+
+
+class ToolPreviewTarget(BaseModelWithConfigDict):
+    """Where a live invocation of the previewed tool would be dispatched.
+
+    Never carries the remote gateway's URL, transport, or credentials —
+    only the gateway's name, so a caller can tell "federated" from "local"
+    without gaining any information useful for reaching the gateway directly.
+
+    Attributes:
+        kind (Literal["local", "federated"]): "local" for a manually registered tool
+            (``gateway_id IS NULL``), "federated" for a tool proxied through a gateway.
+        gateway_name (Optional[str]): Name of the owning gateway when kind is "federated";
+            None for local tools.
+    """
+
+    kind: Literal["local", "federated"]
+    gateway_name: Optional[str] = Field(None, description="Name of the owning gateway (federated tools only); never the gateway URL or credentials")
+
+
+class ToolPreviewWarning(BaseModelWithConfigDict):
+    """A single non-fatal caveat surfaced by a tool preview.
+
+    Attributes:
+        code (str): Machine-readable warning code (e.g. "hook_not_previewed").
+        hook (Optional[str]): Name of the plugin hook the warning concerns, if any.
+        message (str): Human-readable explanation.
+    """
+
+    code: str = Field(..., description="Machine-readable warning code")
+    hook: Optional[str] = Field(None, description="Name of the plugin hook this warning concerns, if any")
+    message: str = Field(..., description="Human-readable explanation")
+
+
+class ToolPreviewResponse(BaseModelWithConfigDict):
+    """Schema for tool preview (dry-run) responses. Companion to :class:`ToolPreviewRequest`. See #5629.
+
+    Reports whether the given arguments would validate against the tool's input
+    schema and where a live invocation would be dispatched, without invoking the
+    tool: no REST/MCP/A2A/gRPC call is made, and no TOOL_POST_INVOKE hook runs.
+
+    Attributes:
+        validated (bool): True when ``arguments`` validate against the tool's input schema.
+        resolved_arguments (Dict[str, Any]): The input arguments, unchanged (pre-invoke hook
+            payload modifications are not applied back here).
+        target (ToolPreviewTarget): Where a live invocation would be dispatched.
+        annotations (ToolAnnotations): The tool's declared behavior hints (readOnlyHint, etc.).
+        pre_hooks_run (List[str]): Names of plugins whose TOOL_PRE_INVOKE hook actually ran
+            (only plugins tagged ``preview_safe``; see plugins/AGENTS.md).
+        warnings (List[ToolPreviewWarning]): Non-fatal caveats, e.g. invalid arguments or
+            hooks that were skipped rather than exercised.
+    """
+
+    validated: bool
+    resolved_arguments: Dict[str, Any]
+    target: ToolPreviewTarget
+    annotations: ToolAnnotations
+    pre_hooks_run: List[str] = Field(default_factory=list, description="Plugins whose TOOL_PRE_INVOKE hook actually ran during preview")
+    warnings: List[ToolPreviewWarning] = Field(default_factory=list, description="Non-fatal caveats about this preview")
 
 
 class ResourceCreate(BaseModel):
@@ -3377,6 +3467,8 @@ class GatewayCreate(BaseModelWithConfigDict):
             if not username or not password:
                 raise ValueError("For 'basic' auth, both 'auth_username' and 'auth_password' must be provided.")
 
+            username = SecurityValidator.sanitize_credential_value(username)
+            password = SecurityValidator.sanitize_credential_value(password)
             creds = base64.b64encode(f"{username}:{password}".encode("utf-8")).decode()
             return encode_auth({"Authorization": f"Basic {creds}"})
 
@@ -3387,6 +3479,7 @@ class GatewayCreate(BaseModelWithConfigDict):
             if not token:
                 raise ValueError("For 'bearer' auth, 'auth_token' must be provided.")
 
+            token = SecurityValidator.sanitize_credential_value(token)
             return encode_auth({"Authorization": f"Bearer {token}"})
 
         if auth_type == "oauth":
@@ -3409,6 +3502,7 @@ class GatewayCreate(BaseModelWithConfigDict):
             if not header_key or not header_value:
                 raise ValueError("For 'authheaders' auth, either 'auth_headers' list or both 'auth_header_key' and 'auth_header_value' must be provided.")
 
+            header_value = SecurityValidator.sanitize_credential_value(header_value)
             return encode_auth({header_key: header_value})
 
         if auth_type == "one_time_auth":
@@ -3720,6 +3814,8 @@ class GatewayUpdate(BaseModelWithConfigDict):
             if not username or not password:
                 raise ValueError("For 'basic' auth, both 'auth_username' and 'auth_password' must be provided.")
 
+            username = SecurityValidator.sanitize_credential_value(username)
+            password = SecurityValidator.sanitize_credential_value(password)
             creds = base64.b64encode(f"{username}:{password}".encode("utf-8")).decode()
             return encode_auth({"Authorization": f"Basic {creds}"})
 
@@ -3730,6 +3826,7 @@ class GatewayUpdate(BaseModelWithConfigDict):
             if not token:
                 raise ValueError("For 'bearer' auth, 'auth_token' must be provided.")
 
+            token = SecurityValidator.sanitize_credential_value(token)
             return encode_auth({"Authorization": f"Bearer {token}"})
 
         if auth_type == "oauth":
@@ -3752,6 +3849,7 @@ class GatewayUpdate(BaseModelWithConfigDict):
             if not header_key or not header_value:
                 raise ValueError("For 'authheaders' auth, either 'auth_headers' list or both 'auth_header_key' and 'auth_header_value' must be provided.")
 
+            header_value = SecurityValidator.sanitize_credential_value(header_value)
             return encode_auth({header_key: header_value})
 
         if auth_type == "one_time_auth":
@@ -3791,6 +3889,13 @@ class GatewayUpdate(BaseModelWithConfigDict):
                 raise ValueError("auth_query_param_value is required when setting auth_type to 'query_param'")
 
         return self
+
+
+class GatewayOwnershipTransferRequest(BaseModel):
+    """Request to transfer gateway ownership to another user."""
+
+    target_owner_email: EmailStr = Field(..., description="Email of the new gateway owner")
+    target_team_id: Optional[str] = Field(None, description="New team ID for the gateway")
 
 
 # ---------------------------------------------------------------------------
@@ -4195,6 +4300,20 @@ class GatewayRefreshResponse(BaseModelWithConfigDict):
     validation_errors: List[str] = Field(default_factory=list, description="List of validation errors encountered")
     duration_ms: float = Field(..., description="Duration of the refresh operation in milliseconds")
     refreshed_at: datetime = Field(..., description="Timestamp when the refresh completed")
+
+
+class GatewayImpactServer(BaseModelWithConfigDict):
+    """Virtual server affected by a gateway deletion."""
+
+    id: str = Field(..., description="ID of the affected virtual server")
+    name: str = Field(..., description="Name of the affected virtual server")
+
+
+class GatewayImpactPreview(BaseModelWithConfigDict):
+    """Layer-1-scoped preview of virtual servers affected by gateway deletion."""
+
+    gateway_id: str = Field(..., description="ID of the gateway being evaluated")
+    servers: List[GatewayImpactServer] = Field(default_factory=list, description="Visible virtual servers associated through this gateway's tools, resources, or prompts")
 
 
 class FederatedTool(BaseModelWithConfigDict):
@@ -4927,10 +5046,28 @@ class GatewayHandshakeResponse(BaseModelWithConfigDict):
     capabilities: Optional[Dict[str, Any]] = None
     component_counts: Optional[Dict[str, int]] = Field(None, description="Counts for tools/resources/prompts; a key is absent when the capability is not advertised")
     counts_partial: bool = Field(False, description="True when any list result had a nextCursor (counts are first-page lower bounds)")
-    credential_source: Literal["stored", "form", "none"] = "none"
+    credential_source: Literal["stored", "form", "none", "session"] = "none"
     failure_class: Optional[Literal["transport", "protocol", "auth", "invalid_response"]] = None
     error: Optional[str] = None
     raw_preview: Optional[str] = Field(None, description="Size-capped JSON preview of the final handshake payload")
+
+
+class ServerHandshakeRequest(BaseModelWithConfigDict):
+    """Request to run an MCP handshake test against a virtual server's own endpoint.
+
+    Unlike :class:`GatewayHandshakeRequest`, the target is derived from the
+    trusted, already-registered virtual server ID (path parameter) rather than
+    an arbitrary caller-supplied URL, so no ``base_url``/``path`` fields exist here.
+    """
+
+    headers: Optional[Dict[str, str]] = Field(
+        None,
+        description=(
+            "Optional header overrides for the handshake's credentials. Only 'Authorization' and the "
+            "configured AUTH_HEADER_NAME (when customized) are honored -- any other header (including "
+            "proxy-identity, client-IP, session, or hop-by-hop headers) is ignored."
+        ),
+    )
 
 
 class TaggedEntity(BaseModelWithConfigDict):
@@ -5262,6 +5399,8 @@ class A2AAgentCreate(BaseModel):
             if not username or not password:
                 raise ValueError("For 'basic' auth, both 'auth_username' and 'auth_password' must be provided.")
 
+            username = SecurityValidator.sanitize_credential_value(username)
+            password = SecurityValidator.sanitize_credential_value(password)
             creds = base64.b64encode(f"{username}:{password}".encode("utf-8")).decode()
             return encode_auth({"Authorization": f"Basic {creds}"})
 
@@ -5272,6 +5411,7 @@ class A2AAgentCreate(BaseModel):
             if not token:
                 raise ValueError("For 'bearer' auth, 'auth_token' must be provided.")
 
+            token = SecurityValidator.sanitize_credential_value(token)
             return encode_auth({"Authorization": f"Bearer {token}"})
 
         if auth_type == "oauth":
@@ -5294,6 +5434,7 @@ class A2AAgentCreate(BaseModel):
             if not header_key or not header_value:
                 raise ValueError("For 'authheaders' auth, either 'auth_headers' list or both 'auth_header_key' and 'auth_header_value' must be provided.")
 
+            header_value = SecurityValidator.sanitize_credential_value(header_value)
             return encode_auth({header_key: header_value})
 
         if auth_type == "one_time_auth":
@@ -5601,6 +5742,8 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
             if not username or not password:
                 raise ValueError("For 'basic' auth, both 'auth_username' and 'auth_password' must be provided.")
 
+            username = SecurityValidator.sanitize_credential_value(username)
+            password = SecurityValidator.sanitize_credential_value(password)
             creds = base64.b64encode(f"{username}:{password}".encode("utf-8")).decode()
             return encode_auth({"Authorization": f"Basic {creds}"})
 
@@ -5611,6 +5754,7 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
             if not token:
                 raise ValueError("For 'bearer' auth, 'auth_token' must be provided.")
 
+            token = SecurityValidator.sanitize_credential_value(token)
             return encode_auth({"Authorization": f"Bearer {token}"})
 
         if auth_type == "oauth":
@@ -5633,6 +5777,7 @@ class A2AAgentUpdate(BaseModelWithConfigDict):
             if not header_key or not header_value:
                 raise ValueError("For 'authheaders' auth, either 'auth_headers' list or both 'auth_header_key' and 'auth_header_value' must be provided.")
 
+            header_value = SecurityValidator.sanitize_credential_value(header_value)
             return encode_auth({header_key: header_value})
 
         if auth_type == "one_time_auth":
@@ -7546,6 +7691,7 @@ class TokenCreateResponse(BaseModel):
     Attributes:
         token: Token information
         access_token: The actual token string (only returned on creation)
+        warnings: Non-fatal advisories about the created token's effective scope
 
     Examples:
         >>> from datetime import datetime
@@ -7561,10 +7707,13 @@ class TokenCreateResponse(BaseModel):
         ... )
         >>> response.access_token
         'abc123xyz'
+        >>> response.warnings
+        []
     """
 
     token: TokenResponse = Field(..., description="Token information")
     access_token: str = Field(..., description="The actual token string")
+    warnings: List[str] = Field(default_factory=list, description="Non-fatal advisories about the created token's effective scope")
 
 
 class TokenListResponse(BaseModel):
@@ -8277,6 +8426,7 @@ class CatalogServer(BaseModel):
     logo_url: Optional[str] = Field(None, description="URL to server logo/icon")
     documentation_url: Optional[str] = Field(None, description="URL to server documentation")
     is_registered: bool = Field(default=False, description="Whether server is already registered")
+    gateway_id: Optional[str] = Field(None, description="ID of the caller-visible gateway matched to this catalog server")
     is_available: bool = Field(default=True, description="Whether server is currently available")
     requires_oauth_config: bool = Field(default=False, description="Whether server is registered but needs OAuth configuration")
 
@@ -8288,6 +8438,8 @@ class CatalogServerRegisterRequest(BaseModel):
     name: Optional[str] = Field(None, description="Optional custom name for the server")
     api_key: Optional[str] = Field(None, description="API key if required")
     oauth_credentials: Optional[Dict[str, Any]] = Field(None, description="OAuth credentials if required")
+    visibility: Optional[Literal["private", "team", "public"]] = Field(None, description="Visibility level: private, team, or public")
+    team_id: Optional[str] = Field(None, description="Team ID for team-scoped registration")
 
 
 class CatalogServerRegisterBody(BaseModel):
@@ -8299,6 +8451,8 @@ class CatalogServerRegisterBody(BaseModel):
 
     name: Optional[str] = Field(None, description="Optional custom name for the server")
     api_key: Optional[str] = Field(None, max_length=4096, description="API key if the catalog entry requires one")
+    visibility: Optional[Literal["private", "team", "public"]] = Field(None, description="Visibility level: private, team, or public")
+    team_id: Optional[str] = Field(None, description="Team ID for team-scoped registration")
 
     @field_validator("name")
     @classmethod
@@ -8373,6 +8527,8 @@ class CatalogBulkRegisterRequest(BaseModel):
 
     server_ids: List[str] = Field(..., description="List of catalog server IDs to register")
     skip_errors: bool = Field(default=True, description="Continue on error")
+    visibility: Optional[Literal["private", "team", "public"]] = Field(None, description="Visibility level for all registered servers")
+    team_id: Optional[str] = Field(None, description="Team ID for team-scoped registration")
 
 
 class CatalogBulkRegisterResponse(BaseModel):
