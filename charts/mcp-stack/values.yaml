@@ -865,9 +865,9 @@ mcpContextForge:
     EMAIL_AUTH_ENABLED: "true"             # enable email-based authentication system
     PROTECT_ALL_ADMINS: "true"             # allow active admin accounts to bypass login lockout
     PLATFORM_ADMIN_EMAIL: admin@example.com # email for bootstrap platform admin user
-    PLATFORM_ADMIN_PASSWORD: changeme     # password for bootstrap platform admin user
+    PLATFORM_ADMIN_PASSWORD: ""           # REQUIRED — set a strong value; generate with: make init-secrets
     PLATFORM_ADMIN_FULL_NAME: Platform Administrator # full name for bootstrap platform admin
-    DEFAULT_USER_PASSWORD: changeme       # default password for new users (bootstrap)
+    DEFAULT_USER_PASSWORD: ""             # REQUIRED — set a strong value; generate with: make init-secrets
 
     # ─ Password Hashing & Security ─
     ARGON2ID_TIME_COST: "3"                # Argon2id time cost (iterations)

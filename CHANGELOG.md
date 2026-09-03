@@ -46,6 +46,10 @@ Release 1.0.9 consolidates **41 PRs** focused on **inbound mTLS client certifica
 - **TLS cipher suite exposure** ([#6483](https://github.com/IBM/mcp-context-forge/pull/6483)) - Exposed TLS cipher suite configuration.
 - **Automated MCP server catalog icon generation** ([#6397](https://github.com/IBM/mcp-context-forge/pull/6397)) - Automated MCP server catalog icon generation.
 
+### Breaking Changes
+
+- **Enabled authentication rejects default passwords** - When Basic Auth or email authentication is enabled, empty, placeholder, and known-weak password values now fail startup. Set `BASIC_AUTH_PASSWORD` for `API_ALLOW_BASIC_AUTH=true` or `DOCS_ALLOW_BASIC_AUTH=true`; set `PLATFORM_ADMIN_PASSWORD` and `DEFAULT_USER_PASSWORD` for `EMAIL_AUTH_ENABLED=true`. Existing deployments must run `make init-secrets-patch-env` or update their deployment Secret before restarting. See the [migration guide](docs/docs/operations/default-password-fail-closed-migration.md).
+
 ### Fixed
 
 #### **Security & Auth**

@@ -6,22 +6,33 @@ This guide provides comprehensive configuration options for ContextForge, includ
 
 ## 🔐 Required: Change Before Use
 
-These variables have insecure defaults and **must be changed** before production deployment:
+These variables have insecure built-in placeholders. Set each credential before enabling its consuming authentication feature; the gateway rejects empty, placeholder, and known-weak password values at startup.
 
 | Variable | Description | Default | Action Required |
 |----------|-------------|---------|-----------------|
 | `JWT_SECRET_KEY` | Secret key for signing JWT tokens | *(must be set — no default)* | Generate with `make init-secrets-patch-env` or `openssl rand -hex 32` |
 | `AUTH_ENCRYPTION_SECRET` | Passphrase for encrypting stored credentials | *(must be set — no default)* | Generate with `make init-secrets-patch-env` or `openssl rand -hex 32` |
 | `BASIC_AUTH_USER` | Username for HTTP Basic auth | `admin` | Change for production |
-| `BASIC_AUTH_PASSWORD` | Password for HTTP Basic auth | `changeme` | Set a strong password |
+| `BASIC_AUTH_PASSWORD` | Password for HTTP Basic auth | `changeme` (rejected when Basic Auth is enabled) | Set a strong password |
 | `PLATFORM_ADMIN_EMAIL` | Email for bootstrap admin user | `admin@example.com` | Use real admin email |
-| `PLATFORM_ADMIN_PASSWORD` | Password for bootstrap admin user | `changeme` | Set a strong password |
-| `DEFAULT_USER_PASSWORD` | Default password for new users | `changeme` | Set a strong password |
+| `PLATFORM_ADMIN_PASSWORD` | Password for bootstrap admin user | `changeme` (rejected when email auth is enabled) | Set a strong password |
+| `DEFAULT_USER_PASSWORD` | Default password for new users | `changeme` (rejected when email auth is enabled) | Set a strong password |
 
-Copy [.env.example](https://github.com/IBM/mcp-context-forge/blob/main/.env.example) to `.env` and update these values.
+Copy [.env.example](https://github.com/IBM/mcp-context-forge/blob/main/.env.example) to `.env`, then run `make setup` or `make init-secrets-patch-env`.
 
 !!! warning "Startup Validation"
-    If any required `.env` variable is missing or invalid, the gateway will fail fast at startup with a validation error via Pydantic.
+    If an enabled authentication feature has a missing, placeholder, or known-weak password, the gateway fails fast at startup with a Pydantic validation error.
+
+### Migrating Existing Deployments
+
+Before upgrading, set strong values for every enabled authentication path:
+
+1. Run `make init-secrets-patch-env` against the existing `.env`, or set the values manually.
+2. Set `BASIC_AUTH_PASSWORD` when `API_ALLOW_BASIC_AUTH=true` or `DOCS_ALLOW_BASIC_AUTH=true`.
+3. Set `PLATFORM_ADMIN_PASSWORD` and `DEFAULT_USER_PASSWORD` when `EMAIL_AUTH_ENABLED=true`.
+4. For Helm or Kubernetes, update the corresponding Secret values before restarting the gateway.
+
+Deployments that previously relied on `changeme`, an empty value, or a `__REPLACE_ME__` placeholder will not start until the affected credential is replaced. See the [full migration guide](../operations/default-password-fail-closed-migration.md) for verification steps and rollback notes.
 
 ### 🔒 Security Defaults (Secure by Default)
 
@@ -137,7 +148,7 @@ appropriate secure-cookie, SameSite, credential, and CSRF configuration.
 | Setting                     | Description                                                                  | Default             | Options     |
 |-----------------------------|------------------------------------------------------------------------------|---------------------|-------------|
 | `BASIC_AUTH_USER`           | Username for HTTP Basic authentication (when enabled)                        | `admin`             | string      |
-| `BASIC_AUTH_PASSWORD`       | Password for HTTP Basic authentication (when enabled)                        | `changeme`          | string      |
+| `BASIC_AUTH_PASSWORD`       | Password for HTTP Basic authentication (when enabled)                        | `changeme` (rejected when enabled) | string      |
 | `API_ALLOW_BASIC_AUTH`      | Enable Basic auth for API endpoints (disabled by default for security)       | `false`             | bool        |
 | `DOCS_ALLOW_BASIC_AUTH`     | Enable Basic auth for docs endpoints (disabled by default)                   | `false`             | bool        |
 | `PLATFORM_ADMIN_EMAIL`      | Email for bootstrap platform admin user (auto-created with admin privileges). Also used as the default identity for OAuth health-check token lookups on `authorization_code` gateways — if this user has not completed consent for a gateway, health checks proceed unauthenticated (expected behaviour). | `admin@example.com` | string      |
@@ -408,9 +419,9 @@ curl -X POST -H "Authorization: Bearer $TOKEN" \
 | ------------------------------ | ------------------------------------------------ | --------------------- | ------- |
 | `EMAIL_AUTH_ENABLED`          | Enable email-based authentication system         | `true`                | bool    |
 | `PLATFORM_ADMIN_EMAIL`        | Email for bootstrap platform admin user          | `admin@example.com`   | string  |
-| `PLATFORM_ADMIN_PASSWORD`     | Password for bootstrap platform admin user       | `changeme`            | string  |
+| `PLATFORM_ADMIN_PASSWORD`     | Password for bootstrap platform admin user       | `changeme` (rejected when email auth is enabled) | string  |
 | `PLATFORM_ADMIN_FULL_NAME`    | Full name for bootstrap platform admin user      | `Platform Administrator` | string |
-| `DEFAULT_USER_PASSWORD`       | Default password for newly created users         | `changeme`            | string  |
+| `DEFAULT_USER_PASSWORD`       | Default password for newly created users         | `changeme` (rejected when email auth is enabled) | string  |
 | `ARGON2ID_TIME_COST`          | Argon2id time cost (iterations)                  | `3`                   | int > 0 |
 | `ARGON2ID_MEMORY_COST`        | Argon2id memory cost in KiB                      | `65536`               | int > 0 |
 | `ARGON2ID_PARALLELISM`        | Argon2id parallelism (threads)                   | `1`                   | int > 0 |
@@ -1361,9 +1372,11 @@ HOST=0.0.0.0
 PORT=4444
 DATABASE_URL=postgresql+psycopg://postgres:changeme@postgres:5432/mcp
 REDIS_URL=redis://redis:6379/0
-JWT_SECRET_KEY=my-secret-key
-BASIC_AUTH_USER=admin
-BASIC_AUTH_PASSWORD=changeme
+JWT_SECRET_KEY=$(openssl rand -hex 32)
+AUTH_ENCRYPTION_SECRET=$(openssl rand -hex 32)
+BASIC_AUTH_PASSWORD=$(openssl rand -base64 24 | tr -d '\n')
+PLATFORM_ADMIN_PASSWORD=$(openssl rand -base64 24 | tr -d '\n')
+DEFAULT_USER_PASSWORD=$(openssl rand -base64 24 | tr -d '\n')
 MCPGATEWAY_UI_ENABLED=true
 MCPGATEWAY_ADMIN_API_ENABLED=true
 # Embedded UI mode (hides logout + team selector by default)
