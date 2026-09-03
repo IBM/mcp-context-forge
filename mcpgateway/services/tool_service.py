@@ -718,6 +718,31 @@ def _validate_with_cached_schema(instance: Any, schema: dict) -> None:
         raise error
 
 
+def _validate_tool_input_arguments(arguments: Dict[str, Any], input_schema: Optional[Dict[str, Any]]) -> Optional[str]:
+    """Validate candidate arguments against a tool's input schema.
+
+    Shared by ``ToolService.invoke_tool`` (live invocation) and
+    ``ToolService.preview_tool_invocation`` (dry-run, #5629) via
+    ``ToolService._resolve_tool_for_invocation`` so the two can never disagree about
+    whether a given set of arguments is acceptable.
+
+    Args:
+        arguments: Candidate arguments to validate.
+        input_schema: The tool's JSON input schema, if any.
+
+    Returns:
+        None if ``arguments`` validate cleanly (or there is no schema to check against),
+        otherwise the ``str()`` of the ``jsonschema`` validation/schema error.
+    """
+    if not input_schema:
+        return None
+    try:
+        _validate_with_cached_schema(arguments, input_schema)
+    except (jsonschema.exceptions.ValidationError, jsonschema.exceptions.SchemaError) as exc:
+        return str(exc)
+    return None
+
+
 def extract_using_jq(data, jq_filter=""):
     """
     Extracts data from a given input (string, dict, or list) using a jq filter string.
@@ -1092,6 +1117,13 @@ class ResolvedTool:
         tool_payload: Flattened tool fields, from a cache hit, a cache-miss ORM conversion,
             or direct-proxy synthesis. Always populated.
         gateway_payload: Flattened gateway fields, or None when the tool has no gateway.
+        schema_validation_error: ``str()`` of the ``jsonschema`` error when the caller's
+            ``arguments`` fail the tool's input schema, via ``_validate_tool_input_arguments``
+            (#5629); None when arguments validate, no schema exists, or no ``arguments`` were
+            passed to resolution. Never raised from resolution itself -- each caller decides
+            how to react (``invoke_tool`` raises ``ToolInvocationError``;
+            ``preview_tool_invocation`` reports ``validated=False`` plus a warning) since a
+            dry-run must not turn a schema mismatch into an HTTP error.
     """
 
     is_direct_proxy: bool
@@ -1099,6 +1131,7 @@ class ResolvedTool:
     gateway: Optional[DbGateway]
     tool_payload: Dict[str, Any]
     gateway_payload: Optional[Dict[str, Any]]
+    schema_validation_error: Optional[str] = None
 
 
 class ToolService(BaseService):
@@ -4997,6 +5030,7 @@ class ToolService(BaseService):
         server_id: Optional[str],
         require_app_visible: bool,
         require_model_visible: bool,
+        arguments: Optional[Dict[str, Any]] = None,
     ) -> ResolvedTool:
         """Resolve a tool name to an authorized, invocable target.
 
@@ -5004,7 +5038,7 @@ class ToolService(BaseService):
         required to answer "is this tool invocable by this caller"): no network call, no
         plugin hook, no dispatch. Extracted from ``invoke_tool`` (#5629) so the live
         invocation path and the dry-run preview path (``preview_tool_invocation``) share
-        one resolution/RBAC implementation and cannot silently drift apart.
+        one resolution/RBAC/schema-validation implementation and cannot silently drift apart.
 
         Args:
             db: Database session.
@@ -5019,6 +5053,11 @@ class ToolService(BaseService):
             require_app_visible: When True, deny resolution unless the tool is MCP Apps
                 app-visible.
             require_model_visible: When True, deny resolution unless the tool is model-visible.
+            arguments: Candidate arguments to validate against the resolved tool's input
+                schema (#5629). None skips schema validation entirely -- the direct-proxy
+                path has no schema, and validation errors surface via
+                ``ResolvedTool.schema_validation_error`` rather than being raised here, so
+                callers that don't pass ``arguments`` see no schema check applied at all.
 
         Returns:
             ResolvedTool: The resolved, authorized tool (or direct-proxy target).
@@ -5202,7 +5241,19 @@ class ToolService(BaseService):
         elif require_model_visible and not is_direct_proxy and not is_model_visible_tool(tool_payload):
             raise ToolNotFoundError(f"Tool not found: {name}")
 
-        return ResolvedTool(is_direct_proxy=is_direct_proxy, tool=tool, gateway=gateway, tool_payload=tool_payload, gateway_payload=gateway_payload)
+        # Input-schema validation (#5629): shared by invoke_tool and preview_tool_invocation
+        # so the two can never disagree about whether a given set of arguments is acceptable.
+        # Reported, not raised -- see ResolvedTool.schema_validation_error.
+        schema_validation_error = _validate_tool_input_arguments(arguments, tool_payload.get("input_schema")) if arguments is not None else None
+
+        return ResolvedTool(
+            is_direct_proxy=is_direct_proxy,
+            tool=tool,
+            gateway=gateway,
+            tool_payload=tool_payload,
+            gateway_payload=gateway_payload,
+            schema_validation_error=schema_validation_error,
+        )
 
     async def invoke_tool(
         self,
@@ -5257,7 +5308,8 @@ class ToolService(BaseService):
 
         Raises:
             ToolNotFoundError: If tool not found or access denied.
-            ToolInvocationError: If invocation fails or A2A authentication decryption fails.
+            ToolInvocationError: If invocation fails, A2A authentication decryption fails,
+                or arguments fail the tool's input schema (#5629; same validator preview uses).
             ToolTimeoutError: If tool invocation times out.
             PluginViolationError: If plugin blocks tool invocation.
             PluginError: If encounters issue with plugin.
@@ -5282,9 +5334,12 @@ class ToolService(BaseService):
         # ═══════════════════════════════════════════════════════════════════════════
         # PHASE 1: Resolve tool name to an authorized, invocable target.
         # Shared with preview_tool_invocation (#5629) via _resolve_tool_for_invocation
-        # so tool lookup, RBAC, and visibility rules cannot drift between the two paths.
+        # so tool lookup, RBAC, visibility rules, and input-schema validation cannot
+        # drift between the two paths.
         # ═══════════════════════════════════════════════════════════════════════════
-        resolved = await self._resolve_tool_for_invocation(db, name, request_headers, user_email, token_teams, server_id, require_app_visible, require_model_visible)
+        resolved = await self._resolve_tool_for_invocation(db, name, request_headers, user_email, token_teams, server_id, require_app_visible, require_model_visible, arguments=arguments)
+        if resolved.schema_validation_error:
+            raise ToolInvocationError(f"Invalid arguments for tool '{name}': {resolved.schema_validation_error}")
         is_direct_proxy = resolved.is_direct_proxy
         tool = resolved.tool
         gateway = resolved.gateway
@@ -7233,9 +7288,12 @@ class ToolService(BaseService):
     ) -> ToolPreviewResponse:
         """Validate and resolve a tool invocation without executing it (#5629).
 
-        Dry-run counterpart to :meth:`invoke_tool`, sharing its resolution/RBAC path via
-        :meth:`_resolve_tool_for_invocation` so the two can never disagree about whether a
-        tool exists or is accessible. Never dispatches: no REST/MCP/A2A/gRPC call is made
+        Dry-run counterpart to :meth:`invoke_tool`, sharing its resolution/RBAC/input-schema
+        validation path via :meth:`_resolve_tool_for_invocation` so the two can never disagree
+        about whether a tool exists, is accessible, or whether given arguments would pass
+        live invocation's own schema check (#5629 -- previously the two diverged: only preview
+        checked the input schema, so ``validated: true`` here did not guarantee the live path
+        would accept the same arguments). Never dispatches: no REST/MCP/A2A/gRPC call is made
         (federated tools resolve to ``target.kind == "federated"`` with no wire call to the
         remote gateway, regardless of the tool's annotations), and TOOL_POST_INVOKE never runs.
 
@@ -7270,22 +7328,18 @@ class ToolService(BaseService):
         Raises:
             ToolNotFoundError: If tool not found or access denied (same as invoke_tool).
         """
-        resolved = await self._resolve_tool_for_invocation(db, name, None, user_email, token_teams, server_id, False, False)
+        resolved = await self._resolve_tool_for_invocation(db, name, None, user_email, token_teams, server_id, False, False, arguments=arguments)
         tool_payload = resolved.tool_payload
         warnings: List[ToolPreviewWarning] = []
 
-        # Input-schema validation: reuse the same validator invoke_tool already uses for
-        # *output* schemas (_validate_with_cached_schema, tool_service.py). No behavior
-        # change to invoke_tool itself — arguments are never validated against the input
-        # schema on the live path either; see #5629 planning notes.
-        validated = True
-        input_schema = tool_payload.get("input_schema")
-        if input_schema:
-            try:
-                _validate_with_cached_schema(arguments, input_schema)
-            except (jsonschema.exceptions.ValidationError, jsonschema.exceptions.SchemaError) as exc:
-                validated = False
-                warnings.append(ToolPreviewWarning(code="invalid_arguments", message=str(exc)))
+        # Input-schema validation (#5629): _resolve_tool_for_invocation ran the same
+        # validator invoke_tool uses (_validate_tool_input_arguments, tool_service.py) against
+        # this tool's input schema. Report it as validated=False + a warning rather than
+        # raising -- a dry-run must surface a schema mismatch in the envelope, not as an
+        # HTTP error, unlike invoke_tool which raises ToolInvocationError for the same check.
+        validated = resolved.schema_validation_error is None
+        if resolved.schema_validation_error:
+            warnings.append(ToolPreviewWarning(code="invalid_arguments", message=resolved.schema_validation_error))
 
         # Federation policy (#5629): local dry-run only, regardless of annotations.
         # Never surface the gateway's URL, transport, or credentials -- name only.
