@@ -40,6 +40,7 @@ from mcpgateway.services.dcr_service import DcrError, DcrService
 from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
 from mcpgateway.services.oauth_manager import OAuthError, OAuthManager
 from mcpgateway.services.token_storage_service import TokenStorageService
+from mcpgateway.services.gateway_service import GatewayToolNameConflictError
 
 # First-Party - CSP nonce support
 from mcpgateway.utils.csp_nonce import get_csp_nonce_from_request
@@ -1457,6 +1458,8 @@ async def _fetch_tools_via_token_exchange(
         )
     except gateway_not_found_error:
         raise HTTPException(status_code=404, detail=f"Gateway not found: {gateway_id}")
+    except GatewayToolNameConflictError as conflict:
+        raise HTTPException(status_code=409, detail=str(conflict))
     except gateway_connection_error:
         raise  # outer handler maps to 400
     except gateway_error as ge:
@@ -1543,6 +1546,8 @@ async def fetch_tools_after_oauth(
 
     except HTTPException:
         raise
+    except GatewayToolNameConflictError as e:
+        raise HTTPException(status_code=409, detail=str(e))
     except GatewayConnectionError as e:
         logger.error("FETCH-TOOLS FAILED [GatewayConnectionError] gateway=%s error=%s", SecurityValidator.sanitize_log_message(gateway_id), e, exc_info=True)
         raise HTTPException(status_code=400, detail="Failed to fetch tools")
