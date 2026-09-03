@@ -2828,7 +2828,7 @@ class Settings(BaseSettings):
     mcpgateway_session_affinity_enabled: bool = False  # Global session affinity toggle
     mcpgateway_session_affinity_ttl: int = 300  # Session affinity binding TTL
     mcpgateway_pool_rpc_forward_timeout: int = 30  # Timeout for forwarding RPC requests to owner worker
-    mcpgateway_affinity_forward_concurrency: int = 32  # Max concurrent forwarded-request dispatches per worker listener
+    mcpgateway_affinity_forward_concurrency: int = Field(default=32, ge=1, description="Max concurrent forwarded-request dispatches per worker listener (0 would wedge all forwarding)")
     mcpgateway_affinity_session_lock_timeout: int = 30  # Max seconds to wait for a same-session forward lock before executing without ordering
 
     # Prompts

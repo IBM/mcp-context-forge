@@ -16,6 +16,8 @@ from __future__ import annotations
 
 # Standard
 import asyncio
+import time
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
@@ -1489,6 +1491,121 @@ async def test_forward_request_to_owner_happy_path_via_pubsub():
 
 
 @pytest.mark.asyncio
+async def test_forward_request_to_owner_envelope_carries_fresh_timestamp():
+    """The rpc_forward envelope sets ``timestamp`` so the owner-side stale-envelope drop is live.
+
+    Without it, ``_dispatch_forwarded``'s age check is a no-op for the RPC/SSE path
+    and burst back-log accumulates work the requester has already timed out on.
+    """
+    # Third-Party
+    import orjson
+
+    # First-Party
+    from mcpgateway.auth_context import verify_redis_forward_envelope
+    from mcpgateway.services.session_affinity import SessionAffinity
+
+    affinity = SessionAffinity()
+    fake = _FakeRedisWithListen(response_payload=orjson.dumps({"jsonrpc": "2.0", "result": {"ok": True}, "id": 1}))
+    fake.store["mcpgw:pool_owner:sess-1"] = b"other-worker"
+    fake.store["mcpgw:worker_heartbeat:other-worker"] = b"alive"
+
+    with (
+        patch("mcpgateway.services.session_affinity.settings") as mock_settings,
+        patch("mcpgateway.utils.redis_client.get_redis_client", AsyncMock(return_value=fake)),
+    ):
+        mock_settings.mcpgateway_session_affinity_enabled = True
+        mock_settings.mcpgateway_pool_rpc_forward_timeout = 5.0
+        mock_settings.mcpgateway_session_affinity_ttl = 300
+        before = time.time()
+        await affinity.forward_request_to_owner("sess-1", {"method": "tools/list"}, "ctx")
+        after = time.time()
+
+    forward_data = orjson.loads(fake.published[0][1])
+    assert before <= forward_data["timestamp"] <= after
+    # The timestamp is inside the signed envelope, so the signature still verifies.
+    assert verify_redis_forward_envelope(forward_data)
+
+
+@pytest.mark.asyncio
+async def test_forward_request_to_owner_preserves_edge_traceparent_over_stale_ambient():
+    """An edge-injected traceparent survives even when the ambient OTel context is a stale span.
+
+    SDK handler tasks inherit the context of whichever request spawned the session
+    task, so the ambient span there may belong to a different (earlier) request.
+    The forwarded envelope's trace ID must match the inbound request's, not the
+    ambient one.
+    """
+    # Third-Party
+    import orjson
+
+    # First-Party
+    from mcpgateway.services.session_affinity import SessionAffinity
+
+    edge_traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+    stale_traceparent = "00-00000000000000000000000000deadc0-00f067aa0ba902b7-01"
+
+    def _stale_inject(carrier):
+        carrier["traceparent"] = stale_traceparent
+
+    affinity = SessionAffinity()
+    fake = _FakeRedisWithListen(response_payload=orjson.dumps({"jsonrpc": "2.0", "result": {"ok": True}, "id": 1}))
+    fake.store["mcpgw:pool_owner:sess-1"] = b"other-worker"
+    fake.store["mcpgw:worker_heartbeat:other-worker"] = b"alive"
+
+    with (
+        patch("mcpgateway.services.session_affinity.settings") as mock_settings,
+        patch("mcpgateway.utils.redis_client.get_redis_client", AsyncMock(return_value=fake)),
+        patch("mcpgateway.observability.otel_context_active", return_value=True),
+        patch("mcpgateway.observability.otel_inject", side_effect=_stale_inject),
+    ):
+        mock_settings.mcpgateway_session_affinity_enabled = True
+        mock_settings.mcpgateway_pool_rpc_forward_timeout = 5.0
+        mock_settings.mcpgateway_session_affinity_ttl = 300
+        await affinity.forward_request_to_owner(
+            "sess-1",
+            {"method": "tools/call", "headers": {"traceparent": edge_traceparent}},
+            "ctx",
+        )
+
+    forward_data = orjson.loads(fake.published[0][1])
+    assert forward_data["headers"]["traceparent"] == edge_traceparent
+
+
+@pytest.mark.asyncio
+async def test_forward_request_to_owner_injects_ambient_trace_context_when_headers_lack_it():
+    """Without an edge traceparent, the hop falls back to injecting the ambient context."""
+    # Third-Party
+    import orjson
+
+    # First-Party
+    from mcpgateway.services.session_affinity import SessionAffinity
+
+    ambient_traceparent = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+
+    def _ambient_inject(carrier):
+        carrier["traceparent"] = ambient_traceparent
+
+    affinity = SessionAffinity()
+    fake = _FakeRedisWithListen(response_payload=orjson.dumps({"jsonrpc": "2.0", "result": {"ok": True}, "id": 1}))
+    fake.store["mcpgw:pool_owner:sess-1"] = b"other-worker"
+    fake.store["mcpgw:worker_heartbeat:other-worker"] = b"alive"
+
+    with (
+        patch("mcpgateway.services.session_affinity.settings") as mock_settings,
+        patch("mcpgateway.utils.redis_client.get_redis_client", AsyncMock(return_value=fake)),
+        patch("mcpgateway.observability.otel_context_active", return_value=True),
+        patch("mcpgateway.observability.otel_inject", side_effect=_ambient_inject),
+    ):
+        mock_settings.mcpgateway_session_affinity_enabled = True
+        mock_settings.mcpgateway_pool_rpc_forward_timeout = 5.0
+        mock_settings.mcpgateway_session_affinity_ttl = 300
+        await affinity.forward_request_to_owner("sess-1", {"method": "tools/list", "headers": {}}, "ctx")
+
+    forward_data = orjson.loads(fake.published[0][1])
+    assert forward_data["headers"]["traceparent"] == ambient_traceparent
+
+
+@pytest.mark.asyncio
 async def test_forward_request_to_owner_raises_and_counts_timeout_when_no_response():
     """No response from owner within timeout → metric bumped, asyncio.TimeoutError propagates."""
     # First-Party
@@ -1714,8 +1831,13 @@ async def test_execute_forwarded_request_rejects_forged_signature():
     affinity = SessionAffinity()
     client = _FakeHttpxClient(response=_FakeHttpResponse(200, json_body={"jsonrpc": "2.0", "result": {}, "id": 1}))
     request = {
-        "method": "tools/list", "params": {}, "headers": {}, "req_id": 1, "mcp_session_id": "sess-forged",
-        "auth_context": "forged-admin-ctx", "forward_sig": "deadbeef" * 8,  # not a valid envelope HMAC
+        "method": "tools/list",
+        "params": {},
+        "headers": {},
+        "req_id": 1,
+        "mcp_session_id": "sess-forged",
+        "auth_context": "forged-admin-ctx",
+        "forward_sig": "deadbeef" * 8,  # not a valid envelope HMAC
     }
     with (
         patch("mcpgateway.services.session_affinity.settings") as mock_settings,
@@ -2858,15 +2980,17 @@ async def test_execute_forwarded_http_request_acks_non_post_lifecycle_requests()
     fake = _FakeRedis()
     client = _FakeHttpxClient(response=_FakeHttpResponse(200, text_body="ok"))
 
-    request = _sign_forward({
-        "response_channel": "r",
-        "method": "DELETE",
-        "path": "/mcp",
-        "query_string": "",
-        "headers": {},
-        "body": "",
-        "mcp_session_id": "sess-delete",
-    })
+    request = _sign_forward(
+        {
+            "response_channel": "r",
+            "method": "DELETE",
+            "path": "/mcp",
+            "query_string": "",
+            "headers": {},
+            "body": "",
+            "mcp_session_id": "sess-delete",
+        }
+    )
 
     with (
         patch("mcpgateway.services.session_affinity.settings") as mock_settings,
@@ -2899,14 +3023,16 @@ async def test_execute_forwarded_http_request_acks_notification_method_without_d
     client = _FakeHttpxClient(response=_FakeHttpResponse(200, text_body="should-not-be-used"))
 
     jsonrpc_body = orjson.dumps({"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}})
-    request = _sign_forward({
-        "response_channel": "mcpgw:pool_http_response:req-notif",
-        "method": "POST",
-        "path": "/mcp",
-        "headers": {},
-        "body": jsonrpc_body.hex(),
-        "mcp_session_id": "sess-notif",
-    })
+    request = _sign_forward(
+        {
+            "response_channel": "mcpgw:pool_http_response:req-notif",
+            "method": "POST",
+            "path": "/mcp",
+            "headers": {},
+            "body": jsonrpc_body.hex(),
+            "mcp_session_id": "sess-notif",
+        }
+    )
 
     with (
         patch("mcpgateway.services.session_affinity.settings") as mock_settings,
@@ -3544,13 +3670,38 @@ def test_detach_envelope_trace_context_swallows_exceptions(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# drain_all cancels _forward_tasks (line 717)
+# close_all cancels _forward_tasks; drain_all must NOT (SIGHUP safety)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
-async def test_drain_all_cancels_inflight_forward_tasks():
-    """drain_all must cancel any in-progress _forward_tasks."""
+async def test_close_all_cancels_inflight_forward_tasks():
+    """close_all (true shutdown) must cancel and await any in-progress _forward_tasks."""
+    # First-Party
+    from mcpgateway.services.session_affinity import SessionAffinity
+
+    affinity = SessionAffinity()
+
+    async def _forever():
+        await asyncio.Event().wait()
+
+    task = asyncio.create_task(_forever(), name="fake-forward-task")
+    affinity._forward_tasks.add(task)  # pylint: disable=protected-access
+
+    await affinity.close_all()
+
+    assert task.cancelled()
+    assert not affinity._forward_tasks  # pylint: disable=protected-access
+
+
+@pytest.mark.asyncio
+async def test_drain_all_preserves_inflight_forward_tasks():
+    """drain_all (SIGHUP/cert-rotation path) must NOT cancel in-flight forwards.
+
+    Cancelling them on a routine cert rotation would surface spurious
+    ``mcpgateway_pool_rpc_forward_timeout`` errors to callers whose requests
+    would otherwise have succeeded.
+    """
     # First-Party
     from mcpgateway.services.session_affinity import SessionAffinity
 
@@ -3563,11 +3714,13 @@ async def test_drain_all_cancels_inflight_forward_tasks():
     affinity._forward_tasks.add(task)  # pylint: disable=protected-access
 
     await affinity.drain_all()
-
-    # Give the event loop a turn so the cancellation propagates.
     await asyncio.sleep(0)
 
-    assert task.cancelled()
+    assert not task.cancelled()
+    assert not task.done()
+
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
 
 
 # ---------------------------------------------------------------------------

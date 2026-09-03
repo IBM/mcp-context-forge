@@ -681,7 +681,7 @@ class SessionAffinity:
         self._closed = True
         logger.info("Closing session-affinity service...")
 
-        # Stop RPC listener if running
+        # Stop RPC listener if running (first, so no new forward tasks spawn)
         if self._rpc_listener_task and not self._rpc_listener_task.done():
             self._rpc_listener_task.cancel()
             try:
@@ -699,6 +699,19 @@ class SessionAffinity:
                 pass
             self._heartbeat_task = None
 
+        # Cancel in-flight forwarded-request dispatches spawned by the listener.
+        # Shutdown-only: cancelling these on a routine SIGHUP drain would abort
+        # healthy cross-worker calls mid-flight (the requester would surface a
+        # spurious forward timeout).
+        forward_tasks = list(self._forward_tasks)
+        for task in forward_tasks:
+            task.cancel()
+        if forward_tasks:
+            await asyncio.gather(*forward_tasks, return_exceptions=True)
+            # Done callbacks normally discard these; clear explicitly so shutdown
+            # doesn't depend on callback timing.
+            self._forward_tasks.difference_update(forward_tasks)
+
         logger.info("Session-affinity service closed")
 
     async def drain_all(self) -> None:
@@ -710,11 +723,13 @@ class SessionAffinity:
         owned by ``UpstreamSessionRegistry``. The method remains so SIGHUP and
         other drain coordinators have a stable entry point, and to advertise
         "there is no worker-local affinity state to blow away on reload."
+
+        In-flight forwarded-request dispatches are deliberately NOT cancelled
+        here: SIGHUP fires on routine TLS cert rotation, and aborting healthy
+        cross-worker calls would surface spurious forward timeouts to callers.
+        That cancellation belongs to ``close_all()`` (true shutdown).
         """
         logger.info("Session-affinity drain requested; no worker-local state to clear")
-        # Cancel any in-flight forwarded-request dispatches spawned by the listener.
-        for task in self._forward_tasks:
-            task.cancel()
 
     async def register_session_owner(self, mcp_session_id: str) -> None:
         """Claim this worker as the owner of a downstream MCP session, or refresh the existing lease.
@@ -912,9 +927,17 @@ class SessionAffinity:
                     from mcpgateway.auth_context import FORWARD_SIG_FIELD, sign_redis_forward_envelope  # pylint: disable=import-outside-toplevel
                     from mcpgateway.observability import inject_trace_context_headers  # pylint: disable=import-outside-toplevel
 
-                    # Propagate the active W3C trace context across the Redis hop so the
-                    # owner-side dispatch continues this trace instead of rooting a new one.
-                    request_data = {**request_data, "headers": inject_trace_context_headers(request_data.get("headers") or {})}
+                    # Propagate the W3C trace context across the Redis hop so the
+                    # owner-side dispatch continues this trace instead of rooting a
+                    # new one. An existing traceparent always wins: callers in SDK
+                    # handler tasks already carry the edge-injected context in their
+                    # headers, while their ambient OTel context may be a stale (valid
+                    # but ended) span from whichever request spawned the session task —
+                    # injecting from that would clobber the live request's trace.
+                    outbound_headers = request_data.get("headers") or {}
+                    if not any(str(key).lower() == "traceparent" for key in outbound_headers):
+                        outbound_headers = inject_trace_context_headers(outbound_headers)
+                    request_data = {**request_data, "headers": outbound_headers}
 
                     # Prepare request with response channel and the edge auth context.
                     forward_data = {
@@ -922,6 +945,7 @@ class SessionAffinity:
                         **request_data,
                         "response_channel": response_channel,
                         "mcp_session_id": mcp_session_id,
+                        "timestamp": time.time(),
                         "auth_context": auth_context,
                     }
                     # HMAC over the whole envelope (identity + operation + response_channel);
