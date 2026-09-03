@@ -36,6 +36,7 @@ from mcpgateway.db import Gateway, get_db, Permissions
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.middleware.token_scoping import ResourceOwnershipResult, token_scoping_middleware
 from mcpgateway.schemas import EmailUserResponse
+from mcpgateway.services.csrf_service import get_csrf_service
 from mcpgateway.services.dcr_service import DcrError, DcrService
 from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
 from mcpgateway.services.oauth_manager import OAuthError, OAuthManager
@@ -1070,10 +1071,12 @@ async def oauth_callback(
         )
 
         # Legacy admin UI: return full page with fetch-tools button.
-        # Generate CSRF token early so it can be embedded in the JS literal
+        # Generate CSRF token early so it can be embedded in the JS literal.
+        # CSRFMiddleware validates by recomputing an HMAC of (user_id, session_id), so mint via
+        # csrf_service rather than a random value, bound to the session_jwt issued below.
         csrf_token = request.cookies.get(ADMIN_CSRF_COOKIE_NAME, "")
         if not isinstance(csrf_token, str) or not re.match(r"^[A-Za-z0-9_=-]{32,}$", csrf_token):
-            csrf_token = secrets.token_urlsafe(32)
+            csrf_token = get_csrf_service().generate_csrf_token(app_user_email, jwt_payload["jti"])
 
         html_content = f"""
         <!DOCTYPE html>
