@@ -9,6 +9,7 @@ Tests for observability module.
 # Standard
 import importlib
 import inspect
+import logging
 import os
 from unittest.mock import MagicMock, patch
 
@@ -252,7 +253,7 @@ class TestObservability:
             exporter_cls,
             endpoint="https://collector.example.com/v1/traces",
             headers=None,
-            protocol="http",
+            _protocol="http",
             insecure=True,
         )
 
@@ -419,3 +420,236 @@ class TestObservability:
         """Test inject_trace_context_headers handles None headers."""
         result = inject_trace_context_headers(None)
         assert isinstance(result, dict)
+
+    @patch("mcpgateway.observability.OTEL_AVAILABLE", True)
+    @patch("mcpgateway.observability.ConsoleSpanExporter")
+    @patch("mcpgateway.observability.TracerProvider")
+    @patch("mcpgateway.observability.SimpleSpanProcessor")
+    def test_init_telemetry_instruments_httpx_clients(self, mock_processor, mock_provider, mock_exporter):
+        """httpx/httpx2 client instrumentors are invoked when httpx instrumentation is enabled."""
+        self._enable_observability()
+        os.environ["OTEL_TRACES_EXPORTER"] = "console"
+        os.environ["OTEL_HTTPX_INSTRUMENTATION_ENABLED"] = "true"
+        get_settings.cache_clear()
+
+        mock_provider.return_value = MagicMock()
+        httpx_instrumentor = MagicMock()
+        httpx2_instrumentor = MagicMock()
+
+        with patch("mcpgateway.observability.HTTPX_INSTRUMENTOR", httpx_instrumentor), patch("mcpgateway.observability.HTTPX2_INSTRUMENTOR", httpx2_instrumentor):
+            result = init_telemetry()
+
+        assert result is not None
+        httpx_instrumentor.return_value.instrument.assert_called_once_with()
+        httpx2_instrumentor.return_value.instrument.assert_called_once_with()
+
+    @patch("mcpgateway.observability.OTEL_AVAILABLE", True)
+    @patch("mcpgateway.observability.ConsoleSpanExporter")
+    @patch("mcpgateway.observability.TracerProvider")
+    @patch("mcpgateway.observability.SimpleSpanProcessor")
+    def test_init_telemetry_httpx_instrumentation_failure_is_nonfatal(self, mock_processor, mock_provider, mock_exporter, caplog):
+        """A failing httpx instrumentor logs a warning and telemetry still initializes."""
+        self._enable_observability()
+        os.environ["OTEL_TRACES_EXPORTER"] = "console"
+        os.environ["OTEL_HTTPX_INSTRUMENTATION_ENABLED"] = "true"
+        get_settings.cache_clear()
+
+        mock_provider.return_value = MagicMock()
+        httpx_instrumentor = MagicMock()
+        httpx_instrumentor.return_value.instrument.side_effect = RuntimeError("boom")
+
+        with patch("mcpgateway.observability.HTTPX_INSTRUMENTOR", httpx_instrumentor), patch("mcpgateway.observability.HTTPX2_INSTRUMENTOR", None), caplog.at_level(logging.WARNING):
+            result = init_telemetry()
+
+        assert result is not None
+        assert any("Failed to instrument httpx clients" in record.message for record in caplog.records)
+
+    @patch("mcpgateway.observability.OTEL_AVAILABLE", True)
+    @patch("mcpgateway.observability.ConsoleSpanExporter")
+    @patch("mcpgateway.observability.TracerProvider")
+    @patch("mcpgateway.observability.SimpleSpanProcessor")
+    def test_init_telemetry_redis_instrumentation_success(self, mock_processor, mock_provider, mock_exporter):
+        """Redis instrumentor is invoked when otel_redis_instrumentation_enabled is True."""
+        self._enable_observability()
+        os.environ["OTEL_TRACES_EXPORTER"] = "console"
+        os.environ["OTEL_REDIS_INSTRUMENTATION_ENABLED"] = "true"
+        get_settings.cache_clear()
+
+        mock_provider.return_value = MagicMock()
+        redis_instrumentor = MagicMock()
+
+        with patch("mcpgateway.observability.REDIS_INSTRUMENTOR", redis_instrumentor):
+            result = init_telemetry()
+
+        assert result is not None
+        redis_instrumentor.return_value.instrument.assert_called_once_with()
+
+    @patch("mcpgateway.observability.OTEL_AVAILABLE", True)
+    @patch("mcpgateway.observability.ConsoleSpanExporter")
+    @patch("mcpgateway.observability.TracerProvider")
+    @patch("mcpgateway.observability.SimpleSpanProcessor")
+    def test_init_telemetry_redis_instrumentation_failure_is_nonfatal(self, mock_processor, mock_provider, mock_exporter, caplog):
+        """A failing redis instrumentor logs a warning and telemetry still initializes."""
+        self._enable_observability()
+        os.environ["OTEL_TRACES_EXPORTER"] = "console"
+        os.environ["OTEL_REDIS_INSTRUMENTATION_ENABLED"] = "true"
+        get_settings.cache_clear()
+
+        mock_provider.return_value = MagicMock()
+        redis_instrumentor = MagicMock()
+        redis_instrumentor.return_value.instrument.side_effect = RuntimeError("redis instrument boom")
+
+        with patch("mcpgateway.observability.REDIS_INSTRUMENTOR", redis_instrumentor), caplog.at_level(logging.WARNING):
+            result = init_telemetry()
+
+        assert result is not None
+        assert any("Failed to instrument redis clients" in record.message for record in caplog.records)
+
+    @patch("mcpgateway.observability.OTEL_AVAILABLE", True)
+    @patch("mcpgateway.observability.ConsoleSpanExporter")
+    @patch("mcpgateway.observability.TracerProvider")
+    @patch("mcpgateway.observability.SimpleSpanProcessor")
+    def test_init_telemetry_redis_instrumentation_package_unavailable(self, mock_processor, mock_provider, mock_exporter, caplog):
+        """When REDIS_INSTRUMENTOR is None (package absent), a warning is logged and init succeeds."""
+        self._enable_observability()
+        os.environ["OTEL_TRACES_EXPORTER"] = "console"
+        os.environ["OTEL_REDIS_INSTRUMENTATION_ENABLED"] = "true"
+        get_settings.cache_clear()
+
+        mock_provider.return_value = MagicMock()
+
+        with patch("mcpgateway.observability.REDIS_INSTRUMENTOR", None), caplog.at_level(logging.WARNING):
+            result = init_telemetry()
+
+        assert result is not None
+        assert any("redis instrumentation enabled but package unavailable" in record.message for record in caplog.records)
+
+
+class TestRequestMiddlewareTraceEnvelope:
+    """Tests for trace-envelope publication in OpenTelemetryRequestMiddleware."""
+
+    @staticmethod
+    def _make_scope(headers=None):
+        return {
+            "type": "http",
+            "path": "/mcp",
+            "method": "POST",
+            "headers": list(headers or []),
+            "server": ("testserver", 80),
+            "client": ("127.0.0.1", 12345),
+            "http_version": "1.1",
+            "query_string": b"",
+        }
+
+    @staticmethod
+    def _make_app(captured):
+        async def app(scope, _receive, send):
+            captured["headers"] = list(scope.get("headers", []))
+            await send({"type": "http.response.start", "status": 200, "headers": []})
+            await send({"type": "http.response.body", "body": b""})
+
+        async def receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+
+        async def send(_message):
+            return None
+
+        return app, receive, send
+
+    @staticmethod
+    def _fake_inject(carrier):
+        carrier["traceparent"] = "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+        carrier["tracestate"] = "congo=t61rcWkgMzE"
+
+    @pytest.mark.asyncio
+    async def test_middleware_publishes_trace_envelope_when_no_remote_parent(self):
+        """Without a valid inbound traceparent, the new root span context is added to the ASGI headers."""
+        captured = {}
+        app, receive, send = self._make_app(captured)
+        scope = self._make_scope([(b"content-type", b"application/json")])
+
+        mock_trace = MagicMock()
+        mock_trace.get_span_context.return_value = MagicMock(is_valid=False, is_remote=False)
+
+        with (
+            patch("mcpgateway.observability._TRACER", MagicMock()),
+            patch("mcpgateway.observability.OTEL_AVAILABLE", True),
+            patch("mcpgateway.observability.trace", mock_trace),
+            patch("mcpgateway.observability.otel_extract", return_value=MagicMock()),
+            patch("mcpgateway.observability.otel_inject", side_effect=self._fake_inject),
+        ):
+            middleware = OpenTelemetryRequestMiddleware(app)
+            await middleware(scope, receive, send)
+
+        headers = captured["headers"]
+        assert (b"traceparent", b"00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01") in headers
+        assert (b"tracestate", b"congo=t61rcWkgMzE") in headers
+
+    @pytest.mark.asyncio
+    async def test_middleware_publishes_envelope_when_span_context_inspection_fails(self):
+        """If remote-parent detection raises, the request is treated as root and the envelope is published."""
+        captured = {}
+        app, receive, send = self._make_app(captured)
+        scope = self._make_scope()
+
+        mock_trace = MagicMock()
+        mock_trace.get_span_context.side_effect = RuntimeError("boom")
+
+        with (
+            patch("mcpgateway.observability._TRACER", MagicMock()),
+            patch("mcpgateway.observability.OTEL_AVAILABLE", True),
+            patch("mcpgateway.observability.trace", mock_trace),
+            patch("mcpgateway.observability.otel_extract", return_value=MagicMock()),
+            patch("mcpgateway.observability.otel_inject", side_effect=self._fake_inject),
+        ):
+            middleware = OpenTelemetryRequestMiddleware(app)
+            await middleware(scope, receive, send)
+
+        assert (b"traceparent", b"00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01") in captured["headers"]
+
+    @pytest.mark.asyncio
+    async def test_middleware_does_not_publish_envelope_with_valid_remote_parent(self):
+        """A valid remote traceparent leaves the inbound headers untouched."""
+        captured = {}
+        app, receive, send = self._make_app(captured)
+        original_headers = [(b"traceparent", b"00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01")]
+        scope = self._make_scope(original_headers)
+
+        mock_trace = MagicMock()
+        mock_trace.get_span_context.return_value = MagicMock(is_valid=True, is_remote=True)
+
+        with (
+            patch("mcpgateway.observability._TRACER", MagicMock()),
+            patch("mcpgateway.observability.OTEL_AVAILABLE", True),
+            patch("mcpgateway.observability.trace", mock_trace),
+            patch("mcpgateway.observability.otel_extract", return_value=MagicMock()),
+            patch("mcpgateway.observability.otel_inject") as mock_inject,
+        ):
+            middleware = OpenTelemetryRequestMiddleware(app)
+            await middleware(scope, receive, send)
+
+        mock_inject.assert_not_called()
+        assert captured["headers"] == original_headers
+
+    @pytest.mark.asyncio
+    async def test_middleware_envelope_publication_failure_is_nonfatal(self):
+        """If publishing the envelope raises, the request still proceeds with headers untouched."""
+        captured = {}
+        app, receive, send = self._make_app(captured)
+        original_headers = [(b"content-type", b"application/json")]
+        scope = self._make_scope(original_headers)
+
+        mock_trace = MagicMock()
+        mock_trace.get_span_context.return_value = MagicMock(is_valid=False, is_remote=False)
+
+        with (
+            patch("mcpgateway.observability._TRACER", MagicMock()),
+            patch("mcpgateway.observability.OTEL_AVAILABLE", True),
+            patch("mcpgateway.observability.trace", mock_trace),
+            patch("mcpgateway.observability.otel_extract", return_value=MagicMock()),
+            patch("mcpgateway.observability.otel_inject", side_effect=RuntimeError("boom")),
+        ):
+            middleware = OpenTelemetryRequestMiddleware(app)
+            await middleware(scope, receive, send)
+
+        assert captured["headers"] == original_headers

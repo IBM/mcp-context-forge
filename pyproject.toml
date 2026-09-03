@@ -25,8 +25,6 @@ cpex-pii-filter = "2026-08-24T23:59:59Z"
 cpex-retry-with-backoff = "2026-08-24T23:59:59Z"
 cpex-secrets-detection = "2026-08-24T23:59:59Z"
 cpex-sql-sanitizer = "2026-08-24T23:59:59Z"
-# additional packages below this: remove before next upgrade cycle starts
-
 
 # ----------------------------------------------------------------
 # 📦 Core project metadata (PEP 621)
@@ -120,6 +118,7 @@ dev = [
     "a2a-sdk[http-server]",
     "aiohttp>=3.14.3",
     "argparse-manpage>=4.7",
+    "authlib>=1.7.2", # Transitive pin via fastmcp (dev-only test client); 1.7.0 ships security fixes
     "autoflake>=2.3.3",
     "bandit>=1.9.4",
     "bump2version>=1.0.1",
@@ -234,6 +233,9 @@ observability = [
     "opentelemetry-exporter-otlp-proto-grpc>=1.44.0",
     "opentelemetry-exporter-otlp-proto-http>=1.44.0",
     "opentelemetry-sdk>=1.44.0",
+    "opentelemetry-instrumentation-httpx>=0.65b0",
+    "opentelemetry-instrumentation-sqlalchemy>=0.65b0",
+    "opentelemetry-instrumentation-redis>=0.65b0",
 ]
 
 # Async SQLite Driver (optional)
