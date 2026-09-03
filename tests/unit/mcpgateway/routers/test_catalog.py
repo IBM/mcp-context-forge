@@ -258,6 +258,32 @@ async def test_register_with_api_key_builds_request(monkeypatch, allow_permissio
 
 
 @pytest.mark.asyncio
+async def test_register_with_oauth_credentials_builds_request(monkeypatch, allow_permission):
+    """oauth_credentials on the body reach the service request in the same single call
+    (#5967) - no separate PUT /gateways/{id} for OAuth configuration."""
+    monkeypatch.setattr("mcpgateway.routers.catalog.settings.mcpgateway_catalog_enabled", True, raising=False)
+    monkeypatch.setattr("mcpgateway.routers.catalog.get_scoped_resource_access_context", MagicMock(return_value=("user@example.com", [])))
+    mock_register = AsyncMock(return_value=CatalogServerRegisterResponse(success=True, server_id="gw-1", message="Successfully registered OAuth server", error=None, oauth_required=True))
+    monkeypatch.setattr("mcpgateway.routers.catalog.catalog_service.register_catalog_server", mock_register)
+    db = MagicMock()
+    request = MagicMock(spec=Request)
+    oauth_credentials = {"issuer": "https://issuer.example.com", "scopes": ["read"]}
+
+    await register_catalog_server(
+        "github",
+        request,
+        body=CatalogServerRegisterBody(oauth_credentials=oauth_credentials),
+        db=db,
+        user={"email": "user@example.com", "db": db},
+    )
+
+    service_request = mock_register.await_args.kwargs["request"]
+    assert isinstance(service_request, CatalogServerRegisterRequest)
+    assert service_request.server_id == "github"
+    assert service_request.oauth_credentials == oauth_credentials
+
+
+@pytest.mark.asyncio
 async def test_register_duplicate_returns_409(monkeypatch, allow_permission):
     """An already-registered catalog server maps to HTTP 409."""
     monkeypatch.setattr("mcpgateway.routers.catalog.settings.mcpgateway_catalog_enabled", True, raising=False)

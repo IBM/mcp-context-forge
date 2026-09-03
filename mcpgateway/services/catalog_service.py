@@ -294,8 +294,11 @@ class CatalogService:
             if selected_gateway is not None:
                 server.is_registered = True
                 server.gateway_id = selected_gateway.gateway_id
-                # Only disabled OAuth gateways with no OAuth config still need setup.
-                server.requires_oauth_config = not selected_gateway.enabled and selected_gateway.auth_type == "oauth" and not selected_gateway.oauth_config
+                # Any disabled OAuth gateway still needs the caller to authorize it, whether or
+                # not oauth_config is already populated: catalog registration now persists
+                # oauth_config up front (#5967), so an unauthorized-but-configured gateway must
+                # still surface here rather than looking indistinguishable from a working one.
+                server.requires_oauth_config = not selected_gateway.enabled and selected_gateway.auth_type == "oauth"
             # Set availability based on registration status (registered servers are assumed available)
             # Individual health checks can be done via the /status endpoint
             server.is_available = server.is_registered or server_data.get("is_available", True)
@@ -528,9 +531,9 @@ class CatalogService:
                     # For any other auth types, use custom headers (as list of dicts)
                     gateway_data["auth_type"] = "authheaders"
                     gateway_data["auth_headers"] = [{"key": "X-API-Key", "value": request.api_key}]
-            elif auth_type in ["OAuth2.1", "OAuth"]:
-                # OAuth server without credentials - register but skip initialization
-                # User will need to complete OAuth flow later
+            elif auth_type in ["OAuth2.1", "OAuth", "OAuth2.1 & API Key"]:
+                # OAuth server without credentials (or a mixed-auth entry given no API key) -
+                # register but skip initialization. User will need to complete OAuth flow later.
                 skip_initialization = True
                 logger.info("Registering OAuth server %s without credentials - OAuth flow required later", server_data["name"])
 
@@ -539,9 +542,40 @@ class CatalogService:
                 # Create minimal gateway entry without tool discovery
                 # First-Party
                 from mcpgateway.db import Gateway as DbGateway  # pylint: disable=import-outside-toplevel
+                from mcpgateway.services.encryption_service import protect_oauth_config_for_storage  # pylint: disable=import-outside-toplevel
 
+                # Carry any OAuth credentials the caller supplied (issuer, scopes, and
+                # optionally client_id/client_secret/token_url/authorization_url) onto the
+                # gateway up front, so a second PUT /gateways/{id} is never required (#5967).
+                # Whatever is left blank (client_id/secret, token/authorization URLs) is filled
+                # in later - automatically for providers that support discovery/DCR - by the
+                # existing GET /oauth/authorize/{gateway_id} flow.
+                oauth_credentials = (request.oauth_credentials if request and request.oauth_credentials else {}) or {}
+                raw_oauth_config: Dict[str, Any] = {
+                    "grant_type": "authorization_code",
+                    "store_tokens": True,
+                    "auto_refresh": True,
+                }
+                for key in ("issuer", "client_id", "client_secret", "token_url", "authorization_url"):
+                    value = oauth_credentials.get(key)
+                    if value:
+                        raw_oauth_config[key] = value
+                scopes = oauth_credentials.get("scopes")
+                if scopes:
+                    raw_oauth_config["scopes"] = scopes if isinstance(scopes, list) else [str(scopes)]
+                gateway_data["oauth_config"] = raw_oauth_config
+
+                # Runs the same URL/SSRF and grant-type validation normal gateway registration
+                # applies (GatewayCreate.validate_oauth_config); oauth_config round-trips through
+                # unchanged when valid, raises ValidationError otherwise.
                 gateway_create = GatewayCreate(**gateway_data)
                 slug_name = slugify(gateway_data["name"])
+
+                # Same discovery-then-encrypt pipeline register_gateway() uses
+                # (gateway_service.py) so issuer-only submissions still get usable
+                # token_url/authorization_url when the provider publishes them.
+                raw_oauth_config = await self._gateway_service._auto_discover_oauth_endpoints(gateway_create.oauth_config)  # pylint: disable=protected-access
+                stored_oauth_config = await protect_oauth_config_for_storage(raw_oauth_config)
 
                 db_gateway = DbGateway(
                     name=gateway_data["name"],
@@ -552,6 +586,7 @@ class CatalogService:
                     transport=gateway_data["transport"],
                     capabilities={},
                     auth_type="oauth",  # Mark as OAuth so it can be identified after page refresh
+                    oauth_config=stored_oauth_config,
                     enabled=False,  # Disabled until OAuth is configured
                     created_via="catalog",
                     visibility=visibility,
