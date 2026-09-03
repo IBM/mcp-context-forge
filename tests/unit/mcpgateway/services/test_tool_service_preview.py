@@ -25,9 +25,9 @@ import pytest
 from mcpgateway.services.tool_service import ResolvedTool, ToolNotFoundError, ToolService
 
 
-def _resolved(tool_payload, gateway_payload=None):
+def _resolved(tool_payload, gateway_payload=None, schema_validation_error=None):
     """Build a ResolvedTool with only the fields preview_tool_invocation reads."""
-    return ResolvedTool(is_direct_proxy=False, tool=None, gateway=None, tool_payload=tool_payload, gateway_payload=gateway_payload)
+    return ResolvedTool(is_direct_proxy=False, tool=None, gateway=None, tool_payload=tool_payload, gateway_payload=gateway_payload, schema_validation_error=schema_validation_error)
 
 
 def _local_tool_payload(**overrides):
@@ -65,8 +65,9 @@ class TestPreviewToolInvocationHappyPath:
         """Preview makes no HTTP call after resolution, so it must not commit/close the
         caller's session -- that session belongs to the route's get_db() dependency."""
         db = Mock()
-        with patch.object(service, "_resolve_tool_for_invocation", AsyncMock(return_value=_resolved(_local_tool_payload()))), patch.object(
-            service, "_get_plugin_manager", AsyncMock(return_value=None)
+        with (
+            patch.object(service, "_resolve_tool_for_invocation", AsyncMock(return_value=_resolved(_local_tool_payload()))),
+            patch.object(service, "_get_plugin_manager", AsyncMock(return_value=None)),
         ):
             await service.preview_tool_invocation(db, "test_tool", {"param": "value"})
 
@@ -76,8 +77,9 @@ class TestPreviewToolInvocationHappyPath:
     @pytest.mark.asyncio
     async def test_local_tool_happy_path(self, service, test_db):
         """Local tool (gateway_id is None): validated, target.kind == 'local', no gateway_name."""
-        with patch.object(service, "_resolve_tool_for_invocation", AsyncMock(return_value=_resolved(_local_tool_payload()))), patch.object(
-            service, "_get_plugin_manager", AsyncMock(return_value=None)
+        with (
+            patch.object(service, "_resolve_tool_for_invocation", AsyncMock(return_value=_resolved(_local_tool_payload()))),
+            patch.object(service, "_get_plugin_manager", AsyncMock(return_value=None)),
         ):
             result = await service.preview_tool_invocation(test_db, "test_tool", {"param": "value"})
 
@@ -101,9 +103,10 @@ class TestPreviewToolInvocationHappyPath:
             "transport": "STREAMABLEHTTP",
             "client_key": "PRIVATE_KEY_MARKER",
         }
-        with patch.object(
-            service, "_resolve_tool_for_invocation", AsyncMock(return_value=_resolved(_federated_tool_payload(), gateway_payload))
-        ), patch.object(service, "_get_plugin_manager", AsyncMock(return_value=None)):
+        with (
+            patch.object(service, "_resolve_tool_for_invocation", AsyncMock(return_value=_resolved(_federated_tool_payload(), gateway_payload))),
+            patch.object(service, "_get_plugin_manager", AsyncMock(return_value=None)),
+        ):
             result = await service.preview_tool_invocation(test_db, "test_tool", {"param": "value"})
 
         assert result.target.kind == "federated"
@@ -117,9 +120,10 @@ class TestPreviewToolInvocationHappyPath:
     async def test_no_dispatch_no_http_call(self, service, test_db):
         """Preview never touches the HTTP client, even for a federated tool."""
         service._http_client = AsyncMock()
-        with patch.object(
-            service, "_resolve_tool_for_invocation", AsyncMock(return_value=_resolved(_federated_tool_payload(), {"name": "remote-gw"}))
-        ), patch.object(service, "_get_plugin_manager", AsyncMock(return_value=None)):
+        with (
+            patch.object(service, "_resolve_tool_for_invocation", AsyncMock(return_value=_resolved(_federated_tool_payload(), {"name": "remote-gw"}))),
+            patch.object(service, "_get_plugin_manager", AsyncMock(return_value=None)),
+        ):
             await service.preview_tool_invocation(test_db, "test_tool", {"param": "value"})
 
         service._http_client.request.assert_not_called()
@@ -134,7 +138,13 @@ class TestPreviewToolInvocationHappyPath:
 
 
 class TestPreviewToolInvocationSchemaValidation:
-    """Input-schema validation against the tool's declared input_schema."""
+    """preview_tool_invocation's handling of ResolvedTool.schema_validation_error.
+
+    The actual jsonschema check now lives in _resolve_tool_for_invocation (shared with
+    invoke_tool, #5629) -- see TestValidateToolInputArguments in test_tool_service.py for
+    that check itself, and TestToolService::test_invoke_tool_and_preview_agree_on_schema_validation
+    there for a same-input, no-mocking regression proving preview and invoke_tool agree.
+    """
 
     @pytest.mark.asyncio
     async def test_valid_arguments(self, service, test_db):
@@ -146,18 +156,17 @@ class TestPreviewToolInvocationSchemaValidation:
 
     @pytest.mark.asyncio
     async def test_invalid_arguments_reported_not_raised(self, service, test_db):
-        """Schema-invalid arguments produce validated=False + a warning, not an exception --
-        a preview should report what live invocation would reject, not 500."""
-        with patch.object(service, "_resolve_tool_for_invocation", AsyncMock(return_value=_resolved(_local_tool_payload()))):
-            # required "param" missing
+        """A schema_validation_error from resolution produces validated=False + a warning,
+        not an exception -- a preview should report what live invocation would reject, not 500."""
+        with patch.object(service, "_resolve_tool_for_invocation", AsyncMock(return_value=_resolved(_local_tool_payload(), schema_validation_error="'param' is a required property"))):
             result = await service.preview_tool_invocation(test_db, "test_tool", {})
 
         assert result.validated is False
-        assert any(w.code == "invalid_arguments" for w in result.warnings)
+        assert any(w.code == "invalid_arguments" and "required property" in w.message for w in result.warnings)
 
     @pytest.mark.asyncio
-    async def test_no_input_schema_defaults_to_validated(self, service, test_db):
-        """Tools with no declared input_schema are trivially considered validated."""
+    async def test_no_schema_validation_error_defaults_to_validated(self, service, test_db):
+        """No schema_validation_error (no schema, or arguments validated) means validated=True."""
         with patch.object(service, "_resolve_tool_for_invocation", AsyncMock(return_value=_resolved(_local_tool_payload(input_schema=None)))):
             result = await service.preview_tool_invocation(test_db, "test_tool", {"anything": "goes"})
 
@@ -194,8 +203,9 @@ class TestPreviewToolInvocationPluginHooks:
 
     @pytest.mark.asyncio
     async def test_no_plugin_manager_no_hooks(self, service, test_db):
-        with patch.object(service, "_resolve_tool_for_invocation", AsyncMock(return_value=_resolved(_local_tool_payload()))), patch.object(
-            service, "_get_plugin_manager", AsyncMock(return_value=None)
+        with (
+            patch.object(service, "_resolve_tool_for_invocation", AsyncMock(return_value=_resolved(_local_tool_payload()))),
+            patch.object(service, "_get_plugin_manager", AsyncMock(return_value=None)),
         ):
             result = await service.preview_tool_invocation(test_db, "test_tool", {"param": "value"})
 
@@ -211,8 +221,9 @@ class TestPreviewToolInvocationPluginHooks:
         from mcpgateway.plugins.gateway_plugin_manager import make_context_id
 
         mock_get_pm = AsyncMock(return_value=None)
-        with patch.object(service, "_resolve_tool_for_invocation", AsyncMock(return_value=_resolved(_local_tool_payload(team_id="team-a", name="test_tool")))), patch.object(
-            service, "_get_plugin_manager", mock_get_pm
+        with (
+            patch.object(service, "_resolve_tool_for_invocation", AsyncMock(return_value=_resolved(_local_tool_payload(team_id="team-a", name="test_tool")))),
+            patch.object(service, "_get_plugin_manager", mock_get_pm),
         ):
             await service.preview_tool_invocation(test_db, "test_tool", {"param": "value"}, server_id="some-server")
 
@@ -222,9 +233,7 @@ class TestPreviewToolInvocationPluginHooks:
     async def test_plugin_context_id_falls_back_to_server_id_without_team(self, service, test_db):
         """Matches invoke_tool: only falls back to server_id when the tool has no team_id."""
         mock_get_pm = AsyncMock(return_value=None)
-        with patch.object(service, "_resolve_tool_for_invocation", AsyncMock(return_value=_resolved(_local_tool_payload(team_id=None)))), patch.object(
-            service, "_get_plugin_manager", mock_get_pm
-        ):
+        with patch.object(service, "_resolve_tool_for_invocation", AsyncMock(return_value=_resolved(_local_tool_payload(team_id=None)))), patch.object(service, "_get_plugin_manager", mock_get_pm):
             await service.preview_tool_invocation(test_db, "test_tool", {"param": "value"}, server_id="server-xyz")
 
         mock_get_pm.assert_awaited_once_with("server-xyz")
@@ -234,9 +243,7 @@ class TestPreviewToolInvocationPluginHooks:
         ref = self._hook_ref("safe_plugin", ["preview_safe"])
         pm = self._plugin_manager_with_refs([ref])
 
-        with patch.object(service, "_resolve_tool_for_invocation", AsyncMock(return_value=_resolved(_local_tool_payload()))), patch.object(
-            service, "_get_plugin_manager", AsyncMock(return_value=pm)
-        ):
+        with patch.object(service, "_resolve_tool_for_invocation", AsyncMock(return_value=_resolved(_local_tool_payload()))), patch.object(service, "_get_plugin_manager", AsyncMock(return_value=pm)):
             result = await service.preview_tool_invocation(test_db, "test_tool", {"param": "value"})
 
         assert result.pre_hooks_run == ["safe_plugin"]
@@ -254,9 +261,7 @@ class TestPreviewToolInvocationPluginHooks:
         ref = self._hook_ref("confirmation_plugin", ["preview_safe"])
         pm = self._plugin_manager_with_refs([ref], elicit_plugin_names={"confirmation_plugin"})
 
-        with patch.object(service, "_resolve_tool_for_invocation", AsyncMock(return_value=_resolved(_local_tool_payload()))), patch.object(
-            service, "_get_plugin_manager", AsyncMock(return_value=pm)
-        ):
+        with patch.object(service, "_resolve_tool_for_invocation", AsyncMock(return_value=_resolved(_local_tool_payload()))), patch.object(service, "_get_plugin_manager", AsyncMock(return_value=pm)):
             result = await service.preview_tool_invocation(test_db, "test_tool", {"param": "value"})
 
         assert result.pre_hooks_run == []
@@ -272,9 +277,7 @@ class TestPreviewToolInvocationPluginHooks:
         ref = self._hook_ref("plain_plugin", ["preview_safe"])
         pm = self._plugin_manager_with_refs([ref])  # no elicit_plugin_names
 
-        with patch.object(service, "_resolve_tool_for_invocation", AsyncMock(return_value=_resolved(_local_tool_payload()))), patch.object(
-            service, "_get_plugin_manager", AsyncMock(return_value=pm)
-        ):
+        with patch.object(service, "_resolve_tool_for_invocation", AsyncMock(return_value=_resolved(_local_tool_payload()))), patch.object(service, "_get_plugin_manager", AsyncMock(return_value=pm)):
             result = await service.preview_tool_invocation(test_db, "test_tool", {"param": "value"})
 
         assert result.pre_hooks_run == ["plain_plugin"]
@@ -289,9 +292,10 @@ class TestPreviewToolInvocationPluginHooks:
         ref = self._hook_ref("safe_plugin", ["preview_safe"])
         pm = self._plugin_manager_with_refs([ref])
 
-        with patch.object(
-            service, "_resolve_tool_for_invocation", AsyncMock(return_value=_resolved(_federated_tool_payload(), {"name": "remote-gw"}))
-        ), patch.object(service, "_get_plugin_manager", AsyncMock(return_value=pm)):
+        with (
+            patch.object(service, "_resolve_tool_for_invocation", AsyncMock(return_value=_resolved(_federated_tool_payload(), {"name": "remote-gw"}))),
+            patch.object(service, "_get_plugin_manager", AsyncMock(return_value=pm)),
+        ):
             await service.preview_tool_invocation(test_db, "test_tool", {"param": "value"})
 
         context = pm.invoke_hook_for_plugin.call_args.kwargs["context"]
@@ -303,9 +307,7 @@ class TestPreviewToolInvocationPluginHooks:
         ref = self._hook_ref("safe_plugin", ["preview_safe"])
         pm = self._plugin_manager_with_refs([ref])
 
-        with patch.object(service, "_resolve_tool_for_invocation", AsyncMock(return_value=_resolved(_local_tool_payload()))), patch.object(
-            service, "_get_plugin_manager", AsyncMock(return_value=pm)
-        ):
+        with patch.object(service, "_resolve_tool_for_invocation", AsyncMock(return_value=_resolved(_local_tool_payload()))), patch.object(service, "_get_plugin_manager", AsyncMock(return_value=pm)):
             await service.preview_tool_invocation(test_db, "test_tool", {"param": "value"})
 
         context = pm.invoke_hook_for_plugin.call_args.kwargs["context"]
@@ -318,9 +320,7 @@ class TestPreviewToolInvocationPluginHooks:
         ref = self._hook_ref("untagged_plugin", [])
         pm = self._plugin_manager_with_refs([ref])
 
-        with patch.object(service, "_resolve_tool_for_invocation", AsyncMock(return_value=_resolved(_local_tool_payload()))), patch.object(
-            service, "_get_plugin_manager", AsyncMock(return_value=pm)
-        ):
+        with patch.object(service, "_resolve_tool_for_invocation", AsyncMock(return_value=_resolved(_local_tool_payload()))), patch.object(service, "_get_plugin_manager", AsyncMock(return_value=pm)):
             result = await service.preview_tool_invocation(test_db, "test_tool", {"param": "value"})
 
         assert result.pre_hooks_run == []
@@ -337,9 +337,7 @@ class TestPreviewToolInvocationPluginHooks:
         ref = self._hook_ref("strict_plugin", ["preview_safe"])
         pm = self._plugin_manager_with_refs([ref], invoke_side_effect=PluginViolationError("blocked by policy"))
 
-        with patch.object(service, "_resolve_tool_for_invocation", AsyncMock(return_value=_resolved(_local_tool_payload()))), patch.object(
-            service, "_get_plugin_manager", AsyncMock(return_value=pm)
-        ):
+        with patch.object(service, "_resolve_tool_for_invocation", AsyncMock(return_value=_resolved(_local_tool_payload()))), patch.object(service, "_get_plugin_manager", AsyncMock(return_value=pm)):
             result = await service.preview_tool_invocation(test_db, "test_tool", {"param": "value"})
 
         assert result.pre_hooks_run == []
@@ -357,9 +355,7 @@ class TestPreviewToolInvocationPluginHooks:
         ref = self._hook_ref("flaky_plugin", ["preview_safe"])
         pm = self._plugin_manager_with_refs([ref], invoke_side_effect=PluginError(error=Mock(message="plugin crashed")))
 
-        with patch.object(service, "_resolve_tool_for_invocation", AsyncMock(return_value=_resolved(_local_tool_payload()))), patch.object(
-            service, "_get_plugin_manager", AsyncMock(return_value=pm)
-        ):
+        with patch.object(service, "_resolve_tool_for_invocation", AsyncMock(return_value=_resolved(_local_tool_payload()))), patch.object(service, "_get_plugin_manager", AsyncMock(return_value=pm)):
             result = await service.preview_tool_invocation(test_db, "test_tool", {"param": "value"})
 
         assert any(w.code == "preview_hook_error" and w.hook == "flaky_plugin" for w in result.warnings)
@@ -373,9 +369,7 @@ class TestPreviewToolInvocationPluginHooks:
         pm._registry = Mock()
         pm._registry.get_hook_refs_for_hook = Mock(side_effect=AttributeError("shape changed"))
 
-        with patch.object(service, "_resolve_tool_for_invocation", AsyncMock(return_value=_resolved(_local_tool_payload()))), patch.object(
-            service, "_get_plugin_manager", AsyncMock(return_value=pm)
-        ):
+        with patch.object(service, "_resolve_tool_for_invocation", AsyncMock(return_value=_resolved(_local_tool_payload()))), patch.object(service, "_get_plugin_manager", AsyncMock(return_value=pm)):
             result = await service.preview_tool_invocation(test_db, "test_tool", {"param": "value"})
 
         assert result.pre_hooks_run == []
@@ -390,9 +384,7 @@ class TestPreviewToolInvocationPluginHooks:
         ref = self._hook_ref("disabled_plugin", ["preview_safe"], mode=PluginMode.DISABLED)
         pm = self._plugin_manager_with_refs([ref])
 
-        with patch.object(service, "_resolve_tool_for_invocation", AsyncMock(return_value=_resolved(_local_tool_payload()))), patch.object(
-            service, "_get_plugin_manager", AsyncMock(return_value=pm)
-        ):
+        with patch.object(service, "_resolve_tool_for_invocation", AsyncMock(return_value=_resolved(_local_tool_payload()))), patch.object(service, "_get_plugin_manager", AsyncMock(return_value=pm)):
             result = await service.preview_tool_invocation(test_db, "test_tool", {"param": "value"})
 
         assert result.pre_hooks_run == []
@@ -408,9 +400,7 @@ class TestPreviewToolInvocationPluginHooks:
         ref = self._hook_ref("flaky_plugin", ["preview_safe"])
         pm = self._plugin_manager_with_refs([ref], runtime_disabled={"flaky_plugin"})
 
-        with patch.object(service, "_resolve_tool_for_invocation", AsyncMock(return_value=_resolved(_local_tool_payload()))), patch.object(
-            service, "_get_plugin_manager", AsyncMock(return_value=pm)
-        ):
+        with patch.object(service, "_resolve_tool_for_invocation", AsyncMock(return_value=_resolved(_local_tool_payload()))), patch.object(service, "_get_plugin_manager", AsyncMock(return_value=pm)):
             result = await service.preview_tool_invocation(test_db, "test_tool", {"param": "value"})
 
         assert result.pre_hooks_run == []
@@ -428,9 +418,10 @@ class TestPreviewToolInvocationPluginHooks:
         ref = self._hook_ref("scoped_plugin", ["preview_safe"], conditions=[PluginCondition(tools={"some_other_tool"})])
         pm = self._plugin_manager_with_refs([ref])
 
-        with patch.object(
-            service, "_resolve_tool_for_invocation", AsyncMock(return_value=_resolved(_local_tool_payload(name="test_tool")))
-        ), patch.object(service, "_get_plugin_manager", AsyncMock(return_value=pm)):
+        with (
+            patch.object(service, "_resolve_tool_for_invocation", AsyncMock(return_value=_resolved(_local_tool_payload(name="test_tool")))),
+            patch.object(service, "_get_plugin_manager", AsyncMock(return_value=pm)),
+        ):
             result = await service.preview_tool_invocation(test_db, "test_tool", {"param": "value"})
 
         assert result.pre_hooks_run == []
@@ -447,9 +438,10 @@ class TestPreviewToolInvocationPluginHooks:
         ref = self._hook_ref("scoped_plugin", ["preview_safe"], conditions=[PluginCondition(tools={"test_tool"})])
         pm = self._plugin_manager_with_refs([ref])
 
-        with patch.object(
-            service, "_resolve_tool_for_invocation", AsyncMock(return_value=_resolved(_local_tool_payload(name="test_tool")))
-        ), patch.object(service, "_get_plugin_manager", AsyncMock(return_value=pm)):
+        with (
+            patch.object(service, "_resolve_tool_for_invocation", AsyncMock(return_value=_resolved(_local_tool_payload(name="test_tool")))),
+            patch.object(service, "_get_plugin_manager", AsyncMock(return_value=pm)),
+        ):
             result = await service.preview_tool_invocation(test_db, "test_tool", {"param": "value"})
 
         assert result.pre_hooks_run == ["scoped_plugin"]
@@ -461,9 +453,7 @@ class TestPreviewToolInvocationPluginHooks:
         ref = self._hook_ref("header_aware_plugin", ["preview_safe"])
         pm = self._plugin_manager_with_refs([ref])
 
-        with patch.object(service, "_resolve_tool_for_invocation", AsyncMock(return_value=_resolved(_local_tool_payload()))), patch.object(
-            service, "_get_plugin_manager", AsyncMock(return_value=pm)
-        ):
+        with patch.object(service, "_resolve_tool_for_invocation", AsyncMock(return_value=_resolved(_local_tool_payload()))), patch.object(service, "_get_plugin_manager", AsyncMock(return_value=pm)):
             await service.preview_tool_invocation(test_db, "test_tool", {"param": "value"}, request_headers={"x-custom": "abc"})
 
         payload = pm.invoke_hook_for_plugin.call_args.kwargs["payload"]
@@ -476,9 +466,7 @@ class TestPreviewToolInvocationPluginHooks:
         ref = self._hook_ref("header_aware_plugin", ["preview_safe"])
         pm = self._plugin_manager_with_refs([ref])
 
-        with patch.object(service, "_resolve_tool_for_invocation", AsyncMock(return_value=_resolved(_local_tool_payload()))), patch.object(
-            service, "_get_plugin_manager", AsyncMock(return_value=pm)
-        ):
+        with patch.object(service, "_resolve_tool_for_invocation", AsyncMock(return_value=_resolved(_local_tool_payload()))), patch.object(service, "_get_plugin_manager", AsyncMock(return_value=pm)):
             await service.preview_tool_invocation(test_db, "test_tool", {"param": "value"})
 
         payload = pm.invoke_hook_for_plugin.call_args.kwargs["payload"]
@@ -494,9 +482,7 @@ class TestSharedResolutionPath:
         resolved = _resolved(_local_tool_payload())
         mock_resolve = AsyncMock(return_value=resolved)
 
-        with patch.object(service, "_resolve_tool_for_invocation", mock_resolve), patch.object(
-            service, "_get_plugin_manager", AsyncMock(return_value=None)
-        ):
+        with patch.object(service, "_resolve_tool_for_invocation", mock_resolve), patch.object(service, "_get_plugin_manager", AsyncMock(return_value=None)):
             await service.preview_tool_invocation(test_db, "test_tool", {"param": "value"})
             # invoke_tool will fail past resolution against this minimal synthetic payload
             # (no real HTTP/MCP target configured) -- only the shared resolution call matters here.
@@ -513,9 +499,11 @@ class TestSharedResolutionPath:
         resolved = _resolved(_local_tool_payload())
         mock_derive = Mock(wraps=service._derive_plugin_context_id)
 
-        with patch.object(service, "_resolve_tool_for_invocation", AsyncMock(return_value=resolved)), patch.object(
-            service, "_derive_plugin_context_id", mock_derive
-        ), patch.object(service, "_get_plugin_manager", AsyncMock(return_value=None)):
+        with (
+            patch.object(service, "_resolve_tool_for_invocation", AsyncMock(return_value=resolved)),
+            patch.object(service, "_derive_plugin_context_id", mock_derive),
+            patch.object(service, "_get_plugin_manager", AsyncMock(return_value=None)),
+        ):
             await service.preview_tool_invocation(test_db, "test_tool", {"param": "value"})
             with suppress(Exception):
                 await service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
