@@ -1,6 +1,7 @@
 nav:
   - Overview: index.md
   - "当前技术方案（中文）": current-technical-solution-zh.md
+  - "gRPC 转 MCP Tool（中文）": grpc-to-mcp-tool-translation-zh.md
   - Interactive Explorer: explorer.md
   - Roadmap: roadmap.md
   - Release History: releases.md

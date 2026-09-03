@@ -1,6 +1,6 @@
 ---
 title: ContextForge 当前技术方案
-description: 基于 1.0.7 源码现状的总体架构、安全、部署、运维与实施方案
+description: 基于包版本 1.0.7 与 Git 基线 5f2a3af6 的总体架构、安全、部署、运维与实施方案
 ---
 
 # ContextForge 当前技术方案
@@ -10,8 +10,9 @@ description: 基于 1.0.7 源码现状的总体架构、安全、部署、运维
 | 项目 | 内容 |
 | --- | --- |
 | 产品 | ContextForge AI Gateway |
-| 基线版本 | 1.0.7 |
-| 基线日期 | 2026-08-17 |
+| 包版本 | 1.0.7 |
+| Git 基线 | `5f2a3af6` |
+| 审计日期 | 2026-08-28 |
 | 文档状态 | 当前实现基线与生产落地建议 |
 | 主要读者 | 架构师、开发、测试、安全、平台工程与运维团队 |
 | 适用范围 | MCP、A2A、REST/gRPC、SQL API 的统一接入、治理、发布与观测 |
@@ -85,7 +86,7 @@ flowchart LR
     end
 
     E --> MW
-    SVC -->|"无连接代理时"| PG["PostgreSQL\n权威数据与审计"]
+    SVC -->|"无连接代理时"| PG["PostgreSQL\n权威数据；审计与内部 Trace（启用时）"]
     SVC --> RD["Redis\n缓存、亲和、分布式协调"]
     SVC -->|"使用连接代理时"| PB["PgBouncer\n生产推荐"]
     PB --> PG
@@ -133,6 +134,18 @@ ContextForge 当前是“模块化单体”：一个应用进程装配路由、�
 | 观测 | Prometheus、结构化日志、OpenTelemetry | 指标、日志和分布式链路 |
 | 部署 | 容器、Docker Compose、Helm/Kubernetes | 从开发到多副本生产 |
 
+### 3.4 配置管理
+
+运行时配置由 Pydantic Settings 从环境变量和 `.env` 加载，字段名不区分大小写，未知字段被忽略。容器和
+Kubernetes 应分别通过 ConfigMap 注入普通配置、通过 Secret 或企业 Secret Manager 注入密钥，不能把生产秘密
+写入镜像、Chart values 或仓库中的 `.env`。配置事实的优先级保持为运行时代码与配置模型、构建和部署清单、
+示例环境文件、说明文档。
+
+`get_settings()` 使用进程级缓存，环境和 `.env` 通常只在进程启动时读取一次。除证书轮换外，配置变更应通过
+滚动重启生效，并在发布前执行 `mcpgateway --validate-config`。`SIGHUP` 只清理 TLS Context、上游 MCP Session
+和本地亲和缓存，不是通用配置热加载机制。多副本部署还必须保证所有 Pod 使用同一配置版本；插件运行时开关等
+显式支持 Redis 广播的少数配置例外，应单独验证传播结果和失败语义。
+
 ## 4. 核心领域与发布模型
 
 ### 4.1 领域对象
@@ -175,6 +188,10 @@ flowchart TB
 Virtual Server 是面向消费者的发布单元，Gateway 是面向提供者的接入单元。生产设计应避免客户端直接依赖
 上游 Gateway 的物理细节；通过稳定的 Virtual Server 地址和能力集合隔离上游变更。
 
+Tool 目录同时提供规范化 Definition、来源绑定和依赖感知便携包。REST Tool 可导出无敏感 Header 的定义；
+gRPC Tool 额外绑定生成当前修订的不可变 Schema Artifact，并可把 Descriptor Set 一起导出为
+`*.toolpkg.zip`。导入采用 Preview 后确认、冲突策略、内容 Hash 和 ZIP 安全校验，不携带源实例凭据或所有权。
+
 Gateway 默认使用 `cache` 模式，把发现的上游目录协调到本地数据库。受
 `MCPGATEWAY_DIRECT_PROXY_ENABLED` 保护的 `direct_proxy` 是高级模式，不把远端目录缓存为相同的本地对象，
 因此下文“发现并同步”的生命周期仅指 cache 模式。Virtual Server 的 `server_id` 还可限制 API Token；
@@ -208,6 +225,10 @@ A2A 选择能力。需要该能力时使用 `/v1` API，并把 UI 补齐作为�
 5. 下游客户端通过 Virtual Server 获取受限目录，或在获批的 direct proxy 路径按 Gateway 访问权调用。
 6. 每次调用再次执行作用域、RBAC 和运行时策略检查，不能依赖发现阶段的结果。
 7. 变更、执行和安全事件进入指标、日志、Trace 或审计链路。
+
+Tool 创建时 `version=1`，实际语义变更才递增。更新可携带 `expectedVersion`，通过数据库条件更新防止旧页面
+覆盖新修改；冲突返回 409。当前 Tool 表只保存最新状态，不提供修订快照、Diff 或直接回滚。需要发布留档时
+保存 Tool 便携包；gRPC 协议版本继续由不可变 Schema Artifact 管理。
 
 ## 5. 接口与协议方案
 
@@ -345,6 +366,9 @@ Direct proxy 通过请求头解析 Gateway 并创建临时 Tool，跳过本地 T
 | gRPC | Reflection 或 Proto 发现方法，JSON 与 Protobuf 双向转换 | 功能开关、元数据、Schema、健康监控 |
 | SQL | 将数据源、表和操作生成受治理 Tool，在独立工作路径执行 | 表/列白名单、主键、操作许可、最小数据库账号 |
 
+gRPC 的 Proto/Reflection 发现、Tool Schema 生成、请求序列化和响应反序列化链路，详见
+[gRPC 转换为 MCP Tool 的实现方案](grpc-to-mcp-tool-translation-zh.md)。
+
 SQL Query 只接受字段白名单、等值过滤、排序、分页和受限关系展开，不开放任意 SQL。视图保持只读；更新和删除
 需要完整主键或唯一键。`/api/v1/data` 同样解析为生成的 SQL Tool 并进入统一执行管线，不是绕过治理的旁路。
 
@@ -371,6 +395,18 @@ Endpoint 并循环调用工具，该 Endpoint 可以是 ContextForge 根入口�
 应把它作为待修正实现缺口，不能对这些路径承诺相同隔离。若业务要求资源与审计绝对原子，应设计事务 Outbox，
 而不是复用已经提交的请求 Session。
 
+### 5.6 插件实现架构
+
+ContextForge 通过 `mcpgateway/plugins/` 封装外部 `cpex` 插件执行框架。启动时只要 YAML 配置可用就初始化
+Manager Factory，实际钩子执行再由共享启用开关门控；这样关闭状态启动的节点也可在运行时接收启用通知。
+Factory 以 `<team_id>::<tool_name>` 作为上下文标识，在 YAML 基础配置上应用数据库中的 Tool 绑定和运行时模式，
+并为各上下文缓存 `TenantPluginManager`。
+
+本地 Manager 缓存有 TTL；全局启停、单插件模式和绑定变化通过 Redis Key 与 Pub/Sub 在 Worker/Pod 间传播。
+Redis 不可用时会退回进程内状态，节点间可能暂时不一致，因此生产多副本必须监控广播失败并验证缓存收敛。
+插件超时、`on_error`、请求/响应载荷策略和 RBAC 覆盖能力分别控制执行边界；插件仍属于受信任扩展代码，
+不是安全沙箱。详细配置与钩子模型见 [插件框架](plugins.md)。
+
 ## 6. 数据与状态方案
 
 ### 6.1 数据分类
@@ -380,9 +416,10 @@ Endpoint 并循环调用工具，该 Endpoint 可以是 ContextForge 根入口�
 | 身份与授权 | 用户、团队、成员、邀请、角色、权限、令牌与撤销 | PostgreSQL |
 | 能力目录 | Gateway、Tool、Resource、Prompt、Virtual Server、A2A Agent | PostgreSQL |
 | 协议状态 | A2A Task、MCP App Session、OAuth、gRPC Schema、SQL 元数据 | PostgreSQL / Redis / 进程内状态 |
+| Tool 便携制品 | 无凭据 Tool Definition、Manifest、gRPC Descriptor Set | 按需下载/外部制品库；平台数据库保存当前 Tool 与 Artifact |
 | 运行指标 | 调用指标、小时/日汇总、性能数据 | PostgreSQL 与 Prometheus |
-| 可观测数据 | Trace、Span、Event、Token Usage、结构化日志 | PostgreSQL 和/或外部观测平台 |
-| 审计与安全 | Audit Trail、Security Event | PostgreSQL 和外部日志平台 |
+| 可观测数据 | Trace、Span、Event、Token Usage、结构化日志 | 启用时写 PostgreSQL 和/或外部观测平台 |
+| 审计与安全 | Audit Trail、Security Event | 启用时写 PostgreSQL 和/或外部日志平台 |
 | 瞬态协调 | 缓存、会话所有者、心跳、限流、选主 | Redis |
 
 ### 6.2 数据库选择
@@ -411,8 +448,9 @@ Endpoint 并循环调用工具，该 Endpoint 可以是 ContextForge 根入口�
 
 ### 6.4 缓存与 Redis
 
-应用支持 `database`、`memory`、`redis` 和 `none` 缓存后端；源码默认是 `database`。
-生产多副本推荐 `CACHE_TYPE=redis`，原因包括：
+全局 `CACHE_TYPE` 和会话注册能力可选择 `database`、`memory`、`redis` 或 `none`，源码的
+`CACHE_TYPE` 默认是 `database`。这不是每一种内部缓存都完整支持四种后端：认证、目录、会话等缓存各自还有
+L1/L2、数据库回退和失效策略。生产多副本推荐 `CACHE_TYPE=redis`，原因包括：
 
 - 跨副本的目录和认证缓存一致性。
 - 多 Worker MCP 状态会话的亲和映射与 RPC 转发。
@@ -463,7 +501,18 @@ RUST_MCP_MODE=off
 
 负载均衡器的 Cookie 粘滞不能替代应用级亲和，因为滚动发布、Worker 重启和连接重建仍会改变进程所有者。
 
-### 6.6 数据库连接预算
+### 6.6 进程内异步任务边界
+
+`MCPGATEWAY_ASYNC_JOBS_ENABLED` 默认关闭。启用后，Async Jobs 使用每个 Worker 独立的有界内存队列和固定数量
+协程 Worker；任务状态、输入和结果只保存在接收请求的进程中。队列容量、并发数、执行超时、结果保留时间、
+单任务及总结果字节数均有配置上限，以限制内存和外部调用放大。
+
+该实现不是 Redis Streams、RabbitMQ、Kafka、Celery 或数据库支持的持久任务系统：其他 Worker/Pod 无法读取
+任务，轮询落到非所有者会找不到任务，进程退出会取消待执行和运行中任务，重启后状态与结果不可恢复。因此它
+不提供跨副本 HA、至少一次投递或断点续跑保证。生产若需要可靠异步处理，应引入持久 Broker、共享状态存储、
+幂等键、重试/死信与可观测消费语义；在此之前仅适合受控的单 Worker、粘滞路由或可接受丢失的实验场景。
+
+### 6.7 数据库连接预算
 
 连接容量不能只按 Pod 数估算。使用 QueuePool 时，初始预算使用：
 
@@ -788,7 +837,10 @@ HA PostgreSQL，不能在高可用数据库前新增单点代理。
 
 ### 9.1 应用层
 
-- Gateway Pod 无共享本地持久数据；权威状态放在 PostgreSQL，分布式瞬态状态放在 Redis。
+- Gateway Pod 不保存应被视为权威数据的共享本地持久状态；权威状态放在 PostgreSQL，分布式瞬态状态放在
+  Redis。
+- Pod/Worker 仍持有上游 `ClientSession`、进程内 Async Jobs、插件 Manager 和连接缓存等瞬态对象，故障后
+  不能迁移。
 - 使用 `/ready` 作为流量门禁；通过额外的 preStop/drain 配置先取消就绪，再等待流式连接排空。
 - 对 SSE、Streamable HTTP 和长工具调用配置足够的 Ingress 空闲超时与终止宽限期。
 - 多 Worker 状态会话启用 Redis 亲和；无状态请求可自由负载均衡。
@@ -823,9 +875,10 @@ HA PostgreSQL，不能在高可用数据库前新增单点代理。
 
 ## 10. 可观测与运维
 
-源码严格默认下，数据库 Audit Trail、Security Logging、内部 Observability、结构化日志数据库落盘和 Metrics
-均为关闭状态；Compose/Helm 会覆盖其中部分开关。未显式启用并验证前，不存在相应数据库证据链。
-SIEM 也默认关闭且采用异步 best-effort 交付。
+源码默认开启内部 Observability，Compose 也默认开启，但 Helm values 明确设置为关闭。数据库 Audit Trail、
+Security Logging、结构化日志数据库落盘和 Prometheus Metrics 在源码中默认关闭；发布清单可分别覆盖，其中 Helm
+默认开启 Prometheus。OTLP 和 SIEM 默认关闭，SIEM 采用异步 best-effort 交付。部署评审必须以最终渲染配置为准，
+不能把源码默认、Compose 和 Helm values 视为相同。
 
 ### 10.1 三类信号
 
@@ -891,7 +944,7 @@ permissions Token 会直接通过，因为这里没有 Layer 2 可以继承。�
 ```text
 平均在途请求 ≈ 吞吐率 × 平均响应时间（Little 定律）
 活跃长连接 ≈ 峰值在线客户端 × 每客户端连接数 × 重连余量
-数据库连接预算见第 6.6 节
+数据库连接预算见第 6.7 节
 Redis 普通连接池上限 ≈ Pod 数 × Worker 数 × REDIS_MAX_CONNECTIONS
 Redis 内存 ≈ 会话状态 + 缓存条目 + 限流窗口 + 协调 Key + 碎片与故障切换余量
 ```
@@ -954,6 +1007,7 @@ RPO/RTO 必须由业务分级确定并通过恢复演练证明。只验证“备
 - 采用金丝雀或分批发布，重点验证长连接和跨 Worker Session。
 - 只有当新迁移对旧镜像向后兼容时才能直接回退镜像；否则按迁移文档执行数据库恢复或降级。
 - 新客户端使用 `/v1`，升级窗口内监控旧版无前缀 API 的调用者。
+- 数据库新增 Tool→gRPC Artifact 关联时，先确认 Alembic 保持单 Head；启动后核对迁移、Definition/Source 和包回导。
 
 ## 13. 功能开关与技术选型状态
 
@@ -968,9 +1022,9 @@ RPO/RTO 必须由业务分级确定并通过恢复演练证明。只验证“备
 | SQL API / Debugger | 可选，Debugger 默认关闭 | 使用最小数据库权限和表/列治理 |
 | ToolOps | 默认关闭 | 明确操作语义、审批和回滚后启用 |
 | Direct Proxy Gateway | 默认关闭的高级模式 | 只有完成独立缓存、认证和调用路径验证后启用 |
-| Plugins | 默认关闭 | 供应链、安全和性能评审后逐个启用 |
+| Plugins | 框架初始关闭；Compose/Helm 开启 | 核对最终配置；逐个完成供应链、安全和性能评审 |
 | Audit / Security Logging | 源码默认关闭 | 合规需要时显式开启、验证递归脱敏与可靠交付 |
-| Internal Observability / DB Structured Logs | 源码默认关闭 | 评估数据库写放大、保留和敏感载荷后启用 |
+| Internal Observability / DB Logs | 源码/Compose 开启，Helm 关闭；DB Logs 关闭 | 按最终渲染配置验收；调整采样率和保留期 |
 | Metrics | 源码默认关闭，发布清单常覆盖开启 | 私网抓取并修补 Prometheus 端点 RBAC 缺口 |
 | Dynamic Client Registration | 当前源码默认开启且空 issuer 列表不收窄 | 不使用时关闭；使用时设精确 issuer 白名单 |
 | Redis Cache | 不是源码默认，但为多副本推荐 | 生产多副本使用 `CACHE_TYPE=redis` |
@@ -1018,6 +1072,7 @@ RPO/RTO 必须由业务分级确定并通过恢复演练证明。只验证“备
 - MCP 初始化、列表、调用、流式返回和断开重连符合客户端预期。
 - REST/gRPC/A2A/SQL 仅在对应开关启用时可用，关闭后失败方式明确。
 - 导入导出、版本化 API 和 Admin UI 的关键流程可用。
+- Tool Definition/Source 可按可见性读取；包导出不含秘密，Preview、冲突策略和 gRPC 依赖回导可用。
 
 ### 15.2 安全验收
 
@@ -1048,6 +1103,17 @@ RPO/RTO 必须由业务分级确定并通过恢复演练证明。只验证“备
 - 观测全开、插件启用和高目录规模场景均纳入基线。
 - 压测期间数据库、Redis、CPU、内存、文件描述符和连接队列无持续耗尽。
 
+### 15.6 测试与质量门禁
+
+测试按单元、集成、协议 E2E、浏览器 E2E、安全、迁移、性能、负载、模糊和差分层次组织。行为变更至少
+覆盖成功路径、参数边界和失败路径；安全敏感变更必须增加未认证、错误团队、权限不足、功能关闭和不可信
+输入等拒绝用例。数据库变更还要验证升级、降级、单 Alembic Head 和已有数据库兼容性。
+
+合并前依次执行代码风格与静态检查、`make test`、`make coverage diff-cover`、生产风格容器栈验证，以及
+`make test-mcp-protocol-e2e test-mcp-rbac test-protocol-compliance`。最后执行 `make detect-secrets-scan`；
+文档变更还应在 `docs/` 目录执行 `make build`，验证 MkDocs 链接和渲染。无法执行的门禁必须记录环境限制、风险和替代证据，
+不能静默跳过。
+
 ## 16. 风险与缓解
 
 | 风险 | 影响 | 缓解措施 |
@@ -1057,6 +1123,7 @@ RPO/RTO 必须由业务分级确定并通过恢复演练证明。只验证“备
 | Compose/Chart 示例 Secret 进入生产 | 账号和数据泄漏 | Secret Manager 注入、部署前策略扫描、轮换 |
 | 发布层允许全部私网 SSRF | 内网探测和横向移动 | 关闭全私网许可，使用精确 CIDR 与 NetworkPolicy |
 | 多 Worker 未配置 Session Affinity | MCP 会话随机丢失 | Redis + 应用级所有权；发布前做故障演练 |
+| 把进程内 Async Jobs 当成持久队列 | 任务跨 Worker 不可查，重启后丢失 | 可靠任务接入持久 Broker 与幂等机制 |
 | 连接数按 Pod 粗略估计 | PostgreSQL 池耗尽 | 使用连接预算公式、PgBouncer 和实测峰值 |
 | 把 Roots 当作沙箱 | 文件越权访问 | 容器、挂载、OS 权限和上游限制联合控制 |
 | Prometheus 端点缺少 Layer 2 RBAC | 任意认证 Session 可读或抓取配置失效 | 网络隔离、专用 Token，并补齐处理器 RBAC |
@@ -1084,6 +1151,7 @@ RPO/RTO 必须由业务分级确定并通过恢复演练证明。只验证“备
 
 - [产品使用手册](../using/product-user-manual-zh.md)
 - [架构总览](index.md)
+- [gRPC 转换为 MCP Tool 的实现方案](grpc-to-mcp-tool-translation-zh.md)
 - [多租户架构](multitenancy.md)
 - [OAuth 设计](oauth-design.md)
 - [安全特性](security-features.md)

@@ -8,7 +8,7 @@ nav:
   - query-param-auth.md
   - tool-annotations.md
   - rest-passthrough.md
-  - "gRPC Services (Experimental)": grpc-services.md
+  - "gRPC 服务（实验性）": grpc-services.md
   - Clients: clients
   - Agents: agents
   - Servers: servers

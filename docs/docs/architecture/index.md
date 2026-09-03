@@ -400,6 +400,8 @@ graph TD
 
 ## Additional Architecture Documentation
 
+- [ContextForge 当前技术方案（中文）](current-technical-solution-zh.md) - 当前实现基线、部署、安全、数据与运维方案
+- [gRPC 到 MCP Tool 转换技术方案（中文）](grpc-to-mcp-tool-translation-zh.md) - Proto、Tool 生成和双向数据转换链路
 - [Export/Import System Architecture](export-import-architecture.md) - Technical design of configuration management system
 - [Plugin Framework Specification](plugins.md) - Technical design of the gateway plugin system
 
