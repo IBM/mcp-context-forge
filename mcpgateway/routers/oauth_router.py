@@ -550,12 +550,15 @@ async def _enforce_gateway_access(
     if visibility == "team":
         if not gateway_team_id:
             raise HTTPException(status_code=403, detail="You don't have access to this gateway")
-        # First-Party
-        from mcpgateway.services.email_auth_service import EmailAuthService
+        # Use TeamManagementService.get_user_role_in_team() which checks the role cache
+        # (auth_cache.get_user_role) before hitting the DB. This avoids the broken
+        # user.is_team_member() path where EmailAuthService.get_user_by_email() returns a
+        # cache-reconstructed detached EmailUser with empty team_memberships.
+        from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel
 
-        auth_service = EmailAuthService(db)
-        user = await auth_service.get_user_by_email(requester_email)
-        if not user or not user.is_team_member(gateway_team_id):
+        team_service = TeamManagementService(db)
+        role = await team_service.get_user_role_in_team(requester_email, gateway_team_id)
+        if not role:
             raise HTTPException(status_code=403, detail="You don't have access to this gateway")
         return
 
@@ -567,12 +570,11 @@ async def _enforce_gateway_access(
     if gateway_owner and gateway_owner.strip().lower() == requester_email:
         return
     if gateway_team_id:
-        # First-Party
-        from mcpgateway.services.email_auth_service import EmailAuthService
+        # Same pattern as the team-visibility branch above.
+        from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel
 
-        auth_service = EmailAuthService(db)
-        user = await auth_service.get_user_by_email(requester_email)
-        if user and user.is_team_member(gateway_team_id):
+        role = await TeamManagementService(db).get_user_role_in_team(requester_email, gateway_team_id)
+        if role:
             return
 
     raise HTTPException(status_code=403, detail="You don't have access to this gateway")

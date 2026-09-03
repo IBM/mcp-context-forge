@@ -1753,17 +1753,19 @@ class TestOAuthAccessHelpers:
     async def test_enforce_gateway_access_team_visibility_member_allowed(self, mock_db):
         from mcpgateway.routers.oauth_router import _enforce_gateway_access
 
-        class _User:
-            def is_team_member(self, _team_id):
-                return True
+        gateway = SimpleNamespace(visibility="team", owner_email=None, team_id="team-1")
+        with patch("mcpgateway.services.team_management_service.TeamManagementService.get_user_role_in_team", new_callable=AsyncMock, return_value="owner"):
+            await _enforce_gateway_access("gateway123", gateway, {"email": "user@example.com", "is_admin": False}, mock_db, request=None)
 
-        class _AuthService:
-            async def get_user_by_email(self, _email):
-                return _User()
+    @pytest.mark.asyncio
+    async def test_enforce_gateway_access_team_visibility_non_member_denied(self, mock_db):
+        from mcpgateway.routers.oauth_router import _enforce_gateway_access
 
         gateway = SimpleNamespace(visibility="team", owner_email=None, team_id="team-1")
-        with patch("mcpgateway.services.email_auth_service.EmailAuthService", return_value=_AuthService()):
-            await _enforce_gateway_access("gateway123", gateway, {"email": "user@example.com", "is_admin": False}, mock_db, request=None)
+        with patch("mcpgateway.services.team_management_service.TeamManagementService.get_user_role_in_team", new_callable=AsyncMock, return_value=None):
+            with pytest.raises(HTTPException) as exc_info:
+                await _enforce_gateway_access("gateway123", gateway, {"email": "user@example.com", "is_admin": False}, mock_db, request=None)
+        assert exc_info.value.status_code == 403
 
     @pytest.mark.asyncio
     async def test_enforce_gateway_access_unknown_visibility_owner_allowed(self, mock_db):
@@ -1776,35 +1778,18 @@ class TestOAuthAccessHelpers:
     async def test_enforce_gateway_access_unknown_visibility_team_member_allowed(self, mock_db):
         from mcpgateway.routers.oauth_router import _enforce_gateway_access
 
-        class _User:
-            def is_team_member(self, _team_id):
-                return True
-
-        class _AuthService:
-            async def get_user_by_email(self, _email):
-                return _User()
-
         gateway = SimpleNamespace(visibility="internal", owner_email=None, team_id="team-1")
-        with patch("mcpgateway.services.email_auth_service.EmailAuthService", return_value=_AuthService()):
+        with patch("mcpgateway.services.team_management_service.TeamManagementService.get_user_role_in_team", new_callable=AsyncMock, return_value="member"):
             await _enforce_gateway_access("gateway123", gateway, {"email": "user@example.com", "is_admin": False}, mock_db, request=None)
 
     @pytest.mark.asyncio
     async def test_enforce_gateway_access_unknown_visibility_team_non_member_denied(self, mock_db):
         from mcpgateway.routers.oauth_router import _enforce_gateway_access
 
-        class _User:
-            def is_team_member(self, _team_id):
-                return False
-
-        class _AuthService:
-            async def get_user_by_email(self, _email):
-                return _User()
-
         gateway = SimpleNamespace(visibility="internal", owner_email=None, team_id="team-1")
-        with patch("mcpgateway.services.email_auth_service.EmailAuthService", return_value=_AuthService()):
+        with patch("mcpgateway.services.team_management_service.TeamManagementService.get_user_role_in_team", new_callable=AsyncMock, return_value=None):
             with pytest.raises(HTTPException) as exc_info:
                 await _enforce_gateway_access("gateway123", gateway, {"email": "user@example.com", "is_admin": False}, mock_db, request=None)
-
         assert exc_info.value.status_code == 403
 
 
@@ -2064,15 +2049,7 @@ class TestOAuthRouterAdditionalCoverage:
         }
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
 
-        class _User:
-            def is_team_member(self, _team_id):
-                return False
-
-        class _AuthService:
-            async def get_user_by_email(self, _email):
-                return _User()
-
-        with patch("mcpgateway.services.email_auth_service.EmailAuthService", return_value=_AuthService()):
+        with patch("mcpgateway.services.team_management_service.TeamManagementService.get_user_role_in_team", new_callable=AsyncMock, return_value=None):
             # First-Party
             from mcpgateway.routers.oauth_router import initiate_oauth_flow
 
@@ -2288,15 +2265,7 @@ class TestOAuthRouterAdditionalCoverage:
         mock_gateway.oauth_config = {"grant_type": "authorization_code", "client_id": "cid"}
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
 
-        class _User:
-            def is_team_member(self, _team_id):
-                return False
-
-        class _AuthService:
-            async def get_user_by_email(self, _email):
-                return _User()
-
-        with patch("mcpgateway.services.email_auth_service.EmailAuthService", return_value=_AuthService()):
+        with patch("mcpgateway.services.team_management_service.TeamManagementService.get_user_role_in_team", new_callable=AsyncMock, return_value=None):
             # First-Party
             from mcpgateway.routers.oauth_router import get_oauth_status
 
