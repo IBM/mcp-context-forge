@@ -204,7 +204,7 @@ def test_a2a_path_injects_token_and_strips_vault_header(live_stack):
             json={
                 "agent": {
                     "name": agent_name,
-                    "endpoint_url": "http://localhost:8002/invoke",
+                    "endpoint_url": "http://127.0.0.1:8002/invoke",
                     "agent_type": "custom",  # plain-JSON POST, no jsonrpc envelope
                     "tags": [SYSTEM_TAG],
                     "passthrough_headers": ["X-Vault-Tokens", "Authorization"],
@@ -248,7 +248,7 @@ def test_a2a_tool_wrapped_as_mcp_injects_token_and_strips_vault_header(live_stac
             json={
                 "agent": {
                     "name": agent_name,
-                    "endpoint_url": "http://localhost:8002/invoke",
+                    "endpoint_url": "http://127.0.0.1:8002/invoke",
                     "agent_type": "custom",
                     "tags": [SYSTEM_TAG],  # Tag on the A2A agent
                     "passthrough_headers": ["X-Vault-Tokens", "Authorization"],

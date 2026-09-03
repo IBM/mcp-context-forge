@@ -435,16 +435,30 @@ class Vault(Plugin):
             logger.debug("Injected auth header for system: %s", system_key)
         elif not token_value:
             # No vault token found for the expected system. Since the target has a system tag
-            # indicating it expects vault token injection, strip any existing Authorization header
-            # to prevent wrong credentials from being forwarded.
-            if "authorization" in headers:
-                del headers["authorization"]
-                logger.warning(
-                    "Vault tokens provided but no match found for system '%s' - stripped Authorization header to prevent credential leakage (possible misconfiguration)",
-                    system_key,
-                )
-            else:
-                logger.warning("Vault tokens provided but no match found for system '%s' - possible misconfiguration", system_key)
+            # indicating it expects vault token injection, any existing Authorization header is
+            # presumptively wrong for this destination and must not reach it.
+            #
+            # This plugin never receives the real Authorization value on this path -- the caller
+            # (tool_service.py / a2a_service.py) filters it out of what plugins see before this
+            # hook runs, by design (#4925) -- so `headers` here structurally cannot contain
+            # "authorization" and a plain `del` would be a no-op. Instead, set it to the empty
+            # string as a sentinel: a real bearer token is never empty, so this is unambiguous.
+            # The caller checks its own raw (pre-filter) copy of the headers this plugin returns
+            # for exactly this sentinel, immediately after invoking this hook, and deletes the
+            # real Authorization header unconditionally when it sees it -- before the
+            # passthrough_headers allowlist / ENABLE_SENSITIVE_HEADER_PASSTHROUGH filtering that
+            # would otherwise silently drop the sentinel in most configurations.
+            #
+            # Possible future direction (not in scope here): the framework's capability-gated
+            # header extension (Capability.READ_HEADERS / WRITE_HEADERS on
+            # extensions.http.headers) could let this plugin declare ownership of Authorization
+            # and delete it directly, once migrated off the deprecated
+            # ToolPreInvokePayload.headers field.
+            headers["authorization"] = ""
+            logger.warning(
+                "Vault tokens provided but no match found for system '%s' - signaling Authorization strip to prevent credential leakage (possible misconfiguration)",
+                system_key,
+            )
 
         # Always return replacement headers since the vault header was stripped
         return HttpHeaderPayload(root=headers)
