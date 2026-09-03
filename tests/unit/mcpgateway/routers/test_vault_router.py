@@ -419,3 +419,58 @@ async def test_vault_authorize_generic_exception_returns_500():
     with pytest.raises(HTTPException) as exc_info:
         await vault_authorize(request, "srv-1", None, db, current_user)
     assert exc_info.value.status_code == 500
+
+
+# ---------------------------------------------------------------------------
+# redirect_uri derivation: must use settings.app_domain, not request.url
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_vault_authorize_redirect_uri_uses_app_domain():
+    """redirect_uri must be derived from settings.app_domain, not request.url.
+
+    Behind a K8s ingress the request origin resolves to an internal pod address;
+    the IdP rejects redirect_uri values that don't match its registered callback.
+    This test mocks request.url to an internal address and settings.app_domain to
+    the public domain, then asserts the redirect_uri reflects app_domain.
+    """
+    db = MagicMock()
+    db.get.return_value = _make_server()
+    gateway = _make_gateway()
+
+    alice = _make_user(email="alice@corp.com", is_admin=False, token_teams=["engineering"])
+
+    # Request arrives on internal pod address
+    request = _make_request()
+    request.url.scheme = "http"
+    request.url.netloc = "internal-pod:4444"
+    request.scope = {"root_path": "/proxy"}
+
+    with patch("mcpgateway.routers.vault_router._resolve_oauth_gateway", return_value=gateway), \
+         patch("mcpgateway.routers.vault_router._enforce_gateway_access", new_callable=AsyncMock, return_value=None), \
+         patch("mcpgateway.routers.vault_router._check_server_visibility", return_value=True), \
+         patch("mcpgateway.routers.vault_router.OAuthManager") as mock_oauth_cls, \
+         patch("mcpgateway.routers.vault_router._default_redirect_uri", return_value="https://public.example.com/proxy/oauth/callback") as mock_redirect:
+        mock_oauth = AsyncMock()
+        mock_oauth.initiate_authorization_code_flow.return_value = {
+            "authorization_url": "https://idp.example.com/authorize?state=xyz"
+        }
+        mock_oauth_cls.return_value = mock_oauth
+
+        await vault_authorize(
+            request=request,
+            server_id="srv-123",
+            gateway_url=None,
+            db=db,
+            current_user=alice,
+        )
+
+        # Verify _default_redirect_uri was called with the request
+        mock_redirect.assert_called_once_with(request)
+
+        # Verify the redirect_uri passed to OAuthManager uses the public domain
+        call_kwargs = mock_oauth.initiate_authorization_code_flow.call_args[1]
+        credentials = call_kwargs["credentials"]
+        assert credentials["redirect_uri"] == "https://public.example.com/proxy/oauth/callback"
+        assert "internal-pod" not in credentials["redirect_uri"]
