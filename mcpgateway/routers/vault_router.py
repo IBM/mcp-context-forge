@@ -26,12 +26,10 @@ from sqlalchemy.orm import Session
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.db import Gateway, Server, Tool, get_db, server_tool_association
 from mcpgateway.middleware.rbac import get_current_user_with_permissions
-from mcpgateway.config import settings
-from mcpgateway.routers.oauth_router import _build_user_context, _enforce_gateway_access
+from mcpgateway.routers.oauth_router import _build_user_context, _default_redirect_uri, _enforce_gateway_access
 from mcpgateway.services.a2a_server_service import _check_server_access as _check_server_visibility
 from mcpgateway.services.oauth_manager import OAuthManager
 from mcpgateway.services.token_storage_service import TokenStorageService
-from mcpgateway.utils.paths import resolve_root_path
 
 logger = logging.getLogger(__name__)
 
@@ -190,11 +188,7 @@ async def vault_authorize(
 
         # Build authorization URL with user email embedded in state
         # Use the standard /oauth/callback endpoint (it already handles both Database and Vault backends)
-        # Use settings.app_domain (consistent with oauth_router._default_redirect_uri)
-        # so the redirect_uri matches the externally-visible origin registered with the
-        # IdP, even when the request arrives via a reverse-proxy / K8s ingress.
-        root_path = resolve_root_path(request) if request else ""
-        callback_url = f"{str(settings.app_domain).rstrip('/')}{root_path}/oauth/callback"
+        callback_url = _default_redirect_uri(request)
 
         # Add callback URL to oauth_config for this flow
         oauth_config_with_callback = gateway.oauth_config.copy()
