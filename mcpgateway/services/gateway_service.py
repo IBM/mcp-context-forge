@@ -4937,6 +4937,21 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             response.raise_for_status()
                             if span:
                                 set_span_attribute(span, "http.status_code", response.status_code)
+                        # Capability probe: a 200 from the SSE endpoint only proves the
+                        # HTTP front-end is alive. When the gateway is an SSE-to-stdio
+                        # bridge (mcp-proxy et al.), the child process can be wedged while
+                        # the SSE layer keeps answering — transport-alive, capability-dead,
+                        # and every downstream tool call then hangs. An initialize
+                        # round-trip crosses all three hops and is the cheapest probe
+                        # that can fail for that reason. Disable via
+                        # HEALTH_CHECK_CAPABILITY_PROBE=false for pure-HTTP SSE servers
+                        # that do not speak MCP initialize (rare).
+                        if settings.health_check_capability_probe:
+                            async with sse_client(url=gateway_url, headers=headers) as (read_stream, write_stream):
+                                async with ClientSession(read_stream, write_stream) as session:
+                                    await asyncio.wait_for(session.initialize(), timeout=settings.health_check_timeout)
+                            if span:
+                                set_span_attribute(span, "health.mode", "capability")
                     elif (gateway_transport).lower() == "streamablehttp":
                         # Health checks are system operations with no downstream MCP session,
                         # so they don't go through the UpstreamSessionRegistry (which requires

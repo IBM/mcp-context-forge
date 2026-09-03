@@ -2839,6 +2839,13 @@ class Settings(BaseSettings):
     health_check_interval: int = 60
     # Timeout in seconds for each health check request
     health_check_timeout: int = 30
+    # When true, SSE health checks also perform an MCP initialize round-trip
+    # (capability check) instead of trusting the HTTP 200 from the SSE endpoint.
+    # Rationale: an SSE front-end (e.g. an mcp-proxy) can answer GET /sse with
+    # 200 while the stdio child behind it is wedged — transport-alive but
+    # capability-dead. The initialize round-trip is the cheapest probe that
+    # crosses all three hops. StreamableHTTP checks already initialize.
+    health_check_capability_probe: bool = True
     # Per-check timeout (seconds) to bound total time of one gateway health check
     # Env: GATEWAY_HEALTH_CHECK_TIMEOUT
     gateway_health_check_timeout: float = 30.0
