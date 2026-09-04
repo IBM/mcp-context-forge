@@ -8446,11 +8446,12 @@ class CatalogServerRegisterBody(BaseModel):
     """Body for the v1 catalog register endpoint.
 
     The catalog server id comes from the path; this body carries only the
-    optional overrides. OAuth configuration is out of scope here (#5967).
+    optional overrides.
     """
 
     name: Optional[str] = Field(None, description="Optional custom name for the server")
     api_key: Optional[str] = Field(None, max_length=4096, description="API key if the catalog entry requires one")
+    oauth_credentials: Optional[Dict[str, Any]] = Field(None, description="OAuth credentials if the catalog entry requires OAuth")
     visibility: Optional[Literal["private", "team", "public"]] = Field(None, description="Visibility level: private, team, or public")
     team_id: Optional[str] = Field(None, description="Team ID for team-scoped registration")
 

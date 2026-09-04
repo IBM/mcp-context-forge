@@ -112,7 +112,9 @@ async def test_get_catalog_servers_requires_oauth_config_unconfigured(service):
 
 @pytest.mark.asyncio
 async def test_get_catalog_servers_requires_oauth_config_configured(service):
-    """Test that disabled OAuth server with oauth_config is NOT marked as requires_oauth_config."""
+    """A disabled OAuth server with oauth_config already set still needs the caller's
+    authorization: catalog registration now persists oauth_config up front (#5967), so
+    presence of oauth_config alone must not clear requires_oauth_config."""
     fake_catalog = {
         "catalog_servers": [
             {
@@ -129,7 +131,7 @@ async def test_get_catalog_servers_requires_oauth_config_configured(service):
     }
     with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)), patch.object(service, "_get_registry_cache", return_value=None):
         db = MagicMock()
-        # Disabled OAuth server WITH oauth_config - manually disabled, not needing setup
+        # Disabled OAuth server WITH oauth_config - registered but not yet authorized
         db.execute.return_value = [("gw-configured", "http://oauth-configured.example.com", False, "oauth", {"client_id": "abc", "client_secret": "xyz"}, "public", None, None, "catalog")]
         req = CatalogListRequest(offset=0, limit=10)
         result = await service.get_catalog_servers(req, db)
@@ -137,7 +139,7 @@ async def test_get_catalog_servers_requires_oauth_config_configured(service):
         server = result.servers[0]
         assert server.is_registered is True
         assert server.gateway_id == "gw-configured"
-        assert server.requires_oauth_config is False
+        assert server.requires_oauth_config is True
 
 
 @pytest.mark.asyncio
@@ -496,6 +498,94 @@ async def test_register_oauth_skip_init_stamps_owner(service):
     assert db_gateway.owner_email == "u@x.com"
     assert db_gateway.team_id is None
     assert db_gateway.visibility == "private"
+
+
+@pytest.mark.asyncio
+async def test_register_oauth_skip_init_persists_oauth_credentials(service):
+    """oauth_credentials submitted with the register request land on the gateway's
+    oauth_config in a single call - no second PUT /gateways/{id} required (#5967)."""
+    fake_catalog = {
+        "catalog_servers": [{"id": "oauth-server", "name": "OAuth Server", "url": "https://oauth.example.com/mcp", "description": "OAuth server", "auth_type": "OAuth2.1", "tags": []}]
+    }
+    req = CatalogServerRegisterRequest(
+        server_id="oauth-server",
+        oauth_credentials={
+            "issuer": "https://issuer.example.com",
+            "client_id": "client-123",
+            "client_secret": "super-secret",  # pragma: allowlist secret
+            "scopes": ["read", "write"],
+        },
+    )
+
+    with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)):
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = None
+
+        def mock_refresh(obj):
+            obj.id = "test-id"
+            obj.created_at = datetime.now(timezone.utc)
+            obj.updated_at = datetime.now(timezone.utc)
+            obj.reachable = False
+
+        db.refresh = MagicMock(side_effect=mock_refresh)
+
+        # Discovery makes an outbound call; keep it a no-op so the test stays offline.
+        with (
+            patch("mcpgateway.services.catalog_service.select"),
+            patch("mcpgateway.services.catalog_service.slugify", return_value="oauth-server"),
+            patch.object(service._gateway_service, "_auto_discover_oauth_endpoints", AsyncMock(side_effect=lambda cfg: cfg)),
+        ):
+            result = await service.register_catalog_server("oauth-server", req, db, created_by="u@x.com", owner_email="u@x.com", token_teams=None)
+
+    assert result.success
+    assert result.oauth_required is True
+    db_gateway = db.add.call_args[0][0]
+    assert db_gateway.auth_type == "oauth"
+    assert db_gateway.enabled is False
+    stored = db_gateway.oauth_config
+    assert stored["grant_type"] == "authorization_code"
+    assert stored["issuer"] == "https://issuer.example.com"
+    assert stored["client_id"] == "client-123"
+    assert stored["scopes"] == ["read", "write"]
+    # Sensitive values are encrypted at rest, never stored as the plaintext submitted.
+    assert stored["client_secret"] != "super-secret"  # pragma: allowlist secret
+
+
+@pytest.mark.asyncio
+async def test_register_oauth_and_api_key_without_api_key_skips_initialization(service):
+    """A mixed OAuth2.1 & API Key catalog entry registered with no api_key must take the
+    skip-initialization path rather than falling through to a doomed connection test."""
+    fake_catalog = {
+        "catalog_servers": [
+            {"id": "mixed-server", "name": "Mixed Server", "url": "https://mixed.example.com/mcp", "description": "Mixed auth server", "auth_type": "OAuth2.1 & API Key", "tags": []}
+        ]
+    }
+
+    with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)):
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = None
+
+        def mock_refresh(obj):
+            obj.id = "test-id"
+            obj.created_at = datetime.now(timezone.utc)
+            obj.updated_at = datetime.now(timezone.utc)
+            obj.reachable = False
+
+        db.refresh = MagicMock(side_effect=mock_refresh)
+
+        with (
+            patch("mcpgateway.services.catalog_service.select"),
+            patch("mcpgateway.services.catalog_service.slugify", return_value="mixed-server"),
+            patch.object(service._gateway_service, "register_gateway", AsyncMock(side_effect=AssertionError("register_gateway must not be called on the skip-init path"))),
+        ):
+            # request=None: no api_key supplied at all.
+            result = await service.register_catalog_server("mixed-server", None, db, created_by="u@x.com", owner_email="u@x.com", token_teams=None)
+
+    assert result.success
+    assert result.oauth_required is True
+    db_gateway = db.add.call_args[0][0]
+    assert db_gateway.auth_type == "oauth"
+    assert db_gateway.enabled is False
 
 
 # ---------- Exception mapping in register_catalog_server ----------
