@@ -3542,6 +3542,7 @@ class TestAuthenticateOrCreateUser:
             mock_settings.sso_google_admin_domains = []
             mock_settings.sso_entra_admin_groups = []
             mock_settings.sso_entra_sync_roles_on_login = False
+            mock_settings.sso_allow_provider_linking = False
             result = await sso_service.authenticate_or_create_user(
                 {
                     "email": "user@test.com",
@@ -3912,6 +3913,60 @@ class TestAuthenticateOrCreateUser:
 
         assert existing_user.is_admin is False
         assert existing_user.admin_origin is None
+
+    @pytest.mark.asyncio
+    async def test_cross_provider_login_refused_when_linking_disabled(self, sso_service, mock_db):
+        """Existing email bound to another provider is refused (secure default)."""
+        existing_user = SimpleNamespace(
+            email="user@test.com",
+            full_name="User",
+            auth_provider="provider-a",
+            email_verified=True,
+            last_login=None,
+            is_admin=False,
+            admin_origin=None,
+        )
+        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=existing_user)
+        sso_service.get_provider = lambda _id: _make_provider(id="provider-b")
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_settings.sso_allow_provider_linking = False
+            result = await sso_service.authenticate_or_create_user(
+                {"email": "user@test.com", "full_name": "User", "provider": "provider-b", "email_verified": True}
+            )
+
+        assert result is None
+        assert existing_user.auth_provider == "provider-a"
+
+    @pytest.mark.asyncio
+    async def test_cross_provider_login_relinks_when_enabled(self, sso_service, mock_db):
+        """With SSO_ALLOW_PROVIDER_LINKING, a verified email rebinds to the new provider."""
+        existing_user = SimpleNamespace(
+            email="user@test.com",
+            full_name="User",
+            auth_provider="provider-a",
+            email_verified=True,
+            last_login=None,
+            is_admin=False,
+            admin_origin=None,
+        )
+        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=existing_user)
+        sso_service.get_provider = lambda _id: _make_provider(id="provider-b")
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings, patch("mcpgateway.services.sso_service.create_jwt_token", new_callable=AsyncMock) as mock_jwt:
+            mock_settings.sso_allow_provider_linking = True
+            mock_settings.sso_auto_admin_domains = []
+            mock_settings.sso_github_admin_orgs = []
+            mock_settings.sso_google_admin_domains = []
+            mock_settings.sso_entra_admin_groups = []
+            mock_settings.sso_entra_sync_roles_on_login = False
+            mock_jwt.return_value = "jwt-token"
+            result = await sso_service.authenticate_or_create_user(
+                {"email": "user@test.com", "full_name": "User", "provider": "provider-b", "email_verified": True}
+            )
+
+        assert result == "jwt-token"
+        assert existing_user.auth_provider == "provider-b"
 
     @pytest.mark.asyncio
     async def test_new_user_auto_create(self, sso_service, mock_db):
