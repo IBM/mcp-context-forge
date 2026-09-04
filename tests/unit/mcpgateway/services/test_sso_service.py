@@ -2552,6 +2552,41 @@ class TestExtractGroupsAndRoles:
         assert result == []
 
 
+class TestResolveEmailClaim:
+    """Tests for generic-OIDC email resolution."""
+
+    def test_prefers_standard_email_claim(self):
+        d = {"email": "a@e.com", "preferred_username": "b@e.com"}
+        assert SSOService._resolve_email_claim(d, {}, "p") == "a@e.com"
+
+    def test_falls_back_to_preferred_username(self):
+        d = {"preferred_username": "user@example.com"}
+        assert SSOService._resolve_email_claim(d, {}, "p") == "user@example.com"
+
+    def test_falls_back_to_upn_then_unique_name_then_mail(self):
+        assert SSOService._resolve_email_claim({"upn": "u@e.com"}, {}, "p") == "u@e.com"
+        assert SSOService._resolve_email_claim({"unique_name": "n@e.com"}, {}, "p") == "n@e.com"
+        assert SSOService._resolve_email_claim({"mail": "m@e.com"}, {}, "p") == "m@e.com"
+
+    def test_does_not_promote_a_bare_username(self):
+        """A fallback must look like an address; it becomes the identity key."""
+        assert SSOService._resolve_email_claim({"preferred_username": "jdoe"}, {}, "p") is None
+
+    def test_configured_email_claim_wins_and_skips_at_check(self):
+        d = {"email": "wrong@e.com", "corpMail": "right@e.com"}
+        assert SSOService._resolve_email_claim(d, {"email_claim": "corpMail"}, "p") == "right@e.com"
+
+    def test_configured_email_claim_missing_returns_none(self):
+        d = {"email": "present@e.com"}
+        assert SSOService._resolve_email_claim(d, {"email_claim": "absent"}, "p") is None
+
+    def test_returns_none_when_nothing_usable(self):
+        assert SSOService._resolve_email_claim({"sub": "abc", "name": "A"}, {}, "p") is None
+
+    def test_handles_missing_metadata(self):
+        assert SSOService._resolve_email_claim({"email": "a@e.com"}, None, "p") == "a@e.com"
+
+
 class TestBuildNormalizedUserInfo:
     """Tests for the extracted _build_normalized_user_info helper."""
 

@@ -1691,6 +1691,58 @@ class SSOService:
         return raw_email_str
 
     @staticmethod
+    def _resolve_email_claim(user_data: Dict[str, Any], metadata: Optional[Dict[str, Any]], provider_id: str) -> Optional[str]:
+        """Resolve the email address for a generic OIDC provider.
+
+        ``authenticate_or_create_user`` keys the local user record on email and
+        refuses any identity without one, but not every OIDC deployment releases
+        an ``email`` claim from ``/userinfo`` even when it advertises the scope.
+        The dedicated Keycloak, Entra and ADFS branches already fall back to other
+        claims; the generic branch did not, so such a provider failed the login
+        with ``user_creation_failed`` after an otherwise successful token
+        exchange.
+
+        Resolution order:
+
+        1. ``provider_metadata["email_claim"]`` when configured -- explicit
+           operator intent, used as-is with no ``@`` check.
+        2. Otherwise the conventional claims, in order: ``email``,
+           ``preferred_username``, ``upn``, ``unique_name``, ``mail``. A fallback
+           value must look like an address (contain ``@``), so a bare username is
+           never silently promoted to an identity key.
+
+        Args:
+            user_data: Raw claims from the provider's userinfo/id_token.
+            metadata: The provider's ``provider_metadata`` mapping, if any.
+            provider_id: Provider id, for logging.
+
+        Returns:
+            The resolved email, or None when no candidate qualifies.
+        """
+        configured = (metadata or {}).get("email_claim")
+        if configured:
+            value = user_data.get(configured)
+            return value if isinstance(value, str) and value else None
+
+        for claim in ("email", "preferred_username", "upn", "unique_name", "mail"):
+            value = user_data.get(claim)
+            if isinstance(value, str) and "@" in value:
+                if claim != "email":
+                    # Say which claim stood in for email: it becomes the identity
+                    # key, so this must be visible rather than inferred later.
+                    logger.info("SSO provider %s: no 'email' claim; using '%s' as the email identity", provider_id, claim)
+                return value
+
+        # Name the claims that WERE present. "no email" alone gives the operator
+        # nothing to act on, and userinfo bodies are not otherwise logged.
+        logger.warning(
+            "SSO provider %s returned no usable email claim. Claims present: %s. Set provider_metadata.email_claim to name the right one.",
+            provider_id,
+            sorted(user_data.keys()),
+        )
+        return None
+
+    @staticmethod
     def _extract_groups_and_roles(user_data: Dict[str, Any], groups_claim: str = "groups") -> list[str]:
         """Extract groups and roles from user data into a unified list.
 
@@ -1919,7 +1971,7 @@ class SSOService:
 
         # Generic OIDC format for all other providers.
         groups = self._extract_groups_and_roles(user_data, groups_claim)
-        return self._build_normalized_user_info(user_data, provider.id, groups)
+        return self._build_normalized_user_info(user_data, provider.id, groups, email=self._resolve_email_claim(user_data, metadata, provider.id))
 
     def _reset_pending_approval(self, pending: PendingUserApproval, incoming_provider: str, user_info: Dict[str, Any]) -> None:
         """Reset a pending approval request to pending state with fresh metadata.
