@@ -8,15 +8,18 @@ Unit Tests for Catalog Service .
 
 # Standard
 from datetime import datetime, timezone
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 import pytest
+import yaml
 
 # First-Party
 from mcpgateway.schemas import (
     CatalogBulkRegisterRequest,
     CatalogListRequest,
+    CatalogOAuthMetadata,
     CatalogServer,
     CatalogServerRegisterRequest,
 )
@@ -33,6 +36,81 @@ def test_catalog_server_gateway_id_defaults_to_none():
     server = CatalogServer(id="catalog-1", name="Server", category="Dev", url="https://example.com/mcp", auth_type="Open", provider="Example", description="Example server")
 
     assert server.gateway_id is None
+
+
+def test_catalog_server_oauth_defaults_to_none():
+    """Catalog entries with no seeded OAuth metadata expose oauth=None."""
+    server = CatalogServer(id="catalog-1", name="Server", category="Dev", url="https://example.com/mcp", auth_type="OAuth2.1", provider="Example", description="Example server")
+
+    assert server.oauth is None
+
+
+def test_catalog_server_oauth_metadata_parses_nested_block():
+    """A seeded ``oauth`` block on a catalog entry parses into CatalogOAuthMetadata."""
+    server = CatalogServer(
+        id="linear",
+        name="Linear",
+        category="Project Management",
+        url="https://mcp.linear.app/sse",
+        auth_type="OAuth2.1",
+        provider="Linear",
+        description="Modern project management for software teams",
+        oauth={
+            "issuer": "https://mcp.linear.app",
+            "authorization_url": "https://mcp.linear.app/authorize",
+            "token_url": "https://mcp.linear.app/token",
+            "scopes": ["read", "write"],
+            "supports_dcr": True,
+            "resource": "https://mcp.linear.app/mcp",
+        },
+    )
+
+    assert isinstance(server.oauth, CatalogOAuthMetadata)
+    assert server.oauth.issuer == "https://mcp.linear.app"
+    assert server.oauth.authorization_url == "https://mcp.linear.app/authorize"
+    assert server.oauth.token_url == "https://mcp.linear.app/token"
+    assert server.oauth.scopes == ["read", "write"]
+    assert server.oauth.supports_dcr is True
+    assert server.oauth.resource == "https://mcp.linear.app/mcp"
+
+
+def test_catalog_oauth_metadata_defaults():
+    """CatalogOAuthMetadata carries no secrets and defaults to empty/unset fields."""
+    metadata = CatalogOAuthMetadata()
+
+    assert metadata.issuer is None
+    assert metadata.authorization_url is None
+    assert metadata.token_url is None
+    assert metadata.scopes == []
+    assert metadata.supports_dcr is False
+    assert metadata.resource is None
+    assert not hasattr(metadata, "client_id")
+    assert not hasattr(metadata, "client_secret")
+
+
+def test_seeded_oauth_entries_in_real_catalog_file():
+    """The real mcp-catalog.yml file's seeded oauth blocks parse cleanly.
+
+    Guards against a malformed edit to the file's OAuth discovery metadata
+    (issue #6461): every OAuth-auth entry that carries an ``oauth`` block
+    must parse into CatalogOAuthMetadata with at least an authorization_url
+    and token_url, and none may carry client credentials.
+    """
+    catalog_path = Path(__file__).parent.parent.parent.parent.parent / "mcp-catalog.yml"
+    catalog_data = yaml.safe_load(catalog_path.read_text(encoding="utf-8"))
+    servers = catalog_data["catalog_servers"]
+
+    seeded = [CatalogServer(**s) for s in servers if s.get("oauth")]
+    assert len(seeded) >= 60
+    assert {s.id for s in seeded} >= {"asana", "linear", "notion", "github", "atlassian", "vercel"}
+
+    for server in seeded:
+        assert "OAuth" in server.auth_type
+        assert server.oauth.authorization_url
+        assert server.oauth.token_url
+        raw = next(s for s in servers if s["id"] == server.id)["oauth"]
+        assert "client_id" not in raw
+        assert "client_secret" not in raw
 
 
 @pytest.mark.asyncio
