@@ -6095,7 +6095,7 @@ async def set_tool_state(
         return {
             "status": "success",
             "message": f"Tool {tool_id} {'activated' if activate else 'deactivated'}",
-            "tool": tool.model_dump(),
+            "tool": tool.model_dump(by_alias=True),
         }
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
@@ -6215,7 +6215,7 @@ async def set_resource_state(
         return {
             "status": "success",
             "message": f"Resource {resource_id} {'activated' if activate else 'deactivated'}",
-            "resource": resource.model_dump(),
+            "resource": resource.model_dump(by_alias=True),
         }
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
@@ -6779,7 +6779,7 @@ async def set_prompt_state(
         return {
             "status": "success",
             "message": f"Prompt {prompt_id} {'activated' if activate else 'deactivated'}",
-            "prompt": prompt.model_dump(),
+            "prompt": prompt.model_dump(by_alias=True),
         }
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
@@ -7289,7 +7289,7 @@ async def set_gateway_state(
         return {
             "status": "success",
             "message": f"Gateway {gateway_id} {'activated' if activate else 'deactivated'}",
-            "gateway": gateway.model_dump(),
+            "gateway": gateway.model_dump(by_alias=True),
         }
     except PermissionError as e:
         raise HTTPException(status_code=403, detail=str(e))
