@@ -6670,7 +6670,10 @@ class ToolService(BaseService):
                             logger.debug("Tool call result dump: %s", dump)
                             content = dump.get("content", [])
                             # Accept both alias and pythonic names for structured content
-                            structured = dump.get("structuredContent") or dump.get("structured_content")
+                            # Use explicit None check to preserve empty dicts (valid MCP responses)
+                            structured = dump.get("structuredContent")
+                            if structured is None:
+                                structured = dump.get("structured_content")
                             filtered_response = await asyncio.to_thread(extract_using_jq, content, tool_jsonpath_filter)
 
                             is_err = getattr(tool_call_result, "is_error", None)
