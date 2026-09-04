@@ -26,6 +26,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 # Third-Party
 import orjson
 from sqlalchemy import and_, desc, func, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload, Session
 
 # First-Party
@@ -887,7 +888,15 @@ class TeamManagementService:
                 team = EmailTeam(name=name, description=description, created_by=created_by, is_personal=False, visibility=visibility, max_members=max_members, is_active=True)
                 self.db.add(team)
 
-                self.db.flush()  # Get the team ID
+                try:
+                    self.db.flush()  # Get the team ID
+                except IntegrityError:
+                    # The SELECT pre-check above and this insert are not atomic. Under concurrent
+                    # workers both can pass the pre-check, and the second flush() then hits the real
+                    # unique constraint on email_teams.slug. Backstop the race with the DB constraint
+                    # itself so it surfaces as a clean conflict instead of an opaque 500.
+                    self.db.rollback()
+                    raise TeamNameConflictError(f"A team named '{name}' already exists")
 
                 # Add the creator as owner (brand-new team, so no prior membership to look up)
                 self._upsert_membership(team.id, created_by, "owner", existing=None)

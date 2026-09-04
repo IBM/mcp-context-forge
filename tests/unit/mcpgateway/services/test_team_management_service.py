@@ -16,11 +16,12 @@ from uuid import uuid4
 # Third-Party
 import orjson
 import pytest
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.db import EmailTeam, EmailTeamJoinRequest, EmailTeamMember, EmailUser
-from mcpgateway.services.team_management_service import JoinRequestNotFoundError, TeamManagementError, TeamManagementService, TeamMemberLimitExceededError, get_effective_max_members
+from mcpgateway.services.team_management_service import JoinRequestNotFoundError, TeamManagementError, TeamManagementService, TeamMemberLimitExceededError, TeamNameConflictError, get_effective_max_members
 
 
 class TestGetEffectiveMaxMembers:
@@ -336,6 +337,35 @@ class TestTeamManagementService:
             MockMember.assert_not_called()
             mock_db.add.assert_not_called()
             mock_db.flush.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_create_team_flush_integrity_error_becomes_conflict(self, service, mock_db):
+        """Concurrency race: if the active-slug SELECT passes in two workers but the INSERT
+        (flush) then hits the real unique constraint, the IntegrityError must be re-raised as a
+        TeamNameConflictError (clean 400/409) rather than surfacing as an opaque 500."""
+        # Both callers "pass" the active-slug pre-check (returns None, i.e. no active team seen yet).
+        mock_db.query.return_value.filter.return_value.first.return_value = None
+        # The DB backstop fires on flush: another worker won the race and inserted the slug first.
+        mock_db.flush.side_effect = IntegrityError("statement", {}, Exception("UNIQUE constraint failed: email_teams.slug"))
+
+        with (
+            patch("mcpgateway.utils.create_slug.slugify") as mock_slugify,
+            patch("mcpgateway.services.team_management_service.EmailTeam") as MockTeam,
+            patch("mcpgateway.services.team_management_service.EmailTeamMember"),
+        ):
+            mock_slugify.return_value = "test-team"
+
+            with pytest.raises(TeamNameConflictError, match="already exists"):
+                await service.create_team(
+                    name="Race Team",
+                    description="colliding under concurrency",
+                    created_by="admin@example.com",
+                    visibility="private",
+                )
+
+            # The failed insert must have been rolled back (once here before re-raise, and the
+            # service's own error handler rolls back again on the propagating exception).
+            mock_db.rollback.assert_called()
 
     # =========================================================================
     # Team Retrieval Tests
