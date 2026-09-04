@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.db import EmailTeam, EmailTeamJoinRequest, EmailTeamMember, EmailUser
-from mcpgateway.services.team_management_service import JoinRequestNotFoundError, TeamManagementError, TeamManagementService, TeamMemberLimitExceededError, TeamNameConflictError, get_effective_max_members
+from mcpgateway.services.team_management_service import JoinRequestNotFoundError, TeamManagementService, TeamMemberLimitExceededError, TeamNameConflictError, get_effective_max_members
 
 
 class TestGetEffectiveMaxMembers:
@@ -324,7 +324,7 @@ class TestTeamManagementService:
         ):
             mock_slugify.return_value = "test-team"
 
-            with pytest.raises(TeamManagementError, match="already exists"):
+            with pytest.raises(TeamNameConflictError, match="already exists"):
                 await service.create_team(
                     name="Existing Active Team",
                     description="A colliding team",

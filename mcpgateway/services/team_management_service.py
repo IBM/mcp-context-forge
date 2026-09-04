@@ -108,6 +108,9 @@ class TeamNameConflictError(TeamManagementError):
     TeamManagementError cases (capacity limits, etc.), which aren't existence-disclosure-sensitive
     and should keep their specific message unconditionally.
 
+    The router maps this to HTTP 400 for platform admins and HTTP 409 for everyone else, so the
+    team name is not leaked to unprivileged callers.
+
     Examples:
         >>> error = TeamNameConflictError("A team named 'X' already exists")
         >>> str(error)
@@ -733,6 +736,7 @@ class TeamManagementService:
 
         Raises:
             ValueError: If team name is taken or invalid
+            TeamNameConflictError: If an active team with the same name exists
             Exception: If team creation fails
 
         Examples:
@@ -819,6 +823,7 @@ class TeamManagementService:
         Raises:
             ValueError: If team name, visibility or member list is invalid
             TeamMemberLimitExceededError: If the seeded team would exceed its member limit
+            TeamNameConflictError: If an active team with the same name exists
             Exception: If team creation fails
 
         Examples:
@@ -890,13 +895,17 @@ class TeamManagementService:
 
                 try:
                     self.db.flush()  # Get the team ID
-                except IntegrityError:
+                except IntegrityError as ie:
                     # The SELECT pre-check above and this insert are not atomic. Under concurrent
                     # workers both can pass the pre-check, and the second flush() then hits the real
                     # unique constraint on email_teams.slug. Backstop the race with the DB constraint
-                    # itself so it surfaces as a clean conflict instead of an opaque 500.
-                    self.db.rollback()
-                    raise TeamNameConflictError(f"A team named '{name}' already exists")
+                    # itself so it surfaces as a clean conflict (the router maps it to 400/409)
+                    # instead of an opaque 500. Only slug collisions are name conflicts — any other
+                    # IntegrityError (e.g. an FK on created_by) must propagate as-is and stay a 500,
+                    # not masquerade as a name conflict. The outer handler rolls back uniformly.
+                    if "slug" in str(ie.orig).lower():
+                        raise TeamNameConflictError(f"A team named '{name}' already exists")
+                    raise
 
                 # Add the creator as owner (brand-new team, so no prior membership to look up)
                 self._upsert_membership(team.id, created_by, "owner", existing=None)

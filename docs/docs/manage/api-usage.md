@@ -1830,7 +1830,9 @@ curl -s -X POST \
 | `400` | Seed count + 1 exceeds capacity | `Team would start with 6 members, exceeding the maximum of 5` |
 | `400` | Invalid role value | `Input should be 'owner' or 'member'` |
 | `400` | Invitations disabled and unknown address seeded | `members[1] (external@partner.com): invitations are currently disabled` |
+| `400` | Active team with the same name already exists (platform admin caller) | `A team with the name 'Marketing' already exists` |
 | `403` | `ALLOW_TEAM_CREATION=false` and caller is not admin | `Team creation is currently disabled` |
+| `409` | Active team with the same name already exists (non-admin caller; purposefully generic so a team's existence cannot be probed) | `An active team with this name already exists` |
 | `422` | `members` array exceeds 500 entries | Pydantic validation error |
 
 ### List Teams

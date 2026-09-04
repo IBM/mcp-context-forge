@@ -37,13 +37,21 @@ from mcpgateway.middleware.rbac import get_db as rbac_get_db
 from mcpgateway.utils.verify_credentials import require_auth
 
 
-@pytest.fixture
-def client_with_teams(tmp_path):
-    """FastAPI TestClient with a real database and platform-admin user.
+@pytest.fixture(params=["admin", "non_admin"])
+def client_with_teams(tmp_path, request):
+    """FastAPI TestClient with a real database and a seeded user.
 
     Mirrors the pattern in test_admin_teams_ui.py: a temp SQLite file, real schema, a seeded
-    platform_admin user, and an active team whose slug we will collide with.
+    user, and an active team whose slug we will collide with.
+
+    The ``request.param`` controls the identity under which the collision POST is issued:
+
+    * ``admin`` - a platform_admin user (is_admin=True, ``*`` role). The router's tiered
+      disclosure returns a specific 400 with the perfectly-named team in the body.
+    * ``non_admin`` - a user with only ``teams.create``/``teams.read`` but no ``*`` role. The
+      router must NOT leak the purposefully-named team, returning a generic 409 instead.
     """
+    is_admin = request.param == "admin"
     mp = MonkeyPatch()
 
     db_path = tmp_path / "test.db"
@@ -76,36 +84,45 @@ def client_with_teams(tmp_path):
 
     db = TestSessionLocal()
 
-    admin_user = EmailUser(
-        email="admin@test.com",
+    user_email = "admin@test.com" if is_admin else "dev@test.com"
+
+    seed_user = EmailUser(
+        email=user_email,
         password_hash="$2b$12$dummy",
-        is_admin=True,
+        is_admin=is_admin,
         email_verified_at=datetime.now(timezone.utc),
     )
-    db.add(admin_user)
+    db.add(seed_user)
     db.flush()
 
     from mcpgateway.db import Role, UserRole
 
-    pa_role = Role(
+    if is_admin:
+        role_permissions = ["*"]
+        role_name = "platform_admin"
+    else:
+        role_permissions = ["teams.create", "teams.read"]
+        role_name = "team_creator"
+
+    seed_role = Role(
         id=str(uuid4()),
-        name="platform_admin",
-        description="Platform Administrator",
+        name=role_name,
+        description=role_name.replace("_", " ").title(),
         scope="global",
-        permissions=["*"],
-        created_by="admin@test.com",
-        is_system_role=True,
+        permissions=role_permissions,
+        created_by=user_email,
+        is_system_role=is_admin,
         is_active=True,
     )
-    db.add(pa_role)
+    db.add(seed_role)
     db.flush()
     db.add(
         UserRole(
-            user_email="admin@test.com",
-            role_id=pa_role.id,
+            user_email=user_email,
+            role_id=seed_role.id,
             scope="global",
             scope_id=None,
-            granted_by="admin@test.com",
+            granted_by=user_email,
             is_active=True,
         )
     )
@@ -136,7 +153,7 @@ def client_with_teams(tmp_path):
     async def mock_get_current_user():
         db_session = TestSessionLocal()
         try:
-            return db_session.query(EmailUser).filter(EmailUser.email == "admin@test.com").first()
+            return db_session.query(EmailUser).filter(EmailUser.email == user_email).first()
         finally:
             db_session.close()
 
@@ -144,9 +161,9 @@ def client_with_teams(tmp_path):
         db_session = TestSessionLocal()
         try:
             yield {
-                "email": "admin@test.com",
-                "full_name": "Admin User",
-                "is_admin": True,
+                "email": user_email,
+                "full_name": user_email,
+                "is_admin": is_admin,
                 "ip_address": "127.0.0.1",
                 "user_agent": "test-client",
                 "auth_method": "jwt",
@@ -159,12 +176,12 @@ def client_with_teams(tmp_path):
 
     app.dependency_overrides[get_current_user] = mock_get_current_user
     app.dependency_overrides[get_current_user_with_permissions] = mock_user_with_permissions
-    app.dependency_overrides[require_auth] = lambda: "admin@test.com"
+    app.dependency_overrides[require_auth] = lambda: user_email
 
     client = TestClient(app)
 
     try:
-        yield client, TestSessionLocal
+        yield client, TestSessionLocal, is_admin
     finally:
         db.close()
         client.close()
@@ -175,7 +192,9 @@ def client_with_teams(tmp_path):
 @pytest.mark.integration
 def test_second_post_same_name_returns_400_not_500(client_with_teams):
     """ICA20-1559 contract: a POST colliding with an EXISTING ACTIVE team returns 400, never 500."""
-    client, _ = client_with_teams
+    client, _, is_admin = client_with_teams
+    if not is_admin:
+        pytest.skip("admin-specific tiered disclosure")
 
     payload = {"name": "Existing Active Team", "visibility": "private"}
 
@@ -188,9 +207,29 @@ def test_second_post_same_name_returns_400_not_500(client_with_teams):
 
 
 @pytest.mark.integration
+def test_second_post_same_name_non_admin_returns_409(client_with_teams):
+    """ICA20-1559: a non-admin colliding with an active team gets a generic 409, never a 500
+    and never a leak of the purposefully-named team (identity is derivable from it)."""
+    client, _, is_admin = client_with_teams
+    if is_admin:
+        pytest.skip("non-admin 409 path")
+
+    payload = {"name": "Existing Active Team", "visibility": "private"}
+
+    response = client.post("/teams/", json=payload)
+
+    assert response.status_code == 409, (
+        f"Expected 409 for non-admin on active-slug collision, got {response.status_code}: {response.text}"
+    )
+    assert "already exists" not in response.text.lower()
+
+
+@pytest.mark.integration
 def test_create_team_success_still_returns_201(client_with_teams):
     """Guard: creating a genuinely NEW team still returns 201 (no regression)."""
-    client, _ = client_with_teams
+    client, _, is_admin = client_with_teams
+    if not is_admin:
+        pytest.skip("admin-only guard")
 
     payload = {"name": "Brand New Team", "visibility": "private"}
 
