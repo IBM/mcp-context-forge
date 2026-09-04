@@ -21,7 +21,7 @@ import pytest
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.db import Gateway
+from mcpgateway.db import EmailTeamMember, Gateway
 from mcpgateway.middleware.token_scoping import ResourceOwnershipResult
 from mcpgateway.routers.oauth_router import (
     ADMIN_CSRF_COOKIE_NAME,
@@ -327,7 +327,7 @@ class TestOAuthRouter:
         gateway = Mock(spec=Gateway)
         gateway.id = "gateway123"
         gateway.name = "Test Gateway"
-        gateway.url = "https://mcp.example.com"  # MCP server URL
+        gateway.url = "https://mcp.example.com/deep/path"  # MCP server URL
         gateway.visibility = "public"
         gateway.owner_email = None
         gateway.team_id = None  # No team restriction - allow all authenticated users
@@ -388,9 +388,10 @@ class TestOAuthRouter:
                 call_args = mock_oauth_manager.initiate_authorization_code_flow.call_args
                 assert call_args[0][0] == "gateway123"
                 assert call_args[1]["app_user_email"] == mock_current_user.get("email")
-                # oauth_config should have resource set to gateway.url
+                # oauth_config should have resource set to the origin of gateway.url,
+                # not the full URL — derive_resource_origin strips the path component.
                 oauth_config_passed = call_args[0][1]
-                assert oauth_config_passed["resource"] == mock_gateway.url
+                assert oauth_config_passed["resource"] == "https://mcp.example.com"
 
     @pytest.mark.asyncio
     async def test_initiate_oauth_flow_gateway_not_found(self, mock_db, mock_request, mock_current_user):
@@ -1750,20 +1751,14 @@ class TestOAuthAccessHelpers:
         assert exc_info.value.status_code == 403
 
     @pytest.mark.asyncio
-    async def test_enforce_gateway_access_team_visibility_member_allowed(self, mock_db):
+    async def test_enforce_gateway_access_team_visibility_non_member_denied(self, mock_db):
         from mcpgateway.routers.oauth_router import _enforce_gateway_access
 
-        class _User:
-            def is_team_member(self, _team_id):
-                return True
-
-        class _AuthService:
-            async def get_user_by_email(self, _email):
-                return _User()
-
         gateway = SimpleNamespace(visibility="team", owner_email=None, team_id="team-1")
-        with patch("mcpgateway.services.email_auth_service.EmailAuthService", return_value=_AuthService()):
-            await _enforce_gateway_access("gateway123", gateway, {"email": "user@example.com", "is_admin": False}, mock_db, request=None)
+        with patch("mcpgateway.services.team_management_service.TeamManagementService.get_user_role_in_team", new_callable=AsyncMock, return_value=None):
+            with pytest.raises(HTTPException) as exc_info:
+                await _enforce_gateway_access("gateway123", gateway, {"email": "user@example.com", "is_admin": False}, mock_db, request=None)
+        assert exc_info.value.status_code == 403
 
     @pytest.mark.asyncio
     async def test_enforce_gateway_access_unknown_visibility_owner_allowed(self, mock_db):
@@ -1776,36 +1771,54 @@ class TestOAuthAccessHelpers:
     async def test_enforce_gateway_access_unknown_visibility_team_member_allowed(self, mock_db):
         from mcpgateway.routers.oauth_router import _enforce_gateway_access
 
-        class _User:
-            def is_team_member(self, _team_id):
-                return True
-
-        class _AuthService:
-            async def get_user_by_email(self, _email):
-                return _User()
-
         gateway = SimpleNamespace(visibility="internal", owner_email=None, team_id="team-1")
-        with patch("mcpgateway.services.email_auth_service.EmailAuthService", return_value=_AuthService()):
+        with patch("mcpgateway.services.team_management_service.TeamManagementService.get_user_role_in_team", new_callable=AsyncMock, return_value="member"):
             await _enforce_gateway_access("gateway123", gateway, {"email": "user@example.com", "is_admin": False}, mock_db, request=None)
 
     @pytest.mark.asyncio
     async def test_enforce_gateway_access_unknown_visibility_team_non_member_denied(self, mock_db):
         from mcpgateway.routers.oauth_router import _enforce_gateway_access
 
-        class _User:
-            def is_team_member(self, _team_id):
-                return False
-
-        class _AuthService:
-            async def get_user_by_email(self, _email):
-                return _User()
-
         gateway = SimpleNamespace(visibility="internal", owner_email=None, team_id="team-1")
-        with patch("mcpgateway.services.email_auth_service.EmailAuthService", return_value=_AuthService()):
+        with patch("mcpgateway.services.team_management_service.TeamManagementService.get_user_role_in_team", new_callable=AsyncMock, return_value=None):
             with pytest.raises(HTTPException) as exc_info:
                 await _enforce_gateway_access("gateway123", gateway, {"email": "user@example.com", "is_admin": False}, mock_db, request=None)
-
         assert exc_info.value.status_code == 403
+
+    @pytest.mark.asyncio
+    async def test_enforce_gateway_access_team_visibility_cache_hit_member_allowed(self, mock_db):
+        """Regression: the new TeamManagementService path must be the sole membership check.
+
+        Verifies that _enforce_gateway_access calls get_user_role_in_team (the
+        cache-aware path) and that the result determines access. If someone
+        reverted to the old EmailAuthService + user.is_team_member() pattern,
+        the patched get_user_role_in_team would never execute and the assertion
+        on mock_role would fail.
+        """
+        from mcpgateway.routers.oauth_router import _enforce_gateway_access
+
+        gateway = SimpleNamespace(visibility="team", owner_email=None, team_id="team-1")
+        with patch("mcpgateway.services.team_management_service.TeamManagementService.get_user_role_in_team", new_callable=AsyncMock, return_value="member") as mock_role:
+            await _enforce_gateway_access("gateway123", gateway, {"email": "user@example.com", "is_admin": False}, mock_db, request=None)
+
+            # TeamManagementService was called with the correct args (new path)
+            mock_role.assert_called_once_with("user@example.com", "team-1")
+
+    @pytest.mark.asyncio
+    async def test_enforce_gateway_access_unknown_visibility_with_request_team_member_allowed(self, mock_db):
+        """Unknown-visibility fallback with a request object carrying token_teams.
+
+        Exercises the interaction between _resolve_token_teams_for_scope_check (triggered
+        when request is not None) and the unknown-visibility team-member check.
+        """
+        from mcpgateway.routers.oauth_router import _enforce_gateway_access
+
+        gateway = SimpleNamespace(visibility="internal", owner_email=None, team_id="team-1")
+        mock_request = Mock(spec=Request)
+        mock_request.state = SimpleNamespace(token_teams=["team-1"])
+        with patch("mcpgateway.services.team_management_service.TeamManagementService.get_user_role_in_team", new_callable=AsyncMock, return_value="developer") as mock_role:
+            await _enforce_gateway_access("gateway123", gateway, {"email": "user@example.com", "is_admin": False}, mock_db, request=mock_request)
+            mock_role.assert_called_once_with("user@example.com", "team-1")
 
 
 class TestOAuthRouterAdditionalCoverage:
@@ -2064,15 +2077,7 @@ class TestOAuthRouterAdditionalCoverage:
         }
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
 
-        class _User:
-            def is_team_member(self, _team_id):
-                return False
-
-        class _AuthService:
-            async def get_user_by_email(self, _email):
-                return _User()
-
-        with patch("mcpgateway.services.email_auth_service.EmailAuthService", return_value=_AuthService()):
+        with patch("mcpgateway.services.team_management_service.TeamManagementService.get_user_role_in_team", new_callable=AsyncMock, return_value=None):
             # First-Party
             from mcpgateway.routers.oauth_router import initiate_oauth_flow
 
@@ -2288,15 +2293,7 @@ class TestOAuthRouterAdditionalCoverage:
         mock_gateway.oauth_config = {"grant_type": "authorization_code", "client_id": "cid"}
         mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
 
-        class _User:
-            def is_team_member(self, _team_id):
-                return False
-
-        class _AuthService:
-            async def get_user_by_email(self, _email):
-                return _User()
-
-        with patch("mcpgateway.services.email_auth_service.EmailAuthService", return_value=_AuthService()):
+        with patch("mcpgateway.services.team_management_service.TeamManagementService.get_user_role_in_team", new_callable=AsyncMock, return_value=None):
             # First-Party
             from mcpgateway.routers.oauth_router import get_oauth_status
 
@@ -4408,3 +4405,128 @@ def test_oauth_callback_scope_non_string_non_list():
     else:
         scopes_list = []
     assert scopes_list == []
+
+
+# ---------------------------------------------------------------------------
+# Cache-layer tests: _enforce_gateway_access with role cache
+# ---------------------------------------------------------------------------
+
+
+class TestEnforceGatewayAccessCacheLayer:
+    """Cache-layer tests exercising _enforce_gateway_access through TeamManagementService.
+
+    Unlike the unit tests above (which mock get_user_role_in_team directly),
+    this test mocks at the cache layer to confirm the full call chain:
+    _enforce_gateway_access → TeamManagementService.get_user_role_in_team()
+    → _get_auth_cache().get_user_role() → cache hit (no DB fallback).
+    """
+
+    @pytest.mark.asyncio
+    async def test_team_visibility_warm_cache_grants_access(self):
+        """Warm auth_cache role entry grants access without DB query.
+
+        1. Mocks _get_auth_cache().get_user_role to return a cached role ("developer").
+        2. Calls _enforce_gateway_access with team-visibility gateway.
+        3. Asserts: access granted, no DB team_memberships query executed.
+        """
+        from mcpgateway.routers.oauth_router import _enforce_gateway_access
+
+        mock_db = Mock(spec=Session)
+        gateway = SimpleNamespace(visibility="team", owner_email=None, team_id="team-1")
+
+        mock_cache = AsyncMock()
+        mock_cache.get_user_role = AsyncMock(return_value="developer")
+        mock_cache.set_user_role = AsyncMock()
+
+        with patch("mcpgateway.services.team_management_service.get_auth_cache", return_value=mock_cache):
+            # Access should be granted via cached role — no exception raised
+            await _enforce_gateway_access(
+                "gateway123",
+                gateway,
+                {"email": "user@example.com", "is_admin": False},
+                mock_db,
+                request=None,
+            )
+
+        # Verify cache was consulted
+        mock_cache.get_user_role.assert_awaited_once_with("user@example.com", "team-1")
+        # DB must NOT be queried on a cache hit
+        mock_db.query.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_team_visibility_cache_miss_falls_back_to_db(self):
+        """Cache miss triggers DB fallback and caches the result.
+
+        1. Mocks _get_auth_cache().get_user_role to return None (cache miss).
+        2. Mocks the DB query path to return a membership row.
+        3. Asserts: access granted via DB fallback, result cached.
+        """
+        from mcpgateway.routers.oauth_router import _enforce_gateway_access
+
+        mock_db = MagicMock(spec=Session)
+        gateway = SimpleNamespace(visibility="team", owner_email=None, team_id="team-1")
+
+        # Simulate a DB membership row returned by db.query().filter().first()
+        mock_membership = Mock()
+        mock_membership.role = "member"
+        mock_db.query.return_value.filter.return_value.first.return_value = mock_membership
+
+        mock_cache = AsyncMock()
+        mock_cache.get_user_role = AsyncMock(return_value=None)  # Cache miss
+        mock_cache.set_user_role = AsyncMock()
+
+        with patch("mcpgateway.services.team_management_service.get_auth_cache", return_value=mock_cache):
+            await _enforce_gateway_access(
+                "gateway123",
+                gateway,
+                {"email": "user@example.com", "is_admin": False},
+                mock_db,
+                request=None,
+            )
+
+        # Cache was checked first
+        mock_cache.get_user_role.assert_awaited_once_with("user@example.com", "team-1")
+        mock_db.query.assert_called_once_with(EmailTeamMember)
+        criteria = mock_db.query.return_value.filter.call_args.args
+        assert len(criteria) == 3
+        assert criteria[0].left.compare(EmailTeamMember.__table__.c.user_email)
+        assert criteria[0].right.value == "user@example.com"
+        assert criteria[1].left.compare(EmailTeamMember.__table__.c.team_id)
+        assert criteria[1].right.value == "team-1"
+        assert str(criteria[2]) == "email_team_members.is_active IS true"
+        # Result was cached after DB lookup
+        mock_cache.set_user_role.assert_awaited_once_with("user@example.com", "team-1", "member")
+
+    @pytest.mark.asyncio
+    async def test_team_visibility_negative_cache_denies_access(self):
+        """Negative cache entry (empty string = 'not a member') must deny access.
+
+        TeamManagementService.get_user_role_in_team() converts the cache's
+        empty-string negative marker to ``None``. The resulting falsy role must
+        be denied by ``_enforce_gateway_access``.
+        """
+        from mcpgateway.routers.oauth_router import _enforce_gateway_access
+
+        mock_db = Mock(spec=Session)
+        gateway = SimpleNamespace(visibility="team", owner_email=None, team_id="team-1")
+
+        mock_cache = AsyncMock()
+        # Empty string = cached negative result ("not a member")
+        mock_cache.get_user_role = AsyncMock(return_value="")
+        mock_cache.set_user_role = AsyncMock()
+
+        with patch("mcpgateway.services.team_management_service.get_auth_cache", return_value=mock_cache):
+            with pytest.raises(HTTPException) as exc_info:
+                await _enforce_gateway_access(
+                    "gateway123",
+                    gateway,
+                    {"email": "outsider@example.com", "is_admin": False},
+                    mock_db,
+                    request=None,
+                )
+
+        assert exc_info.value.status_code == 403
+        # Cache was consulted (negative hit)
+        mock_cache.get_user_role.assert_awaited_once_with("outsider@example.com", "team-1")
+        # No DB fallback on a negative cache hit
+        mock_db.query.assert_not_called()

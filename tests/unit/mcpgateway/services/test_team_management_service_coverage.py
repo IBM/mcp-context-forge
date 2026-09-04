@@ -10,7 +10,7 @@ Coverage tests for mcpgateway.services.team_management_service — missing branc
 import asyncio
 import base64
 from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 import orjson
@@ -18,7 +18,7 @@ import pytest
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.db import EmailTeam, EmailTeamJoinRequest, EmailTeamMember, EmailTeamMemberHistory, EmailUser
+from mcpgateway.db import EmailTeam, EmailTeamJoinRequest, EmailTeamMember, EmailUser
 from mcpgateway.services.team_management_service import TeamManagementService, TeamMemberLimitExceededError
 
 
@@ -629,11 +629,17 @@ class TestGetTeamMembersEdge:
 
 
 class TestCacheGetters:
-    def test_auth_cache_import_error(self, svc):
-        """ImportError in _get_auth_cache returns None."""
-        with patch("mcpgateway.services.team_management_service.get_auth_cache", side_effect=ImportError("mocked")):
+    def test_auth_cache_factory_error_logs_and_returns_none(self, svc):
+        """Unexpected auth-cache factory failures degrade with an operator signal."""
+        error = RuntimeError("redis unavailable")
+        with (
+            patch("mcpgateway.services.team_management_service.get_auth_cache", side_effect=error),
+            patch("mcpgateway.services.team_management_service.logger.warning") as mock_warning,
+        ):
             result = svc._get_auth_cache()
+
         assert result is None
+        mock_warning.assert_called_once_with("Auth cache unavailable: %s", error)
 
     def test_admin_stats_cache_import_error(self, svc):
         """ImportError in _get_admin_stats_cache returns None."""
@@ -691,6 +697,23 @@ class TestGetUserRoleCache:
             result = await svc.get_user_role_in_team("u@t.com", "t1")
         assert result == "member"
         mock_cache.set_user_role.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_cache_miss_without_membership_stores_negative_result(self, svc, db):
+        """A confirmed DB miss is cached distinctly from a cache miss."""
+        mock_cache = MagicMock()
+        mock_cache.get_user_role = AsyncMock(return_value=None)
+        mock_cache.set_user_role = AsyncMock()
+
+        mock_query = MagicMock()
+        mock_query.filter.return_value.first.return_value = None
+        db.query = MagicMock(return_value=mock_query)
+
+        with patch.object(svc, "_get_auth_cache", return_value=mock_cache):
+            result = await svc.get_user_role_in_team("u@t.com", "t1")
+
+        assert result is None
+        mock_cache.set_user_role.assert_awaited_once_with("u@t.com", "t1", None)
 
 
 # ===========================================================================

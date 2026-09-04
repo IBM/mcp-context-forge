@@ -39,6 +39,7 @@ from mcpgateway.schemas import EmailUserResponse
 from mcpgateway.services.dcr_service import DcrError, DcrService
 from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
 from mcpgateway.services.oauth_manager import OAuthError, OAuthManager
+from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.services.token_storage_service import TokenStorageService
 
 # First-Party - CSP nonce support
@@ -501,6 +502,12 @@ async def _enforce_gateway_access(
 ) -> None:
     """Enforce gateway visibility and ownership checks for OAuth endpoints.
 
+    .. note::
+        ``TeamManagementService.get_user_role_in_team()`` may commit the
+        database session (``db.commit()``) on a cache miss to release the idle
+        transaction.  Callers must not rely on uncommitted ORM state being
+        preserved across this call.
+
     Args:
         gateway_id: Gateway identifier used for scoped ownership checks.
         gateway: Gateway record being accessed.
@@ -547,15 +554,15 @@ async def _enforce_gateway_access(
     if visibility == "public":
         return
 
+    # Use TeamManagementService.get_user_role_in_team() which checks the role cache
+    # (auth_cache.get_user_role) before hitting the DB. This avoids the broken
+    # user.is_team_member() path where EmailAuthService.get_user_by_email() returns a
+    # cache-reconstructed detached EmailUser with empty team_memberships.
     if visibility == "team":
         if not gateway_team_id:
             raise HTTPException(status_code=403, detail="You don't have access to this gateway")
-        # First-Party
-        from mcpgateway.services.email_auth_service import EmailAuthService
-
-        auth_service = EmailAuthService(db)
-        user = await auth_service.get_user_by_email(requester_email)
-        if not user or not user.is_team_member(gateway_team_id):
+        role = await TeamManagementService(db).get_user_role_in_team(requester_email, gateway_team_id)
+        if not role:
             raise HTTPException(status_code=403, detail="You don't have access to this gateway")
         return
 
@@ -567,12 +574,8 @@ async def _enforce_gateway_access(
     if gateway_owner and gateway_owner.strip().lower() == requester_email:
         return
     if gateway_team_id:
-        # First-Party
-        from mcpgateway.services.email_auth_service import EmailAuthService
-
-        auth_service = EmailAuthService(db)
-        user = await auth_service.get_user_by_email(requester_email)
-        if user and user.is_team_member(gateway_team_id):
+        role = await TeamManagementService(db).get_user_role_in_team(requester_email, gateway_team_id)
+        if role:
             return
 
     raise HTTPException(status_code=403, detail="You don't have access to this gateway")
