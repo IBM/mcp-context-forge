@@ -11493,14 +11493,33 @@ async def test_admin_delete_user_exception(monkeypatch, mock_request, mock_db, a
 async def test_admin_force_password_change_success(monkeypatch, mock_request, mock_db, allow_permission):
     monkeypatch.setattr(settings, "email_auth_enabled", True)
     auth_service = MagicMock()
-    auth_service.get_user_by_email = AsyncMock(
-        return_value=SimpleNamespace(email="a@example.com", full_name="A", is_active=True, is_admin=False, auth_provider="local", created_at=datetime.now(timezone.utc), password_change_required=False)
+    auth_service.update_user = AsyncMock(
+        return_value=SimpleNamespace(email="a@example.com", full_name="A", is_active=True, is_admin=False, auth_provider="local", created_at=datetime.now(timezone.utc), password_change_required=True)
     )
     auth_service.count_active_admin_users = AsyncMock(return_value=1)
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
     response = await admin_force_password_change("a%40example.com", mock_request, db=mock_db, user={"email": "admin@example.com", "db": mock_db})
     assert isinstance(response, HTMLResponse)
+    auth_service.update_user.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_admin_force_password_change_rejects_passwordless_user(monkeypatch, mock_request, mock_db, allow_permission):
+    # First-Party
+    from mcpgateway.services.email_auth_service import PasswordValidationError
+
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    auth_service = MagicMock()
+    auth_service.update_user = AsyncMock(side_effect=PasswordValidationError("Password change cannot be required for passwordless users"))
+    auth_service.count_active_admin_users = AsyncMock(return_value=1)
+    monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
+
+    response = await admin_force_password_change("a%40example.com", mock_request, db=mock_db, user={"email": "admin@example.com", "db": mock_db})
+
+    assert response.status_code == 400
+    assert "passwordless" in response.body.decode().lower()
+    mock_db.commit.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -11514,7 +11533,7 @@ async def test_admin_force_password_change_email_auth_disabled(monkeypatch, mock
 async def test_admin_force_password_change_user_not_found(monkeypatch, mock_request, mock_db, allow_permission):
     monkeypatch.setattr(settings, "email_auth_enabled", True)
     auth_service = MagicMock()
-    auth_service.get_user_by_email = AsyncMock(return_value=None)
+    auth_service.update_user = AsyncMock(side_effect=ValueError("User a@example.com not found"))
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
     response = await admin_force_password_change("a%40example.com", mock_request, db=mock_db, user={"email": "admin@example.com", "db": mock_db})
@@ -11525,7 +11544,7 @@ async def test_admin_force_password_change_user_not_found(monkeypatch, mock_requ
 async def test_admin_force_password_change_exception(monkeypatch, mock_request, mock_db, allow_permission):
     monkeypatch.setattr(settings, "email_auth_enabled", True)
     auth_service = MagicMock()
-    auth_service.get_user_by_email = AsyncMock(side_effect=RuntimeError("boom"))
+    auth_service.update_user = AsyncMock(side_effect=RuntimeError("boom"))
     monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
 
     response = await admin_force_password_change("a%40example.com", mock_request, db=mock_db, user={"email": "admin@example.com", "db": mock_db})
@@ -20170,6 +20189,7 @@ class TestAuthLogin:
         mock_user.password_change_required = False
         mock_user.password_changed_at = None
         mock_user.password_hash = "hash"
+        mock_user.password_hash_type = "argon2id"
 
         mock_auth_service = MagicMock()
         mock_auth_service.authenticate_user = AsyncMock(return_value=mock_user)
@@ -20188,6 +20208,43 @@ class TestAuthLogin:
         result = await admin_login_handler(request, mock_db)
         assert isinstance(result, RedirectResponse)
         assert result.status_code == 303
+
+    @pytest.mark.asyncio
+    async def test_admin_login_handler_skips_default_password_detection_for_passwordless_user(self, monkeypatch, mock_db):
+        """Passwordless users do not reach Admin UI default-password hash verification."""
+        monkeypatch.setattr("mcpgateway.admin.settings.email_auth_enabled", True, raising=False)
+        monkeypatch.setattr("mcpgateway.admin.settings.password_change_enforcement_enabled", True, raising=False)
+        monkeypatch.setattr("mcpgateway.admin.settings.detect_default_password_on_login", True, raising=False)
+        monkeypatch.setattr("mcpgateway.admin.settings.secure_cookies", False, raising=False)
+        monkeypatch.setattr("mcpgateway.admin.settings.environment", "development", raising=False)
+        monkeypatch.setattr("mcpgateway.admin.settings.sso_enabled", False, raising=False)
+        monkeypatch.setattr("mcpgateway.admin.settings.sso_preserve_admin_auth", True, raising=False)
+
+        mock_user = MagicMock()
+        mock_user.password_change_required = False
+        mock_user.password_changed_at = None
+        mock_user.password_hash = None
+        mock_user.password_hash_type = "none"
+
+        mock_auth_service = MagicMock()
+        mock_auth_service.authenticate_user = AsyncMock(return_value=mock_user)
+        monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: mock_auth_service)
+        monkeypatch.setattr("mcpgateway.admin.create_access_token", AsyncMock(return_value=("fake-token", None)))
+        monkeypatch.setattr("mcpgateway.admin.set_auth_cookie", lambda resp, token, remember_me=False: None)
+
+        password_service = MagicMock()
+        password_service.verify_password_async = AsyncMock(return_value=True)
+        monkeypatch.setattr("mcpgateway.admin.Argon2PasswordService", lambda: password_service)
+
+        request = MagicMock(spec=Request)
+        request.scope = {"root_path": ""}
+        request.form = AsyncMock(return_value={"email": "admin@test.com", "password": "secret123"})  # pragma: allowlist secret
+
+        result = await admin_login_handler(request, mock_db)
+
+        assert isinstance(result, RedirectResponse)
+        assert result.status_code == 303
+        password_service.verify_password_async.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_admin_login_handler_secure_cookies_dev_warning(self, monkeypatch, mock_db):
