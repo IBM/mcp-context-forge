@@ -1730,7 +1730,7 @@ class SSOService:
 
     @staticmethod
     def _extract_groups_and_roles(user_data: Dict[str, Any], groups_claim: str = "groups") -> list[str]:
-        """Extract groups and roles from user data into a unified list.
+        """Extract groups and roles from user data into a unified, de-duplicated list.
 
         Args:
             user_data: Raw user data from provider.
