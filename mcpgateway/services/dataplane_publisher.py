@@ -58,38 +58,38 @@ def get_publisher_ttl(publisher_interval: int | None = None) -> int:
     return publisher_interval * 2 + 10
 
 
-class BackendConfig(TypedDict):
-    """Backend gateway configuration for dataplane routing."""
-
-    name: str
-    url: str
-    passthrough_headers: list[str]
-    add_headers: dict[str, str]
-    remove_headers: list[str]
-    capabilities: dict[str, Any]
-    allowed_tool_names: list[str]
-    tool_name_aliases: dict[str, str]
-    tool_schemas: dict[str, dict[str, Any]]
-    allowed_resource_names: list[str]
-    allowed_resource_uris: list[str]
-    allowed_prompt_names: list[str]
-
-
 class GatewayBaseConfig(TypedDict):
     """Gateway connection fields shared by every virtual-host backend."""
 
     name: str
     url: str
+    mcp_protocol_version: str
     passthrough_headers: list[str]
     add_headers: dict[str, str]
     remove_headers: list[str]
-    capabilities: dict[str, Any]
+
+
+class BackendConfig(GatewayBaseConfig):
+    """Backend connection configuration with schemas keyed by upstream name."""
+
+    tool_schemas: dict[str, dict[str, Any]]
+
+
+class ServiceRoute(TypedDict):
+    """An exact upstream identifier and the backend that serves it."""
+
+    backend_name: str
+    upstream_name: str
 
 
 class VirtualHostConfig(TypedDict):
     """Virtual host configuration mapping backend IDs to their configs."""
 
     backends: dict[str, BackendConfig]
+    tools: dict[str, ServiceRoute]
+    resources: dict[str, ServiceRoute]
+    resource_templates: dict[str, ServiceRoute]
+    prompts: dict[str, ServiceRoute]
 
 
 class UserConfig(TypedDict):
@@ -106,19 +106,20 @@ class BackendItems(TypedDict):
     prompts: list[str]
 
 
-class PublishedBackendItems(BackendItems):
-    """User-filtered backend items enriched with tool routing metadata."""
-
-    tool_name_aliases: dict[str, str]
-    tool_schemas: dict[str, dict[str, Any]]
-
-
 class ToolMetadata(TypedDict):
     """Tool fields needed to publish dataplane routing configuration."""
 
     exposed_name: str
     upstream_name: str
     input_schema: dict[str, Any]
+
+
+class PublishedBackendItems(TypedDict):
+    """Visible tools and associated resource/prompt IDs for one backend."""
+
+    tools: list[ToolMetadata]
+    resources: list[str]
+    prompts: list[str]
 
 
 BackendItemsByServer = dict[str, dict[str, BackendItems]]
@@ -259,22 +260,19 @@ class DataplanePublisherService:
             gateways = user_data["gateways"]
             prompts = user_data["prompts"]
             resources = user_data["resources"]
-            resource_names_by_id = {resource["id"]: resource["name"] for resource in resources}
-            resource_uris_by_id = {resource["id"]: resource["uri"] for resource in resources if resource.get("uri")}
+            resource_map = {resource["id"]: resource for resource in resources if resource.get("uri")}
+            prompt_map = {prompt["id"]: prompt for prompt in prompts}
 
-            prompt_map = {prompt["id"]: prompt["name"] for prompt in prompts}
-
-            # The dataplane proxies streamable-HTTP upstreams only. Exclude
-            # every other transport before building its transport-agnostic
-            # backend config.
+            # Use the configured MCP version as the client's preferred version;
+            # the dataplane negotiates with each upstream when connecting.
             gateway_base: dict[str, GatewayBaseConfig] = {
                 gateway["id"]: {
                     "name": gateway["name"],
                     "url": gateway["url"],
+                    "mcp_protocol_version": settings.protocol_version,
                     "passthrough_headers": gateway["passthrough_headers"] or [],
                     "add_headers": gateway.get("add_headers") or {},
                     "remove_headers": gateway.get("remove_headers") or [],
-                    "capabilities": gateway.get("capabilities") or {},
                 }
                 for gateway in gateways
                 if (gateway["transport"] or "").upper() == "STREAMABLEHTTP"
@@ -284,45 +282,62 @@ class DataplanePublisherService:
 
             for server in servers:
                 backends: dict[str, BackendConfig] = {}
+                tool_routes: list[tuple[str, ServiceRoute]] = []
+                resource_routes: list[tuple[str, ServiceRoute]] = []
+                prompt_routes: list[tuple[str, ServiceRoute]] = []
 
                 for gateway_id, backend_items in server["backend_items"].items():
                     gateway_config = gateway_base.get(gateway_id)
                     if gateway_config is None:
                         continue
 
-                    allowed_resource_names = [resource_names_by_id[resource_id] for resource_id in backend_items["resources"] if resource_id in resource_names_by_id]
-                    allowed_resource_uris = [resource_uris_by_id[resource_id] for resource_id in backend_items["resources"] if resource_id in resource_uris_by_id]
-                    allowed_prompt_names = [prompt_map[prompt_id] for prompt_id in backend_items["prompts"] if prompt_id in prompt_map]
-                    if not backend_items["tools"] and not allowed_resource_names and not allowed_prompt_names:
+                    visible_resources = [resource_map[resource_id] for resource_id in backend_items["resources"] if resource_id in resource_map]
+                    visible_prompts = [prompt_map[prompt_id] for prompt_id in backend_items["prompts"] if prompt_id in prompt_map]
+                    if not backend_items["tools"] and not visible_resources and not visible_prompts:
                         continue
 
                     backends[gateway_id] = {
-                        "name": gateway_config["name"],
-                        "url": gateway_config["url"],
-                        "passthrough_headers": gateway_config["passthrough_headers"],
-                        "add_headers": gateway_config["add_headers"],
-                        "remove_headers": gateway_config["remove_headers"],
-                        "capabilities": gateway_config["capabilities"],
-                        "allowed_tool_names": backend_items["tools"],
-                        "tool_name_aliases": backend_items.get("tool_name_aliases", {}),
-                        "tool_schemas": backend_items["tool_schemas"],
-                        "allowed_resource_names": allowed_resource_names,
-                        "allowed_resource_uris": allowed_resource_uris,
-                        "allowed_prompt_names": allowed_prompt_names,
+                        **gateway_config,
+                        "tool_schemas": {tool["upstream_name"]: tool["input_schema"] for tool in backend_items["tools"]},
                     }
+                    tool_routes.extend((tool["exposed_name"], {"backend_name": gateway_id, "upstream_name": tool["upstream_name"]}) for tool in backend_items["tools"])
+                    resource_routes.extend((resource["uri"], {"backend_name": gateway_id, "upstream_name": resource["uri"]}) for resource in visible_resources)
+                    prompt_routes.extend((prompt["name"], {"backend_name": gateway_id, "upstream_name": prompt["original_name"]}) for prompt in visible_prompts)
 
                 if not backends:
-                    # No publishable backends: leave the virtual host out so
-                    # the dataplane returns 404 for it and deployments can
-                    # route the request back to the control plane, instead of
-                    # serving an empty tool list that looks like success.
                     continue
 
-                virtual_hosts[server["id"]] = {"backends": backends}
+                tools = self._build_routes(tool_routes, server["id"], "tool")
+                resources_by_uri = self._build_routes(resource_routes, server["id"], "resource")
+                prompts_by_name = self._build_routes(prompt_routes, server["id"], "prompt")
+                if tools is None or resources_by_uri is None or prompts_by_name is None:
+                    # Preserve control-plane naming/visibility-priority resolution.
+                    # Omitting the host makes the dataplane return 404 so callers
+                    # can fall back to the control plane instead of misrouting.
+                    continue
+
+                virtual_hosts[server["id"]] = {
+                    "backends": backends,
+                    "tools": tools,
+                    "resources": resources_by_uri,
+                    "resource_templates": {},
+                    "prompts": prompts_by_name,
+                }
 
             result[subject_key] = {"virtual_hosts": virtual_hosts}
 
         return result
+
+    @staticmethod
+    def _build_routes(candidates: list[tuple[str, ServiceRoute]], server_id: str, kind: str) -> dict[str, ServiceRoute] | None:
+        """Build a route map, rejecting names that resolve to different targets."""
+        routes: dict[str, ServiceRoute] = {}
+        for name, route in candidates:
+            if name in routes and routes[name] != route:
+                logger.warning("Excluding server %s from the dataplane snapshot because %s route %s is ambiguous", server_id, kind, name)
+                return None
+            routes[name] = route
+        return routes
 
     async def get_data_from_db(self) -> dict[str, Any] | None:
         """Fetch active users and dataplane data with bulk minimal-column queries."""
@@ -356,13 +371,14 @@ class DataplanePublisherService:
                         DbGateway.passthrough_headers,
                         DbGateway.add_headers,
                         DbGateway.remove_headers,
-                        DbGateway.capabilities,
                         DbGateway.owner_email,
                         DbGateway.team_id,
                         DbGateway.visibility,
                     ).where(DbGateway.enabled.is_(True))
                 ).all()
-                prompt_rows = db.execute(select(DbPrompt.id, DbPrompt.name, DbPrompt.owner_email, DbPrompt.team_id, DbPrompt.visibility).where(DbPrompt.enabled.is_(True))).all()
+                prompt_rows = db.execute(
+                    select(DbPrompt.id, DbPrompt.name, DbPrompt.original_name, DbPrompt.owner_email, DbPrompt.team_id, DbPrompt.visibility).where(DbPrompt.enabled.is_(True))
+                ).all()
                 resource_rows = db.execute(
                     select(DbResource.id, DbResource.name, DbResource.uri, DbResource.owner_email, DbResource.team_id, DbResource.visibility).where(
                         DbResource.enabled.is_(True),
@@ -437,12 +453,13 @@ class DataplanePublisherService:
                     "passthrough_headers": gateway.passthrough_headers,
                     "add_headers": gateway.add_headers or {},
                     "remove_headers": gateway.remove_headers or [],
-                    "capabilities": gateway.capabilities or {},
                 }
                 for gateway in gateway_rows
                 if self._filter_for_user(gateway, user_email, team_ids, is_admin=is_admin)
             ],
-            "prompts": [{"id": prompt.id, "name": prompt.name} for prompt in prompt_rows if self._filter_for_user(prompt, user_email, team_ids, is_admin=is_admin)],
+            "prompts": [
+                {"id": prompt.id, "name": prompt.name, "original_name": prompt.original_name} for prompt in prompt_rows if self._filter_for_user(prompt, user_email, team_ids, is_admin=is_admin)
+            ],
             "resources": [{"id": resource.id, "name": resource.name, "uri": resource.uri} for resource in resource_rows if self._filter_for_user(resource, user_email, team_ids, is_admin=is_admin)],
         }
 
@@ -460,12 +477,10 @@ class DataplanePublisherService:
 
     @staticmethod
     def _filter_backend_items_for_user(backend_items_by_gateway: dict[str, BackendItems], tool_by_id: dict[str, ToolMetadata]) -> dict[str, PublishedBackendItems]:
-        """Filter backend tool IDs and publish client-to-upstream name mappings."""
+        """Filter backend tool IDs without collapsing tools with identical exposed names."""
         return {
             gateway_id: {
-                "tools": [tool_by_id[tool_id]["upstream_name"] for tool_id in backend_items["tools"] if tool_id in tool_by_id],
-                "tool_name_aliases": {tool_by_id[tool_id]["exposed_name"]: tool_by_id[tool_id]["upstream_name"] for tool_id in backend_items["tools"] if tool_id in tool_by_id},
-                "tool_schemas": {tool_by_id[tool_id]["upstream_name"]: tool_by_id[tool_id]["input_schema"] for tool_id in backend_items["tools"] if tool_id in tool_by_id},
+                "tools": [tool_by_id[tool_id] for tool_id in backend_items["tools"] if tool_id in tool_by_id],
                 "resources": list(backend_items["resources"]),
                 "prompts": list(backend_items["prompts"]),
             }

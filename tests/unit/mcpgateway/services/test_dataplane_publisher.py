@@ -194,7 +194,8 @@ async def test_full_payload_generation_with_mock_db():
 
     prompt1 = Mock()
     prompt1.id = "p1"
-    prompt1.name = "Prompt 1"
+    prompt1.name = "gw1-prompt"
+    prompt1.original_name = "Prompt.Original"
     prompt1.owner_email = "user1@example.com"
     prompt1.team_id = "team1"
     prompt1.visibility = "public"
@@ -302,22 +303,20 @@ async def test_full_payload_generation_with_mock_db():
             "passthrough_headers": ["Authorization"],
             "add_headers": {"X-Tenant": "acme"},
             "remove_headers": ["Cookie"],
-            "capabilities": {"resources": {"subscribe": True}},
-            "allowed_tool_names": ["admin.tools.list", "private_tool"],
-            "tool_name_aliases": {
-                "gw1-admin-tools-list": "admin.tools.list",
-                "gw1-private_tool": "private_tool",
-            },
+            "mcp_protocol_version": "2025-11-25",
             "tool_schemas": {
                 "admin.tools.list": tool1.input_schema,
                 "private_tool": {},
             },
-            "allowed_resource_names": ["Resource 1"],
-            "allowed_resource_uris": ["resource://one"],
-            "allowed_prompt_names": ["Prompt 1"],
         }
-        assert "bad_tool" not in backend["allowed_tool_names"]
-        assert "gw1-bad_tool" not in backend["tool_name_aliases"]
+        assert server1["tools"] == {
+            "gw1-admin-tools-list": {"backend_name": "g1", "upstream_name": "admin.tools.list"},
+            "gw1-private_tool": {"backend_name": "g1", "upstream_name": "private_tool"},
+        }
+        assert server1["resources"] == {"resource://one": {"backend_name": "g1", "upstream_name": "resource://one"}}
+        assert server1["prompts"] == {"gw1-prompt": {"backend_name": "g1", "upstream_name": "Prompt.Original"}}
+        assert server1["resource_templates"] == {}
+        assert "gw1-bad_tool" not in server1["tools"]
         assert "bad_tool" not in backend["tool_schemas"]
 
         # Verify the gateway SELECT projection actually includes the new columns
@@ -342,10 +341,9 @@ async def test_full_payload_generation_with_mock_db():
         # is omitted from the payload (no publishable backends).
         assert "s2" not in user2_config["virtual_hosts"]
         user2_backend = user2_config["virtual_hosts"]["s1"]["backends"]["g1"]
-        assert user2_backend["allowed_tool_names"] == ["admin.tools.list", "team2_tool"]
-        assert user2_backend["tool_name_aliases"] == {
-            "gw1-admin-tools-list": "admin.tools.list",
-            "gw1-team2_tool": "team2_tool",
+        assert user2_config["virtual_hosts"]["s1"]["tools"] == {
+            "gw1-admin-tools-list": {"backend_name": "g1", "upstream_name": "admin.tools.list"},
+            "gw1-team2_tool": {"backend_name": "g1", "upstream_name": "team2_tool"},
         }
         assert user2_backend["tool_schemas"] == {
             "admin.tools.list": tool1.input_schema,
@@ -357,8 +355,7 @@ async def test_full_payload_generation_with_mock_db():
         assert "s1" in user3_config["virtual_hosts"]
         assert "s2" not in user3_config["virtual_hosts"]
         user3_backend = user3_config["virtual_hosts"]["s1"]["backends"]["g1"]
-        assert user3_backend["allowed_tool_names"] == ["admin.tools.list"]
-        assert user3_backend["tool_name_aliases"] == {"gw1-admin-tools-list": "admin.tools.list"}
+        assert user3_config["virtual_hosts"]["s1"]["tools"] == {"gw1-admin-tools-list": {"backend_name": "g1", "upstream_name": "admin.tools.list"}}
         assert user3_backend["tool_schemas"] == {"admin.tools.list": tool1.input_schema}
 
 
@@ -386,9 +383,7 @@ def test_build_user_data_excludes_non_object_tool_schema(caplog):
     result = DataplanePublisherService()._build_user_data("user@example.com", set(), False, [server], [], [], [], [bad_tool, good_tool], backend_items_by_server)
 
     backend_items = result["servers"][0]["backend_items"]["gateway"]
-    assert backend_items["tools"] == ["good"]
-    assert backend_items["tool_name_aliases"] == {"gateway-good": "good"}
-    assert backend_items["tool_schemas"] == {"good": {"type": "object"}}
+    assert backend_items["tools"] == [{"exposed_name": "gateway-good", "upstream_name": "good", "input_schema": {"type": "object"}}]
     assert "Excluding tool bad-tool" in caplog.text
 
 
@@ -467,7 +462,7 @@ def test_create_payload_filters_empty_backends():
                 {
                     "id": "server1",
                     "backend_items": {
-                        "gateway1": {"tools": [], "tool_schemas": {}, "resources": [], "prompts": []},
+                        "gateway1": {"tools": [], "resources": [], "prompts": []},
                     },
                 }
             ],
@@ -497,8 +492,7 @@ def test_create_payload_excludes_non_streamable_gateways(transport: str):
                     "id": "server1",
                     "backend_items": {
                         "gateway_non_streamable": {
-                            "tools": ["tool1"],
-                            "tool_schemas": {},
+                            "tools": [{"exposed_name": "gateway-tool1", "upstream_name": "tool1", "input_schema": {}}],
                             "resources": [],
                             "prompts": [],
                         },
@@ -528,7 +522,7 @@ def test_create_payload_normalizes_null_passthrough_headers():
                 {
                     "id": "server1",
                     "backend_items": {
-                        "gateway1": {"tools": ["tool1"], "tool_schemas": {}, "resources": [], "prompts": []},
+                        "gateway1": {"tools": [{"exposed_name": "gateway-tool1", "upstream_name": "tool1", "input_schema": {}}], "resources": [], "prompts": []},
                     },
                 }
             ],
@@ -544,7 +538,7 @@ def test_create_payload_normalizes_null_passthrough_headers():
     assert backend["passthrough_headers"] == []
     assert backend["add_headers"] == {}
     assert backend["remove_headers"] == []
-    assert backend["capabilities"] == {}
+    assert backend["mcp_protocol_version"] == "2025-11-25"
 
 
 def test_create_payload_handles_missing_references():
@@ -559,8 +553,7 @@ def test_create_payload_handles_missing_references():
                     "id": "server1",
                     "backend_items": {
                         "missing_gateway": {
-                            "tools": ["tool1"],
-                            "tool_schemas": {},
+                            "tools": [{"exposed_name": "gateway-tool1", "upstream_name": "tool1", "input_schema": {}}],
                             "resources": ["missing_res"],
                             "prompts": ["missing_prompt"],
                         },
@@ -579,6 +572,90 @@ def test_create_payload_handles_missing_references():
     # With its only gateway missing, the server has no publishable backends
     # and is omitted from the payload.
     assert "server1" not in result[USER1_ID]["virtual_hosts"]
+
+
+@pytest.mark.parametrize("kind", ["tools", "resources", "prompts"])
+@pytest.mark.parametrize("same_backend", [False, True])
+def test_create_payload_omits_ambiguous_virtual_host(kind, same_backend, caplog):
+    """Duplicate visible names never overwrite routes, even within one backend."""
+    from mcpgateway.services.dataplane_publisher import DataplanePublisherService
+
+    backend_items = {"g1": {"tools": [], "resources": [], "prompts": []}, "g2": {"tools": [], "resources": [], "prompts": []}}
+    gateways = [{"id": gateway_id, "name": "Shared", "url": "http://localhost:9000/mcp", "transport": "STREAMABLEHTTP", "passthrough_headers": []} for gateway_id in backend_items]
+    resources = []
+    prompts = []
+    for index, gateway_id in enumerate(["g1", "g1" if same_backend else "g2"]):
+        if kind == "tools":
+            backend_items[gateway_id][kind].append({"exposed_name": "shared-tool", "upstream_name": f"Tool.{index}", "input_schema": {}})
+        elif kind == "resources":
+            # Identical backend/URI pairs describe the same route, so they
+            # are harmless duplicates; different backends are ambiguous.
+            backend_items[gateway_id][kind].append(str(index))
+            resources.append({"id": str(index), "name": f"Resource {index}", "uri": "resource://same"})
+        else:
+            backend_items[gateway_id][kind].append(str(index))
+            prompts.append({"id": str(index), "name": "shared-prompt", "original_name": f"Prompt.{index}"})
+
+    data = {USER1_ID: {"servers": [{"id": "server", "backend_items": backend_items}], "gateways": gateways, "resources": resources, "prompts": prompts}}
+    result = DataplanePublisherService().create_payload(data)
+
+    if same_backend and kind == "resources":
+        assert result[USER1_ID]["virtual_hosts"]["server"]["resources"] == {"resource://same": {"backend_name": "g1", "upstream_name": "resource://same"}}
+    else:
+        assert result[USER1_ID]["virtual_hosts"] == {}
+        assert "is ambiguous" in caplog.text
+
+
+@pytest.mark.parametrize("hidden_reason", ["private", "wrong_team", "unsupported", "unassociated"])
+def test_only_visible_publishable_tools_participate_in_collisions(hidden_reason):
+    """An invisible or unsupported duplicate cannot suppress a valid route."""
+    from types import SimpleNamespace
+
+    from mcpgateway.services.dataplane_publisher import DataplanePublisherService
+
+    service = DataplanePublisherService()
+    tools = [
+        SimpleNamespace(id="t1", name="shared-tool", original_name="Tool.One", input_schema={}, visibility="public"),
+        SimpleNamespace(id="t2", name="shared-tool", original_name="Tool.Two", input_schema={}, visibility="public", team_id="other-team", owner_email="other@example.com"),
+    ]
+    if hidden_reason == "private":
+        tools[1].visibility = "private"
+    elif hidden_reason == "wrong_team":
+        tools[1].visibility = "team"
+    gateways = [
+        SimpleNamespace(id=gateway_id, name="Shared", url="http://localhost:9000/mcp", transport="STREAMABLEHTTP", passthrough_headers=[], add_headers={}, remove_headers={}, visibility="public")
+        for gateway_id in ["g1", "g2"]
+    ]
+    if hidden_reason == "unsupported":
+        gateways[1].transport = "SSE"
+    associations = {"server": {"g1": {"tools": ["t1"], "resources": [], "prompts": []}, "g2": {"tools": [] if hidden_reason == "unassociated" else ["t2"], "resources": [], "prompts": []}}}
+    data = service._build_user_data("user@example.com", set(), False, [SimpleNamespace(id="server", visibility="public")], gateways, [], [], tools, associations)
+
+    result = service.create_payload({USER1_ID: data})
+
+    assert result[USER1_ID]["virtual_hosts"]["server"]["tools"] == {"shared-tool": {"backend_name": "g1", "upstream_name": "Tool.One"}}
+    assert set(result[USER1_ID]["virtual_hosts"]["server"]["backends"]) == {"g1"}
+
+
+@pytest.mark.parametrize("kind", ["resources", "prompts"])
+def test_create_payload_keeps_backends_without_tools(kind):
+    """Resource-only and prompt-only backends remain routable in the new contract."""
+    from mcpgateway.services.dataplane_publisher import DataplanePublisherService
+
+    data = {
+        USER1_ID: {
+            "servers": [{"id": "server", "backend_items": {"gateway": {"tools": [], "resources": ["r"] if kind == "resources" else [], "prompts": ["p"] if kind == "prompts" else []}}}],
+            "gateways": [{"id": "gateway", "name": "Gateway", "url": "http://localhost:9000/mcp", "transport": "STREAMABLEHTTP", "passthrough_headers": []}],
+            "resources": [{"id": "r", "name": "Display name", "uri": "resource://one"}],
+            "prompts": [{"id": "p", "name": "gateway-prompt", "original_name": "Prompt.Original"}],
+        }
+    }
+    result = DataplanePublisherService().create_payload(data)[USER1_ID]["virtual_hosts"]["server"]
+    assert result["tools"] == {}
+    assert result["backends"]["gateway"]["tool_schemas"] == {}
+    expected_name = "resource://one" if kind == "resources" else "gateway-prompt"
+    expected_upstream = "resource://one" if kind == "resources" else "Prompt.Original"
+    assert result[kind] == {expected_name: {"backend_name": "gateway", "upstream_name": expected_upstream}}
 
 
 @pytest.mark.asyncio
