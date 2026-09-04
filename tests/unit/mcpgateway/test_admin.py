@@ -21443,9 +21443,74 @@ class TestMaintenanceMisc:
         request.app.state.templates = MagicMock()
         request.app.state.templates.TemplateResponse.return_value = HTMLResponse("<html>Maintenance</html>")
 
-        result = await get_maintenance_partial(request, _user={"email": "admin@test.com"}, _db=mock_db)
+        result = await get_maintenance_partial(request, _user={"email": "admin@test.com"}, db=mock_db)
         assert isinstance(result, HTMLResponse)
         request.app.state.templates.TemplateResponse.assert_called_once()
+
+    @staticmethod
+    def _maintenance_request():
+        """Build a request whose templates render maintenance_partial.html for real."""
+        # Third-Party
+        from fastapi.templating import Jinja2Templates
+
+        request = MagicMock(spec=Request)
+        request.scope = {"root_path": "", "type": "http"}
+        request.app = MagicMock()
+        request.app.state.templates = Jinja2Templates(directory="mcpgateway/templates")
+        return request
+
+    @pytest.mark.asyncio
+    async def test_maintenance_partial_reports_healthy_database(self, monkeypatch, allow_permission, mock_db):
+        """A working database probe renders the healthy state (#6070)."""
+        monkeypatch.setattr("mcpgateway.admin.settings.cache_type", "memory", raising=False)
+
+        request = self._maintenance_request()
+        result = await get_maintenance_partial(request, _user={"email": "admin@test.com"}, db=mock_db)
+
+        body = result.body.decode()
+        assert "Healthy" in body
+        assert "Unavailable" not in body
+
+    @pytest.mark.asyncio
+    async def test_maintenance_partial_reports_unavailable_database(self, monkeypatch, allow_permission, mock_db):
+        """A failing database probe renders the unavailable state (#6070)."""
+        # Third-Party
+        from sqlalchemy.exc import SQLAlchemyError
+
+        monkeypatch.setattr("mcpgateway.admin.settings.cache_type", "memory", raising=False)
+        mock_db.execute.side_effect = SQLAlchemyError("db down")
+
+        request = self._maintenance_request()
+        result = await get_maintenance_partial(request, _user={"email": "admin@test.com"}, db=mock_db)
+
+        body = result.body.decode()
+        assert "Unavailable" in body
+        assert "Healthy" not in body
+
+    @pytest.mark.asyncio
+    async def test_maintenance_partial_shows_cache_backend_without_probe(self, monkeypatch, allow_permission, mock_db):
+        """Non-redis backends get a plain label, never a fabricated status (#6070)."""
+        monkeypatch.setattr("mcpgateway.admin.settings.cache_type", "memory", raising=False)
+
+        request = self._maintenance_request()
+        result = await get_maintenance_partial(request, _user={"email": "admin@test.com"}, db=mock_db)
+
+        body = result.body.decode()
+        assert "In-memory" in body
+        assert "Operational" not in body
+        assert "Background Jobs" not in body
+
+    @pytest.mark.asyncio
+    async def test_maintenance_partial_probes_redis_backend(self, monkeypatch, allow_permission, mock_db):
+        """A redis backend is probed live and rendered unreachable when the ping fails (#6070)."""
+        monkeypatch.setattr("mcpgateway.admin.settings.cache_type", "redis", raising=False)
+        monkeypatch.setattr("mcpgateway.admin.settings.redis_url", "redis://localhost:6379/0", raising=False)
+        monkeypatch.setattr("mcpgateway.admin.is_redis_available", AsyncMock(return_value=False))
+
+        request = self._maintenance_request()
+        result = await get_maintenance_partial(request, _user={"email": "admin@test.com"}, db=mock_db)
+
+        assert "Unreachable" in result.body.decode()
 
     @pytest.mark.asyncio
     async def test_admin_import_preview_success(self, monkeypatch, allow_permission, mock_db):
