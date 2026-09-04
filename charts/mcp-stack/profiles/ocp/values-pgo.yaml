@@ -282,7 +282,7 @@ mcpContextForge:
     JWT_SECRET_KEY: ""  # must be set to a strong value before deploy (run make init-secrets-patch-env)
     AUTH_ENCRYPTION_SECRET: ""  # must be set to a strong value before deploy (run make init-secrets-patch-env)
     BASIC_AUTH_PASSWORD: "changeme"  # CHANGE THIS before deploy  # pragma: allowlist secret
-    PLATFORM_ADMIN_PASSWORD: "changeme"  # CHANGE THIS before deploy  # pragma: allowlist secret
+    PLATFORM_ADMIN_PASSWORD: ""  # must be set to a strong value before deploy (run make init-secrets-patch-env)
     REQUIRE_STRONG_SECRETS: "true"         # gateway refuses to start with weak/default secrets
 
 # --- Migration ---

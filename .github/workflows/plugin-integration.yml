@@ -255,6 +255,12 @@ jobs:
                   SSRF_PROTECTION_ENABLED: false
                   JWT_SECRET_KEY: ${{ env.DYNAMIC_JWT_SECRET }}
                   AUTH_ENCRYPTION_SECRET: ${{ env.DYNAMIC_ENC_SECRET }}
+                  # email_auth_enabled defaults true, which feature-gates
+                  # platform_admin_password/default_user_password checks in
+                  # Settings.validate_security_combinations(); unset, they
+                  # fall back to the "changeme" default and boot fails closed.
+                  PLATFORM_ADMIN_PASSWORD: "ci-test-admin-P@ssw0rd-DO-NOT-USE-IN-PRODUCTION"  # pragma: allowlist secret
+                  DEFAULT_USER_PASSWORD: "ci-test-user-P@ssw0rd-DO-NOT-USE-IN-PRODUCTION"  # pragma: allowlist secret
                   ADMIN_REQUIRE_PASSWORD_CHANGE_ON_BOOTSTRAP: false
                   PASSWORD_CHANGE_ENFORCEMENT_ENABLED: false
                   LOG_LEVEL: INFO

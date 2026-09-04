@@ -171,6 +171,7 @@ def test_csrf_cookie_name_default_matches_env_example():
     dummy_env = {
         "JWT_SECRET_KEY": _TEST_JWT_SECRET,
         "AUTH_ENCRYPTION_SECRET": _TEST_ENC_SECRET,
+        "EMAIL_AUTH_ENABLED": "false",
     }
 
     repo_root = os.path.join(os.path.dirname(__file__), "..", "..", "..")
@@ -208,6 +209,7 @@ def test_admin_csrf_cookie_name_matches_config_default():
     dummy_env = {
         "JWT_SECRET_KEY": _TEST_JWT_SECRET,
         "AUTH_ENCRYPTION_SECRET": _TEST_ENC_SECRET,
+        "EMAIL_AUTH_ENABLED": "false",
     }
 
     with patch.dict(os.environ, dummy_env, clear=True):
@@ -230,6 +232,7 @@ def test_oauth_router_csrf_cookie_name_matches_config_default():
     dummy_env = {
         "JWT_SECRET_KEY": _TEST_JWT_SECRET,
         "AUTH_ENCRYPTION_SECRET": _TEST_ENC_SECRET,
+        "EMAIL_AUTH_ENABLED": "false",
     }
 
     with patch.dict(os.environ, dummy_env, clear=True):
@@ -253,6 +256,7 @@ def test_admin_csrf_header_name_matches_config_default():
     dummy_env = {
         "JWT_SECRET_KEY": _TEST_JWT_SECRET,
         "AUTH_ENCRYPTION_SECRET": _TEST_ENC_SECRET,
+        "EMAIL_AUTH_ENABLED": "false",
     }
 
     with patch.dict(os.environ, dummy_env, clear=True):
@@ -273,6 +277,7 @@ def test_oauth_router_csrf_header_name_matches_config_default():
     dummy_env = {
         "JWT_SECRET_KEY": _TEST_JWT_SECRET,
         "AUTH_ENCRYPTION_SECRET": _TEST_ENC_SECRET,
+        "EMAIL_AUTH_ENABLED": "false",
     }
 
     with patch.dict(os.environ, dummy_env, clear=True):
@@ -608,6 +613,7 @@ def test_settings_default_values():
         "JWT_SECRET_KEY": _TEST_JWT_SECRET,
         "AUTH_ENCRYPTION_SECRET": _TEST_ENC_SECRET,
         "APP_DOMAIN": "http://localhost",
+        "EMAIL_AUTH_ENABLED": "false",  # Avoid password gate — this test checks field defaults, not auth
     }
 
     with patch.dict(os.environ, dummy_env, clear=True):
@@ -647,6 +653,7 @@ def test_skip_migrations_defaults_to_false():
     dummy_env = {
         "JWT_SECRET_KEY": _TEST_JWT_SECRET,
         "AUTH_ENCRYPTION_SECRET": _TEST_ENC_SECRET,
+        "EMAIL_AUTH_ENABLED": "false",
     }
     with patch.dict(os.environ, dummy_env, clear=True):
         settings = Settings(environment="development", _env_file=None)
@@ -658,6 +665,7 @@ def test_skip_migrations_env_true_flips_flag():
     dummy_env = {
         "JWT_SECRET_KEY": _TEST_JWT_SECRET,
         "AUTH_ENCRYPTION_SECRET": _TEST_ENC_SECRET,
+        "EMAIL_AUTH_ENABLED": "false",
         "MCPGATEWAY_SKIP_MIGRATIONS": "true",
     }
     with patch.dict(os.environ, dummy_env, clear=True):
@@ -670,6 +678,7 @@ def test_skip_migrations_env_false_keeps_flag_off():
     dummy_env = {
         "JWT_SECRET_KEY": _TEST_JWT_SECRET,
         "AUTH_ENCRYPTION_SECRET": _TEST_ENC_SECRET,
+        "EMAIL_AUTH_ENABLED": "false",
         "MCPGATEWAY_SKIP_MIGRATIONS": "false",
     }
     with patch.dict(os.environ, dummy_env, clear=True):
