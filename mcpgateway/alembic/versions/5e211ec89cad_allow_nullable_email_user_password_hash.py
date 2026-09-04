@@ -1,9 +1,13 @@
-"""Allow email users without local password hashes.
+# -*- coding: utf-8 -*-
+"""Location: ./mcpgateway/alembic/versions/5e211ec89cad_allow_nullable_email_user_password_hash.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+
+Allow email users without local password hashes.
 
 Revision ID: 5e211ec89cad
 Revises: 12d4a0c7789c
 Create Date: 2026-09-04 09:37:21.131648
-
 """
 
 # Standard
