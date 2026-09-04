@@ -2366,11 +2366,26 @@ class SessionRegistry(SessionBackend):
                         headers=headers,
                     )
                     logger.info(f"SSE RPC: Got response status {rpc_response.status_code}")
-                    result = rpc_response.json()
-                    logger.info(f"SSE RPC: Response content: {result}")
-                    result = result.get("result", {})
+                    rpc_body = rpc_response.json()
+                    logger.info(f"SSE RPC: Response content: {rpc_body}")
 
-                response = {"jsonrpc": "2.0", "result": result, "id": req_id}
+                # Per JSON-RPC 2.0 a response carries either "result" or "error".
+                # Forward "error" verbatim (RBAC denies, plugin violations, upstream
+                # failures) instead of re-encoding it as an empty result (#5956).
+                if isinstance(rpc_body, dict) and "error" in rpc_body:
+                    response = {"jsonrpc": "2.0", "error": rpc_body["error"], "id": req_id}
+                elif isinstance(rpc_body, dict) and "result" in rpc_body:
+                    response = {"jsonrpc": "2.0", "result": rpc_body["result"], "id": req_id}
+                else:
+                    # Non-JSON-RPC body (e.g. {"detail": "..."} from an auth middleware
+                    # 401/403 on the loopback): map to a JSON-RPC error carrying detail.
+                    detail = rpc_body.get("detail") if isinstance(rpc_body, dict) else None
+                    error_message = detail if isinstance(detail, str) and detail else "Internal error"
+                    response = {
+                        "jsonrpc": "2.0",
+                        "error": {"code": -32000, "message": error_message, "data": rpc_body},
+                        "id": req_id,
+                    }
             except JSONRPCError as e:
                 logger.error(f"SSE RPC: JSON-RPC error: {e}")
                 result = e.to_dict()
