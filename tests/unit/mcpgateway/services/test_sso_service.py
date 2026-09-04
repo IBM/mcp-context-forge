@@ -2551,6 +2551,28 @@ class TestExtractGroupsAndRoles:
         result = SSOService._extract_groups_and_roles(user_data)
         assert result == []
 
+    def test_extracts_names_from_dict_shaped_claim(self):
+        """IBM account-iam emits roles bucketed by scope: {"roles": {"SERVICE": [...]}}."""
+        user_data = {"roles": {"SERVICE": ["ServiceOwner"]}}
+        result = SSOService._extract_groups_and_roles(user_data, groups_claim="roles")
+        assert result == ["ServiceOwner"]
+
+    def test_dict_shaped_claim_collects_all_buckets(self):
+        user_data = {"groups": {"SERVICE": ["ServiceOwner"], "APP": ["AppAdmin", "AppViewer"]}}
+        result = SSOService._extract_groups_and_roles(user_data)
+        assert set(result) == {"ServiceOwner", "AppAdmin", "AppViewer"}
+
+    def test_deduplicates_when_groups_claim_is_roles(self):
+        """groups_claim='roles' must not read the roles claim twice."""
+        user_data = {"roles": ["admin", "viewer"]}
+        result = SSOService._extract_groups_and_roles(user_data, groups_claim="roles")
+        assert result == ["admin", "viewer"]
+
+    def test_deduplicates_overlapping_groups_and_roles(self):
+        user_data = {"groups": ["eng", "shared"], "roles": ["shared", "admin"]}
+        result = SSOService._extract_groups_and_roles(user_data)
+        assert result == ["eng", "shared", "admin"]
+
 
 class TestBuildNormalizedUserInfo:
     """Tests for the extracted _build_normalized_user_info helper."""
