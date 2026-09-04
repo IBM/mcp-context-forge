@@ -486,7 +486,8 @@ dev:
 	@trap 'echo "🛑 Stopping background processes..."; jobs -p | xargs $(XARGS_FLAGS) kill 2>/dev/null || true' EXIT; \
 	$(MAKE) js-build watch-css & \
 	WATCH_CSS_PID=$$!; \
-	TEMPLATES_AUTO_RELOAD=true $(VENV_DIR)/bin/uvicorn mcpgateway.main:app --host 0.0.0.0 --port 8000 --reload --reload-exclude='public/' || { kill $$WATCH_CSS_PID 2>/dev/null || true; exit 1; }
+	export LOG_LEVEL=$${LOG_LEVEL:-WARNING}; \
+	TEMPLATES_AUTO_RELOAD=true $(VENV_DIR)/bin/uvicorn mcpgateway.main:app --host 0.0.0.0 --port 8000 --reload --reload-exclude='public/' --log-level warning || { kill $$WATCH_CSS_PID 2>/dev/null || true; exit 1; }
 
 .PHONY: dev-echo
 dev-echo: js-build               ## Run dev server with SQL query logging enabled
