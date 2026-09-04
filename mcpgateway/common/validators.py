@@ -392,6 +392,29 @@ class SecurityValidator:
     MAX_URL_LENGTH = settings.validation_max_url_length  # Default: 2048
 
     @classmethod
+    def has_allowed_scheme(cls, value: str) -> bool:
+        """Check whether a URL starts with one of the configured allowed schemes.
+
+        Shared by validate_url (registration-time) and the startup scheme
+        audit in bootstrap_db (existing-record time) so both enforce the
+        exact same rule.
+
+        Args:
+            value: URL to check
+
+        Returns:
+            bool: True if value starts with one of cls.ALLOWED_URL_SCHEMES (case-insensitive)
+
+        Examples:
+            >>> SecurityValidator.has_allowed_scheme("https://example.com")
+            True
+            >>> SecurityValidator.has_allowed_scheme("javascript:alert(1)")
+            False
+        """
+        value_lower = value.lower()
+        return any(value_lower.startswith(scheme.lower()) for scheme in cls.ALLOWED_URL_SCHEMES)
+
+    @classmethod
     def sanitize_display_text(cls, value: str, field_name: str) -> str:
         """Ensure text is safe for display in UI by escaping special characters
 
@@ -1265,11 +1288,9 @@ class SecurityValidator:
         if "\ufffd" in decoded_value:
             raise ValueError(f"{field_name} contains invalid UTF-8 byte sequences which are not allowed")
 
-        # Check allowed schemes (lowercase value once, not per scheme).
-        allowed_schemes = cls.ALLOWED_URL_SCHEMES
-        value_lower = value.lower()
-        if not any(value_lower.startswith(scheme.lower()) for scheme in allowed_schemes):
-            raise ValueError(f"{field_name} must start with one of: {', '.join(allowed_schemes)}")
+        # Check allowed schemes.
+        if not cls.has_allowed_scheme(value):
+            raise ValueError(f"{field_name} must start with one of: {', '.join(cls.ALLOWED_URL_SCHEMES)}")
 
         # Block dangerous URL patterns anywhere in the decoded URL (defense-in-depth:
         # downstream consumers may extract query/fragment and reuse as URLs elsewhere).

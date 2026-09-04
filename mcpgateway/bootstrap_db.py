@@ -162,15 +162,58 @@ def alembic_at_head(conn: Connection, cfg: Config) -> bool:
         return False
 
 
+def audit_url_schemes(conn: Connection) -> None:
+    """Audit active gateway/tool/A2A-agent URLs against the configured scheme allowlist.
+
+    ``SecurityValidator.ALLOWED_URL_SCHEMES`` is enforced only at registration
+    time (the Pydantic field validators on create/update schemas), so a record
+    that was registered before the allowlist was tightened — e.g. an
+    ``http://`` gateway created before ``VALIDATION_ALLOWED_URL_SCHEMES`` was
+    narrowed to ``https://`` only — keeps being used by health checks, tool
+    invocation, and federation regardless of the current setting. This makes
+    that gap visible on every startup instead of leaving it undetected.
+
+    Read-only by design: this only logs (or, under ``strict_scheme_enforcement``,
+    raises) — it never mutates or disables an offending record, since deciding
+    what to do about a live integration is an operator call, not this
+    function's to make silently.
+
+    Args:
+        conn: Active SQLAlchemy connection.
+
+    Raises:
+        RuntimeError: If ``settings.strict_scheme_enforcement`` is True and at
+            least one active record uses a scheme outside the allowlist.
+    """
+    violations: list[str] = []
+    with Session(bind=conn) as session:
+        for model, url_attr, label in ((Gateway, "url", "gateway"), (Tool, "url", "tool"), (A2AAgent, "endpoint_url", "a2a_agent")):
+            records = session.query(model).filter(model.enabled.is_(True)).all()
+            for record in records:
+                url = getattr(record, url_attr, None)
+                if not url:
+                    continue
+                if not SecurityValidator.has_allowed_scheme(url):
+                    violations.append(f"{label} '{record.name}' (id={record.id}): {url}")
+
+    if not violations:
+        return
+
+    message = f"{len(violations)} active record(s) use a URL scheme outside " f"VALIDATION_ALLOWED_URL_SCHEMES ({', '.join(SecurityValidator.ALLOWED_URL_SCHEMES)}): " + "; ".join(violations)
+    if settings.strict_scheme_enforcement:
+        raise RuntimeError(f"{message}. Refusing to start (STRICT_SCHEME_ENFORCEMENT=true).")
+    logger.warning(message)
+
+
 async def _run_post_migration_bootstrap(conn: Connection) -> None:
     """Run the idempotent post-migration bootstrap steps.
 
     These steps (team-visibility normalization, admin user, default roles,
-    orphaned-resource assignment) are designed to be safe to re-run on
-    every startup — each checks for existing state and skips if already
-    populated. They must run on replicas that take the fast-path so that a
-    prior replica crashing mid-bootstrap doesn't leave downstream state
-    unpopulated.
+    orphaned-resource assignment, URL-scheme audit) are designed to be safe
+    to re-run on every startup — each checks for existing state and skips if
+    already populated (or, for the scheme audit, is read-only). They must run
+    on replicas that take the fast-path so that a prior replica crashing
+    mid-bootstrap doesn't leave downstream state unpopulated.
 
     Args:
         conn: Active SQLAlchemy connection (locked on the slow path,
@@ -183,6 +226,7 @@ async def _run_post_migration_bootstrap(conn: Connection) -> None:
     await bootstrap_admin_user(conn)
     await bootstrap_default_roles(conn)
     await bootstrap_resource_assignments(conn)
+    audit_url_schemes(conn)
 
 
 @contextmanager
