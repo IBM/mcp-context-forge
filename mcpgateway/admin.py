@@ -66,6 +66,7 @@ from mcpgateway import version as version_module
 
 # Authentication and password-related imports
 from mcpgateway.auth import get_current_user, get_user_team_roles
+from mcpgateway.auth_user_helpers import is_passwordless_user
 
 # Re-export canonical get_user_email from auth_context for backward compatibility.
 from mcpgateway.auth_context import (
@@ -4612,9 +4613,12 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
                         LOGGER.debug("Failed to evaluate password age for %s: %s", email, exc)
 
                 # Detect default password on login if enabled
-                if getattr(settings, "detect_default_password_on_login", True):
+                if getattr(settings, "detect_default_password_on_login", True) and not is_passwordless_user(user):
+                    current_password_hash = user.password_hash
+                    if current_password_hash is None:
+                        return RedirectResponse(url=f"{root_path}/admin/login?error=invalid_credentials&email={urllib.parse.quote(email)}", status_code=303)
                     password_service = Argon2PasswordService()
-                    is_using_default_password = await password_service.verify_password_async(settings.default_user_password.get_secret_value(), user.password_hash)  # nosec B105
+                    is_using_default_password = await password_service.verify_password_async(settings.default_user_password.get_secret_value(), current_password_hash)  # nosec B105
                     if is_using_default_password:
                         if getattr(settings, "require_password_change_for_default_password", True):
                             user.password_change_required = True
@@ -8761,20 +8765,22 @@ async def admin_force_password_change(
         # Get current user email from JWT
         current_user_email = get_user_email(user)
 
-        # Get the user to update
-        user_obj = await auth_service.get_user_by_email(decoded_email)
-        if not user_obj:
-            return HTMLResponse(content='<div class="text-red-500">User not found</div>', status_code=404)
-
-        # Set password_change_required flag
-        user_obj.password_change_required = True
-        db.commit()
+        user_obj = await auth_service.update_user(
+            email=decoded_email,
+            password_change_required=True,
+            admin_origin_source="ui",
+            requesting_user_email=current_user_email,
+        )
 
         LOGGER.info(f"Admin {current_user_email} forced password change for user {decoded_email}")
 
         admin_count = await auth_service.count_active_admin_users()
         return HTMLResponse(content=_render_user_card_html(user_obj, current_user_email, admin_count, root_path))
 
+    except PasswordValidationError as exc:
+        return HTMLResponse(content=f'<div class="text-red-500">{html.escape(str(exc))}</div>', status_code=400)
+    except ValueError as exc:
+        return HTMLResponse(content=f'<div class="text-red-500">{html.escape(str(exc))}</div>', status_code=404)
     except Exception as e:
         LOGGER.error(f"Error forcing password change for user {user_email}: {e}")
         return HTMLResponse(content=f'<div class="text-red-500">Error forcing password change: {html.escape(str(e))}</div>', status_code=400)
