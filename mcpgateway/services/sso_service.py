@@ -2079,13 +2079,25 @@ class SSOService:
             current_admin_origin = user.admin_origin
 
             if user.auth_provider and current_auth_provider != incoming_provider:
-                logger.warning(
-                    "SSO authenticate_or_create_user: account-linking required for email '%s' (existing provider='%s', incoming='%s').",
+                # Email is already verified (gated above) and within trusted-domain policy,
+                # so linking here only ever rebinds a trusted, verified identity.
+                if not settings.sso_allow_provider_linking:
+                    logger.warning(
+                        "SSO authenticate_or_create_user: login refused for email '%s' — it is bound to provider '%s' and sign-in came from '%s'. "
+                        "One email maps to one provider unless SSO_ALLOW_PROVIDER_LINKING is enabled.",
+                        email,
+                        current_auth_provider,
+                        incoming_provider,
+                    )
+                    return None
+                logger.info(
+                    "SSO authenticate_or_create_user: relinking email '%s' from provider '%s' to '%s' (SSO_ALLOW_PROVIDER_LINKING enabled).",
                     email,
                     current_auth_provider,
                     incoming_provider,
                 )
-                return None
+                user.auth_provider = incoming_provider
+                current_auth_provider = incoming_provider
 
             provider_id: Optional[str] = None
             provider_metadata: Dict[str, Any] = {}

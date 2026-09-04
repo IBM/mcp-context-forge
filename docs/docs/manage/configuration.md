@@ -477,6 +477,7 @@ When `SMTP_ENABLED=false`, reset requests are accepted but no email is delivered
 | `SSO_AUTO_CREATE_USERS`       | Automatically create users from SSO providers    | `true`                | bool    |
 | `SSO_TRUSTED_DOMAINS`         | Trusted email domains (JSON array)               | `[]`                  | JSON array |
 | `SSO_PRESERVE_ADMIN_AUTH`     | Preserve local admin authentication when SSO enabled | `true`            | bool    |
+| `SSO_ALLOW_PROVIDER_LINKING`  | Let a verified email sign in via a different trusted provider (rebinds) | `false`     | bool    |
 | `SSO_REQUIRE_ADMIN_APPROVAL`  | Require admin approval for new SSO registrations | `false`               | bool    |
 | `SSO_ISSUERS`                 | Optional JSON array of issuer URLs for SSO providers | (none)            | JSON array |
 | `SSO_AUTO_ADMIN_DOMAINS`      | Email domains that automatically get admin privileges | `[]`             | JSON array |
