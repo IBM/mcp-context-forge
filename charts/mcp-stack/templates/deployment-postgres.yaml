@@ -28,6 +28,10 @@ metadata:
   labels:
     {{- include "mcp-stack.labels" . | nindent 4 }}
     app: {{ include "mcp-stack.fullname" . }}-postgres
+  {{- with merge (default dict .Values.postgres.annotations) (default dict .Values.annotations) }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
 spec:
   replicas: 1                   # one DB pod; use StatefulSet if you ever scale
   selector:
@@ -41,6 +45,13 @@ spec:
     metadata:
       labels:
         app: {{ include "mcp-stack.fullname" . }}-postgres
+        {{- with merge (default dict .Values.postgres.podLabels) (default dict .Values.podLabels) }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      {{- with merge (default dict .Values.postgres.podAnnotations) (default dict .Values.podAnnotations) }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
     spec:
       # Image pull secrets
       {{- if .Values.global.imagePullSecrets }}
@@ -53,6 +64,14 @@ spec:
       serviceAccountName: {{ include "mcp-stack.serviceAccountName" . }}
       {{- end }}
       automountServiceAccountToken: {{ .Values.serviceAccount.automountServiceAccountToken }}
+      {{- with (coalesce .Values.postgres.nodeSelector .Values.nodeSelector) }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with (coalesce .Values.postgres.tolerations .Values.tolerations) }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       securityContext:
         seccompProfile:
           type: RuntimeDefault

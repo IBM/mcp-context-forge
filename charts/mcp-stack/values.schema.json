@@ -1823,18 +1823,25 @@
             },
             "AUTH_ENCRYPTION_SECRET": {
               "type": "string",
-              "description": "Auth encryption secret — must be set to a strong value before deploy (run make init-secrets-patch-env)",
+              "description": "Auth encryption secret \u2014 must be set to a strong value before deploy (run make init-secrets-patch-env)",
               "default": ""
             },
             "IDENTITY_PROPAGATION_ENABLED": {
               "type": "string",
-              "enum": ["true", "false"],
+              "enum": [
+                "true",
+                "false"
+              ],
               "description": "Enable end-user identity propagation to upstream MCP servers",
               "default": "false"
             },
             "IDENTITY_PROPAGATION_MODE": {
               "type": "string",
-              "enum": ["headers", "meta", "both"],
+              "enum": [
+                "headers",
+                "meta",
+                "both"
+              ],
               "description": "How to propagate identity: headers (HTTP), meta (MCP _meta), or both",
               "default": "both"
             },
@@ -1850,7 +1857,10 @@
             },
             "IDENTITY_SIGN_CLAIMS": {
               "type": "string",
-              "enum": ["true", "false"],
+              "enum": [
+                "true",
+                "false"
+              ],
               "description": "Sign propagated user claims with HMAC-SHA256 for upstream verification",
               "default": "false"
             },
@@ -1972,7 +1982,7 @@
             },
             "JWT_SECRET_KEY": {
               "type": "string",
-              "description": "JWT secret key — must be set to a strong value before deploy (run make init-secrets-patch-env)",
+              "description": "JWT secret key \u2014 must be set to a strong value before deploy (run make init-secrets-patch-env)",
               "default": ""
             },
             "MAX_FAILED_LOGIN_ATTEMPTS": {
@@ -2244,6 +2254,67 @@
             }
           },
           "description": "Service configuration"
+        },
+        "nodeSelector": {
+          "type": "object",
+          "description": "Node labels for pod assignment. Component-specific value takes precedence over top-level nodeSelector.",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "tolerations": {
+          "type": "array",
+          "description": "Tolerations for pod scheduling onto tainted nodes. Component-specific value takes precedence over top-level tolerations.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "key": {
+                "type": "string"
+              },
+              "operator": {
+                "type": "string",
+                "enum": [
+                  "Equal",
+                  "Exists"
+                ]
+              },
+              "value": {
+                "type": "string"
+              },
+              "effect": {
+                "type": "string",
+                "enum": [
+                  "NoSchedule",
+                  "PreferNoSchedule",
+                  "NoExecute"
+                ]
+              },
+              "tolerationSeconds": {
+                "type": "integer"
+              }
+            }
+          }
+        },
+        "annotations": {
+          "type": "object",
+          "description": "Annotations applied to the Deployment/Job resource itself.",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "podAnnotations": {
+          "type": "object",
+          "description": "Annotations applied to every pod. Merged with top-level podAnnotations; component values take precedence.",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "podLabels": {
+          "type": "object",
+          "description": "Extra labels applied to every pod. Merged with top-level podLabels; component values take precedence.",
+          "additionalProperties": {
+            "type": "string"
+          }
         }
       },
       "description": "ContextForge Gateway configuration"
@@ -2466,6 +2537,67 @@
             }
           },
           "description": "Resource limits and requests"
+        },
+        "nodeSelector": {
+          "type": "object",
+          "description": "Node labels for pod assignment. Component-specific value takes precedence over top-level nodeSelector.",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "tolerations": {
+          "type": "array",
+          "description": "Tolerations for pod scheduling onto tainted nodes. Component-specific value takes precedence over top-level tolerations.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "key": {
+                "type": "string"
+              },
+              "operator": {
+                "type": "string",
+                "enum": [
+                  "Equal",
+                  "Exists"
+                ]
+              },
+              "value": {
+                "type": "string"
+              },
+              "effect": {
+                "type": "string",
+                "enum": [
+                  "NoSchedule",
+                  "PreferNoSchedule",
+                  "NoExecute"
+                ]
+              },
+              "tolerationSeconds": {
+                "type": "integer"
+              }
+            }
+          }
+        },
+        "annotations": {
+          "type": "object",
+          "description": "Annotations applied to the Deployment/Job resource itself.",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "podAnnotations": {
+          "type": "object",
+          "description": "Annotations applied to every pod. Merged with top-level podAnnotations; component values take precedence.",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "podLabels": {
+          "type": "object",
+          "description": "Extra labels applied to every pod. Merged with top-level podLabels; component values take precedence.",
+          "additionalProperties": {
+            "type": "string"
+          }
         }
       },
       "description": "MCP Fast Time Server configuration"
@@ -2570,6 +2702,67 @@
             "OnFailure",
             "Always"
           ]
+        },
+        "nodeSelector": {
+          "type": "object",
+          "description": "Node labels for pod assignment. Component-specific value takes precedence over top-level nodeSelector.",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "tolerations": {
+          "type": "array",
+          "description": "Tolerations for pod scheduling onto tainted nodes. Component-specific value takes precedence over top-level tolerations.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "key": {
+                "type": "string"
+              },
+              "operator": {
+                "type": "string",
+                "enum": [
+                  "Equal",
+                  "Exists"
+                ]
+              },
+              "value": {
+                "type": "string"
+              },
+              "effect": {
+                "type": "string",
+                "enum": [
+                  "NoSchedule",
+                  "PreferNoSchedule",
+                  "NoExecute"
+                ]
+              },
+              "tolerationSeconds": {
+                "type": "integer"
+              }
+            }
+          }
+        },
+        "annotations": {
+          "type": "object",
+          "description": "Annotations applied to the Deployment/Job resource itself.",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "podAnnotations": {
+          "type": "object",
+          "description": "Annotations applied to every pod. Merged with top-level podAnnotations; component values take precedence.",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "podLabels": {
+          "type": "object",
+          "description": "Extra labels applied to every pod. Merged with top-level podLabels; component values take precedence.",
+          "additionalProperties": {
+            "type": "string"
+          }
         }
       },
       "description": "Database migration configuration"
@@ -3654,6 +3847,67 @@
           "items": {
             "type": "string"
           }
+        },
+        "nodeSelector": {
+          "type": "object",
+          "description": "Node labels for pod assignment. Component-specific value takes precedence over top-level nodeSelector.",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "tolerations": {
+          "type": "array",
+          "description": "Tolerations for pod scheduling onto tainted nodes. Component-specific value takes precedence over top-level tolerations.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "key": {
+                "type": "string"
+              },
+              "operator": {
+                "type": "string",
+                "enum": [
+                  "Equal",
+                  "Exists"
+                ]
+              },
+              "value": {
+                "type": "string"
+              },
+              "effect": {
+                "type": "string",
+                "enum": [
+                  "NoSchedule",
+                  "PreferNoSchedule",
+                  "NoExecute"
+                ]
+              },
+              "tolerationSeconds": {
+                "type": "integer"
+              }
+            }
+          }
+        },
+        "annotations": {
+          "type": "object",
+          "description": "Annotations applied to the Deployment/Job resource itself.",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "podAnnotations": {
+          "type": "object",
+          "description": "Annotations applied to every pod. Merged with top-level podAnnotations; component values take precedence.",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "podLabels": {
+          "type": "object",
+          "description": "Extra labels applied to every pod. Merged with top-level podLabels; component values take precedence.",
+          "additionalProperties": {
+            "type": "string"
+          }
         }
       },
       "description": "Optional nginx reverse-proxy profile values"
@@ -3834,6 +4088,67 @@
             }
           },
           "description": "PgAdmin service configuration"
+        },
+        "nodeSelector": {
+          "type": "object",
+          "description": "Node labels for pod assignment. Component-specific value takes precedence over top-level nodeSelector.",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "tolerations": {
+          "type": "array",
+          "description": "Tolerations for pod scheduling onto tainted nodes. Component-specific value takes precedence over top-level tolerations.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "key": {
+                "type": "string"
+              },
+              "operator": {
+                "type": "string",
+                "enum": [
+                  "Equal",
+                  "Exists"
+                ]
+              },
+              "value": {
+                "type": "string"
+              },
+              "effect": {
+                "type": "string",
+                "enum": [
+                  "NoSchedule",
+                  "PreferNoSchedule",
+                  "NoExecute"
+                ]
+              },
+              "tolerationSeconds": {
+                "type": "integer"
+              }
+            }
+          }
+        },
+        "annotations": {
+          "type": "object",
+          "description": "Annotations applied to the Deployment/Job resource itself.",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "podAnnotations": {
+          "type": "object",
+          "description": "Annotations applied to every pod. Merged with top-level podAnnotations; component values take precedence.",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "podLabels": {
+          "type": "object",
+          "description": "Extra labels applied to every pod. Merged with top-level podLabels; component values take precedence.",
+          "additionalProperties": {
+            "type": "string"
+          }
         }
       },
       "description": "PgAdmin configuration"
@@ -4054,6 +4369,67 @@
             }
           },
           "description": "PgBouncer service configuration"
+        },
+        "nodeSelector": {
+          "type": "object",
+          "description": "Node labels for pod assignment. Component-specific value takes precedence over top-level nodeSelector.",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "tolerations": {
+          "type": "array",
+          "description": "Tolerations for pod scheduling onto tainted nodes. Component-specific value takes precedence over top-level tolerations.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "key": {
+                "type": "string"
+              },
+              "operator": {
+                "type": "string",
+                "enum": [
+                  "Equal",
+                  "Exists"
+                ]
+              },
+              "value": {
+                "type": "string"
+              },
+              "effect": {
+                "type": "string",
+                "enum": [
+                  "NoSchedule",
+                  "PreferNoSchedule",
+                  "NoExecute"
+                ]
+              },
+              "tolerationSeconds": {
+                "type": "integer"
+              }
+            }
+          }
+        },
+        "annotations": {
+          "type": "object",
+          "description": "Annotations applied to the Deployment/Job resource itself.",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "podAnnotations": {
+          "type": "object",
+          "description": "Annotations applied to every pod. Merged with top-level podAnnotations; component values take precedence.",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "podLabels": {
+          "type": "object",
+          "description": "Extra labels applied to every pod. Merged with top-level podLabels; component values take precedence.",
+          "additionalProperties": {
+            "type": "string"
+          }
         }
       },
       "description": "PgBouncer connection pooler configuration"
@@ -4387,6 +4763,67 @@
             }
           },
           "description": "PostgreSQL upgrade configuration"
+        },
+        "nodeSelector": {
+          "type": "object",
+          "description": "Node labels for pod assignment. Component-specific value takes precedence over top-level nodeSelector.",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "tolerations": {
+          "type": "array",
+          "description": "Tolerations for pod scheduling onto tainted nodes. Component-specific value takes precedence over top-level tolerations.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "key": {
+                "type": "string"
+              },
+              "operator": {
+                "type": "string",
+                "enum": [
+                  "Equal",
+                  "Exists"
+                ]
+              },
+              "value": {
+                "type": "string"
+              },
+              "effect": {
+                "type": "string",
+                "enum": [
+                  "NoSchedule",
+                  "PreferNoSchedule",
+                  "NoExecute"
+                ]
+              },
+              "tolerationSeconds": {
+                "type": "integer"
+              }
+            }
+          }
+        },
+        "annotations": {
+          "type": "object",
+          "description": "Annotations applied to the Deployment/Job resource itself.",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "podAnnotations": {
+          "type": "object",
+          "description": "Annotations applied to every pod. Merged with top-level podAnnotations; component values take precedence.",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "podLabels": {
+          "type": "object",
+          "description": "Extra labels applied to every pod. Merged with top-level podLabels; component values take precedence.",
+          "additionalProperties": {
+            "type": "string"
+          }
         }
       },
       "description": "PostgreSQL database configuration"
@@ -4666,10 +5103,71 @@
         },
         "maxclients": {
           "type": "integer",
-          "description": "Maximum number of client connections. Formula: replicas × workers × REDIS_MAX_CONNECTIONS × 1.2",
+          "description": "Maximum number of client connections. Formula: replicas \u00d7 workers \u00d7 REDIS_MAX_CONNECTIONS \u00d7 1.2",
           "default": 15000,
           "minimum": 5000,
           "maximum": 30000
+        },
+        "nodeSelector": {
+          "type": "object",
+          "description": "Node labels for pod assignment. Component-specific value takes precedence over top-level nodeSelector.",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "tolerations": {
+          "type": "array",
+          "description": "Tolerations for pod scheduling onto tainted nodes. Component-specific value takes precedence over top-level tolerations.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "key": {
+                "type": "string"
+              },
+              "operator": {
+                "type": "string",
+                "enum": [
+                  "Equal",
+                  "Exists"
+                ]
+              },
+              "value": {
+                "type": "string"
+              },
+              "effect": {
+                "type": "string",
+                "enum": [
+                  "NoSchedule",
+                  "PreferNoSchedule",
+                  "NoExecute"
+                ]
+              },
+              "tolerationSeconds": {
+                "type": "integer"
+              }
+            }
+          }
+        },
+        "annotations": {
+          "type": "object",
+          "description": "Annotations applied to the Deployment/Job resource itself.",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "podAnnotations": {
+          "type": "object",
+          "description": "Annotations applied to every pod. Merged with top-level podAnnotations; component values take precedence.",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "podLabels": {
+          "type": "object",
+          "description": "Extra labels applied to every pod. Merged with top-level podLabels; component values take precedence.",
+          "additionalProperties": {
+            "type": "string"
+          }
         }
       },
       "description": "Redis cache configuration"
@@ -4824,6 +5322,67 @@
             }
           },
           "description": "Redis Commander service configuration"
+        },
+        "nodeSelector": {
+          "type": "object",
+          "description": "Node labels for pod assignment. Component-specific value takes precedence over top-level nodeSelector.",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "tolerations": {
+          "type": "array",
+          "description": "Tolerations for pod scheduling onto tainted nodes. Component-specific value takes precedence over top-level tolerations.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "key": {
+                "type": "string"
+              },
+              "operator": {
+                "type": "string",
+                "enum": [
+                  "Equal",
+                  "Exists"
+                ]
+              },
+              "value": {
+                "type": "string"
+              },
+              "effect": {
+                "type": "string",
+                "enum": [
+                  "NoSchedule",
+                  "PreferNoSchedule",
+                  "NoExecute"
+                ]
+              },
+              "tolerationSeconds": {
+                "type": "integer"
+              }
+            }
+          }
+        },
+        "annotations": {
+          "type": "object",
+          "description": "Annotations applied to the Deployment/Job resource itself.",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "podAnnotations": {
+          "type": "object",
+          "description": "Annotations applied to every pod. Merged with top-level podAnnotations; component values take precedence.",
+          "additionalProperties": {
+            "type": "string"
+          }
+        },
+        "podLabels": {
+          "type": "object",
+          "description": "Extra labels applied to every pod. Merged with top-level podLabels; component values take precedence.",
+          "additionalProperties": {
+            "type": "string"
+          }
         }
       },
       "description": "Redis Commander configuration"
@@ -5405,6 +5964,67 @@
         }
       },
       "description": "Optional TLS profile values"
+    },
+    "nodeSelector": {
+      "type": "object",
+      "description": "Global node labels for pod assignment. Applied to all deployments unless overridden per component.",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "tolerations": {
+      "type": "array",
+      "description": "Global tolerations for pod scheduling. Applied to all deployments unless overridden per component.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "operator": {
+            "type": "string",
+            "enum": [
+              "Equal",
+              "Exists"
+            ]
+          },
+          "value": {
+            "type": "string"
+          },
+          "effect": {
+            "type": "string",
+            "enum": [
+              "NoSchedule",
+              "PreferNoSchedule",
+              "NoExecute"
+            ]
+          },
+          "tolerationSeconds": {
+            "type": "integer"
+          }
+        }
+      }
+    },
+    "podAnnotations": {
+      "type": "object",
+      "description": "Global pod annotations applied to all deployments. Merged with per-component podAnnotations.",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "podLabels": {
+      "type": "object",
+      "description": "Global pod labels applied to all deployments. Merged with per-component podLabels.",
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
+    "annotations": {
+      "type": "object",
+      "description": "Global annotations applied to all Deployment/Job resources. Merged with per-component annotations; component values take precedence.",
+      "additionalProperties": {
+        "type": "string"
+      }
     }
   },
   "description": "JSON Schema for MCP Stack Helm Chart values.yaml",
