@@ -40,6 +40,7 @@ def test_get_predefined_sso_providers_multiple(monkeypatch):
         sso_ibm_verify_client_id="ibm-client",
         sso_ibm_verify_client_secret=secret,
         sso_ibm_verify_issuer="https://tenant.verify.ibm.com",
+        ibm_verify_group_mapping='{"CN=Developers,OU=Groups": "dev-team-uuid"}',
         sso_okta_enabled=True,
         sso_okta_client_id="okta-client",
         sso_okta_client_secret=secret,
@@ -110,6 +111,9 @@ def test_get_predefined_sso_providers_multiple(monkeypatch):
     okta_provider = next(provider for provider in providers if provider["id"] == "okta")
     assert okta_provider["scope"] == "openid profile email groups"
     assert okta_provider["team_mapping"] == {"Engineering": "team-uuid-1"}
+
+    ibm_verify_provider = next(provider for provider in providers if provider["id"] == "ibm_verify")
+    assert ibm_verify_provider["team_mapping"] == {"CN=Developers,OU=Groups": "dev-team-uuid"}
 
     entra_provider = next(provider for provider in providers if provider["id"] == "entra")
     entra_metadata = entra_provider["provider_metadata"]
@@ -1062,6 +1066,102 @@ def test_okta_invalid_group_mapping_json_uses_empty(monkeypatch, caplog):
     assert len(providers) == 1
     assert providers[0]["team_mapping"] == {}
     assert any("Failed to parse OKTA_GROUP_MAPPING" in record.message for record in caplog.records)
+
+def test_ibm_verify_default_scope_without_group_mapping(monkeypatch):
+    """IBM Verify should use empty team_mapping when IBM_VERIFY_GROUP_MAPPING is not set."""
+    # First-Party
+    from mcpgateway.utils.sso_bootstrap import get_predefined_sso_providers
+
+    secret = DummySecret("secret-value")
+    cfg = SimpleNamespace(
+        sso_github_enabled=False,
+        sso_github_client_id=None,
+        sso_github_client_secret=None,
+        sso_google_enabled=False,
+        sso_google_client_id=None,
+        sso_google_client_secret=None,
+        sso_ibm_verify_enabled=True,
+        sso_ibm_verify_client_id="ibm-client",
+        sso_ibm_verify_client_secret=secret,
+        sso_ibm_verify_issuer="https://tenant.verify.ibm.com",
+        ibm_verify_group_mapping=None,
+        sso_okta_enabled=False,
+        sso_okta_client_id=None,
+        sso_okta_client_secret=None,
+        sso_okta_issuer=None,
+        sso_okta_scope="openid profile email",
+        okta_group_mapping=None,
+        sso_entra_enabled=False,
+        sso_entra_client_id=None,
+        sso_entra_client_secret=None,
+        sso_entra_tenant_id=None,
+        sso_keycloak_enabled=False,
+        sso_keycloak_base_url=None,
+        sso_keycloak_client_id=None,
+        sso_adfs_enabled=False,
+        sso_generic_enabled=False,
+        sso_generic_provider_id=None,
+        sso_generic_client_id=None,
+        sso_trusted_domains=[],
+        sso_auto_create_users=True,
+    )
+
+    monkeypatch.setattr("mcpgateway.utils.sso_bootstrap.settings", cfg)
+    providers = get_predefined_sso_providers()
+
+    assert len(providers) == 1
+    ibm_verify = providers[0]
+    assert ibm_verify["id"] == "ibm_verify"
+    assert ibm_verify["team_mapping"] == {}
+
+
+def test_ibm_verify_invalid_group_mapping_json_uses_empty(monkeypatch, caplog):
+    """Invalid IBM_VERIFY_GROUP_MAPPING JSON should log warning and use empty mapping."""
+    # First-Party
+    from mcpgateway.utils.sso_bootstrap import get_predefined_sso_providers
+
+    secret = DummySecret("secret-value")
+    cfg = SimpleNamespace(
+        sso_github_enabled=False,
+        sso_github_client_id=None,
+        sso_github_client_secret=None,
+        sso_google_enabled=False,
+        sso_google_client_id=None,
+        sso_google_client_secret=None,
+        sso_ibm_verify_enabled=True,
+        sso_ibm_verify_client_id="ibm-client",
+        sso_ibm_verify_client_secret=secret,
+        sso_ibm_verify_issuer="https://tenant.verify.ibm.com",
+        ibm_verify_group_mapping="not-valid-json{",
+        sso_okta_enabled=False,
+        sso_okta_client_id=None,
+        sso_okta_client_secret=None,
+        sso_okta_issuer=None,
+        sso_okta_scope="openid profile email",
+        okta_group_mapping=None,
+        sso_entra_enabled=False,
+        sso_entra_client_id=None,
+        sso_entra_client_secret=None,
+        sso_entra_tenant_id=None,
+        sso_keycloak_enabled=False,
+        sso_keycloak_base_url=None,
+        sso_keycloak_client_id=None,
+        sso_adfs_enabled=False,
+        sso_generic_enabled=False,
+        sso_generic_provider_id=None,
+        sso_generic_client_id=None,
+        sso_trusted_domains=[],
+        sso_auto_create_users=True,
+    )
+
+    monkeypatch.setattr("mcpgateway.utils.sso_bootstrap.settings", cfg)
+    with caplog.at_level(logging.WARNING, logger="mcpgateway.utils.sso_bootstrap"):
+        providers = get_predefined_sso_providers()
+
+    assert len(providers) == 1
+    assert providers[0]["team_mapping"] == {}
+    assert any("Failed to parse IBM_VERIFY_GROUP_MAPPING" in record.message for record in caplog.records)
+
 
 
 class TestBootstrapPreservesDBValues:
