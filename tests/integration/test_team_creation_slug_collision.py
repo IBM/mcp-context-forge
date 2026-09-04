@@ -37,21 +37,34 @@ from mcpgateway.middleware.rbac import get_db as rbac_get_db
 from mcpgateway.utils.verify_credentials import require_auth
 
 
-@pytest.fixture(params=["admin", "non_admin"])
-def client_with_teams(tmp_path, request):
-    """FastAPI TestClient with a real database and a seeded user.
+@pytest.fixture
+def admin_client_with_teams(tmp_path):
+    """TestClient with a real DB and a platform_admin (``*`` role) identity.
+
+    The router's tiered disclosure returns a specific 400 (with the colliding team's name in the
+    body) when this identity collides with an active team's slug.
+    """
+    yield from _make_team_client(tmp_path, is_admin=True)
+
+
+@pytest.fixture
+def non_admin_client_with_teams(tmp_path):
+    """TestClient with a real DB and a non-admin (``teams.create``/``teams.read`` only) identity.
+
+    The router must NOT leak the colliding team's existence, returning a generic 409 instead.
+    """
+    yield from _make_team_client(tmp_path, is_admin=False)
+
+
+def _make_team_client(tmp_path, is_admin):
+    """Build a FastAPI TestClient with a real database and a seeded user.
 
     Mirrors the pattern in test_admin_teams_ui.py: a temp SQLite file, real schema, a seeded
     user, and an active team whose slug we will collide with.
 
-    The ``request.param`` controls the identity under which the collision POST is issued:
-
-    * ``admin`` - a platform_admin user (is_admin=True, ``*`` role). The router's tiered
-      disclosure returns a specific 400 with the perfectly-named team in the body.
-    * ``non_admin`` - a user with only ``teams.create``/``teams.read`` but no ``*`` role. The
-      router must NOT leak the purposefully-named team, returning a generic 409 instead.
+    ``is_admin`` controls the identity under which the collision POST is issued (see
+    ``admin_client_with_teams`` / ``non_admin_client_with_teams``).
     """
-    is_admin = request.param == "admin"
     mp = MonkeyPatch()
 
     db_path = tmp_path / "test.db"
@@ -191,11 +204,10 @@ def client_with_teams(tmp_path, request):
 
 
 @pytest.mark.integration
-def test_second_post_same_name_returns_400_not_500(client_with_teams):
-    """ICA20-1559 contract: a POST colliding with an EXISTING ACTIVE team returns 400, never 500."""
-    client, _, is_admin = client_with_teams
-    if not is_admin:
-        pytest.skip("admin-specific tiered disclosure")
+def test_second_post_same_name_returns_400_not_500(admin_client_with_teams):
+    """ICA20-1559 contract: an admin POST colliding with an EXISTING ACTIVE team returns 400, never
+    500, and discloses the specific conflicting team (the caller is authorized to see it)."""
+    client, _, _ = admin_client_with_teams
 
     payload = {"name": "Existing Active Team", "visibility": "private"}
 
@@ -208,12 +220,10 @@ def test_second_post_same_name_returns_400_not_500(client_with_teams):
 
 
 @pytest.mark.integration
-def test_second_post_same_name_non_admin_returns_409(client_with_teams):
+def test_second_post_same_name_non_admin_returns_409(non_admin_client_with_teams):
     """ICA20-1559: a non-admin colliding with an active team gets a generic 409, never a 500
     and never a leak of the purposefully-named team (identity is derivable from it)."""
-    client, _, is_admin = client_with_teams
-    if is_admin:
-        pytest.skip("non-admin 409 path")
+    client, _, _ = non_admin_client_with_teams
 
     payload = {"name": "Existing Active Team", "visibility": "private"}
 
@@ -226,11 +236,11 @@ def test_second_post_same_name_non_admin_returns_409(client_with_teams):
 
 
 @pytest.mark.integration
-def test_create_team_success_still_returns_201(client_with_teams):
-    """Guard: creating a genuinely NEW team still returns 201 (no regression)."""
-    client, _, is_admin = client_with_teams
-    if not is_admin:
-        pytest.skip("admin-only guard")
+@pytest.mark.parametrize("client_fixture", ["admin_client_with_teams", "non_admin_client_with_teams"])
+def test_create_team_success_still_returns_201(client_fixture, request):
+    """Guard: creating a genuinely NEW team still returns 201 for BOTH admin and non-admin (no
+    regression on the collision fix, and the non-admin creation path is covered too)."""
+    client, _, _ = request.getfixturevalue(client_fixture)
 
     payload = {"name": "Brand New Team", "visibility": "private"}
 
@@ -239,3 +249,28 @@ def test_create_team_success_still_returns_201(client_with_teams):
     assert response.status_code == 201, (
         f"Expected 201 on fresh team creation, got {response.status_code}: {response.text}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Waiver: concurrent-race (flush IntegrityError) backstop is NOT covered at the
+# integration level — by design, not omission.
+#
+# The backstop (team_management_service.create_team_with_members, the
+# `except IntegrityError` around `self.db.flush()`) can only fire when two fully
+# concurrent in-flight transactions BOTH pass the active-slug pre-check before
+# either commits. `email_teams.slug` is globally unique across active and
+# inactive rows, so a single sequential request can never make the pre-check
+# miss a row that the later insert collides with — the two statements observe
+# the same rows absent real concurrency.
+#
+# Reproducing that true race here would require real multi-worker/threaded
+# concurrency against the SQLite + StaticPool + single-TestClient harness this
+# file uses; SQLite write-locking makes such a test inherently non-deterministic
+# and flaky, which would be worse than no test.
+#
+# The backstop is therefore covered deterministically at the unit level by
+# `test_team_management_service.py::test_create_team_flush_integrity_error_becomes_conflict`,
+# which forces the flush IntegrityError and asserts it surfaces as a clean
+# TeamNameConflictError (routed to 400/409). The race is closed by the same DB
+# unique constraint the sequential 400/409 tests above already prove end-to-end.
+# ---------------------------------------------------------------------------

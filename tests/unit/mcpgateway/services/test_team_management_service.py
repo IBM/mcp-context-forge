@@ -395,6 +395,43 @@ class TestTeamManagementService:
             mock_db.flush.assert_called()
             mock_db.rollback.assert_called()
 
+    @pytest.mark.asyncio
+    async def test_create_team_with_members_rejects_active_collision(self, service, mock_db):
+        """A slug collision must surface as TeamNameConflictError through the public
+        ``create_team_with_members`` entry point, the method the router actually calls
+        (routers/teams.py creates the team via ``service.create_team_with_members(...)``)."""
+        mock_active_team = MagicMock(spec=EmailTeam)
+        mock_active_team.id = "existing_active_team_id"
+        mock_active_team.name = "Existing Active Team"
+        mock_active_team.is_active = True
+
+        # No inactive team (first .first() -> None), then the active-slug check finds the collision.
+        mock_db.query.return_value.filter.return_value.first.side_effect = [
+            None,
+            mock_active_team,
+        ]
+
+        with (
+            patch("mcpgateway.services.team_management_service.slugify") as mock_slugify,
+            patch("mcpgateway.services.team_management_service.EmailTeam") as MockTeam,
+            patch("mcpgateway.services.team_management_service.EmailTeamMember"),
+        ):
+            mock_slugify.return_value = "test-team"
+
+            with pytest.raises(TeamNameConflictError, match="already exists"):
+                await service.create_team_with_members(
+                    name="Existing Active Team",
+                    description="A colliding team",
+                    created_by="admin@example.com",
+                    visibility="private",
+                )
+
+            # Nothing may be inserted, flushed, or committed.
+            MockTeam.assert_not_called()
+            mock_db.add.assert_not_called()
+            mock_db.flush.assert_not_called()
+            mock_db.commit.assert_not_called()
+
     # =========================================================================
     # Team Retrieval Tests
     # =========================================================================
