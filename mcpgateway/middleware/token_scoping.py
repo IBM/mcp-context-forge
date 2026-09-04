@@ -135,6 +135,9 @@ _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     # They must precede the generic POST sub-resource rule below.
     ("POST", re.compile(r"^/gateways/test(?:$|/)"), Permissions.GATEWAYS_READ),
     ("POST", re.compile(r"^/gateways/test-handshake(?:$|/)"), Permissions.GATEWAYS_READ),
+    # Public metadata discovery is part of gateway creation, not a gateway update.
+    # It must precede the generic gateway sub-resource pattern below.
+    ("POST", re.compile(r"^/gateways/discover-metadata/?$"), Permissions.GATEWAYS_CREATE),
     ("GET", re.compile(r"^/gateways(?:$|/)"), Permissions.GATEWAYS_READ),
     ("POST", re.compile(r"^/gateways/?$"), Permissions.GATEWAYS_CREATE),  # Only exact /gateways or /gateways/
     ("POST", re.compile(r"^/gateways/[^/]+/"), Permissions.GATEWAYS_UPDATE),  # POST to sub-resources (state, toggle, refresh)

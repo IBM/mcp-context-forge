@@ -1742,6 +1742,8 @@ class TestTokenScopingMiddleware:
         # Test POST /gateways (exact) requires GATEWAYS_CREATE
         assert middleware._check_permission_restrictions("/gateways", "POST", [Permissions.GATEWAYS_CREATE]) is True
         assert middleware._check_permission_restrictions("/gateways/", "POST", [Permissions.GATEWAYS_CREATE]) is True
+        assert middleware._check_permission_restrictions("/gateways/discover-metadata", "POST", [Permissions.GATEWAYS_CREATE]) is True
+        assert middleware._check_permission_restrictions("/gateways/discover-metadata", "POST", [Permissions.GATEWAYS_UPDATE]) is False
 
         # Test POST to sub-resources requires GATEWAYS_UPDATE (not CREATE)
         assert middleware._check_permission_restrictions("/gateways/gw-123/state", "POST", [Permissions.GATEWAYS_UPDATE]) is True

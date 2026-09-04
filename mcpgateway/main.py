@@ -154,6 +154,8 @@ from mcpgateway.schemas import (
     HealthStatusItem,
     JsonPathModifier,
     MetricsResponse,
+    OAuthMetadataDiscoveryRequest,
+    OAuthMetadataDiscoveryResponse,
     PromptCreate,
     PromptExecuteArgs,
     PromptRead,
@@ -177,10 +179,12 @@ from mcpgateway.schemas import (
 )
 from mcpgateway.services.a2a_server_service import A2AServerService
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
+from mcpgateway.services.audit_trail_service import get_audit_trail_service
 from mcpgateway.services.cancellation_service import cancellation_service
 from mcpgateway.services.completion_service import CompletionError, CompletionService
 from mcpgateway.services.content_security import ContentPatternError, ContentSizeError, ContentTypeError, TemplateValidationError
 from mcpgateway.services.dataplane_publisher import DataplanePublisherService
+from mcpgateway.services.dcr_service import DcrError, DcrService
 from mcpgateway.services.email_auth_service import EmailAuthService
 from mcpgateway.services.export_service import ExportError, ExportService
 from mcpgateway.services.gateway_service import (
@@ -7400,6 +7404,75 @@ async def list_gateways(
     if include_pagination:
         return CursorPaginatedGatewaysResponse.model_construct(gateways=data, next_cursor=next_cursor)
     return data
+
+
+_OAUTH_DISCOVERY_ERROR_MESSAGES = {
+    "not_found": "OAuth metadata was not served by this issuer. Enter the endpoint URLs manually.",
+    "invalid_metadata": "OAuth metadata from this issuer was invalid. Enter the endpoint URLs manually.",
+    "blocked": "This issuer URL is blocked by the outbound security policy.",
+    "timeout": "OAuth metadata request timed out. Try again or enter the endpoint URLs manually.",
+}
+
+
+def _safe_oauth_issuer_for_audit(value: str) -> str:
+    """Return an issuer identifier without query, fragment, or credentials for audit logs."""
+    parsed = urlparse(value)
+    if not parsed.scheme or not parsed.hostname:
+        return "invalid-issuer"
+    try:
+        port = f":{parsed.port}" if parsed.port is not None else ""
+    except ValueError:
+        return "invalid-issuer"
+    return f"{parsed.scheme}://{parsed.hostname}{port}{parsed.path}"
+
+
+@gateway_router.post("/discover-metadata", response_model=OAuthMetadataDiscoveryResponse)
+@require_permission("gateways.create")
+async def discover_oauth_metadata(
+    discovery_request: OAuthMetadataDiscoveryRequest,
+    request: Request,
+    user=Depends(get_current_user_with_permissions),
+) -> OAuthMetadataDiscoveryResponse:
+    """Discover OAuth authorization-server metadata for gateway registration.
+
+    The endpoint is deliberately POST so issuer URLs do not appear in access-log
+    query strings. Provider lookup failures return a structured 200 response so
+    callers can keep manual OAuth configuration available.
+    """
+    issuer_for_audit = _safe_oauth_issuer_for_audit(discovery_request.issuer_url)
+    user_email = get_user_email(user)
+    outcome = "success"
+    error_code: Optional[str] = None
+
+    try:
+        metadata = await DcrService().discover_public_metadata(discovery_request.issuer_url)
+        response = OAuthMetadataDiscoveryResponse(
+            discovered=True,
+            authorization_url=metadata.get("authorization_endpoint"),
+            token_url=metadata.get("token_endpoint"),
+            registration_endpoint=metadata.get("registration_endpoint"),
+            scopes_supported=metadata.get("scopes_supported") or [],
+        )
+    except DcrError as exc:
+        outcome = "failure"
+        error_code = exc.code if exc.code in _OAUTH_DISCOVERY_ERROR_MESSAGES else "invalid_metadata"
+        response = OAuthMetadataDiscoveryResponse(
+            discovered=False,
+            error=_OAUTH_DISCOVERY_ERROR_MESSAGES[error_code],
+            error_code=error_code,
+        )
+
+    get_audit_trail_service().log_action(
+        user_id=user_email or "unknown",
+        action="discover_oauth_metadata",
+        resource_type="oauth_issuer",
+        resource_id=None,
+        resource_name=issuer_for_audit,
+        user_email=user_email,
+        client_ip=request.client.host if request.client else None,
+        details={"outcome": outcome, "error_code": error_code},
+    )
+    return response
 
 
 @gateway_router.post("", response_model=GatewayRead)

@@ -12,8 +12,12 @@ This module handles OAuth 2.0 Dynamic Client Registration (DCR) including:
 """
 
 # Standard
+import asyncio
+from collections import OrderedDict
 from datetime import datetime, timezone
+import ipaddress
 import logging
+import socket
 from typing import Any, Dict, List
 from urllib.parse import urlsplit
 
@@ -33,7 +37,13 @@ logger = logging.getLogger(__name__)
 
 # In-memory cache for AS metadata
 # Format: {issuer: {"metadata": dict, "cached_at": datetime}}
-_metadata_cache: Dict[str, Dict[str, Any]] = {}
+_metadata_cache: OrderedDict[str, Dict[str, Any]] = OrderedDict()
+_metadata_locks: Dict[str, asyncio.Lock] = {}
+_metadata_locks_guard = asyncio.Lock()
+
+_DISCOVERY_TIMEOUT_SECONDS = 5.0
+_DISCOVERY_MAX_RESPONSE_BYTES = 256 * 1024
+_DISCOVERY_MAX_CACHE_ENTRIES = 256
 
 
 class DcrService:
@@ -59,6 +69,137 @@ class DcrService:
         """
         return float(self.settings.oauth_request_timeout)
 
+    @staticmethod
+    def _get_cached_metadata(normalized_issuer: str, cache_ttl: int) -> Dict[str, Any] | None:
+        """Return fresh cached metadata for an issuer when available."""
+        cached_entry = _metadata_cache.get(normalized_issuer)
+        if cached_entry is None:
+            return None
+
+        cache_age = (datetime.now(timezone.utc) - cached_entry["cached_at"]).total_seconds()
+        if cache_age >= cache_ttl:
+            _metadata_cache.pop(normalized_issuer, None)
+            return None
+        _metadata_cache.move_to_end(normalized_issuer)
+        return cached_entry["metadata"]
+
+    @staticmethod
+    def _cache_metadata(normalized_issuer: str, metadata: Dict[str, Any]) -> None:
+        """Store discovery metadata in a bounded process-local LRU cache."""
+        _metadata_cache[normalized_issuer] = {"metadata": metadata, "cached_at": datetime.now(timezone.utc)}
+        _metadata_cache.move_to_end(normalized_issuer)
+        while len(_metadata_cache) > _DISCOVERY_MAX_CACHE_ENTRIES:
+            _metadata_cache.popitem(last=False)
+
+    async def _metadata_lock(self, normalized_issuer: str) -> asyncio.Lock:
+        """Return the process-local singleflight lock for an issuer."""
+        async with _metadata_locks_guard:
+            return _metadata_locks.setdefault(normalized_issuer, asyncio.Lock())
+
+    async def _validate_discovery_issuer(self, issuer: str) -> str:
+        """Validate a public-discovery issuer before outbound I/O."""
+        try:
+            target = await SecurityValidator.validate_url_for_connection_pinning(issuer, "OAuth issuer URL")
+        except ValueError as exc:
+            raise DcrError("OAuth issuer URL is blocked by outbound security policy", code="blocked") from exc
+
+        normalized_issuer = str(target["validated_url"]).rstrip("/")
+        parsed = urlsplit(normalized_issuer)
+        if parsed.scheme != "https" or not parsed.netloc or parsed.query or parsed.fragment or parsed.username or parsed.password:
+            raise DcrError("OAuth issuer URL must be an HTTPS origin or path without credentials, query, or fragment", code="blocked")
+        await self._validate_public_discovery_target(parsed.hostname)
+        return normalized_issuer
+
+    @staticmethod
+    async def _validate_public_discovery_target(hostname: str | None) -> None:
+        """Deny non-public network targets regardless of global gateway settings."""
+        if not hostname or hostname.lower() in {"localhost", "localhost.localdomain"}:
+            raise DcrError("OAuth issuer URL is blocked by outbound security policy", code="blocked")
+
+        try:
+            addr_info = await asyncio.wait_for(
+                asyncio.to_thread(socket.getaddrinfo, hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM),
+                timeout=_DISCOVERY_TIMEOUT_SECONDS,
+            )
+        except (TimeoutError, socket.gaierror, socket.herror) as exc:
+            raise DcrError("OAuth issuer URL is blocked by outbound security policy", code="blocked") from exc
+        addresses = {sockaddr[0] for _, _, _, _, sockaddr in addr_info}
+
+        try:
+            if any(not ipaddress.ip_address(address).is_global for address in addresses):
+                raise DcrError("OAuth issuer URL is blocked by outbound security policy", code="blocked")
+        except ValueError as exc:
+            raise DcrError("OAuth issuer URL is blocked by outbound security policy", code="blocked") from exc
+
+    async def _fetch_public_metadata_document(self, url: str, normalized_issuer: str) -> Dict[str, Any] | None:
+        """Stream one public discovery document within safety limits."""
+        try:
+            client = await self._get_client()
+            stream_context = client.stream(
+                "GET",
+                url,
+                timeout=min(self._get_timeout(), _DISCOVERY_TIMEOUT_SECONDS),
+                follow_redirects=False,
+                headers={"Accept": "application/json"},
+            )
+            async with stream_context as response:
+                if 300 <= response.status_code < 400:
+                    raise DcrError("OAuth issuer metadata redirects are not allowed", code="invalid_metadata")
+                if response.status_code != 200:
+                    return None
+
+                content_length = response.headers.get("content-length")
+                if content_length:
+                    try:
+                        if int(content_length) > _DISCOVERY_MAX_RESPONSE_BYTES:
+                            raise DcrError("OAuth issuer metadata response is too large", code="invalid_metadata")
+                    except ValueError:
+                        raise DcrError("OAuth issuer metadata response has an invalid content length", code="invalid_metadata") from None
+
+                content = bytearray()
+                async for chunk in response.aiter_bytes():
+                    content.extend(chunk)
+                    if len(content) > _DISCOVERY_MAX_RESPONSE_BYTES:
+                        raise DcrError("OAuth issuer metadata response is too large", code="invalid_metadata")
+        except httpx.TimeoutException as exc:
+            raise DcrError("OAuth issuer metadata request timed out", code="timeout") from exc
+        except httpx.HTTPError as exc:
+            raise DcrError("OAuth issuer metadata could not be reached", code="not_found") from exc
+
+        try:
+            metadata = orjson.loads(content)
+        except (ValueError, orjson.JSONDecodeError) as exc:
+            raise DcrError("OAuth issuer metadata is not valid JSON", code="invalid_metadata") from exc
+        if not isinstance(metadata, dict):
+            raise DcrError("OAuth issuer metadata must be a JSON object", code="invalid_metadata")
+
+        metadata_issuer = str(metadata.get("issuer") or "").rstrip("/")
+        if metadata_issuer != normalized_issuer:
+            raise DcrError("OAuth issuer metadata issuer mismatch", code="invalid_metadata")
+        self._validate_metadata_shape(metadata)
+        return metadata
+
+    @staticmethod
+    def _validate_metadata_shape(metadata: Dict[str, Any]) -> None:
+        """Validate metadata fields that are returned to the registration UI."""
+        for field_name in ("authorization_endpoint", "token_endpoint"):
+            value = metadata.get(field_name)
+            if value is None:
+                continue
+            parsed = urlsplit(value) if isinstance(value, str) else None
+            if not parsed or parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password:
+                raise DcrError(f"OAuth issuer metadata has invalid {field_name}", code="invalid_metadata")
+
+        registration_endpoint = metadata.get("registration_endpoint")
+        if registration_endpoint is not None:
+            parsed = urlsplit(registration_endpoint) if isinstance(registration_endpoint, str) else None
+            if not parsed or parsed.scheme != "https" or not parsed.netloc or parsed.username or parsed.password:
+                raise DcrError("OAuth issuer metadata has invalid registration_endpoint", code="invalid_metadata")
+
+        scopes_supported = metadata.get("scopes_supported")
+        if scopes_supported is not None and (not isinstance(scopes_supported, list) or not all(isinstance(scope, str) and scope for scope in scopes_supported)):
+            raise DcrError("OAuth issuer metadata has invalid scopes_supported", code="invalid_metadata")
+
     async def discover_as_metadata(self, issuer: str) -> Dict[str, Any]:
         """Discover AS metadata via RFC 8414.
 
@@ -75,80 +216,97 @@ class DcrService:
         Raises:
             DcrError: If metadata cannot be discovered
         """
-        # Normalize issuer URL by removing trailing slash for consistency.
-        # Per RFC 8414 Section 3.1, any terminating "/" MUST be removed before
-        # inserting "/.well-known/" and the well-known URI suffix.
-        # This also works around MCP Python SDK issue #1919 where Pydantic's
-        # AnyHttpUrl adds trailing slashes to bare hostnames.
-        # See: https://github.com/modelcontextprotocol/python-sdk/issues/1919
+        # This service remains compatible with existing gateway registrations.
+        # Public endpoint callers must use discover_public_metadata() below.
         normalized_issuer = issuer.rstrip("/")
+        cached = self._get_cached_metadata(normalized_issuer, self.settings.dcr_metadata_cache_ttl)
+        if cached is not None:
+            logger.debug("Using cached AS metadata for %s", normalized_issuer)
+            return cached
 
-        # Check cache first (using normalized issuer as key for consistency)
-        if normalized_issuer in _metadata_cache:
-            cached_entry = _metadata_cache[normalized_issuer]
-            cached_at = cached_entry["cached_at"]
-            cache_age = (datetime.now(timezone.utc) - cached_at).total_seconds()
-
-            if cache_age < self.settings.dcr_metadata_cache_ttl:
-                logger.debug("Using cached AS metadata for %s", normalized_issuer)
-                return cached_entry["metadata"]
-
-        # Try RFC 8414 path first
-        # Per RFC 8414 Section 3.1: "the well-known URI is formed by inserting the
-        # well-known URI string... between the host component and any existing path
-        # component of the issuer's identifier".
-        # See: https://datatracker.ietf.org/doc/html/rfc8414#section-3.1
-        parsed = urlsplit(normalized_issuer)
-        rfc8414_url = f"{parsed.scheme}://{parsed.netloc}/.well-known/oauth-authorization-server"
-        if parsed.path:
-            rfc8414_url += parsed.path
-
+        metadata_lock = await self._metadata_lock(normalized_issuer)
         try:
-            client = await self._get_client()
-            response = await client.get(rfc8414_url, timeout=self._get_timeout(), follow_redirects=False)
-            if 300 <= response.status_code < 400:
-                raise DcrError(f"AS metadata discovery redirect refused for {normalized_issuer} (status: {response.status_code})")
-            if response.status_code == 200:
-                metadata = response.json()
+            async with metadata_lock:
+                cached = self._get_cached_metadata(normalized_issuer, self.settings.dcr_metadata_cache_ttl)
+                if cached is not None:
+                    logger.debug("Using cached AS metadata for %s", normalized_issuer)
+                    return cached
 
-                # Validate issuer matches (normalize metadata issuer for comparison)
-                metadata_issuer = (metadata.get("issuer") or "").rstrip("/")
+                # RFC 8414 inserts the well-known path between authority and any issuer path.
+                parsed = urlsplit(normalized_issuer)
+                rfc8414_url = f"{parsed.scheme}://{parsed.netloc}/.well-known/oauth-authorization-server{parsed.path}"
+                try:
+                    client = await self._get_client()
+                    response = await client.get(rfc8414_url, timeout=self._get_timeout(), follow_redirects=False)
+                    if 300 <= response.status_code < 400:
+                        raise DcrError(f"AS metadata discovery redirect refused for {normalized_issuer} (status: {response.status_code})")
+                    metadata = response.json() if response.status_code == 200 else None
+                except httpx.HTTPError as exc:
+                    logger.debug("RFC 8414 discovery failed for %s: %s, trying OIDC fallback", normalized_issuer, exc)
+                    metadata = None
+                discovery_method = "RFC 8414"
+
+                if metadata is None:
+                    oidc_url = f"{normalized_issuer}/.well-known/openid-configuration"
+                    try:
+                        client = await self._get_client()
+                        response = await client.get(oidc_url, timeout=self._get_timeout(), follow_redirects=False)
+                        if 300 <= response.status_code < 400:
+                            raise DcrError(f"AS metadata discovery redirect refused for {normalized_issuer} (status: {response.status_code})")
+                        metadata = response.json() if response.status_code == 200 else None
+                    except httpx.HTTPError as exc:
+                        raise DcrError(f"Failed to discover AS metadata for {normalized_issuer}: {exc}") from exc
+                    discovery_method = "OIDC Discovery"
+
+                if metadata is None:
+                    raise DcrError("OAuth issuer metadata was not found", code="not_found")
+
+                metadata_issuer = str(metadata.get("issuer") or "").rstrip("/")
                 if metadata_issuer != normalized_issuer:
                     raise DcrError(f"AS metadata issuer mismatch: expected {normalized_issuer}, got {metadata.get('issuer')}")
 
-                # Cache the metadata
-                _metadata_cache[normalized_issuer] = {"metadata": metadata, "cached_at": datetime.now(timezone.utc)}
-
-                logger.info("Discovered AS metadata for %s via RFC 8414", normalized_issuer)
+                self._cache_metadata(normalized_issuer, metadata)
+                logger.info("Discovered AS metadata for %s via %s", normalized_issuer, discovery_method)
                 return metadata
-        except httpx.HTTPError as e:
-            logger.debug("RFC 8414 discovery failed for %s: %s, trying OIDC fallback", normalized_issuer, e)
+        finally:
+            # Locks guard only in-flight work. Keeping one for every user-supplied
+            # issuer would let this public endpoint grow process memory forever.
+            async with _metadata_locks_guard:
+                if _metadata_locks.get(normalized_issuer) is metadata_lock and not metadata_lock.locked():
+                    _metadata_locks.pop(normalized_issuer, None)
 
-        # Try OIDC discovery fallback
-        oidc_url = f"{normalized_issuer}/.well-known/openid-configuration"
-
+    async def discover_public_metadata(self, issuer: str) -> Dict[str, Any]:
+        """Discover metadata for public gateway-registration form autofill."""
+        normalized_issuer = await self._validate_discovery_issuer(issuer)
+        cached = self._get_cached_metadata(normalized_issuer, self.settings.dcr_metadata_cache_ttl)
+        if cached is not None:
+            self._validate_metadata_shape(cached)
+            return cached
+        metadata_lock = await self._metadata_lock(normalized_issuer)
         try:
-            client = await self._get_client()
-            response = await client.get(oidc_url, timeout=self._get_timeout(), follow_redirects=False)
-            if 300 <= response.status_code < 400:
-                raise DcrError(f"AS metadata discovery redirect refused for {normalized_issuer} (status: {response.status_code})")
-            if response.status_code == 200:
-                metadata = response.json()
-
-                # Validate issuer matches (normalize metadata issuer for comparison)
-                metadata_issuer = (metadata.get("issuer") or "").rstrip("/")
-                if metadata_issuer != normalized_issuer:
-                    raise DcrError(f"AS metadata issuer mismatch: expected {normalized_issuer}, got {metadata.get('issuer')}")
-
-                # Cache the metadata
-                _metadata_cache[normalized_issuer] = {"metadata": metadata, "cached_at": datetime.now(timezone.utc)}
-
-                logger.info("Discovered AS metadata for %s via OIDC discovery", normalized_issuer)
+            async with metadata_lock:
+                cached = self._get_cached_metadata(normalized_issuer, self.settings.dcr_metadata_cache_ttl)
+                if cached is not None:
+                    self._validate_metadata_shape(cached)
+                    return cached
+                parsed = urlsplit(normalized_issuer)
+                metadata = await self._fetch_public_metadata_document(
+                    f"{parsed.scheme}://{parsed.netloc}/.well-known/oauth-authorization-server{parsed.path}",
+                    normalized_issuer,
+                )
+                if metadata is None:
+                    metadata = await self._fetch_public_metadata_document(
+                        f"{normalized_issuer}/.well-known/openid-configuration",
+                        normalized_issuer,
+                    )
+                if metadata is None:
+                    raise DcrError("OAuth issuer metadata was not found", code="not_found")
+                self._cache_metadata(normalized_issuer, metadata)
                 return metadata
-
-            raise DcrError(f"AS metadata not found for {normalized_issuer} (status: {response.status_code})")
-        except httpx.HTTPError as e:
-            raise DcrError(f"Failed to discover AS metadata for {normalized_issuer}: {e}")
+        finally:
+            async with _metadata_locks_guard:
+                if _metadata_locks.get(normalized_issuer) is metadata_lock and not metadata_lock.locked():
+                    _metadata_locks.pop(normalized_issuer, None)
 
     async def register_client(self, gateway_id: str, gateway_name: str, issuer: str, redirect_uri: str, scopes: List[str], db: Session) -> RegisteredOAuthClient:
         """Register as OAuth client with upstream AS (RFC 7591).
@@ -294,7 +452,9 @@ class DcrService:
         # Try to find existing client using normalized issuer
         existing_client = (
             db.query(RegisteredOAuthClient)
-            .filter(RegisteredOAuthClient.gateway_id == gateway_id, RegisteredOAuthClient.issuer == normalized_issuer, RegisteredOAuthClient.is_active.is_(True))  # pylint: disable=singleton-comparison
+            .filter(
+                RegisteredOAuthClient.gateway_id == gateway_id, RegisteredOAuthClient.issuer == normalized_issuer, RegisteredOAuthClient.is_active.is_(True)
+            )  # pylint: disable=singleton-comparison
             .first()
         )
 
@@ -412,4 +572,9 @@ class DcrService:
 
 
 class DcrError(Exception):
-    """DCR-related errors."""
+    """DCR-related errors with a safe, structured public classification."""
+
+    def __init__(self, message: str, *, code: str = "invalid_metadata") -> None:
+        """Create a DCR error with a safe public error code."""
+        super().__init__(message)
+        self.code = code
