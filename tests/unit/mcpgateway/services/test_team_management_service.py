@@ -200,7 +200,7 @@ class TestTeamManagementService:
         with (
             patch("mcpgateway.services.team_management_service.EmailTeam") as MockTeam,
             patch("mcpgateway.services.team_management_service.EmailTeamMember") as MockMember,
-            patch("mcpgateway.utils.create_slug.slugify") as mock_slugify,
+            patch("mcpgateway.services.team_management_service.slugify") as mock_slugify,
         ):
             MockTeam.return_value = mock_team
             mock_slugify.return_value = "test-team"
@@ -225,7 +225,7 @@ class TestTeamManagementService:
         mock_db.query.return_value.filter.return_value.first.return_value = None
         mock_db.add.side_effect = Exception("Database error")
 
-        with patch("mcpgateway.services.team_management_service.EmailTeam"), patch("mcpgateway.utils.create_slug.slugify") as mock_slugify:
+        with patch("mcpgateway.services.team_management_service.EmailTeam"), patch("mcpgateway.services.team_management_service.slugify") as mock_slugify:
             mock_slugify.return_value = "test-team"
             with pytest.raises(Exception):
                 await service.create_team(name="Test Team", description="A test team", created_by="admin@example.com")
@@ -248,7 +248,7 @@ class TestTeamManagementService:
             patch("mcpgateway.services.team_management_service.settings") as mock_settings,
             patch("mcpgateway.services.team_management_service.EmailTeam") as MockTeam,
             patch("mcpgateway.services.team_management_service.EmailTeamMember"),
-            patch("mcpgateway.utils.create_slug.slugify") as mock_slugify,
+            patch("mcpgateway.services.team_management_service.slugify") as mock_slugify,
         ):
             mock_settings.max_members_per_team = 50
             mock_settings.max_teams_per_user = 50
@@ -281,7 +281,7 @@ class TestTeamManagementService:
         mock_queries = [mock_existing_team, mock_existing_membership]
         mock_db.query.return_value.filter.return_value.first.side_effect = mock_queries
 
-        with patch("mcpgateway.utils.create_slug.slugify") as mock_slugify, patch("mcpgateway.services.team_management_service.utc_now") as mock_utc_now:
+        with patch("mcpgateway.services.team_management_service.slugify") as mock_slugify, patch("mcpgateway.services.team_management_service.utc_now") as mock_utc_now:
             mock_slugify.return_value = "test-team"
             mock_utc_now.return_value = "2023-01-01T00:00:00Z"
 
@@ -318,7 +318,7 @@ class TestTeamManagementService:
         ]
 
         with (
-            patch("mcpgateway.utils.create_slug.slugify") as mock_slugify,
+            patch("mcpgateway.services.team_management_service.slugify") as mock_slugify,
             patch("mcpgateway.services.team_management_service.EmailTeam") as MockTeam,
             patch("mcpgateway.services.team_management_service.EmailTeamMember") as MockMember,
         ):
@@ -349,7 +349,7 @@ class TestTeamManagementService:
         mock_db.flush.side_effect = IntegrityError("statement", {}, Exception("UNIQUE constraint failed: email_teams.slug"))
 
         with (
-            patch("mcpgateway.utils.create_slug.slugify") as mock_slugify,
+            patch("mcpgateway.services.team_management_service.slugify") as mock_slugify,
             patch("mcpgateway.services.team_management_service.EmailTeam") as MockTeam,
             patch("mcpgateway.services.team_management_service.EmailTeamMember"),
         ):
@@ -363,8 +363,36 @@ class TestTeamManagementService:
                     visibility="private",
                 )
 
-            # The failed insert must have been rolled back (once here before re-raise, and the
-            # service's own error handler rolls back again on the propagating exception).
+            # The IntegrityError is re-raised as TeamNameConflictError, which propagates to the
+            # outer except Exception handler in create_team_with_members, which calls self.db.rollback().
+            mock_db.rollback.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_create_team_flush_non_slug_integrity_error_propagates(self, service, mock_db):
+        """A flush IntegrityError that is NOT a slug collision (e.g. an FK violation on created_by)
+        must propagate as the original IntegrityError (-> 500), never be swallowed as a
+        TeamNameConflictError (-> 400/409)."""
+        mock_db.query.return_value.filter.return_value.first.return_value = None
+        mock_db.flush.side_effect = IntegrityError(
+            "statement", {}, Exception("FOREIGN KEY constraint failed: email_teams.created_by")
+        )
+
+        with (
+            patch("mcpgateway.services.team_management_service.slugify") as mock_slugify,
+            patch("mcpgateway.services.team_management_service.EmailTeam"),
+            patch("mcpgateway.services.team_management_service.EmailTeamMember"),
+        ):
+            mock_slugify.return_value = "test-team"
+
+            with pytest.raises(IntegrityError):
+                await service.create_team(
+                    name="Bad Created By",
+                    description="FK violation",
+                    created_by="missing@example.com",
+                    visibility="private",
+                )
+
+            mock_db.flush.assert_called()
             mock_db.rollback.assert_called()
 
     # =========================================================================

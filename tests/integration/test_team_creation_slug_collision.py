@@ -170,6 +170,7 @@ def client_with_teams(tmp_path, request):
                 "db": db_session,
                 "token_use": "session",
                 "team_id": None,
+                "token_teams": None,
             }
         finally:
             db_session.close()

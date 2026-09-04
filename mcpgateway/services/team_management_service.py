@@ -903,7 +903,10 @@ class TeamManagementService:
                     # instead of an opaque 500. Only slug collisions are name conflicts — any other
                     # IntegrityError (e.g. an FK on created_by) must propagate as-is and stay a 500,
                     # not masquerade as a name conflict. The outer handler rolls back uniformly.
-                    if "slug" in str(ie.orig).lower():
+                    # str(None) is "None" (no slug match -> re-raises), but be explicit so the
+                    # discrimination intent isn't obscured if ie.orig is ever None.
+                    orig_msg = str(ie.orig).lower() if ie.orig is not None else ""
+                    if "slug" in orig_msg:
                         raise TeamNameConflictError(f"A team named '{name}' already exists")
                     raise
 
