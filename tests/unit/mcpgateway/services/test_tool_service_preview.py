@@ -252,6 +252,27 @@ class TestPreviewToolInvocationPluginHooks:
         assert pm.invoke_hook_for_plugin.call_args.kwargs["name"] == "safe_plugin"
 
     @pytest.mark.asyncio
+    async def test_preview_safe_hook_modified_payload_not_applied_back(self, service, test_db):
+        """A preview_safe hook's modified_payload (e.g. a redaction/normalization plugin
+        rewriting args) must not change resolved_arguments -- preview only reports whether a
+        hook ran, it never lets one alter what the caller sees back (#5629)."""
+
+        async def _mutating_hook(*args, **kwargs):
+            mutated = Mock()
+            mutated.modified_payload = Mock(args={"param": "MUTATED-BY-HOOK"})
+            return mutated
+
+        ref = self._hook_ref("mutating_plugin", ["preview_safe"])
+        pm = self._plugin_manager_with_refs([ref], invoke_side_effect=_mutating_hook)
+
+        original_input = {"param": "value"}
+        with patch.object(service, "_resolve_tool_for_invocation", AsyncMock(return_value=_resolved(_local_tool_payload()))), patch.object(service, "_get_plugin_manager", AsyncMock(return_value=pm)):
+            result = await service.preview_tool_invocation(test_db, "test_tool", original_input)
+
+        assert result.pre_hooks_run == ["mutating_plugin"]
+        assert result.resolved_arguments == original_input
+
+    @pytest.mark.asyncio
     async def test_preview_safe_plugin_with_elicit_hook_is_not_invoked(self, service, test_db):
         """A preview_safe plugin that also registers the `elicit` hook a future cpex release
         adds must not have its tool_pre_invoke hook run at all -- excluded from pre_hooks_run
