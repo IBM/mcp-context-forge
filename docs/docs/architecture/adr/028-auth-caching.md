@@ -70,6 +70,11 @@ Implement a two-tier authentication caching system with Redis as the primary sto
 {cache_prefix}auth:user:{email}           → User data JSON
 {cache_prefix}auth:team:{email}           → Personal team ID
 {cache_prefix}auth:role:{email}:{team_id} → Team role string (e.g. "owner", "member")
+```
+
+> **Note:** An empty string stored at the role key is a **negative sentinel** — it means "confirmed not a member" and avoids repeated DB misses.  `get_user_role_in_team()` converts `""` → `None` before returning, so callers always see `None` for non-members.  A cache miss (key absent) triggers a DB fallback query.
+
+```
 {cache_prefix}auth:revoke:{jti}           → "1" if revoked
 {cache_prefix}auth:ctx:{email}:{jti}      → Batched context JSON
 ```

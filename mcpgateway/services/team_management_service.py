@@ -1737,7 +1737,7 @@ class TeamManagementService:
         """
         try:
             return get_auth_cache()
-        except ImportError:
+        except Exception:  # pylint: disable=broad-exception-caught
             return None
 
     def _get_admin_stats_cache(self):

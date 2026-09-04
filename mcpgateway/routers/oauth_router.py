@@ -501,6 +501,11 @@ async def _enforce_gateway_access(
 ) -> None:
     """Enforce gateway visibility and ownership checks for OAuth endpoints.
 
+    .. note::
+        ``TeamManagementService.get_user_role_in_team()`` commits the database
+        session (``db.commit()``) to release the idle transaction.  Callers must
+        not rely on uncommitted ORM state being preserved across this call.
+
     Args:
         gateway_id: Gateway identifier used for scoped ownership checks.
         gateway: Gateway record being accessed.

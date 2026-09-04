@@ -1824,8 +1824,9 @@ class TestOAuthAccessHelpers:
         gateway = SimpleNamespace(visibility="internal", owner_email=None, team_id="team-1")
         mock_request = Mock(spec=Request)
         mock_request.state = SimpleNamespace(token_teams=["team-1"])
-        with patch("mcpgateway.services.team_management_service.TeamManagementService.get_user_role_in_team", new_callable=AsyncMock, return_value="developer"):
+        with patch("mcpgateway.services.team_management_service.TeamManagementService.get_user_role_in_team", new_callable=AsyncMock, return_value="developer") as mock_role:
             await _enforce_gateway_access("gateway123", gateway, {"email": "user@example.com", "is_admin": False}, mock_db, request=mock_request)
+            mock_role.assert_called_once_with("user@example.com", "team-1")
 
 
 class TestOAuthRouterAdditionalCoverage:
