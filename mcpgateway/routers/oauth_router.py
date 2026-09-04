@@ -39,6 +39,7 @@ from mcpgateway.schemas import EmailUserResponse
 from mcpgateway.services.dcr_service import DcrError, DcrService
 from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
 from mcpgateway.services.oauth_manager import OAuthError, OAuthManager
+from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.services.token_storage_service import TokenStorageService
 
 # First-Party - CSP nonce support
@@ -557,8 +558,6 @@ async def _enforce_gateway_access(
     # (auth_cache.get_user_role) before hitting the DB. This avoids the broken
     # user.is_team_member() path where EmailAuthService.get_user_by_email() returns a
     # cache-reconstructed detached EmailUser with empty team_memberships.
-    from mcpgateway.services.team_management_service import TeamManagementService  # pylint: disable=import-outside-toplevel
-
     if visibility == "team":
         if not gateway_team_id:
             raise HTTPException(status_code=403, detail="You don't have access to this gateway")

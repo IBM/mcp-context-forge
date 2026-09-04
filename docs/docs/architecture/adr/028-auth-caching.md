@@ -4,6 +4,11 @@
 - *Date:* 2025-01-15
 - *Deciders:* Platform Team
 
+!!! note
+    A later role-cache extension added `{cache_prefix}auth:role:{email}:{team_id}` entries,
+    controlled by `AUTH_CACHE_ROLE_TTL` (default: 60 seconds). A cached non-membership is
+    represented internally by a negative sentinel and returned to callers as `None`.
+
 ## Context
 
 Under high-concurrency load testing (1000+ concurrent users), authentication became a significant performance bottleneck. Every authenticated request triggered 3-4 separate database queries via `asyncio.to_thread()`:
@@ -53,8 +58,7 @@ Implement a two-tier authentication caching system with Redis as the primary sto
 
    - `token_catalog_service.py:revoke_token()` - Invalidates revocation cache
    - `email_auth_service.py:change_password()` - Invalidates user cache
-   - `team_management_service.py:add_member_to_team/remove_member_from_team()` - Invalidates team and role caches
-   - `team_management_service.py:get_user_role_in_team()` - Reads from role cache (`auth:role:{email}:{team_id}`) with DB fallback
+   - `team_management_service.py:add_member_to_team/remove_member_from_team()` - Invalidates team cache
 
 4. **Configuration settings**
 
@@ -67,16 +71,10 @@ Implement a two-tier authentication caching system with Redis as the primary sto
 ### Cache Key Scheme
 
 ```
-{cache_prefix}auth:user:{email}           → User data JSON
-{cache_prefix}auth:team:{email}           → Personal team ID
-{cache_prefix}auth:role:{email}:{team_id} → Team role string (e.g. "owner", "member")
-```
-
-> **Note:** An empty string stored at the role key is a **negative sentinel** — it means "confirmed not a member" and avoids repeated DB misses.  `get_user_role_in_team()` converts `""` → `None` before returning, so callers always see `None` for non-members.  A cache miss (key absent) triggers a DB fallback query.
-
-```
-{cache_prefix}auth:revoke:{jti}           → "1" if revoked
-{cache_prefix}auth:ctx:{email}:{jti}      → Batched context JSON
+{cache_prefix}auth:user:{email}      → User data JSON
+{cache_prefix}auth:team:{email}      → Personal team ID
+{cache_prefix}auth:revoke:{jti}      → "1" if revoked
+{cache_prefix}auth:ctx:{email}:{jti} → Batched context JSON
 ```
 
 Default prefix: `mcpgw:` → `mcpgw:auth:ctx:admin@example.com:jti-123`

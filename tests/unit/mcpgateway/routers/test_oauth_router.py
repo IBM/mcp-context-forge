@@ -21,7 +21,7 @@ import pytest
 from sqlalchemy.orm import Session
 
 # First-Party
-from mcpgateway.db import Gateway
+from mcpgateway.db import EmailTeamMember, Gateway
 from mcpgateway.middleware.token_scoping import ResourceOwnershipResult
 from mcpgateway.routers.oauth_router import (
     ADMIN_CSRF_COOKIE_NAME,
@@ -1749,14 +1749,6 @@ class TestOAuthAccessHelpers:
             await _enforce_gateway_access("gateway123", gateway, {"email": "user@example.com", "is_admin": False}, mock_db, request=None)
 
         assert exc_info.value.status_code == 403
-
-    @pytest.mark.asyncio
-    async def test_enforce_gateway_access_team_visibility_member_allowed(self, mock_db):
-        from mcpgateway.routers.oauth_router import _enforce_gateway_access
-
-        gateway = SimpleNamespace(visibility="team", owner_email=None, team_id="team-1")
-        with patch("mcpgateway.services.team_management_service.TeamManagementService.get_user_role_in_team", new_callable=AsyncMock, return_value="owner"):
-            await _enforce_gateway_access("gateway123", gateway, {"email": "user@example.com", "is_admin": False}, mock_db, request=None)
 
     @pytest.mark.asyncio
     async def test_enforce_gateway_access_team_visibility_non_member_denied(self, mock_db):
@@ -4416,12 +4408,12 @@ def test_oauth_callback_scope_non_string_non_list():
 
 
 # ---------------------------------------------------------------------------
-# Integration test: _enforce_gateway_access with warm role cache
+# Cache-layer tests: _enforce_gateway_access with role cache
 # ---------------------------------------------------------------------------
 
 
-class TestEnforceGatewayAccessCacheIntegration:
-    """Integration test exercising _enforce_gateway_access through TeamManagementService with cache.
+class TestEnforceGatewayAccessCacheLayer:
+    """Cache-layer tests exercising _enforce_gateway_access through TeamManagementService.
 
     Unlike the unit tests above (which mock get_user_role_in_team directly),
     this test mocks at the cache layer to confirm the full call chain:
@@ -4494,6 +4486,14 @@ class TestEnforceGatewayAccessCacheIntegration:
 
         # Cache was checked first
         mock_cache.get_user_role.assert_awaited_once_with("user@example.com", "team-1")
+        mock_db.query.assert_called_once_with(EmailTeamMember)
+        criteria = mock_db.query.return_value.filter.call_args.args
+        assert len(criteria) == 3
+        assert criteria[0].left.compare(EmailTeamMember.__table__.c.user_email)
+        assert criteria[0].right.value == "user@example.com"
+        assert criteria[1].left.compare(EmailTeamMember.__table__.c.team_id)
+        assert criteria[1].right.value == "team-1"
+        assert str(criteria[2]) == "email_team_members.is_active IS true"
         # Result was cached after DB lookup
         mock_cache.set_user_role.assert_awaited_once_with("user@example.com", "team-1", "member")
 
@@ -4501,10 +4501,9 @@ class TestEnforceGatewayAccessCacheIntegration:
     async def test_team_visibility_negative_cache_denies_access(self):
         """Negative cache entry (empty string = 'not a member') must deny access.
 
-        TeamManagementService.get_user_role_in_team() stores empty string in
-        cache to represent 'no membership' (line 1778: ``cached_role if
-        cached_role else None``).  The empty string is falsy, so the production
-        code's ``if not role:`` check at oauth_router.py:561 must raise 403.
+        TeamManagementService.get_user_role_in_team() converts the cache's
+        empty-string negative marker to ``None``. The resulting falsy role must
+        be denied by ``_enforce_gateway_access``.
         """
         from mcpgateway.routers.oauth_router import _enforce_gateway_access
 

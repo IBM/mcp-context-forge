@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
 from fastapi import HTTPException
+from fastapi.responses import RedirectResponse
 import pytest
 
 # First-Party
@@ -258,8 +259,6 @@ class TestVaultAuthorizeDenyPaths:
                     }
                     mock_oauth_cls.return_value = mock_oauth
 
-                    from fastapi.responses import RedirectResponse
-
                     response = await vault_authorize(
                         request=_make_request(),
                         server_id="srv-123",
@@ -292,8 +291,6 @@ class TestVaultAuthorizeDenyPaths:
                         "authorization_url": "https://idp.example.com/authorize?state=abc"
                     }
                     mock_oauth_cls.return_value = mock_oauth
-
-                    from fastapi.responses import RedirectResponse
 
                     response = await vault_authorize(
                         request=_make_request(),
@@ -377,8 +374,6 @@ class TestVaultAuthorizeDenyPaths:
                             "authorization_url": "https://idp.example.com/authorize?state=xyz"
                         }
                         mock_oauth_cls.return_value = mock_oauth
-
-                        from fastapi.responses import RedirectResponse
 
                         response = await vault_authorize(
                             request=_make_request(),
