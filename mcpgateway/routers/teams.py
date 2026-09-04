@@ -64,6 +64,7 @@ from mcpgateway.services.team_management_service import (
     TeamManagementService,
     TeamMemberAddError,
     TeamMemberLimitExceededError,
+    TeamNameConflictError,
     TeamNotFoundError,
     UserNotFoundError,
 )
@@ -104,13 +105,19 @@ async def create_team(
         TeamCreateResponse: Created team data, plus how each seeded member was resolved
 
     Raises:
-        HTTPException: If team creation fails
+        HTTPException 400: Active team with same name exists (platform admin callers).
+        HTTPException 403: Team creation disabled; caller is not platform admin.
+        HTTPException 409: Active team with same name exists (non-admin; generic message prevents name enumeration).
+        HTTPException 500: Unexpected service error.
 
     Examples:
         >>> import asyncio
         >>> asyncio.iscoroutinefunction(create_team)
         True
     """
+    # Default-deny: if the permission lookup fails before is_admin is assigned, treat the caller as
+    # a non-admin so the name-conflict path (which references is_admin) stays safe.
+    is_admin = False
     try:
         # Check admin permissions using PermissionService (handles both is_admin flag and RBAC)
         permission_service = PermissionService(db)
@@ -165,6 +172,17 @@ async def create_team(
         return response
     except HTTPException:
         raise
+    except TeamNameConflictError as e:
+        # Active-slug collision. Disclose the specific conflict (which reveals a team with this
+        # name exists) only to callers authorized to list all teams (platform admin). Everyone else
+        # gets a generic conflict that does not leak team-name existence.
+        logger.info("Team creation blocked by name conflict: %s", e)
+        if is_admin:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A team with the same name could not be created",
+        )
     except (ValueError, TeamManagementError) as e:
         # TeamManagementError covers the member-seeding failures (capacity, team limits)
         logger.error(f"Team creation failed: {e}")

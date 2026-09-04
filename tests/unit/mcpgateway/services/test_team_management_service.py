@@ -16,11 +16,12 @@ from uuid import uuid4
 # Third-Party
 import orjson
 import pytest
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.db import EmailTeam, EmailTeamJoinRequest, EmailTeamMember, EmailUser
-from mcpgateway.services.team_management_service import JoinRequestNotFoundError, TeamManagementService, TeamMemberLimitExceededError, get_effective_max_members
+from mcpgateway.services.team_management_service import JoinRequestNotFoundError, TeamManagementService, TeamMemberLimitExceededError, TeamNameConflictError, get_effective_max_members
 
 
 class TestGetEffectiveMaxMembers:
@@ -199,7 +200,7 @@ class TestTeamManagementService:
         with (
             patch("mcpgateway.services.team_management_service.EmailTeam") as MockTeam,
             patch("mcpgateway.services.team_management_service.EmailTeamMember") as MockMember,
-            patch("mcpgateway.utils.create_slug.slugify") as mock_slugify,
+            patch("mcpgateway.services.team_management_service.slugify") as mock_slugify,
         ):
             MockTeam.return_value = mock_team
             mock_slugify.return_value = "test-team"
@@ -224,7 +225,7 @@ class TestTeamManagementService:
         mock_db.query.return_value.filter.return_value.first.return_value = None
         mock_db.add.side_effect = Exception("Database error")
 
-        with patch("mcpgateway.services.team_management_service.EmailTeam"), patch("mcpgateway.utils.create_slug.slugify") as mock_slugify:
+        with patch("mcpgateway.services.team_management_service.EmailTeam"), patch("mcpgateway.services.team_management_service.slugify") as mock_slugify:
             mock_slugify.return_value = "test-team"
             with pytest.raises(Exception):
                 await service.create_team(name="Test Team", description="A test team", created_by="admin@example.com")
@@ -247,7 +248,7 @@ class TestTeamManagementService:
             patch("mcpgateway.services.team_management_service.settings") as mock_settings,
             patch("mcpgateway.services.team_management_service.EmailTeam") as MockTeam,
             patch("mcpgateway.services.team_management_service.EmailTeamMember"),
-            patch("mcpgateway.utils.create_slug.slugify") as mock_slugify,
+            patch("mcpgateway.services.team_management_service.slugify") as mock_slugify,
         ):
             mock_settings.max_members_per_team = 50
             mock_settings.max_teams_per_user = 50
@@ -280,7 +281,7 @@ class TestTeamManagementService:
         mock_queries = [mock_existing_team, mock_existing_membership]
         mock_db.query.return_value.filter.return_value.first.side_effect = mock_queries
 
-        with patch("mcpgateway.utils.create_slug.slugify") as mock_slugify, patch("mcpgateway.services.team_management_service.utc_now") as mock_utc_now:
+        with patch("mcpgateway.services.team_management_service.slugify") as mock_slugify, patch("mcpgateway.services.team_management_service.utc_now") as mock_utc_now:
             mock_slugify.return_value = "test-team"
             mock_utc_now.return_value = "2023-01-01T00:00:00Z"
 
@@ -296,6 +297,140 @@ class TestTeamManagementService:
             # Verify existing membership was reactivated
             assert mock_existing_membership.role == "owner"
             assert mock_existing_membership.is_active is True
+
+    @pytest.mark.asyncio
+    async def test_create_team_rejects_existing_active_team(self, service, mock_db):
+        """Creating a team whose slug collides with an ACTIVE team raises TeamManagementError.
+
+        Regression for ICA20-1559: an active same-slug team must surface as a clean, catchable
+        conflict (400) rather than leaking an IntegrityError that becomes an opaque 500.
+        """
+        mock_active_team = MagicMock(spec=EmailTeam)
+        mock_active_team.id = "existing_active_team_id"
+        mock_active_team.name = "Existing Active Team"
+        mock_active_team.is_active = True
+
+        # No inactive team (returns None for the first .first() call), then the active-slug check
+        # finds the colliding active team.
+        mock_db.query.return_value.filter.return_value.first.side_effect = [
+            None,
+            mock_active_team,
+        ]
+
+        with (
+            patch("mcpgateway.services.team_management_service.slugify") as mock_slugify,
+            patch("mcpgateway.services.team_management_service.EmailTeam") as MockTeam,
+            patch("mcpgateway.services.team_management_service.EmailTeamMember") as MockMember,
+        ):
+            mock_slugify.return_value = "test-team"
+
+            with pytest.raises(TeamNameConflictError, match="already exists"):
+                await service.create_team(
+                    name="Existing Active Team",
+                    description="A colliding team",
+                    created_by="admin@example.com",
+                    visibility="private",
+                )
+
+            # The new team must NOT have been inserted
+            MockTeam.assert_not_called()
+            MockMember.assert_not_called()
+            mock_db.add.assert_not_called()
+            mock_db.flush.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_create_team_flush_integrity_error_becomes_conflict(self, service, mock_db):
+        """Concurrency race: if the active-slug SELECT passes in two workers but the INSERT
+        (flush) then hits the real unique constraint, the IntegrityError must be re-raised as a
+        TeamNameConflictError (clean 400/409) rather than surfacing as an opaque 500."""
+        # Both callers "pass" the active-slug pre-check (returns None, i.e. no active team seen yet).
+        mock_db.query.return_value.filter.return_value.first.return_value = None
+        # The DB backstop fires on flush: another worker won the race and inserted the slug first.
+        mock_db.flush.side_effect = IntegrityError("statement", {}, Exception("UNIQUE constraint failed: email_teams.slug"))
+
+        with (
+            patch("mcpgateway.services.team_management_service.slugify") as mock_slugify,
+            patch("mcpgateway.services.team_management_service.EmailTeam") as MockTeam,
+            patch("mcpgateway.services.team_management_service.EmailTeamMember"),
+        ):
+            mock_slugify.return_value = "test-team"
+
+            with pytest.raises(TeamNameConflictError, match="already exists"):
+                await service.create_team(
+                    name="Race Team",
+                    description="colliding under concurrency",
+                    created_by="admin@example.com",
+                    visibility="private",
+                )
+
+            # The IntegrityError is re-raised as TeamNameConflictError, which propagates to the
+            # outer except Exception handler in create_team_with_members, which calls self.db.rollback().
+            mock_db.rollback.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_create_team_flush_non_slug_integrity_error_propagates(self, service, mock_db):
+        """A flush IntegrityError that is NOT a slug collision (e.g. an FK violation on created_by)
+        must propagate as the original IntegrityError (-> 500), never be swallowed as a
+        TeamNameConflictError (-> 400/409)."""
+        mock_db.query.return_value.filter.return_value.first.return_value = None
+        mock_db.flush.side_effect = IntegrityError(
+            "statement", {}, Exception("FOREIGN KEY constraint failed: email_teams.created_by")
+        )
+
+        with (
+            patch("mcpgateway.services.team_management_service.slugify") as mock_slugify,
+            patch("mcpgateway.services.team_management_service.EmailTeam"),
+            patch("mcpgateway.services.team_management_service.EmailTeamMember"),
+        ):
+            mock_slugify.return_value = "test-team"
+
+            with pytest.raises(IntegrityError):
+                await service.create_team(
+                    name="Bad Created By",
+                    description="FK violation",
+                    created_by="missing@example.com",
+                    visibility="private",
+                )
+
+            mock_db.flush.assert_called()
+            mock_db.rollback.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_create_team_with_members_rejects_active_collision(self, service, mock_db):
+        """A slug collision must surface as TeamNameConflictError through the public
+        ``create_team_with_members`` entry point, the method the router actually calls
+        (routers/teams.py creates the team via ``service.create_team_with_members(...)``)."""
+        mock_active_team = MagicMock(spec=EmailTeam)
+        mock_active_team.id = "existing_active_team_id"
+        mock_active_team.name = "Existing Active Team"
+        mock_active_team.is_active = True
+
+        # No inactive team (first .first() -> None), then the active-slug check finds the collision.
+        mock_db.query.return_value.filter.return_value.first.side_effect = [
+            None,
+            mock_active_team,
+        ]
+
+        with (
+            patch("mcpgateway.services.team_management_service.slugify") as mock_slugify,
+            patch("mcpgateway.services.team_management_service.EmailTeam") as MockTeam,
+            patch("mcpgateway.services.team_management_service.EmailTeamMember"),
+        ):
+            mock_slugify.return_value = "test-team"
+
+            with pytest.raises(TeamNameConflictError, match="already exists"):
+                await service.create_team_with_members(
+                    name="Existing Active Team",
+                    description="A colliding team",
+                    created_by="admin@example.com",
+                    visibility="private",
+                )
+
+            # Nothing may be inserted, flushed, or committed.
+            MockTeam.assert_not_called()
+            mock_db.add.assert_not_called()
+            mock_db.flush.assert_not_called()
+            mock_db.commit.assert_not_called()
 
     # =========================================================================
     # Team Retrieval Tests
