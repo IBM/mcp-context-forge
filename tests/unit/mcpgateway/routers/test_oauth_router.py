@@ -768,6 +768,56 @@ class TestOAuthRouter:
                 assert oauth_config_passed["resource"] == "https://mcp.example.com"  # Normalized URL
 
     @pytest.mark.asyncio
+    async def test_oauth_callback_csrf_token_validates_against_csrf_service(self, mock_db, mock_request, mock_gateway):
+        """The fetch-tools page's CSRF token must satisfy CSRFMiddleware.
+
+        CSRFMiddleware validates by recomputing an HMAC of (user_id, session_id). The page
+        previously minted a random secrets.token_urlsafe() value, which could never match, so
+        the Fetch Tools button always failed with "CSRF validation failed". Regression guard:
+        the emitted token must validate for the identity carried by the session JWT issued
+        alongside it.
+        """
+        # Standard
+        import base64
+        import json
+
+        # First-Party
+        from mcpgateway.services.csrf_service import get_csrf_service
+
+        state_data = {"gateway_id": "gateway123", "app_user_email": "test@example.com", "nonce": "abc123"}
+        state = base64.urlsafe_b64encode(json.dumps(state_data).encode() + b"x" * 32).decode()
+
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+
+        token_result = {"user_id": "oauth_user_123", "app_user_email": "test@example.com", "expires_at": "2024-01-01T12:00:00", "token_aud": None, "state_data": {"app_user_email": "test@example.com", "team_id": None}}
+
+        with patch("mcpgateway.routers.oauth_router.OAuthManager") as mock_oauth_manager_class:
+            mock_oauth_manager = Mock()
+            mock_oauth_manager.resolve_gateway_id_from_state = AsyncMock(return_value="gateway123")
+            mock_oauth_manager.complete_authorization_code_flow = AsyncMock(return_value=token_result)
+            mock_oauth_manager_class.return_value = mock_oauth_manager
+
+            with patch("mcpgateway.routers.oauth_router.TokenStorageService"):
+                # First-Party
+                from mcpgateway.routers.oauth_router import oauth_callback
+
+                result = await oauth_callback(code="auth_code_123", state=state, request=mock_request, db=mock_db)
+
+        cookies = {}
+        for header in result.headers.getlist("set-cookie"):
+            name, _, rest = header.partition("=")
+            cookies[name.strip()] = rest.split(";")[0]
+
+        csrf_token = cookies["mcpgateway_csrf_token"]
+
+        # The session JWT issued by the same response carries the identity the middleware binds to.
+        jwt_payload = json.loads(base64.urlsafe_b64decode(cookies["jwt_token"].split(".")[1] + "=="))
+
+        assert get_csrf_service().validate_csrf_token(csrf_token, jwt_payload["email"], jwt_payload["jti"]) is True
+        # The same token is embedded in the page so the button's fetch() sends a matching header.
+        assert csrf_token in result.body.decode()
+
+    @pytest.mark.asyncio
     async def test_oauth_callback_redirects_to_allowed_external_origin_without_cookies(self, mock_db, mock_request, mock_gateway):
         """Successful callback redirects externally without gateway-scoped cookies."""
         from mcpgateway.routers.oauth_router import oauth_callback
