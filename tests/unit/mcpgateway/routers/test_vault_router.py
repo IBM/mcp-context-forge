@@ -348,6 +348,50 @@ class TestVaultAuthorizeDenyPaths:
         assert exc_info.value.status_code == 403
         mock_resolve.assert_not_called()
 
+    @pytest.mark.asyncio
+    async def test_team_member_cache_hit_allowed(self):
+        """Team member with cache-hit role (no DB query) gets 302 redirect.
+
+        Regression test: confirms the vault_authorize path uses
+        _enforce_gateway_access with TeamManagementService.get_user_role_in_team()
+        (cache-aware) rather than the old EmailAuthService.get_user_by_email() +
+        user.is_team_member() path that failed on detached cache-reconstructed users.
+        """
+        db = MagicMock()
+        db.get.return_value = _make_server()
+        gateway = _make_gateway(visibility="team", team_id="engineering")
+
+        alice = _make_user(email="alice@corp.com", is_admin=False, token_teams=["engineering"])
+
+        with patch("mcpgateway.routers.vault_router._resolve_oauth_gateway", return_value=gateway):
+            with patch("mcpgateway.routers.vault_router._check_server_visibility", return_value=True):
+                # Let _enforce_gateway_access run for real — it will call TeamManagementService
+                with patch(
+                    "mcpgateway.services.team_management_service.TeamManagementService.get_user_role_in_team",
+                    new_callable=AsyncMock,
+                    return_value="member",  # Cache-hit returns role
+                ) as mock_role:
+                    with patch("mcpgateway.routers.vault_router.OAuthManager") as mock_oauth_cls:
+                        mock_oauth = AsyncMock()
+                        mock_oauth.initiate_authorization_code_flow.return_value = {
+                            "authorization_url": "https://idp.example.com/authorize?state=xyz"
+                        }
+                        mock_oauth_cls.return_value = mock_oauth
+
+                        from fastapi.responses import RedirectResponse
+
+                        response = await vault_authorize(
+                            request=_make_request(),
+                            server_id="srv-123",
+                            gateway_url=None,
+                            db=db,
+                            current_user=alice,
+                        )
+
+                    assert isinstance(response, RedirectResponse)
+                    assert response.status_code == 302
+                    mock_role.assert_called_once_with("alice@corp.com", "engineering")
+
 
 # ---------------------------------------------------------------------------
 # Round-7 coverage: _resolve_oauth_gateway preferred_url not found (line 79),

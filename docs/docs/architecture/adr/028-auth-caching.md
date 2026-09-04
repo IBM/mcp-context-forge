@@ -53,7 +53,8 @@ Implement a two-tier authentication caching system with Redis as the primary sto
 
    - `token_catalog_service.py:revoke_token()` - Invalidates revocation cache
    - `email_auth_service.py:change_password()` - Invalidates user cache
-   - `team_management_service.py:add_member_to_team/remove_member_from_team()` - Invalidates team cache
+   - `team_management_service.py:add_member_to_team/remove_member_from_team()` - Invalidates team and role caches
+   - `team_management_service.py:get_user_role_in_team()` - Reads from role cache (`auth:role:{email}:{team_id}`) with DB fallback
 
 4. **Configuration settings**
 
@@ -66,10 +67,11 @@ Implement a two-tier authentication caching system with Redis as the primary sto
 ### Cache Key Scheme
 
 ```
-{cache_prefix}auth:user:{email}      → User data JSON
-{cache_prefix}auth:team:{email}      → Personal team ID
-{cache_prefix}auth:revoke:{jti}      → "1" if revoked
-{cache_prefix}auth:ctx:{email}:{jti} → Batched context JSON
+{cache_prefix}auth:user:{email}           → User data JSON
+{cache_prefix}auth:team:{email}           → Personal team ID
+{cache_prefix}auth:role:{email}:{team_id} → Team role string (e.g. "owner", "member")
+{cache_prefix}auth:revoke:{jti}           → "1" if revoked
+{cache_prefix}auth:ctx:{email}:{jti}      → Batched context JSON
 ```
 
 Default prefix: `mcpgw:` → `mcpgw:auth:ctx:admin@example.com:jti-123`
