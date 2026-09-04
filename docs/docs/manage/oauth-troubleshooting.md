@@ -74,6 +74,7 @@ state_data = {
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/oauth/authorize/{gateway_id}` | GET | Initiates OAuth flow, redirects to provider |
+| `/vault/authorize/{server_id}` | GET | Per-user OAuth credential connection for team virtual servers (shared access control with `/oauth/authorize/{gateway_id}`) |
 | `/oauth/callback` | GET | Handles OAuth callback, exchanges code for tokens |
 | `/oauth/status/{gateway_id}` | GET | Returns OAuth configuration status |
 | `/oauth/fetch-tools/{gateway_id}` | POST | Fetches tools from MCP server after OAuth completion |
