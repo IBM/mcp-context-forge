@@ -111,7 +111,6 @@ dev = [
   "pytest>=7.0.0",
   "pytest-asyncio>=0.21.0",
   "pytest-cov>=4.0.0",
-  "black>=23.0.0",
   "mypy>=1.5.0",
   "ruff>=0.0.290",
 ]
@@ -125,10 +124,6 @@ packages = ["src/awesome_server"]
 
 [project.scripts]
 awesome-server = "awesome_server.server_fastmcp:main"
-
-[tool.black]
-line-length = 100
-target-version = ["py311"]
 
 [tool.mypy]
 python_version = "3.11"
@@ -178,8 +173,8 @@ install: ## Install in editable mode
 dev-install: ## Install with dev extras
     $(PYTHON) -m pip install -e ".[dev]"
 
-format: ## Format (black + ruff --fix)
-    black . && ruff check --fix .
+format: ## Format (ruff format + ruff --fix)
+    ruff format . && ruff check --fix .
 
 lint: ## Lint (ruff, mypy)
     ruff check . && mypy src/awesome_server

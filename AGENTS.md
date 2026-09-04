@@ -123,7 +123,7 @@ Run from the worktree root, in order. Each must pass (or have a documented waive
 | 5 | `make test-mcp-protocol-e2e test-mcp-rbac` | MCP protocol E2E and RBAC against the live gateway |
 | 6 | `make detect-secrets-scan` | No new secrets in files changed vs `main`; exits non-zero on live/unaudited findings (jq merge preserves out-of-scope audited entries; remediate with `make detect-secrets-audit`) |
 
-Distinct from the per-edit hygiene chain in *Essential Commands → Code Quality* (`make autoflake isort black pre-commit`, then `make ruff bandit interrogate pylint verify`): hygiene runs continuously; this gate runs once before declaring a PR ready.
+Distinct from the per-edit hygiene chain in *Essential Commands → Code Quality* (`make autoflake isort ruff RUFF_MODE=format pre-commit`, then `make ruff bandit interrogate pylint verify`): hygiene runs continuously; this gate runs once before declaring a PR ready.
 
 ### Secret Detection (detect-secrets)
 
@@ -572,4 +572,4 @@ When posting PR reviews, issue comments, or any public-facing text on GitHub, us
 - `make` for build/test automation
 - `uv` for virtual environment management and for `uv tool run` linter invocations
 - Dev-group tools installed in the venv: `pytest`, `mypy`, `bandit`, `pre-commit`, etc. (see `pyproject.toml` `[dependency-groups]`)
-- Formatters and linters (`ruff`, `vulture`, `interrogate`, `radon`, `yamllint`, `tomlcheck`) are pinned in the `Makefile` and invoked on demand via `uv tool run`; always prefer the Makefile targets (`make black`, `make ruff`, etc.) over calling the underlying tools directly
+- Formatters and linters (`ruff`, `vulture`, `interrogate`, `radon`, `yamllint`, `tomlcheck`) are pinned in the `Makefile` and invoked on demand via `uv tool run`; always prefer the Makefile targets (`make ruff RUFF_MODE=format`, `make ruff`, etc.) over calling the underlying tools directly
