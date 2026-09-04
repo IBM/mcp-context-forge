@@ -1685,9 +1685,12 @@ class Settings(BaseSettings):
         Secrets (``jwt_secret_key``, ``auth_encryption_secret``) are checked
         unconditionally for empty, placeholder, weak, short, and low-entropy
         values.  Password credentials (``basic_auth_password``,
-        ``platform_admin_password``, ``default_user_password``) are checked for
-        empty, placeholder, and known-weak values when their consuming
-        authentication feature is enabled (feature-gated fail-closed).
+        empty, placeholder, known-weak, and too-short (below
+        ``password_min_length_user``, the OWASP baseline) values when their
+        consuming authentication feature is enabled (feature-gated fail-closed).
+        No entropy floor is applied to passwords: the Shannon-entropy check used
+        for random secrets is a poor signal for human-chosen passwords and the
+        length + known-weak-value checks already cover the realistic risk.
 
         Run ``python -m mcpgateway.scripts.init_secrets`` (or ``make init-secrets``
         for interactive use, ``make init-secrets-patch-env`` to write directly into
@@ -1725,12 +1728,13 @@ class Settings(BaseSettings):
                 hint=hint,
             )
 
-        # Feature-gated: password credentials (empty, placeholder, or weak)
+        # Feature-gated: password credentials (empty, placeholder, weak, or too short)
         if self.api_allow_basic_auth or self.docs_allow_basic_auth:
             self._enforce_secret_strength(
                 "basic_auth_password",
                 self.basic_auth_password.get_secret_value(),
                 weak_secrets,
+                min_length=self.password_min_length_user,
                 check_placeholder=True,
             )
 
@@ -1743,6 +1747,7 @@ class Settings(BaseSettings):
                     pw_field,
                     pw_secret.get_secret_value(),
                     weak_secrets,
+                    min_length=self.password_min_length_user,
                     check_placeholder=True,
                 )
 
