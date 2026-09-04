@@ -4003,7 +4003,9 @@ class TestGatewayHealth:
 
             assert result is True
             # Should have timed out and called failure handler
-            gateway_service._handle_gateway_failure.assert_awaited_once_with(mock_gateway_health)
+            gateway_service._handle_gateway_failure.assert_awaited_once()
+            error = gateway_service._handle_gateway_failure.await_args.kwargs["error"]
+            assert isinstance(error, asyncio.TimeoutError)
 
     @pytest.mark.asyncio
     async def test_health_triggers_auto_refresh(self, gateway_service, mock_gateway_health, mock_db_session):
@@ -6349,6 +6351,71 @@ class TestHandleGatewayFailureThreshold:
         await gateway_service._handle_gateway_failure(gw)
         assert gateway_service._gateway_failure_counts["gw-2"] == 2
 
+    @pytest.mark.asyncio
+    async def test_threshold_persists_sanitized_health_error(self, gateway_service, monkeypatch):
+        """Reaching the threshold records the sanitized health-check reason."""
+        gw = SimpleNamespace(id="gw-error", name="test", enabled=True, reachable=True, auth_query_params={"api_key": "secret"})
+        gateway_service._gateway_failure_counts = {}
+        monkeypatch.setattr("mcpgateway.services.gateway_service.GW_FAILURE_THRESHOLD", 1)
+        gateway_service.set_gateway_state = AsyncMock()
+
+        db = MagicMock()
+        db.__enter__ = MagicMock(return_value=db)
+        db.__exit__ = MagicMock(return_value=False)
+        monkeypatch.setattr("mcpgateway.services.gateway_service.SessionLocal", MagicMock(return_value=db))
+
+        error = RuntimeError("connection failed for https://gateway.test?api_key=secret")
+        await gateway_service._handle_gateway_failure(gw, error)
+
+        gateway_service.set_gateway_state.assert_awaited_once_with(db, "gw-error", activate=True, reachable=False, only_update_reachable=True)
+        statement = db.execute.call_args.args[0]
+        compiled = str(statement.compile(compile_kwargs={"literal_binds": True}))
+        assert "last_error" in compiled
+        assert "REDACTED" in compiled
+        assert "secret" not in compiled
+        db.commit.assert_called_once()
+
+
+class TestMarkGatewayReachableErrorCleanup:
+    @pytest.mark.asyncio
+    async def test_recovery_clears_last_error_for_enabled_gateway(self, gateway_service, monkeypatch):
+        """A successful probe of an enabled gateway removes the previous outage reason."""
+        recovered = SimpleNamespace(last_seen=None, last_error="certificate has expired")
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = recovered
+        db.__enter__ = MagicMock(return_value=db)
+        db.__exit__ = MagicMock(return_value=False)
+        monkeypatch.setattr("mcpgateway.services.gateway_service.fresh_db_session", MagicMock(return_value=db))
+        # Enabled + currently-unreachable also takes the reactivation branch.
+        monkeypatch.setattr("mcpgateway.services.gateway_service.SessionLocal", MagicMock(return_value=db))
+        monkeypatch.setattr(gateway_service, "set_gateway_state", AsyncMock())
+
+        await gateway_service._mark_gateway_reachable("gw-1", "test", True, False)
+
+        assert recovered.last_error is None
+        assert recovered.last_seen is not None
+        db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_recovery_preserves_last_error_for_disabled_gateway(self, gateway_service, monkeypatch):
+        """A successful probe of a disabled gateway keeps its recorded outage reason.
+
+        Disabled gateways are still probed (include_inactive=True), so without
+        this a successful probe silently wipes why the operator sees it as down.
+        """
+        recovered = SimpleNamespace(last_seen=None, last_error="certificate has expired")
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = recovered
+        db.__enter__ = MagicMock(return_value=db)
+        db.__exit__ = MagicMock(return_value=False)
+        monkeypatch.setattr("mcpgateway.services.gateway_service.fresh_db_session", MagicMock(return_value=db))
+
+        await gateway_service._mark_gateway_reachable("gw-1", "test", False, True)
+
+        assert recovered.last_error == "certificate has expired"
+        assert recovered.last_seen is not None
+        db.commit.assert_called_once()
+
 
 # ---------------------------------------------------------------------------
 # _check_single_gateway_health tests
@@ -6448,6 +6515,9 @@ class TestCheckSingleGatewayHealth:
 
         await gateway_service._check_single_gateway_health(gw)
         gateway_service._handle_gateway_failure.assert_awaited_once()
+        error = gateway_service._handle_gateway_failure.await_args.kwargs["error"]
+        assert isinstance(error, ConnectionError)
+        assert str(error) == "refused"
 
     @pytest.mark.asyncio
     async def test_health_check_cleans_invisible_char_in_stored_credential(self, gateway_service, monkeypatch):
@@ -6657,6 +6727,9 @@ class TestCheckSingleGatewayHealth:
 
         await gateway_service._check_single_gateway_health(gw)
         gateway_service._handle_gateway_failure.assert_awaited_once()
+        _, kwargs = gateway_service._handle_gateway_failure.await_args
+        assert isinstance(kwargs.get("error"), Exception)
+        assert str(kwargs["error"]) == "Token expired"
 
     @pytest.mark.asyncio
     async def test_health_check_oauth_auth_code_no_user(self, gateway_service, monkeypatch):
