@@ -433,39 +433,86 @@ def _require_unnarrowed_admin(request: Request, current_user: EmailUserResponse)
         raise HTTPException(status_code=403, detail="OAuth client management requires un-narrowed admin access")
 
 
+def _recover_token_teams_from_jwt(request: Request) -> tuple[list[str] | None, bool] | None:
+    """Attempt to recover token_teams from cached JWT payload.
+
+    When ``request.state.token_teams`` is missing or malformed, this helper
+    inspects the cached verified JWT payload (set by the auth middleware) to
+    re-derive a well-typed ``token_teams`` value and the associated admin flag.
+
+    Returns:
+        Tuple of ``(token_teams, is_admin)`` if recovery succeeds (cached payload
+        exists, is a well-formed tuple, and contains a non-empty dict), ``None``
+        otherwise.  Empty dict payloads are treated as untrusted and fail recovery.
+    """
+    cached = getattr(request.state, "_jwt_verified_payload", None)
+    if not (cached and isinstance(cached, tuple) and len(cached) == 2):
+        return None
+
+    _, payload = cached
+    if not (isinstance(payload, dict) and payload):
+        return None
+
+    token_teams = normalize_token_teams(payload)
+    is_admin = _extract_is_admin(payload)
+
+    return (token_teams, is_admin)
+
+
 def _resolve_token_teams_for_scope_check(request: Request, current_user: EmailUserResponse) -> list[str] | None:
     """Resolve token teams for scoped ownership checks using normalized token semantics.
+
+    SECURITY: This function must never promote indeterminate scope (missing or
+    malformed ``token_teams``) to unrestricted admin scope.  Only explicitly
+    resolved ``token_teams=None`` from a trusted source (``request.state``,
+    cached JWT payload) may produce unrestricted scope for eligible admins.
+    When no trusted source is available, the function fails closed to
+    public-only (``[]``), matching ``get_token_teams_from_request`` semantics
+    in ``auth_context.py``.
 
     Args:
         request: Incoming request with token scoping state.
         current_user: Authenticated user context.
 
     Returns:
-        ``None`` for unrestricted admin scope, or a normalized team list for scoped access.
+        ``None`` for unrestricted admin scope (which callers must downgrade for non-admins),
+        a non-empty list for team-scoped access, or ``[]`` for public-only scope (including
+        fail-closed cases when no trusted source is available).
     """
-    is_admin = False
-    if hasattr(current_user, "is_admin"):
-        is_admin = bool(getattr(current_user, "is_admin", False))
-    elif isinstance(current_user, dict):
-        is_admin = bool(current_user.get("is_admin", False) or current_user.get("user", {}).get("is_admin", False))
+    is_admin = _extract_is_admin(current_user)
 
     _not_set = object()
     token_teams = getattr(request.state, "token_teams", _not_set)
-    if token_teams is _not_set or not (token_teams is None or isinstance(token_teams, list)):
-        cached = getattr(request.state, "_jwt_verified_payload", None)
-        if cached and isinstance(cached, tuple) and len(cached) == 2:
-            _, payload = cached
-            if payload:
-                token_teams = normalize_token_teams(payload)
-                is_admin = bool(payload.get("is_admin", False) or payload.get("user", {}).get("is_admin", False))
-        # An unexpected token_teams value falls through to the _not_set branch below,
-        # which fails closed (empty scope) for non-admins but is treated as un-narrowed
-        # for admins.
-        if token_teams is not _not_set and not (token_teams is None or isinstance(token_teams, list)):
-            token_teams = _not_set
 
-    if token_teams is _not_set:
-        token_teams = None if is_admin else []
+    # Fast path: token_teams is already a well-typed value set by auth.py.
+    if token_teams is not _not_set and (token_teams is None or isinstance(token_teams, list)):
+        # Resolved from the primary trusted source — proceed to final checks.
+        pass
+    else:
+        # token_teams is missing (_not_set) or malformed (wrong type).
+        is_malformed = token_teams is not _not_set
+        if is_malformed:
+            logger.warning(
+                "_resolve_token_teams_for_scope_check: malformed token_teams type=%s; attempting recovery from cached JWT payload",
+                type(token_teams).__name__,
+            )
+
+        # Attempt recovery from the cached verified JWT payload.
+        recovered = _recover_token_teams_from_jwt(request)
+        if recovered:
+            token_teams, is_admin = recovered
+            logger.debug(
+                "_resolve_token_teams_for_scope_check: recovered token_teams from cached JWT payload",
+            )
+        else:
+            # No usable cached payload — fail closed to public-only regardless
+            # of admin status.  Unrestricted scope requires an explicit signal from
+            # a trusted source, not an absence of any signal.
+            if is_malformed:
+                logger.warning(
+                    "_resolve_token_teams_for_scope_check: malformed token_teams with no cached JWT payload; failing closed to public-only scope",
+                )
+            token_teams = []
 
     # Empty-team scoped tokens are public-only and must never receive admin bypass.
     if isinstance(token_teams, list) and len(token_teams) == 0:
@@ -479,8 +526,11 @@ def _resolve_token_teams_for_scope_check(request: Request, current_user: EmailUs
 def _extract_is_admin(current_user: EmailUserResponse | dict) -> bool:
     """Extract admin flag from typed or dict user contexts.
 
+    Supports both flat dict structures (``{"is_admin": True}``) and nested
+    structures (``{"user": {"is_admin": True}}``), matching JWT payload formats.
+
     Args:
-        current_user: Authenticated user context.
+        current_user: Authenticated user context (typed object or dict).
 
     Returns:
         ``True`` when the user context indicates admin privileges.
@@ -488,7 +538,9 @@ def _extract_is_admin(current_user: EmailUserResponse | dict) -> bool:
     if hasattr(current_user, "is_admin"):
         return bool(getattr(current_user, "is_admin", False))
     if isinstance(current_user, dict):
-        return bool(current_user.get("is_admin", False) or current_user.get("user", {}).get("is_admin", False))
+        user_claim = current_user.get("user", {})
+        user_is_admin = user_claim.get("is_admin", False) if isinstance(user_claim, dict) else False
+        return bool(current_user.get("is_admin", False) or user_is_admin)
     return False
 
 
