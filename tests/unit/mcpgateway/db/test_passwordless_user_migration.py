@@ -17,8 +17,8 @@ import pytest
 import sqlalchemy as sa
 
 MODULE_NAME = "mcpgateway.alembic.versions.5e211ec89cad_allow_nullable_email_user_password_hash"
-REVISION = "5e211ec89cad"
-DOWN_REVISION = "12d4a0c7789c"
+REVISION = "5e211ec89cad"  # pragma: allowlist secret
+DOWN_REVISION = "12d4a0c7789c"  # pragma: allowlist secret
 
 
 def _migration_context(conn):
