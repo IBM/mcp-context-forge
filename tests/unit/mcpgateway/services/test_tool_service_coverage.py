@@ -7604,7 +7604,7 @@ class TestInvokeToolGatewayQueryParams:
 class TestInvokeToolPluginContext:
     @pytest.mark.asyncio
     async def test_global_context_updated_with_server_id_and_email(self, tool_service):
-        """Plugin global context is updated with gateway_id and user email."""
+        """A missing context server ID falls back to the tool gateway ID and user email."""
         # Third-Party
         from cpex.framework.models import GlobalContext
 
@@ -7619,7 +7619,7 @@ class TestInvokeToolPluginContext:
         async def fake_get(*a, **kw):
             return mock_response
 
-        gc = GlobalContext(request_id="req-1", server_id="old-server", tenant_id=None, user=None)
+        gc = GlobalContext(request_id="req-1", server_id=None, tenant_id=None, user=None)
 
         mock_metrics_buffer = MagicMock()
         mock_metrics_buffer.record_tool_metric = MagicMock()
@@ -7650,6 +7650,55 @@ class TestInvokeToolPluginContext:
             )
         assert gc.server_id == "gw-42"
         assert gc.user == "user@test.com"
+
+    @pytest.mark.asyncio
+    async def test_fresh_global_context_uses_virtual_server_id(self, tool_service):
+        """A fresh invoke context keeps the explicit virtual-server scope over its gateway."""
+        # Third-Party
+        from cpex.framework.models import GlobalContext
+
+        tp = _make_tool_payload(integration_type="REST", request_type="GET", gateway_id="gw-42")
+        db = MagicMock()
+
+        mock_response = MagicMock()
+        mock_response.status_code = 200
+        mock_response.json = MagicMock(return_value={"ok": True})
+        mock_response.raise_for_status = MagicMock()
+
+        async def fake_get(*_args, **_kwargs):
+            return mock_response
+
+        plugin_manager = MagicMock()
+        plugin_manager.has_hooks_for = MagicMock(return_value=True)
+        plugin_manager.invoke_hook = AsyncMock(return_value=(SimpleNamespace(modified_payload=None, retry_delay_ms=0, metadata=None, executions=[]), {}))
+
+        mock_metrics_buffer = MagicMock()
+        mock_metrics_buffer.record_tool_metric = MagicMock()
+
+        with (
+            _setup_cache_for_invoke(tp),
+            patch.object(tool_service, "_check_tool_access", AsyncMock(return_value=True)),
+            patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=plugin_manager)),
+            patch("mcpgateway.services.tool_service.global_config_cache") as mock_gcc,
+            patch("mcpgateway.services.tool_service.current_trace_id") as mock_trace,
+            patch("mcpgateway.services.tool_service.create_span") as mock_span_ctx,
+            patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer),
+            patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", return_value={}),
+        ):
+            mock_gcc.get_passthrough_headers = MagicMock(return_value=[])
+            mock_trace.get = MagicMock(return_value=None)
+            mock_span_ctx.return_value.__enter__ = MagicMock(return_value=MagicMock())
+            mock_span_ctx.return_value.__exit__ = MagicMock(return_value=False)
+
+            tool_service._http_client = AsyncMock()
+            tool_service._http_client.get = fake_get
+
+            await tool_service.invoke_tool(db, "test_tool", {}, server_id="virtual-server")
+
+        contexts = [call.kwargs["global_context"] for call in plugin_manager.invoke_hook.call_args_list if "global_context" in call.kwargs]
+        assert contexts
+        assert all(isinstance(context, GlobalContext) for context in contexts)
+        assert all(context.server_id == "virtual-server" for context in contexts)
 
     @pytest.mark.asyncio
     async def test_global_context_not_updated_when_gateway_id_missing_and_user_already_set(self, tool_service):
