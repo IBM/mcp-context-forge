@@ -7494,13 +7494,15 @@ class ToolService(BaseService):
                     tool.custom_name = tool_update.name
                 tool.name = tool_update.name
 
-            # Check for conflicts when visibility changes without a name change
+            if tool_update.custom_name is not None:
+                if tool_update.custom_name != tool.custom_name and not name_is_changing:
+                    tool_visibility_ref = tool.visibility if tool_update.visibility is None else tool_update.visibility.lower()
+                    self._check_tool_name_conflict(db, tool_update.custom_name, tool_visibility_ref, tool.id, team_id=tool.team_id, owner_email=tool.owner_email)
+                tool.custom_name = tool_update.custom_name
+
             if tool_update.visibility is not None and tool_update.visibility.lower() != tool.visibility and not name_is_changing:
                 new_visibility = tool_update.visibility.lower()
                 self._check_tool_name_conflict(db, tool.custom_name, new_visibility, tool.id, team_id=tool.team_id, owner_email=tool.owner_email)
-
-            if tool_update.custom_name is not None:
-                tool.custom_name = tool_update.custom_name
             if tool_update.displayName is not None:
                 tool.display_name = tool_update.displayName
             if tool_update.url is not None:
