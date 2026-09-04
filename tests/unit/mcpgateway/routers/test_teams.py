@@ -27,7 +27,7 @@ from mcpgateway.schemas import (
     TeamUpdateRequest,
 )
 from mcpgateway.services.team_invitation_service import InvitationDeliveryResult, TeamInvitationService
-from mcpgateway.services.team_management_service import SeededInvitation, SeededMember, TeamManagementService, TeamMemberLimitExceededError, TeamSeedResult
+from mcpgateway.services.team_management_service import SeededInvitation, SeededMember, TeamManagementService, TeamMemberLimitExceededError, TeamNameConflictError, TeamSeedResult
 
 from tests.utils.rbac_mocks import patch_rbac_decorators, restore_rbac_decorators
 
@@ -335,6 +335,72 @@ class TestTeamsRouter:
 
             assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
             assert "exceeding the maximum" in str(exc_info.value.detail)
+
+    @pytest.mark.asyncio
+    async def test_create_team_name_conflict_admin_returns_400(self, mock_admin_context, mock_db):
+        """ICA20-1559: a caller authorized to list all teams (platform admin) sees the specific
+        conflict message on an active name collision — this is the 400 ICA depends on to trigger
+        its recovery-by-name lookup."""
+        request = TeamCreateRequest(name="Existing Active Team", visibility="private")
+
+        with mock_permission_check(is_admin=True), patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+            mock_service = AsyncMock(spec=TeamManagementService)
+            mock_service.create_team_with_members = AsyncMock(
+                side_effect=TeamNameConflictError("A team named 'Existing Active Team' already exists")
+            )
+            MockService.return_value = mock_service
+
+            from mcpgateway.routers.teams import create_team
+
+            with pytest.raises(HTTPException) as exc_info:
+                await create_team(request, BackgroundTasks(), current_user_ctx=mock_admin_context, db=mock_db)
+
+            assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
+            assert "already exists" in str(exc_info.value.detail)
+            assert "Existing Active Team" in str(exc_info.value.detail)
+
+    @pytest.mark.asyncio
+    async def test_create_team_name_conflict_non_admin_returns_generic_409(self, mock_user_context, mock_db):
+        """Security/deny-path: a non-admin who hits an active name collision gets a generic 409 that
+        does NOT confirm a team with that name exists (prevents name-existence oracle)."""
+        request = TeamCreateRequest(name="Existing Active Team", visibility="private")
+
+        with mock_permission_check(is_admin=False), patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+            mock_service = AsyncMock(spec=TeamManagementService)
+            mock_service.create_team_with_members = AsyncMock(
+                side_effect=TeamNameConflictError("A team named 'Existing Active Team' already exists")
+            )
+            MockService.return_value = mock_service
+
+            from mcpgateway.routers.teams import create_team
+
+            with pytest.raises(HTTPException) as exc_info:
+                await create_team(request, BackgroundTasks(), current_user_ctx=mock_user_context, db=mock_db)
+
+            assert exc_info.value.status_code == status.HTTP_409_CONFLICT
+            assert "Existing Active Team" not in str(exc_info.value.detail)
+            assert "already exists" not in str(exc_info.value.detail)
+
+    @pytest.mark.asyncio
+    async def test_create_team_non_admin_unrelated_validation_keeps_specific_400(self, mock_user_context, mock_db):
+        """Precision guard: a non-admin hitting an UNRELATED validation error (not a name collision)
+        still gets its specific 400 message, not the generic collision 409."""
+        request = TeamCreateRequest(name="New Team", visibility="private")
+
+        with mock_permission_check(is_admin=False), patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+            mock_service = AsyncMock(spec=TeamManagementService)
+            mock_service.create_team_with_members = AsyncMock(
+                side_effect=TeamMemberLimitExceededError("max_members cannot exceed the configured limit of 500")
+            )
+            MockService.return_value = mock_service
+
+            from mcpgateway.routers.teams import create_team
+
+            with pytest.raises(HTTPException) as exc_info:
+                await create_team(request, BackgroundTasks(), current_user_ctx=mock_user_context, db=mock_db)
+
+            assert exc_info.value.status_code == status.HTTP_400_BAD_REQUEST
+            assert "configured limit" in str(exc_info.value.detail)
 
     @pytest.mark.asyncio
     async def test_create_team_value_error(self, mock_user_context, mock_db):
