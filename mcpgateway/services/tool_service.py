@@ -7344,6 +7344,7 @@ class ToolService(BaseService):
                     DbTool.visibility == "public",
                     DbTool.id != tool_id,
                 ),
+                first_only=True,
             )
         elif visibility == "team" and team_id:
             existing_tool = get_for_update(
@@ -7355,6 +7356,7 @@ class ToolService(BaseService):
                     DbTool.team_id == team_id,
                     DbTool.id != tool_id,
                 ),
+                first_only=True,
             )
         elif visibility == "private" and owner_email:
             existing_tool = get_for_update(
@@ -7366,6 +7368,7 @@ class ToolService(BaseService):
                     DbTool.owner_email == owner_email,
                     DbTool.id != tool_id,
                 ),
+                first_only=True,
             )
         else:
             logger.warning("Skipping conflict check for tool %s: visibility=%r requires %s but none provided", tool_id, visibility, "team_id" if visibility == "team" else "owner_email")

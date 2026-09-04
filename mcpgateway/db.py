@@ -6043,6 +6043,7 @@ def get_for_update(
     nowait: bool = False,
     lock_timeout_ms: Optional[int] = None,
     options: Optional[List] = None,
+    first_only: bool = False,
 ):
     """Get entity with row lock for update operations.
 
@@ -6051,6 +6052,9 @@ def get_for_update(
         model: ORM model class
         entity_id: Primary key value (optional if `where` provided)
         where: Optional SQLAlchemy WHERE clause to locate rows for conflict detection
+        first_only: Return the first matching row when the caller only needs to
+            establish that a conflict exists. This keeps the normal strict
+            single-row behavior for callers that expect uniqueness.
         skip_locked: If False (default), wait for locked rows. If True, skip locked
             rows (returns None if row is locked). Use False for conflict checks and
             entity updates to ensure consistency. Use True only for job-queue patterns.
@@ -6092,12 +6096,16 @@ def get_for_update(
     if options:
         stmt = stmt.options(*options)
 
+    if first_only:
+        stmt = stmt.limit(1)
+
     if dialect != "postgresql":
         # SQLite and others: no FOR UPDATE support
         # Use db.get optimization only when querying by primary key without loader options
         if not options and where is None and entity_id is not None:
             return db.get(model, entity_id)
-        return db.execute(stmt).scalar_one_or_none()
+        result = db.execute(stmt)
+        return result.scalars().first() if first_only else result.scalar_one_or_none()
 
     # PostgreSQL: set lock timeout if specified
     if lock_timeout_ms is not None:
@@ -6105,7 +6113,8 @@ def get_for_update(
 
     # PostgreSQL: apply FOR UPDATE with optional nowait
     stmt = stmt.with_for_update(skip_locked=skip_locked, nowait=nowait)
-    return db.execute(stmt).scalar_one_or_none()
+    result = db.execute(stmt)
+    return result.scalars().first() if first_only else result.scalar_one_or_none()
 
 
 # Using the existing get_db generator to create a context manager for fresh sessions
