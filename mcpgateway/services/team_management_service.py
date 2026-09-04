@@ -864,9 +864,7 @@ class TeamManagementService:
                 # unique, so an active collision would otherwise raise an unhandled IntegrityError
                 # at flush() and surface to callers as an opaque 500. Raise a clean, catchable
                 # conflict instead.
-                existing_active_team = self.db.query(EmailTeam).filter(
-                    EmailTeam.slug == potential_slug, EmailTeam.is_active.is_(True)
-                ).first()
+                existing_active_team = self.db.query(EmailTeam).filter(EmailTeam.slug == potential_slug, EmailTeam.is_active.is_(True)).first()
                 if existing_active_team:
                     raise TeamManagementError(f"A team named '{name}' already exists")
 
