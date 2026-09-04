@@ -1176,3 +1176,26 @@ async def test_handle_sso_callback_missing_state_no_error(monkeypatch: pytest.Mo
 
     assert isinstance(response, RedirectResponse)
     assert "/admin/login?error=sso_failed" in response.headers.get("location", "")
+
+
+def test_sso_provider_id_rejects_html_metacharacters():
+    """Issue #5856: stored-XSS defense-in-depth — HTML in provider id is rejected at ingestion."""
+    # Third-Party
+    from pydantic import ValidationError
+
+    fields = dict(
+        name="Evil",
+        display_name="Evil",
+        provider_type="oidc",
+        client_id="cid",
+        client_secret="secret",  # pragma: allowlist secret
+        authorization_url="https://idp.example.com/auth",
+        token_url="https://idp.example.com/token",
+        userinfo_url="https://idp.example.com/userinfo",
+    )
+
+    with pytest.raises(ValidationError):
+        sso_router.SSOProviderCreateRequest(id="<script>alert(1)</script>", **fields)
+
+    # A safe identifier still validates.
+    assert sso_router.SSOProviderCreateRequest(id="keycloak.prod-1", **fields).id == "keycloak.prod-1"

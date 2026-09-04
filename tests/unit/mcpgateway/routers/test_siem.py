@@ -233,3 +233,15 @@ class TestSIEMRBACDenyPaths:
         with pytest.raises(HTTPException) as exc:
             await siem.get_siem_health(_user=None)
         assert exc.value.status_code == 401
+
+
+def test_destination_name_rejects_html_metacharacters():
+    """Issue #5856: stored-XSS defense-in-depth — HTML in destination name is rejected at ingestion."""
+    # Third-Party
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        siem.DestinationUpsertRequest(name="<script>alert(1)</script>", type="webhook", url="https://example.com/hook")
+
+    # A safe identifier still validates.
+    assert siem.DestinationUpsertRequest(name="splunk-prod.1", type="webhook", url="https://example.com/hook").name == "splunk-prod.1"
