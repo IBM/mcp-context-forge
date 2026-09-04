@@ -89,6 +89,28 @@ def _set_jwt_cookie(context: BrowserContext, token: str) -> None:
     )
 
 
+def _goto_with_rate_limit_retry(page: Page, url: str, attempts: int = 2, **goto_kwargs):
+    """Navigate, retrying once if the CRITICAL rate-limit tier (no burst) returns 429.
+
+    This suite's own admin-login/logout traffic can legitimately trip the
+    login endpoint's 10 req/min limit when many tests authenticate in quick
+    succession, so a 429 here is contention from prior requests in this run,
+    not a real navigation failure.
+    """
+    response = None
+    for attempt in range(attempts):
+        response = page.goto(url, **goto_kwargs)
+        if not response or response.status != 429:
+            break
+        if attempt < attempts - 1:
+            try:
+                retry_after = float(response.headers.get("retry-after", "60"))
+            except (TypeError, ValueError):
+                retry_after = 60.0
+            time.sleep(retry_after)
+    return response
+
+
 def _expected_samesite() -> str:
     value = (settings.cookie_samesite or "lax").strip().lower()
     return {"lax": "Lax", "strict": "Strict", "none": "None"}.get(value, "Lax")
@@ -443,7 +465,7 @@ class TestPlaywrightSecurityE2EAuthAndSession:
 
         page_one = email_logged_in_page
         page_two = page_one.context.new_page()
-        page_two.goto("/admin", wait_until="domcontentloaded", timeout=60000)
+        _goto_with_rate_limit_retry(page_two, "/admin", wait_until="domcontentloaded", timeout=60000)
         expect(page_two).to_have_url(re.compile(r".*/admin(?!/login).*"), timeout=15000)
 
         logout_button = page_one.locator('form[action$="/admin/logout"] button[type="submit"]')
@@ -452,7 +474,7 @@ class TestPlaywrightSecurityE2EAuthAndSession:
         logout_button.click()
         page_one.wait_for_load_state("domcontentloaded")
 
-        page_two.goto(f"/admin?logout_check={uuid.uuid4().hex[:8]}")
+        _goto_with_rate_limit_retry(page_two, f"/admin?logout_check={uuid.uuid4().hex[:8]}")
         expect(page_two).to_have_url(re.compile(r".*/admin/login.*"))
         page_two.close()
 
