@@ -754,7 +754,7 @@ class TestTokenExchange:
         # Verify it's valid base64
         import base64
 
-        payload = auth_header[len("Basic "):]
+        payload = auth_header[len("Basic ") :]
         decoded = base64.b64decode(payload).decode("utf-8")
         assert decoded.startswith("test-client-id:")
         assert decoded.count(":") == 1
@@ -810,7 +810,7 @@ class TestTokenExchange:
         assert header.startswith("Basic ")
         import base64
 
-        payload = base64.b64decode(header[len("Basic "):]).decode("utf-8")
+        payload = base64.b64decode(header[len("Basic ") :]).decode("utf-8")
         assert payload == "client%40id:secret%3A%2B%3F"
 
     @pytest.mark.asyncio
@@ -3585,6 +3585,7 @@ class TestAuthenticateOrCreateUser:
         assert result == "jwt-token"
         assert existing_user.full_name == "New Name"
         assert existing_user.auth_provider == "github"
+        assert existing_user.email_verified_at is not None
 
     @pytest.mark.asyncio
     async def test_existing_user_calls_apply_team_mapping(self, sso_service, mock_db):
@@ -4063,6 +4064,7 @@ class TestAuthenticateOrCreateUser:
             )
 
         assert result == "new-jwt"
+        assert sso_service.auth_service.create_user.return_value.email_verified_at is not None
         sso_service._map_groups_to_roles.assert_called_once()
         sso_service._sync_user_roles.assert_called_once()
 

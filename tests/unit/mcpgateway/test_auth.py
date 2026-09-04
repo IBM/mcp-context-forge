@@ -14,12 +14,13 @@ and error handling scenarios.
 from datetime import datetime, timedelta, timezone
 import logging
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 # Third-Party
 from fastapi import HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials
 import pytest
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 # First-Party
@@ -4724,9 +4725,9 @@ class TestTenantIdPropagation:
 
         auth_module._propagate_tenant_id(request)
 
-        assert request.state.plugin_global_context.tenant_id == "team-acme", (
-            "_propagate_tenant_id must fill tenant_id even when middleware has already created plugin_global_context with tenant_id=None"
-        )
+        assert (
+            request.state.plugin_global_context.tenant_id == "team-acme"
+        ), "_propagate_tenant_id must fill tenant_id even when middleware has already created plugin_global_context with tenant_id=None"
 
     def test_propagate_tenant_id_no_overwrite(self):
         """_propagate_tenant_id must not overwrite an already-set tenant_id."""
@@ -7049,6 +7050,333 @@ class TestTryOauthAccessTokenErrorBranches:
 
         assert result is OAuthAuthResult.FAILED
         assert b"not registered in ContextForge" in _response_body(responses)
+
+    @pytest.mark.asyncio
+    async def test_missing_user_is_auto_provisioned(self, _pinned_app_domain, oauth_server_row):
+        """A trusted provider may provision a first-time headless MCP user."""
+        del _pinned_app_domain
+        handler, _responses = _make_handler()
+        token = _make_idp_token()
+        claims = {
+            "iss": IDP_ISSUER,
+            "sub": "provider-user-123",
+            "principal": "new-user@example.com",
+            "email": "contact@example.com",
+            "email_verified": True,
+        }
+        mock_user = MagicMock(is_active=True, is_admin=False)
+
+        async def fake_verify(*_args, **_kwargs):
+            return claims
+
+        lookup = MagicMock(side_effect=[None, mock_user])
+        provision = AsyncMock(return_value=True)
+
+        with (
+            _patched_get_db(oauth_server_row),
+            patch("mcpgateway.transports.streamablehttp_transport.verify_oauth_access_token", side_effect=fake_verify),
+            patch("mcpgateway.transports.streamablehttp_transport._resolve_oauth_user_email", new_callable=AsyncMock, return_value="new-user@example.com"),
+            patch("mcpgateway.transports.streamablehttp_transport._auto_provision_oauth_user", provision),
+            patch("mcpgateway.auth._get_user_by_email_sync", lookup),
+            patch("mcpgateway.auth._resolve_teams_from_db", new_callable=AsyncMock, return_value=[]),
+        ):
+            result = await handler._try_oauth_access_token(token, self._GOOD_UNVERIFIED)
+
+        assert result is OAuthAuthResult.SUCCESS
+        provision.assert_awaited_once_with(token, claims, "new-user@example.com")
+        assert lookup.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_existing_user_skips_auto_provision(self, _pinned_app_domain, oauth_server_row):
+        """Existing local users stay on the lookup fast path."""
+        del _pinned_app_domain
+        handler, _responses = _make_handler()
+        mock_user = MagicMock(is_active=True, is_admin=False)
+        provision = AsyncMock()
+
+        async def fake_verify(*_args, **_kwargs):
+            return {"iss": IDP_ISSUER, "email": "user@example.com"}
+
+        with (
+            _patched_get_db(oauth_server_row),
+            patch("mcpgateway.transports.streamablehttp_transport.verify_oauth_access_token", side_effect=fake_verify),
+            patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user),
+            patch("mcpgateway.auth._resolve_teams_from_db", new_callable=AsyncMock, return_value=[]),
+            patch("mcpgateway.transports.streamablehttp_transport._auto_provision_oauth_user", provision),
+        ):
+            result = await handler._try_oauth_access_token(_make_idp_token(), self._GOOD_UNVERIFIED)
+
+        assert result is OAuthAuthResult.SUCCESS
+        provision.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_auto_provision_requires_global_opt_in(self, monkeypatch):
+        """Virtual-server token JIT provisioning is disabled by default."""
+        # First-Party
+        from mcpgateway.transports.streamablehttp_transport import _auto_provision_oauth_user  # pylint: disable=import-outside-toplevel
+
+        monkeypatch.setattr(settings, "sso_api_token_auth_enabled", False)
+        resolve_provider = MagicMock()
+
+        with patch("mcpgateway.transports.streamablehttp_transport.resolve_trusted_provider_by_issuer", resolve_provider):
+            result = await _auto_provision_oauth_user(
+                "token",
+                {"iss": IDP_ISSUER, "email": "user@example.com"},
+                "user@example.com",
+            )
+
+        assert result is False
+        resolve_provider.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_auto_provision_requires_issuer(self, monkeypatch):
+        """Provisioning cannot select a provider without a verified issuer."""
+        # First-Party
+        from mcpgateway.transports.streamablehttp_transport import _auto_provision_oauth_user  # pylint: disable=import-outside-toplevel
+
+        monkeypatch.setattr(settings, "sso_api_token_auth_enabled", True)
+
+        result = await _auto_provision_oauth_user("token", {"email": "user@example.com"}, "user@example.com")
+
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_oauth_principal_uses_provider_email_claim_mapping(self, monkeypatch):
+        """The MCP OAuth lookup uses the same normalized identity as SSO."""
+        # First-Party
+        from mcpgateway.transports.streamablehttp_transport import _resolve_oauth_user_email  # pylint: disable=import-outside-toplevel
+
+        monkeypatch.setattr(settings, "sso_api_token_auth_enabled", True)
+        provider = MagicMock(id="custom_oidc")
+        db_mock = MagicMock()
+        cm = MagicMock()
+        cm.__aenter__ = AsyncMock(return_value=db_mock)
+        cm.__aexit__ = AsyncMock(return_value=False)
+        sso_service = MagicMock()
+        sso_service.normalize_user_info.return_value = {"email": "stable-principal@example.com"}
+
+        with (
+            patch("mcpgateway.transports.streamablehttp_transport.get_db", return_value=cm),
+            patch("mcpgateway.transports.streamablehttp_transport.resolve_trusted_provider_by_issuer", return_value=provider),
+            patch("mcpgateway.transports.streamablehttp_transport.SSOService", return_value=sso_service),
+        ):
+            email = await _resolve_oauth_user_email(
+                {
+                    "iss": IDP_ISSUER,
+                    "email": "contact@example.com",
+                    "principal": "stable-principal@example.com",
+                }
+            )
+
+        assert email == "stable-principal@example.com"
+        sso_service.normalize_user_info.assert_called_once_with(provider, ANY)
+
+    @pytest.mark.asyncio
+    async def test_oauth_principal_missing_mapped_claim_fails_closed(self, monkeypatch):
+        """A matched provider cannot silently fall back to the contact email."""
+        # First-Party
+        from mcpgateway.transports.streamablehttp_transport import _resolve_oauth_user_email  # pylint: disable=import-outside-toplevel
+
+        monkeypatch.setattr(settings, "sso_api_token_auth_enabled", True)
+        provider = MagicMock(id="custom_oidc")
+        db_mock = MagicMock()
+        cm = MagicMock()
+        cm.__aenter__ = AsyncMock(return_value=db_mock)
+        cm.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch("mcpgateway.transports.streamablehttp_transport.get_db", return_value=cm),
+            patch("mcpgateway.transports.streamablehttp_transport.resolve_trusted_provider_by_issuer", return_value=provider),
+            patch("mcpgateway.transports.streamablehttp_transport.SSOService") as service_factory,
+        ):
+            service_factory.return_value.normalize_user_info.return_value = {"email": None}
+            email = await _resolve_oauth_user_email({"iss": IDP_ISSUER, "email": "contact@example.com"})
+
+        assert email is None
+
+    @pytest.mark.asyncio
+    async def test_oauth_principal_without_issuer_uses_legacy_claims(self, monkeypatch):
+        """Provider mapping is skipped when verified claims have no issuer."""
+        # First-Party
+        from mcpgateway.transports.streamablehttp_transport import _resolve_oauth_user_email  # pylint: disable=import-outside-toplevel
+
+        monkeypatch.setattr(settings, "sso_api_token_auth_enabled", True)
+
+        email = await _resolve_oauth_user_email({"email": "Legacy@Example.com"})
+
+        assert email == "legacy@example.com"
+
+    @pytest.mark.asyncio
+    async def test_oauth_principal_without_trusted_provider_uses_legacy_claims(self, monkeypatch):
+        """An unmatched issuer preserves the existing principal precedence."""
+        # First-Party
+        from mcpgateway.transports.streamablehttp_transport import _resolve_oauth_user_email  # pylint: disable=import-outside-toplevel
+
+        monkeypatch.setattr(settings, "sso_api_token_auth_enabled", True)
+        db_mock = MagicMock()
+        cm = MagicMock()
+        cm.__aenter__ = AsyncMock(return_value=db_mock)
+        cm.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch("mcpgateway.transports.streamablehttp_transport.get_db", return_value=cm),
+            patch("mcpgateway.transports.streamablehttp_transport.resolve_trusted_provider_by_issuer", return_value=None),
+        ):
+            email = await _resolve_oauth_user_email({"iss": IDP_ISSUER, "email": "Legacy@Example.com"})
+
+        assert email == "legacy@example.com"
+
+    @pytest.mark.asyncio
+    async def test_auto_provision_requires_provider_opt_in(self, monkeypatch):
+        """An API-trusted provider with auto-create disabled cannot create users."""
+        # First-Party
+        from mcpgateway.transports.streamablehttp_transport import _auto_provision_oauth_user  # pylint: disable=import-outside-toplevel
+
+        monkeypatch.setattr(settings, "sso_api_token_auth_enabled", True)
+        provider = MagicMock(auto_create_users=False)
+        db_mock = MagicMock()
+        cm = MagicMock()
+        cm.__aenter__ = AsyncMock(return_value=db_mock)
+        cm.__aexit__ = AsyncMock(return_value=False)
+        build = AsyncMock()
+
+        with (
+            patch("mcpgateway.transports.streamablehttp_transport.get_db", return_value=cm),
+            patch("mcpgateway.transports.streamablehttp_transport.resolve_trusted_provider_by_issuer", return_value=provider),
+            patch("mcpgateway.transports.streamablehttp_transport.build_external_identity", build),
+        ):
+            result = await _auto_provision_oauth_user(
+                "token",
+                {"iss": IDP_ISSUER, "email": "user@example.com"},
+                "user@example.com",
+            )
+
+        assert result is False
+        build.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_auto_provision_accepts_matching_normalized_identity(self, monkeypatch):
+        """A trusted auto-create provider provisions the selected local principal."""
+        # First-Party
+        from mcpgateway.transports.streamablehttp_transport import _auto_provision_oauth_user  # pylint: disable=import-outside-toplevel
+
+        monkeypatch.setattr(settings, "sso_api_token_auth_enabled", True)
+        provider = MagicMock(id="oidc", auto_create_users=True)
+        db_mock = MagicMock()
+        db_mock.info = {}
+        cm = MagicMock()
+        cm.__aenter__ = AsyncMock(return_value=db_mock)
+        cm.__aexit__ = AsyncMock(return_value=False)
+        claims = {"iss": IDP_ISSUER, "principal": "user@example.com"}
+        build = AsyncMock(return_value={"email": "user@example.com"})
+
+        with (
+            patch("mcpgateway.transports.streamablehttp_transport.get_db", return_value=cm),
+            patch("mcpgateway.transports.streamablehttp_transport.resolve_trusted_provider_by_issuer", return_value=provider),
+            patch("mcpgateway.transports.streamablehttp_transport.build_external_identity", build),
+        ):
+            result = await _auto_provision_oauth_user("token", claims, "user@example.com")
+
+        assert result is True
+        assert db_mock.info["external_owned"] is True
+        build.assert_awaited_once_with(provider, claims, "token", db_mock)
+
+    @pytest.mark.asyncio
+    async def test_auto_provision_rejects_unresolved_identity(self, monkeypatch):
+        """A provider that cannot provision the identity fails closed."""
+        # First-Party
+        from mcpgateway.transports.streamablehttp_transport import _auto_provision_oauth_user  # pylint: disable=import-outside-toplevel
+
+        monkeypatch.setattr(settings, "sso_api_token_auth_enabled", True)
+        provider = MagicMock(id="oidc", auto_create_users=True)
+        db_mock = MagicMock()
+        db_mock.info = {}
+        cm = MagicMock()
+        cm.__aenter__ = AsyncMock(return_value=db_mock)
+        cm.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch("mcpgateway.transports.streamablehttp_transport.get_db", return_value=cm),
+            patch("mcpgateway.transports.streamablehttp_transport.resolve_trusted_provider_by_issuer", return_value=provider),
+            patch("mcpgateway.transports.streamablehttp_transport.build_external_identity", new_callable=AsyncMock, return_value=None),
+        ):
+            result = await _auto_provision_oauth_user("token", {"iss": IDP_ISSUER}, "user@example.com")
+
+        assert result is False
+
+    @pytest.mark.asyncio
+    async def test_auto_provision_rejects_identity_mismatch(self, monkeypatch):
+        """Provisioning cannot switch to a different normalized local principal."""
+        # First-Party
+        from mcpgateway.transports.streamablehttp_transport import _auto_provision_oauth_user  # pylint: disable=import-outside-toplevel
+
+        monkeypatch.setattr(settings, "sso_api_token_auth_enabled", True)
+        provider = MagicMock(id="oidc", auto_create_users=True)
+        db_mock = MagicMock()
+        cm = MagicMock()
+        cm.__aenter__ = AsyncMock(return_value=db_mock)
+        cm.__aexit__ = AsyncMock(return_value=False)
+
+        with (
+            patch("mcpgateway.transports.streamablehttp_transport.get_db", return_value=cm),
+            patch("mcpgateway.transports.streamablehttp_transport.resolve_trusted_provider_by_issuer", return_value=provider),
+            patch(
+                "mcpgateway.transports.streamablehttp_transport.build_external_identity",
+                new_callable=AsyncMock,
+                return_value={"email": "different@example.com"},
+            ),
+        ):
+            result = await _auto_provision_oauth_user(
+                "token",
+                {"iss": IDP_ISSUER, "email": "expected@example.com"},
+                "expected@example.com",
+            )
+
+        assert result is False
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("error", "expected_status"), [(SQLAlchemyError("db down"), 503), (RuntimeError("unexpected"), 401)])
+    async def test_oauth_principal_resolution_errors_fail_closed(self, _pinned_app_domain, oauth_server_row, error, expected_status):
+        """Identity-resolution failures return the appropriate closed response."""
+        del _pinned_app_domain
+        handler, responses = _make_handler()
+
+        async def fake_verify(*_args, **_kwargs):
+            return {"iss": IDP_ISSUER, "email": "user@example.com"}
+
+        with (
+            _patched_get_db(oauth_server_row),
+            patch("mcpgateway.transports.streamablehttp_transport.verify_oauth_access_token", side_effect=fake_verify),
+            patch("mcpgateway.transports.streamablehttp_transport._resolve_oauth_user_email", new_callable=AsyncMock, side_effect=error),
+        ):
+            result = await handler._try_oauth_access_token(_make_idp_token(), self._GOOD_UNVERIFIED)
+
+        assert result is OAuthAuthResult.FAILED
+        start = next(message for message in responses if message["type"] == "http.response.start")
+        assert start["status"] == expected_status
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(("error", "expected_status"), [(SQLAlchemyError("db down"), 503), (RuntimeError("unexpected"), 401)])
+    async def test_oauth_provisioning_errors_fail_closed(self, _pinned_app_domain, oauth_server_row, error, expected_status):
+        """JIT-provisioning failures return the appropriate closed response."""
+        del _pinned_app_domain
+        handler, responses = _make_handler()
+
+        async def fake_verify(*_args, **_kwargs):
+            return {"iss": IDP_ISSUER, "email": "user@example.com"}
+
+        with (
+            _patched_get_db(oauth_server_row),
+            patch("mcpgateway.transports.streamablehttp_transport.verify_oauth_access_token", side_effect=fake_verify),
+            patch("mcpgateway.transports.streamablehttp_transport._resolve_oauth_user_email", new_callable=AsyncMock, return_value="user@example.com"),
+            patch("mcpgateway.transports.streamablehttp_transport._auto_provision_oauth_user", new_callable=AsyncMock, side_effect=error),
+            patch("mcpgateway.auth._get_user_by_email_sync", return_value=None),
+        ):
+            result = await handler._try_oauth_access_token(_make_idp_token(), self._GOOD_UNVERIFIED)
+
+        assert result is OAuthAuthResult.FAILED
+        start = next(message for message in responses if message["type"] == "http.response.start")
+        assert start["status"] == expected_status
 
     @pytest.mark.asyncio
     async def test_inactive_user_rejected(self, _pinned_app_domain, oauth_server_row):

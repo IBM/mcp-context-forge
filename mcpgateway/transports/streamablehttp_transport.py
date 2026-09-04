@@ -95,6 +95,7 @@ from mcpgateway.services.oauth_manager import OAuthEnforcementUnavailableError, 
 from mcpgateway.services.permission_service import PermissionService
 from mcpgateway.services.prompt_service import PromptService
 from mcpgateway.services.resource_service import ResourceError, ResourceNotFoundError, ResourceService
+from mcpgateway.services.sso_service import resolve_trusted_provider_by_issuer, SSOService
 from mcpgateway.services.tool_service import ToolService
 from mcpgateway.transports.context import UserContext
 from mcpgateway.transports.redis_event_store import RedisEventStore
@@ -107,6 +108,7 @@ from mcpgateway.utils.passthrough_headers import compute_passthrough_headers_cac
 from mcpgateway.utils.trace_context import set_trace_context_from_teams, set_trace_session_id
 from mcpgateway.utils.verify_credentials import (
     _resolve_auth_header_name,
+    build_external_identity,
     get_auth_header_value,
     is_proxy_auth_trust_active,
     require_auth_header_first,
@@ -867,6 +869,97 @@ async def get_db() -> AsyncGenerator[Session, Any]:
         raise
     finally:
         db.close()
+
+
+def _legacy_oauth_user_email(claims: Dict[str, Any]) -> Optional[str]:
+    """Return the backwards-compatible OAuth principal from verified claims."""
+    value = claims.get("email") or claims.get("preferred_username") or claims.get("sub")
+    if not isinstance(value, str) or "@" not in value:
+        return None
+    return value.strip().lower()
+
+
+async def _resolve_oauth_user_email(claims: Dict[str, Any]) -> Optional[str]:
+    """Resolve the local principal using trusted SSO provider claim mapping.
+
+    When external SSO token authentication is disabled, or the issuer does not
+    map to an API-trusted provider, this preserves the historical
+    ``email``/``preferred_username``/``sub`` precedence. A matched provider is
+    authoritative: a missing or invalid configured ``email_claim`` fails closed
+    instead of falling back to a different identity claim.
+
+    Args:
+        claims: Claims already verified for the target virtual server.
+
+    Returns:
+        Normalized ContextForge email principal, or ``None`` when invalid.
+    """
+    fallback = _legacy_oauth_user_email(claims)
+    if not settings.sso_api_token_auth_enabled:
+        return fallback
+
+    issuer = claims.get("iss")
+    if not isinstance(issuer, str) or not issuer:
+        return fallback
+
+    async with get_db() as db:
+        provider = resolve_trusted_provider_by_issuer(issuer, db)
+        if provider is None:
+            return fallback
+        user_info = SSOService(db).normalize_user_info(provider, claims)
+
+    value = user_info.get("email")
+    if not isinstance(value, str) or "@" not in value:
+        return None
+    return value.strip().lower()
+
+
+async def _auto_provision_oauth_user(token: str, claims: Dict[str, Any], expected_email: str) -> bool:
+    """Provision a missing virtual-server OAuth user through trusted SSO.
+
+    The token has already passed the virtual server's signature, issuer,
+    expiry, and audience validation. Provisioning additionally requires the
+    global external-token opt-in and an enabled, API-trusted SSO provider with
+    ``auto_create_users`` enabled. The shared SSO service applies the existing
+    email-verification, trusted-domain, approval, account-linking, role, and
+    team rules.
+
+    Args:
+        token: Raw external bearer token.
+        claims: Claims verified for the target virtual server.
+        expected_email: Principal selected through provider claim mapping.
+
+    Returns:
+        ``True`` only when the expected local user exists after provisioning.
+    """
+    if not settings.sso_api_token_auth_enabled:
+        return False
+
+    issuer = claims.get("iss")
+    if not isinstance(issuer, str) or not issuer:
+        return False
+
+    async with get_db() as db:
+        db.info["external_owned"] = True
+        provider = resolve_trusted_provider_by_issuer(issuer, db)
+        if provider is None or not provider.auto_create_users:
+            return False
+
+        identity = await build_external_identity(provider, claims, token, db)
+        if identity is None:
+            return False
+
+        provisioned_email = str(identity.get("email") or "").strip().lower()
+        if provisioned_email != expected_email:
+            logger.warning(
+                "Virtual-server OAuth provisioning identity mismatch: expected=%s actual=%s provider=%s",
+                sanitize_for_log(expected_email),
+                sanitize_for_log(provisioned_email),
+                sanitize_for_log(getattr(provider, "id", "")),
+            )
+            return False
+
+        return True
 
 
 def get_user_email_from_context() -> str:
@@ -1736,9 +1829,7 @@ def _get_plugin_contexts_or_none() -> Tuple[Optional[GlobalContext], Optional[Pl
 
 
 @mcp_app.call_tool(validate_input=False)
-async def call_tool(
-    name: str, arguments: dict
-) -> Union[
+async def call_tool(name: str, arguments: dict) -> Union[
     types.CallToolResult,
     List[Union[types.TextContent, types.ImageContent, types.AudioContent, types.ResourceLink, types.EmbeddedResource]],
     Tuple[List[Union[types.TextContent, types.ImageContent, types.AudioContent, types.ResourceLink, types.EmbeddedResource]], Dict[str, Any]],
@@ -5790,15 +5881,25 @@ class _StreamableHttpAuthHandler:
         except Exception:
             logger.warning("Failed to persist learned audience for server %s (caller guard)", server_id, exc_info=True)
 
-        # Resolve user identity from verified claims
-        user_email = claims.get("email") or claims.get("preferred_username") or claims.get("sub")
-        if not user_email or not isinstance(user_email, str) or "@" not in user_email:
+        # Resolve the local principal through the trusted provider's SSO claim
+        # mapping when configured; preserve the historical fallback otherwise.
+        try:
+            user_email = await _resolve_oauth_user_email(claims)
+        except SQLAlchemyError:
+            logger.exception("DB error resolving SSO identity during OAuth access-token verification")
+            await self._send_error(detail="Service unavailable", status_code=503)
+            return OAuthAuthResult.FAILED
+        except Exception:
+            logger.exception("Unexpected error resolving SSO identity during OAuth access-token verification")
+            await self._send_error(detail="Authentication failed", headers={"WWW-Authenticate": "Bearer"})
+            return OAuthAuthResult.FAILED
+
+        if not user_email:
             await self._send_error(detail="OAuth token missing valid email claim")
             return OAuthAuthResult.FAILED
 
-        user_email = user_email.strip().lower()
-
-        # Look up user in ContextForge DB — user must already exist (no auto-creation)
+        # Look up the local user first. Only a trusted SSO provider may provision
+        # a missing identity, and existing users stay on this fast path.
         # First-Party
         from mcpgateway.auth import _get_user_by_email_sync, _resolve_teams_from_db  # pylint: disable=import-outside-toplevel
 
@@ -5814,8 +5915,22 @@ class _StreamableHttpAuthHandler:
             return OAuthAuthResult.FAILED
 
         if user_record is None:
-            await self._send_error(detail="User not registered in ContextForge. Please log in via SSO first.")
-            return OAuthAuthResult.FAILED
+            try:
+                provisioned = await _auto_provision_oauth_user(token, claims, user_email)
+                if provisioned:
+                    user_record = await asyncio.to_thread(_get_user_by_email_sync, user_email)
+            except SQLAlchemyError:
+                logger.exception("DB error provisioning user %s during OAuth access-token verification", user_email)
+                await self._send_error(detail="Service unavailable", status_code=503)
+                return OAuthAuthResult.FAILED
+            except Exception:
+                logger.exception("Unexpected error provisioning user %s during OAuth access-token verification", user_email)
+                await self._send_error(detail="Authentication failed", headers={"WWW-Authenticate": "Bearer"})
+                return OAuthAuthResult.FAILED
+
+            if user_record is None:
+                await self._send_error(detail="User not registered in ContextForge. Please log in via SSO first.")
+                return OAuthAuthResult.FAILED
         if not user_record.is_active:
             await self._send_error(detail="Account disabled")
             return OAuthAuthResult.FAILED
