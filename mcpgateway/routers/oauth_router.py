@@ -1330,6 +1330,44 @@ def custom_redirect_after_callback(url: str, status_code: int) -> RedirectRespon
     return RedirectResponse(url=url, status_code=status_code, headers={"Referrer-Policy": "no-referrer"})
 
 
+async def _get_caller_token_status(db: Session, current_user: Any, gateway_id: str) -> Dict[str, Any]:
+    """Look up the caller's own OAuth token state for a gateway.
+
+    Wires the already-implemented ``TokenStorageService.get_token_info`` into
+    the status endpoints. Never returns token values - only metadata about
+    whether a token exists and its freshness.
+
+    Args:
+        db: Active database session.
+        current_user: Authenticated requester context (dict or EmailUserResponse).
+        gateway_id: Gateway identifier to look up.
+
+    Returns:
+        Dict with ``authorized`` (bool) and ``status`` (one of "missing",
+        "valid", "near_expiry", "expired"), plus ``scopes``, ``expires_at``
+        and ``updated_at`` when a token is stored.
+    """
+    requester_email = get_user_email(current_user)
+    if requester_email == "unknown" or not requester_email.strip():
+        return {"status": "missing", "authorized": False}
+
+    user_context = _build_user_context(current_user)
+    token_storage = TokenStorageService(db, user_context)
+    info = await token_storage.get_token_info(gateway_id, requester_email)
+
+    if not info:
+        return {"status": "missing", "authorized": False}
+
+    status = info.get("status", "missing")
+    return {
+        "status": status,
+        "authorized": status in ("valid", "near_expiry"),
+        "scopes": info.get("scopes"),
+        "expires_at": info.get("expires_at"),
+        "updated_at": info.get("updated_at"),
+    }
+
+
 @oauth_router.get("/status/{gateway_id}")
 async def get_oauth_status(
     gateway_id: str,
@@ -1341,6 +1379,10 @@ async def get_oauth_status(
 
     Requires authentication and authorization to prevent information disclosure
     about gateway OAuth configuration (client IDs, scopes, etc.).
+
+    For the authorization_code grant, also reports the *caller's own* token
+    state (``user_token_status``), derived from authenticated identity - never
+    a client-supplied user. This is per-caller and never shared across users.
 
     Args:
         gateway_id: ID of the gateway
@@ -1371,8 +1413,6 @@ async def get_oauth_status(
         grant_type = oauth_config.get("grant_type")
 
         if grant_type == "authorization_code":
-            # For now, return basic info - in a real implementation you might want to
-            # show authorized users, token status, etc.
             return {
                 "oauth_enabled": True,
                 "grant_type": grant_type,
@@ -1381,6 +1421,7 @@ async def get_oauth_status(
                 "authorization_url": oauth_config.get("authorization_url"),
                 "redirect_uri": oauth_config.get("redirect_uri"),
                 "message": "Gateway configured for Authorization Code flow",
+                "user_token_status": await _get_caller_token_status(db, current_user, gateway_id),
             }
         else:
             return {
@@ -1396,6 +1437,54 @@ async def get_oauth_status(
     except Exception as e:
         logger.error(f"Failed to get OAuth status: {str(e)}")
         raise HTTPException(status_code=500, detail="Failed to get OAuth status")
+
+
+OAUTH_STATUS_BATCH_MAX_IDS = 100
+
+
+@oauth_router.get("/status")
+async def get_oauth_status_batch(
+    request: Request,
+    gateway_ids: Annotated[list[str], Query(description="Gateway ids to look up; repeat the parameter for multiple ids")],
+    current_user: dict = Depends(get_current_user_with_permissions),
+    db: Session = Depends(get_db),
+) -> Dict[str, Dict[str, Any]]:
+    """Get OAuth status for multiple gateways in a single call.
+
+    Batched equivalent of ``GET /oauth/status/{gateway_id}`` so a grid of
+    cards (catalog, gateways list) can render caller-scoped OAuth state
+    without issuing one request per card.
+
+    Args:
+        request: Incoming request with token-scoping context.
+        gateway_ids: Gateway identifiers to look up (repeated query param).
+        current_user: Authenticated user (enforces authentication).
+        db: Database session.
+
+    Returns:
+        Mapping of gateway_id to the same payload ``GET /oauth/status/{gateway_id}``
+        returns. Gateway ids that don't exist or aren't visible to the caller
+        are omitted rather than failing the whole batch.
+
+    Raises:
+        HTTPException: If no gateway ids are supplied, or more than
+            ``OAUTH_STATUS_BATCH_MAX_IDS`` are requested at once.
+    """
+    if not gateway_ids:
+        raise HTTPException(status_code=400, detail="gateway_ids is required")
+
+    deduped_ids = list(dict.fromkeys(gateway_ids))
+    if len(deduped_ids) > OAUTH_STATUS_BATCH_MAX_IDS:
+        raise HTTPException(status_code=400, detail=f"Too many gateway_ids requested (max {OAUTH_STATUS_BATCH_MAX_IDS})")
+
+    results: Dict[str, Dict[str, Any]] = {}
+    for gateway_id in deduped_ids:
+        try:
+            results[gateway_id] = await get_oauth_status(gateway_id, request, current_user, db)
+        except HTTPException:
+            # Not found / not accessible to this caller - omit rather than failing the batch.
+            continue
+    return results
 
 
 async def _fetch_tools_via_token_exchange(
