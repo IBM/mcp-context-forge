@@ -1,5 +1,25 @@
 # MCP Server Catalog Configuration
 # This file contains a curated list of public MCP servers that can be easily added to the gateway
+#
+# `oauth` blocks (issue #6461) are public discovery metadata seeded per entry so registering an
+# OAuth server doesn't require an outbound discovery probe at add time. Never add client_id or
+# client_secret here - those are per-deployment values the operator supplies later. Values are
+# copied verbatim from each provider's live `.well-known/oauth-authorization-server` /
+# `oauth-protected-resource` document (or, for GitHub, its long-stable documented OAuth App
+# endpoints - it publishes no discovery document at all), so:
+#   - issuer/authorization_url trailing-slash presence varies entry to entry (e.g. Instant,
+#     Netlify) because that's what the provider's own document publishes; don't "clean up" the
+#     slash without re-checking the live document, since some providers do origin comparison on it.
+#   - Some entries (e.g. Atlassian) have no `resource` or empty `scopes` because the provider's
+#     discovery document doesn't publish one; leave unset rather than guessing.
+#   - The nine Microsoft-backed entries (microsoft-foundry, sentinel-data-exploration, power-bi,
+#     agent365-*) share Microsoft Entra ID's multi-tenant `organizations` endpoint, whose own
+#     metadata document literally publishes `issuer: "https://login.microsoftonline.com/{tenantid}/v2.0"`
+#     as a template - `{tenantid}` is not a placeholder we introduced, it must be substituted with
+#     the resolved tenant ID at runtime and is not a fetchable URL as-is.
+# A handful of entries (grafbase, waystation, invideo, rube, metro-mcp, stack-overflow, kollektiv)
+# publish no discoverable OAuth metadata at any standard path; they have no `oauth` block and fall
+# back to runtime discovery, per the issue's documented fallback behavior.
 
 catalog_servers:
   # Project Management
@@ -13,6 +33,13 @@ catalog_servers:
     description: "Task and project management platform for teams"
     requires_api_key: false
     tags: ["project-management", "collaboration", "tasks"]
+    oauth:
+      issuer: "https://mcp.asana.com"
+      authorization_url: "https://mcp.asana.com/authorize"
+      token_url: "https://mcp.asana.com/token"
+      scopes: ["default"]
+      supports_dcr: true
+      resource: "https://mcp.asana.com"
 
   - id: linear
     name: "Linear"
@@ -24,6 +51,13 @@ catalog_servers:
     description: "Modern project management for software teams"
     requires_api_key: false
     tags: ["project-management", "issue-tracking", "development"]
+    oauth:
+      issuer: "https://mcp.linear.app"
+      authorization_url: "https://mcp.linear.app/authorize"
+      token_url: "https://mcp.linear.app/token"
+      scopes: ["read", "write"]
+      supports_dcr: true
+      resource: "https://mcp.linear.app/mcp"
 
   - id: notion
     name: "Notion"
@@ -35,6 +69,13 @@ catalog_servers:
     description: "All-in-one workspace for notes, tasks, and collaboration"
     requires_api_key: false
     tags: ["project-management", "documentation", "wiki"]
+    oauth:
+      issuer: "https://mcp.notion.com"
+      authorization_url: "https://mcp.notion.com/authorize"
+      token_url: "https://mcp.notion.com/token"
+      scopes: ["default"]
+      supports_dcr: true
+      resource: "https://mcp.notion.com"
 
   - id: monday
     name: "monday.com"
@@ -46,6 +87,13 @@ catalog_servers:
     description: "Work OS for teams to manage projects and workflows"
     requires_api_key: false
     tags: ["productivity", "workflow", "collaboration"]
+    oauth:
+      issuer: "https://auth.monday.com/mcp"
+      authorization_url: "https://auth.monday.com/oauth2/authorize"
+      token_url: "https://auth.monday.com/oauth_ms/oauth/token"
+      scopes: []
+      supports_dcr: true
+      resource: "https://mcp.monday.com/mcp"
 
   # Software Development
   - id: github
@@ -59,6 +107,16 @@ catalog_servers:
     description: "Version control and collaborative software development"
     requires_api_key: false
     tags: ["development", "git", "version-control", "collaboration"]
+    # GitHub publishes no OAuth authorization-server discovery document (its
+    # OAuth Apps flow predates RFC 8414), so seeding matters most here: these
+    # are GitHub's fixed, long-stable OAuth App endpoints.
+    oauth:
+      issuer: "https://github.com"
+      authorization_url: "https://github.com/login/oauth/authorize"
+      token_url: "https://github.com/login/oauth/access_token"
+      scopes: ["repo", "delete_repo", "read:org", "admin:org", "read:enterprise", "admin:enterprise", "read:user", "user:email", "read:packages", "write:packages", "read:project", "project", "gist", "notifications", "workflow", "codespace"]
+      supports_dcr: false
+      resource: "https://api.githubcopilot.com/mcp"
 
   - id: atlassian
     name: "Atlassian"
@@ -71,6 +129,12 @@ catalog_servers:
     description: "Suite of development and collaboration tools"
     requires_api_key: false
     tags: ["development", "jira", "confluence", "bitbucket"]
+    oauth:
+      issuer: "https://mcp.atlassian.com"
+      authorization_url: "https://mcp.atlassian.com/v1/authorize"
+      token_url: "https://mcp.atlassian.com/v1/token"
+      scopes: []
+      supports_dcr: true
 
   - id: buildkite
     name: "Buildkite"
@@ -82,6 +146,13 @@ catalog_servers:
     description: "Continuous integration and deployment platform"
     requires_api_key: false
     tags: ["ci-cd", "automation", "development"]
+    oauth:
+      issuer: "https://mcp.buildkite.com"
+      authorization_url: "https://mcp.buildkite.com/oauth/authorize"
+      token_url: "https://mcp.buildkite.com/oauth/token"
+      scopes: ["read", "write"]
+      supports_dcr: true
+      resource: "https://mcp.buildkite.com/mcp"
 
   - id: cloudflare-workers
     name: "Cloudflare Workers"
@@ -93,6 +164,13 @@ catalog_servers:
     description: "Serverless compute platform at the edge"
     requires_api_key: false
     tags: ["serverless", "edge-computing", "development"]
+    oauth:
+      issuer: "https://bindings.mcp.cloudflare.com"
+      authorization_url: "https://bindings.mcp.cloudflare.com/oauth/authorize"
+      token_url: "https://bindings.mcp.cloudflare.com/token"
+      scopes: []
+      supports_dcr: true
+      resource: "https://bindings.mcp.cloudflare.com/sse"
 
   - id: cloudflare-observability
     name: "Cloudflare Observability"
@@ -104,6 +182,13 @@ catalog_servers:
     description: "Monitor and analyze Cloudflare services"
     requires_api_key: false
     tags: ["monitoring", "observability", "analytics"]
+    oauth:
+      issuer: "https://observability.mcp.cloudflare.com"
+      authorization_url: "https://observability.mcp.cloudflare.com/oauth/authorize"
+      token_url: "https://observability.mcp.cloudflare.com/token"
+      scopes: []
+      supports_dcr: true
+      resource: "https://observability.mcp.cloudflare.com/sse"
 
   - id: grafbase
     name: "Grafbase"
@@ -126,6 +211,13 @@ catalog_servers:
     description: "Real-time database platform"
     requires_api_key: false
     tags: ["database", "real-time", "development"]
+    oauth:
+      issuer: "https://mcp.instantdb.com/"
+      authorization_url: "https://mcp.instantdb.com/authorize"
+      token_url: "https://mcp.instantdb.com/token"
+      scopes: ["apps-read", "apps-write"]
+      supports_dcr: true
+      resource: "https://mcp.instantdb.com/mcp"
 
   - id: jam
     name: "Jam"
@@ -136,6 +228,13 @@ catalog_servers:
     description: "Bug reporting and debugging tool"
     requires_api_key: false
     tags: ["debugging", "bug-tracking", "development"]
+    oauth:
+      issuer: "https://api.jam.dev"
+      authorization_url: "https://api.jam.dev/oauth/authorize"
+      token_url: "https://api.jam.dev/oauth/token"
+      scopes: ["mcp:read", "mcp:write"]
+      supports_dcr: true
+      resource: "https://mcp.jam.dev/mcp"
 
   - id: neon
     name: "Neon"
@@ -147,6 +246,13 @@ catalog_servers:
     description: "Serverless Postgres database"
     requires_api_key: false
     tags: ["database", "postgres", "serverless"]
+    oauth:
+      issuer: "https://mcp.neon.tech"
+      authorization_url: "https://mcp.neon.tech/api/authorize"
+      token_url: "https://mcp.neon.tech/api/token"
+      scopes: ["read", "write"]
+      supports_dcr: true
+      resource: "https://mcp.neon.tech/mcp"
 
   - id: netlify
     name: "Netlify"
@@ -158,6 +264,13 @@ catalog_servers:
     description: "Web hosting and serverless backend services"
     requires_api_key: false
     tags: ["hosting", "deployment", "serverless", "jamstack"]
+    oauth:
+      issuer: "https://netlify-mcp.netlify.app/"
+      authorization_url: "https://netlify-mcp.netlify.app/oauth-server/auth"
+      token_url: "https://netlify-mcp.netlify.app/oauth-server/token"
+      scopes: ["offline_access", "read", "write", "claudeai"]
+      supports_dcr: true
+      resource: "https://netlify-mcp.netlify.app/mcp"
 
   - id: sentry
     name: "Sentry"
@@ -169,6 +282,13 @@ catalog_servers:
     description: "Application monitoring and error tracking"
     requires_api_key: false
     tags: ["monitoring", "error-tracking", "observability"]
+    oauth:
+      issuer: "https://mcp.sentry.dev"
+      authorization_url: "https://mcp.sentry.dev/oauth/authorize"
+      token_url: "https://mcp.sentry.dev/oauth/token"
+      scopes: ["org:read", "project:write", "team:write", "event:write"]
+      supports_dcr: true
+      resource: "https://mcp.sentry.dev/mcp"
 
   - id: vercel
     name: "Vercel"
@@ -180,6 +300,13 @@ catalog_servers:
     description: "Platform for frontend frameworks and static sites"
     requires_api_key: false
     tags: ["hosting", "deployment", "nextjs", "serverless"]
+    oauth:
+      issuer: "https://vercel.com"
+      authorization_url: "https://vercel.com/oauth/authorize"
+      token_url: "https://vercel.com/api/login/oauth/token"
+      scopes: ["openid"]
+      supports_dcr: true
+      resource: "https://mcp.vercel.com/"
 
   - id: prisma-postgres
     name: "Prisma Postgres"
@@ -191,6 +318,13 @@ catalog_servers:
     description: "Type-safe database access and migrations"
     requires_api_key: false
     tags: ["database", "orm", "postgres", "typescript"]
+    oauth:
+      issuer: "https://auth.prisma.io"
+      authorization_url: "https://auth.prisma.io/authorize"
+      token_url: "https://auth.prisma.io/token"
+      scopes: ["workspace:admin", "offline_access"]
+      supports_dcr: true
+      resource: "https://mcp.prisma.io/mcp"
 
   - id: globalping
     name: "Globalping"
@@ -202,6 +336,13 @@ catalog_servers:
     description: "Global network testing and monitoring"
     requires_api_key: false
     tags: ["networking", "monitoring", "testing"]
+    oauth:
+      issuer: "https://mcp.globalping.dev"
+      authorization_url: "https://mcp.globalping.dev/authorize"
+      token_url: "https://mcp.globalping.dev/token"
+      scopes: ["measurements"]
+      supports_dcr: true
+      resource: "https://mcp.globalping.dev/sse"
 
   - id: supabase
     name: "Supabase"
@@ -213,6 +354,13 @@ catalog_servers:
     description: "Open source Firebase alternative with Postgres"
     requires_api_key: false
     tags: ["database", "postgres", "backend", "auth"]
+    oauth:
+      issuer: "https://api.supabase.com"
+      authorization_url: "https://api.supabase.com/v1/oauth/authorize"
+      token_url: "https://api.supabase.com/v1/oauth/token"
+      scopes: ["organizations:read", "projects:read", "projects:write", "database:write", "database:read", "analytics:read", "secrets:read", "edge_functions:read", "edge_functions:write", "environment:read", "environment:write", "storage:read", "storage:write"]
+      supports_dcr: true
+      resource: "https://mcp.supabase.com/mcp"
 
   - id: cortex
     name: "Cortex"
@@ -237,6 +385,13 @@ catalog_servers:
     description: "Payment processing and financial infrastructure"
     requires_api_key: true
     tags: ["payments", "billing", "finance"]
+    oauth:
+      issuer: "https://access.stripe.com/mcp"
+      authorization_url: "https://access.stripe.com/mcp/oauth2/authorize"
+      token_url: "https://access.stripe.com/mcp/oauth2/token"
+      scopes: []
+      supports_dcr: true
+      resource: "https://mcp.stripe.com"
 
   - id: paypal
     name: "PayPal"
@@ -248,6 +403,13 @@ catalog_servers:
     description: "Online payment processing"
     requires_api_key: false
     tags: ["payments", "e-commerce", "finance"]
+    oauth:
+      issuer: "https://mcp.paypal.com"
+      authorization_url: "https://mcp.paypal.com/authorize"
+      token_url: "https://mcp.paypal.com/token"
+      scopes: ["openid", "email", "profile"]
+      supports_dcr: true
+      resource: "https://mcp.paypal.com/sse"
 
   - id: plaid
     name: "Plaid"
@@ -260,6 +422,12 @@ catalog_servers:
     description: "Financial data aggregation and banking APIs"
     requires_api_key: false
     tags: ["banking", "finance", "fintech"]
+    oauth:
+      issuer: "https://api.dashboard.plaid.com"
+      authorization_url: "https://dashboard.plaid.com/oauth/authorize"
+      token_url: "https://api.dashboard.plaid.com/oauth/token"
+      scopes: ["mcp:dashboard"]
+      supports_dcr: true
 
   - id: square
     name: "Square"
@@ -271,6 +439,13 @@ catalog_servers:
     description: "Payment processing and point-of-sale solutions"
     requires_api_key: false
     tags: ["payments", "pos", "e-commerce"]
+    oauth:
+      issuer: "https://mcp.squareup.com"
+      authorization_url: "https://mcp.squareup.com/authorize"
+      token_url: "https://mcp.squareup.com/token"
+      scopes: []
+      supports_dcr: true
+      resource: "https://mcp.squareup.com/sse"
 
   - id: dodo-payments
     name: "Dodo Payments"
@@ -304,6 +479,26 @@ catalog_servers:
     description: "Corporate card and spend management platform"
     requires_api_key: false
     tags: ["payments", "finance", "expense-management"]
+    oauth:
+      issuer: "https://ramp-mcp-remote.ramp.com"
+      authorization_url: "https://ramp-mcp-remote.ramp.com/oauth/authorize?auth_level=auto"
+      token_url: "https://api.ramp.com/developer/v1/token/pkce"
+      scopes:
+        [
+          "bills:read", "cards:read", "departments:read", "entities:read", "limits:read", "locations:read",
+          "memos:read", "purchase_orders:read", "reimbursements:read", "spend_programs:read", "transactions:read",
+          "users:read", "vendors:read", "treasury:read", "accounting:write", "cards:write", "trips:write",
+          "funds:write", "bills:write", "reimbursements:write", "approvals:write", "transactions:write",
+          "sourcing:write", "departments:write", "vendors:write", "accounting:read", "x402:write",
+          "cards:read_agentic", "ai_spend:read", "tasks:read", "trips:read", "statements:read", "workflows:read",
+          "unified_requests:read", "sourcing:read", "limits:write", "receipts:write", "merchants:read",
+          "comments:write", "spend_requests:write", "spend_requests:read", "x402_provisioning:write",
+          "purchase_orders:write", "agent_wallet_policy:read", "agent_wallet_policy:write", "ask_ramp:read",
+          "ask_ramp:write", "audit_logs:read", "bank_accounts:read", "bank_accounts:write",
+          "banking_drawdown_requests:write", "agent_account_numbers:read", "mpp:write",
+        ]
+      supports_dcr: true
+      resource: "https://ramp-mcp-remote.ramp.com/mcp"
 
   # CRM
   - id: close-crm
@@ -317,6 +512,13 @@ catalog_servers:
     description: "Sales CRM for small and medium businesses"
     requires_api_key: false
     tags: ["crm", "sales", "customer-management"]
+    oauth:
+      issuer: "https://api.close.com"
+      authorization_url: "https://app.close.com/oauth2/authorize/"
+      token_url: "https://api.close.com/oauth2/token/"
+      scopes: ["mcp.read", "mcp.write_destructive", "mcp.write_safe", "offline_access"]
+      supports_dcr: true
+      resource: "https://mcp.close.com/"
 
   - id: close-crm-api
     name: "Close (API Key)"
@@ -350,6 +552,12 @@ catalog_servers:
     description: "Customer messaging and support platform"
     requires_api_key: false
     tags: ["support", "messaging", "customer-service"]
+    oauth:
+      issuer: "https://mcp.intercom.com"
+      authorization_url: "https://mcp.intercom.com/authorize"
+      token_url: "https://mcp.intercom.com/token"
+      scopes: []
+      supports_dcr: true
 
   # Document Management
   - id: box
@@ -363,6 +571,13 @@ catalog_servers:
     description: "Cloud content management and file sharing"
     requires_api_key: false
     tags: ["storage", "documents", "collaboration"]
+    oauth:
+      issuer: "https://api.box.com"
+      authorization_url: "https://account.box.com/api/oauth2/authorize"
+      token_url: "https://api.box.com/oauth2/token"
+      scopes: []
+      supports_dcr: false
+      resource: "https://mcp.box.com/"
 
   - id: egnyte
     name: "Egnyte"
@@ -374,6 +589,13 @@ catalog_servers:
     description: "Content collaboration and governance platform"
     requires_api_key: false
     tags: ["storage", "documents", "governance"]
+    oauth:
+      issuer: "https://mcp-oauth.egnyte.com/egnyte-connect"
+      authorization_url: "https://mcp-oauth.egnyte.com/external/oauth2/authorize/egnyte-connect"
+      token_url: "https://mcp-oauth.egnyte.com/egnyte-connect/oauth2/token"
+      scopes: []
+      supports_dcr: true
+      resource: "https://mcp-server.egnyte.com/mcp"
 
   - id: cloudinary
     name: "Cloudinary"
@@ -385,6 +607,13 @@ catalog_servers:
     description: "Image and video management platform"
     requires_api_key: false
     tags: ["media", "images", "video", "cdn"]
+    oauth:
+      issuer: "https://asset-management.mcp.cloudinary.com"
+      authorization_url: "https://asset-management.mcp.cloudinary.com/authorize"
+      token_url: "https://asset-management.mcp.cloudinary.com/token"
+      scopes: ["openid", "profile", "email", "offline_access", "asset_management", "upload", "media_generation"]
+      supports_dcr: true
+      resource: "https://asset-management.mcp.cloudinary.com/sse"
 
   # Productivity
   - id: audioscrape
@@ -397,6 +626,13 @@ catalog_servers:
     description: "Audio content extraction and analysis"
     requires_api_key: false
     tags: ["audio", "rag", "ai", "content-extraction"]
+    oauth:
+      issuer: "https://mcp.audioscrape.com"
+      authorization_url: "https://mcp.audioscrape.com/oauth/authorize"
+      token_url: "https://mcp.audioscrape.com/oauth/token"
+      scopes: ["mcp:search", "mcp:read", "profile"]
+      supports_dcr: true
+      resource: "https://mcp.audioscrape.com"
 
   - id: carbon-voice
     name: "Carbon Voice"
@@ -408,6 +644,13 @@ catalog_servers:
     description: "Voice-based productivity tools"
     requires_api_key: false
     tags: ["voice", "productivity", "audio"]
+    oauth:
+      issuer: "https://api.carbonvoice.app"
+      authorization_url: "https://api.carbonvoice.app/oauth/authorize"
+      token_url: "https://api.carbonvoice.app/oauth/token"
+      scopes: ["mcp:read", "mcp:write"]
+      supports_dcr: true
+      resource: "https://mcp.carbonvoice.app"
 
   - id: firefly
     name: "Firefly"
@@ -419,6 +662,13 @@ catalog_servers:
     description: "AI meeting assistant and transcription"
     requires_api_key: false
     tags: ["meetings", "transcription", "ai", "productivity"]
+    oauth:
+      issuer: "https://api.fireflies.ai/"
+      authorization_url: "https://api.fireflies.ai/authorize"
+      token_url: "https://api.fireflies.ai/token"
+      scopes: ["profile", "email"]
+      supports_dcr: true
+      resource: "https://api.fireflies.ai/mcp"
 
   - id: listenetic
     name: "Listenetic"
@@ -430,6 +680,13 @@ catalog_servers:
     description: "Audio analysis and processing platform"
     requires_api_key: false
     tags: ["audio", "analysis", "productivity"]
+    oauth:
+      issuer: "https://auth.listenetic.com"
+      authorization_url: "https://auth.listenetic.com/oauth/authorize"
+      token_url: "https://auth.listenetic.com/oauth/token"
+      scopes: ["profile", "email"]
+      supports_dcr: true
+      resource: "https://mcp.listenetic.com/v1/mcp"
 
   - id: waystation
     name: "WayStation"
@@ -451,6 +708,13 @@ catalog_servers:
     description: "Personal knowledge management system"
     requires_api_key: false
     tags: ["knowledge", "memory", "notes"]
+    oauth:
+      issuer: "https://www.zine.ai"
+      authorization_url: "https://www.zine.ai/api/auth/mcp-oauth/authorize"
+      token_url: "https://www.zine.ai/api/auth/mcp-oauth/token"
+      scopes: ["mcp:read", "mcp:write"]
+      supports_dcr: true
+      resource: "https://www.zine.ai/mcp"
 
   - id: mypromind
     name: "myProMind"
@@ -462,6 +726,12 @@ catalog_servers:
     description: "AI-powered professional productivity tools"
     requires_api_key: false
     tags: ["ai", "productivity", "professional"]
+    oauth:
+      issuer: "https://clerk.mypromind.com"
+      authorization_url: "https://clerk.mypromind.com/oauth/authorize"
+      token_url: "https://clerk.mypromind.com/oauth/token"
+      scopes: ["openid", "profile", "email", "public_metadata", "private_metadata", "offline_access"]
+      supports_dcr: true
 
   # Design & Content
   - id: canva
@@ -474,6 +744,13 @@ catalog_servers:
     description: "Graphic design and visual content creation"
     requires_api_key: false
     tags: ["design", "graphics", "content-creation"]
+    oauth:
+      issuer: "https://mcp.canva.com"
+      authorization_url: "https://mcp.canva.com/authorize"
+      token_url: "https://mcp.canva.com/token"
+      scopes: ["profile:read", "design:meta:read", "design:content:write", "design:content:read", "folder:read", "folder:write", "brandtemplate:content:read", "brandtemplate:meta:read", "brandtemplate:content:write", "comment:write", "comment:read", "asset:read", "asset:write", "brandkit:read", "help:answers:read", "help:answers:write"]
+      supports_dcr: true
+      resource: "https://mcp.canva.com/mcp"
 
   - id: invideo
     name: "InVideo"
@@ -496,6 +773,12 @@ catalog_servers:
     description: "AI-powered marketing content creation"
     requires_api_key: false
     tags: ["marketing", "content-creation", "ai"]
+    oauth:
+      issuer: "https://vibemarketing.ninja"
+      authorization_url: "https://vibemarketing.ninja/api/mcp/oauth/authorize"
+      token_url: "https://vibemarketing.ninja/api/mcp/oauth/token"
+      scopes: ["read", "write"]
+      supports_dcr: true
 
   # CMS
   - id: webflow
@@ -508,6 +791,13 @@ catalog_servers:
     description: "Visual web design and CMS platform"
     requires_api_key: false
     tags: ["cms", "web-design", "no-code"]
+    oauth:
+      issuer: "https://mcp.webflow.com"
+      authorization_url: "https://mcp.webflow.com/oauth/authorize"
+      token_url: "https://mcp.webflow.com/oauth/token"
+      scopes: []
+      supports_dcr: true
+      resource: "https://mcp.webflow.com/sse"
 
   - id: wix
     name: "Wix"
@@ -519,6 +809,13 @@ catalog_servers:
     description: "Website builder and hosting platform"
     requires_api_key: false
     tags: ["cms", "website-builder", "hosting"]
+    oauth:
+      issuer: "https://mcp.wix.com"
+      authorization_url: "https://mcp.wix.com/authorize"
+      token_url: "https://mcp.wix.com/token"
+      scopes: ["offline_access"]
+      supports_dcr: true
+      resource: "https://mcp.wix.com"
 
   # Communication
   - id: dialer
@@ -531,6 +828,12 @@ catalog_servers:
     description: "Automated outbound calling platform"
     requires_api_key: false
     tags: ["phone", "calling", "communication"]
+    oauth:
+      issuer: "https://getdialer.app"
+      authorization_url: "https://getdialer.app/authorize"
+      token_url: "https://getdialer.app/token"
+      scopes: []
+      supports_dcr: true
 
   # Analytics & Data
   - id: thoughtspot
@@ -543,6 +846,12 @@ catalog_servers:
     description: "Search-driven analytics platform"
     requires_api_key: false
     tags: ["analytics", "bi", "data", "search"]
+    oauth:
+      issuer: "https://agent.thoughtspot.app"
+      authorization_url: "https://agent.thoughtspot.app/authorize"
+      token_url: "https://agent.thoughtspot.app/token"
+      scopes: []
+      supports_dcr: true
 
   - id: scorecard
     name: "Scorecard"
@@ -553,6 +862,12 @@ catalog_servers:
     description: "AI model evaluation and benchmarking"
     requires_api_key: false
     tags: ["ai", "evaluation", "testing", "ml"]
+    oauth:
+      issuer: "https://scorecard-mcp.dare-d5b.workers.dev"
+      authorization_url: "https://scorecard-mcp.dare-d5b.workers.dev/authorize"
+      token_url: "https://scorecard-mcp.dare-d5b.workers.dev/token"
+      scopes: []
+      supports_dcr: true
 
   - id: morningstar
     name: "MorningStar"
@@ -564,6 +879,13 @@ catalog_servers:
     description: "Investment research and financial data analytics"
     requires_api_key: false
     tags: ["finance", "analytics", "investment", "data"]
+    oauth:
+      issuer: "https://mcp.morningstar.com/mcp"
+      authorization_url: "https://mcp.morningstar.com/oauth-issuer/authorize?audience=https://uim-prod.morningstar.auth0.com"
+      token_url: "https://mcp.morningstar.com/oauth-issuer/token"
+      scopes: ["openid", "profile", "email", "offline_access"]
+      supports_dcr: true
+      resource: "https://mcp.morningstar.com/mcp"
 
   # RAG & AI Services
   - id: onecontext
@@ -575,6 +897,12 @@ catalog_servers:
     description: "Retrieval-augmented generation platform"
     requires_api_key: false
     tags: ["rag", "ai", "search", "retrieval"]
+    oauth:
+      issuer: "https://rag-mcp-2.whatsmcp.workers.dev"
+      authorization_url: "https://rag-mcp-2.whatsmcp.workers.dev/authorize"
+      token_url: "https://rag-mcp-2.whatsmcp.workers.dev/token"
+      scopes: []
+      supports_dcr: true
 
   - id: needle
     name: "Needle"
@@ -675,6 +1003,12 @@ catalog_servers:
     description: "Visual web scraping platform"
     requires_api_key: false
     tags: ["scraping", "automation", "web-data"]
+    oauth:
+      issuer: "https://mcp.simplescraper.io"
+      authorization_url: "https://mcp.simplescraper.io/authorize"
+      token_url: "https://mcp.simplescraper.io/token"
+      scopes: ["scrape"]
+      supports_dcr: true
 
   - id: apify
     name: "Apify"
@@ -721,6 +1055,13 @@ catalog_servers:
     description: "User authentication and authorization platform"
     requires_api_key: false
     tags: ["auth", "security", "identity"]
+    oauth:
+      issuer: "https://rustic-kilogram-6347.customers.stytch.com"
+      authorization_url: "https://stytch.com/oauth/authorize"
+      token_url: "https://rustic-kilogram-6347.customers.stytch.com/v1/oauth2/token"
+      scopes: ["openid", "email", "profile", "admin:projects", "manage:api_keys", "manage:api_keys:test", "manage:project_settings", "manage:project_data"]
+      supports_dcr: true
+      resource: "https://mcp.stytch.dev"
 
   - id: zenable
     name: "Zenable"
@@ -732,6 +1073,13 @@ catalog_servers:
     description: "Security and compliance automation"
     requires_api_key: false
     tags: ["security", "compliance", "automation"]
+    oauth:
+      issuer: "https://zenable.us.auth0.com/"
+      authorization_url: "https://zenable.us.auth0.com/authorize"
+      token_url: "https://zenable.us.auth0.com/oauth/token"
+      scopes: ["openid", "profile", "offline_access", "name", "given_name", "family_name", "nickname", "email", "email_verified", "picture", "created_at", "identities", "phone", "address"]
+      supports_dcr: true
+      resource: "https://mcp.zenable.app/"
 
   # Specialized Services
   - id: find-a-domain
@@ -756,6 +1104,13 @@ catalog_servers:
     description: "Cryptocurrency and blockchain analytics"
     requires_api_key: false
     tags: ["crypto", "blockchain", "analytics"]
+    oauth:
+      issuer: "https://mcp.hiveintelligence.xyz/"
+      authorization_url: "https://mcp.hiveintelligence.xyz/authorize"
+      token_url: "https://mcp.hiveintelligence.xyz/token"
+      scopes: ["mcp:tools", "mcp:resources", "mcp:prompts", "hive:stateful"]
+      supports_dcr: true
+      resource: "https://mcp.hiveintelligence.xyz/mcp"
 
   - id: octagon
     name: "Octagon"
@@ -767,6 +1122,13 @@ catalog_servers:
     description: "Market research and competitive intelligence"
     requires_api_key: false
     tags: ["market-research", "intelligence", "analytics"]
+    oauth:
+      issuer: "https://login.octagonai.co"
+      authorization_url: "https://login.octagonai.co/oauth2/authorize"
+      token_url: "https://login.octagonai.co/oauth2/token"
+      scopes: ["email", "offline_access", "openid", "profile"]
+      supports_dcr: true
+      resource: "https://mcp.octagonai.co/mcp"
 
   - id: meta-ads
     name: "Meta Ads by Pipeboard"
@@ -778,6 +1140,13 @@ catalog_servers:
     description: "Meta (Facebook/Instagram) advertising management"
     requires_api_key: false
     tags: ["advertising", "marketing", "social-media", "meta"]
+    oauth:
+      issuer: "https://pipeboard.co"
+      authorization_url: "https://pipeboard.co/oauth/authorize"
+      token_url: "https://pipeboard.co/oauth/token"
+      scopes: ["mcp:read", "mcp:write"]
+      supports_dcr: true
+      resource: "https://mcp.pipeboard.co/"
 
   - id: shortio
     name: "Short.io"
@@ -799,6 +1168,12 @@ catalog_servers:
     description: "Flight booking and airline services"
     requires_api_key: false
     tags: ["travel", "airlines", "booking"]
+    oauth:
+      issuer: "https://mcp.turkishtechlab.com"
+      authorization_url: "https://mcp.turkishtechlab.com/authorize"
+      token_url: "https://mcp.turkishtechlab.com/token"
+      scopes: []
+      supports_dcr: true
 
   - id: rube
     name: "Rube"
@@ -820,6 +1195,13 @@ catalog_servers:
     description: "Job search and recruitment platform"
     requires_api_key: false
     tags: ["jobs", "recruitment", "hiring"]
+    oauth:
+      issuer: "https://secure.indeed.com"
+      authorization_url: "https://secure.indeed.com/oauth/v2/authorize"
+      token_url: "https://apis.indeed.com/oauth/v2/tokens"
+      scopes: ["job_seeker.company.details.read", "job_seeker.jobs.search", "job_seeker.profile.read", "offline_access"]
+      supports_dcr: true
+      resource: "https://mcp.indeed.com/claude/mcp"
 
   - id: peek
     name: "Peek"
@@ -876,6 +1258,13 @@ catalog_servers:
     description: "Static code analysis and security scanning"
     requires_api_key: false
     tags: ["security", "code-analysis", "sast", "linting"]
+    oauth:
+      issuer: "https://login.semgrep.dev"
+      authorization_url: "https://login.semgrep.dev/oauth2/authorize"
+      token_url: "https://login.semgrep.dev/oauth2/token"
+      scopes: ["email", "offline_access", "openid", "profile"]
+      supports_dcr: true
+      resource: "https://mcp.semgrep.ai/"
 
   - id: polar-signals
     name: "Polar Signals"
@@ -920,6 +1309,13 @@ catalog_servers:
     description: "Internal developer portal for microservices"
     requires_api_key: false
     tags: ["developer-portal", "infrastructure", "microservices"]
+    oauth:
+      issuer: "https://mcp.port.io"
+      authorization_url: "https://mcp.port.io/v1/authorize"
+      token_url: "https://mcp.port.io/v1/token"
+      scopes: ["openid", "profile", "email", "offline_access"]
+      supports_dcr: true
+      resource: "https://mcp.port.io/v1"
 
   # Smart Contracts & Blockchain
   - id: openzeppelin-cairo
@@ -1041,6 +1437,13 @@ catalog_servers:
     description: "Barcode and product information lookup"
     requires_api_key: false
     tags: ["barcode", "products", "ean", "data"]
+    oauth:
+      issuer: "https://www.ean-search.org"
+      authorization_url: "https://www.ean-search.org/authorize"
+      token_url: "https://www.ean-search.org/token"
+      scopes: ["user"]
+      supports_dcr: true
+      resource: "https://www.ean-search.org/mcp"
 
   - id: webzum
     name: "WebZum"
@@ -1086,6 +1489,13 @@ catalog_servers:
     description: "AI-powered task execution and automation"
     requires_api_key: false
     tags: ["ai", "tasks", "automation"]
+    oauth:
+      issuer: "https://platform.parallel.ai"
+      authorization_url: "https://platform.parallel.ai/getKeys/authorize"
+      token_url: "https://platform.parallel.ai/getKeys/token"
+      scopes: ["key:read"]
+      supports_dcr: true
+      resource: "https://task-mcp.parallel.ai/mcp"
 
   - id: parallel-search
     name: "Parallel Search"
@@ -1097,6 +1507,13 @@ catalog_servers:
     description: "AI-powered search and information retrieval"
     requires_api_key: false
     tags: ["ai", "search", "retrieval"]
+    oauth:
+      issuer: "https://platform.parallel.ai"
+      authorization_url: "https://platform.parallel.ai/getKeys/authorize"
+      token_url: "https://platform.parallel.ai/getKeys/token"
+      scopes: ["key:read"]
+      supports_dcr: true
+      resource: "https://search-mcp.parallel.ai/mcp"
 
   - id: metro-mcp
     name: "Metro MCP"
@@ -1120,6 +1537,13 @@ catalog_servers:
     description: "Next-generation CRM with flexible data modeling and real-time collaboration"
     requires_api_key: false
     tags: ["crm", "sales", "customer-management"]
+    oauth:
+      issuer: "https://mcp.attio.com"
+      authorization_url: "https://app.attio.com/oidc/authorize"
+      token_url: "https://app.attio.com/oidc/token"
+      scopes: ["mcp", "offline_access", "openid"]
+      supports_dcr: true
+      resource: "https://mcp.attio.com/mcp"
 
   # Software Development (additional)
   - id: stack-overflow
@@ -1224,6 +1648,13 @@ catalog_servers:
     requires_api_key: false
     repo: "https://github.com/microsoft/mcp"
     tags: ["ai", "azure", "models", "evaluation", "microsoft"]
+    oauth:
+      issuer: "https://login.microsoftonline.com/{tenantid}/v2.0"
+      authorization_url: "https://login.microsoftonline.com/common/oauth2/v2.0/authorize"
+      token_url: "https://login.microsoftonline.com/common/oauth2/v2.0/token"
+      scopes: ["https://mcp.ai.azure.com/Foundry.Mcp.Tools"]
+      supports_dcr: false
+      resource: "https://mcp.ai.azure.com"
 
   - id: sentinel-data-exploration
     name: "Microsoft Sentinel"
@@ -1235,6 +1666,13 @@ catalog_servers:
     description: "Search for relevant tables and retrieve data from Microsoft Sentinel's data lake using natural language"
     requires_api_key: false
     tags: ["security", "siem", "azure", "sentinel", "microsoft"]
+    oauth:
+      issuer: "https://login.microsoftonline.com/{tenantid}/v2.0"
+      authorization_url: "https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize"
+      token_url: "https://login.microsoftonline.com/organizations/oauth2/v2.0/token"
+      scopes: ["4500ebfb-89b6-4b14-a480-7f749797bfcd/.default"]
+      supports_dcr: false
+      resource: "https://sentinel.microsoft.com/mcp/data-exploration"
 
   - id: power-bi
     name: "Power BI"
@@ -1246,6 +1684,13 @@ catalog_servers:
     description: "Query Power BI semantic models — AI agents connect to hosted analytics without running a local server"
     requires_api_key: false
     tags: ["analytics", "bi", "power-bi", "fabric", "microsoft"]
+    oauth:
+      issuer: "https://login.microsoftonline.com/{tenantid}/v2.0"
+      authorization_url: "https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize"
+      token_url: "https://login.microsoftonline.com/organizations/oauth2/v2.0/token"
+      scopes: ["https://api.fabric.microsoft.com/.default"]
+      supports_dcr: false
+      resource: "https://api.fabric.microsoft.com"
 
   # Microsoft Agent 365 (Frontier Preview — requires M365 + Entra OAuth)
   # URL pattern: https://agent365.svc.cloud.microsoft/agents/servers/<server_id>
@@ -1259,6 +1704,13 @@ catalog_servers:
     description: "Create, send, search, reply, and manage Outlook emails via Microsoft Graph"
     requires_api_key: false
     tags: ["email", "outlook", "microsoft-365", "microsoft"]
+    oauth:
+      issuer: "https://login.microsoftonline.com/{tenantid}/v2.0"
+      authorization_url: "https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize"
+      token_url: "https://login.microsoftonline.com/organizations/oauth2/v2.0/token"
+      scopes: ["https://agent365.svc.cloud.microsoft/agents/servers/mcp_MailTools/.default", "openid", "profile", "offline_access"]
+      supports_dcr: false
+      resource: "https://agent365.svc.cloud.microsoft/agents/servers/mcp_MailTools"
 
   - id: agent365-outlook-calendar
     name: "Agent 365 Outlook Calendar"
@@ -1270,6 +1722,13 @@ catalog_servers:
     description: "Create, list, update, and delete calendar events — accept, decline, and resolve conflicts"
     requires_api_key: false
     tags: ["calendar", "outlook", "microsoft-365", "microsoft"]
+    oauth:
+      issuer: "https://login.microsoftonline.com/{tenantid}/v2.0"
+      authorization_url: "https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize"
+      token_url: "https://login.microsoftonline.com/organizations/oauth2/v2.0/token"
+      scopes: ["https://agent365.svc.cloud.microsoft/agents/servers/mcp_CalendarTools/.default", "openid", "profile", "offline_access"]
+      supports_dcr: false
+      resource: "https://agent365.svc.cloud.microsoft/agents/servers/mcp_CalendarTools"
 
   - id: agent365-teams
     name: "Agent 365 Teams"
@@ -1281,6 +1740,13 @@ catalog_servers:
     description: "Create chats, add members, post messages, and manage Teams channels"
     requires_api_key: false
     tags: ["teams", "chat", "microsoft-365", "microsoft"]
+    oauth:
+      issuer: "https://login.microsoftonline.com/{tenantid}/v2.0"
+      authorization_url: "https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize"
+      token_url: "https://login.microsoftonline.com/organizations/oauth2/v2.0/token"
+      scopes: ["https://agent365.svc.cloud.microsoft/agents/servers/mcp_TeamsTools/.default", "openid", "profile", "offline_access"]
+      supports_dcr: false
+      resource: "https://agent365.svc.cloud.microsoft/agents/servers/mcp_TeamsTools"
 
   - id: agent365-sharepoint-onedrive
     name: "Agent 365 SharePoint & OneDrive"
@@ -1292,6 +1758,13 @@ catalog_servers:
     description: "Upload files, search, manage lists, get metadata across SharePoint and OneDrive"
     requires_api_key: false
     tags: ["sharepoint", "onedrive", "documents", "microsoft-365", "microsoft"]
+    oauth:
+      issuer: "https://login.microsoftonline.com/{tenantid}/v2.0"
+      authorization_url: "https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize"
+      token_url: "https://login.microsoftonline.com/organizations/oauth2/v2.0/token"
+      scopes: ["https://agent365.svc.cloud.microsoft/agents/servers/mcp_ODSPRemoteServer/.default", "openid", "profile", "offline_access"]
+      supports_dcr: false
+      resource: "https://agent365.svc.cloud.microsoft/agents/servers/mcp_ODSPRemoteServer"
 
   - id: agent365-sharepoint-lists
     name: "Agent 365 SharePoint Lists"
@@ -1303,6 +1776,13 @@ catalog_servers:
     description: "Create, read, update, and delete SharePoint list items"
     requires_api_key: false
     tags: ["sharepoint", "lists", "microsoft-365", "microsoft"]
+    oauth:
+      issuer: "https://login.microsoftonline.com/{tenantid}/v2.0"
+      authorization_url: "https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize"
+      token_url: "https://login.microsoftonline.com/organizations/oauth2/v2.0/token"
+      scopes: ["https://agent365.svc.cloud.microsoft/agents/servers/mcp_SharepointListsTools/.default", "openid", "profile", "offline_access"]
+      supports_dcr: false
+      resource: "https://agent365.svc.cloud.microsoft/agents/servers/mcp_SharepointListsTools"
 
   - id: agent365-word
     name: "Agent 365 Word"
@@ -1314,6 +1794,13 @@ catalog_servers:
     description: "Create and read Word documents, add and reply to comments"
     requires_api_key: false
     tags: ["word", "documents", "microsoft-365", "microsoft"]
+    oauth:
+      issuer: "https://login.microsoftonline.com/{tenantid}/v2.0"
+      authorization_url: "https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize"
+      token_url: "https://login.microsoftonline.com/organizations/oauth2/v2.0/token"
+      scopes: ["https://agent365.svc.cloud.microsoft/agents/servers/mcp_WordTools/.default", "openid", "profile", "offline_access"]
+      supports_dcr: false
+      resource: "https://agent365.svc.cloud.microsoft/agents/servers/mcp_WordTools"
 
   - id: agent365-user-profile
     name: "Agent 365 User Profile"
@@ -1325,6 +1812,13 @@ catalog_servers:
     description: "Get manager, direct reports, profile info, and search users in Microsoft 365"
     requires_api_key: false
     tags: ["identity", "users", "microsoft-365", "microsoft"]
+    oauth:
+      issuer: "https://login.microsoftonline.com/{tenantid}/v2.0"
+      authorization_url: "https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize"
+      token_url: "https://login.microsoftonline.com/organizations/oauth2/v2.0/token"
+      scopes: ["https://agent365.svc.cloud.microsoft/agents/servers/mcp_UserProfile/.default", "openid", "profile", "offline_access"]
+      supports_dcr: false
+      resource: "https://agent365.svc.cloud.microsoft/agents/servers/mcp_UserProfile"
 
   - id: agent365-admin-center
     name: "Agent 365 Admin Center"
@@ -1336,6 +1830,13 @@ catalog_servers:
     description: "Microsoft 365 administration — manage users, licenses, and tenant settings"
     requires_api_key: false
     tags: ["admin", "management", "microsoft-365", "microsoft"]
+    oauth:
+      issuer: "https://login.microsoftonline.com/{tenantid}/v2.0"
+      authorization_url: "https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize"
+      token_url: "https://login.microsoftonline.com/organizations/oauth2/v2.0/token"
+      scopes: ["https://agent365.svc.cloud.microsoft/agents/servers/mcp_M365AdminCenter/.default", "openid", "profile", "offline_access"]
+      supports_dcr: false
+      resource: "https://agent365.svc.cloud.microsoft/agents/servers/mcp_M365AdminCenter"
 
   - id: agent365-copilot-search
     name: "Agent 365 Copilot Search"
@@ -1347,6 +1848,13 @@ catalog_servers:
     description: "Search across Microsoft 365 — SharePoint, OneDrive, emails, Teams chats, and connected content"
     requires_api_key: false
     tags: ["search", "copilot", "microsoft-365", "microsoft"]
+    oauth:
+      issuer: "https://login.microsoftonline.com/{tenantid}/v2.0"
+      authorization_url: "https://login.microsoftonline.com/organizations/oauth2/v2.0/authorize"
+      token_url: "https://login.microsoftonline.com/organizations/oauth2/v2.0/token"
+      scopes: ["https://agent365.svc.cloud.microsoft/agents/servers/mcp_M365Copilot/.default", "openid", "profile", "offline_access"]
+      supports_dcr: false
+      resource: "https://agent365.svc.cloud.microsoft/agents/servers/mcp_M365Copilot"
 
   # Documentation
   - id: microsoft-learn-docs
