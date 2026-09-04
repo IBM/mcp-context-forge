@@ -744,7 +744,7 @@ For detailed guidance on resource limits and process management, see `docs/docs/
 | mcpContextForge.config.LOG_SEARCH_MAX_RESULTS | string | `"1000"` |  |
 | mcpContextForge.config.MASKED_AUTH_VALUE | string | `"*****"` |  |
 | mcpContextForge.secret.BASIC_AUTH_USER | string | `"admin"` |  |
-| mcpContextForge.secret.BASIC_AUTH_PASSWORD | string | `"changeme"` |  |
+| mcpContextForge.secret.BASIC_AUTH_PASSWORD | string | `""` |  |
 | mcpContextForge.secret.API_ALLOW_BASIC_AUTH | string | `"false"` |  |
 | mcpContextForge.secret.AUTH_REQUIRED | string | `"true"` |  |
 | mcpContextForge.secret.MCP_REQUIRE_AUTH | string | `"false"` |  |

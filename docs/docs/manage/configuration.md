@@ -1399,7 +1399,7 @@ services:
     environment:
       - DATABASE_URL=postgresql+psycopg://postgres:changeme@postgres:5432/mcp
       - REDIS_URL=redis://redis:6379/0
-      - JWT_SECRET_KEY=my-secret-key
+      - JWT_SECRET_KEY=$(openssl rand -hex 32)
     depends_on:
       postgres:
         condition: service_healthy
@@ -1446,11 +1446,13 @@ data:
   REDIS_URL: "redis://redis-service:6379/0"
   JWT_SECRET_KEY: "your-secret-key"
   BASIC_AUTH_USER: "admin"
-  BASIC_AUTH_PASSWORD: "changeme"
+  BASIC_AUTH_PASSWORD: "__REPLACE_ME__run_make_init-secrets-patch-env"
   MCPGATEWAY_UI_ENABLED: "true"
   MCPGATEWAY_ADMIN_API_ENABLED: "true"
   LOG_LEVEL: "INFO"
 ```
+
+`BASIC_AUTH_PASSWORD` is only enforced when `API_ALLOW_BASIC_AUTH` or `DOCS_ALLOW_BASIC_AUTH` is `true`. Replace the `__REPLACE_ME__...` placeholder with a strong value (e.g. `openssl rand -hex 32`) before enabling either — the gateway refuses to start with a placeholder, empty, or known-weak secret.
 
 ---
 
