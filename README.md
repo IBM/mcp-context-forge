@@ -1075,7 +1075,7 @@ Special thanks to our contributors for helping us improve ContextForge:
 
 ## Star History and Project Activity
 
-[![Star History Chart](https://api.star-history.com/svg?repos=ibm/mcp-context-forge&type=Date)](https://www.star-history.com/#ibm/mcp-context-forge&Date)
+[![Star History Chart](https://star-history.dera.page/svg?repos=ibm/mcp-context-forge&type=Date)](https://star-history.dera.page/#ibm/mcp-context-forge&Date)
 
 <!-- === Usage Stats === -->
 [![PyPi Downloads](https://static.pepy.tech/badge/mcp-contextforge-gateway/month)](https://pepy.tech/project/mcp-contextforge-gateway)&nbsp;
