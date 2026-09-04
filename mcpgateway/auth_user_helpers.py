@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Helpers for interpreting persisted user authentication state."""
+"""Location: ./mcpgateway/auth_user_helpers.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+
+Helpers for interpreting persisted user authentication state.
+"""
 
 # Standard
 from typing import Optional, Protocol

@@ -1,5 +1,10 @@
 # -*- coding: utf-8 -*-
-"""Tests for passwordless SSO-only EmailUser migration."""
+"""Location: ./tests/unit/mcpgateway/db/test_passwordless_user_migration.py
+Copyright contributors to the MCP-CONTEXT-FORGE project
+SPDX-License-Identifier: Apache-2.0
+
+Tests for passwordless SSO-only EmailUser migration.
+"""
 
 # Standard
 import importlib
