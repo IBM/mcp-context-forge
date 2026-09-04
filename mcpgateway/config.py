@@ -3262,7 +3262,7 @@ Disallow: /
     # ===================================
 
     slug_refresh_batch_size: int = Field(default=1000, description="Batch size for gateway/tool slug refresh at startup")
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore")
+    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", case_sensitive=False, extra="ignore", env_ignore_empty=True)
 
     gateway_tool_name_separator: str = "-"
     valid_slug_separator_regexp: ClassVar[str] = r"^(-{1,2}|[_.])$"
