@@ -106,6 +106,19 @@ def test_sanitize_display_text_js(patch_logger):
         SecurityValidator.sanitize_display_text("data:text/html;script", "desc")
 
 
+def test_sanitize_display_text_url_scheme_allowed(patch_logger):
+    # Quoted URL schemes in descriptions must not be flagged as polyglots: connection-string
+    # examples like "postgresql://" previously tripped the ['"].*//['"] pattern.
+    assert SecurityValidator.sanitize_display_text('Examples: "postgresql://" or "mysql://"', "desc")
+    assert SecurityValidator.sanitize_display_text('DSN: "postgresql://user:pass@host/db"', "desc")
+
+
+def test_sanitize_display_text_polyglot_double_slash_still_blocked(patch_logger):
+    # A bare `//` before a closing quote (not a URL scheme) is still treated as a polyglot.
+    with pytest.raises(ValueError):
+        SecurityValidator.sanitize_display_text('x "a//" y', "desc")
+
+
 def test_validate_name_valid():
     assert SecurityValidator.validate_name("ValidName", "Name") == "ValidName"
 
