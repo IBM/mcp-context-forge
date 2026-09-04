@@ -4002,6 +4002,69 @@ class TestInvokeResourceCoverage:
             )
 
     @pytest.mark.asyncio
+    async def test_invoke_resource_forwards_passthrough_and_upstream_auth_headers(self, resource_service):
+        """Client-supplied passthrough headers and X-Upstream-Authorization must reach the
+        upstream MCP server, exactly as tools/call already does via compute_passthrough_headers_cached.
+
+        Currently ResourceService.invoke_resource() only ever extracts request_headers for the
+        RFC 8693 token-exchange subject_token; it never applies the gateway's configured
+        passthrough_headers allow-list, and never honors the always-on X-Upstream-Authorization
+        -> Authorization rename. This test is expected to FAIL until that gap is fixed.
+        """
+        resource = self._make_resource()
+        gateway = self._make_gateway(transport="sse")
+        gateway.passthrough_headers = ["X-Api-Key"]
+
+        db = MagicMock()
+        db.execute = MagicMock()
+
+        request_headers = {
+            "x-api-key": "tenant-42-key",
+            "x-upstream-authorization": "Bearer client-supplied-token",
+        }
+
+        with (
+            patch(
+                "mcpgateway.services.resource_service.settings",
+                MagicMock(
+                    enable_ed25519_signing=False,
+                    platform_admin_email="admin@test.com",
+                    httpx_max_connections=10,
+                    httpx_max_keepalive_connections=5,
+                    httpx_keepalive_expiry=30,
+                    mcp_session_pool_enabled=False,
+                ),
+            ),
+            patch("mcpgateway.services.resource_service.create_span", MagicMock(return_value=MagicMock(__enter__=MagicMock(return_value=MagicMock()), __exit__=MagicMock(return_value=False)))),
+            patch("mcpgateway.services.resource_service.sse_client") as mock_sse,
+            patch("mcpgateway.services.resource_service.ClientSession") as MockCS,
+        ):
+            mock_cs_instance = AsyncMock()
+            mock_cs_instance.initialize = AsyncMock()
+            mock_cs_instance.read_resource.return_value = MagicMock(contents=[MagicMock(text="content", blob=None)])
+            MockCS.return_value.__aenter__ = AsyncMock(return_value=mock_cs_instance)
+            MockCS.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            mock_read = AsyncMock()
+            mock_write = AsyncMock()
+            mock_sse.return_value.__aenter__ = AsyncMock(return_value=(mock_read, mock_write))
+            mock_sse.return_value.__aexit__ = AsyncMock(return_value=False)
+
+            await resource_service.invoke_resource(
+                db,
+                "res-1",
+                "http://test.com",
+                resource_obj=resource,
+                gateway_obj=gateway,
+                request_headers=request_headers,
+            )
+
+        assert mock_sse.call_count == 1
+        upstream_headers = mock_sse.call_args.kwargs.get("headers") or {}
+        assert upstream_headers.get("X-Api-Key") == "tenant-42-key", f"passthrough header not forwarded to upstream MCP server, got headers={upstream_headers!r}"
+        assert upstream_headers.get("Authorization") == "Bearer client-supplied-token", f"X-Upstream-Authorization not renamed/forwarded to upstream MCP server, got headers={upstream_headers!r}"
+
+    @pytest.mark.asyncio
     async def test_user_identity_dict(self, resource_service):
         """User identity as dict should extract email for pool isolation."""
         resource = self._make_resource(gateway_id=None)
