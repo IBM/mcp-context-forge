@@ -349,12 +349,12 @@ services:
       # - BASIC_AUTH_PASSWORD=${BASIC_AUTH_PASSWORD:-changeme}
       # Auth encryption secret + default user password
       - "AUTH_ENCRYPTION_SECRET=${AUTH_ENCRYPTION_SECRET:?AUTH_ENCRYPTION_SECRET is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
-      - DEFAULT_USER_PASSWORD=${DEFAULT_USER_PASSWORD:-changeme}
+      - "DEFAULT_USER_PASSWORD=${DEFAULT_USER_PASSWORD:?DEFAULT_USER_PASSWORD is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
       # Admin UI uses email/password authentication
       - EMAIL_AUTH_ENABLED=true
       - PROTECT_ALL_ADMINS=${PROTECT_ALL_ADMINS:-true}
       - PLATFORM_ADMIN_EMAIL=${PLATFORM_ADMIN_EMAIL:-admin@example.com}
-      - PLATFORM_ADMIN_PASSWORD=${PLATFORM_ADMIN_PASSWORD:-changeme}
+      - "PLATFORM_ADMIN_PASSWORD=${PLATFORM_ADMIN_PASSWORD:?PLATFORM_ADMIN_PASSWORD is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
       # Compose default off so /admin/* REST works without bootstrap redirect; override for production.
       - PASSWORD_CHANGE_ENFORCEMENT_ENABLED=${PASSWORD_CHANGE_ENFORCEMENT_ENABLED:-true}
       - ACCOUNT_LOCKOUT_NOTIFICATION_ENABLED=${ACCOUNT_LOCKOUT_NOTIFICATION_ENABLED:-true}
@@ -1076,10 +1076,13 @@ services:
     environment:
       - DATABASE_URL=postgresql+psycopg://postgres:${POSTGRES_PASSWORD:-mysecretpassword}@postgres:5432/mcp
       - "JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY is not set. Run: make setup (first time) or make init-secrets-patch-env (if .env exists)}"
+      # Basic auth is DISABLED by default for security (API_ALLOW_BASIC_AUTH unset here)
+      # Only set these if you explicitly enable Basic auth for this container
       - BASIC_AUTH_USER=${BASIC_AUTH_USER:-admin}
-      - BASIC_AUTH_PASSWORD=${BASIC_AUTH_PASSWORD:-changeme}
+      # - BASIC_AUTH_PASSWORD=${BASIC_AUTH_PASSWORD:-changeme}
       - PLATFORM_ADMIN_EMAIL=${PLATFORM_ADMIN_EMAIL:-admin@example.com}
-      - PLATFORM_ADMIN_PASSWORD=${PLATFORM_ADMIN_PASSWORD:-changeme}
+      - "PLATFORM_ADMIN_PASSWORD=${PLATFORM_ADMIN_PASSWORD:?PLATFORM_ADMIN_PASSWORD is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
+      - "DEFAULT_USER_PASSWORD=${DEFAULT_USER_PASSWORD:?DEFAULT_USER_PASSWORD is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
       - AUTH_REQUIRED=${AUTH_REQUIRED:-true}
       - "AUTH_ENCRYPTION_SECRET=${AUTH_ENCRYPTION_SECRET:?AUTH_ENCRYPTION_SECRET is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
       - LOG_LEVEL=${LOG_LEVEL:-INFO}
@@ -1335,6 +1338,10 @@ services:
     environment:
       - "JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY is not set. Run: make setup (first time) or make init-secrets-patch-env (if .env exists)}"
       - "AUTH_ENCRYPTION_SECRET=${AUTH_ENCRYPTION_SECRET:?AUTH_ENCRYPTION_SECRET is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
+      # create_jwt_token instantiates Settings(), which fails closed on the default "changeme"
+      # platform_admin_password/default_user_password once email_auth_enabled (default true).
+      - "PLATFORM_ADMIN_PASSWORD=${PLATFORM_ADMIN_PASSWORD:?PLATFORM_ADMIN_PASSWORD is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
+      - "DEFAULT_USER_PASSWORD=${DEFAULT_USER_PASSWORD:?DEFAULT_USER_PASSWORD is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
@@ -1585,6 +1592,10 @@ services:
     environment:
       - "JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY is not set. Run: make setup (first time) or make init-secrets-patch-env (if .env exists)}"
       - "AUTH_ENCRYPTION_SECRET=${AUTH_ENCRYPTION_SECRET:?AUTH_ENCRYPTION_SECRET is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
+      # create_jwt_token instantiates Settings(), which fails closed on the default "changeme"
+      # platform_admin_password/default_user_password once email_auth_enabled (default true).
+      - "PLATFORM_ADMIN_PASSWORD=${PLATFORM_ADMIN_PASSWORD:?PLATFORM_ADMIN_PASSWORD is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
+      - "DEFAULT_USER_PASSWORD=${DEFAULT_USER_PASSWORD:?DEFAULT_USER_PASSWORD is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
       - "GATEWAY_URL=${GATEWAY_URL:-http://gateway:4444}"
 
     # This is a one-shot container that exits after registration
@@ -1916,6 +1927,11 @@ services:
         condition: service_healthy
     environment:
       - "JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY is not set. Run: make setup (first time) or make init-secrets-patch-env (if .env exists)}"
+      - "AUTH_ENCRYPTION_SECRET=${AUTH_ENCRYPTION_SECRET:?AUTH_ENCRYPTION_SECRET is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
+      # create_jwt_token instantiates Settings(), which fails closed on the default "changeme"
+      # platform_admin_password/default_user_password once email_auth_enabled (default true).
+      - "PLATFORM_ADMIN_PASSWORD=${PLATFORM_ADMIN_PASSWORD:?PLATFORM_ADMIN_PASSWORD is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
+      - "DEFAULT_USER_PASSWORD=${DEFAULT_USER_PASSWORD:?DEFAULT_USER_PASSWORD is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
     restart: "no"
     entrypoint: ["/bin/sh", "-c"]
     command:
@@ -2037,6 +2053,10 @@ services:
     environment:
       - "JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY is not set. Run: make setup (first time) or make init-secrets-patch-env (if .env exists)}"
       - "AUTH_ENCRYPTION_SECRET=${AUTH_ENCRYPTION_SECRET:?AUTH_ENCRYPTION_SECRET is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
+      # create_jwt_token instantiates Settings(), which fails closed on the default "changeme"
+      # platform_admin_password/default_user_password once email_auth_enabled (default true).
+      - "PLATFORM_ADMIN_PASSWORD=${PLATFORM_ADMIN_PASSWORD:?PLATFORM_ADMIN_PASSWORD is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
+      - "DEFAULT_USER_PASSWORD=${DEFAULT_USER_PASSWORD:?DEFAULT_USER_PASSWORD is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
     restart: "no"
     entrypoint: ["/bin/sh", "-c"]
     command:
@@ -2109,6 +2129,10 @@ services:
     environment:
       - "JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY is not set. Run: make setup (first time) or make init-secrets-patch-env (if .env exists)}"
       - "AUTH_ENCRYPTION_SECRET=${AUTH_ENCRYPTION_SECRET:?AUTH_ENCRYPTION_SECRET is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
+      # create_jwt_token instantiates Settings(), which fails closed on the default "changeme"
+      # platform_admin_password/default_user_password once email_auth_enabled (default true).
+      - "PLATFORM_ADMIN_PASSWORD=${PLATFORM_ADMIN_PASSWORD:?PLATFORM_ADMIN_PASSWORD is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
+      - "DEFAULT_USER_PASSWORD=${DEFAULT_USER_PASSWORD:?DEFAULT_USER_PASSWORD is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
     entrypoint: ["/bin/sh", "-c"]
     command:
       - |
@@ -2280,6 +2304,10 @@ services:
     environment:
       - "JWT_SECRET_KEY=${JWT_SECRET_KEY:?JWT_SECRET_KEY is not set. Run: make setup (first time) or make init-secrets-patch-env (if .env exists)}"
       - "AUTH_ENCRYPTION_SECRET=${AUTH_ENCRYPTION_SECRET:?AUTH_ENCRYPTION_SECRET is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
+      # create_jwt_token instantiates Settings(), which fails closed on the default "changeme"
+      # platform_admin_password/default_user_password once email_auth_enabled (default true).
+      - "PLATFORM_ADMIN_PASSWORD=${PLATFORM_ADMIN_PASSWORD:?PLATFORM_ADMIN_PASSWORD is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
+      - "DEFAULT_USER_PASSWORD=${DEFAULT_USER_PASSWORD:?DEFAULT_USER_PASSWORD is not set. Run: make setup (if .env does not exist) or make init-secrets-patch-env (if .env exists)}"
       - BENCHMARK_SERVER_COUNT=${BENCHMARK_SERVER_COUNT:-10}
       - BENCHMARK_START_PORT=${BENCHMARK_START_PORT:-9000}
     restart: "no"

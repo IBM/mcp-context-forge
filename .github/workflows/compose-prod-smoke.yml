@@ -80,8 +80,16 @@ jobs:
           # alphabet has no '|' or '&', so it is safe with the sed delimiter.
           jwt_secret="$(openssl rand -base64 32)"  # pragma: allowlist secret
           enc_secret="$(openssl rand -base64 32)"  # pragma: allowlist secret
+          admin_password="$(openssl rand -base64 24)"  # pragma: allowlist secret
+          user_password="$(openssl rand -base64 24)"  # pragma: allowlist secret
           sed -i "s|^JWT_SECRET_KEY=.*|JWT_SECRET_KEY=${jwt_secret}|" .env
           sed -i "s|^AUTH_ENCRYPTION_SECRET=.*|AUTH_ENCRYPTION_SECRET=${enc_secret}|" .env
+          # EMAIL_AUTH_ENABLED=true on the gateway service (docker-compose.yml)
+          # feature-gates platform_admin_password/default_user_password checks
+          # in Settings.validate_security_combinations() — the .env.example
+          # placeholders must be patched too or the gateway refuses to boot.
+          sed -i "s|^PLATFORM_ADMIN_PASSWORD=.*|PLATFORM_ADMIN_PASSWORD=${admin_password}|" .env
+          sed -i "s|^DEFAULT_USER_PASSWORD=.*|DEFAULT_USER_PASSWORD=${user_password}|" .env
 
       # ── Default compose stack ──────────────────────────────────
       # Start the stack, wait up to 3 min for nginx to proxy

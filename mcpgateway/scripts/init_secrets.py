@@ -86,10 +86,12 @@ _SECRET_FIELDS: dict[str, int] = {
     "JWT_SECRET_KEY": 32,  # nosec B105 — value is minimum byte length, not a password
     "AUTH_ENCRYPTION_SECRET": 32,  # nosec B105 — value is minimum byte length, not a password
     "BASIC_AUTH_PASSWORD": 18,  # nosec B105 — patched when "changeme" or placeholder; 18 bytes → 24 chars
+    "PLATFORM_ADMIN_PASSWORD": 18,  # nosec B105 — patched when "changeme" or placeholder; 18 bytes → 24 chars
+    "DEFAULT_USER_PASSWORD": 18,  # nosec B105 — patched when "changeme" or placeholder; 18 bytes → 24 chars
 }
 
 # Fields subject to the full compliance predicate (startup hard-fail): length + entropy enforced.
-# BASIC_AUTH_PASSWORD is excluded — Settings only warns on it, never hard-fails.
+# Password fields are excluded — Settings hard-fails only when the consuming feature is enabled.
 _STRONG_SECRET_FIELDS: frozenset[str] = frozenset({"JWT_SECRET_KEY", "AUTH_ENCRYPTION_SECRET"})
 
 # Fields where auto-rotation without a data-migration is irreversible.
@@ -108,7 +110,7 @@ def _is_strong_value(val: str, weak_values: frozenset[str]) -> bool:
     """
     if not val.strip():
         return False
-    if val.lower() in weak_values or val.lower().startswith("__replace_me__"):
+    if val.lower() in weak_values or val.lower().startswith(("__replace_me__", "replaceme")):
         return False
     if len(val) < _MIN_SECRET_LENGTH or calculate_entropy(val) < _MIN_ENTROPY:
         return False
@@ -207,15 +209,17 @@ def ensure_env_file_secrets(
     env_file: str = ".env",
     weak_values: frozenset[str] | None = None,
 ) -> dict[str, str]:
-    """Check JWT_SECRET_KEY, AUTH_ENCRYPTION_SECRET, and BASIC_AUTH_PASSWORD for weak or placeholder values.
+    """Check JWT_SECRET_KEY, AUTH_ENCRYPTION_SECRET, BASIC_AUTH_PASSWORD,
+    PLATFORM_ADMIN_PASSWORD, and DEFAULT_USER_PASSWORD for weak or placeholder
+    values.
 
     If weak values are detected, generates cryptographically strong replacements,
     merges them into *env_file* (creating the file if it does not exist), and
     patches ``os.environ`` so the running process picks them up without restart.
 
     Set ``MCPGATEWAY_AUTO_INIT_SECRETS=false`` to disable this behaviour (e.g.
-    when secrets are injected via Vault or Kubernetes secrets and disk writes
-    are undesirable).
+    when secrets are injected via Vault or Kubernetes secrets and disk writes are
+    undesirable).
 
     Returns a dict of ``{KEY: generated_value}`` for every key that was regenerated.
     Returns ``{}`` if all secrets are already strong or auto-init is disabled.
@@ -254,7 +258,7 @@ def ensure_env_file_secrets(
         env_val = os.environ.get(field)
         current = env_val if env_val is not None else _env_file_ci.get(field.lower(), "changeme")
         # Base checks apply to all fields: empty, known-weak name, placeholder.
-        is_non_compliant = not current.strip() or current.lower() in weak_values or current.lower().startswith("__replace_me__")
+        is_non_compliant = not current.strip() or current.lower() in weak_values or current.lower().startswith(("__replace_me__", "replaceme"))
         # Length and entropy checks apply only to secrets that Settings hard-fails on startup.
         if not is_non_compliant and field in _STRONG_SECRET_FIELDS:
             is_non_compliant = len(current) < effective_min or calculate_entropy(current) < _MIN_ENTROPY
@@ -371,9 +375,10 @@ def main() -> None:
         metavar="ENV_FILE",
         default=None,
         help=(
-            "Patch an existing env file in-place: replace only the JWT_SECRET_KEY and "
-            "AUTH_ENCRYPTION_SECRET lines that still hold placeholder or weak values; "
-            "all other lines are preserved unchanged. No-ops if those keys are already strong."
+            "Patch an existing env file in-place: replace JWT_SECRET_KEY, AUTH_ENCRYPTION_SECRET, "
+            "BASIC_AUTH_PASSWORD, PLATFORM_ADMIN_PASSWORD, and DEFAULT_USER_PASSWORD lines that "
+            "still hold placeholder or weak values; all other lines are preserved unchanged. "
+            "No-ops if those keys are already strong."
         ),
     )
     args = parser.parse_args()
@@ -400,6 +405,7 @@ def main() -> None:
         "AUTH_ENCRYPTION_SECRET": generate_token(32),
         "BASIC_AUTH_PASSWORD": generate_token(18),
         "PLATFORM_ADMIN_PASSWORD": generate_token(18),
+        "DEFAULT_USER_PASSWORD": generate_token(18),
     }
 
     output_lines = [f"{key}={val}" for key, val in secrets_map.items()]

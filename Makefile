@@ -335,7 +335,8 @@ install-dev: venv
 	@echo "🔑  Next step — choose one:"
 	@echo "    make setup           # recommended: auto-creates .env and patches secrets in-place"
 	@echo "    make init-secrets    # writes secrets to .env.secrets so you can review before copying"
-	@echo "    The gateway will not start until JWT_SECRET_KEY and AUTH_ENCRYPTION_SECRET are set."
+	@echo "    The gateway will not start until secrets and passwords are configured."
+	@echo "    Run 'make setup' to auto-generate all required values."
 
 # help: build-ui              - Build Admin UI CSS and JS bundles (requires npm; set SKIP_UI_BUILD=1 to bypass)
 .PHONY: build-ui
