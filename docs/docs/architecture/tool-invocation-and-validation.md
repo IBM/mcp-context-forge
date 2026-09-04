@@ -6,6 +6,13 @@ ContextForge invokes tools across several very different backends — federated 
 
 [#4202]: https://github.com/IBM/mcp-context-forge/issues/4202
 
+> **Scope note:** this document covers *output*-schema validation (Validators A/B/C below),
+> which runs after a tool actually dispatches. *Input*-schema validation — checking the
+> caller's `arguments` against the tool's `input_schema` before dispatch — is a separate,
+> earlier gate shared by `ToolService.invoke_tool` and the `POST /tools/preview/{name}`
+> dry-run endpoint via `_resolve_tool_for_invocation` / `_validate_tool_input_arguments`; see
+> [API Usage — Preview a Tool Call](../manage/api-usage.md#preview-a-tool-call-dry-run).
+
 ## High-level flow
 
 ```

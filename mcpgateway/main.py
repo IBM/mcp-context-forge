@@ -172,6 +172,8 @@ from mcpgateway.schemas import (
     TaggedEntity,
     TagInfo,
     ToolCreate,
+    ToolPreviewRequest,
+    ToolPreviewResponse,
     ToolRead,
     ToolUpdate,
 )
@@ -5891,6 +5893,58 @@ async def create_tool(
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(ex))
         logger.error(f"Unexpected error while creating tool: {ex}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="An unexpected error occurred while creating the tool")
+
+
+@tool_router.post("/preview/{name:path}", response_model=ToolPreviewResponse)
+@require_permission("tools.preview")
+async def preview_tool(
+    name: str,
+    request: Request,
+    body: Optional[ToolPreviewRequest] = Body(default=None),
+    db: Session = Depends(get_db),
+    user=Depends(get_current_user_with_permissions),
+) -> ToolPreviewResponse:
+    """Validate and resolve a tool invocation without executing it (#5629).
+
+    Dry-run counterpart to live tool invocation: no REST/MCP/A2A/gRPC call is made, and no
+    TOOL_POST_INVOKE hook runs. Shares tool resolution/RBAC with the live invocation path
+    (see ``ToolService._resolve_tool_for_invocation``), so the two can never disagree about
+    whether a tool exists or is accessible.
+
+    Args:
+        name: Name of the tool to preview.
+        request: FastAPI request object, used to resolve the caller's visibility scope.
+        body: Candidate arguments to validate against the tool's input schema.
+        db: Database session.
+        user: Authenticated user with permissions.
+
+    Returns:
+        ToolPreviewResponse: The dry-run envelope (validation result, target, annotations,
+            plugin pre-hooks that actually ran, and non-fatal warnings).
+
+    Raises:
+        HTTPException: 404 if the feature is disabled, or if the tool is not found or not
+            accessible to the caller (same visibility rules as live invocation).
+    """
+    if not settings.mcpgateway_tool_preview_enabled:
+        raise HTTPException(status_code=404, detail="Tool preview is disabled")
+
+    body = body or ToolPreviewRequest()
+    auth_user_email, auth_token_teams = get_scoped_resource_access_context(request, user)
+    try:
+        return await tool_service.preview_tool_invocation(
+            db,
+            name=name,
+            arguments=body.arguments,
+            user_email=auth_user_email,
+            token_teams=auth_token_teams,
+            # SECURITY: strip Authorization/Cookie/etc. before these reach a preview_safe
+            # plugin's TOOL_PRE_INVOKE hook -- live invocation never hands a hook the
+            # caller's raw inbound headers either, only resolved runtime headers.
+            request_headers=_filter_sensitive_headers(dict(request.headers)),
+        )
+    except ToolNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
 
 
 @tool_router.get("/{tool_id}", response_model=Union[ToolRead, Dict])

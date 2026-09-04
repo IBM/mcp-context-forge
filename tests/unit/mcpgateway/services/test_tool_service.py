@@ -2198,6 +2198,35 @@ class TestToolService:
         assert "Tool 'test_tool' exists but is inactive" in str(exc_info.value)
 
     @pytest.mark.asyncio
+    async def test_invoke_tool_rejects_arguments_failing_input_schema(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """Arguments missing a required input_schema property must raise ToolInvocationError
+        before dispatch (#5629) -- shared with preview_tool_invocation via
+        _resolve_tool_for_invocation / _validate_tool_input_arguments so the two paths can
+        never disagree about whether given arguments are acceptable."""
+        mock_tool.input_schema = {"type": "object", "properties": {"param": {"type": "string"}}, "required": ["param"]}
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        with pytest.raises(ToolInvocationError, match="'param' is a required property"):
+            await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_and_preview_agree_on_schema_validation(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """Same-input parity (#5629 acceptance criteria): given the same tool and the same
+        invalid arguments, invoke_tool and preview_tool_invocation must agree that the
+        arguments are rejected -- one raising, the other reporting -- rather than one
+        silently accepting what the other rejects."""
+        mock_tool.input_schema = {"type": "object", "properties": {"param": {"type": "string"}}, "required": ["param"]}
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+        preview_result = await tool_service.preview_tool_invocation(test_db, "test_tool", {})
+        assert preview_result.validated is False
+        assert any(w.code == "invalid_arguments" for w in preview_result.warnings)
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+        with pytest.raises(ToolInvocationError):
+            await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
+
+    @pytest.mark.asyncio
     async def test_invoke_tool_rest_get(self, tool_service, mock_tool, mock_global_config_obj, test_db):
         # ----------------  DB  -----------------
         mock_tool.integration_type = "REST"
@@ -6604,6 +6633,35 @@ class TestSchemaValidatorCaching:
         # Invalid instance
         with pytest.raises(jsonschema.ValidationError):
             _validate_with_cached_schema({"foo": 123}, schema)
+
+
+class TestValidateToolInputArguments:
+    """Tests for _validate_tool_input_arguments, shared by invoke_tool and
+    preview_tool_invocation via _resolve_tool_for_invocation (#5629)."""
+
+    def test_no_schema_returns_none(self):
+        # First-Party
+        from mcpgateway.services.tool_service import _validate_tool_input_arguments
+
+        assert _validate_tool_input_arguments({"anything": "goes"}, None) is None
+        assert _validate_tool_input_arguments({"anything": "goes"}, {}) is None
+
+    def test_valid_arguments_return_none(self):
+        # First-Party
+        from mcpgateway.services.tool_service import _validate_tool_input_arguments
+
+        schema = {"type": "object", "properties": {"foo": {"type": "string"}}, "required": ["foo"]}
+        assert _validate_tool_input_arguments({"foo": "bar"}, schema) is None
+
+    def test_invalid_arguments_return_error_message(self):
+        # First-Party
+        from mcpgateway.services.tool_service import _validate_tool_input_arguments
+
+        schema = {"type": "object", "properties": {"foo": {"type": "string"}}, "required": ["foo"]}
+        error = _validate_tool_input_arguments({}, schema)
+
+        assert error is not None
+        assert "required property" in error
 
 
 class TestCorrelationIdPoolExclusion:

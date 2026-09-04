@@ -1034,6 +1034,7 @@ The gateway includes built-in observability features for tracking HTTP requests,
 | `TOOL_RATE_LIMIT`       | Tool calls per minute          | `100`   | int > 0 |
 | `TOOL_CONCURRENT_LIMIT` | Concurrent tool invocations    | `10`    | int > 0 |
 | `GATEWAY_TOOL_NAME_SEPARATOR` | Tool name separator for gateway routing | `-`     | `-`, `--`, `_`, `.` |
+| `MCPGATEWAY_TOOL_PREVIEW_ENABLED` | Enable the tool preview (dry-run) endpoint at `POST /tools/preview/{name}` | `true` | bool |
 
 ### Prompts
 
