@@ -15,11 +15,12 @@ from urllib.parse import urlparse
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 import jwt
-from pydantic import BaseModel, model_validator
+from pydantic import BaseModel, field_validator, model_validator
 from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.common.query_params import QueryErrorCodeSso
+from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import get_db
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
@@ -56,6 +57,22 @@ class SSOProviderCreateRequest(BaseModel):
     provider_metadata: Dict = {}  # Role mappings, groups_claim config, etc.
     trusted_for_api_auth: bool = False
     api_audience: Optional[str] = None
+
+    @field_validator("id")
+    @classmethod
+    def _validate_id(cls, value: str) -> str:
+        """Reject provider ids containing HTML/unsafe characters (stored-XSS defense-in-depth).
+
+        Args:
+            value: Provider identifier supplied by the caller.
+
+        Returns:
+            The validated identifier.
+
+        Raises:
+            ValueError: If the identifier is empty or contains unsafe characters.
+        """
+        return SecurityValidator.validate_identifier(value, "Provider id")
 
     @model_validator(mode="after")
     def _require_audience_when_api_trusted(self):
