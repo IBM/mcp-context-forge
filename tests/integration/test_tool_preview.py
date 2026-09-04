@@ -284,6 +284,27 @@ class TestToolPreviewIntegration:
 
         assert mock_preview.call_args.kwargs["name"] == "gateway-slug/tool-name"
 
+    @patch("mcpgateway.main.tool_service.preview_tool_invocation", new_callable=AsyncMock)
+    def test_sensitive_headers_stripped_before_reaching_service(self, mock_preview, _auth_client):
+        """The caller's Authorization/Cookie must never reach preview_tool_invocation's
+        request_headers -- that dict is forwarded into preview_safe plugin hook payloads,
+        and a hook must not see the caller's bearer token. A benign custom header must
+        still pass through, since preview_safe hooks may condition on it (#5629)."""
+        client, auth_headers = _auth_client
+        mock_preview.return_value = _sample_local_response()
+
+        response = client.post(
+            "/tools/preview/get_weather",
+            json={"arguments": {}},
+            headers={**auth_headers, "Cookie": "session=secret", "X-Custom-Tenant": "tenant-a"},
+        )
+
+        assert response.status_code == 200
+        forwarded_headers = {k.lower(): v for k, v in mock_preview.call_args.kwargs["request_headers"].items()}
+        assert "authorization" not in forwarded_headers
+        assert "cookie" not in forwarded_headers
+        assert forwarded_headers.get("x-custom-tenant") == "tenant-a"
+
     # ------------------------------------------------------------------
     # Federation policy / leak-check (#5629)
     # ------------------------------------------------------------------

@@ -7273,7 +7273,8 @@ class ToolService(BaseService):
             return False
         try:
             return plugin_manager._registry.get_plugin_hook_by_name(plugin_name, "elicit") is not None  # pylint: disable=protected-access
-        except Exception:  # pylint: disable=broad-except  # noqa: S110 - degrade to "no elicit hook known" like the other _get_dispatchable_hook_refs/_is_preview_safe helpers
+        except Exception as exc:  # pylint: disable=broad-except  # degrade to "no elicit hook known", same as other hook-lookup helpers
+            logger.debug("Elicit-hook lookup failed for plugin '%s' (treating as no elicit hook): %s", plugin_name, exc)
             return False
 
     async def preview_tool_invocation(
@@ -7306,6 +7307,13 @@ class ToolService(BaseService):
         adds (see :meth:`_has_elicit_hook`) is not run at all and is reported as an ``elicitation_skipped``
         warning instead, since it may need to gather user input live.
 
+        No audit trail entry is written for a preview (v1 scope, #5629): the spec's "isolates
+        preview metrics and audit rows from production tool traffic by route" describes keeping
+        them separate from live rows, not that no rows exist at all. Today that separation is
+        simply "no rows" rather than "preview-tagged rows" -- a defensible v1 call, but a preview
+        activity view (a named #5629 follow-up) would need audit rows here, tagged as preview,
+        not the live-invocation audit call reused as-is.
+
         Args:
             db: Database session.
             name: Name of tool to preview.
@@ -7315,12 +7323,13 @@ class ToolService(BaseService):
                 [] = public-only, [...] = team-scoped.
             server_id: Virtual server ID for server scoping enforcement, if previewing through
                 a virtual server context.
-            request_headers: The caller's inbound request headers, forwarded into the
-                ``preview_safe`` hook payload as-is for condition/logic evaluation. This is
-                *not* equivalent to what a live dispatch would see: it excludes tool-configured
-                static headers, resolved auth headers, and passthrough-merged headers, since
-                building those would require preview to resolve gateway/tool secrets it
-                otherwise never touches (#5629 federation policy).
+            request_headers: The caller's inbound request headers, sensitive ones (Authorization,
+                Cookie, API keys -- see ``filter_sensitive_headers``) already stripped by the
+                caller, forwarded into the ``preview_safe`` hook payload for condition/logic
+                evaluation. This is *not* equivalent to what a live dispatch would see: it also
+                excludes tool-configured static headers, resolved auth headers, and
+                passthrough-merged headers, since building those would require preview to
+                resolve gateway/tool secrets it otherwise never touches (#5629 federation policy).
 
         Returns:
             ToolPreviewResponse: The dry-run envelope described in #5629.

@@ -619,6 +619,46 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" \
   -d @- "$BASE_URL/rpc" | jq '.result.content[0].text'
 ```
 
+### Preview a Tool Call (Dry Run)
+
+`POST /tools/preview/{name}` validates and resolves a tool call without executing it — no
+REST/MCP/A2A/gRPC call is made, and no `TOOL_POST_INVOKE` hook runs. It shares tool
+resolution, RBAC, and input-schema validation with the live `tools/call` path (via
+`ToolService._resolve_tool_for_invocation`), so a `validated: true` preview is a reliable
+predictor of whether the same arguments would pass live invocation.
+
+Requires the `tools.preview` permission, which is distinct from `tools.execute` — a role
+holding `tools.preview` but not `tools.execute` can validate a call but never invoke it. The
+route 404s if `MCPGATEWAY_TOOL_PREVIEW_ENABLED=false`, using the same visibility rules as live
+invocation otherwise (a tool outside the caller's team also 404s, matching `tools/call`).
+
+```bash
+# Preview a tool call — validates arguments against the tool's input schema, resolves the
+# target (local vs. federated), and reports which preview_safe plugin hooks would run.
+jq -n --argjson args '{"param1":"value1"}' '{"arguments":$args}' |
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d @- "$BASE_URL/tools/preview/$TOOL_NAME" | jq
+```
+
+Response shape:
+
+```json
+{
+  "validated": true,
+  "resolved_arguments": {"param1": "value1"},
+  "target": {"kind": "local", "gateway_name": null},
+  "annotations": {"readOnlyHint": true, "destructiveHint": null, "idempotentHint": null, "openWorldHint": null},
+  "pre_hooks_run": ["schema_validation"],
+  "warnings": []
+}
+```
+
+For a federated tool (`target.kind == "federated"`), only the gateway's name is ever
+returned — never its URL, transport, or credentials — and no wire call to the remote gateway
+is made regardless of the tool's annotations. An empty request body defaults to
+`{"arguments": {}}`, so `POST /tools/preview/{name}` with no body is valid.
+
 ### Update Tool
 
 ```bash

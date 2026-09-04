@@ -5938,7 +5938,10 @@ async def preview_tool(
             arguments=body.arguments,
             user_email=auth_user_email,
             token_teams=auth_token_teams,
-            request_headers=dict(request.headers),
+            # SECURITY: strip Authorization/Cookie/etc. before these reach a preview_safe
+            # plugin's TOOL_PRE_INVOKE hook -- live invocation never hands a hook the
+            # caller's raw inbound headers either, only resolved runtime headers.
+            request_headers=_filter_sensitive_headers(dict(request.headers)),
         )
     except ToolNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
