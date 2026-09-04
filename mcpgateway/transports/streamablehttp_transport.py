@@ -1992,7 +1992,7 @@ async def call_tool(
                 plugin_global_context=plugin_global_context,
                 plugin_context_table=plugin_context_table,
             )
-            if not result or not result.content:
+            if not result or (not result.content and not getattr(result, "structured_content", None)):
                 logger.warning("No content returned by tool: %s", name)
                 return []
 
