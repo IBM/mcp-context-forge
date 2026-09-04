@@ -9,6 +9,7 @@ ARTIFACT_DIR="${ARTIFACT_DIR:-artifacts/upgrade-validation}"
 HEALTH_TIMEOUT_SECONDS="${HEALTH_TIMEOUT_SECONDS:-240}"
 CI_JWT_SECRET="${CI_JWT_SECRET:-ci-upgrade-validation-jwt-secret-DO-NOT-USE-IN-PRODUCTION}"
 CI_ENC_SECRET="${CI_ENC_SECRET:-ci-upgrade-validation-enc-secret-DO-NOT-USE-IN-PRODUCTION}"
+CI_PLATFORM_ADMIN_PASSWORD="${CI_PLATFORM_ADMIN_PASSWORD:-${CI_ENC_SECRET}}"
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 RUN_ID="${RUN_ID:-$(date +%s)-$RANDOM}"
@@ -338,6 +339,7 @@ run_sqlite_fresh() {
         -e "LOG_LEVEL=INFO" \
         -e "JWT_SECRET_KEY=${CI_JWT_SECRET}" \
         -e "AUTH_ENCRYPTION_SECRET=${CI_ENC_SECRET}" \
+        -e "PLATFORM_ADMIN_PASSWORD=${CI_PLATFORM_ADMIN_PASSWORD}" \
         -v "${db_dir}:/app/data" \
         "${TARGET_IMAGE}" >/dev/null
     register_container "${container}"
@@ -379,6 +381,7 @@ run_sqlite_upgrade() {
         -e "LOG_LEVEL=INFO" \
         -e "JWT_SECRET_KEY=${CI_JWT_SECRET}" \
         -e "AUTH_ENCRYPTION_SECRET=${CI_ENC_SECRET}" \
+        -e "PLATFORM_ADMIN_PASSWORD=${CI_PLATFORM_ADMIN_PASSWORD}" \
         -v "${db_dir}:/app/data" \
         "${BASE_IMAGE}" >/dev/null
     register_container "${old_container}"
@@ -401,6 +404,7 @@ run_sqlite_upgrade() {
         -e "LOG_LEVEL=INFO" \
         -e "JWT_SECRET_KEY=${CI_JWT_SECRET}" \
         -e "AUTH_ENCRYPTION_SECRET=${CI_ENC_SECRET}" \
+        -e "PLATFORM_ADMIN_PASSWORD=${CI_PLATFORM_ADMIN_PASSWORD}" \
         -v "${db_dir}:/app/data" \
         "${TARGET_IMAGE}" >/dev/null
     register_container "${new_container}"
@@ -456,6 +460,7 @@ run_postgres_fresh() {
         -e "LOG_LEVEL=INFO" \
         -e "JWT_SECRET_KEY=${CI_JWT_SECRET}" \
         -e "AUTH_ENCRYPTION_SECRET=${CI_ENC_SECRET}" \
+        -e "PLATFORM_ADMIN_PASSWORD=${CI_PLATFORM_ADMIN_PASSWORD}" \
         "${TARGET_IMAGE}" >/dev/null
     register_container "${gateway_container}"
 
@@ -512,6 +517,7 @@ run_postgres_upgrade() {
         -e "LOG_LEVEL=INFO" \
         -e "JWT_SECRET_KEY=${CI_JWT_SECRET}" \
         -e "AUTH_ENCRYPTION_SECRET=${CI_ENC_SECRET}" \
+        -e "PLATFORM_ADMIN_PASSWORD=${CI_PLATFORM_ADMIN_PASSWORD}" \
         "${BASE_IMAGE}" >/dev/null
     register_container "${old_container}"
 
@@ -536,6 +542,7 @@ run_postgres_upgrade() {
         -e "LOG_LEVEL=INFO" \
         -e "JWT_SECRET_KEY=${CI_JWT_SECRET}" \
         -e "AUTH_ENCRYPTION_SECRET=${CI_ENC_SECRET}" \
+        -e "PLATFORM_ADMIN_PASSWORD=${CI_PLATFORM_ADMIN_PASSWORD}" \
         "${TARGET_IMAGE}" >/dev/null
     register_container "${new_container}"
 
@@ -584,6 +591,7 @@ run_sqlite_roundtrip() {
         -e "LOG_LEVEL=INFO" \
         -e "JWT_SECRET_KEY=${CI_JWT_SECRET}" \
         -e "AUTH_ENCRYPTION_SECRET=${CI_ENC_SECRET}" \
+        -e "PLATFORM_ADMIN_PASSWORD=${CI_PLATFORM_ADMIN_PASSWORD}" \
         -v "${db_dir}:/app/data" \
         "${BASE_IMAGE}" >/dev/null
     register_container "${old_container}"
@@ -608,6 +616,7 @@ run_sqlite_roundtrip() {
         -e "LOG_LEVEL=INFO" \
         -e "JWT_SECRET_KEY=${CI_JWT_SECRET}" \
         -e "AUTH_ENCRYPTION_SECRET=${CI_ENC_SECRET}" \
+        -e "PLATFORM_ADMIN_PASSWORD=${CI_PLATFORM_ADMIN_PASSWORD}" \
         -v "${db_dir}:/app/data" \
         "${TARGET_IMAGE}" >/dev/null
     register_container "${new_container}"
@@ -626,6 +635,7 @@ run_sqlite_roundtrip() {
         -e "LOG_LEVEL=INFO" \
         -e "JWT_SECRET_KEY=${CI_JWT_SECRET}" \
         -e "AUTH_ENCRYPTION_SECRET=${CI_ENC_SECRET}" \
+        -e "PLATFORM_ADMIN_PASSWORD=${CI_PLATFORM_ADMIN_PASSWORD}" \
         "${TARGET_IMAGE}" \
         /app/.venv/bin/alembic -c /app/mcpgateway/alembic.ini downgrade "${base_version}"
 
@@ -686,6 +696,7 @@ run_postgres_roundtrip() {
         -e "LOG_LEVEL=INFO" \
         -e "JWT_SECRET_KEY=${CI_JWT_SECRET}" \
         -e "AUTH_ENCRYPTION_SECRET=${CI_ENC_SECRET}" \
+        -e "PLATFORM_ADMIN_PASSWORD=${CI_PLATFORM_ADMIN_PASSWORD}" \
         "${BASE_IMAGE}" >/dev/null
     register_container "${old_container}"
 
@@ -711,6 +722,7 @@ run_postgres_roundtrip() {
         -e "LOG_LEVEL=INFO" \
         -e "JWT_SECRET_KEY=${CI_JWT_SECRET}" \
         -e "AUTH_ENCRYPTION_SECRET=${CI_ENC_SECRET}" \
+        -e "PLATFORM_ADMIN_PASSWORD=${CI_PLATFORM_ADMIN_PASSWORD}" \
         "${TARGET_IMAGE}" >/dev/null
     register_container "${new_container}"
 
@@ -728,6 +740,7 @@ run_postgres_roundtrip() {
         -e "LOG_LEVEL=INFO" \
         -e "JWT_SECRET_KEY=${CI_JWT_SECRET}" \
         -e "AUTH_ENCRYPTION_SECRET=${CI_ENC_SECRET}" \
+        -e "PLATFORM_ADMIN_PASSWORD=${CI_PLATFORM_ADMIN_PASSWORD}" \
         "${TARGET_IMAGE}" \
         /app/.venv/bin/alembic -c /app/mcpgateway/alembic.ini downgrade "${base_version}"
 

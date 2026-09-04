@@ -1434,7 +1434,9 @@ class EmailAuthService:
                     else:
                         logger.debug("User %s already has active platform_admin role", SecurityValidator.sanitize_log_message(normalized_email))
                 else:
-                    logger.warning("platform_admin role not found. User %s updated with is_admin=True but without platform_admin role assignment.", SecurityValidator.sanitize_log_message(normalized_email))
+                    logger.warning(
+                        "platform_admin role not found. User %s updated with is_admin=True but without platform_admin role assignment.", SecurityValidator.sanitize_log_message(normalized_email)
+                    )
             except Exception as role_error:
                 logger.error(
                     "Failed to assign platform_admin role to %s: %s. User updated with is_admin=True but role assignment failed.",
