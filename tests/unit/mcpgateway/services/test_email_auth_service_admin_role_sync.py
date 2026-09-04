@@ -286,8 +286,8 @@ async def test_create_platform_admin_new_user_assigns_role(mock_db):
     """Test create_platform_admin assigns platform_admin role when creating new user."""
     service = EmailAuthService(mock_db)
 
-    # Mock get_user_by_email to return None (user doesn't exist)
-    with patch.object(service, "get_user_by_email", new=AsyncMock(return_value=None)):
+    # Mock the session-attached lookup to return None (user doesn't exist)
+    with patch.object(service, "_fetch_user_from_db", return_value=None):
         # Mock create_user to return a new admin user
         new_admin = EmailUser(email="newadmin@example.com", password_hash="hash", is_admin=True, is_active=True)
 
