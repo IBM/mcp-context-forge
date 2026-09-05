@@ -29,7 +29,7 @@ import hmac
 import re
 import secrets
 import time
-from typing import Optional
+from typing import cast, Optional
 import warnings
 
 # Third-Party
@@ -911,12 +911,7 @@ class EmailAuthService:
                 await self._apply_failed_login_floor(start_time)
                 return None
 
-            current_password_hash = user.password_hash
-            if current_password_hash is None:
-                failure_reason = "Invalid password"
-                logger.info("Authentication failed for %s: local password authentication disabled", SecurityValidator.sanitize_log_message(email))
-                await self._apply_failed_login_floor(start_time)
-                return None
+            current_password_hash = cast(str, user.password_hash)
 
             # Verify password
             if not await self.password_service.verify_password_async(password, current_password_hash):
@@ -1143,12 +1138,7 @@ class EmailAuthService:
             password_reset_completions_counter.labels(outcome="invalid_user").inc()
             raise AuthenticationError("This reset link is invalid")
 
-        current_password_hash = user.password_hash
-        if current_password_hash is None:
-            reset_token.used_at = utc_now()
-            self.db.commit()
-            password_reset_completions_counter.labels(outcome="invalid_user").inc()
-            raise AuthenticationError("This reset link is invalid")
+        current_password_hash = cast(str, user.password_hash)
 
         self.validate_password(new_password, user.email, user.is_admin)
 
@@ -1297,9 +1287,7 @@ class EmailAuthService:
         if is_passwordless_user(user):
             raise AuthenticationError("Current password is incorrect")
 
-        current_password_hash = user.password_hash
-        if current_password_hash is None:
-            raise AuthenticationError("Current password is incorrect")
+        current_password_hash = cast(str, user.password_hash)
 
         # Validate new password
         self.validate_password(new_password, normalized_email, user.is_admin)
@@ -1978,9 +1966,7 @@ class EmailAuthService:
                 user.is_active = is_active
 
             if password is not None:
-                current_password_hash = user.password_hash
-                if current_password_hash is None:
-                    raise PasswordValidationError("Local password updates are not allowed for passwordless users")
+                current_password_hash = cast(str, user.password_hash)
 
                 self.validate_password(password, user.email, user.is_admin)
 

@@ -318,8 +318,8 @@ async def test_create_platform_admin_existing_user_assigns_role(mock_db):
     # Create existing non-admin user
     existing_user = EmailUser(email="test@example.com", password_hash="old_hash", is_admin=False, is_active=True)
 
-    # Mock get_user_by_email to return existing user
-    with patch.object(service, "get_user_by_email", new=AsyncMock(return_value=existing_user)):
+    # Mock the session-attached lookup to return existing user
+    with patch.object(service, "_fetch_user_from_db", return_value=existing_user):
         # Mock password verification to return False (password changed)
         with patch.object(service.password_service, "verify_password_async", new=AsyncMock(return_value=False)):
             with patch.object(service.password_service, "hash_password_async", new=AsyncMock(return_value="new_hash")):
@@ -358,8 +358,8 @@ async def test_create_platform_admin_existing_user_role_already_assigned(mock_db
     # Create existing admin user
     existing_user = EmailUser(email="test@example.com", password_hash="hash", is_admin=True, is_active=True)
 
-    # Mock get_user_by_email to return existing user
-    with patch.object(service, "get_user_by_email", new=AsyncMock(return_value=existing_user)):
+    # Mock the session-attached lookup to return existing user
+    with patch.object(service, "_fetch_user_from_db", return_value=existing_user):
         # Mock password verification to return True (password same)
         with patch.object(service.password_service, "verify_password_async", new=AsyncMock(return_value=True)):
             # Mock RoleService
@@ -398,8 +398,8 @@ async def test_create_platform_admin_existing_user_role_not_found(mock_db):
     # Create existing user
     existing_user = EmailUser(email="test@example.com", password_hash="hash", is_admin=False, is_active=True)
 
-    # Mock get_user_by_email to return existing user
-    with patch.object(service, "get_user_by_email", new=AsyncMock(return_value=existing_user)):
+    # Mock the session-attached lookup to return existing user
+    with patch.object(service, "_fetch_user_from_db", return_value=existing_user):
         # Mock password verification
         with patch.object(service.password_service, "verify_password_async", new=AsyncMock(return_value=True)):
             # Mock RoleService - role not found
@@ -431,8 +431,8 @@ async def test_create_platform_admin_existing_user_inactive_assignment(mock_db):
     # Create existing user
     existing_user = EmailUser(email="test@example.com", password_hash="hash", is_admin=False, is_active=True)
 
-    # Mock get_user_by_email to return existing user
-    with patch.object(service, "get_user_by_email", new=AsyncMock(return_value=existing_user)):
+    # Mock the session-attached lookup to return existing user
+    with patch.object(service, "_fetch_user_from_db", return_value=existing_user):
         # Mock password verification
         with patch.object(service.password_service, "verify_password_async", new=AsyncMock(return_value=True)):
             # Mock RoleService
@@ -464,8 +464,8 @@ async def test_create_platform_admin_existing_user_role_assignment_exception(moc
     # Create existing user
     existing_user = EmailUser(email="test@example.com", password_hash="hash", is_admin=False, is_active=True)
 
-    # Mock get_user_by_email to return existing user
-    with patch.object(service, "get_user_by_email", new=AsyncMock(return_value=existing_user)):
+    # Mock the session-attached lookup to return existing user
+    with patch.object(service, "_fetch_user_from_db", return_value=existing_user):
         # Mock password verification
         with patch.object(service.password_service, "verify_password_async", new=AsyncMock(return_value=True)):
             # Mock RoleService - raise exception during role lookup
@@ -493,7 +493,7 @@ async def test_create_platform_admin_role_sync_rollback_also_fails(mock_db):
 
     existing_user = EmailUser(email="test@example.com", password_hash="hash", is_admin=False, is_active=True)
 
-    with patch.object(service, "get_user_by_email", new=AsyncMock(return_value=existing_user)):
+    with patch.object(service, "_fetch_user_from_db", return_value=existing_user):
         with patch.object(service.password_service, "verify_password_async", new=AsyncMock(return_value=True)):
             with patch("mcpgateway.services.role_service.RoleService") as mock_role_service_cls:
                 mock_role_service = AsyncMock()
