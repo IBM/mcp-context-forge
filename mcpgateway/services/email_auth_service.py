@@ -29,7 +29,7 @@ import hmac
 import re
 import secrets
 import time
-from typing import Optional
+from typing import cast, Optional
 import warnings
 
 # Third-Party
@@ -39,6 +39,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.auth_user_helpers import DISABLED_PASSWORD_HASH, is_passwordless_user
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import (
@@ -686,7 +687,7 @@ class EmailAuthService:
         # all other callers go through hash_password_async which raises
         # ValueError on empty input.
         if not password and skip_password_validation:
-            password_hash = "!disabled"  # nosec B105 — not a valid Argon2 hash, verify_password always rejects
+            password_hash = DISABLED_PASSWORD_HASH  # nosec B105 — not a valid Argon2 hash, verify_password always rejects
         else:
             password_hash = await self.password_service.hash_password_async(password)
 
@@ -903,8 +904,17 @@ class EmailAuthService:
                 await self._apply_failed_login_floor(start_time)
                 return None
 
+            if is_passwordless_user(user):
+                failure_reason = "Invalid password"
+                logger.info("Authentication failed for %s: local password authentication disabled", SecurityValidator.sanitize_log_message(email))
+                await self._verify_dummy_password_for_timing(password)
+                await self._apply_failed_login_floor(start_time)
+                return None
+
+            current_password_hash = cast(str, user.password_hash)
+
             # Verify password
-            if not await self.password_service.verify_password_async(password, user.password_hash):
+            if not await self.password_service.verify_password_async(password, current_password_hash):
                 failure_reason = "Invalid password"
 
                 # Always increment failed attempts — including for protected admins
@@ -992,7 +1002,7 @@ class EmailAuthService:
                 await asyncio.sleep(remaining)
             return PasswordResetRequestResult(rate_limited=True, email_sent=False)
 
-        user = await self.get_user_by_email(normalized_email) if normalized_email else None
+        user = self._fetch_user_from_db(normalized_email) if normalized_email else None
         self._log_auth_event(
             event_type="PASSWORD_RESET_REQUESTED",
             success=True,
@@ -1002,7 +1012,7 @@ class EmailAuthService:
         )
 
         email_sent = False
-        if user and user.is_active:
+        if user and user.is_active and not is_passwordless_user(user):
             token_plaintext = secrets.token_urlsafe(48)
             token_hash = self._hash_reset_token(token_plaintext)
             expires_minutes = int(getattr(settings, "password_reset_token_expiry_minutes", 60))
@@ -1122,6 +1132,14 @@ class EmailAuthService:
             password_reset_completions_counter.labels(outcome="invalid_user").inc()
             raise AuthenticationError("This reset link is invalid")
 
+        if is_passwordless_user(user):
+            reset_token.used_at = utc_now()
+            self.db.commit()
+            password_reset_completions_counter.labels(outcome="invalid_user").inc()
+            raise AuthenticationError("This reset link is invalid")
+
+        current_password_hash = cast(str, user.password_hash)
+
         self.validate_password(new_password, user.email, user.is_admin)
 
         # Check password history (prevents reuse of last N passwords and current password)
@@ -1131,10 +1149,10 @@ class EmailAuthService:
 
             policy_service = PasswordPolicyService(self.db, self.password_service)
             history_count = getattr(settings, "password_history_count", 5)
-            await policy_service.check_password_history(user.email, new_password, history_count, user.password_hash)
+            await policy_service.check_password_history(user.email, new_password, history_count, current_password_hash)
         except ImportError:
             # Fallback to simple current password check
-            if getattr(settings, "password_prevent_reuse", True) and await self.password_service.verify_password_async(new_password, user.password_hash):
+            if getattr(settings, "password_prevent_reuse", True) and await self.password_service.verify_password_async(new_password, current_password_hash):
                 password_reset_completions_counter.labels(outcome="reused_password").inc()
                 raise PasswordValidationError("New password must be different from current password")
         except PasswordPolicyError as e:
@@ -1152,7 +1170,7 @@ class EmailAuthService:
             from mcpgateway.services.password_policy_service import PasswordPolicyService  # pylint: disable=import-outside-toplevel
 
             policy_service = PasswordPolicyService(self.db, self.password_service)
-            await policy_service.save_password_to_history(user.email, user.password_hash)
+            await policy_service.save_password_to_history(user.email, current_password_hash)
         except Exception as history_error:
             logger.warning("Failed to save password to history for %s: %s", SecurityValidator.sanitize_log_message(user.email), history_error)
 
@@ -1256,13 +1274,23 @@ class EmailAuthService:
         if old_password is None:
             raise AuthenticationError("Current password is required")
 
+        normalized_email = email.lower().strip()
+        existing_user = self._fetch_user_from_db(normalized_email)
+        if existing_user and is_passwordless_user(existing_user):
+            raise AuthenticationError("Current password is incorrect")
+
         # First authenticate with old password
-        user = await self.authenticate_user(email, old_password, ip_address, user_agent)
+        user = await self.authenticate_user(normalized_email, old_password, ip_address, user_agent)
         if not user:
             raise AuthenticationError("Current password is incorrect")
 
+        if is_passwordless_user(user):
+            raise AuthenticationError("Current password is incorrect")
+
+        current_password_hash = cast(str, user.password_hash)
+
         # Validate new password
-        self.validate_password(new_password, email, user.is_admin)
+        self.validate_password(new_password, normalized_email, user.is_admin)
 
         # Check password history (prevents reuse of last N passwords and current password)
         try:
@@ -1271,10 +1299,10 @@ class EmailAuthService:
 
             policy_service = PasswordPolicyService(self.db, self.password_service)
             history_count = getattr(settings, "password_history_count", 5)
-            await policy_service.check_password_history(email, new_password, history_count, user.password_hash)
+            await policy_service.check_password_history(normalized_email, new_password, history_count, current_password_hash)
         except ImportError:
             # Fallback to simple current password check
-            if getattr(settings, "password_prevent_reuse", True) and await self.password_service.verify_password_async(new_password, user.password_hash):
+            if getattr(settings, "password_prevent_reuse", True) and await self.password_service.verify_password_async(new_password, current_password_hash):
                 raise PasswordValidationError("New password must be different from current password")
         except PasswordPolicyError as e:
             # Wrap PasswordPolicyError in PasswordValidationError for consistency
@@ -1295,9 +1323,9 @@ class EmailAuthService:
                 from mcpgateway.services.password_policy_service import PasswordPolicyService  # pylint: disable=import-outside-toplevel
 
                 policy_service = PasswordPolicyService(self.db, self.password_service)
-                await policy_service.save_password_to_history(email, user.password_hash)
+                await policy_service.save_password_to_history(normalized_email, current_password_hash)
             except Exception as history_error:
-                logger.warning("Failed to save password to history for %s: %s", SecurityValidator.sanitize_log_message(email), history_error)
+                logger.warning("Failed to save password to history for %s: %s", SecurityValidator.sanitize_log_message(normalized_email), history_error)
                 # Continue with password change even if history save fails
 
             user.password_hash = new_password_hash
@@ -1307,26 +1335,26 @@ class EmailAuthService:
             try:
                 user.password_changed_at = utc_now()
             except Exception as exc:
-                logger.debug("Failed to set password_changed_at for %s: %s", email, exc)
+                logger.debug("Failed to set password_changed_at for %s: %s", normalized_email, exc)
 
             self.db.commit()
             success = True
 
             # Invalidate auth cache for user
             try:
-                await self._invalidate_user_auth_cache(email)
+                await self._invalidate_user_auth_cache(normalized_email)
             except Exception as cache_error:  # nosec B110 - best effort cache invalidation
                 logger.debug("Failed to invalidate auth cache on password change: %s", cache_error)
 
-            logger.info("Password changed successfully for %s", SecurityValidator.sanitize_log_message(email))
+            logger.info("Password changed successfully for %s", SecurityValidator.sanitize_log_message(normalized_email))
 
         except Exception as e:
             self.db.rollback()
-            logger.error("Error changing password for %s: %s", SecurityValidator.sanitize_log_message(email), e)
+            logger.error("Error changing password for %s: %s", SecurityValidator.sanitize_log_message(normalized_email), e)
             raise
         finally:
             # Log password change event
-            password_event = EmailAuthEvent.create_password_change_event(user_email=email, success=success, ip_address=ip_address, user_agent=user_agent)
+            password_event = EmailAuthEvent.create_password_change_event(user_email=normalized_email, success=success, ip_address=ip_address, user_agent=user_agent)
             self.db.add(password_event)
             self.db.commit()
 
@@ -1354,8 +1382,10 @@ class EmailAuthService:
             # )
             # admin.is_admin       # Returns: True
         """
+        normalized_email = email.lower().strip()
+
         # Check if admin user already exists
-        existing_admin = await self.get_user_by_email(email)
+        existing_admin = self._fetch_user_from_db(normalized_email)
 
         if existing_admin:
             # Update existing admin if password or name changed
@@ -1363,12 +1393,16 @@ class EmailAuthService:
                 existing_admin.full_name = full_name
 
             # Check if password needs update (verify current password first)
-            if not await self.password_service.verify_password_async(password, existing_admin.password_hash):
-                existing_admin.password_hash = await self.password_service.hash_password_async(password)
-                try:
-                    existing_admin.password_changed_at = utc_now()
-                except Exception as exc:
-                    logger.debug("Failed to set password_changed_at for existing admin %s: %s", email, exc)
+            if is_passwordless_user(existing_admin):
+                logger.info("Skipping platform admin password synchronization for passwordless user %s", SecurityValidator.sanitize_log_message(normalized_email))
+            else:
+                current_password_hash = existing_admin.password_hash
+                if current_password_hash is None or not await self.password_service.verify_password_async(password, current_password_hash):
+                    existing_admin.password_hash = await self.password_service.hash_password_async(password)
+                    try:
+                        existing_admin.password_changed_at = utc_now()
+                    except Exception as exc:
+                        logger.debug("Failed to set password_changed_at for existing admin %s: %s", normalized_email, exc)
 
             # Ensure admin status
             existing_admin.is_admin = True
@@ -1380,19 +1414,21 @@ class EmailAuthService:
                 platform_admin_role = await self.role_service.get_role_by_name("platform_admin", "global")
                 if platform_admin_role:
                     # Check if role assignment already exists
-                    existing_assignment = await self.role_service.get_user_role_assignment(user_email=email, role_id=platform_admin_role.id, scope="global", scope_id=None)
+                    existing_assignment = await self.role_service.get_user_role_assignment(user_email=normalized_email, role_id=platform_admin_role.id, scope="global", scope_id=None)
 
                     if not existing_assignment or not existing_assignment.is_active:
-                        await self.role_service.assign_role_to_user(user_email=email, role_id=platform_admin_role.id, scope="global", scope_id=None, granted_by=email)
-                        logger.info("Assigned platform_admin role to %s during create_platform_admin()", SecurityValidator.sanitize_log_message(email))
+                        await self.role_service.assign_role_to_user(user_email=normalized_email, role_id=platform_admin_role.id, scope="global", scope_id=None, granted_by=normalized_email)
+                        logger.info("Assigned platform_admin role to %s during create_platform_admin()", SecurityValidator.sanitize_log_message(normalized_email))
                     else:
-                        logger.debug("User %s already has active platform_admin role", SecurityValidator.sanitize_log_message(email))
+                        logger.debug("User %s already has active platform_admin role", SecurityValidator.sanitize_log_message(normalized_email))
                 else:
-                    logger.warning("platform_admin role not found. User %s updated with is_admin=True but without platform_admin role assignment.", SecurityValidator.sanitize_log_message(email))
+                    logger.warning(
+                        "platform_admin role not found. User %s updated with is_admin=True but without platform_admin role assignment.", SecurityValidator.sanitize_log_message(normalized_email)
+                    )
             except Exception as role_error:
                 logger.error(
                     "Failed to assign platform_admin role to %s: %s. User updated with is_admin=True but role assignment failed.",
-                    SecurityValidator.sanitize_log_message(email),
+                    SecurityValidator.sanitize_log_message(normalized_email),
                     SecurityValidator.sanitize_log_message(str(role_error)),
                 )
                 # Rollback to clear any failed transaction state (e.g. PendingRollbackError
@@ -1407,13 +1443,13 @@ class EmailAuthService:
                 # bootstrap_default_roles() will sync the role assignment later
 
             self.db.commit()
-            logger.info("Updated platform admin user: %s", SecurityValidator.sanitize_log_message(email))
+            logger.info("Updated platform admin user: %s", SecurityValidator.sanitize_log_message(normalized_email))
             return existing_admin
 
         # Create new admin user - skip password validation during bootstrap
-        admin_user = await self.create_user(email=email, password=password, full_name=full_name, is_admin=True, auth_provider="local", skip_password_validation=True)
+        admin_user = await self.create_user(email=normalized_email, password=password, full_name=full_name, is_admin=True, auth_provider="local", skip_password_validation=True)
 
-        logger.info("Created platform admin user: %s", SecurityValidator.sanitize_log_message(email))
+        logger.info("Created platform admin user: %s", SecurityValidator.sanitize_log_message(normalized_email))
         return admin_user
 
     async def update_last_login(self, email: str) -> None:
@@ -1854,6 +1890,12 @@ class EmailAuthService:
                     if await self.is_last_active_admin(email):
                         raise ValueError("Cannot demote or deactivate the last remaining active admin user")
 
+            if is_passwordless_user(user):
+                if password is not None:
+                    raise PasswordValidationError("Local password updates are not allowed for passwordless users")
+                if password_change_required is True:
+                    raise PasswordValidationError("Password change cannot be required for passwordless users")
+
             # Update fields if provided
             if full_name is not None:
                 user.full_name = full_name
@@ -1924,6 +1966,8 @@ class EmailAuthService:
                 user.is_active = is_active
 
             if password is not None:
+                current_password_hash = cast(str, user.password_hash)
+
                 self.validate_password(password, user.email, user.is_admin)
 
                 # Check password history (prevents reuse of last N passwords and current password)
@@ -1933,10 +1977,10 @@ class EmailAuthService:
 
                     policy_service = PasswordPolicyService(self.db, self.password_service)
                     history_count = getattr(settings, "password_history_count", 5)
-                    await policy_service.check_password_history(user.email, password, history_count, user.password_hash)
+                    await policy_service.check_password_history(user.email, password, history_count, current_password_hash)
                 except ImportError:
                     # Fallback to simple current password check
-                    if getattr(settings, "password_prevent_reuse", True) and await self.password_service.verify_password_async(password, user.password_hash):
+                    if getattr(settings, "password_prevent_reuse", True) and await self.password_service.verify_password_async(password, current_password_hash):
                         raise PasswordValidationError("New password must be different from current password")
                 except PasswordPolicyError as e:
                     raise PasswordValidationError(str(e)) from e
@@ -1950,7 +1994,7 @@ class EmailAuthService:
                     from mcpgateway.services.password_policy_service import PasswordPolicyService  # pylint: disable=import-outside-toplevel
 
                     policy_service = PasswordPolicyService(self.db, self.password_service)
-                    await policy_service.save_password_to_history(user.email, user.password_hash)
+                    await policy_service.save_password_to_history(user.email, current_password_hash)
                 except Exception as history_error:
                     logger.warning("Failed to save password to history for %s: %s", SecurityValidator.sanitize_log_message(user.email), history_error)
 

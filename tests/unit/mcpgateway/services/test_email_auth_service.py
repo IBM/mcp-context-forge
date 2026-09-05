@@ -62,6 +62,7 @@ async def test_create_user_personal_team_creation_fails(email_auth_service, mock
         # Mock settings for both password validation and personal teams
         with patch("mcpgateway.config.settings") as mock_config_settings:
             mock_config_settings.password_min_length = 8
+            mock_config_settings.password_policy_enabled = False
             mock_config_settings.password_require_uppercase = False
             mock_config_settings.password_require_lowercase = False
             mock_config_settings.password_require_numbers = False
@@ -97,6 +98,7 @@ async def test_create_user_admin_platform_admin_role_assignment_fails(email_auth
         with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
             mock_settings.auto_create_personal_teams = False
             mock_settings.password_min_length = 8
+            mock_settings.password_policy_enabled = False
             mock_settings.password_require_uppercase = False
             mock_settings.password_require_lowercase = False
             mock_settings.password_require_numbers = False
@@ -128,6 +130,7 @@ async def test_create_user_admin_team_admin_role_assignment(email_auth_service, 
         with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
             mock_settings.auto_create_personal_teams = True
             mock_settings.password_min_length = 8
+            mock_settings.password_policy_enabled = False
             mock_settings.password_require_uppercase = False
             mock_settings.password_require_lowercase = False
             mock_settings.password_require_numbers = False
@@ -171,6 +174,7 @@ async def test_create_user_admin_team_admin_role_not_found(email_auth_service, m
         with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
             mock_settings.auto_create_personal_teams = True
             mock_settings.password_min_length = 8
+            mock_settings.password_policy_enabled = False
             mock_settings.password_require_uppercase = False
             mock_settings.password_require_lowercase = False
             mock_settings.password_require_numbers = False
@@ -216,6 +220,7 @@ async def test_create_user_non_admin_platform_viewer_role_assignment_fails(email
         with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
             mock_settings.auto_create_personal_teams = False
             mock_settings.password_min_length = 8
+            mock_settings.password_policy_enabled = False
             mock_settings.password_require_uppercase = False
             mock_settings.password_require_lowercase = False
             mock_settings.password_require_numbers = False
@@ -247,6 +252,7 @@ async def test_create_user_non_admin_team_admin_role_assignment(email_auth_servi
         with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
             mock_settings.auto_create_personal_teams = True
             mock_settings.password_min_length = 8
+            mock_settings.password_policy_enabled = False
             mock_settings.password_require_uppercase = False
             mock_settings.password_require_lowercase = False
             mock_settings.password_require_numbers = False
@@ -290,6 +296,7 @@ async def test_create_user_non_admin_team_admin_role_not_found(email_auth_servic
         with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
             mock_settings.auto_create_personal_teams = True
             mock_settings.password_min_length = 8
+            mock_settings.password_policy_enabled = False
             mock_settings.password_require_uppercase = False
             mock_settings.password_require_lowercase = False
             mock_settings.password_require_numbers = False
@@ -332,6 +339,7 @@ async def test_create_user_admin_team_owner_role_assignment_fails(email_auth_ser
         with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
             mock_settings.auto_create_personal_teams = True
             mock_settings.password_min_length = 8
+            mock_settings.password_policy_enabled = False
             mock_settings.password_require_uppercase = False
             mock_settings.password_require_lowercase = False
             mock_settings.password_require_numbers = False
@@ -381,6 +389,7 @@ async def test_create_user_role_assignment_exception(email_auth_service, mock_db
         with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
             mock_settings.auto_create_personal_teams = False
             mock_settings.password_min_length = 8
+            mock_settings.password_policy_enabled = False
             mock_settings.password_require_uppercase = False
             mock_settings.password_require_lowercase = False
             mock_settings.password_require_numbers = False
@@ -413,6 +422,7 @@ async def test_create_user_skip_onboarding_no_personal_team(email_auth_service, 
     with patch.object(email_auth_service, "get_user_by_email", return_value=None):
         with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
             mock_settings.password_min_length = 8
+            mock_settings.password_policy_enabled = False
             mock_settings.auto_create_personal_teams = True
 
             with patch(
@@ -440,6 +450,7 @@ async def test_create_user_skip_onboarding_no_role_assignment(email_auth_service
     with patch.object(email_auth_service, "get_user_by_email", return_value=None):
         with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
             mock_settings.password_min_length = 8
+            mock_settings.password_policy_enabled = False
 
             # Inject mock role service to detect if it gets called
             email_auth_service._role_service = mock_role_service
@@ -462,6 +473,7 @@ async def test_create_user_skip_onboarding_no_registration_event(email_auth_serv
     with patch.object(email_auth_service, "get_user_by_email", return_value=None):
         with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
             mock_settings.password_min_length = 8
+            mock_settings.password_policy_enabled = False
 
             user = await email_auth_service.create_user(
                 email="synth@wxo.system",
@@ -485,6 +497,7 @@ async def test_create_user_skip_onboarding_still_logs_failed_registration_event(
     with patch.object(email_auth_service, "get_user_by_email", return_value=None):
         with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
             mock_settings.password_min_length = 8
+            mock_settings.password_policy_enabled = False
 
             # First commit (user row) raises; second commit (failed event) succeeds
             mock_db.commit.side_effect = [RuntimeError("db down"), None]
