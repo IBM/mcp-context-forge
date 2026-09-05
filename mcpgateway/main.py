@@ -3428,24 +3428,14 @@ if settings.correlation_id_enabled:
     logger.info(f"✅ Correlation ID tracking enabled (header: {settings.correlation_id_header})")
 
 
-register_auth_context_middleware(app)
-
-# Add token usage logging middleware
-# This tracks API token usage for analytics and security monitoring
-# Note: Runs after AuthContextMiddleware so request.state.auth_method is available
-if settings.token_usage_logging_enabled:
-    # First-Party
-    from mcpgateway.middleware.token_usage_middleware import TokenUsageMiddleware  # noqa: E402
-
-    app.add_middleware(TokenUsageMiddleware)
-    logger.info("📊 Token usage logging middleware enabled - tracking API token usage")
-else:
-    logger.info("📊 Token usage logging middleware disabled")
-
 # Add observability middleware if enabled
-# Note: Middleware runs in REVERSE order (last added runs first)
-# If AuthContextMiddleware is already registered, ObservabilityMiddleware wraps it
-# Execution order will be: AuthContext -> Observability -> Request Handler
+# Note: Starlette's add_middleware() inserts at position 0, so the LAST
+# middleware registered is OUTERMOST and executes FIRST. Registering
+# ObservabilityMiddleware BEFORE AuthContextMiddleware places it inside auth,
+# so start_trace() reads the identity AuthContextMiddleware has already set
+# (request.state.user / request.state.user_email). The previous order ran
+# observability before auth, leaving observability_traces.user_email NULL on
+# every row (#6473).
 # Wire observability adapter into the plugin manager when observability is enabled
 # _service is a module-level global read later in lifespan(); it must always be bound
 # (even when this branch doesn't run at import time) so tests that flip
@@ -3463,6 +3453,20 @@ if settings.observability_enabled:
     logger.info("🔍 Observability middleware enabled - tracing include-listed requests")
 else:
     logger.info("🔍 Observability middleware disabled")
+
+register_auth_context_middleware(app)
+
+# Add token usage logging middleware
+# This tracks API token usage for analytics and security monitoring
+# Note: Runs after AuthContextMiddleware so request.state.auth_method is available
+if settings.token_usage_logging_enabled:
+    # First-Party
+    from mcpgateway.middleware.token_usage_middleware import TokenUsageMiddleware  # noqa: E402
+
+    app.add_middleware(TokenUsageMiddleware)
+    logger.info("📊 Token usage logging middleware enabled - tracking API token usage")
+else:
+    logger.info("📊 Token usage logging middleware disabled")
 
 if otel_tracing_enabled():
     app.add_middleware(OpenTelemetryRequestMiddleware)
