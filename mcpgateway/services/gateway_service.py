@@ -3029,11 +3029,21 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                             header_dict[key] = value
                     gateway.auth_value = header_dict  # Store as dict for DB JSON field
                 elif settings.masked_auth_value not in (token, password, header_value):
-                    # Check if values differ from existing ones or if setting for first time
-                    decoded_auth = decode_auth(gateway_update.auth_value) if gateway_update.auth_value else {}
-                    current_auth = getattr(gateway, "auth_value", {}) or {}
-                    if current_auth != decoded_auth:
-                        gateway.auth_value = decoded_auth
+                    # Absent auth is a no-op: a GET → change one field → PUT
+                    # round-trip never saw the real credential (the API masks it
+                    # on read), so omitting every auth field must preserve the
+                    # stored value. Distinguishing absent from empty matches
+                    # the uniqueness-check path a few hundred lines earlier
+                    # (`final_auth_value`) and every other optional field on
+                    # this update. Explicit clear remains possible via
+                    # `auth_type: "none"` / empty string, or an empty
+                    # `auth_headers: []` on the multi-header branch above.
+                    auth_provided = gateway_update.auth_value is not None or any(v is not None for v in (token, password, header_value))
+                    if auth_provided:
+                        decoded_auth = decode_auth(gateway_update.auth_value) if gateway_update.auth_value else {}
+                        current_auth = getattr(gateway, "auth_value", {}) or {}
+                        if current_auth != decoded_auth:
+                            gateway.auth_value = decoded_auth
 
                 # Handle query_param auth updates with service-layer enforcement
                 auth_query_params_decrypted: Optional[Dict[str, str]] = None
