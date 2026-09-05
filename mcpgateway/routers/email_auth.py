@@ -18,7 +18,7 @@ Examples:
 
 # Standard
 from datetime import datetime, timedelta, UTC
-from typing import List, Optional, Union
+from typing import cast, List, Optional, Union
 
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
@@ -266,9 +266,7 @@ async def login(login_request: EmailLoginRequest, request: Request, db: Session 
                 # First-Party
                 from mcpgateway.services.argon2_service import Argon2PasswordService
 
-                current_password_hash = user.password_hash
-                if current_password_hash is None:
-                    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid email or password")
+                current_password_hash = cast(str, user.password_hash)
 
                 password_service = Argon2PasswordService()
                 is_using_default_password = await password_service.verify_password_async(settings.default_user_password.get_secret_value(), current_password_hash)  # nosec B105

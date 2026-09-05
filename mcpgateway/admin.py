@@ -4614,9 +4614,7 @@ async def admin_login_handler(request: Request, db: Session = Depends(get_db)) -
 
                 # Detect default password on login if enabled
                 if getattr(settings, "detect_default_password_on_login", True) and not is_passwordless_user(user):
-                    current_password_hash = user.password_hash
-                    if current_password_hash is None:
-                        return RedirectResponse(url=f"{root_path}/admin/login?error=invalid_credentials&email={urllib.parse.quote(email)}", status_code=303)
+                    current_password_hash = typing_cast(str, user.password_hash)
                     password_service = Argon2PasswordService()
                     is_using_default_password = await password_service.verify_password_async(settings.default_user_password.get_secret_value(), current_password_hash)  # nosec B105
                     if is_using_default_password:

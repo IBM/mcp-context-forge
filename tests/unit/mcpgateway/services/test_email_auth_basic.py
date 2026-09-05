@@ -508,6 +508,27 @@ class TestEmailAuthServiceUserManagement:
         assert isinstance(mock_db.add.call_args_list[0][0][0], EmailUser)
         assert mock_db.commit.call_count >= 1
 
+    @pytest.mark.asyncio
+    async def test_create_user_empty_password_skip_validation_uses_disabled_hash(self, service, mock_db, mock_password_service):
+        """Empty bootstrap passwords use a non-loginable sentinel hash."""
+        # First-Party
+        from mcpgateway.auth_user_helpers import DISABLED_PASSWORD_HASH
+
+        service.password_service = mock_password_service
+        mock_db.execute.return_value.scalar_one_or_none.return_value = None
+
+        user = await service.create_user(
+            email="service@example.com",
+            password="",
+            full_name="Service Account",
+            skip_password_validation=True,
+            skip_onboarding=True,
+        )
+
+        assert user.password_hash == DISABLED_PASSWORD_HASH
+        mock_password_service.hash_password_async.assert_not_called()
+        mock_db.add.assert_called_once_with(user)
+
     @pytest.mark.skip(reason="PersonalTeamService import happens inside method, complex to mock")
     @pytest.mark.asyncio
     async def test_create_user_with_personal_team(self, service, mock_db, mock_password_service):
@@ -1408,7 +1429,7 @@ class TestEmailAuthServiceUserManagement:
 
     @pytest.mark.asyncio
     async def test_reset_password_with_token_reused_password_rejected(self, service, mock_password_service):
-        """Reset rejects reusing current password when policy enabled."""
+        """Reset rejects reused passwords through the import-fallback check."""
         service.password_service = mock_password_service
         mock_password_service.verify_password_async = AsyncMock(return_value=True)
 
@@ -1419,14 +1440,65 @@ class TestEmailAuthServiceUserManagement:
         user.email = "user@example.com"
         user.is_active = True
         user.password_hash = "old-hash"
+        user.password_hash_type = "argon2id"
 
-        with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
-            mock_settings.password_policy_enabled = False
-            mock_settings.password_prevent_reuse = True
+        with patch("mcpgateway.services.password_policy_service.PasswordPolicyService", side_effect=ImportError("Module not found")):
+            with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
+                mock_settings.password_policy_enabled = False
+                mock_settings.password_prevent_reuse = True
+                with patch.object(service, "validate_password_reset_token", new=AsyncMock(return_value=reset_token)):
+                    with patch.object(service, "_fetch_user_from_db", return_value=user):
+                        with pytest.raises(PasswordValidationError, match="different"):
+                            await service.reset_password_with_token(token="token", new_password="same-password")  # pragma: allowlist secret
+
+        mock_password_service.verify_password_async.assert_awaited_once_with("same-password", "old-hash")
+
+    @pytest.mark.asyncio
+    async def test_reset_password_with_token_history_uses_current_hash_snapshot(self, service, mock_db, mock_password_service):
+        """Reset stores and checks password history against the pre-update hash."""
+        service.password_service = mock_password_service
+        mock_password_service.verify_password_async = AsyncMock(return_value=False)
+        mock_password_service.hash_password_async = AsyncMock(return_value="new_hashed_password")
+
+        reset_token = MagicMock(spec=PasswordResetToken)
+        reset_token.id = "token-id"
+        reset_token.user_email = "user@example.com"
+
+        user = MagicMock(spec=EmailUser)
+        user.email = "user@example.com"
+        user.full_name = "Test User"
+        user.is_active = True
+        user.password_hash = "old-hash"
+        user.password_hash_type = "argon2id"
+        user.failed_login_attempts = 2
+        user.locked_until = datetime.now(timezone.utc)
+        mock_db.execute.return_value.scalars.return_value.all.return_value = []
+
+        mock_policy_service = AsyncMock()
+        with patch("mcpgateway.services.password_policy_service.PasswordPolicyService", return_value=mock_policy_service):
             with patch.object(service, "validate_password_reset_token", new=AsyncMock(return_value=reset_token)):
                 with patch.object(service, "_fetch_user_from_db", return_value=user):
-                    with pytest.raises(PasswordValidationError, match="different"):
-                        await service.reset_password_with_token(token="token", new_password="same-password")  # pragma: allowlist secret
+                    with patch.object(service, "_invalidate_user_auth_cache", new=AsyncMock()):
+                        with patch.object(service.email_notification_service, "send_password_reset_confirmation_email", new=AsyncMock(return_value=True)):
+                            await service.reset_password_with_token(token="token", new_password="NewSecurePass4$x")  # pragma: allowlist secret
+
+        mock_policy_service.check_password_history.assert_awaited_once_with("user@example.com", "NewSecurePass4$x", 5, "old-hash")
+        mock_policy_service.save_password_to_history.assert_awaited_once_with("user@example.com", "old-hash")
+
+    @pytest.mark.asyncio
+    async def test_change_password_rejects_passwordless_user_returned_by_authenticate(self, service, mock_user, mock_password_service):
+        """Self-service password change fails closed if authentication returns a passwordless user."""
+        service.password_service = mock_password_service
+        mock_user.password_hash = "$argon2id$v=19$m=65536,t=3,p=1$valid$hash"
+        mock_user.password_hash_type = "none"
+
+        with patch.object(service, "_fetch_user_from_db", return_value=None):
+            with patch.object(service, "authenticate_user", new=AsyncMock(return_value=mock_user)):
+                with patch("mcpgateway.services.password_policy_service.PasswordPolicyService") as policy_service_cls:
+                    with pytest.raises(AuthenticationError, match="Current password is incorrect"):
+                        await service.change_password(email="test@example.com", old_password="old_password", new_password="NewSecurePass4$x")  # pragma: allowlist secret
+
+        policy_service_cls.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_reset_password_with_token_history_fail_closed_on_exception(self, service, mock_password_service):
@@ -2507,6 +2579,24 @@ class TestEmailAuthServiceUserUpdates:
 
         mock_password_service.verify_password_async.assert_not_awaited()
         policy_service_cls.assert_not_called()
+        mock_db.rollback.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_update_user_history_fallback_rejects_same_password(self, service, mock_db, mock_user, mock_password_service):
+        """Admin password updates use the current hash in the import-fallback reuse check."""
+        service.password_service = mock_password_service
+        mock_password_service.verify_password_async = AsyncMock(return_value=True)
+        mock_user.password_hash = "old-hash"
+        mock_user.password_hash_type = "argon2id"
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = mock_user
+        mock_db.execute.return_value = mock_result
+
+        with patch("mcpgateway.services.password_policy_service.PasswordPolicyService", side_effect=ImportError("Module not found")):
+            with pytest.raises(PasswordValidationError, match="different"):
+                await service.update_user(email="test@example.com", password="NewSecurePass4$x")  # pragma: allowlist secret
+
+        mock_password_service.verify_password_async.assert_awaited_once_with("NewSecurePass4$x", "old-hash")
         mock_db.rollback.assert_called()
 
     @pytest.mark.asyncio
