@@ -1397,7 +1397,6 @@ class TestOAuthRouter:
         assert result == []
 
 
-
 class TestResolveTokenTeamsForScopeCheck:
     """Comprehensive tests for ``_resolve_token_teams_for_scope_check`` covering all
     acceptance criteria from issue #5980: explicit None, empty list, non-empty list,
@@ -1476,43 +1475,43 @@ class TestResolveTokenTeamsForScopeCheck:
         result = _resolve_token_teams_for_scope_check(request, {"email": "user@example.com", "is_admin": False})
         assert result == []
 
-    def test_malformed_state_string_admin_fails_closed(self):
-        """Malformed ``token_teams`` (string instead of list) with no cached payload
+    @pytest.mark.parametrize(
+        "malformed_value,label",
+        [
+            ("team-1", "str"),
+            (42, "int"),
+            ({"teams": ["t1"]}, "dict"),
+            (True, "bool"),
+            (3.14, "float"),
+            (("team-1",), "tuple"),
+            ({"team-1"}, "set"),
+            (b"team-1", "bytes"),
+        ],
+    )
+    def test_malformed_state_fails_closed(self, malformed_value, label):
+        """Malformed ``token_teams`` (non-list/non-None type) with no cached payload
         fails closed for admins.
         """
         from mcpgateway.routers.oauth_router import _resolve_token_teams_for_scope_check
 
         request = Mock(spec=Request)
-        request.state = SimpleNamespace(token_teams="team-1")
+        request.state = SimpleNamespace(token_teams=malformed_value)
         result = _resolve_token_teams_for_scope_check(request, {"email": "admin@example.com", "is_admin": True})
-        assert result == []
+        assert result == [], f"Expected public-only for malformed type {label}"
 
-    def test_malformed_state_int_fails_closed(self):
-        """Malformed ``token_teams`` (integer) fails closed."""
+    def test_list_with_non_string_items_passes_through(self):
+        """List containing non-string items (e.g. ``[123, None]``) is accepted as a
+        well-typed list by the fast path.  Downstream ``normalize_token_teams`` /
+        ownership checks are responsible for element-level validation.
+        """
         from mcpgateway.routers.oauth_router import _resolve_token_teams_for_scope_check
 
         request = Mock(spec=Request)
-        request.state = SimpleNamespace(token_teams=42)
-        result = _resolve_token_teams_for_scope_check(request, {"email": "admin@example.com", "is_admin": True})
-        assert result == []
-
-    def test_malformed_state_dict_fails_closed(self):
-        """Malformed ``token_teams`` (dict) fails closed."""
-        from mcpgateway.routers.oauth_router import _resolve_token_teams_for_scope_check
-
-        request = Mock(spec=Request)
-        request.state = SimpleNamespace(token_teams={"teams": ["t1"]})
-        result = _resolve_token_teams_for_scope_check(request, {"email": "admin@example.com", "is_admin": True})
-        assert result == []
-
-    def test_malformed_state_bool_fails_closed(self):
-        """Malformed ``token_teams`` (bool True) fails closed."""
-        from mcpgateway.routers.oauth_router import _resolve_token_teams_for_scope_check
-
-        request = Mock(spec=Request)
-        request.state = SimpleNamespace(token_teams=True)
-        result = _resolve_token_teams_for_scope_check(request, {"email": "admin@example.com", "is_admin": True})
-        assert result == []
+        request.state = SimpleNamespace(token_teams=[123, None])
+        result = _resolve_token_teams_for_scope_check(request, {"email": "user@example.com", "is_admin": False})
+        # The function treats any list as well-typed and returns it as-is;
+        # element validation is not its responsibility.
+        assert result == [123, None]
 
     def test_missing_state_recovered_from_cached_jwt_admin(self):
         """Missing ``token_teams`` with cached JWT payload recovers correctly for admin."""
