@@ -7177,8 +7177,17 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                                 if "content" not in resource_template_data:
                                     resource_template_data["content"] = ""
 
-                                resources.append(ResourceCreate.model_validate(resource_template_data))
-                                resource_templates.append(ResourceCreate.model_validate(resource_template_data))
+                                try:
+                                    validated_template = ResourceCreate.model_validate(resource_template_data)
+                                except Exception as exc:
+                                    logger.warning(
+                                        "Skipping resource template %s: %s",
+                                        resource_template_data.get("uriTemplate") or resource_template_data.get("uri"),
+                                        exc,
+                                    )
+                                    continue
+                                resources.append(validated_template)
+                                resource_templates.append(validated_template)
                             logger.info("Fetched %s resource templates from gateway", len(resource_templates))
                         except Exception as e:
                             logger.warning("Failed to fetch resource templates: %s", e)
@@ -7357,9 +7366,18 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                                 if "content" not in resource_template_data:
                                     resource_template_data["content"] = ""
 
-                                resources.append(ResourceCreate.model_validate(resource_template_data))
-                                resource_templates.append(ResourceCreate.model_validate(resource_template_data))
-                            logger.info("Fetched %s resource templates from gateway", len(raw_resources_templates))
+                                try:
+                                    validated_template = ResourceCreate.model_validate(resource_template_data)
+                                except Exception as exc:
+                                    logger.warning(
+                                        "Skipping resource template %s: %s",
+                                        resource_template_data.get("uriTemplate") or resource_template_data.get("uri"),
+                                        exc,
+                                    )
+                                    continue
+                                resources.append(validated_template)
+                                resource_templates.append(validated_template)
+                            logger.info("Fetched %s resource templates from gateway", len(resource_templates))
                         except Exception as ei:
                             logger.warning("Failed to fetch resource templates: %s", ei)
 
@@ -7529,8 +7547,17 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                                 if "content" not in resource_template_data:
                                     resource_template_data["content"] = ""
 
-                                resources.append(ResourceCreate.model_validate(resource_template_data))
-                                resource_templates.append(ResourceCreate.model_validate(resource_template_data))
+                                try:
+                                    validated_template = ResourceCreate.model_validate(resource_template_data)
+                                except Exception as exc:
+                                    logger.warning(
+                                        "Skipping resource template %s: %s",
+                                        resource_template_data.get("uriTemplate") or resource_template_data.get("uri"),
+                                        exc,
+                                    )
+                                    continue
+                                resources.append(validated_template)
+                                resource_templates.append(validated_template)
                             logger.info("Fetched %s resource templates from gateway", len(resource_templates))
                         except Exception as e:
                             logger.warning("Failed to fetch resource templates: %s", e)

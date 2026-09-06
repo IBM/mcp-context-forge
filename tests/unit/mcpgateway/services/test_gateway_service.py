@@ -3815,6 +3815,59 @@ class TestGatewayRefresh:
         assert by_name["customer_data"].extension_metadata == {MCP_UI_EXTENSION: {"resourceUri": "ui://widgets/customer-search"}}
         assert by_name["customer_record"].extension_metadata == {MCP_UI_EXTENSION: {"resourceUri": "ui://widgets/customer-record"}}
 
+    @pytest.mark.asyncio
+    async def test_resource_template_validation_failure_does_not_drop_siblings(self, gateway_service):
+        """A template whose uriTemplate fails validation is skipped, not batch-fatal.
+
+        RFC 6570 list-expansion templates (e.g. ``{?offset,limit}``) contain a comma,
+        which the default ``validation_safe_uri_pattern`` rejects. The ingest loop used
+        to validate the whole batch inside one try, so the invalid template and every
+        template listed after it were silently dropped.
+        """
+        mock_session = AsyncMock()
+        mock_init = MagicMock()
+        mock_init.capabilities.model_dump.return_value = {"resources": {"subscribe": False}}
+        mock_session.initialize.return_value = mock_init
+
+        tool = MagicMock()
+        tool.model_dump.return_value = {"name": "valid_tool", "description": "ok", "inputSchema": {}}
+        mock_list_tools = MagicMock()
+        mock_list_tools.tools = [tool]
+        mock_session.list_tools.return_value = mock_list_tools
+
+        mock_session.list_resources.return_value = MagicMock(resources=[])
+
+        invalid_template = MagicMock()
+        invalid_template.model_dump.return_value = {
+            "uriTemplate": "stub://sliced/{section}{?offset,limit}",
+            "name": "sliced",
+        }
+        valid_template = MagicMock()
+        valid_template.model_dump.return_value = {
+            "uriTemplate": "https://example.com/items/{item_id}",
+            "name": "items",
+        }
+        mock_list_templates = MagicMock()
+        mock_list_templates.resourceTemplates = [invalid_template, valid_template]
+        mock_session.list_resource_templates.return_value = mock_list_templates
+
+        mock_session.list_prompts.return_value = MagicMock(prompts=[])
+
+        mock_sse_cm = AsyncMock()
+        mock_sse_cm.__aenter__.return_value = (MagicMock(), MagicMock())
+        mock_sse_cm.__aexit__.return_value = None
+
+        mock_client_cm = AsyncMock()
+        mock_client_cm.__aenter__.return_value = mock_session
+        mock_client_cm.__aexit__.return_value = None
+
+        with patch("mcpgateway.services.gateway_service.sse_client", return_value=mock_sse_cm):
+            with patch("mcpgateway.services.gateway_service.ClientSession", return_value=mock_client_cm):
+                _capabilities, _tools, resources, _prompts, _errors = await gateway_service.connect_to_sse_server("https://test.example.com")
+
+        assert [resource.name for resource in resources] == ["items"]
+        assert resources[0].uri_template == "https://example.com/items/{item_id}"
+
     def test_validate_tools_all_invalid(self, gateway_service):
         """Test failure when all tools are invalid."""
         tools = [
