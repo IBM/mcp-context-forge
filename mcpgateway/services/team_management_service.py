@@ -905,6 +905,14 @@ class TeamManagementService:
                     # not masquerade as a name conflict. The outer handler rolls back uniformly.
                     # str(None) is "None" (no slug match -> re-raises), but be explicit so the
                     # discrimination intent isn't obscured if ie.orig is ever None.
+                    #
+                    # Dialect note: the "slug" substring appears in the known-good messages for both
+                    # SQLite ("UNIQUE constraint failed: email_teams.slug") and PostgreSQL
+                    # ("duplicate key value violates unique constraint \"email_teams_slug_key\"").
+                    # If a custom PostgreSQL constraint name drops "slug", this check would fall
+                    # through and the race collision would surface as a 500 rather than 400/409.
+                    # The constraint name is defined in db.py and must not be changed without
+                    # updating this guard.
                     orig_msg = str(ie.orig).lower() if ie.orig is not None else ""
                     if "slug" in orig_msg:
                         raise TeamNameConflictError(f"A team named '{name}' already exists")

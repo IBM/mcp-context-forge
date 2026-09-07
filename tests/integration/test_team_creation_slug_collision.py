@@ -183,7 +183,10 @@ def _make_team_client(tmp_path, is_admin):
                 "db": db_session,
                 "token_use": "session",
                 "team_id": None,
-                "token_teams": None,
+                # Use [] (not None) for non-admin: None is the admin-bypass sentinel in token-scoping
+                # logic; an explicit empty list makes this identity's non-admin intent unambiguous
+                # and prevents future policy changes from silently elevating the non-admin fixture.
+                "token_teams": None if is_admin else [],
             }
         finally:
             db_session.close()

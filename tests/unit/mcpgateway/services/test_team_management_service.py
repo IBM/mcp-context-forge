@@ -300,7 +300,7 @@ class TestTeamManagementService:
 
     @pytest.mark.asyncio
     async def test_create_team_rejects_existing_active_team(self, service, mock_db):
-        """Creating a team whose slug collides with an ACTIVE team raises TeamManagementError.
+        """Creating a team whose slug collides with an ACTIVE team raises TeamNameConflictError.
 
         Regression for ICA20-1559: an active same-slug team must surface as a clean, catchable
         conflict (400) rather than leaking an IntegrityError that becomes an opaque 500.
@@ -310,19 +310,25 @@ class TestTeamManagementService:
         mock_active_team.name = "Existing Active Team"
         mock_active_team.is_active = True
 
-        # No inactive team (returns None for the first .first() call), then the active-slug check
-        # finds the colliding active team.
-        mock_db.query.return_value.filter.return_value.first.side_effect = [
-            None,
-            mock_active_team,
-        ]
-
         with (
             patch("mcpgateway.services.team_management_service.slugify") as mock_slugify,
             patch("mcpgateway.services.team_management_service.EmailTeam") as MockTeam,
             patch("mcpgateway.services.team_management_service.EmailTeamMember") as MockMember,
         ):
             mock_slugify.return_value = "test-team"
+
+            # The service calls db.query(EmailTeam) twice for the two slug checks (inactive then
+            # active). EmailTeam is patched to MockTeam, so both calls pass MockTeam. We use a
+            # shared query chain mock so both .filter().first() calls draw from the same
+            # side_effect list in order — stable regardless of how many non-EmailTeam queries
+            # precede the slug checks (positional lists on the global filter chain would shift).
+            team_query_chain = MagicMock()
+            team_query_chain.filter.return_value.first.side_effect = [None, mock_active_team]
+
+            def query_side_effect(model):
+                return team_query_chain if model is MockTeam else MagicMock()
+
+            mock_db.query.side_effect = query_side_effect
 
             with pytest.raises(TeamNameConflictError, match="already exists"):
                 await service.create_team(
@@ -363,9 +369,10 @@ class TestTeamManagementService:
                     visibility="private",
                 )
 
-            # The IntegrityError is re-raised as TeamNameConflictError, which propagates to the
-            # outer except Exception handler in create_team_with_members, which calls self.db.rollback().
-            mock_db.rollback.assert_called()
+            # The IntegrityError is re-raised as TeamNameConflictError, caught by the outer
+            # except Exception handler in create_team_with_members, which calls self.db.rollback()
+            # exactly once. No second rollback exists in the inner except block.
+            mock_db.rollback.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_create_team_flush_non_slug_integrity_error_propagates(self, service, mock_db):
@@ -405,18 +412,25 @@ class TestTeamManagementService:
         mock_active_team.name = "Existing Active Team"
         mock_active_team.is_active = True
 
-        # No inactive team (first .first() -> None), then the active-slug check finds the collision.
-        mock_db.query.return_value.filter.return_value.first.side_effect = [
-            None,
-            mock_active_team,
-        ]
-
         with (
             patch("mcpgateway.services.team_management_service.slugify") as mock_slugify,
             patch("mcpgateway.services.team_management_service.EmailTeam") as MockTeam,
             patch("mcpgateway.services.team_management_service.EmailTeamMember"),
         ):
             mock_slugify.return_value = "test-team"
+
+            # The service calls db.query(EmailTeam) twice for the two slug checks (inactive then
+            # active). EmailTeam is patched to MockTeam, so both calls pass MockTeam. We use a
+            # shared query chain mock so both .filter().first() calls draw from the same
+            # side_effect list in order — stable regardless of how many non-EmailTeam queries
+            # precede the slug checks (positional lists on the global filter chain would shift).
+            team_query_chain = MagicMock()
+            team_query_chain.filter.return_value.first.side_effect = [None, mock_active_team]
+
+            def query_side_effect(model):
+                return team_query_chain if model is MockTeam else MagicMock()
+
+            mock_db.query.side_effect = query_side_effect
 
             with pytest.raises(TeamNameConflictError, match="already exists"):
                 await service.create_team_with_members(
@@ -431,6 +445,32 @@ class TestTeamManagementService:
             mock_db.add.assert_not_called()
             mock_db.flush.assert_not_called()
             mock_db.commit.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_create_team_with_members_flush_integrity_error_becomes_conflict(self, service, mock_db):
+        """Concurrency race through the public entry point: a flush IntegrityError on email_teams.slug
+        must surface as TeamNameConflictError (400/409) — never an opaque 500 — when calling
+        ``create_team_with_members`` directly (the path the router uses)."""
+        mock_db.query.return_value.filter.return_value.first.return_value = None
+        mock_db.flush.side_effect = IntegrityError("statement", {}, Exception("UNIQUE constraint failed: email_teams.slug"))
+
+        with (
+            patch("mcpgateway.services.team_management_service.slugify") as mock_slugify,
+            patch("mcpgateway.services.team_management_service.EmailTeam"),
+            patch("mcpgateway.services.team_management_service.EmailTeamMember"),
+        ):
+            mock_slugify.return_value = "test-team"
+
+            with pytest.raises(TeamNameConflictError, match="already exists"):
+                await service.create_team_with_members(
+                    name="Race Team",
+                    description="colliding under concurrency",
+                    created_by="admin@example.com",
+                    visibility="private",
+                )
+
+            # The outer except Exception handler in create_team_with_members rolls back exactly once.
+            mock_db.rollback.assert_called_once()
 
     # =========================================================================
     # Team Retrieval Tests
