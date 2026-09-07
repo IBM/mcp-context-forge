@@ -199,6 +199,7 @@ async def list_teams(
     limit: int = Query(50, ge=1, le=settings.pagination_max_page_size, description="Number of teams to return"),
     cursor: QueryPaginationCursorGeneric = None,
     include_pagination: bool = Query(False, description="Include pagination metadata (cursor)"),
+    search_query: Optional[str] = Query(None, max_length=500, description="Filter teams by a substring of name, slug, or description"),
     current_user_ctx: dict = Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
 ) -> Union[TeamListResponse, CursorPaginatedTeamsResponse]:
@@ -206,12 +207,15 @@ async def list_teams(
 
     - Administrators see all non-personal teams plus their own personal team (paginated)
     - Regular users see only teams they are a member of (paginated client-side)
+    - search_query, when set, narrows either population to teams whose name, slug, or
+      description contains it (case-insensitive)
 
     Args:
         skip: Number of teams to skip for pagination
         limit: Maximum number of teams to return
         cursor: Pagination cursor
         include_pagination: Include pagination metadata
+        search_query: Substring filter on name/slug/description
         current_user_ctx: Current user context with permissions and database session
         db: Database session
 
@@ -250,18 +254,22 @@ async def list_teams(
                 cursor=cursor,
                 personal_owner_email=current_user_ctx["email"],
                 team_ids=scoped_team_ids,
+                search_query=search_query,
             )
             # Result is tuple (list, next_cursor)
             teams_data, next_cursor = result
 
             # Get accurate total count for API consumers
-            total = await service.get_teams_count(personal_owner_email=current_user_ctx["email"], team_ids=scoped_team_ids)
+            total = await service.get_teams_count(personal_owner_email=current_user_ctx["email"], team_ids=scoped_team_ids, search_query=search_query)
         else:
             # Fallback to user teams and apply pagination locally
             user_teams = await service.get_user_teams(current_user_ctx["email"], include_personal=True)
             if scoped_team_ids is not None:
                 allowed_team_ids = set(scoped_team_ids)
                 user_teams = [team for team in user_teams if str(team.id) in allowed_team_ids]
+            if search_query:
+                needle = search_query.lower()
+                user_teams = [team for team in user_teams if needle in team.name.lower() or needle in team.slug.lower() or needle in (team.description or "").lower()]
             total = len(user_teams)
             teams_data = user_teams[skip : skip + limit]
 
