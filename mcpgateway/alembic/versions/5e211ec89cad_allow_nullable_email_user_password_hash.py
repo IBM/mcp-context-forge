@@ -12,6 +12,7 @@ Create Date: 2026-09-04 09:37:21.131648
 
 # Standard
 import hashlib
+import json
 from typing import Sequence, Union
 
 # Third-Party
@@ -53,13 +54,38 @@ def _metadata_key(prefix: str, email: str) -> str:
     return f"{prefix}{email_hash}"
 
 
-def _snapshot_metadata(prefix: str, emails: list[str]) -> None:
+def _metadata_value(email: str, password_hash: str | None = None) -> str:
+    """Serialize passwordless metadata for a downgraded row."""
+    if password_hash is None:
+        return email
+    return json.dumps({"email": email, "password_hash": password_hash}, separators=(",", ":"))
+
+
+def _parse_metadata_value(value: str) -> tuple[str, str | None]:
+    """Return email and optional original password hash from metadata."""
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return value, None
+
+    if not isinstance(parsed, dict):
+        return value, None
+
+    email = parsed.get("email")
+    if not isinstance(email, str):
+        return value, None
+
+    password_hash = parsed.get("password_hash")
+    return email, password_hash if isinstance(password_hash, str) else None
+
+
+def _snapshot_metadata(prefix: str, rows: list[tuple[str, str | None]]) -> None:
     """Persist email rows whose passwordless state must survive downgrade-to-upgrade."""
-    if not emails or not _has_migration_metadata_table():
+    if not rows or not _has_migration_metadata_table():
         return
 
     bind = op.get_bind()
-    for email in emails:
+    for email, password_hash in rows:
         key = _metadata_key(prefix, email)
         bind.execute(sa.text("DELETE FROM migration_metadata WHERE revision = :revision AND key = :key"), {"revision": revision, "key": key})
         bind.execute(
@@ -67,7 +93,7 @@ def _snapshot_metadata(prefix: str, emails: list[str]) -> None:
                 "INSERT INTO migration_metadata (revision, key, value, created_at) "
                 "VALUES (:revision, :key, :value, CURRENT_TIMESTAMP)"
             ),
-            {"revision": revision, "key": key, "value": email},
+            {"revision": revision, "key": key, "value": _metadata_value(email, password_hash)},
         )
 
 
@@ -93,8 +119,8 @@ def _restore_passwordless_metadata(columns: dict[str, dict]) -> None:
 
     bind = op.get_bind()
     has_password_hash_type = "password_hash_type" in columns
-    null_hash_emails = [email for key, email in rows if key.startswith(NULL_HASH_KEY_PREFIX)]
-    none_type_emails = [email for key, email in rows if key.startswith(NONE_TYPE_KEY_PREFIX)]
+    null_hash_emails = [_parse_metadata_value(value)[0] for key, value in rows if key.startswith(NULL_HASH_KEY_PREFIX)]
+    none_type_entries = [_parse_metadata_value(value) for key, value in rows if key.startswith(NONE_TYPE_KEY_PREFIX)]
 
     for email in null_hash_emails:
         if has_password_hash_type:
@@ -113,11 +139,30 @@ def _restore_passwordless_metadata(columns: dict[str, dict]) -> None:
             )
 
     if has_password_hash_type:
-        for email in none_type_emails:
-            bind.execute(
-                sa.text("UPDATE email_users SET password_hash_type = :passwordless_hash_type WHERE email = :email"),
-                {"email": email, "passwordless_hash_type": PASSWORDLESS_HASH_TYPE},
-            )
+        for email, original_hash in none_type_entries:
+            if original_hash is None:
+                bind.execute(
+                    sa.text(
+                        "UPDATE email_users "
+                        "SET password_hash_type = :passwordless_hash_type "
+                        "WHERE email = :email AND password_hash_type = :compatible_hash_type AND password_hash IS NULL"
+                    ),
+                    {"email": email, "passwordless_hash_type": PASSWORDLESS_HASH_TYPE, "compatible_hash_type": COMPATIBLE_PASSWORD_HASH_TYPE},
+                )
+            else:
+                bind.execute(
+                    sa.text(
+                        "UPDATE email_users "
+                        "SET password_hash_type = :passwordless_hash_type "
+                        "WHERE email = :email AND password_hash_type = :compatible_hash_type AND password_hash = :original_hash"
+                    ),
+                    {
+                        "email": email,
+                        "passwordless_hash_type": PASSWORDLESS_HASH_TYPE,
+                        "compatible_hash_type": COMPATIBLE_PASSWORD_HASH_TYPE,
+                        "original_hash": original_hash,
+                    },
+                )
 
     for key, _email in rows:
         bind.execute(sa.text("DELETE FROM migration_metadata WHERE revision = :revision AND key = :key"), {"revision": revision, "key": key})
@@ -147,20 +192,19 @@ def downgrade() -> None:
     bind = op.get_bind()
     password_hash_type = columns.get("password_hash_type")
 
-    null_hash_emails = [str(email) for email in bind.execute(sa.text("SELECT email FROM email_users WHERE password_hash IS NULL")).scalars().all()]
-    _snapshot_metadata(NULL_HASH_KEY_PREFIX, null_hash_emails)
+    null_hash_rows = [(str(email), None) for email in bind.execute(sa.text("SELECT email FROM email_users WHERE password_hash IS NULL")).scalars().all()]
+    _snapshot_metadata(NULL_HASH_KEY_PREFIX, null_hash_rows)
 
     if password_hash_type is not None:
-        none_type_emails = [
-            str(email)
-            for email in bind.execute(
-                sa.text("SELECT email FROM email_users WHERE password_hash_type = :passwordless_hash_type"),
+        none_type_rows = [
+            (str(row[0]), str(row[1]) if row[1] is not None else None)
+            for row in bind.execute(
+                sa.text("SELECT email, password_hash FROM email_users WHERE password_hash_type = :passwordless_hash_type"),
                 {"passwordless_hash_type": PASSWORDLESS_HASH_TYPE},
             )
-            .scalars()
             .all()
         ]
-        _snapshot_metadata(NONE_TYPE_KEY_PREFIX, none_type_emails)
+        _snapshot_metadata(NONE_TYPE_KEY_PREFIX, none_type_rows)
 
     bind.execute(
         sa.text("UPDATE email_users SET password_hash = :disabled_hash WHERE password_hash IS NULL"),

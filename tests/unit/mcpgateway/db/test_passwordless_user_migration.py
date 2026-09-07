@@ -155,6 +155,52 @@ def test_upgrade_and_downgrade_normalize_passwordless_rows(migration):
         engine.dispose()
 
 
+def test_upgrade_preserves_password_changes_made_while_downgraded(migration):
+    """Re-upgrade does not re-mark rows whose password changed while downgraded."""
+    engine = sa.create_engine("sqlite:///:memory:")
+    try:
+        with engine.connect() as conn:
+            _create_email_users_table(conn)
+            _create_migration_metadata_table(conn)
+
+            with Operations.context(_migration_context(conn)):
+                migration.upgrade()
+
+            conn.execute(
+                sa.text("INSERT INTO email_users (email, password_hash, password_hash_type) VALUES (:email, :password_hash, :password_hash_type)"),
+                {"email": "null-changed@example.com", "password_hash": None, "password_hash_type": "none"},
+            )
+            conn.execute(
+                sa.text("INSERT INTO email_users (email, password_hash, password_hash_type) VALUES (:email, :password_hash, :password_hash_type)"),
+                {"email": "marker-changed@example.com", "password_hash": "old-marker-hash", "password_hash_type": "none"},
+            )
+
+            with Operations.context(_migration_context(conn)):
+                migration.downgrade()
+
+            assert _row(conn, "null-changed@example.com") == ("!disabled", "argon2id")
+            assert _row(conn, "marker-changed@example.com") == ("old-marker-hash", "argon2id")
+            assert _metadata_count(conn) == 3
+
+            conn.execute(
+                sa.text("UPDATE email_users SET password_hash = :password_hash, password_hash_type = :password_hash_type WHERE email = :email"),
+                {"email": "null-changed@example.com", "password_hash": "new-null-local-hash", "password_hash_type": "argon2id"},
+            )
+            conn.execute(
+                sa.text("UPDATE email_users SET password_hash = :password_hash, password_hash_type = :password_hash_type WHERE email = :email"),
+                {"email": "marker-changed@example.com", "password_hash": "new-marker-local-hash", "password_hash_type": "argon2id"},
+            )
+
+            with Operations.context(_migration_context(conn)):
+                migration.upgrade()
+
+            assert _row(conn, "null-changed@example.com") == ("new-null-local-hash", "argon2id")
+            assert _row(conn, "marker-changed@example.com") == ("new-marker-local-hash", "argon2id")
+            assert _metadata_count(conn) == 0
+    finally:
+        engine.dispose()
+
+
 def test_upgrade_and_downgrade_skip_when_email_users_missing(migration):
     """Fresh databases without email_users are skipped."""
     engine = sa.create_engine("sqlite:///:memory:")
