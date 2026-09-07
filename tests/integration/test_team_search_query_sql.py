@@ -112,3 +112,31 @@ async def test_get_teams_count_matches_list_teams_for_description_query(db_with_
     teams, _ = await svc.list_teams(search_query="rocket-squad")
     count = await svc.get_teams_count(search_query="rocket-squad")
     assert count == len(teams), f"list_teams returned {len(teams)} but get_teams_count returned {count}"
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_list_teams_like_wildcard_percent_is_literal(db_with_teams):
+    """Regression: search_query='%' must NOT match every team.
+
+    Without _escape_like(), '%' is a SQL wildcard and returns all rows — a trivial
+    data-enumeration vector for any caller who can use the search parameter.
+    """
+    svc = TeamManagementService(db_with_teams)
+    teams, _ = await svc.list_teams(search_query="%")
+    assert len(teams) == 0, f"'%' must not wildcard-match all teams, got {len(teams)}"
+
+
+@pytest.mark.integration
+@pytest.mark.asyncio
+async def test_list_teams_like_wildcard_underscore_is_literal(db_with_teams):
+    """Regression: search_query='ops_team' must NOT match 'ops-team' via underscore wildcard.
+
+    Without _escape_like(), '_' matches any single character, so 'ops_team' would match
+    'ops-team' (the hyphen) — violating the literal-substring contract and causing
+    admin/SQL results to diverge from the non-admin in-memory filter.
+    """
+    svc = TeamManagementService(db_with_teams)
+    # The fixture has "ops-team" (slug) — an unescaped underscore would match it.
+    teams, _ = await svc.list_teams(search_query="ops_team")
+    assert len(teams) == 0, f"'ops_team' must not wildcard-match 'ops-team', got {len(teams)}"

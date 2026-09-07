@@ -233,10 +233,9 @@ async def list_teams(
         total = 0
         scoped_team_ids = extract_token_team_ids(current_user_ctx)
 
-        # Normalise empty string to None so both admin (SQL) and non-admin (in-memory)
-        # paths treat "no filter" identically. Without this, admin would forward "" to the
-        # service while non-admin's falsy guard silently discards it — two different contracts
-        # for the same input.
+        # Normalise empty string to None so the value passed downstream is always either a
+        # non-empty string or None — never an empty string that could be misread as an
+        # explicit filter by future callers.
         search_query = search_query or None
 
         # Check admin permissions using PermissionService (handles both is_admin flag and RBAC)
