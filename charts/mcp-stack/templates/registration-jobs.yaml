@@ -35,6 +35,7 @@ spec:
         - name: register-fast-time
           image: {{ $registrationImage | quote }}
           imagePullPolicy: {{ .Values.testing.registration.image.pullPolicy }}
+          {{- include "mcp-stack.registrationEnv" . | nindent 10 }}
           command: ["/bin/sh", "-c"]
           args:
             - |
@@ -178,6 +179,7 @@ spec:
         - name: register-a2a-echo
           image: {{ $registrationImage | quote }}
           imagePullPolicy: {{ .Values.testing.registration.image.pullPolicy }}
+          {{- include "mcp-stack.registrationEnv" . | nindent 10 }}
           command: ["/bin/sh", "-c"]
           args:
             - |
@@ -288,6 +290,7 @@ spec:
         - name: register-benchmark
           image: {{ $registrationImage | quote }}
           imagePullPolicy: {{ .Values.testing.registration.image.pullPolicy }}
+          {{- include "mcp-stack.registrationEnv" . | nindent 10 }}
           command: ["/bin/sh", "-c"]
           args:
             - |

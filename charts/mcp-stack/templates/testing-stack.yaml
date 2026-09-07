@@ -137,6 +137,7 @@ spec:
         - name: generate-jwt
           image: "{{ .Values.testing.registration.image.repository }}:{{ .Values.testing.registration.image.tag }}"
           imagePullPolicy: {{ .Values.testing.registration.image.pullPolicy }}
+          {{- include "mcp-stack.registrationEnv" . | nindent 10 }}
           command: ["/bin/sh", "-c"]
           args:
             - |
@@ -268,6 +269,7 @@ spec:
         - name: generate-jwt
           image: "{{ .Values.testing.registration.image.repository }}:{{ .Values.testing.registration.image.tag }}"
           imagePullPolicy: {{ .Values.testing.registration.image.pullPolicy }}
+          {{- include "mcp-stack.registrationEnv" . | nindent 10 }}
           command: ["/bin/sh", "-c"]
           args:
             - |

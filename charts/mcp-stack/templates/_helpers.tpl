@@ -123,3 +123,28 @@ failureThreshold:    {{ $p.failureThreshold    | default 3 }}
 {{- include "helpers.renderProbe" (dict "probe" $p "root" .root) }}
 {{- end }}
 {{- end }}
+
+{{- /* --------------------------------------------------------------------
+     Helper: mcp-stack.registrationEnv
+     Environment for the registration hook Jobs.
+
+     These Jobs run `python -m mcpgateway.utils.create_jwt_token`, which
+     imports mcpgateway.config at module load. That import validates the
+     full settings model and aborts when JWT_SECRET_KEY is still the
+     "__REPLACE_ME__" placeholder, before the --secret flag is ever read.
+     Without this env the token command dies, the shell captures an empty
+     TOKEN, and every API call from the hook returns 401.
+     -------------------------------------------------------------------- */}}
+{{- define "mcp-stack.registrationEnv" -}}
+env:
+  - name: JWT_SECRET_KEY
+    valueFrom:
+      secretKeyRef:
+        name: {{ include "mcp-stack.fullname" . }}-gateway-secret
+        key: JWT_SECRET_KEY
+  - name: AUTH_ENCRYPTION_SECRET
+    valueFrom:
+      secretKeyRef:
+        name: {{ include "mcp-stack.fullname" . }}-gateway-secret
+        key: AUTH_ENCRYPTION_SECRET
+{{- end }}
