@@ -9,8 +9,8 @@ ARTIFACT_DIR="${ARTIFACT_DIR:-artifacts/upgrade-validation}"
 HEALTH_TIMEOUT_SECONDS="${HEALTH_TIMEOUT_SECONDS:-240}"
 CI_JWT_SECRET="${CI_JWT_SECRET:-ci-upgrade-validation-jwt-secret-DO-NOT-USE-IN-PRODUCTION}"
 CI_ENC_SECRET="${CI_ENC_SECRET:-ci-upgrade-validation-enc-secret-DO-NOT-USE-IN-PRODUCTION}"
-CI_PLATFORM_ADMIN_PASSWORD="${CI_PLATFORM_ADMIN_PASSWORD:-${CI_ENC_SECRET}}"
-CI_DEFAULT_USER_PASSWORD="${CI_DEFAULT_USER_PASSWORD:-${CI_ENC_SECRET}}"
+CI_PLATFORM_ADMIN_PASSWORD="${CI_PLATFORM_ADMIN_PASSWORD:-ci-upgrade-platform-admin-P@ssw0rd-DO-NOT-USE-IN-PRODUCTION}" # pragma: allowlist secret
+CI_DEFAULT_USER_PASSWORD="${CI_DEFAULT_USER_PASSWORD:-ci-upgrade-default-user-P@ssw0rd-DO-NOT-USE-IN-PRODUCTION}" # pragma: allowlist secret
 
 PROJECT_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 RUN_ID="${RUN_ID:-$(date +%s)-$RANDOM}"

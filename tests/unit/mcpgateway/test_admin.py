@@ -11191,6 +11191,29 @@ async def test_admin_update_user_password_invalid(monkeypatch, mock_db, allow_pe
 
 
 @pytest.mark.asyncio
+async def test_admin_update_user_passwordless_validation_error(monkeypatch, mock_db, allow_permission):
+    from mcpgateway.services.email_auth_service import PasswordValidationError
+
+    monkeypatch.setattr(settings, "email_auth_enabled", True)
+    request = MagicMock(spec=Request)
+    request.form = AsyncMock(return_value=FakeForm({"full_name": "A", "password": "NewSecurePass4$x", "confirm_password": "NewSecurePass4$x"}))  # pragma: allowlist secret
+    monkeypatch.setattr("mcpgateway.admin.validate_password_strength", lambda _pw, email="", is_admin=False: (True, ""))
+
+    auth_service = MagicMock()
+    auth_service.get_user_by_email = AsyncMock(return_value=SimpleNamespace(email="a@example.com", is_admin=False))
+    auth_service.update_user = AsyncMock(side_effect=PasswordValidationError("Local password updates are not allowed for passwordless users"))
+    monkeypatch.setattr("mcpgateway.admin.EmailAuthService", lambda db: auth_service)
+
+    response = await admin_update_user("a%40example.com", request=request, db=mock_db, _user={"email": "admin@example.com", "db": mock_db})
+
+    assert response.status_code == 400
+    assert response.headers.get("HX-Retarget") == "#edit-user-error"
+    body = response.body.decode()
+    assert "Password validation failed" in body
+    assert "Local password updates are not allowed for passwordless users" in body
+
+
+@pytest.mark.asyncio
 async def test_admin_update_user_exception(monkeypatch, mock_db, allow_permission):
     monkeypatch.setattr(settings, "email_auth_enabled", True)
     request = MagicMock(spec=Request)

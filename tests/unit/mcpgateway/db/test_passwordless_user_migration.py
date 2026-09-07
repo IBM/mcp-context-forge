@@ -41,6 +41,23 @@ def _create_email_users_table(conn) -> None:
     )
 
 
+def _create_migration_metadata_table(conn) -> None:
+    """Create the migration_metadata table used by older migrations."""
+    conn.execute(
+        sa.text(
+            """
+            CREATE TABLE migration_metadata (
+                revision VARCHAR(64) NOT NULL,
+                key VARCHAR(128) NOT NULL,
+                value TEXT,
+                created_at DATETIME,
+                PRIMARY KEY (revision, key)
+            )
+            """
+        )
+    )
+
+
 def _column_nullable(conn, column_name: str) -> bool:
     """Return reflected nullability for an email_users column."""
     columns = {column["name"]: column for column in sa.inspect(conn).get_columns("email_users")}
@@ -53,6 +70,17 @@ def _row(conn, email: str):
         sa.text("SELECT password_hash, password_hash_type FROM email_users WHERE email = :email"),
         {"email": email},
     ).one()
+
+
+def _metadata_count(conn) -> int:
+    """Return passwordless metadata row count for this migration."""
+    return int(
+        conn.execute(
+            sa.text("SELECT COUNT(*) FROM migration_metadata WHERE revision = :revision"),
+            {"revision": REVISION},
+        ).scalar()
+        or 0
+    )
 
 
 @pytest.fixture
@@ -72,14 +100,19 @@ def test_migration_module_structure(migration):
 
 
 def test_upgrade_and_downgrade_normalize_passwordless_rows(migration):
-    """Downgrade backfills NULL hashes and clears passwordless hash-type markers."""
+    """Downgrade normalizes passwordless rows and upgrade restores only those rows."""
     engine = sa.create_engine("sqlite:///:memory:")
     try:
         with engine.connect() as conn:
             _create_email_users_table(conn)
+            _create_migration_metadata_table(conn)
             conn.execute(
                 sa.text("INSERT INTO email_users (email, password_hash, password_hash_type) VALUES (:email, :password_hash, :password_hash_type)"),
                 {"email": "local@example.com", "password_hash": "local-hash", "password_hash_type": "argon2id"},
+            )
+            conn.execute(
+                sa.text("INSERT INTO email_users (email, password_hash, password_hash_type) VALUES (:email, :password_hash, :password_hash_type)"),
+                {"email": "disabled@example.com", "password_hash": "!disabled", "password_hash_type": "argon2id"},
             )
 
             with Operations.context(_migration_context(conn)):
@@ -103,8 +136,21 @@ def test_upgrade_and_downgrade_normalize_passwordless_rows(migration):
 
             assert _column_nullable(conn, "password_hash") is False
             assert _row(conn, "local@example.com") == ("local-hash", "argon2id")
+            assert _row(conn, "disabled@example.com") == ("!disabled", "argon2id")
             assert _row(conn, "null@example.com") == ("!disabled", "argon2id")
             assert _row(conn, "marker@example.com") == ("valid-looking-hash", "argon2id")
+            assert _metadata_count(conn) == 3
+
+            with Operations.context(_migration_context(conn)):
+                migration.upgrade()
+                migration.upgrade()
+
+            assert _column_nullable(conn, "password_hash") is True
+            assert _row(conn, "local@example.com") == ("local-hash", "argon2id")
+            assert _row(conn, "disabled@example.com") == ("!disabled", "argon2id")
+            assert _row(conn, "null@example.com") == (None, "none")
+            assert _row(conn, "marker@example.com") == ("valid-looking-hash", "none")
+            assert _metadata_count(conn) == 0
     finally:
         engine.dispose()
 

@@ -905,7 +905,7 @@ class EmailAuthService:
                 return None
 
             if is_passwordless_user(user):
-                failure_reason = "Invalid password"
+                failure_reason = "Local password authentication disabled"
                 logger.info("Authentication failed for %s: local password authentication disabled", SecurityValidator.sanitize_log_message(email))
                 await self._verify_dummy_password_for_timing(password)
                 await self._apply_failed_login_floor(start_time)
@@ -1275,16 +1275,10 @@ class EmailAuthService:
             raise AuthenticationError("Current password is required")
 
         normalized_email = email.lower().strip()
-        existing_user = self._fetch_user_from_db(normalized_email)
-        if existing_user and is_passwordless_user(existing_user):
-            raise AuthenticationError("Current password is incorrect")
 
         # First authenticate with old password
         user = await self.authenticate_user(normalized_email, old_password, ip_address, user_agent)
         if not user:
-            raise AuthenticationError("Current password is incorrect")
-
-        if is_passwordless_user(user):
             raise AuthenticationError("Current password is incorrect")
 
         current_password_hash = cast(str, user.password_hash)

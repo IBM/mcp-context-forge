@@ -951,6 +951,9 @@ class TestEmailAuthServiceUserManagement:
         mock_user.increment_failed_attempts.assert_not_called()
         mock_user.reset_failed_attempts.assert_not_called()
         floor_mock.assert_awaited_once()
+        auth_event = mock_db.add.call_args.args[0]
+        assert isinstance(auth_event, EmailAuthEvent)
+        assert auth_event.failure_reason == "Local password authentication disabled"
 
     @pytest.mark.asyncio
     async def test_authenticate_user_wrong_password_applies_floor_without_dummy_verify(self, service, mock_db, mock_user, mock_password_service):
@@ -1486,18 +1489,23 @@ class TestEmailAuthServiceUserManagement:
         mock_policy_service.save_password_to_history.assert_awaited_once_with("user@example.com", "old-hash")
 
     @pytest.mark.asyncio
-    async def test_change_password_rejects_passwordless_user_returned_by_authenticate(self, service, mock_user, mock_password_service):
-        """Self-service password change fails closed if authentication returns a passwordless user."""
+    async def test_change_password_passwordless_user_uses_authenticate_failure_path(self, service, mock_db, mock_user, mock_password_service):
+        """Self-service password change delegates passwordless rejection to authenticate_user."""
         service.password_service = mock_password_service
+        mock_password_service.verify_password_async = AsyncMock(return_value=False)
         mock_user.password_hash = "$argon2id$v=19$m=65536,t=3,p=1$valid$hash"
         mock_user.password_hash_type = "none"
+        mock_user.is_active = True
+        mock_user.is_account_locked.return_value = False
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_user
 
-        with patch.object(service, "_fetch_user_from_db", return_value=None):
-            with patch.object(service, "authenticate_user", new=AsyncMock(return_value=mock_user)):
-                with patch("mcpgateway.services.password_policy_service.PasswordPolicyService") as policy_service_cls:
-                    with pytest.raises(AuthenticationError, match="Current password is incorrect"):
-                        await service.change_password(email="test@example.com", old_password="old_password", new_password="NewSecurePass4$x")  # pragma: allowlist secret
+        with patch.object(service, "_apply_failed_login_floor", new=AsyncMock()) as floor_mock:
+            with patch("mcpgateway.services.password_policy_service.PasswordPolicyService") as policy_service_cls:
+                with pytest.raises(AuthenticationError, match="Current password is incorrect"):
+                    await service.change_password(email="test@example.com", old_password="old_password", new_password="NewSecurePass4$x")  # pragma: allowlist secret
 
+        mock_password_service.verify_password_async.assert_awaited_once_with("old_password", _DUMMY_ARGON2_HASH)
+        floor_mock.assert_awaited_once()
         policy_service_cls.assert_not_called()
 
     @pytest.mark.asyncio
@@ -1758,21 +1766,23 @@ class TestEmailAuthServiceUserManagement:
             ("$argon2id$v=19$m=65536,t=3,p=1$valid$hash", "none"),
         ],
     )
-    async def test_change_password_rejects_passwordless_user_without_verifier_or_history(self, service, mock_user, mock_password_service, password_hash, password_hash_type):
-        """Self-service password change cannot create a local password for passwordless users."""
+    async def test_change_password_rejects_passwordless_user_without_history(self, service, mock_db, mock_user, mock_password_service, password_hash, password_hash_type):
+        """Self-service password change rejects passwordless users through authenticate_user."""
         service.password_service = mock_password_service
         mock_password_service.verify_password_async = AsyncMock(return_value=True)
         mock_user.password_hash = password_hash
         mock_user.password_hash_type = password_hash_type
+        mock_user.is_active = True
+        mock_user.is_account_locked.return_value = False
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_user
 
-        with patch.object(service, "_fetch_user_from_db", return_value=mock_user):
-            with patch.object(service, "authenticate_user", new=AsyncMock()) as authenticate_mock:
-                with patch("mcpgateway.services.password_policy_service.PasswordPolicyService") as policy_service_cls:
-                    with pytest.raises(AuthenticationError, match="Current password is incorrect"):
-                        await service.change_password(email="test@example.com", old_password="old_password", new_password="NewSecurePass4$x")  # pragma: allowlist secret
+        with patch.object(service, "_apply_failed_login_floor", new=AsyncMock()) as floor_mock:
+            with patch("mcpgateway.services.password_policy_service.PasswordPolicyService") as policy_service_cls:
+                with pytest.raises(AuthenticationError, match="Current password is incorrect"):
+                    await service.change_password(email="test@example.com", old_password="old_password", new_password="NewSecurePass4$x")  # pragma: allowlist secret
 
-        authenticate_mock.assert_not_awaited()
-        mock_password_service.verify_password_async.assert_not_awaited()
+        mock_password_service.verify_password_async.assert_awaited_once_with("old_password", _DUMMY_ARGON2_HASH)
+        floor_mock.assert_awaited_once()
         policy_service_cls.assert_not_called()
 
     @pytest.mark.asyncio
