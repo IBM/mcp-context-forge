@@ -3212,18 +3212,12 @@ class TestToolService:
         session_mock = AsyncMock()
         session_mock.initialize = AsyncMock()
         session_mock.call_tool = AsyncMock(return_value=expected_result)
-
-        client_session_cm = AsyncMock()
-        client_session_cm.__aenter__.return_value = session_mock
-        client_session_cm.__aexit__.return_value = AsyncMock()
-
-        @asynccontextmanager
-        async def mock_streamable_client(*_args, **_kwargs):
-            yield ("read", "write", None)
+        session_mock.session.call_tool = session_mock.call_tool
+        session_mock.__aenter__ = AsyncMock(return_value=session_mock)
+        session_mock.__aexit__ = AsyncMock(return_value=None)
 
         with (
-            patch("mcpgateway.services.tool_service.streamablehttp_client", mock_streamable_client),
-            patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", return_value=session_mock),
             patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer xyz"}),
             patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
         ):
@@ -3232,7 +3226,7 @@ class TestToolService:
             # ------------------------------------------------------------------
             result = await tool_service.invoke_tool(test_db, "dummy_tool", {"param": "value"}, request_headers=None)
 
-        session_mock.initialize.assert_awaited_once()
+        session_mock.initialize.assert_not_awaited()
         session_mock.call_tool.assert_awaited_once_with("dummy_tool", {"param": "value"}, meta=None)
 
         # Our ToolResult bubbled back out
@@ -3311,6 +3305,7 @@ class TestToolService:
         session_mock = AsyncMock()
         session_mock.initialize = AsyncMock()
         session_mock.call_tool = AsyncMock(return_value=expected_result)
+        session_mock.session.call_tool = session_mock.call_tool
 
         client_session_cm = AsyncMock()
         client_session_cm.__aenter__.return_value = session_mock
@@ -3318,15 +3313,14 @@ class TestToolService:
 
         @asynccontextmanager
         async def mock_streamable_client(*_args, **_kwargs):
-            yield ("read", "write", None)
+            yield session_mock
 
         # Pin a downstream session id so use_registry=True and the RegistryNotInitializedError
         # branch actually fires. Without this, the registry-init try/except is skipped.
         headers_token = request_headers_var.set({"mcp-session-id": "downstream-abc"})
         try:
             with (
-                patch("mcpgateway.services.tool_service.streamablehttp_client", mock_streamable_client),
-                patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+                patch("mcpgateway.services.tool_service.mcp_proxy_client", mock_streamable_client),
                 patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer xyz"}),
                 patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
                 patch("mcpgateway.services.tool_service.get_upstream_session_registry", side_effect=RegistryNotInitializedError("not init")),
@@ -3336,7 +3330,8 @@ class TestToolService:
             request_headers_var.reset(headers_token)
 
         # The per-call streamablehttp client path still reached call_tool successfully.
-        session_mock.initialize.assert_awaited_once()
+        # Note: mcp_proxy_client does NOT call initialize() - the client auto-initializes internally.
+        session_mock.initialize.assert_not_awaited()
         session_mock.call_tool.assert_awaited_once_with("dummy_tool", {"p": "v"}, meta=None)
         assert result.content[0].text == "fallback ok"
 
@@ -3394,14 +3389,11 @@ class TestToolService:
         session_mock = AsyncMock()
         session_mock.initialize = AsyncMock()
         session_mock.call_tool = AsyncMock(return_value=expected_result)
-
-        client_session_cm = AsyncMock()
-        client_session_cm.__aenter__.return_value = session_mock
-        client_session_cm.__aexit__.return_value = AsyncMock()
+        session_mock.session.call_tool = session_mock.call_tool
 
         @asynccontextmanager
-        async def mock_sse_client(*_args, **_kwargs):
-            yield ("read", "write")
+        async def mock_proxy_client(*_args, **_kwargs):
+            yield session_mock
 
         def inject_headers(headers):
             traced = dict(headers)
@@ -3411,8 +3403,7 @@ class TestToolService:
         headers_token = request_headers_var.set({"mcp-session-id": "downstream-sse"})
         try:
             with (
-                patch("mcpgateway.services.tool_service.sse_client", mock_sse_client),
-                patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+                patch("mcpgateway.services.tool_service.mcp_proxy_client", mock_proxy_client),
                 patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer xyz"}),
                 patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
                 patch("mcpgateway.services.tool_service.inject_trace_context_headers", side_effect=inject_headers),
@@ -3428,7 +3419,8 @@ class TestToolService:
         finally:
             request_headers_var.reset(headers_token)
 
-        session_mock.initialize.assert_awaited_once()
+        # mcp_proxy_client auto-initializes internally; no explicit initialize() call.
+        session_mock.initialize.assert_not_awaited()
         session_mock.call_tool.assert_awaited_once_with(
             "dummy_tool",
             {"p": "v"},
@@ -3485,6 +3477,7 @@ class TestToolService:
         session_mock = AsyncMock()
         session_mock.initialize = AsyncMock()
         session_mock.call_tool = AsyncMock(return_value=expected_result)
+        session_mock.session.call_tool = session_mock.call_tool
 
         client_session_cm = AsyncMock()
         client_session_cm.__aenter__.return_value = session_mock
@@ -3495,7 +3488,7 @@ class TestToolService:
         @asynccontextmanager
         async def mock_streamable_client(*_args, **kwargs):
             captured_headers.update(kwargs["headers"])
-            yield ("read", "write", None)
+            yield session_mock
 
         span_names = []
 
@@ -3511,8 +3504,7 @@ class TestToolService:
 
         with (
             patch("mcpgateway.services.tool_service.settings") as mock_settings,
-            patch("mcpgateway.services.tool_service.streamablehttp_client", mock_streamable_client),
-            patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", mock_streamable_client),
             patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer xyz"}),
             patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
             patch("mcpgateway.services.tool_service.create_span", side_effect=record_span),
@@ -3594,6 +3586,7 @@ class TestToolService:
         expected_result = ToolResult(content=[TextContent(type="text", text="registry ok")])
         upstream_session_mock = AsyncMock()
         upstream_session_mock.call_tool = AsyncMock(return_value=expected_result)
+        upstream_session_mock.session.call_tool = upstream_session_mock.call_tool
 
         captured_registry_headers = {}
 
@@ -3702,6 +3695,7 @@ class TestToolService:
         expected = ToolResult(content=[TextContent(type="text", text="ok")])
         upstream_session_mock = AsyncMock()
         upstream_session_mock.call_tool = AsyncMock(return_value=expected)
+        upstream_session_mock.session.call_tool = upstream_session_mock.call_tool
 
         observed_keys: list[tuple[str, str]] = []
 
@@ -3799,7 +3793,7 @@ class TestToolService:
         # This triggers the fallback at line 3684
         call_result = MagicMock()
         call_result.is_error = None
-        call_result.isError = True
+        call_result.is_error = True
         call_result.content = [TextContent(type="text", text="error from remote")]
         call_result.model_dump.return_value = {
             "content": [{"type": "text", "text": "error from remote"}],
@@ -3812,18 +3806,13 @@ class TestToolService:
         session_mock = AsyncMock()
         session_mock.initialize = AsyncMock()
         session_mock.call_tool = AsyncMock(return_value=call_result)
+        session_mock.session.call_tool = session_mock.call_tool
 
-        client_session_cm = AsyncMock()
-        client_session_cm.__aenter__.return_value = session_mock
-        client_session_cm.__aexit__.return_value = AsyncMock()
-
-        @asynccontextmanager
-        async def mock_streamable_client(*_args, **_kwargs):
-            yield ("read", "write", None)
+        session_mock.__aenter__ = AsyncMock(return_value=session_mock)
+        session_mock.__aexit__ = AsyncMock(return_value=None)
 
         with (
-            patch("mcpgateway.services.tool_service.streamablehttp_client", mock_streamable_client),
-            patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", return_value=session_mock),
             patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer xyz"}),
             patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
         ):
@@ -3843,7 +3832,6 @@ class TestToolService:
         where real tool output belonged.
         """
         # Standard
-        from contextlib import asynccontextmanager
         from types import SimpleNamespace
 
         monkeypatch.setenv("JWT_SECRET_KEY", "mcp-sink-canary-must-not-appear")
@@ -3901,23 +3889,18 @@ class TestToolService:
         call_result.meta = None
 
         session_mock = AsyncMock()
-        session_mock.initialize = AsyncMock()
         session_mock.call_tool = AsyncMock(return_value=call_result)
-
-        client_session_cm = AsyncMock()
-        client_session_cm.__aenter__.return_value = session_mock
-        client_session_cm.__aexit__.return_value = AsyncMock()
-
-        @asynccontextmanager
-        async def mock_streamable_client(*_args, **_kwargs):
-            yield ("read", "write", None)
+        session_mock.session.call_tool = session_mock.call_tool
+        # mcp_proxy_client auto-initializes internally; the mock is used directly
+        # as the async context manager yielding the client.
+        session_mock.__aenter__ = AsyncMock(return_value=session_mock)
+        session_mock.__aexit__ = AsyncMock(return_value=None)
 
         mock_metrics_buffer = Mock()
         mock_metrics_buffer.record_tool_metric = Mock()
         with (
             patch("mcpgateway.services.tool_service.metrics_buffer", mock_metrics_buffer),
-            patch("mcpgateway.services.tool_service.streamablehttp_client", mock_streamable_client),
-            patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", return_value=session_mock),
             patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer xyz"}),
         ):
             result = await tool_service.invoke_tool(test_db, "dummy_tool", {"param": "value"}, request_headers=None)
@@ -4238,21 +4221,14 @@ class TestToolService:
         session_mock = AsyncMock()
         session_mock.initialize = AsyncMock()
         session_mock.call_tool = AsyncMock(return_value=expected_result)
+        session_mock.session.call_tool = session_mock.call_tool
 
         client_session_cm = AsyncMock()
         client_session_cm.__aenter__.return_value = session_mock
         client_session_cm.__aexit__.return_value = AsyncMock()
 
-        # @asynccontextmanager
-        # async def mock_sse_client(*_args, **_kwargs):
-        #     yield ("read", "write")
-
-        sse_ctx = AsyncMock()
-        sse_ctx.__aenter__.return_value = ("read", "write")
-
         with (
-            patch("mcpgateway.services.tool_service.sse_client", return_value=sse_ctx) as sse_client_mock,
-            patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", return_value=client_session_cm) as proxy_client_mock,
             patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
             patch("mcpgateway.services.tool_service.get_correlation_id", return_value=None),
         ):
@@ -4261,16 +4237,18 @@ class TestToolService:
             # ------------------------------------------------------------------
             await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
 
-        session_mock.initialize.assert_awaited_once()
+        # mcp_proxy_client auto-initializes internally; no explicit initialize() call.
+        session_mock.initialize.assert_not_awaited()
         session_mock.call_tool.assert_awaited_once_with("test_tool", {"param": "value"}, meta=None)
 
-        sse_ctx.__aenter__.assert_awaited_once()
+        client_session_cm.__aenter__.assert_awaited_once()
 
-        sse_client_mock.assert_called_once()
-        sse_call_kwargs = sse_client_mock.call_args.kwargs
-        assert sse_call_kwargs["url"] == mock_gateway.url
-        assert sse_call_kwargs["headers"]["Authorization"] == "Basic dGVzdF91c2VyOnRlc3RfcGFzc3dvcmQ="
-        assert sse_call_kwargs["httpx_client_factory"] is not None
+        proxy_client_mock.assert_called_once()
+        proxy_call_kwargs = proxy_client_mock.call_args.kwargs
+        assert proxy_call_kwargs["url"] == mock_gateway.url
+        assert proxy_call_kwargs["headers"]["Authorization"] == "Basic dGVzdF91c2VyOnRlc3RfcGFzc3dvcmQ="
+        assert proxy_call_kwargs["httpx_client_factory"] is not None
+        assert proxy_call_kwargs["transport"] == "sse"
 
     @pytest.mark.asyncio
     async def test_invoke_tool_error(self, tool_service, mock_tool, mock_global_config_obj, test_db):
@@ -4322,13 +4300,10 @@ class TestToolService:
         mock_scalar.all.return_value = [mock_tool]
         test_db.execute = Mock(return_value=mock_scalar)
 
-        # Mock SSE client and session
-        sse_ctx = AsyncMock()
-        sse_ctx.__aenter__.return_value = ["read", "write"]
-
+        # Mock MCP client session (mcp_proxy_client auto-initializes)
         session_mock = AsyncMock()
-        session_mock.initialize = AsyncMock()
         session_mock.call_tool = AsyncMock(return_value=ToolResult(content=[TextContent(type="text", text="MCP response")]))
+        session_mock.session.call_tool = session_mock.call_tool
 
         client_session_cm = AsyncMock()
         client_session_cm.__aenter__.return_value = session_mock
@@ -4339,8 +4314,7 @@ class TestToolService:
         mock_metrics_buffer = Mock()
 
         with (
-            patch("mcpgateway.services.tool_service.sse_client", return_value=sse_ctx),
-            patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", return_value=client_session_cm),
             patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
             patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service", return_value=mock_metrics_buffer),
         ):
@@ -4850,17 +4824,14 @@ class TestToolService:
         session_mock = AsyncMock()
         session_mock.initialize = AsyncMock()
         session_mock.call_tool = AsyncMock(return_value=expected_result)
+        session_mock.session.call_tool = session_mock.call_tool
 
         client_session_cm = AsyncMock()
         client_session_cm.__aenter__.return_value = session_mock
         client_session_cm.__aexit__.return_value = AsyncMock()
 
-        sse_ctx = AsyncMock()
-        sse_ctx.__aenter__.return_value = ("read", "write")
-
         with (
-            patch("mcpgateway.services.tool_service.sse_client", return_value=sse_ctx),
-            patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", return_value=client_session_cm),
             patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
         ):
             await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=None)
@@ -4874,8 +4845,8 @@ class TestToolService:
         assert call_args[1]["client_cert"] is None
         assert call_args[1]["client_key"] is None
 
-        # Verify MCP session was initialized and tool called
-        session_mock.initialize.assert_awaited_once()
+        # mcp_proxy_client auto-initializes internally; tool was called
+        session_mock.initialize.assert_not_awaited()
         session_mock.call_tool.assert_awaited_once()
 
     async def test_invoke_tool_with_passthrough_headers_rest(self, tool_service, mock_tool, mock_global_config_obj, test_db):
@@ -4941,13 +4912,11 @@ class TestToolService:
         session_mock = AsyncMock()
         session_mock.initialize = AsyncMock()
         session_mock.call_tool = AsyncMock(return_value=expected_result)
+        session_mock.session.call_tool = session_mock.call_tool
 
         client_session_cm = AsyncMock()
         client_session_cm.__aenter__.return_value = session_mock
         client_session_cm.__aexit__.return_value = AsyncMock()
-
-        sse_ctx = AsyncMock()
-        sse_ctx.__aenter__.return_value = ("read", "write")
 
         # Mock compute_passthrough_headers_cached to return modified headers
         def mock_passthrough(req_headers, base_headers, allowed_headers, gateway_auth_type=None, gateway_passthrough_headers=None, is_token_exchange=False):
@@ -4958,16 +4927,15 @@ class TestToolService:
         request_headers = {"X-Custom-Header": "custom-value", "Authorization": "Bearer test"}
 
         with (
-            patch("mcpgateway.services.tool_service.sse_client", return_value=sse_ctx),
-            patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", return_value=client_session_cm),
             patch("mcpgateway.services.tool_service.decode_auth", return_value={}),
             patch("mcpgateway.services.tool_service.compute_passthrough_headers_cached", side_effect=mock_passthrough),
             patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
         ):
             await tool_service.invoke_tool(test_db, "test_tool", {"param": "value"}, request_headers=request_headers)
 
-        # Verify MCP session was initialized and tool called
-        session_mock.initialize.assert_awaited_once()
+        # mcp_proxy_client auto-initializes internally; tool was called
+        session_mock.initialize.assert_not_awaited()
         session_mock.call_tool.assert_awaited_once()
 
     async def test_invoke_tool_with_plugin_post_invoke_success(self, tool_service, mock_tool, mock_global_config_obj, test_db):
@@ -5272,15 +5240,11 @@ class TestToolService:
         session_mock = AsyncMock()
         session_mock.initialize = AsyncMock()
         session_mock.call_tool = AsyncMock(return_value=expected_result)
+        session_mock.session.call_tool = session_mock.call_tool
 
         client_session_cm = AsyncMock()
         client_session_cm.__aenter__.return_value = session_mock
         client_session_cm.__aexit__.return_value = AsyncMock()
-
-        sse_ctx = AsyncMock()
-        sse_ctx.__aenter__.return_value = ("read", "write")
-
-        # Mock HTTP client response
 
         # Mock plugin manager and post-invoke hook with error
         pm = PluginManager("./tests/unit/mcpgateway/plugins/fixtures/configs/tool_headers_metadata_plugin.yaml")
@@ -5289,8 +5253,7 @@ class TestToolService:
         tool_service._record_tool_metric_sync = Mock()
 
         with (
-            patch("mcpgateway.services.tool_service.sse_client", return_value=sse_ctx),
-            patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", return_value=client_session_cm),
             patch("mcpgateway.services.tool_service.extract_using_jq", side_effect=lambda data, _filt: data),
             patch.object(tool_service, "_get_plugin_manager", AsyncMock(return_value=pm)),
         ):
@@ -8991,6 +8954,7 @@ class TestInvokeToolDirect:
 
         session_mock = AsyncMock()
         session_mock.call_tool = AsyncMock(return_value=expected_result)
+        session_mock.session.call_tool = session_mock.call_tool
 
         client_session_cm = AsyncMock()
         client_session_cm.__aenter__.return_value = session_mock
@@ -8998,15 +8962,14 @@ class TestInvokeToolDirect:
 
         @asynccontextmanager
         async def mock_streamable_client(*_args, **_kwargs):
-            yield ("read", "write", None)
+            yield session_mock
 
         with (
             patch("mcpgateway.services.tool_service.fresh_db_session", self._make_fresh_db_session(mock_direct_gateway)),
             patch("mcpgateway.services.tool_service.settings") as mock_settings,
             patch("mcpgateway.services.tool_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
             patch("mcpgateway.services.tool_service.build_gateway_auth_headers", return_value={"Authorization": "Bearer remote-token"}),
-            patch("mcpgateway.services.tool_service.streamablehttp_client", mock_streamable_client),
-            patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", mock_streamable_client),
         ):
             mock_settings.mcpgateway_direct_proxy_enabled = True
             mock_settings.mcpgateway_direct_proxy_timeout = 30
@@ -9030,22 +8993,18 @@ class TestInvokeToolDirect:
 
         session_mock = AsyncMock()
         session_mock.call_tool = AsyncMock(return_value=expected_result)
-
-        client_session_cm = AsyncMock()
-        client_session_cm.__aenter__.return_value = session_mock
-        client_session_cm.__aexit__.return_value = AsyncMock()
+        session_mock.session.call_tool = session_mock.call_tool
 
         @asynccontextmanager
         async def mock_streamable_client(*_args, **_kwargs):
-            yield ("read", "write", None)
+            yield session_mock
 
         with (
             patch("mcpgateway.services.tool_service.fresh_db_session", self._make_fresh_db_session(mock_direct_gateway)),
             patch("mcpgateway.services.tool_service.settings") as mock_settings,
             patch("mcpgateway.services.tool_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
             patch("mcpgateway.services.tool_service.build_gateway_auth_headers", return_value={}),
-            patch("mcpgateway.services.tool_service.streamablehttp_client", mock_streamable_client),
-            patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", mock_streamable_client),
         ):
             mock_settings.mcpgateway_direct_proxy_enabled = True
             mock_settings.mcpgateway_direct_proxy_timeout = 30
@@ -9074,10 +9033,7 @@ class TestInvokeToolDirect:
 
         session_mock = AsyncMock()
         session_mock.call_tool = AsyncMock(return_value=expected_result)
-
-        client_session_cm = AsyncMock()
-        client_session_cm.__aenter__.return_value = session_mock
-        client_session_cm.__aexit__.return_value = AsyncMock()
+        session_mock.session.call_tool = session_mock.call_tool
 
         def inject_headers(headers):
             traced = dict(headers)
@@ -9087,7 +9043,7 @@ class TestInvokeToolDirect:
         @asynccontextmanager
         async def mock_streamable_client(*_args, **kwargs):
             captured_headers.update(kwargs["headers"])
-            yield ("read", "write", None)
+            yield session_mock
 
         with (
             patch("mcpgateway.services.tool_service.fresh_db_session", self._make_fresh_db_session(mock_direct_gateway)),
@@ -9095,8 +9051,7 @@ class TestInvokeToolDirect:
             patch("mcpgateway.services.tool_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
             patch("mcpgateway.services.tool_service.build_gateway_auth_headers", return_value={}),
             patch("mcpgateway.services.tool_service.inject_trace_context_headers", side_effect=inject_headers),
-            patch("mcpgateway.services.tool_service.streamablehttp_client", mock_streamable_client),
-            patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", mock_streamable_client),
         ):
             mock_settings.mcpgateway_direct_proxy_enabled = True
             mock_settings.mcpgateway_direct_proxy_timeout = 30
@@ -9177,7 +9132,7 @@ class TestInvokeToolDirect:
 
     @pytest.mark.asyncio
     async def test_invoke_tool_direct_connection_error(self, tool_service, mock_direct_gateway):
-        """Connection failure in streamablehttp_client should raise ToolInvocationError."""
+        """Connection failure in streamable_http_client should raise ToolInvocationError."""
 
         @asynccontextmanager
         async def mock_streamable_client_error(*_args, **_kwargs):
@@ -9189,7 +9144,7 @@ class TestInvokeToolDirect:
             patch("mcpgateway.services.tool_service.settings") as mock_settings,
             patch("mcpgateway.services.tool_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
             patch("mcpgateway.services.tool_service.build_gateway_auth_headers", return_value={}),
-            patch("mcpgateway.services.tool_service.streamablehttp_client", mock_streamable_client_error),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", mock_streamable_client_error),
         ):
             mock_settings.mcpgateway_direct_proxy_enabled = True
             mock_settings.mcpgateway_direct_proxy_timeout = 30
@@ -9213,10 +9168,11 @@ class TestInvokeToolDirect:
         @asynccontextmanager
         async def mock_streamable_client(*_args, **kwargs):
             captured_headers.update(kwargs.get("headers", {}))
-            yield ("read", "write", None)
+            yield session_mock
 
         session_mock = AsyncMock()
         session_mock.call_tool = AsyncMock(return_value=MagicMock())
+        session_mock.session.call_tool = session_mock.call_tool
 
         client_session_cm = AsyncMock()
         client_session_cm.__aenter__.return_value = session_mock
@@ -9227,8 +9183,7 @@ class TestInvokeToolDirect:
             patch("mcpgateway.services.tool_service.settings") as mock_settings,
             patch("mcpgateway.services.tool_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
             patch("mcpgateway.services.tool_service.build_gateway_auth_headers", return_value={"Authorization": "Bearer xyz"}),
-            patch("mcpgateway.services.tool_service.streamablehttp_client", mock_streamable_client),
-            patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", mock_streamable_client),
         ):
             mock_settings.mcpgateway_direct_proxy_enabled = True
             mock_settings.mcpgateway_direct_proxy_timeout = 30
@@ -9252,28 +9207,24 @@ class TestInvokeToolDirect:
 
     @pytest.mark.asyncio
     async def test_invoke_tool_direct_configurable_timeout(self, tool_service, mock_direct_gateway):
-        """Timeout passed to streamablehttp_client should match settings.mcpgateway_direct_proxy_timeout."""
+        """Timeout passed to streamable_http_client should match settings.mcpgateway_direct_proxy_timeout."""
         captured_kwargs = {}
 
         @asynccontextmanager
         async def mock_streamable_client(*_args, **kwargs):
             captured_kwargs.update(kwargs)
-            yield ("read", "write", None)
+            yield session_mock
 
         session_mock = AsyncMock()
         session_mock.call_tool = AsyncMock(return_value=MagicMock())
-
-        client_session_cm = AsyncMock()
-        client_session_cm.__aenter__.return_value = session_mock
-        client_session_cm.__aexit__.return_value = AsyncMock()
+        session_mock.session.call_tool = session_mock.call_tool
 
         with (
             patch("mcpgateway.services.tool_service.fresh_db_session", self._make_fresh_db_session(mock_direct_gateway)),
             patch("mcpgateway.services.tool_service.settings") as mock_settings,
             patch("mcpgateway.services.tool_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
             patch("mcpgateway.services.tool_service.build_gateway_auth_headers", return_value={}),
-            patch("mcpgateway.services.tool_service.streamablehttp_client", mock_streamable_client),
-            patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", mock_streamable_client),
         ):
             mock_settings.mcpgateway_direct_proxy_enabled = True
             mock_settings.mcpgateway_direct_proxy_timeout = 120  # Custom timeout
@@ -9294,6 +9245,7 @@ class TestInvokeToolDirect:
         expected_result = MagicMock()
         session_mock = AsyncMock()
         session_mock.call_tool = AsyncMock(return_value=expected_result)
+        session_mock.session.call_tool = session_mock.call_tool
 
         client_session_cm = AsyncMock()
         client_session_cm.__aenter__.return_value = session_mock
@@ -9301,7 +9253,7 @@ class TestInvokeToolDirect:
 
         @asynccontextmanager
         async def mock_streamable_client(*_args, **_kwargs):
-            yield ("read", "write", None)
+            yield session_mock
 
         # Create a mock tool row with original_name different from slugified name
         mock_tool = MagicMock()
@@ -9312,8 +9264,7 @@ class TestInvokeToolDirect:
             patch("mcpgateway.services.tool_service.settings") as mock_settings,
             patch("mcpgateway.services.tool_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
             patch("mcpgateway.services.tool_service.build_gateway_auth_headers", return_value={}),
-            patch("mcpgateway.services.tool_service.streamablehttp_client", mock_streamable_client),
-            patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", mock_streamable_client),
         ):
             mock_settings.mcpgateway_direct_proxy_enabled = True
             mock_settings.mcpgateway_direct_proxy_timeout = 30
@@ -9336,22 +9287,18 @@ class TestInvokeToolDirect:
         expected_result = MagicMock()
         session_mock = AsyncMock()
         session_mock.call_tool = AsyncMock(return_value=expected_result)
-
-        client_session_cm = AsyncMock()
-        client_session_cm.__aenter__.return_value = session_mock
-        client_session_cm.__aexit__.return_value = AsyncMock()
+        session_mock.session.call_tool = session_mock.call_tool
 
         @asynccontextmanager
         async def mock_streamable_client(*_args, **_kwargs):
-            yield ("read", "write", None)
+            yield session_mock
 
         with (
             patch("mcpgateway.services.tool_service.fresh_db_session", self._make_fresh_db_session(mock_direct_gateway, tool_row=None)),
             patch("mcpgateway.services.tool_service.settings") as mock_settings,
             patch("mcpgateway.services.tool_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
             patch("mcpgateway.services.tool_service.build_gateway_auth_headers", return_value={}),
-            patch("mcpgateway.services.tool_service.streamablehttp_client", mock_streamable_client),
-            patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", mock_streamable_client),
         ):
             mock_settings.mcpgateway_direct_proxy_enabled = True
             mock_settings.mcpgateway_direct_proxy_timeout = 30
@@ -9491,6 +9438,7 @@ class TestInvokeToolDirectProxyViaHeader:
         session_mock = AsyncMock()
         session_mock.initialize = AsyncMock()
         session_mock.call_tool = AsyncMock(return_value=expected_result)
+        session_mock.session.call_tool = session_mock.call_tool
 
         client_session_cm = AsyncMock()
         client_session_cm.__aenter__.return_value = session_mock
@@ -9498,7 +9446,7 @@ class TestInvokeToolDirectProxyViaHeader:
 
         @asynccontextmanager
         async def mock_streamable_client(*_args, **_kwargs):
-            yield ("read", "write", None)
+            yield session_mock
 
         # Mock global_config_cache to prevent DB calls
         mock_gc = MagicMock()
@@ -9510,8 +9458,7 @@ class TestInvokeToolDirectProxyViaHeader:
         with (
             patch("mcpgateway.services.tool_service.settings") as mock_settings,
             patch("mcpgateway.services.tool_service.check_gateway_access", new_callable=AsyncMock, return_value=True),
-            patch("mcpgateway.services.tool_service.streamablehttp_client", mock_streamable_client),
-            patch("mcpgateway.services.tool_service.ClientSession", return_value=client_session_cm),
+            patch("mcpgateway.services.tool_service.mcp_proxy_client", mock_streamable_client),
             patch("mcpgateway.services.tool_service.global_config_cache", mock_gc),
             patch("mcpgateway.services.tool_service.decode_auth", return_value={"Authorization": "Bearer xyz"}),
             patch("mcpgateway.services.tool_service.get_performance_tracker", return_value=MagicMock()),
