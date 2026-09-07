@@ -8520,6 +8520,9 @@ async def admin_update_user(
         response.headers["HX-Trigger"] = orjson.dumps({"adminUserAction": {"closeUserEditModal": True, "refreshUsersList": True, "delayMs": 1500}}).decode()
         return response
 
+    except PasswordValidationError as exc:
+        LOGGER.warning("Password validation failed while updating user %s: %s", user_email, exc)
+        return HTMLResponse(content=f'<div class="text-red-500">Password validation failed: {html.escape(str(exc))}</div>', status_code=400, headers={"HX-Retarget": "#edit-user-error"})
     except Exception as e:
         LOGGER.error(f"Error updating user {user_email}: {e}")
         return HTMLResponse(content=f'<div class="text-red-500">Error updating user: {html.escape(str(e))}</div>', status_code=400, headers={"HX-Retarget": "#edit-user-error"})
