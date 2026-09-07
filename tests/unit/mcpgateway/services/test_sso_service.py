@@ -3575,7 +3575,7 @@ class TestAuthenticateOrCreateUser:
             is_admin=False,
             admin_origin=None,
         )
-        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=existing_user)
+        sso_service.auth_service._fetch_user_from_db = MagicMock(return_value=existing_user)
         sso_service.get_provider = lambda _id: _make_provider()
 
         with patch("mcpgateway.services.sso_service.settings") as mock_settings:
@@ -3606,7 +3606,7 @@ class TestAuthenticateOrCreateUser:
             is_admin=False,
             admin_origin=None,
         )
-        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=existing_user)
+        sso_service.auth_service._fetch_user_from_db = MagicMock(return_value=existing_user)
         sso_service.get_provider = lambda _id: _make_provider()
 
         with patch("mcpgateway.services.sso_service.settings") as mock_settings, patch("mcpgateway.services.sso_service.create_jwt_token", new_callable=AsyncMock) as mock_jwt:
@@ -3641,7 +3641,7 @@ class TestAuthenticateOrCreateUser:
             admin_origin=None,
         )
         provider = _make_provider(team_mapping={"engineering": "team-1"})
-        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=existing_user)
+        sso_service.auth_service._fetch_user_from_db = MagicMock(return_value=existing_user)
         sso_service.get_provider = lambda _id: provider
         sso_service._apply_team_mapping = AsyncMock()
 
@@ -3676,7 +3676,7 @@ class TestAuthenticateOrCreateUser:
             is_admin=False,
             admin_origin=None,
         )
-        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=existing_user)
+        sso_service.auth_service._fetch_user_from_db = MagicMock(return_value=existing_user)
         sso_service.get_provider = lambda _id: _make_provider()
 
         result = await sso_service.authenticate_or_create_user(
@@ -3707,7 +3707,7 @@ class TestAuthenticateOrCreateUser:
             is_admin=False,
             admin_origin=None,
         )
-        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=existing_user)
+        sso_service.auth_service._fetch_user_from_db = MagicMock(return_value=existing_user)
         sso_service.get_provider = lambda _id: _make_provider()
 
         with patch("mcpgateway.services.sso_service.settings") as mock_settings, patch("mcpgateway.services.sso_service.create_jwt_token", new_callable=AsyncMock) as mock_jwt:
@@ -3739,7 +3739,7 @@ class TestAuthenticateOrCreateUser:
             is_admin=False,
             admin_origin=None,
         )
-        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=existing_user)
+        sso_service.auth_service._fetch_user_from_db = MagicMock(return_value=existing_user)
         sso_service.get_provider = lambda _id: _make_provider(trusted_domains=["trusted.com"])
 
         result = await sso_service.authenticate_or_create_user(
@@ -3765,7 +3765,7 @@ class TestAuthenticateOrCreateUser:
             is_admin=False,
             admin_origin=None,
         )
-        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=existing_user)
+        sso_service.auth_service._fetch_user_from_db = MagicMock(return_value=existing_user)
         sso_service.get_provider = lambda _id: _make_provider()
 
         with patch("mcpgateway.services.sso_service.settings") as mock_settings, patch("mcpgateway.services.sso_service.create_jwt_token", new_callable=AsyncMock) as mock_jwt:
@@ -3786,7 +3786,7 @@ class TestAuthenticateOrCreateUser:
             )
 
         assert result == "jwt-token"
-        sso_service.auth_service.get_user_by_email.assert_awaited_once_with("user@test.com")
+        sso_service.auth_service._fetch_user_from_db.assert_called_once_with("user@test.com")
         token_payload = mock_jwt.await_args.args[0]
         assert token_payload["sub"] == "550e8400-e29b-41d4-a716-446655440001"
         assert "email" not in token_payload
@@ -3858,7 +3858,7 @@ class TestAuthenticateOrCreateUser:
 
         existing_user = _GuardedUser()
         provider = _GuardedProvider()
-        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=existing_user)
+        sso_service.auth_service._fetch_user_from_db = MagicMock(return_value=existing_user)
         sso_service.get_provider = lambda _id: provider
         sso_service._map_groups_to_roles = AsyncMock(return_value=[])
         sso_service._sync_user_roles = AsyncMock()
@@ -3901,7 +3901,7 @@ class TestAuthenticateOrCreateUser:
             is_admin=False,
             admin_origin=None,
         )
-        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=existing_user)
+        sso_service.auth_service._fetch_user_from_db = MagicMock(return_value=existing_user)
         sso_service.get_provider = lambda _id: _make_provider()
 
         with patch("mcpgateway.services.sso_service.settings") as mock_settings, patch("mcpgateway.services.sso_service.create_jwt_token", new_callable=AsyncMock) as mock_jwt:
@@ -3934,7 +3934,7 @@ class TestAuthenticateOrCreateUser:
             is_admin=True,
             admin_origin="sso",
         )
-        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=existing_user)
+        sso_service.auth_service._fetch_user_from_db = MagicMock(return_value=existing_user)
         sso_service.get_provider = lambda _id: _make_provider()
 
         with patch("mcpgateway.services.sso_service.settings") as mock_settings, patch("mcpgateway.services.sso_service.create_jwt_token", new_callable=AsyncMock) as mock_jwt:
@@ -3968,7 +3968,7 @@ class TestAuthenticateOrCreateUser:
             is_admin=False,
             admin_origin=None,
         )
-        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=existing_user)
+        sso_service.auth_service._fetch_user_from_db = MagicMock(return_value=existing_user)
         sso_service.get_provider = lambda _id: _make_provider(id="provider-b")
 
         with patch("mcpgateway.services.sso_service.settings") as mock_settings:
@@ -3992,7 +3992,7 @@ class TestAuthenticateOrCreateUser:
             is_admin=False,
             admin_origin=None,
         )
-        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=existing_user)
+        sso_service.auth_service._fetch_user_from_db = MagicMock(return_value=existing_user)
         sso_service.get_provider = lambda _id: _make_provider(id="provider-b")
 
         with patch("mcpgateway.services.sso_service.settings") as mock_settings, patch("mcpgateway.services.sso_service.create_jwt_token", new_callable=AsyncMock) as mock_jwt:
@@ -4012,7 +4012,7 @@ class TestAuthenticateOrCreateUser:
 
     @pytest.mark.asyncio
     async def test_new_user_auto_create(self, sso_service, mock_db):
-        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=None)
+        sso_service.auth_service._fetch_user_from_db = MagicMock(return_value=None)
         new_user = SimpleNamespace(
             email="new@test.com",
             full_name="New User",
@@ -4051,7 +4051,7 @@ class TestAuthenticateOrCreateUser:
         Regression guard for https://github.com/IBM/mcp-context-forge/issues/3253
         (same root cause as Entra ID).
         """
-        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=None)
+        sso_service.auth_service._fetch_user_from_db = MagicMock(return_value=None)
         new_user = SimpleNamespace(
             email="new@test.com",
             full_name="New User",
@@ -4091,7 +4091,7 @@ class TestAuthenticateOrCreateUser:
         the userinfo response.  Absence of the claim should be treated as a
         pass-through, not a rejection.
         """
-        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=None)
+        sso_service.auth_service._fetch_user_from_db = MagicMock(return_value=None)
         new_user = SimpleNamespace(
             email="user@company.com",
             full_name="Entra User",
@@ -4128,7 +4128,7 @@ class TestAuthenticateOrCreateUser:
     @pytest.mark.asyncio
     async def test_new_user_with_role_assignments_triggers_sync(self, sso_service, mock_db):
         """New user flow should apply role assignments when mapping returns results."""
-        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=None)
+        sso_service.auth_service._fetch_user_from_db = MagicMock(return_value=None)
         sso_service.auth_service.create_user = AsyncMock(
             return_value=SimpleNamespace(
                 email="new@test.com",
@@ -4188,7 +4188,7 @@ class TestAuthenticateOrCreateUser:
                 return self._provider_metadata
 
         provider = _GuardedProvider()
-        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=None)
+        sso_service.auth_service._fetch_user_from_db = MagicMock(return_value=None)
         sso_service.get_provider = lambda _id: provider
         sso_service._map_groups_to_roles = AsyncMock(return_value=[])
         sso_service._sync_user_roles = AsyncMock()
@@ -4227,7 +4227,7 @@ class TestAuthenticateOrCreateUser:
 
     @pytest.mark.asyncio
     async def test_new_user_no_auto_create(self, sso_service, mock_db):
-        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=None)
+        sso_service.auth_service._fetch_user_from_db = MagicMock(return_value=None)
         sso_service.get_provider = lambda _id: _make_provider(auto_create_users=False)
 
         result = await sso_service.authenticate_or_create_user(
@@ -4241,7 +4241,7 @@ class TestAuthenticateOrCreateUser:
 
     @pytest.mark.asyncio
     async def test_new_user_untrusted_domain(self, sso_service, mock_db):
-        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=None)
+        sso_service.auth_service._fetch_user_from_db = MagicMock(return_value=None)
         sso_service.get_provider = lambda _id: _make_provider(trusted_domains=["trusted.com"])
 
         result = await sso_service.authenticate_or_create_user(
@@ -4256,7 +4256,7 @@ class TestAuthenticateOrCreateUser:
     @pytest.mark.asyncio
     async def test_new_user_admin_approval_pending(self, sso_service, mock_db):
         """Admin approval required + no existing pending -> creates pending request."""
-        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=None)
+        sso_service.auth_service._fetch_user_from_db = MagicMock(return_value=None)
         sso_service.get_provider = lambda _id: _make_provider()
         mock_db.execute.return_value.scalar_one_or_none.return_value = None  # No existing pending
 
@@ -4281,7 +4281,7 @@ class TestAuthenticateOrCreateUser:
     @pytest.mark.asyncio
     async def test_new_user_admin_approval_still_pending(self, sso_service, mock_db):
         """Existing pending approval that hasn't expired."""
-        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=None)
+        sso_service.auth_service._fetch_user_from_db = MagicMock(return_value=None)
         sso_service.get_provider = lambda _id: _make_provider()
         pending = SimpleNamespace(status="pending", is_expired=lambda: False)
         mock_db.execute.return_value.scalar_one_or_none.return_value = pending
@@ -4302,7 +4302,7 @@ class TestAuthenticateOrCreateUser:
     @pytest.mark.asyncio
     async def test_new_user_admin_approval_expired_pending_renews_request(self, sso_service, mock_db):
         """Expired pending approvals are renewed and still denied until admin action."""
-        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=None)
+        sso_service.auth_service._fetch_user_from_db = MagicMock(return_value=None)
         sso_service.get_provider = lambda _id: _make_provider()
         pending = SimpleNamespace(
             status="pending",
@@ -4340,7 +4340,7 @@ class TestAuthenticateOrCreateUser:
     @pytest.mark.asyncio
     async def test_new_user_rejects_unverified_email_claim(self, sso_service, mock_db):
         """SSO logins with explicit unverified email claims are rejected."""
-        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=None)
+        sso_service.auth_service._fetch_user_from_db = MagicMock(return_value=None)
         sso_service.get_provider = lambda _id: _make_provider()
 
         result = await sso_service.authenticate_or_create_user(
@@ -4356,7 +4356,7 @@ class TestAuthenticateOrCreateUser:
     @pytest.mark.asyncio
     async def test_new_user_admin_approval_rejected(self, sso_service, mock_db):
         """Existing pending approval that was rejected."""
-        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=None)
+        sso_service.auth_service._fetch_user_from_db = MagicMock(return_value=None)
         sso_service.get_provider = lambda _id: _make_provider()
         pending = SimpleNamespace(status="rejected", is_expired=lambda: False)
         mock_db.execute.return_value.scalar_one_or_none.return_value = pending
@@ -4375,7 +4375,7 @@ class TestAuthenticateOrCreateUser:
 
     @pytest.mark.asyncio
     async def test_new_user_admin_approval_approved_but_expired(self, sso_service, mock_db):
-        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=None)
+        sso_service.auth_service._fetch_user_from_db = MagicMock(return_value=None)
         sso_service.get_provider = lambda _id: _make_provider()
         pending = SimpleNamespace(status="approved", is_expired=lambda: True)
         mock_db.execute.return_value.scalar_one_or_none.return_value = pending
@@ -4396,7 +4396,7 @@ class TestAuthenticateOrCreateUser:
 
     @pytest.mark.asyncio
     async def test_new_user_admin_approval_status_expired_renews_request(self, sso_service, mock_db):
-        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=None)
+        sso_service.auth_service._fetch_user_from_db = MagicMock(return_value=None)
         sso_service.get_provider = lambda _id: _make_provider()
         pending = SimpleNamespace(
             status="expired",
@@ -4433,7 +4433,7 @@ class TestAuthenticateOrCreateUser:
 
     @pytest.mark.asyncio
     async def test_new_user_admin_approval_completed_denied(self, sso_service, mock_db):
-        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=None)
+        sso_service.auth_service._fetch_user_from_db = MagicMock(return_value=None)
         sso_service.get_provider = lambda _id: _make_provider()
         pending = SimpleNamespace(status="completed", is_expired=lambda: False)
         mock_db.execute.return_value.scalar_one_or_none.return_value = pending
@@ -4452,7 +4452,7 @@ class TestAuthenticateOrCreateUser:
 
     @pytest.mark.asyncio
     async def test_new_user_admin_approval_unknown_status_denied(self, sso_service, mock_db):
-        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=None)
+        sso_service.auth_service._fetch_user_from_db = MagicMock(return_value=None)
         sso_service.get_provider = lambda _id: _make_provider()
         pending = SimpleNamespace(status="mystery", is_expired=lambda: False)
         mock_db.execute.return_value.scalar_one_or_none.return_value = pending
@@ -4477,7 +4477,7 @@ class TestAuthenticateOrCreateUser:
     @pytest.mark.asyncio
     async def test_new_user_admin_approval_approved(self, sso_service, mock_db):
         """Existing pending approval that was approved -> user gets created."""
-        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=None)
+        sso_service.auth_service._fetch_user_from_db = MagicMock(return_value=None)
         sso_service.get_provider = lambda _id: _make_provider()
         new_user = SimpleNamespace(
             email="new@test.com",
@@ -4517,7 +4517,7 @@ class TestAuthenticateOrCreateUser:
     @pytest.mark.asyncio
     async def test_new_user_create_fails(self, sso_service, mock_db):
         """create_user returns None -> returns None."""
-        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=None)
+        sso_service.auth_service._fetch_user_from_db = MagicMock(return_value=None)
         sso_service.auth_service.create_user = AsyncMock(return_value=None)
         sso_service.get_provider = lambda _id: _make_provider()
 
@@ -4550,7 +4550,7 @@ class TestAuthenticateOrCreateUser:
             is_admin=False,
             admin_origin=None,
         )
-        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=existing_user)
+        sso_service.auth_service._fetch_user_from_db = MagicMock(return_value=existing_user)
         sso_service.get_provider = lambda _id: _make_provider(provider_metadata={"sync_roles": True, "role_mappings": {}})
         sso_service._map_groups_to_roles = AsyncMock(return_value=[])
         sso_service._sync_user_roles = AsyncMock()

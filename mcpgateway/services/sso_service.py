@@ -2104,8 +2104,10 @@ class SSOService:
         resolved_auth_provider = incoming_provider
         resolved_is_admin = False
 
-        # Check if user exists
-        user = await self.auth_service.get_user_by_email(email)
+        # Mutation path: use a session-attached row (not the cached, detached copy
+        # get_user_by_email returns) so relink/last_login/is_admin writes below are
+        # tracked and durable across self.db.commit().
+        user = self.auth_service._fetch_user_from_db(email)  # pylint: disable=protected-access
 
         if user:
             current_full_name = user.full_name or resolved_full_name
@@ -2199,6 +2201,10 @@ class SSOService:
             resolved_full_name = current_full_name
             resolved_auth_provider = current_auth_provider
             resolved_is_admin = current_is_admin
+
+            # Row was mutated above (auth_provider relink, last_login, is_admin sync);
+            # drop the stale cached copy so the next read reflects the committed state.
+            await self.auth_service._invalidate_user_auth_cache(email)  # pylint: disable=protected-access
         else:
             # Auto-create user if enabled
             if not provider or not provider.auto_create_users:
