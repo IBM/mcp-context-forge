@@ -267,13 +267,24 @@ class DatabaseTokenBackend(AbstractTokenBackend):
 
         Phase 1: team_id parameter is IGNORED.
 
+        Returns ``None`` only when no token record exists for this
+        (gateway_id, app_user_email) pair. An unexpected failure (e.g. a DB
+        error) is logged and re-raised rather than swallowed to ``None``, so
+        callers exposing this through a user-facing status field (see
+        ``mcpgateway.routers.oauth_router._get_caller_token_status``) can
+        distinguish "never authorized" from "lookup failed" - the two read
+        identically to a caller if both collapse to ``None``.
+
         Args:
             gateway_id: Gateway ID
             team_id: Team identifier (IGNORED in Phase 1)
             app_user_email: ContextForge user email
 
         Returns:
-            Token info dict or None
+            Token info dict, or None if no token is stored.
+
+        Raises:
+            Exception: Propagated from the underlying database query on failure.
         """
         try:
             # PHASE 1: Query by (gateway_id, app_user_email) - team_id IGNORED
@@ -302,7 +313,7 @@ class DatabaseTokenBackend(AbstractTokenBackend):
 
         except Exception as e:
             logger.error("Failed to get token info: %s", str(e))
-            return None
+            raise
 
     async def revoke_user_tokens(
         self,

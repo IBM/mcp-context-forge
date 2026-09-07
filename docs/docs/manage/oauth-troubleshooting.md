@@ -76,7 +76,8 @@ state_data = {
 | `/oauth/authorize/{gateway_id}` | GET | Initiates OAuth flow, redirects to provider |
 | `/vault/authorize/{server_id}` | GET | Per-user OAuth credential connection for team virtual servers (shared access control with `/oauth/authorize/{gateway_id}`) |
 | `/oauth/callback` | GET | Handles OAuth callback, exchanges code for tokens |
-| `/oauth/status/{gateway_id}` | GET | Returns OAuth configuration status |
+| `/oauth/status/{gateway_id}` | GET | Returns OAuth configuration status; for `authorization_code` gateways also includes the caller's own `user_token_status` (valid/near_expiry/expired/missing) |
+| `/oauth/status?gateway_ids=a&gateway_ids=b` | GET | Batch equivalent of the above, keyed by gateway id, so a grid of cards issues one request instead of N |
 | `/oauth/fetch-tools/{gateway_id}` | POST | Fetches tools from MCP server after OAuth completion |
 | `/oauth/registered-clients` | GET | Lists all DCR-registered OAuth clients. Requires `admin.oauth_clients:read` and un-narrowed platform admin access |
 | `/oauth/registered-clients/{gateway_id}` | GET | Gets registered client for specific gateway. Requires `admin.oauth_clients:read` and un-narrowed platform admin access |

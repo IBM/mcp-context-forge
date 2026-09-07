@@ -1275,9 +1275,28 @@ class TestOAuthRouter:
         mock_token_storage.get_token_info.assert_awaited_once_with("gateway123", "other@example.com")
 
     @pytest.mark.asyncio
+    async def test_get_oauth_status_user_token_status_lookup_failure_logs_and_reads_missing(self, mock_db, mock_gateway, mock_current_user, mock_request):
+        """A backend lookup failure (e.g. a DB error) is logged, distinguishing it from a genuinely missing token in logs,
+        while still surfacing the same safe "missing"/unauthorized shape to the client rather than a 500."""
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+
+        from mcpgateway.routers.oauth_router import get_oauth_status
+
+        with patch("mcpgateway.routers.oauth_router.TokenStorageService") as mock_token_storage_class:
+            mock_token_storage = Mock()
+            mock_token_storage.get_token_info = AsyncMock(side_effect=RuntimeError("db unavailable"))
+            mock_token_storage_class.return_value = mock_token_storage
+
+            with patch("mcpgateway.routers.oauth_router.logger") as mock_logger:
+                result = await get_oauth_status("gateway123", mock_request, mock_current_user, mock_db)
+
+        assert result["user_token_status"] == {"status": "missing", "authorized": False}
+        mock_logger.error.assert_called_once()
+
+    @pytest.mark.asyncio
     async def test_get_oauth_status_batch_success(self, mock_db, mock_gateway, mock_current_user, mock_request):
         """Batch endpoint returns the same per-gateway payload as the single endpoint, keyed by gateway id."""
-        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_gateway
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [mock_gateway]
 
         from mcpgateway.routers.oauth_router import get_oauth_status_batch
 
@@ -1294,15 +1313,61 @@ class TestOAuthRouter:
         assert result["gateway123"]["user_token_status"]["status"] == "missing"
 
     @pytest.mark.asyncio
+    async def test_get_oauth_status_batch_single_gateway_query(self, mock_db, mock_gateway, mock_current_user, mock_request):
+        """Batch endpoint issues one Gateway SELECT and one TokenStorageService for the whole batch, not one per id."""
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [mock_gateway]
+
+        from mcpgateway.routers.oauth_router import get_oauth_status_batch
+
+        with patch("mcpgateway.routers.oauth_router.TokenStorageService") as mock_token_storage_class:
+            mock_token_storage = Mock()
+            mock_token_storage.get_token_info = AsyncMock(return_value=None)
+            mock_token_storage_class.return_value = mock_token_storage
+
+            result = await get_oauth_status_batch(mock_request, ["gateway123", "gateway123"], mock_current_user, mock_db)
+
+        assert mock_db.execute.call_count == 1
+        mock_token_storage_class.assert_called_once()
+        assert result["gateway123"]["oauth_enabled"] is True
+
+    @pytest.mark.asyncio
     async def test_get_oauth_status_batch_omits_inaccessible_gateways(self, mock_db, mock_current_user, mock_request):
         """A gateway id that 404s or 403s for this caller is silently dropped, not surfaced as a batch failure."""
-        mock_db.execute.return_value.scalar_one_or_none.return_value = None  # every id -> gateway not found
+        mock_db.execute.return_value.scalars.return_value.all.return_value = []  # every id -> gateway not found
 
         from mcpgateway.routers.oauth_router import get_oauth_status_batch
 
         result = await get_oauth_status_batch(mock_request, ["missing1", "missing2"], mock_current_user, mock_db)
 
         assert result == {}
+
+    @pytest.mark.asyncio
+    async def test_get_oauth_status_batch_logs_access_check_server_errors(self, mock_db, mock_gateway, mock_current_user, mock_request):
+        """A 5xx from the per-gateway access check is logged and omitted, not silently swallowed like a 404/403."""
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [mock_gateway]
+
+        from mcpgateway.routers.oauth_router import get_oauth_status_batch
+
+        with patch("mcpgateway.routers.oauth_router._enforce_gateway_access", new=AsyncMock(side_effect=HTTPException(status_code=500, detail="boom"))):
+            with patch("mcpgateway.routers.oauth_router.logger") as mock_logger:
+                result = await get_oauth_status_batch(mock_request, ["gateway123"], mock_current_user, mock_db)
+
+        assert result == {}
+        mock_logger.error.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_get_oauth_status_batch_does_not_log_404_or_403(self, mock_db, mock_gateway, mock_current_user, mock_request):
+        """A 404/403 from the per-gateway access check is omitted without an error log - it's an expected outcome, not a fault."""
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [mock_gateway]
+
+        from mcpgateway.routers.oauth_router import get_oauth_status_batch
+
+        with patch("mcpgateway.routers.oauth_router._enforce_gateway_access", new=AsyncMock(side_effect=HTTPException(status_code=403, detail="nope"))):
+            with patch("mcpgateway.routers.oauth_router.logger") as mock_logger:
+                result = await get_oauth_status_batch(mock_request, ["gateway123"], mock_current_user, mock_db)
+
+        assert result == {}
+        mock_logger.error.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_get_oauth_status_batch_requires_gateway_ids(self, mock_db, mock_current_user, mock_request):

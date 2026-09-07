@@ -603,18 +603,23 @@ async def test_get_token_info_expired_token(backend_with_encryption, mock_db):
 
 @pytest.mark.asyncio
 async def test_get_token_info_exception(backend_with_encryption, mock_db):
-    """Test get_token_info handles exceptions gracefully."""
+    """get_token_info logs and re-raises on failure rather than returning None.
+
+    None is reserved for "no token stored" - collapsing a lookup failure into the same
+    value would make it indistinguishable from "never authorized" to callers exposing
+    this through a user-facing status field.
+    """
     mock_db.execute.side_effect = Exception("Database error")
 
     with patch("mcpgateway.services.token_backends.db_backend.logger") as mock_logger:
-        result = await backend_with_encryption.get_token_info(
-            gateway_id="gw-1",
-            team_id="team-1",
-            app_user_email="user@test.com",
-        )
+        with pytest.raises(Exception, match="Database error"):
+            await backend_with_encryption.get_token_info(
+                gateway_id="gw-1",
+                team_id="team-1",
+                app_user_email="user@test.com",
+            )
 
         mock_logger.error.assert_called_once()
-        assert result is None
 
 
 @pytest.mark.asyncio

@@ -828,9 +828,10 @@ async def test_get_token_info_not_found(service, mock_db):
 
 @pytest.mark.asyncio
 async def test_get_token_info_exception(service, mock_db):
+    """A backend failure propagates rather than collapsing to None, which is reserved for "no token stored"."""
     mock_db.execute.side_effect = Exception("DB error")
-    result = await service.get_token_info("gw-1", "user@test.com")
-    assert result is None
+    with pytest.raises(Exception, match="DB error"):
+        await service.get_token_info("gw-1", "user@test.com")
 
 
 # ---------- revoke_user_tokens ----------

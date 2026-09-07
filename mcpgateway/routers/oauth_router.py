@@ -1333,7 +1333,7 @@ def custom_redirect_after_callback(url: str, status_code: int) -> RedirectRespon
     return RedirectResponse(url=url, status_code=status_code, headers={"Referrer-Policy": "no-referrer"})
 
 
-async def _get_caller_token_status(db: Session, current_user: Any, gateway_id: str) -> Dict[str, Any]:
+async def _get_caller_token_status(db: Session, current_user: Any, gateway_id: str, *, token_storage: Optional[TokenStorageService] = None) -> Dict[str, Any]:
     """Look up the caller's own OAuth token state for a gateway.
 
     Wires the already-implemented ``TokenStorageService.get_token_info`` into
@@ -1344,6 +1344,9 @@ async def _get_caller_token_status(db: Session, current_user: Any, gateway_id: s
         db: Active database session.
         current_user: Authenticated requester context (dict or EmailUserResponse).
         gateway_id: Gateway identifier to look up.
+        token_storage: Optional pre-built ``TokenStorageService`` to reuse across
+            multiple lookups (batch endpoint) instead of constructing a new one
+            per gateway.
 
     Returns:
         Dict with ``authorized`` (bool) and ``status`` (one of "missing",
@@ -1354,9 +1357,16 @@ async def _get_caller_token_status(db: Session, current_user: Any, gateway_id: s
     if requester_email == "unknown" or not requester_email.strip():
         return {"status": "missing", "authorized": False}
 
-    user_context = _build_user_context(current_user)
-    token_storage = TokenStorageService(db, user_context)
-    info = await token_storage.get_token_info(gateway_id, requester_email)
+    if token_storage is None:
+        token_storage = TokenStorageService(db, _build_user_context(current_user))
+
+    try:
+        info = await token_storage.get_token_info(gateway_id, requester_email)
+    except Exception as e:
+        # The backend already logs its own failure; this line ties it to the caller/gateway
+        # so a transient lookup failure is distinguishable in logs from a genuinely missing token.
+        logger.error("OAuth token status lookup failed for gateway=%s user=%s: %s", gateway_id, requester_email, str(e))
+        return {"status": "missing", "authorized": False}
 
     if not info:
         return {"status": "missing", "authorized": False}
@@ -1368,6 +1378,45 @@ async def _get_caller_token_status(db: Session, current_user: Any, gateway_id: s
         "scopes": info.get("scopes"),
         "expires_at": info.get("expires_at"),
         "updated_at": info.get("updated_at"),
+    }
+
+
+def _build_oauth_status_payload(gateway: Gateway) -> Dict[str, Any]:
+    """Build the OAuth config portion of a gateway's status payload (no I/O).
+
+    Shared by the single-gateway and batch status endpoints so the two never
+    drift. Caller is responsible for gateway lookup, access enforcement, and
+    attaching ``user_token_status`` for ``authorization_code`` grants.
+
+    Args:
+        gateway: Gateway record with ``oauth_config`` already loaded.
+
+    Returns:
+        Dict describing OAuth enablement and, when configured, grant details.
+    """
+    if not gateway.oauth_config:
+        return {"oauth_enabled": False, "message": "Gateway is not configured for OAuth"}
+
+    oauth_config = gateway.oauth_config
+    grant_type = oauth_config.get("grant_type")
+
+    if grant_type == "authorization_code":
+        return {
+            "oauth_enabled": True,
+            "grant_type": grant_type,
+            "client_id": oauth_config.get("client_id"),
+            "scopes": oauth_config.get("scopes", []),
+            "authorization_url": oauth_config.get("authorization_url"),
+            "redirect_uri": oauth_config.get("redirect_uri"),
+            "message": "Gateway configured for Authorization Code flow",
+        }
+
+    return {
+        "oauth_enabled": True,
+        "grant_type": grant_type,
+        "client_id": oauth_config.get("client_id"),
+        "scopes": oauth_config.get("scopes", []),
+        "message": f"Gateway configured for {grant_type} flow",
     }
 
 
@@ -1408,32 +1457,10 @@ async def get_oauth_status(
 
         await _enforce_gateway_access(gateway_id, gateway, current_user, db, request=request)
 
-        if not gateway.oauth_config:
-            return {"oauth_enabled": False, "message": "Gateway is not configured for OAuth"}
-
-        # Get OAuth configuration info
-        oauth_config = gateway.oauth_config
-        grant_type = oauth_config.get("grant_type")
-
-        if grant_type == "authorization_code":
-            return {
-                "oauth_enabled": True,
-                "grant_type": grant_type,
-                "client_id": oauth_config.get("client_id"),
-                "scopes": oauth_config.get("scopes", []),
-                "authorization_url": oauth_config.get("authorization_url"),
-                "redirect_uri": oauth_config.get("redirect_uri"),
-                "message": "Gateway configured for Authorization Code flow",
-                "user_token_status": await _get_caller_token_status(db, current_user, gateway_id),
-            }
-        else:
-            return {
-                "oauth_enabled": True,
-                "grant_type": grant_type,
-                "client_id": oauth_config.get("client_id"),
-                "scopes": oauth_config.get("scopes", []),
-                "message": f"Gateway configured for {grant_type} flow",
-            }
+        payload = _build_oauth_status_payload(gateway)
+        if payload.get("grant_type") == "authorization_code":
+            payload["user_token_status"] = await _get_caller_token_status(db, current_user, gateway_id)
+        return payload
 
     except HTTPException:
         raise
@@ -1480,13 +1507,39 @@ async def get_oauth_status_batch(
     if len(deduped_ids) > OAUTH_STATUS_BATCH_MAX_IDS:
         raise HTTPException(status_code=400, detail=f"Too many gateway_ids requested (max {OAUTH_STATUS_BATCH_MAX_IDS})")
 
+    # Single query for all requested gateways, and one TokenStorageService reused across
+    # the loop, instead of get_oauth_status()'s per-id gateway SELECT + TokenStorageService
+    # construction - the batch route exists specifically to avoid N+1 round trips.
+    gateways_by_id = {gw.id: gw for gw in db.execute(select(Gateway).where(Gateway.id.in_(deduped_ids))).scalars().all()}
+    token_storage = TokenStorageService(db, _build_user_context(current_user))
+
     results: Dict[str, Dict[str, Any]] = {}
     for gateway_id in deduped_ids:
-        try:
-            results[gateway_id] = await get_oauth_status(gateway_id, request, current_user, db)
-        except HTTPException:
-            # Not found / not accessible to this caller - omit rather than failing the batch.
+        gateway = gateways_by_id.get(gateway_id)
+        if not gateway:
+            # Not found - omit rather than failing the batch.
             continue
+
+        try:
+            await _enforce_gateway_access(gateway_id, gateway, current_user, db, request=request)
+        except HTTPException as exc:
+            if exc.status_code >= 500:
+                logger.error("OAuth status batch: access check failed for gateway=%s: %s", gateway_id, exc.detail)
+            # Not accessible to this caller (or a lookup failure, logged above) - omit rather than failing the batch.
+            continue
+        except Exception as exc:
+            logger.error("OAuth status batch: access check raised for gateway=%s: %s", gateway_id, str(exc))
+            continue
+
+        try:
+            payload = _build_oauth_status_payload(gateway)
+            if payload.get("grant_type") == "authorization_code":
+                payload["user_token_status"] = await _get_caller_token_status(db, current_user, gateway_id, token_storage=token_storage)
+            results[gateway_id] = payload
+        except Exception as exc:
+            logger.error("OAuth status batch: failed to build status for gateway=%s: %s", gateway_id, str(exc))
+            continue
+
     return results
 
 
