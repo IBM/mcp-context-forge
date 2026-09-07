@@ -4897,6 +4897,13 @@ class ServerRead(BaseModelWithConfigDict):
     updated_at: datetime
     # is_active: bool
     enabled: bool
+    url: Optional[str] = Field(
+        None,
+        description=(
+            "Fully-qualified MCP endpoint URL for this virtual server, derived from APP_DOMAIN "
+            "(same base URL OAuth's redirect_uri default uses). None if APP_DOMAIN isn't a usable URL."
+        ),
+    )
     associated_tools: List[str] = []
     associated_tool_ids: List[str] = []
     associated_resources: List[str] = []
