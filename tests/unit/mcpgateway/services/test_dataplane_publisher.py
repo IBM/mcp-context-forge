@@ -16,6 +16,254 @@ USER2_ID = "22222222-2222-2222-2222-222222222222"
 USER3_ID = "33333333-3333-3333-3333-333333333333"
 
 
+@pytest.fixture(autouse=True)
+def plugins_disabled_by_default(monkeypatch):
+    """Isolate publisher tests from process-global toggles in other modules."""
+    monkeypatch.setattr("mcpgateway.services.dataplane_publisher.are_plugins_enabled_shared", AsyncMock(return_value=False))
+
+
+@pytest.fixture
+def plugin_publication(tmp_path, monkeypatch):
+    """Use the real config loader, binding resolver and Redis mode handling."""
+    import fakeredis.aioredis
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+
+    from mcpgateway.db import Base
+    from mcpgateway.plugins.gateway_plugin_manager import TenantPluginManagerFactory
+    from mcpgateway.plugins.policy import HOOK_PAYLOAD_POLICIES
+    from mcpgateway.services import dataplane_publisher
+
+    config_path = tmp_path / "plugins.yaml"
+    config_path.write_text(
+        """plugins:
+  - name: Guard
+    kind: plugins.regex_filter.search_replace.SearchReplacePlugin
+    hooks: [tool_pre_invoke, tool_post_invoke, prompt_pre_fetch, prompt_post_fetch,
+            resource_pre_fetch, resource_post_fetch, http_pre_request, http_post_request]
+    mode: sequential
+    on_error: fail
+    priority: 31
+    capabilities: [read_headers]
+    conditions:
+      - tools: [gateway-echo]
+        tenant_ids: [team-a]
+        server_ids: [gateway]
+        user_patterns: ['.*@example.com']
+    config:
+      words: []
+      retained: base
+      nested: {base: true}
+  - name: Disabled
+    kind: unavailable.Plugin
+    hooks: [tool_post_invoke]
+    mode: disabled
+""",
+        encoding="utf-8",
+    )
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    session_factory = sessionmaker(bind=engine)
+    redis = fakeredis.aioredis.FakeRedis()
+    monkeypatch.setattr("mcpgateway.plugins.gateway_plugin_manager._redis", AsyncMock(return_value=redis))
+    monkeypatch.setattr("mcpgateway.plugins.gateway_plugin_manager.active_local_mode_overrides", lambda _now: {})
+    factory = TenantPluginManagerFactory(str(config_path), timeout=17, db_factory=session_factory, hook_policies=HOOK_PAYLOAD_POLICIES)
+    monkeypatch.setattr(dataplane_publisher, "are_plugins_enabled_shared", AsyncMock(return_value=True))
+    monkeypatch.setattr(dataplane_publisher, "get_plugin_manager_factory", lambda: factory)
+    session = session_factory()
+    try:
+        yield dataplane_publisher.DataplanePublisherService(), factory, session, redis
+    finally:
+        session.close()
+        engine.dispose()
+
+
+def _policy_payload(*context_ids):
+    """Make routing data whose targets point to the requested policy contexts."""
+    return {
+        USER1_ID: {
+            "user_email": "user1@example.com",
+            "virtual_hosts": {"server": {"backends": {"gateway": {"tool_policy_contexts": {str(i): {"context_id": context_id} for i, context_id in enumerate(context_ids)}}}}},
+        }
+    }
+
+
+@pytest.mark.asyncio
+async def test_plugin_publication_preserves_builtin_config_and_settings(plugin_publication):
+    """The wire document preserves all configured hooks and execution settings."""
+    import msgpack
+
+    service, factory, _db, _redis = plugin_publication
+    with patch("mcpgateway.plugins.gateway_plugin_manager.TenantPluginManager") as manager:
+        document = await service.fetch_plugin_config(_policy_payload("team-a::gateway-echo", "server"))
+        manager.assert_not_called()
+
+    assert msgpack.unpackb(msgpack.packb(document), raw=False) == document
+    assert document["version"] == 2
+    assert document["enabled"] is True
+    assert document["global"] == (await factory.get_config()).model_dump(mode="json")
+    assert document["contexts"]["server"] == document["global"]
+    plugin = document["global"]["plugins"][0]
+    assert plugin["name"] == "Guard"
+    assert plugin["kind"] == "plugins.regex_filter.search_replace.SearchReplacePlugin"
+    assert len(plugin["hooks"]) == 8
+    assert plugin["capabilities"] == ["read_headers"]
+    assert plugin["conditions"][0]["tools"] == ["gateway-echo"]
+    assert plugin["on_error"] == "fail"
+    assert plugin["priority"] == 31
+    assert document["global"]["plugins"][1]["mode"] == "disabled"
+    assert document["settings"]["plugin_timeout"] == 17
+    assert document["settings"]["hook_policies"]["resource_pre_fetch"] == {"writable_fields": ["metadata", "uri"]}
+    assert document["settings"]["plugins_can_override_rbac"] is False
+
+
+@pytest.mark.asyncio
+async def test_plugin_publication_tracks_override_lifecycle_and_specificity(plugin_publication):
+    """Exact overrides replace wildcard rows; removing them restores the fallback."""
+    from mcpgateway.db import ToolPluginBinding
+
+    service, factory, db, redis = plugin_publication
+    payload = _policy_payload("team-a::gateway-echo", "team-b::gateway-echo")
+    wildcard = ToolPluginBinding(team_id="team-a", tool_name="*", plugin_id="Guard", created_by="admin@example.com", updated_by="admin@example.com", mode="permissive", config={"nested": {"wildcard": True}}, priority=12)
+    exact = ToolPluginBinding(team_id="team-a", tool_name="gateway-echo", plugin_id="Guard", created_by="admin@example.com", updated_by="admin@example.com", mode="enforce_ignore_error", config={"nested": {"exact": True}}, priority=0)
+    db.add_all([exact, wildcard])
+    db.commit()
+
+    document = await service.fetch_plugin_config(payload)
+    scoped = document["contexts"]["team-a::gateway-echo"]
+    assert scoped == (await factory.get_config("team-a::gateway-echo")).model_dump(mode="json")
+    assert scoped["plugins"][0]["config"] == {"words": [], "retained": "base", "nested": {"exact": True}}
+    assert scoped["plugins"][0]["mode"] == "sequential"
+    assert scoped["plugins"][0]["on_error"] == "ignore"
+    assert scoped["plugins"][0]["priority"] == 0
+    assert document["contexts"]["team-b::gateway-echo"] == document["global"]
+
+    exact.mode = "disabled"
+    exact.on_error = "disable"
+    db.commit()
+    document = await service.fetch_plugin_config(payload)
+    assert document["contexts"]["team-a::gateway-echo"]["plugins"][0]["mode"] == "disabled"
+
+    # Runtime mode overrides win over DB overrides, including legacy error policy.
+    await redis.set("plugin:Guard:mode", "enforce_ignore_error")
+    document = await service.fetch_plugin_config(payload)
+    assert document["contexts"]["team-a::gateway-echo"]["plugins"][0]["on_error"] == "ignore"
+    await redis.delete("plugin:Guard:mode")
+    db.delete(exact)
+    db.commit()
+    document = await service.fetch_plugin_config(payload)
+    assert document["contexts"]["team-a::gateway-echo"]["plugins"][0]["mode"] == "transform"
+    assert document["contexts"]["team-a::gateway-echo"]["plugins"][0]["config"]["nested"] == {"wildcard": True}
+    db.delete(wildcard)
+    db.commit()
+    document = await service.fetch_plugin_config(payload)
+    assert document["contexts"]["team-a::gateway-echo"] == document["global"]
+
+
+@pytest.mark.asyncio
+async def test_plugin_publication_uses_loaded_yaml_and_only_published_contexts(plugin_publication):
+    """Publication neither rereads YAML nor leaks cached, unpublished scopes."""
+    service, factory, _db, _redis = plugin_publication
+    with patch.object(factory, "get_config", wraps=factory.get_config) as resolve, patch("cpex.framework.ConfigLoader.load_config", side_effect=AssertionError("YAML reread")):
+        document = await service.fetch_plugin_config(_policy_payload("team-a::gateway-echo", "team-a::gateway-echo"))
+    assert list(document["contexts"]) == ["team-a::gateway-echo"]
+    assert resolve.await_count == 2  # global plus one unique context
+    assert (await service.fetch_plugin_config({}))["contexts"] == {}
+
+
+@pytest.mark.asyncio
+async def test_invalid_binding_config_fails_like_builtin_resolution(plugin_publication):
+    """Malformed DB config cannot silently replace a required scoped override."""
+    from pydantic import ValidationError
+
+    from mcpgateway.db import ToolPluginBinding
+
+    service, factory, db, _redis = plugin_publication
+    db.add(ToolPluginBinding(team_id="team-a", tool_name="*", plugin_id="Guard", config=["invalid"], created_by="admin@example.com", updated_by="admin@example.com"))
+    db.commit()
+    with pytest.raises(ValidationError, match="valid dictionary"):
+        await factory.get_config("team-a::gateway-echo")
+    with pytest.raises(ValidationError, match="valid dictionary"):
+        await service.fetch_plugin_config(_policy_payload("team-a::gateway-echo"))
+
+
+def test_plugin_condition_serialization_is_stable_without_reordering_hooks():
+    """Sort unordered selection sets while preserving ordered hooks and plugins."""
+    from cpex.framework.models import Config, PluginConfig, PluginCondition
+
+    from mcpgateway.services.dataplane_publisher import _serialize_plugin_config
+
+    config = Config(plugins=[PluginConfig(name="Guard", kind="test.Plugin", hooks=["tool_pre_invoke", "resource_pre_fetch"], conditions=[PluginCondition(tools={"z", "a"}, tenant_ids=set())])])
+    serialized = _serialize_plugin_config(config)
+    assert serialized["plugins"][0]["conditions"][0]["tools"] == ["a", "z"]
+    assert serialized["plugins"][0]["conditions"][0]["tenant_ids"] is None
+    assert serialized["plugins"][0]["hooks"] == ["tool_pre_invoke", "resource_pre_fetch"]
+    assert config.plugins[0].conditions[0].tools == {"z", "a"}
+
+
+@pytest.mark.asyncio
+async def test_plugin_publication_distinguishes_disabled_from_missing_factory(plugin_publication, monkeypatch):
+    """An unavailable enabled factory cannot become an empty policy document."""
+    from mcpgateway.services import dataplane_publisher
+
+    service, _factory, _db, _redis = plugin_publication
+    monkeypatch.setattr(dataplane_publisher, "get_plugin_manager_factory", lambda: None)
+    with pytest.raises(RuntimeError, match="initialized plugin manager"):
+        await service.fetch_plugin_config({})
+    monkeypatch.setattr(dataplane_publisher, "are_plugins_enabled_shared", AsyncMock(return_value=False))
+    assert await service.fetch_plugin_config({}) == {"version": 2, "enabled": False, "global": None, "contexts": {}}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", [RuntimeError("DB unavailable"), TypeError("invalid binding config")])
+async def test_policy_failure_does_not_publish_or_refresh_routing(plugin_publication, monkeypatch, failure):
+    """A failed resolution leaves both existing keys untouched and releases the lock."""
+    import msgpack
+
+    from mcpgateway.services import dataplane_publisher
+
+    service, factory, _db, redis = plugin_publication
+    routing_key = msgpack.packb((dataplane_publisher.USER_CONFIG_KEY, USER1_ID))
+    await redis.set(routing_key, b"old-routing", ex=100)
+    await redis.set(dataplane_publisher.RUNTIME_PLUGIN_CONFIG_KEY, b"old-policy", ex=100)
+    monkeypatch.setattr(dataplane_publisher, "get_redis_client", AsyncMock(return_value=redis))
+    monkeypatch.setattr(service, "fetch_payload", AsyncMock(return_value=_policy_payload("team-a::gateway-echo")))
+
+    async def fail_resolution(_context_id):
+        service._shutdown_event.set()
+        raise failure
+
+    monkeypatch.setattr(factory, "get_config_from_db", fail_resolution)
+    await service.publish_to_redis()
+    assert await redis.get(routing_key) == b"old-routing"
+    assert await redis.get(dataplane_publisher.RUNTIME_PLUGIN_CONFIG_KEY) == b"old-policy"
+    assert await redis.get(dataplane_publisher.PUBLISHER_LOCK_KEY) is None
+
+
+@pytest.mark.asyncio
+async def test_plugin_and_routing_documents_share_publish_cycle_and_ttl(plugin_publication, monkeypatch):
+    """Real MessagePack bytes reach Redis together with the existing routing payload."""
+    import msgpack
+
+    from mcpgateway.services import dataplane_publisher
+
+    service, _factory, _db, redis = plugin_publication
+    payload = _policy_payload("team-a::gateway-echo")
+    monkeypatch.setattr(dataplane_publisher, "get_redis_client", AsyncMock(return_value=redis))
+
+    async def fetch_once():
+        service._shutdown_event.set()
+        return payload
+
+    monkeypatch.setattr(service, "fetch_payload", fetch_once)
+    await service.publish_to_redis()
+    routing_key = msgpack.packb((dataplane_publisher.USER_CONFIG_KEY, USER1_ID))
+    assert msgpack.unpackb(await redis.get(routing_key), raw=False) == payload[USER1_ID]
+    document = msgpack.unpackb(await redis.get(dataplane_publisher.RUNTIME_PLUGIN_CONFIG_KEY), raw=False)
+    assert document == await service.fetch_plugin_config(payload)
+    assert await redis.ttl(routing_key) == await redis.ttl(dataplane_publisher.RUNTIME_PLUGIN_CONFIG_KEY)
+
+
 async def _wait_forever():
     """Block until cancelled by the test cleanup."""
     await asyncio.Event().wait()
@@ -304,6 +552,10 @@ async def test_full_payload_generation_with_mock_db():
             "remove_headers": ["Cookie"],
             "capabilities": {"resources": {"subscribe": True}},
             "allowed_tool_names": ["public_tool", "private_tool"],
+            "tool_policy_contexts": {
+                "public_tool": {"id": "t1", "name": "gw1-public_tool", "team_id": "team1", "context_id": "team1::gw1-public_tool"},
+                "private_tool": {"id": "t2", "name": "gw1-private_tool", "team_id": "team1", "context_id": "team1::gw1-private_tool"},
+            },
             "tool_schemas": {
                 "public_tool": tool1.input_schema,
                 "private_tool": {},
@@ -348,6 +600,9 @@ async def test_full_payload_generation_with_mock_db():
         user3_backend = user3_config["virtual_hosts"]["s1"]["backends"]["g1"]
         assert user3_backend["allowed_tool_names"] == ["public_tool"]
         assert user3_backend["tool_schemas"] == {"public_tool": tool1.input_schema}
+        assert list(user3_backend["tool_policy_contexts"]) == ["public_tool"]
+        assert user3_backend["tool_policy_contexts"]["public_tool"]["context_id"] == "team1::gw1-public_tool"
+        assert payload[USER3_ID]["user_email"] == "user3@example.com"
 
 
 def test_build_user_data_excludes_non_object_tool_schema(caplog):
@@ -357,7 +612,8 @@ def test_build_user_data_excludes_non_object_tool_schema(caplog):
     from mcpgateway.services.dataplane_publisher import BackendItemsByServer, DataplanePublisherService
 
     bad_tool = Mock(id="bad-tool", original_name="bad", input_schema=None, visibility="public")
-    good_tool = Mock(id="good-tool", original_name="good", input_schema={"type": "object"}, visibility="public")
+    good_tool = Mock(id="good-tool", original_name="good", input_schema={"type": "object"}, visibility="public", team_id=None)
+    good_tool.name = "gw-good"
     server = Mock(id="server", visibility="public")
     backend_items_by_server: BackendItemsByServer = {
         "server": {
@@ -448,11 +704,12 @@ def test_create_payload_filters_empty_backends():
     service = DataplanePublisherService()
     data = {
         USER1_ID: {
+            "user_email": "user1@example.com",
             "servers": [
                 {
                     "id": "server1",
                     "backend_items": {
-                        "gateway1": {"tools": [], "tool_schemas": {}, "resources": [], "prompts": []},
+                        "gateway1": {"tools": [], "tool_schemas": {}, "tool_policy_contexts": {}, "resources": [], "prompts": []},
                     },
                 }
             ],
@@ -477,6 +734,7 @@ def test_create_payload_excludes_non_streamable_gateways(transport: str):
     service = DataplanePublisherService()
     data = {
         USER1_ID: {
+            "user_email": "user1@example.com",
             "servers": [
                 {
                     "id": "server1",
@@ -484,6 +742,7 @@ def test_create_payload_excludes_non_streamable_gateways(transport: str):
                         "gateway_non_streamable": {
                             "tools": ["tool1"],
                             "tool_schemas": {},
+                            "tool_policy_contexts": {},
                             "resources": [],
                             "prompts": [],
                         },
@@ -509,11 +768,12 @@ def test_create_payload_normalizes_null_passthrough_headers():
     service = DataplanePublisherService()
     data = {
         USER1_ID: {
+            "user_email": "user1@example.com",
             "servers": [
                 {
                     "id": "server1",
                     "backend_items": {
-                        "gateway1": {"tools": ["tool1"], "tool_schemas": {}, "resources": [], "prompts": []},
+                        "gateway1": {"tools": ["tool1"], "tool_schemas": {}, "tool_policy_contexts": {"tool1": {"id": "t1", "name": "gateway-tool1", "team_id": None, "context_id": ""}}, "resources": [], "prompts": []},
                     },
                 }
             ],
@@ -530,6 +790,8 @@ def test_create_payload_normalizes_null_passthrough_headers():
     assert backend["add_headers"] == {}
     assert backend["remove_headers"] == []
     assert backend["capabilities"] == {}
+    assert backend["tool_policy_contexts"]["tool1"] == {"id": "t1", "name": "gateway-tool1", "team_id": None, "context_id": "server1"}
+    assert data[USER1_ID]["servers"][0]["backend_items"]["gateway1"]["tool_policy_contexts"]["tool1"]["context_id"] == ""
 
 
 def test_create_payload_handles_missing_references():
@@ -539,6 +801,7 @@ def test_create_payload_handles_missing_references():
     service = DataplanePublisherService()
     data = {
         USER1_ID: {
+            "user_email": "user1@example.com",
             "servers": [
                 {
                     "id": "server1",
@@ -546,6 +809,7 @@ def test_create_payload_handles_missing_references():
                         "missing_gateway": {
                             "tools": ["tool1"],
                             "tool_schemas": {},
+                            "tool_policy_contexts": {},
                             "resources": ["missing_res"],
                             "prompts": ["missing_prompt"],
                         },
@@ -708,7 +972,7 @@ async def test_publish_writes_payload_releases_lock_and_exits_when_shutdown_wait
 
         await service.publish_to_redis()
 
-    pipe.set.assert_called_once()
+    assert pipe.set.call_count == 2
     key_arg, value_arg = pipe.set.call_args.args
     assert msgpack.unpackb(key_arg, raw=False) == [USER_CONFIG_KEY, USER1_ID]
     assert msgpack.unpackb(value_arg, raw=False) == payload[USER1_ID]
@@ -779,7 +1043,7 @@ async def test_publish_releases_lock_when_pipeline_execute_fails():
 
         await service.publish_to_redis()
 
-    pipe.set.assert_called_once()
+    assert pipe.set.call_count == 2
     pipe.execute.assert_awaited_once()
     mock_redis.eval.assert_awaited_once()
 

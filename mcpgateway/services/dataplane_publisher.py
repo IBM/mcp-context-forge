@@ -18,6 +18,7 @@ import socket
 from typing import Any, TypedDict
 
 # Third-Party
+from cpex.framework.models import Config
 import msgpack
 from sqlalchemy import select
 
@@ -38,12 +39,19 @@ from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.db import Server as DbServer
 from mcpgateway.db import Tool as DbTool
+from mcpgateway.plugins import are_plugins_enabled_shared, get_plugin_manager_factory
+from mcpgateway.plugins.gateway_plugin_manager import make_context_id
 from mcpgateway.utils.redis_client import get_redis_client
 
 logger = logging.getLogger(__name__)
 
 USER_CONFIG_KEY = "UserConfig"
 PUBLISHER_LOCK_KEY = "mcpgw:dataplane_publisher:lock"
+# Reuse the external dataplane's runtime-config key. Version 2 carries the
+# built-in contract: version 1 readers must reject it rather than ignore scope,
+# conditions, capabilities or gateway execution settings they cannot enforce.
+RUNTIME_PLUGIN_CONFIG_KEY = "ContextForgeGatewayRuntimePluginConfig"
+RUNTIME_PLUGIN_CONFIG_VERSION = 2
 
 
 def get_publisher_interval() -> int:
@@ -58,6 +66,30 @@ def get_publisher_ttl(publisher_interval: int | None = None) -> int:
     return publisher_interval * 2 + 10
 
 
+def _serialize_plugin_config(config: Config) -> dict[str, Any]:
+    """Serialize the native contract with stable ordering for condition sets.
+
+    The runtime fingerprints config bytes. Worker-specific set iteration order
+    must not trigger a reload when the effective policy has not changed.
+    """
+    document = config.model_dump(mode="json")
+    for plugin, serialized in zip(config.plugins or [], document["plugins"] or []):
+        for condition, serialized_condition in zip(plugin.conditions, serialized["conditions"]):
+            for key, value in condition:
+                if isinstance(value, set) and value:
+                    serialized_condition[key] = sorted(value)
+    return document
+
+
+class ToolPolicyContext(TypedDict):
+    """Canonical tool identity and the built-in policy lookup context."""
+
+    id: str
+    name: str
+    team_id: str | None
+    context_id: str
+
+
 class BackendConfig(TypedDict):
     """Backend gateway configuration for dataplane routing."""
 
@@ -69,6 +101,7 @@ class BackendConfig(TypedDict):
     capabilities: dict[str, Any]
     allowed_tool_names: list[str]
     tool_schemas: dict[str, dict[str, Any]]
+    tool_policy_contexts: dict[str, ToolPolicyContext]
     allowed_resource_names: list[str]
     allowed_resource_uris: list[str]
     allowed_prompt_names: list[str]
@@ -95,6 +128,7 @@ class UserConfig(TypedDict):
     """User-specific configuration mapping virtual host IDs to their configs."""
 
     virtual_hosts: dict[str, VirtualHostConfig]
+    user_email: str
 
 
 class BackendItems(TypedDict):
@@ -109,6 +143,7 @@ class PublishedBackendItems(BackendItems):
     """User-filtered backend items enriched with tool input schemas."""
 
     tool_schemas: dict[str, dict[str, Any]]
+    tool_policy_contexts: dict[str, ToolPolicyContext]
 
 
 class ToolMetadata(TypedDict):
@@ -116,6 +151,7 @@ class ToolMetadata(TypedDict):
 
     name: str
     input_schema: dict[str, Any]
+    policy_context: ToolPolicyContext
 
 
 BackendItemsByServer = dict[str, dict[str, BackendItems]]
@@ -169,6 +205,43 @@ class DataplanePublisherService:
             return None
         return self.create_payload(user_data)
 
+    async def fetch_plugin_config(self, payload: dict[str, UserConfig]) -> dict[str, Any]:
+        """Resolve built-in policy for every published target, failing the cycle on errors.
+
+        Prompt, resource and HTTP hooks use the global configuration. Tools
+        with a team use the same team/name context as ToolService; unscoped
+        tools use their virtual server. Only published contexts are exported.
+        Disabled plugins remain in the config, preserving override removal and
+        later re-enabling. Credentials retain the framework's serialization.
+        """
+        enabled = await are_plugins_enabled_shared()
+        document: dict[str, Any] = {"version": RUNTIME_PLUGIN_CONFIG_VERSION, "enabled": enabled, "global": None, "contexts": {}}
+        if not enabled:
+            return document
+
+        factory = get_plugin_manager_factory()
+        if factory is None:
+            raise RuntimeError("Cannot publish enabled plugins without an initialized plugin manager factory")
+
+        document["settings"] = {
+            **factory.runtime_settings,
+            "plugins_can_override_rbac": settings.plugins_can_override_rbac,
+            "plugins_can_override_auth_headers": settings.plugins_can_override_auth_headers,
+        }
+        document["global"] = _serialize_plugin_config(await factory.get_config())
+        context_ids = {
+            context["context_id"]
+            for config in payload.values()
+            for virtual_host in config["virtual_hosts"].values()
+            for backend in virtual_host["backends"].values()
+            for context in backend["tool_policy_contexts"].values()
+        }
+        if "" in context_ids:
+            raise ValueError("Published tool is missing its plugin policy context")
+        for context_id in sorted(context_ids):
+            document["contexts"][context_id] = _serialize_plugin_config(await factory.get_config(context_id))
+        return document
+
     async def publish_to_redis(self) -> None:
         """Continuously publish user configuration payloads to Redis."""
         while not self._shutdown_event.is_set():
@@ -204,7 +277,11 @@ class DataplanePublisherService:
                 if payload is None:
                     logger.warning("Skipping publish cycle due to data fetch failure - keeping existing Redis data")
                 else:
+                    # Resolve everything before queuing writes: a failed policy
+                    # lookup must not refresh routing with missing protection.
+                    plugin_config = await self.fetch_plugin_config(payload)
                     pipe = redis.pipeline()
+                    pipe.set(RUNTIME_PLUGIN_CONFIG_KEY, msgpack.dumps(plugin_config, use_bin_type=True), ex=publisher_ttl)
                     for key, config in payload.items():
                         key = msgpack.dumps((USER_CONFIG_KEY, key), use_bin_type=True)
                         pipe.set(
@@ -293,6 +370,10 @@ class DataplanePublisherService:
                     if not backend_items["tools"] and not allowed_resource_names and not allowed_prompt_names:
                         continue
 
+                    tool_contexts = {name: context.copy() for name, context in backend_items["tool_policy_contexts"].items()}
+                    for context in tool_contexts.values():
+                        context["context_id"] = context["context_id"] or server["id"]
+
                     backends[gateway_id] = {
                         "name": gateway_config["name"],
                         "url": gateway_config["url"],
@@ -302,6 +383,7 @@ class DataplanePublisherService:
                         "capabilities": gateway_config["capabilities"],
                         "allowed_tool_names": backend_items["tools"],
                         "tool_schemas": backend_items["tool_schemas"],
+                        "tool_policy_contexts": tool_contexts,
                         "allowed_resource_names": allowed_resource_names,
                         "allowed_resource_uris": allowed_resource_uris,
                         "allowed_prompt_names": allowed_prompt_names,
@@ -316,7 +398,7 @@ class DataplanePublisherService:
 
                 virtual_hosts[server["id"]] = {"backends": backends}
 
-            result[subject_key] = {"virtual_hosts": virtual_hosts}
+            result[subject_key] = {"virtual_hosts": virtual_hosts, "user_email": user_data["user_email"]}
 
         return result
 
@@ -365,7 +447,9 @@ class DataplanePublisherService:
                         DbResource.uri_template.is_(None),
                     )
                 ).all()
-                tool_rows = db.execute(select(DbTool.id, DbTool.original_name, DbTool.input_schema, DbTool.owner_email, DbTool.team_id, DbTool.visibility).where(DbTool.enabled.is_(True))).all()
+                tool_rows = db.execute(
+                    select(DbTool.id, DbTool.__table__.c.name, DbTool.original_name, DbTool.input_schema, DbTool.owner_email, DbTool.team_id, DbTool.visibility).where(DbTool.enabled.is_(True))
+                ).all()
                 backend_items_by_server = self._get_backend_items_by_server(db)
 
                 return {
@@ -410,9 +494,16 @@ class DataplanePublisherService:
             tool_by_id[tool.id] = {
                 "name": tool.original_name,
                 "input_schema": tool.input_schema,
+                "policy_context": {
+                    "id": tool.id,
+                    "name": tool.name,
+                    "team_id": tool.team_id,
+                    "context_id": make_context_id(str(tool.team_id), tool.name) if tool.team_id else "",
+                },
             }
 
         return {
+            "user_email": user_email,
             "servers": [
                 {
                     "id": server.id,
@@ -458,6 +549,7 @@ class DataplanePublisherService:
             gateway_id: {
                 "tools": [tool_by_id[tool_id]["name"] for tool_id in backend_items["tools"] if tool_id in tool_by_id],
                 "tool_schemas": {tool_by_id[tool_id]["name"]: tool_by_id[tool_id]["input_schema"] for tool_id in backend_items["tools"] if tool_id in tool_by_id},
+                "tool_policy_contexts": {tool_by_id[tool_id]["name"]: tool_by_id[tool_id]["policy_context"] for tool_id in backend_items["tools"] if tool_id in tool_by_id},
                 "resources": list(backend_items["resources"]),
                 "prompts": list(backend_items["prompts"]),
             }

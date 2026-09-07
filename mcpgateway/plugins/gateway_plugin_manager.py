@@ -27,6 +27,7 @@ from typing import Any, Callable, Optional
 # Third-Party
 from cpex.framework import ConfigLoader, HookPayloadPolicy, ObservabilityProvider, OnError, PluginMode, TenantPluginManager
 from cpex.framework.models import Config
+from cpex.framework.settings import settings as plugin_settings
 from pydantic import BaseModel, ValidationError
 from sqlalchemy.orm import Session
 
@@ -126,6 +127,28 @@ class TenantPluginManagerFactory:
             return []
         return [plugin.name for plugin in self._base_config.plugins]
 
+    @property
+    def runtime_settings(self) -> dict[str, Any]:
+        """Return the execution settings used by this factory's managers."""
+        return {
+            "plugin_timeout": self._timeout,
+            "fail_on_plugin_error": plugin_settings.fail_on_plugin_error,
+            "execution_pool": plugin_settings.execution_pool,
+            "default_hook_policy": plugin_settings.default_hook_policy,
+            "hook_policies": {hook: {"writable_fields": sorted(policy.writable_fields)} for hook, policy in (self._hook_policies or {}).items()},
+        }
+
+    async def get_config(self, context_id: str = "__global__") -> Config:
+        """Resolve current overrides without constructing or executing plugins.
+
+        Both manager construction and dataplane publication use this resolver.
+        The base YAML stays loaded until factory reinitialization, while DB and
+        runtime mode overrides are reread on each resolution.
+        """
+        overrides = await self.get_config_from_db(context_id)
+        config = self._merge_tenant_config(overrides)
+        return await self._apply_redis_mode_overrides(config)
+
     async def get_manager(self, context_id: Optional[str] = None) -> TenantPluginManager:
         """Get or create a TenantPluginManager for the given context."""
         context_id = context_id or "__global__"
@@ -167,9 +190,7 @@ class TenantPluginManagerFactory:
         """Create, initialise, and cache a new manager for *context_id*."""
         manager = None
         try:
-            new_config = await self.get_config_from_db(context_id)
-            config = self._merge_tenant_config(new_config)
-            config = await self._apply_redis_mode_overrides(config)
+            config = await self.get_config(context_id)
 
             manager = TenantPluginManager(
                 config=config,
@@ -236,7 +257,7 @@ class TenantPluginManagerFactory:
 
         return self._base_config.model_copy(update={"plugins": merged_plugins}, deep=True)
 
-    async def _apply_redis_mode_overrides(self, config: Any) -> Any:
+    async def _apply_redis_mode_overrides(self, config: Config) -> Config:
         """Apply per-plugin mode overrides. Redis is authoritative; the in-process map is the fallback."""
         if not config.plugins:
             return config
