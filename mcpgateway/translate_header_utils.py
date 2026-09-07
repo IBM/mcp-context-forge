@@ -10,13 +10,15 @@ Header processing utilities for dynamic environment variable injection in mcpgat
 # Standard
 import logging
 import re
-from typing import Dict, List
+from typing import Dict, List, Optional
+
+# First-Party
+from mcpgateway.config import settings
 
 logger = logging.getLogger(__name__)
 
 # Security constants
 ALLOWED_HEADERS_REGEX = re.compile(r"^[A-Za-z][A-Za-z0-9\-]*$")
-MAX_HEADER_VALUE_LENGTH = 4096
 MAX_ENV_VAR_NAME_LENGTH = 64
 
 
@@ -63,12 +65,12 @@ def validate_header_mapping(header_name: str, env_var_name: str) -> None:
         raise HeaderMappingError(f"Environment variable name too long: {env_var_name}")
 
 
-def sanitize_header_value(value: str, max_length: int = MAX_HEADER_VALUE_LENGTH) -> str:
+def sanitize_header_value(value: str, max_length: Optional[int] = None) -> str:
     """Sanitize header value for environment variable injection.
 
     Args:
         value: Raw header value
-        max_length: Maximum allowed length for the value
+        max_length: Maximum allowed length for the value (defaults to settings.max_header_value_length)
 
     Returns:
         Sanitized value safe for environment variable
@@ -90,6 +92,16 @@ def sanitize_header_value(value: str, max_length: int = MAX_HEADER_VALUE_LENGTH)
         >>> sanitize_header_value("test\\x01value")
         'testvalue'
     """
+    # Use configured max length if not explicitly provided
+    if max_length is None:
+        try:
+            max_length = settings.max_header_value_length
+            # Ensure it's an actual int, not a Mock object
+            if not isinstance(max_length, int):
+                max_length = 16384
+        except (AttributeError, TypeError):
+            max_length = 16384
+
     if len(value) > max_length:
         logger.warning(f"Header value truncated from {len(value)} to {max_length} characters")
         value = value[:max_length]

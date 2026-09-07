@@ -48,9 +48,6 @@ logger = logging.getLogger(__name__)
 # Header name validation regex - allows letters, numbers, and hyphens
 HEADER_NAME_REGEX = re.compile(r"^[A-Za-z0-9\-]+$")
 
-# Maximum header value length (4KB)
-MAX_HEADER_VALUE_LENGTH = 4096
-
 # Inbound passthrough denylist: protocol-level headers that must never be
 # forwarded from client requests, regardless of allowlist configuration.
 # These headers control request encoding, routing, and connection management
@@ -93,14 +90,14 @@ class PassthroughHeadersError(Exception):
     """
 
 
-def sanitize_header_value(value: str, max_length: int = MAX_HEADER_VALUE_LENGTH) -> str:
+def sanitize_header_value(value: str, max_length: Optional[int] = None) -> str:
     """Sanitize header value for security.
 
     Removes dangerous characters and enforces length limits.
 
     Args:
         value: Header value to sanitize
-        max_length: Maximum allowed length
+        max_length: Maximum allowed length (defaults to settings.max_header_value_length)
 
     Returns:
         Sanitized header value
@@ -115,6 +112,16 @@ def sanitize_header_value(value: str, max_length: int = MAX_HEADER_VALUE_LENGTH)
         >>> sanitize_header_value('  spaced  ')
         'spaced'
     """
+    # Use configured max length if not explicitly provided
+    if max_length is None:
+        try:
+            max_length = settings.max_header_value_length
+            # Ensure it's an actual int, not a Mock object
+            if not isinstance(max_length, int):
+                max_length = 16384
+        except (AttributeError, TypeError):
+            max_length = 16384
+
     # Remove newlines and carriage returns to prevent header injection
     value = value.replace("\r", "").replace("\n", "")
 
