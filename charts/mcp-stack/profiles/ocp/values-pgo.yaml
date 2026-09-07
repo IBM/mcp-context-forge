@@ -292,6 +292,12 @@ migration:
   hookPhase: "pre-install,pre-upgrade"
   hostKey: "host"
   portKey: "port"
+  # Must match mcpContextForge.image.tag. A pinned default here would migrate the
+  # schema to an older head than the gateway expects, crashlooping the gateway pods.
+  image:
+    repository: ghcr.io/ibm/mcp-context-forge
+    tag: latest
+    pullPolicy: Always
   # OpenShift SCC: let OCP assign UID from its allowed range (1000740000-1000749999)
   podSecurityContext:
     runAsNonRoot: true
