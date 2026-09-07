@@ -61,7 +61,11 @@ def test_binding_changes_reach_dataplane_redis(admin_client, fast_time_server):
 
         # The routed upstream name must retain its owning team and canonical
         # gateway name, so direct and aliased routes can select the same policy.
-        user_configs = [msgpack.unpackb(redis.get(key), raw=False) for key in redis.scan_iter() if key != PLUGIN_KEY.encode() and key.startswith(b"\x92\xaaUserConfig")]
+        user_configs = []
+        for key in redis.scan_iter(match=b"\x92\xaaUserConfig*"):
+            raw = redis.get(key)
+            if raw is not None:  # A snapshot can expire between SCAN and GET.
+                user_configs.append(msgpack.unpackb(raw, raw=False))
         contexts = [
             context
             for config in user_configs
@@ -76,12 +80,13 @@ def test_binding_changes_reach_dataplane_redis(admin_client, fast_time_server):
         binding_id = None
         try:
             for mode, expected_mode, priority in [("enforce_ignore_error", "sequential", 7), ("permissive", "transform", 8), ("disabled", "disabled", 9)]:
+                override_config = {**(original["config"] or {}), "publisher_test_revision": priority}
                 binding = _helpers.create_tool_plugin_binding(
                     admin_client,
                     team_id=fast_time_server["team_id"],
                     tool_name=fast_time_server["echo_tool"],
                     plugin_id=PLUGIN_NAME,
-                    config=original["config"] or {},
+                    config=override_config,
                     mode=mode,
                     priority=priority,
                 )
@@ -90,6 +95,7 @@ def test_binding_changes_reach_dataplane_redis(admin_client, fast_time_server):
                 effective = _plugin(document, context_id)
                 assert effective is not None
                 assert effective["mode"] == expected_mode
+                assert effective["config"] == override_config
                 if mode == "enforce_ignore_error":
                     assert effective["on_error"] == "ignore"
                 assert document["global"]["plugins"] == initial["global"]["plugins"]

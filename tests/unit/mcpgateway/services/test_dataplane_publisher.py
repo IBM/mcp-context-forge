@@ -140,9 +140,12 @@ async def test_plugin_publication_tracks_override_lifecycle_and_specificity(plug
 
     exact.mode = "disabled"
     exact.on_error = "disable"
+    exact.config = {"nested": {"updated": True}}
     db.commit()
     document = await service.fetch_plugin_config(payload)
     assert document["contexts"]["team-a::gateway-echo"]["plugins"][0]["mode"] == "disabled"
+    assert document["contexts"]["team-a::gateway-echo"]["plugins"][0]["on_error"] == "disable"
+    assert document["contexts"]["team-a::gateway-echo"]["plugins"][0]["config"] == {"words": [], "retained": "base", "nested": {"updated": True}}
 
     # Runtime mode overrides win over DB overrides, including legacy error policy.
     await redis.set("plugin:Guard:mode", "enforce_ignore_error")
@@ -199,6 +202,14 @@ def test_plugin_condition_serialization_is_stable_without_reordering_hooks():
     assert serialized["plugins"][0]["conditions"][0]["tenant_ids"] is None
     assert serialized["plugins"][0]["hooks"] == ["tool_pre_invoke", "resource_pre_fetch"]
     assert config.plugins[0].conditions[0].tools == {"z", "a"}
+
+
+@pytest.mark.asyncio
+async def test_plugin_publication_rejects_missing_tool_context(plugin_publication):
+    """A routed tool without its policy scope cannot silently use global policy."""
+    service, _factory, _db, _redis = plugin_publication
+    with pytest.raises(ValueError, match="missing its plugin policy context"):
+        await service.fetch_plugin_config(_policy_payload(""))
 
 
 @pytest.mark.asyncio
