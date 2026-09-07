@@ -58,7 +58,6 @@ class _CatalogGatewayMatch:
     gateway_id: str
     enabled: bool
     auth_type: Optional[str]
-    oauth_config: Optional[Dict[str, Any]]
     owner_email: Optional[str]
     created_via: Optional[str]
 
@@ -250,15 +249,14 @@ class CatalogService:
                 # First-Party
                 from mcpgateway.db import Gateway as DbGateway  # pylint: disable=import-outside-toplevel
 
-                # Query all gateways (enabled and disabled) to properly track registration status
-                # Include auth_type and oauth_config to distinguish OAuth servers needing setup
-                # from OAuth servers that were manually disabled after configuration
+                # Query all gateways (enabled and disabled) to properly track registration status.
+                # Include auth_type to distinguish OAuth servers (needing setup or manually
+                # disabled after configuration) from other auth types.
                 stmt = select(
                     DbGateway.id,
                     DbGateway.url,
                     DbGateway.enabled,
                     DbGateway.auth_type,
-                    DbGateway.oauth_config,
                     DbGateway.visibility,
                     DbGateway.team_id,
                     DbGateway.owner_email,
@@ -266,7 +264,7 @@ class CatalogService:
                 )
                 result = db.execute(stmt)
                 for row in result:
-                    gateway_id, url, enabled, auth_type, oauth_config, visibility, team_id, owner_email, created_via = row
+                    gateway_id, url, enabled, auth_type, visibility, team_id, owner_email, created_via = row
                     if is_scoped_request and not self._can_view_registered_gateway(db, visibility, team_id, owner_email, user_email, token_teams):
                         continue
 
@@ -274,7 +272,6 @@ class CatalogService:
                         gateway_id=str(gateway_id),
                         enabled=enabled,
                         auth_type=auth_type,
-                        oauth_config=oauth_config,
                         owner_email=owner_email,
                         created_via=created_via,
                     )
@@ -410,6 +407,37 @@ class CatalogService:
 
         return False
 
+    @staticmethod
+    def _build_oauth_config_from_credentials(oauth_credentials: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """Build a raw (pre-discovery, pre-encryption) oauth_config from caller-supplied credentials.
+
+        Shared by both catalog registration paths that persist ``oauth_config`` up front (#5967):
+        the skip-initialization path (OAuth entry with no API key) and the mixed "OAuth2.1 & API
+        Key" path when the caller supplies both an API key and OAuth credentials.
+
+        Args:
+            oauth_credentials: Caller-supplied OAuth credential overrides (issuer, scopes, and
+                optionally client_id/client_secret/token_url/authorization_url), or None.
+
+        Returns:
+            A raw oauth_config dict with authorization_code/store_tokens/auto_refresh defaults
+            plus whichever caller-supplied fields were provided.
+        """
+        oauth_credentials = oauth_credentials or {}
+        raw_oauth_config: Dict[str, Any] = {
+            "grant_type": "authorization_code",
+            "store_tokens": True,
+            "auto_refresh": True,
+        }
+        for key in ("issuer", "client_id", "client_secret", "token_url", "authorization_url"):
+            value = oauth_credentials.get(key)
+            if value:
+                raw_oauth_config[key] = value
+        scopes = oauth_credentials.get("scopes")
+        if scopes:
+            raw_oauth_config["scopes"] = scopes if isinstance(scopes, list) else [str(scopes)]
+        return raw_oauth_config
+
     async def register_catalog_server(
         self,
         catalog_id: str,
@@ -527,6 +555,15 @@ class CatalogService:
                     # OAuth servers and mixed auth may need API key as a bearer token
                     gateway_data["auth_type"] = "bearer"
                     gateway_data["auth_token"] = request.api_key
+                    if request.oauth_credentials:
+                        # A mixed "OAuth2.1 & API Key" entry may submit both: the bearer
+                        # token drives the connection test below same as any API-key entry,
+                        # and oauth_config still gets persisted on the same GatewayCreate so
+                        # the caller isn't required to resubmit issuer/client details later
+                        # to switch this gateway to OAuth. register_gateway() below already
+                        # runs oauth_config through the same discovery/encryption pipeline
+                        # regardless of auth_type, so nothing else needs to change on this path.
+                        gateway_data["oauth_config"] = self._build_oauth_config_from_credentials(request.oauth_credentials)
                 else:
                     # For any other auth types, use custom headers (as list of dicts)
                     gateway_data["auth_type"] = "authheaders"
@@ -542,7 +579,6 @@ class CatalogService:
                 # Create minimal gateway entry without tool discovery
                 # First-Party
                 from mcpgateway.db import Gateway as DbGateway  # pylint: disable=import-outside-toplevel
-                from mcpgateway.services.encryption_service import protect_oauth_config_for_storage  # pylint: disable=import-outside-toplevel
 
                 # Carry any OAuth credentials the caller supplied (issuer, scopes, and
                 # optionally client_id/client_secret/token_url/authorization_url) onto the
@@ -550,20 +586,7 @@ class CatalogService:
                 # Whatever is left blank (client_id/secret, token/authorization URLs) is filled
                 # in later - automatically for providers that support discovery/DCR - by the
                 # existing GET /oauth/authorize/{gateway_id} flow.
-                oauth_credentials = (request.oauth_credentials if request and request.oauth_credentials else {}) or {}
-                raw_oauth_config: Dict[str, Any] = {
-                    "grant_type": "authorization_code",
-                    "store_tokens": True,
-                    "auto_refresh": True,
-                }
-                for key in ("issuer", "client_id", "client_secret", "token_url", "authorization_url"):
-                    value = oauth_credentials.get(key)
-                    if value:
-                        raw_oauth_config[key] = value
-                scopes = oauth_credentials.get("scopes")
-                if scopes:
-                    raw_oauth_config["scopes"] = scopes if isinstance(scopes, list) else [str(scopes)]
-                gateway_data["oauth_config"] = raw_oauth_config
+                gateway_data["oauth_config"] = self._build_oauth_config_from_credentials(request.oauth_credentials if request else None)
 
                 # Runs the same URL/SSRF and grant-type validation normal gateway registration
                 # applies (GatewayCreate.validate_oauth_config); oauth_config round-trips through
@@ -571,11 +594,10 @@ class CatalogService:
                 gateway_create = GatewayCreate(**gateway_data)
                 slug_name = slugify(gateway_data["name"])
 
-                # Same discovery-then-encrypt pipeline register_gateway() uses
+                # Same enforce/discover/validate/encrypt pipeline register_gateway() uses
                 # (gateway_service.py) so issuer-only submissions still get usable
                 # token_url/authorization_url when the provider publishes them.
-                raw_oauth_config = await self._gateway_service._auto_discover_oauth_endpoints(gateway_create.oauth_config)  # pylint: disable=protected-access
-                stored_oauth_config = await protect_oauth_config_for_storage(raw_oauth_config)
+                stored_oauth_config = await self._gateway_service.prepare_oauth_config_for_storage(db, gateway_create.oauth_config, owner_email)
 
                 db_gateway = DbGateway(
                     name=gateway_data["name"],
