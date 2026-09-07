@@ -304,7 +304,7 @@ async def list_teams(
 
         return TeamListResponse(teams=team_responses, total=total)
     except Exception as e:
-        logger.error(f"Error listing teams: {e}")
+        logger.error(f"Error listing teams: {SecurityValidator.sanitize_log_message(str(e))}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to list teams")
 
 
