@@ -1067,6 +1067,7 @@ def test_okta_invalid_group_mapping_json_uses_empty(monkeypatch, caplog):
     assert providers[0]["team_mapping"] == {}
     assert any("Failed to parse OKTA_GROUP_MAPPING" in record.message for record in caplog.records)
 
+
 def test_ibm_verify_default_scope_without_group_mapping(monkeypatch):
     """IBM Verify should use empty team_mapping when IBM_VERIFY_GROUP_MAPPING is not set."""
     # First-Party
@@ -1161,7 +1162,6 @@ def test_ibm_verify_invalid_group_mapping_json_uses_empty(monkeypatch, caplog):
     assert len(providers) == 1
     assert providers[0]["team_mapping"] == {}
     assert any("Failed to parse IBM_VERIFY_GROUP_MAPPING" in record.message for record in caplog.records)
-
 
 
 class TestBootstrapPreservesDBValues:
