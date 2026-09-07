@@ -634,14 +634,16 @@ invocation otherwise (a tool outside the caller's team also 404s, matching `tool
 
 ```bash
 # Preview a tool call — validates arguments against the tool's input schema, resolves the
-# target (local vs. federated), and reports which preview_safe plugin hooks would run.
+# target (local vs. federated), and reports which preview_safe plugin hooks actually ran.
 jq -n --argjson args '{"param1":"value1"}' '{"arguments":$args}' |
 curl -s -X POST -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
   -d @- "$BASE_URL/tools/preview/$TOOL_NAME" | jq
 ```
 
-Response shape:
+Response shape (`pre_hooks_run` lists the names of `preview_safe`-tagged plugins that actually
+ran — not a fixed set of built-in stages, so it's empty on a gateway with no such plugins
+configured):
 
 ```json
 {
@@ -649,7 +651,7 @@ Response shape:
   "resolved_arguments": {"param1": "value1"},
   "target": {"kind": "local", "gateway_name": null},
   "annotations": {"readOnlyHint": true, "destructiveHint": null, "idempotentHint": null, "openWorldHint": null},
-  "pre_hooks_run": ["schema_validation"],
+  "pre_hooks_run": [],
   "warnings": []
 }
 ```

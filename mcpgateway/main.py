@@ -217,7 +217,7 @@ from mcpgateway.services.prompt_service import PromptError, PromptLockConflictEr
 from mcpgateway.services.resource_service import ResourceError, ResourceLockConflictError, ResourceNotFoundError, ResourceURIConflictError, ResourceValidationError
 from mcpgateway.services.server_service import ServerError, ServerLockConflictError, ServerNameConflictError, ServerNotFoundError
 from mcpgateway.services.tag_service import TagService
-from mcpgateway.services.tool_service import ToolError, ToolLockConflictError, ToolNameConflictError, ToolNotFoundError
+from mcpgateway.services.tool_service import ToolError, ToolInvocationError, ToolLockConflictError, ToolNameConflictError, ToolNotFoundError
 from mcpgateway.transports.sse_transport import SSETransport
 from mcpgateway.transports.streamablehttp_transport import (
     _validate_streamable_session_access,
@@ -5924,7 +5924,9 @@ async def preview_tool(
 
     Raises:
         HTTPException: 404 if the feature is disabled, or if the tool is not found or not
-            accessible to the caller (same visibility rules as live invocation).
+            accessible to the caller (same visibility rules as live invocation). 400 if
+            resolution fails for a reason short of not-found -- an ambiguous tool name or a
+            deprecated tool (same as live invocation's own ``ToolInvocationError`` handling).
     """
     if not settings.mcpgateway_tool_preview_enabled:
         raise HTTPException(status_code=404, detail="Tool preview is disabled")
@@ -5945,6 +5947,10 @@ async def preview_tool(
         )
     except ToolNotFoundError as e:
         raise HTTPException(status_code=404, detail=str(e))
+    except ToolInvocationError as e:
+        # Resolution-time failures short of not-found (ambiguous name, deprecated tool) --
+        # same status live invocation uses for ToolError (main.py's create_tool handler).
+        raise HTTPException(status_code=400, detail=str(e))
 
 
 @tool_router.get("/{tool_id}", response_model=Union[ToolRead, Dict])

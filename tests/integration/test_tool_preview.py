@@ -45,7 +45,7 @@ from mcpgateway.config import settings
 from mcpgateway.main import app
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, get_db as rbac_get_db, get_permission_service
 from mcpgateway.schemas import ToolAnnotations, ToolPreviewResponse, ToolPreviewTarget
-from mcpgateway.services.tool_service import ToolNotFoundError
+from mcpgateway.services.tool_service import ToolInvocationError, ToolNotFoundError
 from mcpgateway.utils.verify_credentials import require_auth
 
 # ---------------------------------------------------------------------------
@@ -247,6 +247,7 @@ class TestToolPreviewIntegration:
 
         assert response.status_code == 200
         body = response.json()
+        assert body.keys() >= {"validated", "resolvedArguments", "target", "annotations", "preHooksRun", "warnings"}
         assert body["validated"] is True
         assert body["target"]["kind"] == "local"
         mock_preview.assert_awaited_once()
@@ -273,6 +274,29 @@ class TestToolPreviewIntegration:
         assert response.status_code == 200
         call_kwargs = mock_preview.call_args.kwargs
         assert call_kwargs["arguments"] == {}
+
+    @patch("mcpgateway.main.tool_service.preview_tool_invocation", new_callable=AsyncMock)
+    def test_empty_object_body_defaults_to_no_arguments(self, mock_preview, _auth_client):
+        """An empty JSON object body (no "arguments" key) also defaults to {}."""
+        client, auth_headers = _auth_client
+        mock_preview.return_value = _sample_local_response()
+
+        response = client.post("/tools/preview/get_weather", json={}, headers=auth_headers)
+
+        assert response.status_code == 200
+        assert mock_preview.call_args.kwargs["arguments"] == {}
+
+    @patch("mcpgateway.main.tool_service.preview_tool_invocation", new_callable=AsyncMock)
+    def test_explicit_null_arguments_defaults_to_no_arguments(self, mock_preview, _auth_client):
+        """An explicit JSON null for "arguments" must not 422 -- treated the same as
+        omitting the key entirely (#5629)."""
+        client, auth_headers = _auth_client
+        mock_preview.return_value = _sample_local_response()
+
+        response = client.post("/tools/preview/get_weather", json={"arguments": None}, headers=auth_headers)
+
+        assert response.status_code == 200
+        assert mock_preview.call_args.kwargs["arguments"] == {}
 
     @patch("mcpgateway.main.tool_service.preview_tool_invocation", new_callable=AsyncMock)
     def test_tool_name_with_path_segments_preserved(self, mock_preview, _auth_client):
@@ -353,6 +377,18 @@ class TestToolPreviewIntegration:
         response = client.post("/v1/tools/preview/missing_tool", json={"arguments": {}}, headers=auth_headers)
 
         assert response.status_code == 404
+
+    @patch("mcpgateway.main.tool_service.preview_tool_invocation", new_callable=AsyncMock)
+    def test_ambiguous_or_deprecated_tool_returns_400(self, mock_preview, _auth_client):
+        """Service raising ToolInvocationError (ambiguous name / deprecated tool, both
+        surfaced by _resolve_tool_for_invocation) -> HTTP 400, not an unhandled 500."""
+        client, auth_headers = _auth_client
+        mock_preview.side_effect = ToolInvocationError("Tool 'dupe_tool' is deprecated and cannot be executed.")
+
+        response = client.post("/tools/preview/dupe_tool", json={"arguments": {}}, headers=auth_headers)
+
+        assert response.status_code == 400
+        assert "deprecated" in response.json()["detail"].lower()
 
     # ------------------------------------------------------------------
     # Authorisation rejection (missing tools.preview permission)

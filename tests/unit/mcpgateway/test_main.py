@@ -1450,7 +1450,7 @@ class TestToolEndpoints:
         response = test_client.post("/tools/1/state?activate=false", headers=auth_headers)
         assert response.status_code == 404
 
-    @patch("mcpgateway.main.tool_service.preview_tool_invocation")
+    @patch("mcpgateway.main.tool_service.preview_tool_invocation", new_callable=AsyncMock)
     def test_preview_tool_endpoint(self, mock_preview, test_client, auth_headers):
         """POST /tools/preview/{name} returns 200 wrapping the service's dry-run envelope (#5629)."""
         # First-Party

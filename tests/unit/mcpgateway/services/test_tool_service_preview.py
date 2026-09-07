@@ -148,7 +148,10 @@ class TestPreviewToolInvocationSchemaValidation:
 
     @pytest.mark.asyncio
     async def test_valid_arguments(self, service, test_db):
-        with patch.object(service, "_resolve_tool_for_invocation", AsyncMock(return_value=_resolved(_local_tool_payload()))):
+        with (
+            patch.object(service, "_resolve_tool_for_invocation", AsyncMock(return_value=_resolved(_local_tool_payload()))),
+            patch.object(service, "_get_plugin_manager", AsyncMock(return_value=None)),
+        ):
             result = await service.preview_tool_invocation(test_db, "test_tool", {"param": "value"})
 
         assert result.validated is True

@@ -2089,9 +2089,32 @@ class ToolPreviewRequest(BaseModelWithConfigDict):
     Attributes:
         arguments (Dict[str, Any]): Arguments to validate against the tool's input schema.
                                    Not executed against the tool; see :class:`ToolPreviewResponse`.
+
+    Examples:
+        >>> ToolPreviewRequest().arguments
+        {}
+        >>> ToolPreviewRequest(arguments={}).arguments
+        {}
+        >>> # An explicit JSON null for "arguments" is as good as omitting the key entirely --
+        >>> # a client that always serializes the field shouldn't 422 for doing so (#5629).
+        >>> ToolPreviewRequest(arguments=None).arguments
+        {}
     """
 
     arguments: Dict[str, Any] = Field(default_factory=dict, description="Arguments to validate against the tool's input schema")
+
+    @field_validator("arguments", mode="before")
+    @classmethod
+    def _coerce_none_to_empty_dict(cls, value: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        """Treat an explicit JSON ``null`` the same as an omitted ``arguments`` key.
+
+        Args:
+            value: The raw ``arguments`` value as received, before type validation.
+
+        Returns:
+            Dict[str, Any]: ``value`` unchanged, or ``{}`` when ``value`` is ``None``.
+        """
+        return {} if value is None else value
 
 
 class ToolPreviewTarget(BaseModelWithConfigDict):

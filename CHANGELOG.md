@@ -12,6 +12,29 @@
 ### Breaking Changes
 
 - **stdio wrapper removed in favour of FastMCP** - `mcpgateway/wrapper.py` (`python -m mcpgateway.wrapper`) and the Rust `crates/wrapper/` binary are removed. Clients that already speak Streamable HTTP need no bridge — point them at `/servers/<server_id>/mcp/` directly. For stdio clients such as Claude Desktop, use FastMCP's bridge (`uvx fastmcp-remote`); see [`docs/docs/using/clients/`](docs/docs/using/clients/) for per-client configuration.
+- **Enabled authentication rejects default passwords** ([#6570](https://github.com/IBM/mcp-context-forge/pull/6570)) - When Basic Auth or email authentication is enabled, empty, placeholder, and known-weak password values now fail startup. Set `BASIC_AUTH_PASSWORD` for `API_ALLOW_BASIC_AUTH=true` or `DOCS_ALLOW_BASIC_AUTH=true`; set `PLATFORM_ADMIN_PASSWORD` and `DEFAULT_USER_PASSWORD` for `EMAIL_AUTH_ENABLED=true`. Existing deployments must run `make init-secrets-patch-env` or update their deployment Secret before restarting. See the [migration guide](../docs/docs/operations/default-password-fail-closed-migration.md).
+
+### Fixed
+
+#### **OAuth & Gateway Access**
+
+- **Team gateway OAuth access with cached users** ([#6589](https://github.com/IBM/mcp-context-forge/pull/6589)) - Gateway OAuth authorization now checks team membership through `TeamManagementService`, avoiding false `403` responses caused by detached cached user records.
+- **Vault OAuth callback origin behind reverse proxies** ([#6556](https://github.com/IBM/mcp-context-forge/pull/6556)) - Vault authorization now builds its callback URI from `APP_DOMAIN` instead of the internal request origin, preventing identity providers from rejecting redirects behind ingress proxies.
+
+#### **MCP Transport & Plugins**
+
+- **Plugin context propagation over `/mcp`** ([#6140](https://github.com/IBM/mcp-context-forge/pull/6140)) - Streamable HTTP tool calls, prompt fetches, and resource reads now receive context created by `HTTP_PRE_REQUEST`, preserving cross-hook plugin state on the MCP transport.
+
+#### **Teams & API Reliability**
+
+- **Active team name collision handling** ([#6558](https://github.com/IBM/mcp-context-forge/pull/6558)) - Duplicate active team names now return controlled client errors instead of an internal server error. Platform administrators receive a specific `400`; other callers receive a non-disclosing `409`, including during concurrent insert races.
+
+### Chores
+
+| PR | Description |
+|----|-------------|
+| [#6530](https://github.com/IBM/mcp-context-forge/pull/6530) | remove pre-commit interrogate arguments so checks use the shared `pyproject.toml` configuration |
+| [#6658](https://github.com/IBM/mcp-context-forge/pull/6658) | update Python and Node.js dependencies, rebuild the Admin UI bundle, and bump `fast-uri` to address four high-severity advisories |
 
 ## [1.0.10] - 2026-09-07 - OAuth Security, Observability, Plugin Context, and Reliability
 
@@ -40,30 +63,8 @@ Release 1.0.10 consolidates **10 PRs** focused on **OAuth security and reliabili
 
 ### Breaking Changes
 
-- **Enabled authentication rejects default passwords** ([#6570](https://github.com/IBM/mcp-context-forge/pull/6570)) - When Basic Auth or email authentication is enabled, empty, placeholder, and known-weak password values now fail startup. Set `BASIC_AUTH_PASSWORD` for `API_ALLOW_BASIC_AUTH=true` or `DOCS_ALLOW_BASIC_AUTH=true`; set `PLATFORM_ADMIN_PASSWORD` and `DEFAULT_USER_PASSWORD` for `EMAIL_AUTH_ENABLED=true`. Existing deployments must run `make init-secrets-patch-env` or update their deployment Secret before restarting. See the [migration guide](../docs/docs/operations/default-password-fail-closed-migration.md).
-
-### Fixed
-
-#### **OAuth & Gateway Access**
-
-- **Team gateway OAuth access with cached users** ([#6589](https://github.com/IBM/mcp-context-forge/pull/6589)) - Gateway OAuth authorization now checks team membership through `TeamManagementService`, avoiding false `403` responses caused by detached cached user records.
-- **Vault OAuth callback origin behind reverse proxies** ([#6556](https://github.com/IBM/mcp-context-forge/pull/6556)) - Vault authorization now builds its callback URI from `APP_DOMAIN` instead of the internal request origin, preventing identity providers from rejecting redirects behind ingress proxies.
-
-#### **MCP Transport & Plugins**
-
-- **Plugin context propagation over `/mcp`** ([#6140](https://github.com/IBM/mcp-context-forge/pull/6140)) - Streamable HTTP tool calls, prompt fetches, and resource reads now receive context created by `HTTP_PRE_REQUEST`, preserving cross-hook plugin state on the MCP transport.
-
-#### **Teams & API Reliability**
-
-- **Active team name collision handling** ([#6558](https://github.com/IBM/mcp-context-forge/pull/6558)) - Duplicate active team names now return controlled client errors instead of an internal server error. Platform administrators receive a specific `400`; other callers receive a non-disclosing `409`, including during concurrent insert races.
-
-### Chores
-
-| PR | Description |
-|----|-------------|
-| [#6530](https://github.com/IBM/mcp-context-forge/pull/6530) | remove pre-commit interrogate arguments so checks use the shared `pyproject.toml` configuration |
-| [#6658](https://github.com/IBM/mcp-context-forge/pull/6658) | update Python and Node.js dependencies, rebuild the Admin UI bundle, and bump `fast-uri` to address four high-severity advisories |
-
+- **Enabled authentication rejects default passwords** - When Basic Auth or email authentication is enabled, empty, placeholder, and known-weak password values now fail startup. Set `BASIC_AUTH_PASSWORD` for `API_ALLOW_BASIC_AUTH=true` or `DOCS_ALLOW_BASIC_AUTH=true`; set `PLATFORM_ADMIN_PASSWORD` and `DEFAULT_USER_PASSWORD` for `EMAIL_AUTH_ENABLED=true`. Existing deployments must run `make init-secrets-patch-env` or update their deployment Secret before restarting. See the [migration guide](docs/docs/operations/default-password-fail-closed-migration.md).
+- **`invoke_tool` now enforces input-schema validation** - Live tool invocation (`tools/call`) now validates `arguments` against the tool's `input_schema` before dispatch, raising `ToolInvocationError` on a mismatch, via the same `_validate_tool_input_arguments` check `POST /tools/preview/{name}` uses (#5629). Previously `invoke_tool` never checked `arguments` against `input_schema` at all. A tool whose callers relied on that gap being unenforced will now reject calls it previously accepted; update the tool's `input_schema` or the caller's arguments if this trips existing integrations.
 
 ## [1.0.9] - 2026-08-31 - mTLS, OAuth Quick Wins, Tool Preview, Catalog Actions, and Security Hardening
 
