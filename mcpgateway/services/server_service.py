@@ -46,10 +46,10 @@ from mcpgateway.services.metrics_cleanup_service import delete_metrics_in_batche
 from mcpgateway.services.performance_tracker import get_performance_tracker
 from mcpgateway.services.structured_logger import get_structured_logger
 from mcpgateway.services.team_management_service import TeamManagementService
-from mcpgateway.transports.streamablehttp_transport import _build_server_resource_url
 from mcpgateway.utils.admin_check import is_admin_bypass_granted
 from mcpgateway.utils.metrics_common import build_top_performers
 from mcpgateway.utils.pagination import unified_paginate
+from mcpgateway.utils.server_urls import build_server_mcp_url
 from mcpgateway.utils.sqlalchemy_modifier import json_contains_tag_expr
 
 # ---------------------------------------------------------------------------
@@ -414,9 +414,9 @@ class ServerService(BaseService):
             "enabled": server.enabled,
             # Same APP_DOMAIN-derived base URL OAuth's redirect_uri default and
             # the RFC 8707/9728 resource URL already use — see
-            # _build_server_resource_url's docstring for why this must come
-            # from settings.app_domain rather than the request's Host header.
-            "url": _build_server_resource_url(scope=None, server_id=server.id) or None,
+            # build_server_mcp_url's docstring for why this must come from
+            # settings.app_domain rather than the request's Host header.
+            "url": build_server_mcp_url(server.id) or None,
             "created_at": server.created_at,
             "updated_at": server.updated_at,
             "team_id": server.team_id,
