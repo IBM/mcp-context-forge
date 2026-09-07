@@ -11,9 +11,9 @@ from unittest.mock import Mock, patch
 
 # First-Party
 from mcpgateway.cache.global_config_cache import global_config_cache
+from mcpgateway.config import settings
 from mcpgateway.utils.passthrough_headers import (
     get_passthrough_headers,
-    MAX_HEADER_VALUE_LENGTH,
     sanitize_header_value,
     validate_header_name,
 )
@@ -67,11 +67,15 @@ class TestHeaderSecurity:
 
     def test_sanitize_header_value_length_limit(self):
         """Test that header values are limited to prevent DoS attacks."""
-        oversized_value = "A" * (MAX_HEADER_VALUE_LENGTH * 2)
+        try:
+            max_length = settings.max_header_value_length
+        except (AttributeError, TypeError):
+            max_length = 16384
+        oversized_value = "A" * (max_length * 2)
         result = sanitize_header_value(oversized_value)
 
-        assert len(result) == MAX_HEADER_VALUE_LENGTH
-        assert result == "A" * MAX_HEADER_VALUE_LENGTH
+        assert len(result) == max_length
+        assert result == "A" * max_length
 
     def test_validate_header_name_injection_prevention(self):
         """Test that header name validation prevents injection."""

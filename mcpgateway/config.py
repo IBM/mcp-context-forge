@@ -65,10 +65,10 @@ from pydantic import AliasChoices, Field, field_validator, HttpUrl, model_valida
 from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 # First-Party
+from mcpgateway._security_constants import calculate_entropy
 from mcpgateway._security_constants import MIN_ENTROPY as _MIN_ENTROPY
 from mcpgateway._security_constants import MIN_SECRET_LENGTH as _MIN_SECRET_LENGTH
 from mcpgateway._security_constants import WEAK_VALUES as _CANONICAL_WEAK_VALUES
-from mcpgateway._security_constants import calculate_entropy
 from mcpgateway.utils.origin import is_exact_https_origin
 
 # Only configure basic logging if no handlers exist yet
@@ -3866,6 +3866,12 @@ Disallow: /
     max_header_total_size_bytes: int = Field(default=16384, description="Maximum total size of all headers (16KB default)")
     max_header_field_size_bytes: int = Field(default=8192, description="Maximum size of individual header field (8KB default)")
     max_header_count: int = Field(default=100, description="Maximum number of header fields")
+    max_header_value_length: int = Field(
+        default=16384,
+        description="Maximum length for individual header values during sanitization (16KB default). "
+        "Increase for OAuth providers with large tokens (e.g., Atlassian Rovo ~8KB+). "
+        "Must be <= max_header_field_size_bytes.",
+    )
 
     # Header passthrough feature (disabled by default for security)
     enable_header_passthrough: bool = Field(default=False, description="Enable HTTP header passthrough feature (WARNING: Security implications - only enable if needed)")
