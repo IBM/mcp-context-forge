@@ -9,9 +9,57 @@
 
 ## [Unreleased]
 
+## [1.0.10] - 2026-09-07 - OAuth Security, Observability, Plugin Context, and Reliability
+
+### Overview
+
+Release 1.0.10 consolidates **10 PRs** focused on **OAuth security and reliability**, **observability and session-affinity performance**, **plugin context propagation**, **Vault support for A2A agents**, **team management reliability**, and **dependency security**:
+
+- **Security & Auth** - Rejects default passwords when authentication features are enabled, adds a strict post-OAuth redirect allowlist, and fixes cached team-membership checks during gateway OAuth authorization.
+- **Gateway & Plugins** - Preserves plugin context across MCP tool, prompt, and resource hooks; supports Vault token injection for A2A agents exposed as MCP tools; and uses the configured public application domain for Vault OAuth callbacks.
+- **Observability & Performance** - Adds affinity-path tracing, W3C trace propagation, optional Redis/HTTPX/SQLAlchemy instrumentation, and bounded concurrent affinity forwarding while preserving per-session ordering.
+- **Reliability & Tooling** - Returns clear client errors for duplicate active team names, centralizes interrogate configuration, and refreshes Python and Node.js dependencies with security updates.
+
+### Added
+
+#### **Security & OAuth**
+
+- **Post-OAuth redirect allowlist** ([#6411](https://github.com/IBM/mcp-context-forge/pull/6411)) - Added optional `redirect_uri_after_oauth` gateway configuration for returning users to an external application after Authorization Code OAuth. Redirects require an exact HTTPS origin configured by `OAUTH_REDIRECT_ALLOWED_ORIGIN` and are validated at configuration and callback time.
+
+#### **Observability & Performance**
+
+- **Affinity-path tracing and concurrent forwarding** ([#6164](https://github.com/IBM/mcp-context-forge/pull/6164)) - Added affinity-path spans, W3C trace propagation across affinity hops, optional Redis/HTTPX/SQLAlchemy auto-instrumentation, and bounded concurrent forwarding while preserving per-session FIFO ordering and timeout fallback.
+
+#### **Plugins**
+
+- **Vault support for A2A agents exposed as MCP tools** ([#6395](https://github.com/IBM/mcp-context-forge/pull/6395)) - Vault plugin now detects A2A-backed MCP tools, injects matching bearer tokens for tagged agents, and strips `X-Vault-Tokens` headers from forwarded requests.
+
 ### Breaking Changes
 
-- **Enabled authentication rejects default passwords** - When Basic Auth or email authentication is enabled, empty, placeholder, and known-weak password values now fail startup. Set `BASIC_AUTH_PASSWORD` for `API_ALLOW_BASIC_AUTH=true` or `DOCS_ALLOW_BASIC_AUTH=true`; set `PLATFORM_ADMIN_PASSWORD` and `DEFAULT_USER_PASSWORD` for `EMAIL_AUTH_ENABLED=true`. Existing deployments must run `make init-secrets-patch-env` or update their deployment Secret before restarting. See the [migration guide](docs/docs/operations/default-password-fail-closed-migration.md).
+- **Enabled authentication rejects default passwords** ([#6570](https://github.com/IBM/mcp-context-forge/pull/6570)) - When Basic Auth or email authentication is enabled, empty, placeholder, and known-weak password values now fail startup. Set `BASIC_AUTH_PASSWORD` for `API_ALLOW_BASIC_AUTH=true` or `DOCS_ALLOW_BASIC_AUTH=true`; set `PLATFORM_ADMIN_PASSWORD` and `DEFAULT_USER_PASSWORD` for `EMAIL_AUTH_ENABLED=true`. Existing deployments must run `make init-secrets-patch-env` or update their deployment Secret before restarting. See the [migration guide](../docs/docs/operations/default-password-fail-closed-migration.md).
+
+### Fixed
+
+#### **OAuth & Gateway Access**
+
+- **Team gateway OAuth access with cached users** ([#6589](https://github.com/IBM/mcp-context-forge/pull/6589)) - Gateway OAuth authorization now checks team membership through `TeamManagementService`, avoiding false `403` responses caused by detached cached user records.
+- **Vault OAuth callback origin behind reverse proxies** ([#6556](https://github.com/IBM/mcp-context-forge/pull/6556)) - Vault authorization now builds its callback URI from `APP_DOMAIN` instead of the internal request origin, preventing identity providers from rejecting redirects behind ingress proxies.
+
+#### **MCP Transport & Plugins**
+
+- **Plugin context propagation over `/mcp`** ([#6140](https://github.com/IBM/mcp-context-forge/pull/6140)) - Streamable HTTP tool calls, prompt fetches, and resource reads now receive context created by `HTTP_PRE_REQUEST`, preserving cross-hook plugin state on the MCP transport.
+
+#### **Teams & API Reliability**
+
+- **Active team name collision handling** ([#6558](https://github.com/IBM/mcp-context-forge/pull/6558)) - Duplicate active team names now return controlled client errors instead of an internal server error. Platform administrators receive a specific `400`; other callers receive a non-disclosing `409`, including during concurrent insert races.
+
+### Chores
+
+| PR | Description |
+|----|-------------|
+| [#6530](https://github.com/IBM/mcp-context-forge/pull/6530) | remove pre-commit interrogate arguments so checks use the shared `pyproject.toml` configuration |
+| [#6658](https://github.com/IBM/mcp-context-forge/pull/6658) | update Python and Node.js dependencies, rebuild the Admin UI bundle, and bump `fast-uri` to address four high-severity advisories |
+
 
 ## [1.0.9] - 2026-08-31 - mTLS, OAuth Quick Wins, Tool Preview, Catalog Actions, and Security Hardening
 

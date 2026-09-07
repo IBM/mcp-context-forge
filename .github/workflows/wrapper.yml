@@ -22,6 +22,8 @@ concurrency:
 env:
     CARGO_TERM_COLOR: always
     RUST_BACKTRACE: 1
+    PLATFORM_ADMIN_PASSWORD: "ci-test-admin-P@ssw0rd-DO-NOT-USE-IN-PRODUCTION"  # pragma: allowlist secret
+    DEFAULT_USER_PASSWORD: "ci-test-user-P@ssw0rd-DO-NOT-USE-IN-PRODUCTION"  # pragma: allowlist secret
 
 jobs:
     wrapper-e2e:
