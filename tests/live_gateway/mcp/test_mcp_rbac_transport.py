@@ -33,7 +33,6 @@ import asyncio
 from collections.abc import AsyncIterator
 import concurrent.futures
 from contextlib import asynccontextmanager, suppress
-from datetime import timedelta
 import logging
 import os
 import time
@@ -42,9 +41,10 @@ import uuid
 
 # Third-Party
 import httpx
+import httpx2
 import pytest
-from mcp import ClientSession, McpError
-from mcp.client.streamable_http import streamablehttp_client
+from mcp import ClientSession, MCPError as McpError
+from mcp.client.streamable_http import create_mcp_http_client, streamable_http_client
 
 pw = pytest.importorskip("playwright", reason="playwright is not installed – pip install playwright")
 from playwright.sync_api import APIRequestContext, Playwright
@@ -433,9 +433,9 @@ async def _mcp_session(server_url: str, access_token: str | None = None) -> Asyn
     """Open an initialized MCP client session over Streamable HTTP."""
     url = _mcp_client_url(server_url)
     headers = {"Authorization": f"Bearer {access_token}"} if access_token else None
-    timeout = timedelta(seconds=_CLIENT_TIMEOUT)
-    async with streamablehttp_client(url, headers=headers, timeout=timeout, sse_read_timeout=timeout) as (read_stream, write_stream, _):
-        async with ClientSession(read_stream, write_stream, read_timeout_seconds=timeout) as session:
+    timeout = httpx2.Timeout(_CLIENT_TIMEOUT)
+    async with streamable_http_client(url, http_client=create_mcp_http_client(headers=headers, timeout=timeout)) as (read_stream, write_stream):
+        async with ClientSession(read_stream, write_stream, read_timeout_seconds=_CLIENT_TIMEOUT) as session:
             await session.initialize()
             yield session
 
@@ -673,7 +673,7 @@ class TestMcpToolCallByRole:
 
     def test_admin_calls_tool_success(self, test_users: dict) -> None:
         result = _mcp_tool_call(test_users["admin"]["access_token"], "mcp-rbac-streamable-http-gw-get-system-time", {"timezone": "UTC"})
-        assert not result.isError, f"Admin tool call should succeed: {result}"
+        assert not result.is_error, f"Admin tool call should succeed: {result}"
         text = result.content[0].text
         assert len(text) > 0
         print(f"    -> Admin call mcp-rbac-streamable-http-gw-get-system-time = {text}")
@@ -681,20 +681,20 @@ class TestMcpToolCallByRole:
     def test_developer_can_execute_on_default_endpoint(self, test_users: dict) -> None:
         """Developer has team-scoped tools.execute; check_any_team=True allows it on /mcp."""
         result = _mcp_tool_call(test_users["developer"]["access_token"], "mcp-rbac-streamable-http-gw-get-system-time", {"timezone": "UTC"})
-        assert not result.isError, f"Developer tool call should succeed (check_any_team): {result}"
+        assert not result.is_error, f"Developer tool call should succeed (check_any_team): {result}"
         print(f"    -> Developer call succeeded: {result.content[0].text}")
 
     def test_team_admin_can_execute_on_default_endpoint(self, test_users: dict) -> None:
         """Team admin has team-scoped tools.execute; check_any_team=True allows it on /mcp."""
         result = _mcp_tool_call(test_users["team_admin"]["access_token"], "mcp-rbac-streamable-http-gw-get-system-time", {"timezone": "UTC"})
-        assert not result.isError, f"Team admin tool call should succeed (check_any_team): {result}"
+        assert not result.is_error, f"Team admin tool call should succeed (check_any_team): {result}"
         print(f"    -> Team admin call succeeded: {result.content[0].text}")
 
     def test_outsider_denied_tools_execute(self, outsider_user: dict) -> None:
         """Outsider has no team membership, so no tools.execute anywhere — denied."""
         try:
             result = _mcp_tool_call(outsider_user["access_token"], "mcp-rbac-streamable-http-gw-get-system-time", {"timezone": "UTC"})
-            assert result.isError, f"Outsider should be denied tools.execute, got: {result}"
+            assert result.is_error, f"Outsider should be denied tools.execute, got: {result}"
         except Exception:
             pass  # McpError or connection error — both valid denials
         print("    -> Outsider denied tools.execute (expected)")
@@ -702,7 +702,7 @@ class TestMcpToolCallByRole:
     def test_outsider_calls_nonexistent_tool_error(self, outsider_user: dict) -> None:
         try:
             result = _mcp_tool_call(outsider_user["access_token"], "nonexistent-tool-xyz-rbac")
-            assert result.isError, f"Nonexistent tool should return error, got: {result}"
+            assert result.is_error, f"Nonexistent tool should return error, got: {result}"
         except Exception:
             pass  # McpError — expected for outsider with no permissions
         print("    -> Outsider nonexistent tool: error (expected)")
@@ -710,7 +710,7 @@ class TestMcpToolCallByRole:
     def test_viewer_can_execute_on_default_endpoint(self, test_users: dict) -> None:
         """Viewer has team-scoped tools.execute; check_any_team=True allows it on /mcp."""
         result = _mcp_tool_call(test_users["viewer"]["access_token"], "mcp-rbac-streamable-http-gw-get-system-time", {"timezone": "UTC"})
-        assert not result.isError, f"Viewer tool call should succeed (check_any_team): {result}"
+        assert not result.is_error, f"Viewer tool call should succeed (check_any_team): {result}"
         print(f"    -> Viewer call succeeded: {result.content[0].text}")
 
 
@@ -747,7 +747,7 @@ class TestMcpScopedTokenPermissions:
     def test_unscoped_admin_token_can_call_tools(self, test_users: dict) -> None:
         """Admin token without custom scope (empty permissions = pass-through) can call tools."""
         result = _mcp_tool_call(test_users["admin"]["access_token"], "mcp-rbac-streamable-http-gw-get-system-time", {"timezone": "UTC"})
-        assert not result.isError, f"Unscoped admin token should succeed: {result}"
+        assert not result.is_error, f"Unscoped admin token should succeed: {result}"
         text = result.content[0].text
         assert len(text) > 0
         print(f"    -> Unscoped admin token call = {text}")
@@ -774,7 +774,7 @@ class TestMcpStreamableHttpTransport:
         assert len(time_tools) > 0, f"Expected at least one get-system-time tool, got: {[t.name for t in tools]}"
         # Call the first one found
         result = _mcp_tool_call(test_users["admin"]["access_token"], time_tools[0], {"timezone": "UTC"})
-        assert not result.isError, f"Streamable HTTP get-system-time failed: {result}"
+        assert not result.is_error, f"Streamable HTTP get-system-time failed: {result}"
         print(f"    -> Streamable HTTP {time_tools[0]} = {result.content[0].text}")
 
     def test_streamable_http_convert_time(self, test_users: dict) -> None:
@@ -786,7 +786,7 @@ class TestMcpStreamableHttpTransport:
             convert_tools[0],
             {"time": "2025-06-01T10:00:00Z", "source_timezone": "UTC", "target_timezone": "Europe/London"},
         )
-        assert not result.isError, f"Streamable HTTP convert-time failed: {result}"
+        assert not result.is_error, f"Streamable HTTP convert-time failed: {result}"
         print(f"    -> Streamable HTTP {convert_tools[0]}: OK")
 
     def test_streamable_http_resources_discoverable(self, test_users: dict) -> None:
@@ -936,7 +936,7 @@ class TestCrossTransportConsistency:
 
         for tool_name in time_tools[:2]:  # Test up to 2 variants
             result = _mcp_tool_call(test_users["admin"]["access_token"], tool_name, {"timezone": "UTC"})
-            assert not result.isError, f"{tool_name} failed: {result}"
+            assert not result.is_error, f"{tool_name} failed: {result}"
             text = result.content[0].text
             assert len(text) > 0, f"{tool_name} returned empty text"
             print(f"    -> {tool_name} = {text}")
@@ -953,7 +953,7 @@ class TestCrossTransportConsistency:
                 tool_name,
                 {"time": "2025-01-15T12:00:00Z", "source_timezone": "UTC", "target_timezone": "America/New_York"},
             )
-            assert not result.isError, f"{tool_name} failed: {result}"
+            assert not result.is_error, f"{tool_name} failed: {result}"
             text = result.content[0].text
             assert len(text) > 0, f"{tool_name} returned empty text"
             print(f"    -> {tool_name} = {text}")

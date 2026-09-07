@@ -644,6 +644,14 @@ class Settings(BaseSettings):
         description="Acknowledge and allow trusted proxy headers when MCP_CLIENT_AUTH_ENABLED=false (dangerous; only for strictly trusted proxy deployments).",
     )
     proxy_user_header: str = Field(default="X-Authenticated-User", description="Header containing authenticated username from proxy")
+    mcp_client_connect_mode: Literal["auto", "legacy"] = Field(
+        default="auto",
+        description=(
+            "Upstream MCP connect mode: 'auto' negotiates modern protocol revisions (e.g. 2026-07-28) "
+            "via server/discover with legacy initialize fallback; 'legacy' forces the pre-2026 "
+            "initialize handshake (rollback for misbehaving upstreams)."
+        ),
+    )
 
     #  Encryption key phrase for auth storage
     auth_encryption_secret: SecretStr = Field(
@@ -2831,6 +2839,11 @@ class Settings(BaseSettings):
     # Per-gateway refresh configuration (used when auto_refresh_servers is True)
     # Gateways can override this with their own refresh_interval_seconds
     gateway_auto_refresh_interval: int = Field(default=300, ge=60, description="Default refresh interval in seconds for gateway tools/resources/prompts sync (minimum 60 seconds)")
+
+    # Modern (2026-07-28) change-event listeners
+    # When enabled, the gateway holds one standing subscriptions/listen stream per
+    # server to get the list changed event
+    gateway_modern_listeners_enabled: bool = Field(default=False, description="Hold standing subscriptions/listen streams to 2026-era gateways for change-driven refresh")
 
     # Async gateway lifecycle processing
     gateway_async_lifecycle_enabled: bool = Field(default=False, description="Enable asynchronous gateway create/update/delete lifecycle processing with 202 Accepted responses")

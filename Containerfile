@@ -227,7 +227,7 @@ RUN set -euo pipefail \
     && dnf install -y --allowerasing \
         python${PYTHON_VERSION} \
         python${PYTHON_VERSION}-devel \
-        binutils openssl-devel gcc postgresql-devel gcc-c++ curl libpq-devel \
+        binutils openssl-devel gcc postgresql-devel gcc-c++ curl libpq-devel git \
     && update-alternatives --install /usr/bin/python3 python3 /usr/bin/python${PYTHON_VERSION} 1 \
     && dnf clean all
 
@@ -269,45 +269,67 @@ COPY --from=wheels /wheels /tmp/wheels
 COPY --chmod=0755 scripts/verify-native-extensions.py /tmp/verify-native-extensions.py
 
 # ----------------------------------------------------------------------------
-# Create and populate virtual environment
-#  - Upgrade pip, setuptools, wheel, uv
-#  - Install project dependencies and package
-#  - Include observability packages for OpenTelemetry support
-#  - Install plugins from PyPI (cpex-* packages)
-#  - Install local native extensions from pre-built wheels (if built)
-#  - Optionally install profiling tools (memray, py-spy) if ENABLE_PROFILING=true
-#  - Remove build tools but keep runtime dist-info
-#  - Remove build caches and build artifacts
+# Create and populate virtual environment — split into discrete RUN steps so a
+# failure names the exact stage in the build log:
+#  1. Create venv; upgrade pip, setuptools, wheel, uv
+#  2. Install project dependencies and package (incl. observability and
+#     plugins from PyPI via the [plugins] extra)
+#  3. Install local native extensions from pre-built wheels (if built)
+#  4. Drop consumed wheel staging areas
+#  5. Optionally install profiling tools (memray, py-spy) if ENABLE_PROFILING=true
+#  6. Remove build tools (keep runtime dist-info), caches, and artifacts
 # ----------------------------------------------------------------------------
 ARG ENABLE_RUST=false
 ARG ENABLE_RUST_MCP_RMCP=false
 ARG ENABLE_PROFILING=false
+
+# Step 1: Create the virtualenv and bootstrap pip/setuptools/wheel/uv.
 RUN set -euo pipefail \
     && . /etc/profile.d/use-openssl.sh \
     && python3 -m venv /app/.venv \
-    && /app/.venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel uv \
+    && /app/.venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel uv
+
+# Step 2: Install project dependencies and the package itself.
+# Hermetic path (CI) installs from the prebuilt wheel closure in /tmp/wheels;
+# otherwise resolve from PyPI. GRPC_PYTHON_BUILD_SYSTEM_OPENSSL (sourced via
+# use-openssl.sh) must be active here in case grpcio falls back to a source build.
+RUN set -euo pipefail \
+    && . /etc/profile.d/use-openssl.sh \
     && if [ -n "$(ls -A /tmp/wheels/*.whl 2>/dev/null)" ]; then \
         echo "📦 Hermetic install from prebuilt wheel closure"; \
         /app/.venv/bin/uv pip install --no-index --find-links=/tmp/wheels ".[redis,observability,plugins,llmchat]" "psycopg[c]>=3.3.3"; \
     else \
         /app/.venv/bin/uv pip install ".[redis,postgres,observability,plugins,llmchat]"; \
     fi \
-    && echo "✅ Plugins installed from PyPI via [plugins] extra" \
+    && echo "✅ Plugins installed from PyPI via [plugins] extra"
+
+# Step 3: Install local native extensions from pre-built wheels (if built).
+RUN set -euo pipefail \
     && if [ "$ENABLE_RUST" = "true" ] && ls "/tmp/local-native-extension-wheels/"*.whl 1> /dev/null 2>&1; then \
         echo "🦀 Installing local native extensions..."; \
         /app/.venv/bin/uv pip install --no-cache-dir "/tmp/local-native-extension-wheels/"*.whl && \
         /app/.venv/bin/python3 /tmp/verify-native-extensions.py && rm /tmp/verify-native-extensions.py; \
     else \
         echo "⏭️  No local native extensions discovered"; \
-    fi \
-    && rm -rf /tmp/local-native-extension-wheels /tmp/wheels \
+    fi
+
+# Step 4: Wheel staging areas are consumed — drop them before profiling so a
+# profiling failure can never shadow a wheel-install failure (and vice versa).
+RUN rm -rf /tmp/local-native-extension-wheels /tmp/wheels
+
+# Step 5: Optionally install profiling tools (memray, py-spy).
+RUN set -euo pipefail \
     && if [ "$ENABLE_PROFILING" = "true" ]; then \
         echo "📊 Installing profiling tools (memray, py-spy)..."; \
         /app/.venv/bin/uv pip install --no-cache-dir "memray>=1.17.0" && \
         /app/.venv/bin/python3 -c "import memray; print('✓ memray installed successfully')"; \
     else \
         echo "⏭️  Profiling tools disabled (set --build-arg ENABLE_PROFILING=true to enable)"; \
-    fi \
+    fi
+
+# Step 6: Remove build tools (keep runtime dist-info for other packages),
+# build caches, and build artifacts.
+RUN set -euo pipefail \
     && /app/.venv/bin/pip uninstall --yes uv pip setuptools wheel \
     && rm -rf /root/.cache /var/cache/dnf \
     && (find /app/.venv -name "*.dist-info" -type d \
