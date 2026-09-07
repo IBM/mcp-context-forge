@@ -296,6 +296,57 @@ class TestPassthroughHeaders:
         # Authorization should be present because gateway is configured with auth_type 'none'
         assert result.get("Authorization") == "Bearer client-token"
 
+    def test_mock_safe_max_length_fallback(self):
+        """Test that Mock objects from settings are handled safely in sanitize_header_value."""
+        from mcpgateway.utils.passthrough_headers import sanitize_header_value
+
+        # Mock settings.max_header_value_length to return a Mock object (test behavior)
+        with patch("mcpgateway.utils.passthrough_headers.settings") as mock_settings:
+            mock_settings.max_header_value_length = Mock()  # Returns Mock, not int
+
+            # Should fall back to 16384 default instead of using Mock (which would become 1)
+            result = sanitize_header_value("test_value")
+            assert result == "test_value"
+
+            # Test with value larger than default
+            large_value = "a" * 20000
+            result = sanitize_header_value(large_value)
+            assert len(result) == 16384  # Should use fallback, not Mock.__int__ (1)
+
+    def test_settings_attribute_error_fallback(self):
+        """Test fallback when settings.max_header_value_length raises AttributeError."""
+        from mcpgateway.utils.passthrough_headers import sanitize_header_value
+
+        # Mock settings to raise AttributeError when accessing max_header_value_length
+        with patch("mcpgateway.utils.passthrough_headers.settings") as mock_settings:
+            type(mock_settings).max_header_value_length = property(lambda self: (_ for _ in ()).throw(AttributeError("attribute not found")))
+
+            # Should fall back to 16384 default
+            result = sanitize_header_value("test_value")
+            assert result == "test_value"
+
+            # Test with value larger than default
+            large_value = "a" * 20000
+            result = sanitize_header_value(large_value)
+            assert len(result) == 16384
+
+    def test_settings_type_error_fallback(self):
+        """Test fallback when settings.max_header_value_length raises TypeError."""
+        from mcpgateway.utils.passthrough_headers import sanitize_header_value
+
+        # Mock settings to raise TypeError when accessing max_header_value_length
+        with patch("mcpgateway.utils.passthrough_headers.settings") as mock_settings:
+            type(mock_settings).max_header_value_length = property(lambda self: (_ for _ in ()).throw(TypeError("type error")))
+
+            # Should fall back to 16384 default
+            result = sanitize_header_value("test_value")
+            assert result == "test_value"
+
+            # Test with value larger than default
+            large_value = "a" * 20000
+            result = sanitize_header_value(large_value)
+            assert len(result) == 16384
+
     def test_none_request_headers(self):
         """Test behavior with None request headers."""
         mock_db = Mock()
