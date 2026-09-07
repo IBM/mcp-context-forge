@@ -22,6 +22,7 @@ Usage:
 """
 
 # Standard
+import asyncio
 import logging
 import os
 import ssl as _ssl
@@ -320,7 +321,12 @@ async def get_redis_client() -> Optional[Any]:
         connection_kwargs.update(_build_ssl_kwargs(settings))
 
         _client = aioredis.from_url(settings.redis_url, **connection_kwargs)
-        await _client.ping()
+        try:
+            await asyncio.wait_for(_client.ping(), 10.0)
+        except asyncio.TimeoutError:
+            logger.warning("Redis ping timed out after 10s — degrading to no-Redis operation")
+            await _client.aclose()
+            return None
         logger.info(
             f"Redis client initialized: parser={_parser_info}, "
             f"pool_size={settings.redis_max_connections}, "
