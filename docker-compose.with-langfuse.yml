@@ -56,9 +56,6 @@ services:
   a2a_echo_agent:
     profiles: []
 
-  register_a2a_echo:
-    profiles: []
-
   # ──────────────────────────────────────────────────────────────────────
   # Override gateway to send OTEL traces to Langfuse
   # Langfuse accepts OTLP/HTTP at /api/public/otel (gRPC not supported)
