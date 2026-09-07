@@ -77,10 +77,14 @@ async def test_list_teams_sql_filters_by_name(db_with_teams):
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_list_teams_sql_filters_by_slug(db_with_teams):
-    """list_teams SQL WHERE matches teams whose slug contains the query (case-insensitive)."""
+    """list_teams SQL WHERE matches teams whose slug contains the query (case-insensitive).
+
+    "ROCKET" matches id-rocket by name/slug AND id-ops by description
+    ("Escalates to rocket-squad on call"). Both must appear.
+    """
     svc = TeamManagementService(db_with_teams)
     teams, _ = await svc.list_teams(search_query="ROCKET")
-    assert any(t.id == "id-rocket" for t in teams)
+    assert {t.id for t in teams} == {"id-rocket", "id-ops"}
 
 
 @pytest.mark.integration

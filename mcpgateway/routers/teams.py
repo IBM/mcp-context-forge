@@ -233,6 +233,12 @@ async def list_teams(
         total = 0
         scoped_team_ids = extract_token_team_ids(current_user_ctx)
 
+        # Normalise empty string to None so both admin (SQL) and non-admin (in-memory)
+        # paths treat "no filter" identically. Without this, admin would forward "" to the
+        # service while non-admin's falsy guard silently discards it — two different contracts
+        # for the same input.
+        search_query = search_query or None
+
         # Check admin permissions using PermissionService (handles both is_admin flag and RBAC)
         permission_service = PermissionService(db)
         has_admin_team_access = await permission_service.check_platform_admin_permission(
@@ -259,16 +265,22 @@ async def list_teams(
             # Result is tuple (list, next_cursor)
             teams_data, next_cursor = result
 
-            # Get accurate total count for API consumers
-            total = await service.get_teams_count(personal_owner_email=current_user_ctx["email"], team_ids=scoped_team_ids, search_query=search_query)
+            # Get accurate total count for API consumers (not needed for cursor pagination
+            # because CursorPaginatedTeamsResponse has no total field — skip the DB round-trip).
+            if not include_pagination:
+                total = await service.get_teams_count(personal_owner_email=current_user_ctx["email"], team_ids=scoped_team_ids, search_query=search_query)
         else:
-            # Fallback to user teams and apply pagination locally
+            # Fallback to user teams and apply pagination locally.
+            # Scope narrowing (scoped_team_ids) is applied BEFORE search so out-of-scope
+            # teams can never be surfaced by a search_query match.
             user_teams = await service.get_user_teams(current_user_ctx["email"], include_personal=True)
             if scoped_team_ids is not None:
                 allowed_team_ids = set(scoped_team_ids)
                 user_teams = [team for team in user_teams if str(team.id) in allowed_team_ids]
             if search_query:
                 needle = search_query.lower()
+                # Keep fields in sync with _apply_team_list_filters(search_description=True)
+                # in team_management_service.py — name, slug, description.
                 user_teams = [team for team in user_teams if needle in team.name.lower() or needle in team.slug.lower() or needle in (team.description or "").lower()]
             total = len(user_teams)
             teams_data = user_teams[skip : skip + limit]

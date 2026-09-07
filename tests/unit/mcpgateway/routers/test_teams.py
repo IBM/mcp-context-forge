@@ -547,7 +547,11 @@ class TestTeamsRouter:
 
     @pytest.mark.asyncio
     async def test_list_teams_admin_with_cursor_pagination(self, mock_admin_context, mock_team, mock_db):
-        """Test listing teams as admin with include_pagination=True returns cursor format."""
+        """Test listing teams as admin with include_pagination=True returns cursor format.
+
+        get_teams_count must NOT be called — CursorPaginatedTeamsResponse has no total field
+        so the DB round-trip is wasted.
+        """
         teams = [mock_team]
         next_cursor = "eyJjcmVhdGVkX2F0IjogIjIwMjYtMDEtMTQiLCAiaWQiOiAiMTIzIn0="  # Base64 encoded cursor  # pragma: allowlist secret
 
@@ -568,6 +572,8 @@ class TestTeamsRouter:
             assert hasattr(result, "next_cursor")
             assert len(result.teams) == 1
             assert result.next_cursor == next_cursor
+            # S-001: get_teams_count must NOT be called for cursor pagination
+            mock_service.get_teams_count.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_list_teams_regular_user(self, mock_user_context, mock_team, mock_db):
@@ -930,8 +936,11 @@ class TestTeamsRouter:
 
     @pytest.mark.asyncio
     async def test_list_teams_admin_empty_string_search_query(self, mock_admin_context, mock_team, mock_db):
-        """Admin branch: empty-string search_query is passed through to the service unchanged
-        (falsy check is non-admin only; admin always forwards, letting the service decide)."""
+        """Empty-string search_query is normalised to None before both branches (FI-001).
+
+        The handler does ``search_query = search_query or None`` at entry so both admin (SQL)
+        and non-admin (in-memory) paths receive None and behave identically.
+        """
         with mock_permission_check(is_admin=True), patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
             mock_service = AsyncMock(spec=TeamManagementService)
             mock_service.list_teams = AsyncMock(return_value=([mock_team], None))
@@ -943,15 +952,15 @@ class TestTeamsRouter:
 
             result = await list_teams(skip=0, limit=50, cursor=None, include_pagination=False, search_query="", current_user_ctx=mock_admin_context, db=mock_db)
 
-            # Empty string is forwarded as-is — the service treats it as "no filter" internally.
-            mock_service.list_teams.assert_called_once_with(limit=50, offset=0, cursor=None, personal_owner_email="admin@example.com", team_ids=None, search_query="")
-            mock_service.get_teams_count.assert_called_once_with(personal_owner_email="admin@example.com", team_ids=None, search_query="")
+            # "" is normalised to None before forwarding — service receives None, not "".
+            mock_service.list_teams.assert_called_once_with(limit=50, offset=0, cursor=None, personal_owner_email="admin@example.com", team_ids=None, search_query=None)
+            mock_service.get_teams_count.assert_called_once_with(personal_owner_email="admin@example.com", team_ids=None, search_query=None)
             assert len(result.teams) == 1
 
     @pytest.mark.asyncio
     async def test_list_teams_non_admin_empty_string_search_query_skips_filter(self, mock_user_context, mock_team, mock_public_team, mock_db):
-        """Non-admin branch: empty-string search_query is falsy so the local filter is skipped
-        and all of the caller's teams are returned unchanged."""
+        """Non-admin branch: empty-string normalised to None, so local filter is skipped
+        and all of the caller's teams are returned unchanged (same outcome as admin path)."""
         with mock_permission_check(is_admin=False), patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
             mock_service = AsyncMock(spec=TeamManagementService)
             mock_service.get_user_teams = AsyncMock(return_value=[mock_team, mock_public_team])
@@ -962,7 +971,7 @@ class TestTeamsRouter:
 
             result = await list_teams(skip=0, limit=50, cursor=None, include_pagination=False, search_query="", current_user_ctx=mock_user_context, db=mock_db)
 
-            # Falsy search_query → no filter applied → all teams returned.
+            # "" → None → falsy guard skips filter → all teams returned.
             assert result.total == 2
 
     @pytest.mark.asyncio
@@ -1009,6 +1018,67 @@ class TestTeamsRouter:
 
             assert result.total == 1
             assert result.teams[0].id == mock_team.id
+
+    @pytest.mark.asyncio
+    async def test_list_teams_admin_cursor_pagination_with_search_query(self, mock_admin_context, mock_team, mock_db):
+        """S-004: cursor-pagination (include_pagination=True) with a non-None search_query.
+
+        search_query must be forwarded to list_teams and get_teams_count must NOT be called
+        (CursorPaginatedTeamsResponse has no total field).
+        """
+        next_cursor = "eyJjcmVhdGVkX2F0IjogIjIwMjYtMDEtMTQiLCAiaWQiOiAiMTIzIn0="  # pragma: allowlist secret
+
+        with mock_permission_check(is_admin=True), patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+            mock_service = AsyncMock(spec=TeamManagementService)
+            mock_service.list_teams = AsyncMock(return_value=([mock_team], next_cursor))
+            mock_service.get_teams_count = AsyncMock(return_value=1)
+            mock_service.get_member_counts_batch_cached = AsyncMock(return_value={str(mock_team.id): 1})
+            MockService.return_value = mock_service
+
+            from mcpgateway.routers.teams import list_teams
+
+            result = await list_teams(skip=0, limit=50, cursor=None, include_pagination=True, search_query="engineering", current_user_ctx=mock_admin_context, db=mock_db)
+
+            mock_service.list_teams.assert_called_once_with(limit=50, offset=0, cursor=None, personal_owner_email="admin@example.com", team_ids=None, search_query="engineering")
+            mock_service.get_teams_count.assert_not_called()
+            assert result.next_cursor == next_cursor
+            assert len(result.teams) == 1
+
+    @pytest.mark.asyncio
+    async def test_list_teams_non_admin_scoped_token_search_query_cannot_leak_out_of_scope(self, mock_user_context, mock_team, mock_public_team, mock_db):
+        """FI-002: scoped token (token_teams set) + search_query must not surface out-of-scope teams.
+
+        Scope narrowing is applied BEFORE the search filter. A search_query matching an
+        out-of-scope team's name must not include it in results.
+        """
+        in_scope_team = mock_team
+        in_scope_team.name = "Alpha Engineering"
+        in_scope_team.slug = "alpha-engineering"
+        in_scope_team.description = None
+
+        out_of_scope_team = mock_public_team
+        out_of_scope_team.name = "Beta Engineering"
+        out_of_scope_team.slug = "beta-engineering"
+        out_of_scope_team.description = None
+
+        # Token scoped to only the in-scope team
+        scoped_context = {**mock_user_context, "token_teams": [{"id": str(in_scope_team.id)}]}
+
+        with mock_permission_check(is_admin=False), patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+            mock_service = AsyncMock(spec=TeamManagementService)
+            # Service returns both teams as if the user is a member of both
+            mock_service.get_user_teams = AsyncMock(return_value=[in_scope_team, out_of_scope_team])
+            mock_service.get_member_counts_batch_cached = AsyncMock(return_value={str(in_scope_team.id): 1})
+            MockService.return_value = mock_service
+
+            from mcpgateway.routers.teams import list_teams
+
+            # "engineering" matches BOTH teams by name — but only in-scope team must be returned
+            result = await list_teams(skip=0, limit=50, cursor=None, include_pagination=False, search_query="engineering", current_user_ctx=scoped_context, db=mock_db)
+
+            result_ids = {t.id for t in result.teams}
+            assert str(in_scope_team.id) in result_ids, "In-scope matching team must be returned"
+            assert str(out_of_scope_team.id) not in result_ids, "Out-of-scope team must not leak even if name matches search_query"
 
     @pytest.mark.asyncio
     async def test_list_teams_error(self, mock_user_context, mock_db):
