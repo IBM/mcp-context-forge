@@ -2028,7 +2028,7 @@ class TeamManagementService:
             include_inactive: Whether to include inactive teams
             visibility_filter: Filter by visibility (private, team, public)
             include_personal: Whether to include personal teams
-            search_query: Search term for name/slug
+            search_query: Search term for name/slug/description
             personal_owner_email: When set (and include_personal=False), includes this user's personal team in the count
             team_ids: When set, restrict the count to these team IDs. An empty list matches no teams.
 
@@ -2042,6 +2042,7 @@ class TeamManagementService:
             visibility_filter=visibility_filter,
             search_query=search_query,
             personal_owner_email=personal_owner_email,
+            search_description=True,
         )
 
         if team_ids is not None:

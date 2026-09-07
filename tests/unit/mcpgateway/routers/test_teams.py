@@ -929,6 +929,88 @@ class TestTeamsRouter:
             assert result_ids == {mock_team.id, mock_public_team.id}
 
     @pytest.mark.asyncio
+    async def test_list_teams_admin_empty_string_search_query(self, mock_admin_context, mock_team, mock_db):
+        """Admin branch: empty-string search_query is passed through to the service unchanged
+        (falsy check is non-admin only; admin always forwards, letting the service decide)."""
+        with mock_permission_check(is_admin=True), patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+            mock_service = AsyncMock(spec=TeamManagementService)
+            mock_service.list_teams = AsyncMock(return_value=([mock_team], None))
+            mock_service.get_teams_count = AsyncMock(return_value=1)
+            mock_service.get_member_counts_batch_cached = AsyncMock(return_value={str(mock_team.id): 1})
+            MockService.return_value = mock_service
+
+            from mcpgateway.routers.teams import list_teams
+
+            result = await list_teams(skip=0, limit=50, cursor=None, include_pagination=False, search_query="", current_user_ctx=mock_admin_context, db=mock_db)
+
+            # Empty string is forwarded as-is — the service treats it as "no filter" internally.
+            mock_service.list_teams.assert_called_once_with(limit=50, offset=0, cursor=None, personal_owner_email="admin@example.com", team_ids=None, search_query="")
+            mock_service.get_teams_count.assert_called_once_with(personal_owner_email="admin@example.com", team_ids=None, search_query="")
+            assert len(result.teams) == 1
+
+    @pytest.mark.asyncio
+    async def test_list_teams_non_admin_empty_string_search_query_skips_filter(self, mock_user_context, mock_team, mock_public_team, mock_db):
+        """Non-admin branch: empty-string search_query is falsy so the local filter is skipped
+        and all of the caller's teams are returned unchanged."""
+        with mock_permission_check(is_admin=False), patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+            mock_service = AsyncMock(spec=TeamManagementService)
+            mock_service.get_user_teams = AsyncMock(return_value=[mock_team, mock_public_team])
+            mock_service.get_member_counts_batch_cached = AsyncMock(return_value={str(mock_team.id): 1, str(mock_public_team.id): 1})
+            MockService.return_value = mock_service
+
+            from mcpgateway.routers.teams import list_teams
+
+            result = await list_teams(skip=0, limit=50, cursor=None, include_pagination=False, search_query="", current_user_ctx=mock_user_context, db=mock_db)
+
+            # Falsy search_query → no filter applied → all teams returned.
+            assert result.total == 2
+
+    @pytest.mark.asyncio
+    async def test_list_teams_admin_search_query_case_insensitive_slug(self, mock_admin_context, mock_team, mock_db):
+        """Admin branch: search_query is case-insensitive — uppercase query matches lowercase slug."""
+        mock_team.name = "Rocket Squad"
+        mock_team.slug = "rocket-squad"
+
+        with mock_permission_check(is_admin=True), patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+            mock_service = AsyncMock(spec=TeamManagementService)
+            mock_service.list_teams = AsyncMock(return_value=([mock_team], None))
+            mock_service.get_teams_count = AsyncMock(return_value=1)
+            mock_service.get_member_counts_batch_cached = AsyncMock(return_value={str(mock_team.id): 1})
+            MockService.return_value = mock_service
+
+            from mcpgateway.routers.teams import list_teams
+
+            # Uppercase query must still be forwarded; case folding is the service's responsibility.
+            result = await list_teams(skip=0, limit=50, cursor=None, include_pagination=False, search_query="ROCKET", current_user_ctx=mock_admin_context, db=mock_db)
+
+            mock_service.list_teams.assert_called_once_with(limit=50, offset=0, cursor=None, personal_owner_email="admin@example.com", team_ids=None, search_query="ROCKET")
+            assert len(result.teams) == 1
+            assert result.teams[0].slug == "rocket-squad"
+
+    @pytest.mark.asyncio
+    async def test_list_teams_non_admin_search_query_case_insensitive_slug(self, mock_user_context, mock_team, mock_public_team, mock_db):
+        """Non-admin branch: local filter is case-insensitive — ROCKET matches slug rocket-squad."""
+        mock_team.name = "Rocket Squad"
+        mock_team.slug = "rocket-squad"
+        mock_team.description = None
+        mock_public_team.name = "Ops Team"
+        mock_public_team.slug = "ops-team"
+        mock_public_team.description = None
+
+        with mock_permission_check(is_admin=False), patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
+            mock_service = AsyncMock(spec=TeamManagementService)
+            mock_service.get_user_teams = AsyncMock(return_value=[mock_team, mock_public_team])
+            mock_service.get_member_counts_batch_cached = AsyncMock(return_value={str(mock_team.id): 1})
+            MockService.return_value = mock_service
+
+            from mcpgateway.routers.teams import list_teams
+
+            result = await list_teams(skip=0, limit=50, cursor=None, include_pagination=False, search_query="ROCKET", current_user_ctx=mock_user_context, db=mock_db)
+
+            assert result.total == 1
+            assert result.teams[0].id == mock_team.id
+
+    @pytest.mark.asyncio
     async def test_list_teams_error(self, mock_user_context, mock_db):
         """Test listing teams with error."""
         with patch("mcpgateway.routers.teams.TeamManagementService") as MockService:
@@ -955,34 +1037,9 @@ class TestTeamsRouter:
             mock_service.get_user_role_in_team = AsyncMock(return_value="member")
             MockService.return_value = mock_service
 
-            # Mock the entire decorated function to bypass RBAC
-            from mcpgateway.routers.teams import TeamResponse
+            from mcpgateway.routers.teams import get_team
 
-            async def mock_get_team(team_id, current_user, db):
-                _ = TeamManagementService(db)
-                team = await mock_service.get_team_by_id(team_id)
-                if not team:
-                    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Team not found")
-                user_role = await mock_service.get_user_role_in_team(current_user["email"], team_id)
-                if not user_role:
-                    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
-                return TeamResponse(
-                    id=team.id,
-                    name=team.name,
-                    slug=team.slug,
-                    description=team.description,
-                    created_by=team.created_by,
-                    is_personal=team.is_personal,
-                    visibility=team.visibility,
-                    max_members=team.max_members,
-                    member_count=team.get_member_count(),
-                    created_at=team.created_at,
-                    updated_at=team.updated_at,
-                    is_active=team.is_active,
-                )
-
-            with patch("mcpgateway.routers.teams.get_team", new=mock_get_team):
-                result = await mock_get_team(team_id, mock_user_context, mock_db)
+            result = await get_team(team_id, current_user=mock_user_context, db=mock_db)
 
             assert result.id == mock_team.id
             assert result.name == mock_team.name
