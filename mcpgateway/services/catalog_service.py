@@ -417,7 +417,8 @@ class CatalogService:
 
         Args:
             oauth_credentials: Caller-supplied OAuth credential overrides (issuer, scopes, and
-                optionally client_id/client_secret/token_url/authorization_url), or None.
+                optionally client_id/client_secret/token_url/authorization_url/redirect_uri/
+                username/password/audience/resource), or None.
 
         Returns:
             A raw oauth_config dict with authorization_code/store_tokens/auto_refresh defaults
@@ -429,13 +430,19 @@ class CatalogService:
             "store_tokens": True,
             "auto_refresh": True,
         }
-        for key in ("issuer", "client_id", "client_secret", "token_url", "authorization_url"):
+        # Mirrors the field set admin._assemble_oauth_config_from_fields() accepts, so a
+        # catalog-registered gateway can carry the same RFC 8707 resource/audience and
+        # password-grant fields a manually-created gateway can (#5967 follow-up).
+        for key in ("issuer", "client_id", "client_secret", "token_url", "authorization_url", "redirect_uri", "username", "password", "audience"):
             value = oauth_credentials.get(key)
             if value:
                 raw_oauth_config[key] = value
         scopes = oauth_credentials.get("scopes")
         if scopes:
             raw_oauth_config["scopes"] = scopes if isinstance(scopes, list) else [str(scopes)]
+        resource = oauth_credentials.get("resource")
+        if resource:
+            raw_oauth_config["resource"] = resource if isinstance(resource, list) else str(resource)
         return raw_oauth_config
 
     async def register_catalog_server(

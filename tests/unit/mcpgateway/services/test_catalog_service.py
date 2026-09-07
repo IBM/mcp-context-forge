@@ -219,6 +219,56 @@ async def test_get_catalog_servers_requires_oauth_config_enabled(service):
 
 
 @pytest.mark.asyncio
+async def test_get_catalog_servers_requires_oauth_config_true_even_when_oauth_config_set(service, test_db):
+    """A disabled OAuth gateway still requires_oauth_config even once oauth_config is persisted.
+
+    Catalog registration now persists oauth_config up front (#5967), so an unauthorized gateway
+    can have a populated oauth_config and still need the caller to complete the OAuth flow.
+    requires_oauth_config must key off enabled/auth_type alone, not oauth_config presence -
+    otherwise a genuinely unauthorized gateway would look fully configured to the caller.
+    """
+    # First-Party
+    from mcpgateway.db import Gateway as DbGateway
+
+    gateway = DbGateway(
+        id="gw-configured-disabled",
+        name="oauth-configured",
+        slug="oauth-configured",
+        url="http://oauth-configured.example.com",
+        description="OAuth server with oauth_config already set, still disabled",
+        capabilities={},
+        auth_type="oauth",
+        enabled=False,
+        oauth_config={"grant_type": "authorization_code", "issuer": "https://idp.example.com"},
+    )
+    test_db.add(gateway)
+    test_db.commit()
+
+    fake_catalog = {
+        "catalog_servers": [
+            {
+                "id": "1",
+                "name": "oauth-configured",
+                "url": "http://oauth-configured.example.com",
+                "category": "cat",
+                "auth_type": "OAuth2.1",
+                "provider": "prov",
+                "tags": [],
+                "description": "OAuth server",
+            },
+        ]
+    }
+    with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)), patch.object(service, "_get_registry_cache", return_value=None):
+        req = CatalogListRequest(offset=0, limit=10)
+        result = await service.get_catalog_servers(req, test_db)
+        assert result.total == 1
+        server = result.servers[0]
+        assert server.is_registered is True
+        assert server.gateway_id == "gw-configured-disabled"
+        assert server.requires_oauth_config is True
+
+
+@pytest.mark.asyncio
 async def test_register_catalog_server_not_found(service):
     with patch.object(service, "load_catalog", AsyncMock(return_value={"catalog_servers": []})):
         db = MagicMock()
@@ -544,6 +594,34 @@ async def test_register_oauth_skip_init_stamps_owner(service):
     assert db_gateway.owner_email == "u@x.com"
     assert db_gateway.team_id is None
     assert db_gateway.visibility == "private"
+
+
+def test_build_oauth_config_from_credentials_carries_resource_and_password_grant_fields(service):
+    """The catalog registration path must not drop RFC 8707 resource/audience or
+    password-grant fields that the equivalent admin.py OAuth form assembly accepts,
+    otherwise a catalog-registered gateway can never get them set at registration time."""
+    raw = service._build_oauth_config_from_credentials(
+        {
+            "issuer": "https://issuer.example.com",
+            "redirect_uri": "https://gateway.example.com/oauth/callback",
+            "username": "svc-account",
+            "password": "svc-secret",  # pragma: allowlist secret
+            "audience": "https://api.example.com",
+            "resource": "https://api.example.com/mcp",
+        }
+    )
+    assert raw["redirect_uri"] == "https://gateway.example.com/oauth/callback"
+    assert raw["username"] == "svc-account"
+    assert raw["password"] == "svc-secret"  # pragma: allowlist secret
+    assert raw["audience"] == "https://api.example.com"
+    assert raw["resource"] == "https://api.example.com/mcp"
+
+
+def test_build_oauth_config_from_credentials_resource_list_preserved(service):
+    """A caller-supplied multi-value ``resource`` (RFC 7519 aud-claim shape) round-trips as a
+    list rather than being coerced to str or dropped for not being a plain string."""
+    raw = service._build_oauth_config_from_credentials({"resource": ["https://a.example.com", "https://b.example.com"]})
+    assert raw["resource"] == ["https://a.example.com", "https://b.example.com"]
 
 
 @pytest.mark.asyncio
