@@ -511,6 +511,42 @@ if __name__ == "__main__":
             result = sanitize_header_value(large_value)
             assert len(result) == 16384  # Should use fallback, not Mock.__int__ (1)
 
+    def test_settings_attribute_error_fallback(self):
+        """Test fallback when settings.max_header_value_length raises AttributeError."""
+        from unittest.mock import patch
+        from mcpgateway.translate_header_utils import sanitize_header_value
+
+        # Mock settings to raise AttributeError when accessing max_header_value_length
+        with patch("mcpgateway.translate_header_utils.settings") as mock_settings:
+            type(mock_settings).max_header_value_length = property(lambda self: (_ for _ in ()).throw(AttributeError("attribute not found")))
+
+            # Should fall back to 16384 default
+            result = sanitize_header_value("test_value")
+            assert result == "test_value"
+
+            # Test with value larger than default
+            large_value = "a" * 20000
+            result = sanitize_header_value(large_value)
+            assert len(result) == 16384
+
+    def test_settings_type_error_fallback(self):
+        """Test fallback when settings.max_header_value_length raises TypeError."""
+        from unittest.mock import patch
+        from mcpgateway.translate_header_utils import sanitize_header_value
+
+        # Mock settings to raise TypeError when accessing max_header_value_length
+        with patch("mcpgateway.translate_header_utils.settings") as mock_settings:
+            type(mock_settings).max_header_value_length = property(lambda self: (_ for _ in ()).throw(TypeError("type error")))
+
+            # Should fall back to 16384 default
+            result = sanitize_header_value("test_value")
+            assert result == "test_value"
+
+            # Test with value larger than default
+            large_value = "a" * 20000
+            result = sanitize_header_value(large_value)
+            assert len(result) == 16384
+
     @pytest.mark.asyncio
     async def test_large_header_values(self, test_script):
         """Test handling of large header values."""

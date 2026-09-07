@@ -6,6 +6,9 @@ SPDX-License-Identifier: Apache-2.0
 Tests for translate_header_utils helpers.
 """
 
+# Standard
+from unittest.mock import Mock, patch
+
 # Third-Party
 import pytest
 
@@ -84,3 +87,51 @@ def test_extract_env_vars_handles_sanitize_exception(monkeypatch):
     env_vars = extract_env_vars_from_headers({"Authorization": "Bearer token"}, nm)
 
     assert env_vars == {}
+
+
+def test_mock_safe_max_length_fallback():
+    """Test that Mock objects from settings are handled safely in sanitize_header_value."""
+    # Mock settings.max_header_value_length to return a Mock object (test behavior)
+    with patch("mcpgateway.translate_header_utils.settings") as mock_settings:
+        mock_settings.max_header_value_length = Mock()  # Returns Mock, not int
+
+        # Should fall back to 16384 default instead of using Mock (which would become 1)
+        result = sanitize_header_value("test_value")
+        assert result == "test_value"
+
+        # Test with value larger than default
+        large_value = "a" * 20000
+        result = sanitize_header_value(large_value)
+        assert len(result) == 16384  # Should use fallback, not Mock.__int__ (1)
+
+
+def test_settings_attribute_error_fallback():
+    """Test fallback when settings.max_header_value_length raises AttributeError."""
+    # Mock settings to raise AttributeError when accessing max_header_value_length
+    with patch("mcpgateway.translate_header_utils.settings") as mock_settings:
+        type(mock_settings).max_header_value_length = property(lambda self: (_ for _ in ()).throw(AttributeError("attribute not found")))
+
+        # Should fall back to 16384 default
+        result = sanitize_header_value("test_value")
+        assert result == "test_value"
+
+        # Test with value larger than default
+        large_value = "a" * 20000
+        result = sanitize_header_value(large_value)
+        assert len(result) == 16384
+
+
+def test_settings_type_error_fallback():
+    """Test fallback when settings.max_header_value_length raises TypeError."""
+    # Mock settings to raise TypeError when accessing max_header_value_length
+    with patch("mcpgateway.translate_header_utils.settings") as mock_settings:
+        type(mock_settings).max_header_value_length = property(lambda self: (_ for _ in ()).throw(TypeError("type error")))
+
+        # Should fall back to 16384 default
+        result = sanitize_header_value("test_value")
+        assert result == "test_value"
+
+        # Test with value larger than default
+        large_value = "a" * 20000
+        result = sanitize_header_value(large_value)
+        assert len(result) == 16384
