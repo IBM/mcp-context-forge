@@ -30,6 +30,7 @@ import pytest
 from mcpgateway.config import settings
 
 # Local
+from tests.helpers.api_helpers import rate_limit_retry_delay
 from tests.helpers.auth import _UNSET, make_playwright_api_context, make_test_jwt
 from ..pages.login_page import LoginPage
 from .conftest import BASE_URL
@@ -87,6 +88,28 @@ def _set_jwt_cookie(context: BrowserContext, token: str) -> None:
             }
         ]
     )
+
+
+def _goto_with_rate_limit_retry(page: Page, url: str, attempts: int = 2, **goto_kwargs):
+    """Navigate, retrying once on a 429 from cross-tier IP lockout.
+
+    /admin itself isn't on the CRITICAL rate-limit tier, but violations are
+    tracked per client IP across all tiers: enough CRITICAL-tier violations
+    elsewhere in this run (e.g. invitation POSTs) can trip an IP-wide lockout
+    that then blocks /admin navigation too. A plain 429 here is contention
+    from other requests in this run, not a real navigation failure; an actual
+    lockout (X-Lockout-Remaining) fails fast instead of sleeping through it.
+    """
+    response = None
+    for attempt in range(attempts):
+        response = page.goto(url, **goto_kwargs)
+        if not response or response.status != 429:
+            break
+        delay = rate_limit_retry_delay(response.headers)
+        if delay is None or attempt >= attempts - 1:
+            break
+        time.sleep(delay)
+    return response
 
 
 def _expected_samesite() -> str:
@@ -427,11 +450,11 @@ class TestPlaywrightSecurityE2EAuthAndSession:
         if not settings.auth_required:
             pytest.skip("Auth is disabled, logout session invalidation is not applicable.")
 
-        response = email_logged_in_page.goto("/admin/logout")
+        response = _goto_with_rate_limit_retry(email_logged_in_page, "/admin/logout")
         if response:
             assert response.status in (200, 302, 303)
 
-        email_logged_in_page.goto(f"/admin?logout_check={uuid.uuid4().hex[:8]}")
+        _goto_with_rate_limit_retry(email_logged_in_page, f"/admin?logout_check={uuid.uuid4().hex[:8]}")
         expect(email_logged_in_page).to_have_url(re.compile(r".*/admin/login.*"))
 
         jwt_cookie = next((cookie for cookie in email_logged_in_page.context.cookies() if cookie["name"] == "jwt_token"), None)
@@ -443,7 +466,7 @@ class TestPlaywrightSecurityE2EAuthAndSession:
 
         page_one = email_logged_in_page
         page_two = page_one.context.new_page()
-        page_two.goto("/admin", wait_until="domcontentloaded", timeout=60000)
+        _goto_with_rate_limit_retry(page_two, "/admin", wait_until="domcontentloaded", timeout=60000)
         expect(page_two).to_have_url(re.compile(r".*/admin(?!/login).*"), timeout=15000)
 
         logout_button = page_one.locator('form[action$="/admin/logout"] button[type="submit"]')
@@ -452,7 +475,7 @@ class TestPlaywrightSecurityE2EAuthAndSession:
         logout_button.click()
         page_one.wait_for_load_state("domcontentloaded")
 
-        page_two.goto(f"/admin?logout_check={uuid.uuid4().hex[:8]}")
+        _goto_with_rate_limit_retry(page_two, f"/admin?logout_check={uuid.uuid4().hex[:8]}")
         expect(page_two).to_have_url(re.compile(r".*/admin/login.*"))
         page_two.close()
 

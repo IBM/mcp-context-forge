@@ -20,6 +20,30 @@ if TYPE_CHECKING:
     from playwright.sync_api import APIRequestContext, Playwright
 
 
+# Ceiling on how long a 429 retry will sleep. The rate-limit middleware's
+# lockout response sets Retry-After to the full lockout window (900s by
+# default) and an X-Lockout-Remaining header; sleeping that out would hang
+# a test for 15+ minutes for no benefit, so lockouts fail fast instead.
+RATE_LIMIT_RETRY_CAP_SECONDS = 10.0
+
+
+def rate_limit_retry_delay(headers: dict[str, str], *, default: float = 60.0, cap: float = RATE_LIMIT_RETRY_CAP_SECONDS) -> float | None:
+    """Compute how long to sleep before retrying a 429 response, or None to fail fast.
+
+    Returns None when the response carries X-Lockout-Remaining (an account
+    lockout, not an ordinary rate-limit violation) since the lockout window
+    far exceeds any reasonable retry budget. Otherwise returns the server's
+    Retry-After value capped at `cap` seconds.
+    """
+    if "x-lockout-remaining" in headers:
+        return None
+    try:
+        retry_after = float(headers.get("retry-after", default))
+    except (TypeError, ValueError):
+        retry_after = default
+    return min(retry_after, cap)
+
+
 class ApiTestHelper:
     """Helper for creating common test entities through real API calls."""
 
