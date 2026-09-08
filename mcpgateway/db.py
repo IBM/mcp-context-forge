@@ -1485,7 +1485,7 @@ class EmailUser(Base):
     Attributes:
         id (str): Primary key, UUID string
         email (str): Unique email identifier
-        password_hash (str): Argon2id hashed password
+        password_hash (str): Argon2id hashed password, or None for passwordless SSO-only users
         full_name (str): Optional display name for professional appearance
         is_admin (bool): Admin privileges flag
         is_active (bool): Account status flag
@@ -1518,7 +1518,7 @@ class EmailUser(Base):
     # Core identity fields
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()), index=True)
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
-    password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
+    password_hash: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     full_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     # Track how admin status was granted: "sso" (synced from IdP), "manual" (Admin UI), "api" (API grant), or None (legacy)

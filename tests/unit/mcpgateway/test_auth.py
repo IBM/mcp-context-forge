@@ -2132,6 +2132,7 @@ class TestBatchedSyncNoPTeam:
             SimpleNamespace(  # user
                 email="user@example.com",
                 password_hash="h",
+                password_hash_type="argon2id",
                 full_name="U",
                 is_admin=False,
                 is_active=True,
