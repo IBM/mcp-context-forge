@@ -1877,11 +1877,11 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         existing.mime_type = mime_type
                         existing.uri_template = r.uri_template or None
                         existing.extension_metadata = r_extension_metadata
-                        existing.text_content = r.content if (mime_type.startswith("text/") or isinstance(r.content, str)) and isinstance(r.content, str) else None
-                        existing.binary_content = (
-                            r.content.encode() if (mime_type.startswith("text/") or isinstance(r.content, str)) and isinstance(r.content, str) else r.content if isinstance(r.content, bytes) else None
-                        )
-                        existing.size = len(r.content) if r.content else 0
+                        # MCP resources/list carries metadata only; ResourceCreate.content
+                        # is a schema placeholder here and real content is fetched on read.
+                        existing.text_content = None
+                        existing.binary_content = None
+                        existing.size = None
                         existing.title = getattr(r, "title", None)
                         existing.tags = getattr(r, "tags", []) or []
                         existing.federation_source = gateway.name
@@ -1904,15 +1904,11 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                                 mime_type=mime_type,
                                 uri_template=r.uri_template or None,
                                 extension_metadata=r_extension_metadata,
-                                text_content=r.content if (mime_type.startswith("text/") or isinstance(r.content, str)) and isinstance(r.content, str) else None,
-                                binary_content=(
-                                    r.content.encode()
-                                    if (mime_type.startswith("text/") or isinstance(r.content, str)) and isinstance(r.content, str)
-                                    else r.content
-                                    if isinstance(r.content, bytes)
-                                    else None
-                                ),
-                                size=len(r.content) if r.content else 0,
+                                # MCP resources/list carries metadata only; ResourceCreate.content
+                                # is a schema placeholder here and real content is fetched on read.
+                                text_content=None,
+                                binary_content=None,
+                                size=None,
                                 tags=getattr(r, "tags", []) or [],
                                 created_by=created_by or "system",
                                 created_from_ip=created_from_ip,
