@@ -500,16 +500,15 @@ make dev
 
 ```bash
 # Setup environment
-export MCP_GATEWAY_BASE_URL=http://localhost:4444
-export MCP_SERVER_URL=http://localhost:4444/servers/UUID/mcp
-export MCP_AUTH="Bearer $(python3 -m mcpgateway.utils.create_jwt_token --username admin --exp 0 --secret my-test-key-but-now-longer-than-32-bytes)"
+export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
+    --username admin --exp 0 --secret my-test-key-but-now-longer-than-32-bytes)
 
 # Launch Inspector with SSE (direct)
 npx @modelcontextprotocol/inspector
 
 # Open browser to http://localhost:5173
 # Add server: http://localhost:4444/servers/UUID/sse
-# Add header: Authorization: Bearer <token>
+# Add header: Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN
 ```
 
 ### Using mcpgateway.translate

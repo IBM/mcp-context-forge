@@ -73,7 +73,7 @@ It currently supports:
 * **A2A (Agent-to-Agent) integration** for external AI agents (OpenAI, Anthropic, custom)
 * **gRPC-to-MCP translation** via automatic reflection-based service discovery
 * Virtualization of legacy APIs as MCP-compliant tools and servers
-* Transport over HTTP, JSON-RPC, WebSocket, SSE (with configurable keepalive), stdio and streamable-HTTP
+* Transport over HTTP, JSON-RPC, WebSocket, SSE (with configurable keepalive), and Streamable HTTP; stdio transport available for server-side use
 * An Admin UI for real-time management, configuration, and log monitoring (with airgapped deployment support)
 * Built-in auth, retries, and rate-limiting with user-scoped OAuth tokens and unconditional X-Upstream-Authorization header support
 * **OpenTelemetry observability** with Phoenix, Jaeger, Zipkin, and other OTLP backends

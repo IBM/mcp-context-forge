@@ -38,7 +38,7 @@ charts/                     # Helm charts (see charts/AGENTS.md)
 docs/                       # Architecture and usage documentation (see docs/AGENTS.md)
 a2a-agents/                 # A2A agent implementations (used for testing/examples)
 mcp-servers/                # MCP server templates (see mcp-servers/AGENTS.md)
-crates/                     # Direct Rust crate folders (runtime and wrapper)
+crates/                     # Direct Rust crate folders (runtime)
 llms/                       # End-user LLM guidance (not for code agents)
 ```
 
