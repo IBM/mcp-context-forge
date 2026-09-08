@@ -99,7 +99,6 @@ async def test_plugin_publication_preserves_builtin_config_and_settings(plugin_p
         manager.assert_not_called()
 
     assert msgpack.unpackb(msgpack.packb(document), raw=False) == document
-    assert document["version"] == 2
     assert document["enabled"] is True
     assert document["global"] == (await factory.get_config()).model_dump(mode="json")
     assert document["contexts"]["server"] == document["global"]
@@ -222,7 +221,7 @@ async def test_plugin_publication_distinguishes_disabled_from_missing_factory(pl
     with pytest.raises(RuntimeError, match="initialized plugin manager"):
         await service.fetch_plugin_config({})
     monkeypatch.setattr(dataplane_publisher, "are_plugins_enabled_shared", AsyncMock(return_value=False))
-    assert await service.fetch_plugin_config({}) == {"version": 2, "enabled": False, "global": None, "contexts": {}}
+    assert await service.fetch_plugin_config({}) == {"enabled": False, "global": None, "contexts": {}}
 
 
 @pytest.mark.asyncio

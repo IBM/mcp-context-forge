@@ -47,11 +47,8 @@ logger = logging.getLogger(__name__)
 
 USER_CONFIG_KEY = "UserConfig"
 PUBLISHER_LOCK_KEY = "mcpgw:dataplane_publisher:lock"
-# Reuse the external dataplane's runtime-config key. Version 2 carries the
-# built-in contract: version 1 readers must reject it rather than ignore scope,
-# conditions, capabilities or gateway execution settings they cannot enforce.
+# Reuse the external dataplane's runtime-config key.
 RUNTIME_PLUGIN_CONFIG_KEY = "ContextForgeGatewayRuntimePluginConfig"
-RUNTIME_PLUGIN_CONFIG_VERSION = 2
 
 
 def get_publisher_interval() -> int:
@@ -215,7 +212,7 @@ class DataplanePublisherService:
         later re-enabling. Credentials retain the framework's serialization.
         """
         enabled = await are_plugins_enabled_shared()
-        document: dict[str, Any] = {"version": RUNTIME_PLUGIN_CONFIG_VERSION, "enabled": enabled, "global": None, "contexts": {}}
+        document: dict[str, Any] = {"enabled": enabled, "global": None, "contexts": {}}
         if not enabled:
             return document
 

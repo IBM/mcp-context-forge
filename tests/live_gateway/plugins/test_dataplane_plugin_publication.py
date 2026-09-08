@@ -54,7 +54,6 @@ def test_binding_changes_reach_dataplane_redis(admin_client, fast_time_server):
     context_id = f"{fast_time_server['team_id']}::{fast_time_server['echo_tool']}"
     with Redis.from_url(REDIS_URL) as redis:
         initial = _wait_for_document(redis, lambda doc: _plugin(doc, context_id) is not None)
-        assert initial["version"] == 2
         assert initial["enabled"] is True
         original = _plugin(initial, context_id)
         assert original is not None
