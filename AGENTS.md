@@ -68,9 +68,9 @@ make pre-commit
 # Before committing, use ty, mypy and pyrefly to check just the new files, then run:
 make ruff bandit interrogate pylint verify
 
-# Before committing Rust changes (tools_rust/):
+# Before committing Rust changes (crates/mcp_runtime/):
 # Run fmt-check, clippy -D warnings, and cargo test for Rust crates
-cd tools_rust/mcp_runtime && cargo fmt --check && cargo clippy -- -D warnings && cargo test
+cd crates/mcp_runtime && cargo fmt --check && cargo clippy -- -D warnings && cargo test
 ```
 
 ## PR Review Workflow

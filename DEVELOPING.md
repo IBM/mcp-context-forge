@@ -33,8 +33,8 @@ make dev
 make autoflake isort black pre-commit
 make doctest test htmlcov pylint verify
 
-# If you changed Rust code (tools_rust/):
-cd tools_rust/mcp_runtime && cargo fmt --check && cargo clippy -- -D warnings && cargo test
+# If you changed Rust code (crates/mcp_runtime/):
+cd crates/mcp_runtime && cargo fmt --check && cargo clippy -- -D warnings && cargo test
 ```
 
 Note that if the pre-commit check fails on detect secrets you need to identify if any secrets are in the code and remove them if necessary.
@@ -139,7 +139,7 @@ mcp-context-forge/
 │   ├── transports/            # Protocol implementations
 │   │   ├── sse_transport.py      # Server-Sent Events
 │   │   ├── websocket_transport.py # WebSocket
-│   │   └── stdio_transport.py    # Standard I/O wrapper
+│   │   └── stdio_transport.py    # Server-side stdio transport
 │   ├── plugins/               # Plugin framework
 │   │   ├── framework/            # Core plugin system
 │   │   └── [plugin_dirs]/       # Individual plugins
@@ -226,8 +226,8 @@ make lint-watch
 # Fix common issues automatically
 make lint-fix
 
-# Rust (tools_rust/) — run before committing Rust changes
-cd tools_rust/mcp_runtime && cargo fmt --check && cargo clippy -- -D warnings && cargo test
+# Rust (crates/mcp_runtime/) — run before committing Rust changes
+cd crates/mcp_runtime && cargo fmt --check && cargo clippy -- -D warnings && cargo test
 ```
 
 ### Pre-commit Workflow

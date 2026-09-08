@@ -173,7 +173,7 @@ export const generateConfig = function (server, configType) {
         servers: {
           [cleanServerName]: {
             type: "streamable-http",
-            url: `${baseUrl}/servers/${server.id}/mcp`,
+            url: `${baseUrl}/servers/${server.id}/mcp/`,
             headers: {
               Authorization: "Bearer your-token-here",
             },

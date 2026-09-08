@@ -33,9 +33,9 @@ Each of these tools can consume the MCP protocol and dynamically detect tools fr
 
 | Page | Description |
 |------|-------------|
-| [Claude Desktop](claude-desktop.md) | How to connect Claude to ContextForge via wrapper |
+| [Claude Desktop](claude-desktop.md) | Configure Claude to connect to ContextForge via Streamable HTTP |
 | [Cline](cline.md) | Using the CLI tool for invoking tools or prompts |
 | [Continue](continue.md) | Integrating with the VSCode plugin |
-| [MCP Inspector](mcp-inspector.md) | Launch and test the Gateway or wrapper via a web debugger |
+| [MCP Inspector](mcp-inspector.md) | Browse and test the Gateway over SSE or Streamable HTTP |
 
 ---

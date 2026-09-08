@@ -113,6 +113,10 @@ def _send_jsonrpc_http(jwt_token: str, path: str, payload: dict[str, Any]) -> di
     Issuing a session id is a spec-level MAY, so a gateway that omits it is
     still compliant and the payload is simply replayed without the header.
 
+    Do not pass an ``initialize`` payload here: this helper already performs its
+    own ``initialize`` handshake, so a second one would duplicate the request id
+    and race the handshake's own trace. Send it directly via ``httpx`` instead.
+
     Args:
         jwt_token: Bearer token for the live gateway.
         path: Gateway-relative MCP endpoint path, e.g. ``/servers/<id>/mcp/``.
@@ -145,6 +149,8 @@ def _send_jsonrpc_http(jwt_token: str, path: str, payload: dict[str, Any]) -> di
     session_id = init.headers.get("mcp-session-id")
     if session_id:
         headers["mcp-session-id"] = session_id
+        # notifications/initialized is a one-way notification: the server responds
+        # 202 Accepted with no body, so the result is intentionally discarded.
         httpx.post(url, headers=headers, json={"jsonrpc": "2.0", "method": "notifications/initialized", "params": {}}, timeout=20)
 
     response = httpx.post(url, headers=headers, json=payload, timeout=20)
@@ -256,14 +262,30 @@ def test_langfuse_public_traces_endpoint_returns_trace_list():
 @skip_no_langfuse_auth
 @pytest.mark.e2e
 def test_langfuse_trace_export_eventually_contains_initialize_trace(jwt_token: str):
-    """An explicit initialize call should export a Langfuse trace for the session-core path."""
+    """An explicit initialize call should export a Langfuse trace for the session-core path.
+
+    Sent directly via httpx rather than ``_send_jsonrpc_http``: that helper performs its own
+    internal ``initialize`` handshake before replaying the caller's payload, and replaying a
+    second ``initialize`` (with the same request id) would race the handshake's own trace for
+    the ``mcp.initialize`` name this test asserts on.
+    """
     triggered_after = time.time() - 1
-    init_response = _send_jsonrpc_http(
-        jwt_token,
-        "/mcp/",
-        {"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": MCP_PROTOCOL_VERSION, "capabilities": {}, "clientInfo": {"name": "langfuse-e2e", "version": "1.0"}}},
+    url = f"{BASE_URL}/mcp/"
+    headers = {
+        **_gateway_api_headers(jwt_token),
+        "Accept": "application/json, text/event-stream",
+        "Content-Type": "application/json",
+        "mcp-protocol-version": MCP_PROTOCOL_VERSION,
+    }
+    init_response = httpx.post(
+        url,
+        headers=headers,
+        json={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": MCP_PROTOCOL_VERSION, "capabilities": {}, "clientInfo": {"name": "langfuse-e2e", "version": "1.0"}}},
+        timeout=20,
     )
-    assert "error" not in init_response, f"initialize returned error: {init_response}"
+    init_response.raise_for_status()
+    response_json = init_response.json()
+    assert "error" not in response_json, f"initialize returned error: {response_json}"
 
     trace = _wait_for_fresh_trace(
         triggered_after,
