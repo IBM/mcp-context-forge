@@ -1691,6 +1691,44 @@ class SSOService:
         return raw_email_str
 
     @staticmethod
+    def _coerce_claim_to_group_names(claim_value: Any) -> list[str]:
+        """Coerce a single groups/roles claim value into a flat list of names.
+
+        Handles the three claim shapes seen across identity providers:
+
+        * ``list`` -- ``["engineering", "finance"]`` (Entra, Okta, generic OIDC).
+        * ``str`` -- ``"engineering"``, a single-valued claim.
+        * ``dict`` -- role names bucketed by scope, e.g. IBM account-iam's
+          ``{"SERVICE": ["ServiceOwner"]}``. Bucket keys are scope identifiers
+          rather than group names, so only the values are collected.
+
+        Non-string entries are dropped, which also excludes ``bool`` (``True`` is
+        an ``int``, never a ``str``).
+
+        Args:
+            claim_value: Raw claim value as it appears in the token or userinfo body.
+
+        Returns:
+            Flat list of group/role names, in claim order.
+        """
+        if isinstance(claim_value, str):
+            return [claim_value]
+
+        if isinstance(claim_value, list):
+            return [entry for entry in claim_value if isinstance(entry, str)]
+
+        if isinstance(claim_value, dict):
+            names: list[str] = []
+            for bucket in claim_value.values():
+                if isinstance(bucket, str):
+                    names.append(bucket)
+                elif isinstance(bucket, list):
+                    names.extend(entry for entry in bucket if isinstance(entry, str))
+            return names
+
+        return []
+
+    @staticmethod
     def _extract_groups_and_roles(user_data: Dict[str, Any], groups_claim: str = "groups") -> list[str]:
         """Extract groups and roles from user data into a unified list.
 
@@ -1699,25 +1737,22 @@ class SSOService:
             groups_claim: Claim key for groups (default: ``"groups"``).
 
         Returns:
-            Combined list of group and role strings.
+            Combined list of group and role names, de-duplicated in first-seen order.
         """
-        groups: list[str] = []
+        names: list[str] = []
+        for claim in (groups_claim, "roles"):
+            if claim in user_data:
+                names.extend(SSOService._coerce_claim_to_group_names(user_data.get(claim)))
 
-        if groups_claim in user_data:
-            groups_value = user_data.get(groups_claim, [])
-            if isinstance(groups_value, list):
-                groups.extend(g for g in groups_value if isinstance(g, str))
-            elif isinstance(groups_value, str):
-                groups.append(groups_value)
-
-        if "roles" in user_data:
-            roles_value = user_data.get("roles", [])
-            if isinstance(roles_value, list):
-                groups.extend(r for r in roles_value if isinstance(r, str))
-            elif isinstance(roles_value, str):
-                groups.append(roles_value)
-
-        return groups
+        # De-duplicate: a provider configured with ``groups_claim: "roles"`` reads the
+        # same claim twice, and a dict-shaped claim can repeat a name across buckets.
+        seen: set[str] = set()
+        deduped: list[str] = []
+        for name in names:
+            if name not in seen:
+                seen.add(name)
+                deduped.append(name)
+        return deduped
 
     @staticmethod
     def _build_normalized_user_info(
