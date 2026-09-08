@@ -12,10 +12,10 @@ from typing import Any, Dict, List, Optional
 
 # Third-Party
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 # First-Party
-from mcpgateway.common.validators import SecurityValidator
+from mcpgateway.common.validators import SafeName
 from mcpgateway.middleware.rbac import get_current_user_with_permissions, require_permission
 from mcpgateway.services.siem_export_service import get_siem_export_service
 
@@ -35,7 +35,7 @@ class DestinationFiltersRequest(BaseModel):
 class DestinationUpsertRequest(BaseModel):
     """Runtime SIEM destination configuration payload."""
 
-    name: str = Field(..., min_length=1)
+    name: SafeName = Field(..., min_length=1)
     type: str = Field(..., min_length=1)
     enabled: bool = True
     format: str = "json"
@@ -45,22 +45,6 @@ class DestinationUpsertRequest(BaseModel):
     protocol: Optional[str] = None
     filters: Optional[DestinationFiltersRequest] = None
     model_config = ConfigDict(extra="allow")
-
-    @field_validator("name")
-    @classmethod
-    def _validate_name(cls, value: str) -> str:
-        """Reject destination names containing HTML/unsafe characters (stored-XSS defense-in-depth).
-
-        Args:
-            value: Destination name supplied by the caller.
-
-        Returns:
-            The validated destination name.
-
-        Raises:
-            ValueError: If the name is empty or contains unsafe characters.
-        """
-        return SecurityValidator.validate_identifier(value, "Destination name")
 
 
 class DestinationBulkReplaceRequest(BaseModel):

@@ -1199,3 +1199,33 @@ def test_sso_provider_id_rejects_html_metacharacters():
 
     # A safe identifier still validates.
     assert sso_router.SSOProviderCreateRequest(id="keycloak.prod-1", **fields).id == "keycloak.prod-1"
+
+
+def test_sso_provider_name_and_display_name_reject_html_metacharacters():
+    """Issue #5856: name/display_name reach the login-page DOM sink — reject HTML at ingestion, allow spaces."""
+    # Third-Party
+    from pydantic import ValidationError
+
+    base = dict(
+        id="keycloak",
+        provider_type="oidc",
+        client_id="cid",
+        client_secret="secret",  # pragma: allowlist secret
+        authorization_url="https://idp.example.com/auth",
+        token_url="https://idp.example.com/token",
+        userinfo_url="https://idp.example.com/userinfo",
+    )
+
+    with pytest.raises(ValidationError):
+        sso_router.SSOProviderCreateRequest(name="<img src=x onerror=alert(1)>", display_name="Ok", **base)
+    with pytest.raises(ValidationError):
+        sso_router.SSOProviderCreateRequest(name="Ok", display_name="<script>alert(1)</script>", **base)
+
+    # Human-facing names may contain spaces (regression guard for the narrowed charset).
+    req = sso_router.SSOProviderCreateRequest(name="Keycloak Prod", display_name="Keycloak Prod", **base)
+    assert req.display_name == "Keycloak Prod"
+
+    # Update payload validates the same fields.
+    with pytest.raises(ValidationError):
+        sso_router.SSOProviderUpdateRequest(display_name="<script>alert(1)</script>")
+    assert sso_router.SSOProviderUpdateRequest(display_name="Keycloak Prod").display_name == "Keycloak Prod"
