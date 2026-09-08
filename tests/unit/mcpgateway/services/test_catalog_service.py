@@ -596,6 +596,37 @@ async def test_register_oauth_skip_init_stamps_owner(service):
     assert db_gateway.visibility == "private"
 
 
+@pytest.mark.asyncio
+async def test_register_oauth_invalid_config_does_not_leak_client_secret(service):
+    """A GatewayCreate validation failure (e.g. bad issuer URL) must never echo the
+    caller-supplied oauth_credentials - including client_secret - back in the
+    response's error/message fields, since those are logged and rendered verbatim
+    in the admin UI's HTMX error tooltip.
+    """
+    fake_catalog = {
+        "catalog_servers": [{"id": "oauth-server", "name": "OAuth Server", "url": "https://oauth.example.com/mcp", "description": "OAuth server", "auth_type": "OAuth2.1", "tags": []}]
+    }
+    secret = "SUPER-SECRET-CLIENT-VALUE"  # pragma: allowlist secret
+
+    request = CatalogServerRegisterRequest(
+        server_id="oauth-server",
+        oauth_credentials={"issuer": "not-a-valid-url", "client_id": "abc", "client_secret": secret},
+    )
+
+    with patch.object(service, "load_catalog", AsyncMock(return_value=fake_catalog)):
+        db = MagicMock()
+        db.execute.return_value.scalar_one_or_none.return_value = None
+
+        with patch("mcpgateway.services.catalog_service.select"):
+            result = await service.register_catalog_server("oauth-server", request, db, created_by="u@x.com", owner_email="u@x.com", token_teams=None)
+
+    assert result.success is False
+    assert secret not in (result.error or "")
+    assert secret not in (result.message or "")
+    db.add.assert_not_called()
+    db.commit.assert_not_called()
+
+
 def test_build_oauth_config_from_credentials_carries_resource_and_password_grant_fields(service):
     """The catalog registration path must not drop RFC 8707 resource/audience or
     password-grant fields that the equivalent admin.py OAuth form assembly accepts,

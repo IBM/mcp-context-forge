@@ -19,6 +19,7 @@ import time
 from typing import Any, Dict, List, Optional
 
 # Third-Party
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 import yaml
@@ -721,6 +722,17 @@ class CatalogService:
 
         except CatalogRegistrationPermissionError:
             raise
+        except ValidationError as e:
+            # Pydantic's default str(e)/repr(e) embeds the raw input value for every
+            # failed field ("input_value={...}"). For GatewayCreate(**gateway_data) that
+            # dict includes the caller-supplied oauth_credentials, so surfacing str(e)
+            # (as logged text, JSON error, or the HTMX button's title attribute below)
+            # would leak client_secret/token values. Build the message from loc/msg only
+            # - never the offending input - since our own field validators never echo the
+            # raw value back in msg.
+            redacted_detail = "; ".join(f"{'.'.join(str(part) for part in err['loc'])}: {err['msg']}" for err in e.errors())
+            logger.error("Failed to register catalog server %s: validation error - %s", catalog_id, redacted_detail)
+            return CatalogServerRegisterResponse(success=False, server_id="", message="Registration failed: invalid configuration", error=f"Invalid registration parameters - {redacted_detail}")
         except Exception as e:
             logger.error("Failed to register catalog server %s: %s", catalog_id, e)
 
