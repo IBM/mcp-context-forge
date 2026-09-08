@@ -1882,6 +1882,7 @@ curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/teams | jq '.'
 | `limit` | int | `50` | Maximum number of teams to return (capped by `PAGINATION_MAX_PAGE_SIZE`). |
 | `cursor` | string | – | Opaque cursor for cursor-based pagination. |
 | `include_pagination` | bool | `false` | When `true`, return cursor metadata instead of a total count. |
+| `search_query` | string | – | Case-insensitive substring filter on team name, slug, or description (max 500 chars). Admins filter server-side; non-admins filter their own team list locally. |
 
 ```bash
 # Offset-based pagination
@@ -1891,6 +1892,10 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 # Cursor-based pagination (returns CursorPaginatedTeamsResponse)
 curl -s -H "Authorization: Bearer $TOKEN" \
   "$BASE_URL/teams?include_pagination=true" | jq '.'
+
+# Search teams by name, slug, or description
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/teams?search_query=engineering" | jq '.'
 ```
 
 **Response with `include_pagination=true` (`CursorPaginatedTeamsResponse`):**

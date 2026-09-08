@@ -1891,10 +1891,18 @@ class TeamManagementService:
             query = query.where(EmailTeam.visibility == visibility_filter)
 
         if search_query:
-            search_term = f"%{search_query}%"
-            predicates = [EmailTeam.name.ilike(search_term), EmailTeam.slug.ilike(search_term)]
+            # Escape LIKE metacharacters so % and _ in user input are treated as literals,
+            # not SQL wildcards. Without this, search_query="ops_team" would match "ops-team"
+            # (underscore wildcard), and search_query="%" would return every row — breaking
+            # the documented "literal substring" contract and diverging from the non-admin
+            # in-memory filter (plain Python substring, no wildcard expansion).
+            search_term = f"%{TeamManagementService._escape_like(search_query)}%"
+            predicates = [
+                EmailTeam.name.ilike(search_term, escape="\\"),
+                EmailTeam.slug.ilike(search_term, escape="\\"),
+            ]
             if search_description:
-                predicates.append(EmailTeam.description.ilike(search_term))
+                predicates.append(EmailTeam.description.ilike(search_term, escape="\\"))
             query = query.where(or_(*predicates))
 
         return query
@@ -2028,7 +2036,7 @@ class TeamManagementService:
             include_inactive: Whether to include inactive teams
             visibility_filter: Filter by visibility (private, team, public)
             include_personal: Whether to include personal teams
-            search_query: Search term for name/slug
+            search_query: Search term for name/slug/description
             personal_owner_email: When set (and include_personal=False), includes this user's personal team in the count
             team_ids: When set, restrict the count to these team IDs. An empty list matches no teams.
 
@@ -2042,6 +2050,7 @@ class TeamManagementService:
             visibility_filter=visibility_filter,
             search_query=search_query,
             personal_owner_email=personal_owner_email,
+            search_description=True,
         )
 
         if team_ids is not None:

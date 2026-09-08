@@ -1371,6 +1371,34 @@ class TestTeamManagementService:
         assert empty_count == 0
         assert unfiltered_count >= 2
 
+    @pytest.mark.asyncio
+    async def test_get_teams_count_search_query_includes_description(self):
+        """Regression for count/list mismatch: get_teams_count must use search_description=True
+        so a search_query that matches only via description is counted the same way list_teams
+        returns it. Previously get_teams_count defaulted search_description=False, causing
+        total to under-count when description-only matches existed."""
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import Session as OrmSession
+
+        from mcpgateway.db import Base
+
+        engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+        Base.metadata.create_all(engine)
+        with OrmSession(engine) as db:
+            db.add_all(
+                [
+                    EmailTeam(id="id-desc", name="Alpha Team", slug="alpha-team", description="owns the rocket-squad integration", created_by="o@example.com", is_personal=False),
+                    EmailTeam(id="id-other", name="Beta Team", slug="beta-team", description="unrelated", created_by="o@example.com", is_personal=False),
+                ]
+            )
+            db.commit()
+
+            svc = TeamManagementService(db)
+            # search_query matches only via description — must return 1, not 0.
+            count = await svc.get_teams_count(search_query="rocket-squad")
+
+        assert count == 1, f"Expected 1 (description match), got {count}"
+
     # =========================================================================
     # Discovery and Join Request Tests
     # =========================================================================
