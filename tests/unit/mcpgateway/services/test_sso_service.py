@@ -2588,6 +2588,11 @@ class TestExtractGroupsAndRoles:
         result = SSOService._extract_groups_and_roles(user_data)
         assert result == []
 
+    def test_deduplicates_overlapping_groups_and_roles(self):
+        user_data = {"groups": ["eng", "shared"], "roles": ["shared", "admin"]}
+        result = SSOService._extract_groups_and_roles(user_data)
+        assert result == ["eng", "shared", "admin"]
+
 
 class TestBuildNormalizedUserInfo:
     """Tests for the extracted _build_normalized_user_info helper."""
