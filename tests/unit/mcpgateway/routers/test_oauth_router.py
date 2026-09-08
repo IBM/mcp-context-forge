@@ -1344,6 +1344,97 @@ class TestOAuthRouter:
         assert result["gateway123"]["oauth_enabled"] is True
 
     @pytest.mark.asyncio
+    async def test_get_oauth_status_batch_single_gateway_query_real_hex_ids(self, mock_db, mock_current_user, mock_request):
+        """Regression test: with real Gateway.id-shaped ids (32-char hex, as uuid4().hex
+        produces - unlike "gateway123" above, which never matches _RESOURCE_PATTERNS'
+        [a-f0-9\\-]+ regex and so never exercises the per-id ownership recheck), the batch
+        endpoint must still issue exactly one Gateway SELECT for the whole batch. The per-id
+        ownership recheck inside _enforce_gateway_access -> _check_resource_team_ownership
+        has to reuse the already-loaded gateway (preloaded_gateway) instead of re-fetching it,
+        or this regresses to N+1 for any non-admin or narrowed-admin caller."""
+        gw1 = Mock(spec=Gateway)
+        gw1.id = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        gw1.visibility = "public"
+        gw1.owner_email = None
+        gw1.team_id = None
+        gw1.oauth_config = {"grant_type": "authorization_code", "client_id": "cid1", "scopes": ["read"], "authorization_url": "https://idp.example.com/authorize", "redirect_uri": "https://gw.example.com/callback"}
+
+        gw2 = Mock(spec=Gateway)
+        gw2.id = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        gw2.visibility = "public"
+        gw2.owner_email = None
+        gw2.team_id = None
+        gw2.oauth_config = {"grant_type": "authorization_code", "client_id": "cid2", "scopes": ["read"], "authorization_url": "https://idp.example.com/authorize", "redirect_uri": "https://gw.example.com/callback"}
+
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [gw1, gw2]
+
+        from mcpgateway.routers.oauth_router import get_oauth_status_batch
+
+        with patch("mcpgateway.routers.oauth_router.TokenStorageService") as mock_token_storage_class:
+            mock_token_storage = Mock()
+            mock_token_storage.get_token_info = AsyncMock(return_value=None)
+            mock_token_storage_class.return_value = mock_token_storage
+
+            result = await get_oauth_status_batch(mock_request, [gw1.id, gw2.id], mock_current_user, mock_db)
+
+        assert mock_db.execute.call_count == 1
+        assert set(result.keys()) == {gw1.id, gw2.id}
+
+    @pytest.mark.asyncio
+    async def test_get_oauth_status_batch_private_visibility_owner_included_non_owner_omitted(self, mock_current_user, mock_request):
+        """The batch endpoint's ownership check exercises the private-visibility branch, not just
+        the public fixtures used elsewhere: the caller's own private gateway is included, and a
+        private gateway owned by someone else is silently omitted rather than failing the batch."""
+        own_gateway = Mock(spec=Gateway)
+        own_gateway.id = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        own_gateway.visibility = "private"
+        own_gateway.owner_email = mock_current_user.email
+        own_gateway.team_id = None
+        own_gateway.oauth_config = {"grant_type": "authorization_code", "client_id": "cid1", "scopes": ["read"], "authorization_url": "https://idp.example.com/authorize", "redirect_uri": "https://gw.example.com/callback"}
+
+        others_gateway = Mock(spec=Gateway)
+        others_gateway.id = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+        others_gateway.visibility = "private"
+        others_gateway.owner_email = "someone-else@example.com"
+        others_gateway.team_id = None
+        others_gateway.oauth_config = {"grant_type": "authorization_code", "client_id": "cid2", "scopes": ["read"], "authorization_url": "https://idp.example.com/authorize", "redirect_uri": "https://gw.example.com/callback"}
+
+        mock_db = Mock(spec=Session)
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [own_gateway, others_gateway]
+
+        from mcpgateway.routers.oauth_router import get_oauth_status_batch
+
+        with patch("mcpgateway.routers.oauth_router.TokenStorageService") as mock_token_storage_class:
+            mock_token_storage = Mock()
+            mock_token_storage.get_token_info = AsyncMock(return_value=None)
+            mock_token_storage_class.return_value = mock_token_storage
+
+            result = await get_oauth_status_batch(mock_request, [own_gateway.id, others_gateway.id], mock_current_user, mock_db)
+
+        assert set(result.keys()) == {own_gateway.id}
+
+    @pytest.mark.asyncio
+    async def test_get_oauth_status_batch_non_authorization_code_grant_omits_user_token_status(self, mock_current_user, mock_request):
+        """A non-authorization_code gateway in the batch still reports oauth_enabled config,
+        but user_token_status stays omitted - there's no per-caller token state to report."""
+        gateway = Mock(spec=Gateway)
+        gateway.id = "cccccccccccccccccccccccccccccc"
+        gateway.visibility = "public"
+        gateway.owner_email = None
+        gateway.team_id = None
+        gateway.oauth_config = {"grant_type": "client_credentials", "client_id": "cid"}
+
+        mock_db = Mock(spec=Session)
+        mock_db.execute.return_value.scalars.return_value.all.return_value = [gateway]
+
+        from mcpgateway.routers.oauth_router import get_oauth_status_batch
+
+        result = await get_oauth_status_batch(mock_request, [gateway.id], mock_current_user, mock_db)
+
+        assert result[gateway.id]["grant_type"] == "client_credentials"
+        assert "user_token_status" not in result[gateway.id]
+
+    @pytest.mark.asyncio
     async def test_get_oauth_status_batch_omits_inaccessible_gateways(self, mock_db, mock_current_user, mock_request):
         """A gateway id that 404s or 403s for this caller is silently dropped, not surfaced as a batch failure."""
         mock_db.execute.return_value.scalars.return_value.all.return_value = []  # every id -> gateway not found

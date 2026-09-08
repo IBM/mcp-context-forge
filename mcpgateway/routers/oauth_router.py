@@ -539,6 +539,7 @@ async def _enforce_gateway_access(
                 token_teams,
                 db=db,
                 _user_email=requester_email,
+                preloaded_gateway=gateway,
             )
             is not ResourceOwnershipResult.ALLOWED
         ):

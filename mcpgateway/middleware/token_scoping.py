@@ -894,7 +894,7 @@ class TokenScopingMiddleware:
         return method == "DELETE" and bool(_TARGETED_MISSING_DELETE_PATTERN.fullmatch(normalized_path))
 
     def _check_resource_team_ownership(  # noqa: PLR0911  # pylint: disable=too-many-return-statements
-        self, request_path: str, token_teams: list, db=None, _user_email: str = None
+        self, request_path: str, token_teams: list, db=None, _user_email: str = None, preloaded_gateway=None
     ) -> ResourceOwnershipResult:
         """
         Check if the requested resource is accessible by the token.
@@ -922,6 +922,12 @@ class TokenScopingMiddleware:
             token_teams: List of team IDs from the token (empty list = public-only token)
             db: Optional database session. If provided, caller manages lifecycle.
                 If None, creates and manages its own session.
+            preloaded_gateway: Optional already-fetched ``Gateway`` row. When the
+                path resolves to a gateway resource and this row's ``id`` matches
+                the path's resource id, it is reused instead of issuing another
+                ``SELECT`` - lets a caller that already loaded the gateway (e.g. a
+                batch endpoint that bulk-fetched many gateways) avoid a redundant
+                per-id re-fetch here.
 
         Returns:
             ResourceOwnershipResult: Allowed, missing, or denied ownership result.
@@ -1189,7 +1195,10 @@ class TokenScopingMiddleware:
 
             # CHECK GATEWAYS
             if resource_type == "gateway":
-                gateway = db.execute(select(Gateway).where(Gateway.id == resource_id)).scalar_one_or_none()
+                if preloaded_gateway is not None and getattr(preloaded_gateway, "id", None) == resource_id:
+                    gateway = preloaded_gateway
+                else:
+                    gateway = db.execute(select(Gateway).where(Gateway.id == resource_id)).scalar_one_or_none()
 
                 if not gateway:
                     logger.warning(f"Gateway {SecurityValidator.sanitize_log_message(resource_id)} not found in database")

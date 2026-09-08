@@ -2149,6 +2149,50 @@ def test_check_resource_team_ownership_gateway_private_denies_non_owner():
     assert middleware._check_resource_team_ownership("/gateways/a1b2c3d4", ["team-1"], db=db, _user_email="other@example.com") is ResourceOwnershipResult.DENIED
 
 
+def test_check_resource_team_ownership_gateway_reuses_preloaded_gateway():
+    """A matching preloaded_gateway must be reused instead of re-SELECTing the row.
+
+    Regression test for the oauth/status batch endpoint (#6620): a caller that already
+    bulk-fetched N gateways shouldn't pay for a second per-id SELECT here just to redo
+    the ownership check.
+    """
+    middleware = TokenScopingMiddleware()
+    db = MagicMock()
+
+    gateway = MagicMock()
+    gateway.id = "a1b2c3d4"
+    gateway.visibility = "public"
+
+    result = middleware._check_resource_team_ownership("/gateways/a1b2c3d4", ["team-1"], db=db, _user_email="user@example.com", preloaded_gateway=gateway)
+
+    assert result is ResourceOwnershipResult.ALLOWED
+    db.execute.assert_not_called()
+
+
+def test_check_resource_team_ownership_gateway_ignores_mismatched_preloaded_gateway():
+    """A preloaded_gateway whose id doesn't match the path's resource id must be ignored,
+    falling back to the normal DB lookup rather than checking the wrong gateway's ACL."""
+    middleware = TokenScopingMiddleware()
+    db = MagicMock()
+
+    stale_preloaded = MagicMock()
+    stale_preloaded.id = "different-id"
+    stale_preloaded.visibility = "public"
+
+    actual_gateway = MagicMock()
+    actual_gateway.id = "a1b2c3d4"
+    actual_gateway.visibility = "private"
+    actual_gateway.owner_email = "owner@example.com"
+    db.execute.return_value.scalar_one_or_none.return_value = actual_gateway
+
+    result = middleware._check_resource_team_ownership(
+        "/gateways/a1b2c3d4", ["team-1"], db=db, _user_email="other@example.com", preloaded_gateway=stale_preloaded
+    )
+
+    db.execute.assert_called_once()
+    assert result is ResourceOwnershipResult.DENIED
+
+
 def test_check_resource_team_ownership_unknown_resource_type_denies(monkeypatch):
     """Unknown resource types should be denied by default."""
     # Standard

@@ -158,7 +158,11 @@ class AbstractTokenBackend(ABC):
         - status: "valid" | "expired" | "near_expiry"
         - updated_at: str (ISO-8601)
 
-        Returns None if no token found.
+        Returns None only when no token is stored for this identity.
+        An unexpected backend failure (DB error, Vault outage) must be
+        logged and re-raised, not swallowed to None - callers surfacing
+        this through a user-facing status field need to distinguish
+        "never authorized" from "lookup failed".
         Does NOT return actual token values.
         """
 
