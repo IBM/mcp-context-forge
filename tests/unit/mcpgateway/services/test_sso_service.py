@@ -3969,6 +3969,7 @@ class TestAuthenticateOrCreateUser:
             admin_origin=None,
         )
         sso_service.auth_service._fetch_user_from_db = MagicMock(return_value=existing_user)
+        sso_service.auth_service._invalidate_user_auth_cache = AsyncMock()
         sso_service.get_provider = lambda _id: _make_provider(id="provider-b")
 
         with patch("mcpgateway.services.sso_service.settings") as mock_settings:
@@ -3979,6 +3980,7 @@ class TestAuthenticateOrCreateUser:
 
         assert result is None
         assert existing_user.auth_provider == "provider-a"
+        sso_service.auth_service._invalidate_user_auth_cache.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_cross_provider_login_relinks_when_enabled(self, sso_service, mock_db):
@@ -3993,6 +3995,7 @@ class TestAuthenticateOrCreateUser:
             admin_origin=None,
         )
         sso_service.auth_service._fetch_user_from_db = MagicMock(return_value=existing_user)
+        sso_service.auth_service._invalidate_user_auth_cache = AsyncMock()
         sso_service.get_provider = lambda _id: _make_provider(id="provider-b")
 
         with patch("mcpgateway.services.sso_service.settings") as mock_settings, patch("mcpgateway.services.sso_service.create_jwt_token", new_callable=AsyncMock) as mock_jwt:
@@ -4009,6 +4012,45 @@ class TestAuthenticateOrCreateUser:
 
         assert result == "jwt-token"
         assert existing_user.auth_provider == "provider-b"
+        sso_service.auth_service._invalidate_user_auth_cache.assert_awaited_once_with("user@test.com")
+
+    @pytest.mark.asyncio
+    async def test_relink_demotes_api_origin_admin_when_new_provider_grants_no_admin(self, sso_service, mock_db):
+        """Relinking an API/manually-granted admin to a provider that doesn't vet for admin must demote.
+
+        Regression test for the relink admin-carryover finding: admin_origin="api" previously
+        only demoted for admin_origin="sso", so an admin relinked to an unvetted provider kept
+        full "*" permissions.
+        """
+        existing_user = SimpleNamespace(
+            email="user@test.com",
+            full_name="User",
+            auth_provider="provider-a",
+            email_verified=True,
+            last_login=None,
+            is_admin=True,
+            admin_origin="api",
+        )
+        sso_service.auth_service._fetch_user_from_db = MagicMock(return_value=existing_user)
+        sso_service.auth_service._invalidate_user_auth_cache = AsyncMock()
+        sso_service.get_provider = lambda _id: _make_provider(id="provider-b")
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings, patch("mcpgateway.services.sso_service.create_jwt_token", new_callable=AsyncMock) as mock_jwt:
+            mock_settings.sso_allow_provider_linking = True
+            mock_settings.sso_auto_admin_domains = []
+            mock_settings.sso_github_admin_orgs = []
+            mock_settings.sso_google_admin_domains = []
+            mock_settings.sso_entra_admin_groups = []
+            mock_settings.sso_entra_sync_roles_on_login = False
+            mock_jwt.return_value = "jwt-token"
+            result = await sso_service.authenticate_or_create_user(
+                {"email": "user@test.com", "full_name": "User", "provider": "provider-b", "email_verified": True}
+            )
+
+        assert result == "jwt-token"
+        assert existing_user.auth_provider == "provider-b"
+        assert existing_user.is_admin is False
+        assert existing_user.admin_origin is None
 
     @pytest.mark.asyncio
     async def test_new_user_auto_create(self, sso_service, mock_db):
