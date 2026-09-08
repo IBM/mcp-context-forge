@@ -32,6 +32,7 @@ class TestEmailAuthLoginPasswordChangeRequired:
         user = MagicMock(spec=EmailUser)
         user.email = "test@example.com"
         user.password_hash = "hashed_password"
+        user.password_hash_type = "argon2id"
         user.full_name = "Test User"
         user.is_admin = False
         user.is_active = True
@@ -49,6 +50,7 @@ class TestEmailAuthLoginPasswordChangeRequired:
         user = MagicMock(spec=EmailUser)
         user.email = "test@example.com"
         user.password_hash = "hashed_password"
+        user.password_hash_type = "argon2id"
         user.full_name = "Test User"
         user.is_admin = False
         user.is_active = True
@@ -143,6 +145,45 @@ class TestEmailAuthLoginPasswordChangeRequired:
                     # Verify response
                     assert response.status_code == status.HTTP_403_FORBIDDEN
                     assert response.headers.get("X-Password-Change-Required") == "true"
+
+    @pytest.mark.asyncio
+    async def test_login_skips_default_password_detection_for_passwordless_user(self, mock_user_normal):
+        """Passwordless users must not reach default-password hash verification."""
+        # First-Party
+        from mcpgateway.routers.email_auth import login
+        from mcpgateway.schemas import AuthenticationResponse, EmailLoginRequest
+
+        mock_user_normal.password_hash = None
+        mock_user_normal.password_hash_type = "none"
+
+        mock_request = MagicMock()
+        mock_request.client = MagicMock()
+        mock_request.client.host = "127.0.0.1"
+        mock_request.headers = {"User-Agent": "TestAgent/1.0"}
+
+        mock_db = MagicMock()
+        login_request = EmailLoginRequest(email="test@example.com", password="password123")  # pragma: allowlist secret
+
+        with patch("mcpgateway.routers.email_auth.EmailAuthService") as MockAuthService:
+            mock_service = MockAuthService.return_value
+            mock_service.authenticate_user = AsyncMock(return_value=mock_user_normal)
+
+            with patch("mcpgateway.services.argon2_service.Argon2PasswordService") as MockPasswordService:
+                mock_password_service = MockPasswordService.return_value
+                mock_password_service.verify_password_async = AsyncMock(return_value=True)
+
+                with (
+                    patch("mcpgateway.routers.email_auth.settings") as mock_settings,
+                    patch("mcpgateway.routers.email_auth.create_access_token", new=AsyncMock(return_value=("test_token_123", 3600))),
+                ):
+                    mock_settings.password_change_enforcement_enabled = True
+                    mock_settings.detect_default_password_on_login = True
+                    mock_settings.default_user_password.get_secret_value.return_value = "default_password"
+
+                    response = await login(login_request, mock_request, mock_db)
+
+        assert isinstance(response, AuthenticationResponse)
+        mock_password_service.verify_password_async.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_login_success_when_no_password_change_required(self, mock_user_normal):
