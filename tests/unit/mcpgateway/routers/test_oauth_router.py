@@ -2022,6 +2022,46 @@ class TestOAuthAccessHelpers:
         assert exc_info.value.status_code == 403
         assert ownership_check.call_args.args[1] == []
 
+    @pytest.mark.asyncio
+    async def test_enforce_gateway_access_team_visibility_cache_hit_member_allowed(self, mock_db):
+        """Team-visible gateway allows access when the requester is a team member
+        and the cached JWT payload provides a valid team-scoped ``token_teams``.
+        """
+        from mcpgateway.routers.oauth_router import _enforce_gateway_access
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(
+            token_teams=["team-1"],
+            _jwt_verified_payload=("token", {"teams": ["team-1"], "is_admin": False}),
+        )
+
+        gateway = SimpleNamespace(visibility="team", owner_email=None, team_id="team-1")
+
+        class _User:
+            def is_team_member(self, _team_id):
+                return True
+
+        class _AuthService:
+            async def get_user_by_email(self, _email):
+                return _User()
+
+        with patch(
+            "mcpgateway.routers.oauth_router.token_scoping_middleware._check_resource_team_ownership",
+            return_value=ResourceOwnershipResult.ALLOWED,
+        ):
+            with patch(
+                "mcpgateway.services.email_auth_service.EmailAuthService",
+                return_value=_AuthService(),
+            ):
+                # Should not raise — member has access.
+                await _enforce_gateway_access(
+                    "gateway123",
+                    gateway,
+                    {"email": "user@example.com", "is_admin": False},
+                    mock_db,
+                    request=request,
+                )
+
 
 class TestRecoverTokenTeamsFromJwt:
     """Tests for ``_recover_token_teams_from_jwt`` helper in isolation."""
@@ -2144,6 +2184,46 @@ class TestRecoverTokenTeamsFromJwt:
         # teams=None with no admin flag -> normalize_token_teams returns []
         assert token_teams == []
         assert is_admin is False
+
+    def test_malformed_teams_int_returns_none(self):
+        """Returns ``None`` when ``teams`` claim is an int (not iterable)."""
+        from mcpgateway.routers.oauth_router import _recover_token_teams_from_jwt
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(
+            _jwt_verified_payload=("token", {"teams": 42, "is_admin": True}),
+        )
+        assert _recover_token_teams_from_jwt(request) is None
+
+    def test_malformed_teams_bool_returns_none(self):
+        """Returns ``None`` when ``teams`` claim is a bool."""
+        from mcpgateway.routers.oauth_router import _recover_token_teams_from_jwt
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(
+            _jwt_verified_payload=("token", {"teams": True, "is_admin": False}),
+        )
+        assert _recover_token_teams_from_jwt(request) is None
+
+    def test_malformed_teams_string_returns_none(self):
+        """Returns ``None`` when ``teams`` claim is a string (would iterate chars)."""
+        from mcpgateway.routers.oauth_router import _recover_token_teams_from_jwt
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(
+            _jwt_verified_payload=("token", {"teams": "team-1", "is_admin": False}),
+        )
+        assert _recover_token_teams_from_jwt(request) is None
+
+    def test_malformed_teams_dict_returns_none(self):
+        """Returns ``None`` when ``teams`` claim is a dict (would iterate keys)."""
+        from mcpgateway.routers.oauth_router import _recover_token_teams_from_jwt
+
+        request = Mock(spec=Request)
+        request.state = SimpleNamespace(
+            _jwt_verified_payload=("token", {"teams": {"id": "team-1"}, "is_admin": True}),
+        )
+        assert _recover_token_teams_from_jwt(request) is None
 
 
 class TestOAuthRouterAdditionalCoverage:

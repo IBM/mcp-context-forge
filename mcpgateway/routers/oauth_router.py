@@ -474,6 +474,19 @@ def _recover_token_teams_from_jwt(request: Request) -> tuple[list[str] | None, b
     if not (isinstance(payload, dict) and payload):
         return None
 
+    # Validate teams claim type before delegating to normalize_token_teams.
+    # normalize_token_teams iterates payload["teams"] without checking it is
+    # iterable; a malformed cached claim (int, bool, str, dict) would raise
+    # TypeError or produce misleading team IDs.  Fail closed: return None so
+    # the caller assigns public-only scope ([]).
+    teams_claim = payload.get("teams")
+    if "teams" in payload and teams_claim is not None and not isinstance(teams_claim, list):
+        logger.warning(
+            "Malformed teams claim in cached JWT payload: expected list or None, got %s",
+            type(teams_claim).__name__,
+        )
+        return None
+
     token_teams = normalize_token_teams(payload)
     is_admin = _extract_is_admin(payload)
 
