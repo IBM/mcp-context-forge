@@ -444,6 +444,7 @@ class DataplanePublisherService:
                         DbResource.uri_template.is_(None),
                     )
                 ).all()
+                # DbTool.name emits the same SQL, but mypy treats the hybrid property as an overloaded function.
                 tool_rows = db.execute(
                     select(DbTool.id, DbTool.__table__.c.name, DbTool.original_name, DbTool.input_schema, DbTool.owner_email, DbTool.team_id, DbTool.visibility).where(DbTool.enabled.is_(True))
                 ).all()
