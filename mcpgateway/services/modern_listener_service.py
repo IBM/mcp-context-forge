@@ -13,7 +13,7 @@ Events are funneled into :class:`NotificationService`'s debounced refresh
 pipeline (``notify_list_changed``), so listener-driven refreshes share the
 same coalescing and rate limiting as session-delivered notifications.
 
-The scheduled auto-refresh (``AUTO_REFRESH_SERVERS``) covers legacy servers, 
+The scheduled auto-refresh (``AUTO_REFRESH_SERVERS``) covers legacy servers,
 modern-era servers that never announce, and any window
 where a listen stream is down.
 
@@ -204,7 +204,7 @@ class ModernListenerService:
                     UNSUPPORTED_REPROBE_SECONDS,
                 )
                 return
-            except asyncio.CancelledError:
+            except asyncio.CancelledError:  # pylint: disable=try-except-raise
                 raise
             except Exception as exc:  # pylint: disable=broad-except  # SubscriptionLost, MCPError, transport errors
                 logger.warning("Listen stream to server %s dropped (%s: %s); reconnecting in %.0fs", gw.name, type(exc).__name__, exc, backoff)
