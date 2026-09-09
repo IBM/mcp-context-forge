@@ -8,6 +8,7 @@ Comprehensive tests for Personal Team Service functionality.
 
 # Standard
 from unittest.mock import AsyncMock, MagicMock, patch
+import uuid
 
 # Third-Party
 import pytest
@@ -486,3 +487,26 @@ class TestPersonalTeamService:
                 await service.create_personal_team(mock_user)
 
             mock_db.rollback.assert_called_once()
+
+
+class TestPersonalTeamCanonicalKeying:
+    """Writer re-keying: create_personal_team stores the canonical user_id (#5893)."""
+
+    @pytest.mark.asyncio
+    async def test_create_personal_team_stores_canonical_user_id(self, test_db):
+        """The owner membership row is keyed by the diverged user's user_id."""
+        # First-Party
+        from mcpgateway.db import EmailTeamMember
+        from mcpgateway.services.email_auth_service import EmailAuthService
+
+        suffix = uuid.uuid4().hex[:8]
+        email = f"owner-{suffix}@example.com"
+        auth_service = EmailAuthService(test_db)
+        user = await auth_service.create_user(email=email, password="", user_id="idp-123", skip_password_validation=True, skip_onboarding=True)
+
+        service = PersonalTeamService(test_db)
+        team = await service.create_personal_team(user)
+
+        membership = test_db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team.id).one()
+        assert membership.user_email == "idp-123"
+        assert membership.role == "owner"
