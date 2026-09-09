@@ -215,6 +215,67 @@ def get_user_email(user: Any) -> str:
     return str(user) if user else "unknown"
 
 
+def get_user_id(user: Any) -> str:
+    """Extract the canonical user ID from a user object.
+
+    The canonical user ID is the stable identity of a user. The explicit
+    ``user_id`` value wins when it is present. The e-mail value is the
+    fallback. Phase 1 populates ``user_id`` with the e-mail value, so the
+    two stay identical until later stories separate them.
+
+    Args:
+        user: User object, can be either a dict (new RBAC format), an object
+            with attributes (ORM model), or a string (legacy format)
+
+    Returns:
+        str: Canonical user ID extracted from the user object
+
+    Examples:
+        >>> get_user_id({'user_id': 'u-1', 'email': 'admin@example.com'})
+        'u-1'
+        >>> get_user_id({'email': 'admin@example.com'})
+        'admin@example.com'
+        >>> get_user_id({'sub': 'user@example.com'})
+        'user@example.com'
+        >>> get_user_id({})
+        'unknown'
+        >>> get_user_id(None)
+        'unknown'
+        >>> get_user_id('')
+        'unknown'
+        >>> import types
+        >>> get_user_id(types.SimpleNamespace(user_id='u-1', email='admin@example.com'))
+        'u-1'
+        >>> get_user_id(types.SimpleNamespace(user_id=None, email='admin@example.com'))
+        'admin@example.com'
+        >>> get_user_id('legacy_user')
+        'legacy_user'
+    """
+    if user is None:
+        return "unknown"
+    # Handle dict-like objects
+    if isinstance(user, dict):
+        user_id = user.get("user_id")
+        if isinstance(user_id, str) and user_id:
+            return user_id
+        email = user.get("email")
+        if isinstance(email, str) and email:
+            return email
+        sub = user.get("sub")
+        if isinstance(sub, str) and sub:
+            return sub
+        return "unknown"
+    # Handle objects with attributes (e.g., ORM models, dataclasses)
+    user_id = getattr(user, "user_id", None)
+    if isinstance(user_id, str) and user_id:
+        return user_id
+    email = getattr(user, "email", None)
+    if isinstance(email, str) and email:
+        return email
+    # Fallback to string conversion for other types
+    return str(user) if user else "unknown"
+
+
 def _is_uuid_string(value: str) -> bool:
     """Return True when *value* is a syntactically valid UUID string."""
     try:
