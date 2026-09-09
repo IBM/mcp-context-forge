@@ -282,6 +282,35 @@ def get_user_id(user: Any) -> str:
     return str(user) if user else "unknown"
 
 
+def resolve_canonical_user_id(email: str, db: Session) -> str:
+    """Resolve an e-mail address to the canonical user ID for writer paths.
+
+    Writer sites call this resolver once and store the result in the
+    ``user_email``-keyed columns of ``UserRole`` and ``EmailTeamMember``.
+    The input e-mail is stripped and lowered, the same rule
+    ``EmailAuthService.create_user`` applies. When a user row exists and
+    carries a non-empty string ``user_id``, that value wins. Otherwise the
+    input e-mail is returned unchanged, so callers stay safe for users not
+    yet provisioned.
+
+    Args:
+        email: E-mail address of the user being written about
+        db: SQLAlchemy session used for the lookup
+
+    Returns:
+        str: Canonical user ID, or the input e-mail when no mapping exists
+
+    Examples:
+        >>> resolve_canonical_user_id('admin@example.com', db)  # doctest: +SKIP
+        'admin@example.com'
+    """
+    normalized_email = email.lower().strip()
+    user = db.query(EmailUser).filter(EmailUser.email == normalized_email).first()
+    if user is not None and isinstance(user.user_id, str) and user.user_id:
+        return user.user_id
+    return email
+
+
 def _is_uuid_string(value: str) -> bool:
     """Return True when *value* is a syntactically valid UUID string."""
     try:
