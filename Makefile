@@ -8729,15 +8729,17 @@ CF_CONTROLPLANE_PULL_POLICY ?= never
 CF_COMPOSE_BUILD ?= true
 CONFORMANCE_BASELINE_DIR := $(CURDIR)/tests/conformance/baselines
 
-# help: conformance          - Run legacy-to-legacy and modern-to-modern MCP conformance through the built-in dataplane
-# help: conformance-bless    - Update baselines only after both era pairs complete successfully
+# help: conformance          - Run legacy and modern MCP conformance through the built-in dataplane
+# help: conformance-bless    - Update baselines after the complete conformance matrix finishes
 .PHONY: conformance conformance-bless
 
 # Fresh conformance stacks need strong bootstrap passwords; preserve explicit settings.
 conformance conformance-bless: export DEFAULT_USER_PASSWORD ?= $(shell python3 -c 'import secrets; print(secrets.token_urlsafe(32))')
 conformance conformance-bless: export PLATFORM_ADMIN_PASSWORD ?= $(shell python3 -c 'import secrets; print(secrets.token_urlsafe(32))')
 
-conformance: ## Run legacy→legacy and modern→modern MCP conformance through the built-in dataplane
+# The fixture accepts both eras so registration does not require a modern gateway.
+# Client checks still exercise each protocol version independently.
+conformance conformance-bless:
 	@if ! command -v "$(CF_INTEGRATION)" >/dev/null 2>&1; then \
 		echo "cf-integration not found: install its published binary with cargo binstall or set CF_INTEGRATION to its path."; \
 		exit 1; \
@@ -8746,57 +8748,16 @@ conformance: ## Run legacy→legacy and modern→modern MCP conformance through 
 		echo "Tracked control-plane changes are not committed; commit or stash them before conformance."; \
 		exit 1; \
 	fi
-	@status=0; \
-	for era in legacy modern; do \
-		CF_INTEGRATION_DIR="$(CF_INTEGRATION_DIR)" \
-		CF_CONTROLPLANE_REPO="$(CF_CONTROLPLANE_REPO)" \
-		CF_CONTROLPLANE_REF="$(CF_CONTROLPLANE_REF)" \
-		CF_CONTROLPLANE_IMAGE="$(CF_CONTROLPLANE_IMAGE)" \
-		CF_CONTROLPLANE_PULL_POLICY="$(CF_CONTROLPLANE_PULL_POLICY)" \
-		CF_COMPOSE_BUILD="$(CF_COMPOSE_BUILD)" \
-		"$(CF_INTEGRATION)" conformance run \
-			--client-era "$${era}" \
-			--server-era "$${era}" \
-			--lane builtin \
-			--baseline-dir "$(CONFORMANCE_BASELINE_DIR)" \
-			--output-dir "$(CF_INTEGRATION_DIR)/reports" || status=$$?; \
-	done; \
-	exit $$status
-
-conformance-bless: ## Run both era pairs and atomically update their baselines
-	@if ! command -v "$(CF_INTEGRATION)" >/dev/null 2>&1; then \
-		echo "cf-integration not found: install its published binary with cargo binstall or set CF_INTEGRATION to its path."; \
-		exit 1; \
-	fi
-	@if [ -n "$$(git -C "$(CF_CONTROLPLANE_REPO)" status --porcelain --untracked-files=no)" ]; then \
-		echo "Tracked control-plane changes are not committed; commit or stash them before conformance."; \
-		exit 1; \
-	fi
-	@set -eu; \
-	mkdir -p "$(CF_INTEGRATION_DIR)"; \
-	staging="$$(mktemp -d "$(CF_INTEGRATION_DIR)/baseline-bless.XXXXXX")"; \
-	trap 'rm -rf "$$staging"' EXIT; \
-	if [ -d "$(CONFORMANCE_BASELINE_DIR)" ]; then \
-		cp -R "$(CONFORMANCE_BASELINE_DIR)/." "$$staging/"; \
-	fi; \
-	status=0; \
-	for era in legacy modern; do \
-		CF_INTEGRATION_DIR="$(CF_INTEGRATION_DIR)" \
-		CF_CONTROLPLANE_REPO="$(CF_CONTROLPLANE_REPO)" \
-		CF_CONTROLPLANE_REF="$(CF_CONTROLPLANE_REF)" \
-		CF_CONTROLPLANE_IMAGE="$(CF_CONTROLPLANE_IMAGE)" \
-		CF_CONTROLPLANE_PULL_POLICY="$(CF_CONTROLPLANE_PULL_POLICY)" \
-		CF_COMPOSE_BUILD="$(CF_COMPOSE_BUILD)" \
-		"$(CF_INTEGRATION)" conformance run \
-			--client-era "$${era}" \
-			--server-era "$${era}" \
-			--lane builtin \
-			--baseline-dir "$$staging" \
-			--output-dir "$(CF_INTEGRATION_DIR)/reports" \
-			--bless || status=$$?; \
-	done; \
-	if [ "$$status" -ne 0 ]; then \
-		exit "$$status"; \
-	fi; \
-	mkdir -p "$(CONFORMANCE_BASELINE_DIR)"; \
-	cp -R "$$staging/." "$(CONFORMANCE_BASELINE_DIR)/"
+	@CF_INTEGRATION_DIR="$(CF_INTEGRATION_DIR)" \
+	CF_CONTROLPLANE_REPO="$(CF_CONTROLPLANE_REPO)" \
+	CF_CONTROLPLANE_REF="$(CF_CONTROLPLANE_REF)" \
+	CF_CONTROLPLANE_IMAGE="$(CF_CONTROLPLANE_IMAGE)" \
+	CF_CONTROLPLANE_PULL_POLICY="$(CF_CONTROLPLANE_PULL_POLICY)" \
+	CF_COMPOSE_BUILD="$(CF_COMPOSE_BUILD)" \
+	"$(CF_INTEGRATION)" conformance run \
+		--client-era dual \
+		--server-era dual \
+		--lane builtin \
+		--baseline-dir "$(CONFORMANCE_BASELINE_DIR)" \
+		--output-dir "$(CF_INTEGRATION_DIR)/reports" \
+		$(if $(filter conformance-bless,$@),--bless)
