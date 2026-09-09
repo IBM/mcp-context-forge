@@ -253,7 +253,8 @@ def _get_user_team_ids_sync(email: str) -> List[str]:
     Matches the behavior of user.get_teams() which returns all active memberships.
 
     Args:
-        email: User email address
+        email: Canonical user_id for the membership query. Phase-1 value =
+            e-mail, so the ``EmailTeamMember.user_email`` query is unchanged.
 
     Returns:
         List of team ID strings
@@ -594,7 +595,9 @@ async def _resolve_teams_from_db(email: str, user_info) -> Optional[List[str]]:
     For non-admin users, returns the full list of team IDs from DB/cache.
 
     Args:
-        email: User email address
+        email: Canonical user_id for the DB/cache lookup. Phase-1 value =
+            e-mail, so the ``EmailTeamMember.user_email`` queries are
+            unchanged.
         user_info: User dict or EmailUser instance
 
     Returns:
@@ -684,11 +687,27 @@ async def resolve_session_teams(
             from a batched query), pass them here to skip the DB call.
             Pass ``None`` to indicate admin bypass was already determined.
 
+    The identity passed to the DB layer comes from ``get_user_id(payload)``
+    (canonical user_id; phase-1 value = e-mail). A UUID session subject is
+    an opaque reference, not an identity: like a missing identity, it falls
+    back to the *email* argument.
+
     Returns:
         None (admin bypass), [] (public-only), or list of team ID strings.
     """
     if not email:
         return []  # No identity — public-only; never admin bypass
+
+    # Canonical identity for team resolution (phase-1 value = e-mail).
+    identity = get_user_id(payload)
+    try:
+        uuid.UUID(identity)
+        identity = "unknown"  # UUID session subject — take the identity from the email argument
+    except ValueError:
+        pass  # Non-UUID identity
+    identity_from_email = identity == "unknown"
+    if identity_from_email:
+        identity = email
 
     # If sub is a UUID (new token format), resolve to email for DB lookups
     try:
@@ -696,13 +715,15 @@ async def resolve_session_teams(
         resolved = await asyncio.to_thread(_get_email_by_id_sync, email)
         if resolved:
             email = resolved
+            if identity_from_email:
+                identity = resolved
     except ValueError:
         pass  # Already an email string
 
     if preresolved_db_teams is not _UNSET:
         db_teams: Optional[List[str]] = preresolved_db_teams
     else:
-        db_teams = await _resolve_teams_from_db(email, user_info)
+        db_teams = await _resolve_teams_from_db(identity, user_info)
 
     return _narrow_by_jwt_teams(payload, db_teams)
 
