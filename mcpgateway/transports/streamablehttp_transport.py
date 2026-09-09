@@ -1749,7 +1749,7 @@ async def call_tool(
     inbound_request_state = None
     # Extract _meta from request context if available
     try:
-        ctx = mcp_app.request_context
+        ctx = mcp_app.request_context  # pylint: disable=no-member
         if ctx and ctx.meta is not None:
             # MCP 2.0 RequestParamsMeta is a TypedDict (no model_dump); tolerate
             # legacy model-shaped meta for tests that inject a Pydantic object.
@@ -2201,7 +2201,7 @@ async def _get_request_context_or_default() -> Tuple[str, dict[str, Any], dict[s
     # 2. Try ASGI scope context injected by handle_streamable_http()
     ctx = None
     try:
-        ctx = mcp_app.request_context
+        ctx = mcp_app.request_context  # pylint: disable=no-member
         request = ctx.request
         if request:
             gw_ctx = getattr(request, "scope", {}).get(_MCPGATEWAY_CONTEXT_KEY)
@@ -2229,7 +2229,7 @@ async def _get_request_context_or_default() -> Tuple[str, dict[str, Any], dict[s
         # Reuse ctx from the scope-reading block above (step 2) to avoid
         # a redundant mcp_app.request_context lookup.
         if ctx is None:
-            ctx = mcp_app.request_context
+            ctx = mcp_app.request_context  # pylint: disable=no-member
         request = ctx.request
         if not request:
             logger.warning("No request object found in MCP context")
@@ -2570,7 +2570,7 @@ async def get_prompt(prompt_id: str, arguments: dict[str, str] | None = None) ->
     meta_data = None
     # Extract _meta from request context if available
     try:
-        ctx = mcp_app.request_context
+        ctx = mcp_app.request_context  # pylint: disable=no-member
         if ctx and ctx.meta is not None:
             # MCP 2.0 RequestParamsMeta is a TypedDict (no model_dump); tolerate
             # legacy model-shaped meta for tests that inject a Pydantic object.
@@ -2753,7 +2753,7 @@ async def read_resource(resource_uri: str) -> Union[str, bytes, List[Any]]:
     meta_data = None
     # Extract _meta from request context if available
     try:
-        ctx = mcp_app.request_context
+        ctx = mcp_app.request_context  # pylint: disable=no-member
         if ctx and ctx.meta is not None:
             # MCP 2.0 RequestParamsMeta is a TypedDict (no model_dump); tolerate
             # legacy model-shaped meta for tests that inject a Pydantic object.
