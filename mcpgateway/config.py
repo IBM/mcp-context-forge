@@ -400,6 +400,28 @@ class Settings(BaseSettings):
         default=True,
         description="Require all authenticated users to exist in the database. When true, disables the platform admin bootstrap mechanism. Set REQUIRE_USER_IN_DB=false in .env for development environments that use the bootstrap admin path.",
     )
+    # JWT Trust Mode Configuration
+    # Trust mode "jwt-trust" accepts claims from tokens issued by trusted
+    # external identity providers without a per-request database lookup.
+    # Default "db" preserves the existing database-backed behavior.
+    jwt_trust_mode: Literal["db", "jwt-trust"] = Field(
+        default="db",
+        description="JWT trust mode: 'db' (database-backed user lookup, default) or 'jwt-trust' (trust claims from tokens of trusted external identity providers)",
+    )
+    jwt_claim_user_id: str = Field(default="sub", description="JWT claim name carrying the user identifier in trust mode")
+    jwt_claim_email: str = Field(default="email", description="JWT claim name carrying the user email in trust mode")
+    jwt_claim_teams: str = Field(default="teams", description="JWT claim name carrying team memberships in trust mode")
+    jwt_claim_roles: str = Field(default="roles", description="JWT claim name carrying role names in trust mode")
+    jwt_claim_admin: str = Field(default="is_admin", description="JWT claim name carrying the admin flag in trust mode")
+    jwt_trust_overage_policy: Literal["fail_closed", "graph_lookup", "proceed_without_groups"] = Field(
+        default="fail_closed",
+        description="Policy when a trust-mode token exceeds the group-claim overage limit: 'fail_closed' (reject), 'graph_lookup' (resolve via Microsoft Graph), 'proceed_without_groups' (continue without group claims)",
+    )
+    jwt_trust_revocation_claim: str = Field(
+        default="jti",
+        description="JWT claim used as the revocation identifier for trust-eligible tokens (default 'jti'; use 'uti' for Entra roots). A trust-eligible token missing this claim is rejected with 401.",
+    )
+
     embed_environment_in_tokens: bool = Field(default=True, description="Embed environment claim in gateway-issued JWTs for environment isolation")
     validate_token_environment: bool = Field(default=True, description="Reject tokens with mismatched environment claim (tokens without env claim are allowed)")
     derive_key_per_environment: bool = Field(
@@ -1825,6 +1847,29 @@ class Settings(BaseSettings):
                 "See .env.example for configuration examples."
             )
 
+        return self
+
+    @model_validator(mode="after")
+    def validate_jwt_trust_config(self) -> Self:
+        """Reject JWT-trust misconfiguration at startup.
+
+        Trust mode requires a non-empty revocation claim and non-empty claim
+        mappings. A trust-eligible token that lacks the configured revocation
+        claim is rejected with 401 at request time; that enforcement lands in
+        #5900. This validator only covers the startup contract.
+        """
+        if self.jwt_trust_mode == "jwt-trust":
+            claim_settings = [
+                "jwt_claim_user_id",
+                "jwt_claim_email",
+                "jwt_claim_teams",
+                "jwt_claim_roles",
+                "jwt_claim_admin",
+                "jwt_trust_revocation_claim",
+            ]
+            for name in claim_settings:
+                if not getattr(self, name).strip():
+                    raise ValueError(f"Setting {name} must not be empty when jwt_trust_mode is enabled.")
         return self
 
     def get_security_warnings(self) -> List[str]:

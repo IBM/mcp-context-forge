@@ -199,6 +199,28 @@ appropriate secure-cookie, SameSite, credential, and CSRF configuration.
     export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token --username admin@example.com --exp 10080 --secret my-test-key-but-now-longer-than-32-bytes)
     ```
 
+### JWT Trust Mode
+
+JWT trust mode controls how the gateway resolves the caller's identity. The default `db` mode performs the existing database-backed user lookup for every request. `jwt-trust` mode accepts claims from tokens issued by trusted external identity providers without a per-request database lookup.
+
+| Setting                      | Description                                                                                  | Default       | Options                                          |
+|------------------------------|----------------------------------------------------------------------------------------------|---------------|--------------------------------------------------|
+| `JWT_TRUST_MODE`             | JWT trust mode toggle                                                                        | `db`          | `db`, `jwt-trust`                                |
+| `JWT_CLAIM_USER_ID`          | JWT claim carrying the user identifier in trust mode                                         | `sub`         | non-empty string                                 |
+| `JWT_CLAIM_EMAIL`            | JWT claim carrying the user email in trust mode                                              | `email`       | non-empty string                                 |
+| `JWT_CLAIM_TEAMS`            | JWT claim carrying team memberships in trust mode                                            | `teams`       | non-empty string                                 |
+| `JWT_CLAIM_ROLES`            | JWT claim carrying role names in trust mode                                                  | `roles`       | non-empty string                                 |
+| `JWT_CLAIM_ADMIN`            | JWT claim carrying the admin flag in trust mode                                              | `is_admin`    | non-empty string                                 |
+| `JWT_TRUST_OVERAGE_POLICY`   | Policy when a token exceeds the group-claim overage limit                                    | `fail_closed` | `fail_closed`, `graph_lookup`, `proceed_without_groups` |
+| `JWT_TRUST_REVOCATION_CLAIM` | JWT claim used as the revocation identifier for trust-eligible tokens (`uti` for Entra roots) | `jti`         | non-empty string                                 |
+
+Startup validation rules:
+
+- When `JWT_TRUST_MODE=jwt-trust`, every claim-mapping setting and `JWT_TRUST_REVOCATION_CLAIM` must be a non-empty string. The gateway refuses to start with an error naming the offending setting.
+- A trust-eligible token that lacks the configured revocation claim is rejected with `401`. The revocation claim is mandatory because trust mode relies on it for token revocation.
+
+All defaults preserve the current behavior: trust mode defaults to `db` and the new settings are inert until `jwt-trust` is enabled.
+
 ### UI Features
 
 For detailed guidance on embedding and section customization, see [Admin UI Customization](admin-ui-customization.md).
