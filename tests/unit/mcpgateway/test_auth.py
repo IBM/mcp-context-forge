@@ -7236,3 +7236,80 @@ class TestUserFromCachedDictFullShape:
         # contract that writers must not rely on these defaults for existing fields.
         assert user.auth_provider == "local", "default masks real provider"
         assert user.password_change_required is False, "default skips forced change"
+
+
+class TestPrincipalCarriesUserId:
+    """Contract: every principal construction site emits user_id equal to the e-mail (issue #5887)."""
+
+    def test_bootstrap_platform_admin_user_carries_user_id(self):
+        """The synthesized platform-admin principal carries user_id equal to its e-mail."""
+        # First-Party
+        from mcpgateway.auth import _bootstrap_platform_admin_user  # pylint: disable=import-outside-toplevel
+
+        user = _bootstrap_platform_admin_user("admin@x.test")
+
+        assert user.email == "admin@x.test"
+        assert getattr(user, "user_id", None) == "admin@x.test"
+
+    def test_user_from_cached_dict_carries_user_id(self):
+        """The cache-rebuilt principal carries user_id, with e-mail fallback."""
+        # First-Party
+        from mcpgateway.auth import _user_from_cached_dict  # pylint: disable=import-outside-toplevel
+
+        user = _user_from_cached_dict({"email": "a@x.test", "user_id": "a@x.test", "is_admin": False, "is_active": True})
+        assert user.user_id == "a@x.test"
+
+        fallback_user = _user_from_cached_dict({"email": "a@x.test", "is_admin": False, "is_active": True})
+        assert fallback_user.user_id == "a@x.test"
+
+    def test_batched_auth_context_user_dict_carries_user_id(self, monkeypatch):
+        """The batched auth-context user dict carries user_id equal to its e-mail."""
+        # Standard
+        from contextlib import contextmanager
+
+        results = [
+            SimpleNamespace(  # user
+                email="user@example.com",
+                password_hash="h",
+                full_name="U",
+                is_admin=False,
+                is_active=True,
+                auth_provider="local",
+                password_change_required=False,
+                email_verified_at=None,
+                created_at=datetime.now(timezone.utc),
+                updated_at=datetime.now(timezone.utc),
+            ),
+            None,  # no personal team
+            [],  # no team memberships (query 4: team_ids)
+        ]
+
+        class DummyResult:
+            def __init__(self, val):
+                self._val = val
+
+            def scalar_one_or_none(self):
+                return self._val
+
+            def all(self):
+                return self._val if isinstance(self._val, list) else []
+
+        class DummySession:
+            def __init__(self):
+                self._idx = 0
+
+            def execute(self, _q):
+                val = results[self._idx] if self._idx < len(results) else None
+                self._idx += 1
+                return DummyResult(val)
+
+        @contextmanager
+        def _session_ctx():
+            yield DummySession()
+
+        monkeypatch.setattr("mcpgateway.auth.fresh_db_session", _session_ctx)
+        # First-Party
+        from mcpgateway.auth import _get_auth_context_batched_sync  # pylint: disable=import-outside-toplevel
+
+        result = _get_auth_context_batched_sync("user@example.com")
+        assert result["user"]["user_id"] == result["user"]["email"]
