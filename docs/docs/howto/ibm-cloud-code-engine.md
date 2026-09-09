@@ -15,6 +15,7 @@ This guide covers two supported deployment paths for the **ContextForge**:
 | Docker **or** Podman | Builds the production container image locally                      |
 | IBM Cloud CLI ≥ 2.16 | Installed automatically with `make ibmcloud-cli-install`           |
 | Code Engine project  | Create or select one in the IBM Cloud console                      |
+| IAM permissions      | Editor or higher on Code Engine; Writer or higher on Container Registry in the resource group |
 | `.env` file          | Runtime secrets & config for the gateway                           |
 | `.env.ce` file       | Deployment credentials & metadata for Code Engine / Container Reg. |
 
@@ -26,13 +27,13 @@ Both files are already in **`.gitignore`**.
 Templates named **`.env.example`** and **`.env.ce.example`** are included; copy them:
 
 ```bash
-cp .env.example .env         # runtime settings (inside the container)
-cp .env.ce.example .env.ce   # deployment credentials (CLI only)
+cp .env.example .env         # runtime settings (uploaded to Code Engine as a secret)
+cp .env.ce.example .env.ce   # deployment credentials (CLI only, never reach the container)
 ```
 
 ### `.env` - runtime settings
 
-This file is **mounted into the container** (via `--env-file=.env`), so its keys live inside Code Engine at runtime. Treat it as an application secret store.
+This file holds the runtime configuration for the gateway. Locally it is passed to the container via `--env-file=.env`, but **Code Engine has no access to your local filesystem** — you must upload these values as a Code Engine secret (covered in the deploy steps below). Treat this file as an application secret store and never commit it to version control.
 
 ```bash
 # ─────────────────────────────────────────────────────────────────────────────
@@ -125,6 +126,17 @@ grep -q DATABASE_URL .env && echo "OK: DATABASE_URL set" || echo "WARNING: DATAB
 grep -q JWT_SECRET_KEY .env && echo "OK: JWT_SECRET_KEY set" || echo "WARNING: JWT_SECRET_KEY not set in .env"
 ```
 
+!!! warning "Set `HOST=0.0.0.0` in your `.env`"
+    Code Engine routes external traffic into the container. If `HOST` is set to `127.0.0.1`
+    (the application default) the process binds to loopback only and Code Engine's routing
+    cannot reach it — the app will appear to start but all requests will fail.
+
+    Make sure your `.env` contains:
+    ```bash
+    HOST=0.0.0.0
+    PORT=4444
+    ```
+
 ---
 
 ## 3 - Workflow A - Makefile targets
@@ -139,10 +151,10 @@ grep -q JWT_SECRET_KEY .env && echo "OK: JWT_SECRET_KEY set" || echo "WARNING: J
 | `ibmcloud-list-containers`  | Show ICR images and existing Code Engine apps.                                       |
 | `ibmcloud-tag`              | `podman tag $IBMCLOUD_IMG_PROD $IBMCLOUD_IMAGE_NAME`.                                |
 | `ibmcloud-push`             | `ibmcloud cr login` + `podman push` to ICR.                                          |
-| `ibmcloud-deploy`           | Create **or** update the app, set CPU/MEM, attach registry secret, expose port 4444. |
+| `ibmcloud-deploy`           | Create **or** update the app; syncs `.env` to a Code Engine secret (`<app>-env`), sets CPU/MEM, attaches registry secret, exposes port 4444. |
 | `ibmcloud-ce-status`        | `ibmcloud ce application get` - see route URL, revisions, health.                    |
 | `ibmcloud-ce-logs`          | `ibmcloud ce application logs --follow` - live log stream.                           |
-| `ibmcloud-ce-rm`            | Delete the application entirely.                                                     |
+| `ibmcloud-ce-rm`            | Delete the application and its `<app>-env` runtime secret.                           |
 
 **Typical first deploy**
 
@@ -157,10 +169,33 @@ make ibmcloud-push
 make ibmcloud-deploy
 ```
 
+!!! info "`make ibmcloud-deploy` handles env injection automatically"
+    The target creates or updates a Code Engine secret named `<app>-env` (where `<app>` is
+    `$IBMCLOUD_CODE_ENGINE_APP`) from your local `.env` on every run, then passes
+    `--env-from-secret <app>-env` to the app. You do not need a
+    separate step — just make sure `.env` is present and populated before running the target.
+
+!!! warning "`--from-env-file` skips lines with inline comments"
+    The `ibmcloud ce secret` flag used to upload `.env` silently **skips any line that contains
+    an inline comment** (e.g. `KEY=value  # comment`).  Before running `make ibmcloud-deploy`,
+    check your `.env` for lines of the form `KEY=value  # comment` and move the comment to its
+    own line above the key.
+
+    Do **not** use a blanket `sed` stripper — values such as `DATABASE_URL` or `REDIS_URL`
+    pasted from the IBM Cloud console can legitimately contain `#`, and stripping would silently
+    truncate them.
+
 **Redeploy after code changes**
 
 ```bash
 make podman ibmcloud-tag ibmcloud-push ibmcloud-deploy
+```
+
+**Update runtime config (`.env` changed, no code change)**
+
+```bash
+ibmcloud ce secret update --name "${IBMCLOUD_CODE_ENGINE_APP}-env" --from-env-file .env
+ibmcloud ce application update --name "$IBMCLOUD_CODE_ENGINE_APP"
 ```
 
 ---
@@ -187,6 +222,12 @@ podman build -t "$IBMCLOUD_IMG_PROD" .
 podman tag "$IBMCLOUD_IMG_PROD" "$IBMCLOUD_IMAGE_NAME"
 
 # 5 - Push image to ICR
+#
+# Note: if you are deploying to a region other than us-south (e.g. eu-de, jp-tok),
+# set the Container Registry region first:
+#   ibmcloud cr region-set <region>   (e.g. ibmcloud cr region-set eu-de)
+# Without this step `ibmcloud cr login` will authenticate to the wrong endpoint
+# and the push will fail with authentication errors.
 ibmcloud cr login
 ibmcloud cr namespaces       # Ensure your namespace exists
 podman push "$IBMCLOUD_IMAGE_NAME"
@@ -203,24 +244,43 @@ ibmcloud cr images --restrict "$(echo "$IBMCLOUD_IMAGE_NAME" | cut -d/ -f2)"
 
 ```bash
 # 6 - Create registry secret (first time)
-ibmcloud ce registry create-secret --name "$IBMCLOUD_REGISTRY_SECRET" \
+# Note: 'ibmcloud ce registry create-secret' is deprecated — use the form below.
+ibmcloud ce secret create --name "$IBMCLOUD_REGISTRY_SECRET" \
+    --format registry \
     --server "$(echo "$IBMCLOUD_IMAGE_NAME" | cut -d/ -f1)" \
     --username iamapikey --password "$IBMCLOUD_API_KEY"
 ibmcloud ce secret list # list every secret (generic, registry, SSH, TLS, etc.)
 ibmcloud ce secret get --name "$IBMCLOUD_REGISTRY_SECRET"         # add --decode to see clear-text values
 
-# 7 - Deploy / update
+# 6b - Create a runtime environment secret from .env
+# Code Engine has no access to your local .env file — upload it as a secret.
+# The secret name is derived from the app name to keep naming consistent.
+#
+# NOTE: --from-env-file skips lines with inline comments (KEY=value  # comment).
+# Check your .env for such lines and move comments to their own line before running.
+# See the warning in Workflow A above for details.
+#
+# First time:
+ibmcloud ce secret create --name "${IBMCLOUD_CODE_ENGINE_APP}-env" --from-env-file .env
+#
+# To update later (e.g. rotating credentials or changing config):
+# ibmcloud ce secret update --name "${IBMCLOUD_CODE_ENGINE_APP}-env" --from-env-file .env
+# ibmcloud ce application update --name "$IBMCLOUD_CODE_ENGINE_APP"
+
+# 7 - Deploy / update (attach the env secret so the container sees your config)
 if ibmcloud ce application get --name "$IBMCLOUD_CODE_ENGINE_APP" >/dev/null 2>&1; then
   ibmcloud ce application update --name "$IBMCLOUD_CODE_ENGINE_APP" \
       --image "$IBMCLOUD_IMAGE_NAME" \
       --cpu "$IBMCLOUD_CPU" --memory "$IBMCLOUD_MEMORY" \
-      --registry-secret "$IBMCLOUD_REGISTRY_SECRET"
+      --registry-secret "$IBMCLOUD_REGISTRY_SECRET" \
+      --env-from-secret "${IBMCLOUD_CODE_ENGINE_APP}-env"
 else
   ibmcloud ce application create --name "$IBMCLOUD_CODE_ENGINE_APP" \
       --image "$IBMCLOUD_IMAGE_NAME" \
       --cpu "$IBMCLOUD_CPU" --memory "$IBMCLOUD_MEMORY" \
       --port 4444 \
-      --registry-secret "$IBMCLOUD_REGISTRY_SECRET"
+      --registry-secret "$IBMCLOUD_REGISTRY_SECRET" \
+      --env-from-secret "${IBMCLOUD_CODE_ENGINE_APP}-env"
 fi
 ```
 
@@ -280,6 +340,9 @@ make ibmcloud-ce-rm
 
 # or directly
 ibmcloud ce application delete --name "$IBMCLOUD_CODE_ENGINE_APP" -f
+
+# Also remove the runtime env secret if you no longer need it
+ibmcloud ce secret delete --name "${IBMCLOUD_CODE_ENGINE_APP}-env" -f
 ```
 
 ---
@@ -287,6 +350,13 @@ ibmcloud ce application delete --name "$IBMCLOUD_CODE_ENGINE_APP" -f
 ## 7 - Using IBM Cloud Databases for PostgreSQL
 
 Need durable data, high availability, and automated backups? Provision **IBM Cloud Databases for PostgreSQL** and connect ContextForge to it.
+
+!!! tip "Already have `DATABASE_URL` in your `.env`?"
+    If you set `DATABASE_URL` in `.env` before running `make ibmcloud-deploy`, it is already
+    present in the `<app>-env` secret and you can skip steps 4–5 below. The separate
+    `mcpgw-db-url` secret approach shown here is useful when you want to manage the database
+    credential independently from the rest of your config — for example, rotating it without
+    re-uploading the entire `.env`.
 
 ```bash
 ###############################################################################
@@ -383,6 +453,12 @@ For production workloads you **must** switch to a managed database or mount a pe
 
 Need a high-performance shared cache? Provision **IBM Cloud Databases for Redis**
 and point ContextForge at it.
+
+!!! tip "Already have `REDIS_URL` in your `.env`?"
+    If you set `REDIS_URL` and `CACHE_TYPE=redis` in `.env` before running `make ibmcloud-deploy`,
+    they are already present in the `<app>-env` secret and you can skip steps 4–5 below. The
+    separate `mcpgw-redis-url` secret approach shown here is useful when you want to manage the
+    Redis credential independently from the rest of your config.
 
 ```bash
 ###############################################################################
@@ -528,6 +604,8 @@ make podman ibmcloud-tag ibmcloud-push ibmcloud-deploy
 |---------|-------|-----|
 | `ibmcloud ce application get` shows "Failed" | Image pull error — wrong registry secret or image path | Verify `IBMCLOUD_IMAGE_NAME` matches the pushed image: `ibmcloud cr images` |
 | Application starts then crashes (OOMKilled) | Insufficient memory for gunicorn workers | Increase `IBMCLOUD_MEMORY` in `.env.ce` or reduce `workers` in `gunicorn.config.py` |
+| App running but env vars missing (auth fails, wrong DB, etc.) | `.env` was never uploaded as a Code Engine secret, or has lines with inline comments that `--from-env-file` skips (see warning in Workflow A) | Check `.env` for `KEY=value  # comment` lines and move comments to their own line, then run:<br>`ibmcloud ce secret create --name "${IBMCLOUD_CODE_ENGINE_APP}-env" --from-env-file .env`<br>`ibmcloud ce application update --name "$IBMCLOUD_CODE_ENGINE_APP" --env-from-secret "${IBMCLOUD_CODE_ENGINE_APP}-env"` |
+| App starts but requests never reach it (connection refused / 502) | `HOST=127.0.0.1` in `.env` — app binds to loopback only | Set `HOST=0.0.0.0` in `.env`, update the secret, and trigger a new revision |
 | `connection refused` to PostgreSQL | Database not yet provisioned or wrong hostname | Verify with: `ibmcloud resource service-instance mcpgw-db` and check credentials JSON |
 | `SSL: CERTIFICATE_VERIFY_FAILED` on database connection | Missing `sslmode=require` in `DATABASE_URL` | Ensure `DATABASE_URL` ends with `?sslmode=require` |
 | Redis connection timeout | Security group or allowlist blocking Code Engine IPs | IBM Cloud Databases allowlist must include Code Engine's outbound IPs, or use private endpoints |
