@@ -83,7 +83,7 @@ from sqlalchemy.orm import Session
 from starlette.requests import Request
 
 # First-Party
-from mcpgateway.auth_context import normalize_token_teams
+from mcpgateway.auth_context import get_user_id, normalize_token_teams
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam, EmailUser, fresh_db_session, SessionLocal
@@ -2230,7 +2230,7 @@ def _inject_userinfo_instate(request: Optional[object] = None, user: Optional[Em
         team_id = getattr(request.state, "team_id", None) if request and hasattr(request, "state") else None
 
         global_context.user_context = UserContext(
-            user_id=user.email,  # canonical user_id, phase-1 value = e-mail
+            user_id=get_user_id(user),  # canonical user_id, phase-1 value = e-mail
             email=user.email,
             full_name=user.full_name,
             is_admin=user.is_admin,

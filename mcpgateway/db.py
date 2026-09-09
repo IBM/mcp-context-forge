@@ -2912,7 +2912,7 @@ class ObservabilityTrace(Base):
     http_status_code: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
 
     # User context
-    user_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
+    user_email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)  # canonical user_id; phase-1 value = e-mail; name kept for compatibility
     user_agent: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     ip_address: Mapped[Optional[str]] = mapped_column(String(45), nullable=True)
 
@@ -6661,7 +6661,7 @@ class AuditTrail(Base):
     resource_name: Mapped[Optional[str]] = mapped_column(String(500), nullable=True)
 
     # User context
-    user_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    user_id: Mapped[str] = mapped_column(String(255), nullable=False, index=True)  # canonical user_id; phase-1 value = e-mail; name kept for compatibility
     user_email: Mapped[Optional[str]] = mapped_column(String(255), index=True, nullable=True)
     team_id: Mapped[Optional[str]] = mapped_column(String(36), index=True, nullable=True)
 
