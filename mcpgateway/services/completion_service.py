@@ -403,21 +403,28 @@ class CompletionService:
             arg_value = arg.get("value", "")
 
             if not ref_type or not arg_name:
-                raise CompletionError("Missing reference type or argument name")
+                raise CompletionInvalidParamsError("Missing reference type or argument name")
+
+            context = request.get("context")
 
             # Handle different reference types
             if ref_type == "ref/prompt":
-                result = await self._complete_prompt_argument(db, ref, arg_name, arg_value, user_email=user_email, token_teams=token_teams)
+                result = await self._complete_prompt_argument(db, ref, arg_name, arg_value, user_email=user_email, token_teams=token_teams, context=context)
             elif ref_type == "ref/resource":
-                result = await self._complete_resource_uri(db, ref, arg_value, user_email=user_email, token_teams=token_teams)
+                result = await self._complete_resource_uri(db, ref, arg_value, user_email=user_email, token_teams=token_teams, arg_name=arg_name, context=context)
             else:
-                raise CompletionError(f"Invalid reference type: {ref_type}")
+                raise CompletionInvalidParamsError(f"Invalid reference type: {ref_type}")
 
             return result
 
+        except CompletionError as e:
+            # Preserve the specific error class so callers can map it to the
+            # correct JSON-RPC code (-32601 / -32602 / -32603).
+            logger.error("Completion error: %s", e)
+            raise
         except Exception as e:
             logger.error("Completion error: %s", e)
-            raise CompletionError(str(e))
+            raise CompletionInternalError(str(e)) from e
 
     async def _resolve_team_ids(self, db: Session, user_email: Optional[str], token_teams: Optional[List[str]]) -> List[str]:
         """Resolve effective team IDs for scoped visibility checks.
