@@ -36,7 +36,7 @@ from tests.live_gateway.helpers.mcp_test_helpers import BASE_URL, JWT_SECRET, sk
 
 LIVE_DB_URL = os.getenv(
     "LIVE_GATEWAY_DB_URL",
-    "postgresql+psycopg://postgres:mysecretpassword@localhost:5433/mcp",
+    "postgresql+psycopg://postgres:mysecretpassword@localhost:5433/mcp",  # pragma: allowlist secret
 )
 
 SECOND_USER_EMAIL = "oauth-status-live-second-user@example.com"
