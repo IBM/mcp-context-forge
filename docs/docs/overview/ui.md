@@ -127,7 +127,7 @@ All vendor JavaScript is installed via npm and bundled/chunked with Vite for loc
 
 ## 🌐 Standalone ContextForge Web UI
 
-In addition to the built-in Admin UI, ContextForge provides a standalone BFF-style Web UI (source: [contextforge-web-ui](https://github.com/contextforge-org/contextforge-web-ui)).
+In addition to the built-in Admin UI, ContextForge provides a standalone BFF-style Web UI — [contextforge-web-ui](https://github.com/contextforge-org/contextforge-web-ui).
 
 ### Running with Docker Compose
 
