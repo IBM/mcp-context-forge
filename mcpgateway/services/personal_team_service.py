@@ -23,6 +23,7 @@ from typing import Optional
 from sqlalchemy.orm import Session
 
 # First-Party
+from mcpgateway.auth_context import resolve_canonical_user_id
 from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam, EmailTeamMember, EmailTeamMemberHistory, EmailUser, utc_now
 from mcpgateway.services.logging_service import LoggingService
@@ -125,8 +126,10 @@ class PersonalTeamService:
             self.db.add(team)
             self.db.flush()  # Get the team ID
 
-            # Add the user as the owner of their personal team
-            membership = EmailTeamMember(team_id=team.id, user_email=user.email, role="owner", joined_at=utc_now(), is_active=True)
+            # Add the user as the owner of their personal team. Resolve the
+            # canonical user ID once; the owner membership keys on it.
+            canonical = resolve_canonical_user_id(user.email, self.db)
+            membership = EmailTeamMember(team_id=team.id, user_email=canonical, role="owner", joined_at=utc_now(), is_active=True)
 
             self.db.add(membership)
             self.db.flush()  # Get the membership ID
