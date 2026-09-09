@@ -29,6 +29,8 @@ from typing import List
 from unittest.mock import AsyncMock, MagicMock, Mock, patch, PropertyMock
 
 # Third-Party
+from cpex.framework import PluginViolationError
+from cpex.framework.models import PluginViolation
 from fastapi import HTTPException
 import httpx
 from mcp_types import PromptArgument
@@ -18235,6 +18237,19 @@ class TestUnknownEntityErrors:
         assert isinstance(result, types.CallToolResult)
         assert result.is_error is True
         assert result.content[0].text == "Tool invocation failed: upstream event too large"
+
+    @pytest.mark.asyncio
+    async def test_plugin_violation_returns_iserror_result(self, monkeypatch):
+        """PluginViolationError (a plugin denying the call) becomes an isError result carrying the plugin's message."""
+        self._fake_db(monkeypatch)
+        message = "tool_pre_invoke blocked by plugin RateLimiterPlugin: RATE_LIMIT - Rate limit exceeded (Rate limit exceeded)"
+        violation = PluginViolation(reason="Rate limit exceeded", description="Rate limit exceeded", code="RATE_LIMIT", details={})
+        monkeypatch.setattr(tool_service, "invoke_tool", AsyncMock(side_effect=PluginViolationError(message=message, violation=violation)))
+
+        result = await call_tool("rate_limited_tool", {})
+        assert isinstance(result, types.CallToolResult)
+        assert result.is_error is True
+        assert result.content[0].text == message
 
     @pytest.mark.asyncio
     async def test_unknown_prompt_raises_invalid_params(self, monkeypatch):
