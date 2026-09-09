@@ -291,6 +291,9 @@ class DataplanePublisherService:
                 tool_routes: dict[str, ServiceRoute] = {}
                 resource_routes: dict[str, ServiceRoute] = {}
                 prompt_routes: dict[str, ServiceRoute] = {}
+                ambiguous_tools: set[str] = set()
+                ambiguous_resources: set[str] = set()
+                ambiguous_prompts: set[str] = set()
 
                 for gateway_id, backend_items in server["backend_items"].items():
                     gateway_config = gateway_base.get(gateway_id)
@@ -302,17 +305,17 @@ class DataplanePublisherService:
                     if not backend_items["tools"] and not allowed_resource_uris and not allowed_prompts:
                         continue
 
-                    backend_name = gateway_config["name"]
-                    backends[backend_name] = {
+                    backend_id = gateway_id
+                    backends[backend_id] = {
                         **gateway_config,
                         "tool_schemas": backend_items["tool_schemas"],
                     }
                     for name, original_name in backend_items["tools"].items():
-                        tool_routes[name] = {"backend_name": backend_name, "upstream_name": original_name}
+                        self._add_unique_route(tool_routes, ambiguous_tools, name, backend_id, original_name, server["id"], "tool")
                     for uri in allowed_resource_uris:
-                        resource_routes[uri] = {"backend_name": backend_name, "upstream_name": uri}
+                        self._add_unique_route(resource_routes, ambiguous_resources, uri, backend_id, uri, server["id"], "resource")
                     for prompt in allowed_prompts:
-                        prompt_routes[prompt["name"]] = {"backend_name": backend_name, "upstream_name": prompt["original_name"]}
+                        self._add_unique_route(prompt_routes, ambiguous_prompts, prompt["name"], backend_id, prompt["original_name"], server["id"], "prompt")
 
                 if not backends:
                     # No publishable backends: leave the virtual host out so
@@ -332,6 +335,20 @@ class DataplanePublisherService:
             result[subject_key] = {"virtual_hosts": virtual_hosts}
 
         return result
+
+    @staticmethod
+    def _add_unique_route(routes: dict[str, ServiceRoute], ambiguous: set[str], name: str, gateway_id: str, upstream_name: str, server_id: str, route_kind: str) -> None:
+        """Retain only single-target routes, keeping conflicts excluded for the whole virtual host."""
+        if name in ambiguous:
+            return
+        target: ServiceRoute = {"backend_name": gateway_id, "upstream_name": upstream_name}
+        previous = routes.get(name)
+        if previous is not None and previous != target:
+            del routes[name]
+            ambiguous.add(name)
+            logger.warning("Omitting ambiguous dataplane %s route %r on virtual host %s", route_kind, name, server_id)
+            return
+        routes[name] = target
 
     async def get_data_from_db(self) -> dict[str, Any] | None:
         """Fetch active users and dataplane data with bulk minimal-column queries."""
