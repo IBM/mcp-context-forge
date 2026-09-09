@@ -20,8 +20,34 @@ from mcpgateway.common.models import (
 from mcpgateway.db import Base, Prompt as DbPrompt, Resource as DbResource
 from mcpgateway.services.completion_service import (
     CompletionError,
+    CompletionInternalError,
+    CompletionInvalidParamsError,
+    CompletionNotSupportedError,
     CompletionService,
+    completion_error_code,
 )
+
+
+def test_completion_not_supported_maps_to_method_not_found():
+    assert completion_error_code(CompletionNotSupportedError("x")) == -32601
+
+
+def test_completion_invalid_params_maps_to_invalid_params():
+    assert completion_error_code(CompletionInvalidParamsError("x")) == -32602
+
+
+def test_completion_internal_error_maps_to_internal_error():
+    assert completion_error_code(CompletionInternalError("x")) == -32603
+
+
+def test_unclassified_completion_error_defaults_to_internal_error():
+    assert completion_error_code(CompletionError("x")) == -32603
+
+
+def test_subclasses_are_completion_errors():
+    assert issubclass(CompletionNotSupportedError, CompletionError)
+    assert issubclass(CompletionInvalidParamsError, CompletionError)
+    assert issubclass(CompletionInternalError, CompletionError)
 
 
 class FakeScalarOneResult:
