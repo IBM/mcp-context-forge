@@ -2436,6 +2436,7 @@ class Settings(BaseSettings):
     auth_cache_teams_enabled: bool = Field(default=True, description="Enable caching for get_user_teams() (default: true)")
     auth_cache_teams_ttl: int = Field(default=60, ge=10, le=300, description="TTL in seconds for user teams list cache")
     auth_cache_batch_queries: bool = Field(default=True, description="Batch auth DB queries into single call (reduces 3 queries to 1)")
+    auth_cache_key_version: str = Field(default="v1", description="Redis key version prefix for auth cache namespace isolation")
 
     # Registry Cache Configuration (reduces DB queries for list endpoints)
     registry_cache_enabled: bool = Field(default=True, description="Enable caching for registry list endpoints (tools, prompts, resources, etc.)")
