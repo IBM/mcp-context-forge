@@ -177,16 +177,13 @@ make ibmcloud-deploy
 
 !!! warning "`--from-env-file` skips lines with inline comments"
     The `ibmcloud ce secret` flag used to upload `.env` silently **skips any line that contains
-    an inline comment** (e.g. `KEY=value  # comment`).  If you copied `.env.example` verbatim,
-    strip all inline comments before running `make ibmcloud-deploy`:
+    an inline comment** (e.g. `KEY=value  # comment`).  Before running `make ibmcloud-deploy`,
+    check your `.env` for lines of the form `KEY=value  # comment` and move the comment to its
+    own line above the key.
 
-    ```bash
-    # Remove inline comments from .env before uploading (non-destructive — edits in place)
-    sed -i.bak 's/[[:space:]]*#.*$//' .env && grep -v '^[[:space:]]*$' .env > .env.clean && mv .env.clean .env
-    ```
-
-    Affected variables will be uploaded as **empty strings**, causing silent misconfiguration
-    that is difficult to diagnose at runtime.
+    Do **not** use a blanket `sed` stripper — values such as `DATABASE_URL` or `REDIS_URL`
+    pasted from the IBM Cloud console can legitimately contain `#`, and stripping would silently
+    truncate them.
 
 **Redeploy after code changes**
 
@@ -259,9 +256,9 @@ ibmcloud ce secret get --name "$IBMCLOUD_REGISTRY_SECRET"         # add --decode
 # Code Engine has no access to your local .env file — upload it as a secret.
 # The secret name is derived from the app name to keep naming consistent.
 #
-# WARNING: --from-env-file skips lines with inline comments (KEY=value  # comment).
-# Strip inline comments from .env before running this command to avoid silent data loss:
-#   sed -i.bak 's/[[:space:]]*#.*$//' .env && grep -v '^[[:space:]]*$' .env > .env.clean && mv .env.clean .env
+# NOTE: --from-env-file skips lines with inline comments (KEY=value  # comment).
+# Check your .env for such lines and move comments to their own line before running.
+# See the warning in Workflow A above for details.
 #
 # First time:
 ibmcloud ce secret create --name "${IBMCLOUD_CODE_ENGINE_APP}-env" --from-env-file .env
@@ -607,7 +604,7 @@ make podman ibmcloud-tag ibmcloud-push ibmcloud-deploy
 |---------|-------|-----|
 | `ibmcloud ce application get` shows "Failed" | Image pull error — wrong registry secret or image path | Verify `IBMCLOUD_IMAGE_NAME` matches the pushed image: `ibmcloud cr images` |
 | Application starts then crashes (OOMKilled) | Insufficient memory for gunicorn workers | Increase `IBMCLOUD_MEMORY` in `.env.ce` or reduce `workers` in `gunicorn.config.py` |
-| App running but env vars missing (auth fails, wrong DB, etc.) | `.env` was never uploaded as a Code Engine secret, or contained inline comments that caused keys to be skipped | Strip inline comments from `.env` first (`sed -i.bak 's/[[:space:]]*#.*$//' .env`), then run: <br>`ibmcloud ce secret create --name "${IBMCLOUD_CODE_ENGINE_APP}-env" --from-env-file .env`<br>`ibmcloud ce application update --name "$IBMCLOUD_CODE_ENGINE_APP" --env-from-secret "${IBMCLOUD_CODE_ENGINE_APP}-env"` |
+| App running but env vars missing (auth fails, wrong DB, etc.) | `.env` was never uploaded as a Code Engine secret, or has lines with inline comments that `--from-env-file` skips (see warning in Workflow A) | Check `.env` for `KEY=value  # comment` lines and move comments to their own line, then run:<br>`ibmcloud ce secret create --name "${IBMCLOUD_CODE_ENGINE_APP}-env" --from-env-file .env`<br>`ibmcloud ce application update --name "$IBMCLOUD_CODE_ENGINE_APP" --env-from-secret "${IBMCLOUD_CODE_ENGINE_APP}-env"` |
 | App starts but requests never reach it (connection refused / 502) | `HOST=127.0.0.1` in `.env` — app binds to loopback only | Set `HOST=0.0.0.0` in `.env`, update the secret, and trigger a new revision |
 | `connection refused` to PostgreSQL | Database not yet provisioned or wrong hostname | Verify with: `ibmcloud resource service-instance mcpgw-db` and check credentials JSON |
 | `SSL: CERTIFICATE_VERIFY_FAILED` on database connection | Missing `sslmode=require` in `DATABASE_URL` | Ensure `DATABASE_URL` ends with `?sslmode=require` |

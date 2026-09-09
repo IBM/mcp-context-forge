@@ -6253,6 +6253,7 @@ ibmcloud-push:
 
 .PHONY: ibmcloud-deploy
 ibmcloud-deploy:
+	@test -f .env || { echo "❌ Missing .env — run: cp .env.example .env"; exit 1; }
 	@echo "🚀 Deploying image to Code Engine as '$(IBMCLOUD_CODE_ENGINE_APP)' using registry secret $(IBMCLOUD_REGISTRY_SECRET)..."
 	@# Create the runtime env secret from .env if it does not exist yet
 	@if ! ibmcloud ce secret get --name $(IBMCLOUD_CODE_ENGINE_APP)-env > /dev/null 2>&1; then \
