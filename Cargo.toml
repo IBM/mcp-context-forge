@@ -25,12 +25,11 @@ bytes = "1.11.1"
 chrono = { version = "0.4.45", features = ["serde"] }
 chrono-tz = "0.10.4"
 clap = { version = "4.5.60", features = ["derive", "env"] }
-futures = "0.3.31"
 futures-util = "0.3.31"
 rand = "0.8"
 redis = { version = "0.32.7", features = ["aio", "tokio-comp", "connection-manager"] }
 regex = "1.12.2"
-rmcp = { version = "1.7.0", default-features = false }
+rmcp = { version = "1.8.0", default-features = false }
 sha2 = "0.10.9"
 
 # HTTP client (native-tls to avoid CDLA-Permissive-2.0 from rustls-platform-verifier)

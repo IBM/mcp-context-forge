@@ -2,8 +2,8 @@
 
 [MCP Inspector](https://www.npmjs.com/package/@modelcontextprotocol/inspector) is a visual
 debugging GUI for the **Model Context Protocol**.
-Point it at any MCP-compliant endpoint &mdash; a live Gateway **SSE** stream or a local
-`mcpgateway.wrapper` stdio server &mdash; and you can:
+Point it at any MCP-compliant endpoint &mdash; a live Gateway **SSE** stream or its
+**Streamable HTTP** endpoint &mdash; and you can:
 
 * 🔍 Browse **tools**, **prompts** and **resources** in real time
 * 🛠 Invoke tools with JSON params and inspect raw results
@@ -24,11 +24,8 @@ Point it at any MCP-compliant endpoint &mdash; a live Gateway **SSE** stream or 
 
 | Use-case | One-liner | What happens |
 |----------|-----------|--------------|
-| **1. Connect to Gateway (SSE)** |<br/>```bash<br/>npx @modelcontextprotocol/inspector \\<br/>  --url http://localhost:4444/servers/UUID_OF_SERVER_1/sse \\<br/>  --header "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN"<br/>``` | Inspector opens `http://localhost:5173` and attaches **directly** to the gateway stream. |
-| **2. Connect to Gateway (Streamable HTTP)** |<br/>```bash<br/>npx @modelcontextprotocol/inspector \\<br/>  --url http://localhost:4444/servers/UUID_OF_SERVER_1/mcp/ \\<br/>  --header "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN"<br/>``` | Inspector opens `http://localhost:5173` and attaches **directly** to the gateway stream. |
-| **3 - Spin up the stdio wrapper in-process** |<br/>```bash<br/>export MCP_AUTH=$MCPGATEWAY_BEARER_TOKEN<br/>export MCP_SERVER_URL=http://localhost:4444/servers/UUID_OF_SERVER_1/mcp<br/><br/>npx @modelcontextprotocol/inspector \\<br/>  python3 -m mcpgateway.wrapper<br/>``` | Inspector forks `python3 -m mcpgateway.wrapper`, then connects to its stdio port automatically. |
-| **4 - Same, but via uv / uvx** |<br/>```bash<br/>npx @modelcontextprotocol/inspector \\<br/>  uvx python3 -m mcpgateway.wrapper<br/>``` | Uses the super-fast **uv** virtual-env if you prefer. |
-| **5 - Wrapper already running** | Launch the wrapper in another shell, then:<br/>```bash<br/>npx @modelcontextprotocol/inspector --stdio<br/>``` | Inspector only opens the GUI and binds to the running stdio server on stdin/stdout. |
+| **1. Connect to Gateway (SSE)** |<br/>```bash<br/>npx @modelcontextprotocol/inspector \\<br/>  --server-url http://localhost:4444/servers/UUID_OF_SERVER_1/sse \\<br/>  --transport sse \\<br/>  --header "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN"<br/>``` | Inspector opens `http://localhost:5173` and attaches **directly** to the gateway stream. |
+| **2. Connect to Gateway (Streamable HTTP)** |<br/>```bash<br/>npx @modelcontextprotocol/inspector \\<br/>  --server-url http://localhost:4444/servers/UUID_OF_SERVER_1/mcp/ \\<br/>  --transport http \\<br/>  --header "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN"<br/>``` | Inspector opens `http://localhost:5173` and attaches **directly** to the gateway stream. |
 
 ---
 
@@ -74,7 +71,8 @@ Then simply start Inspector:
 
 ```bash
 npx @modelcontextprotocol/inspector \
-  --url http://localhost:9002/sse
+  --server-url http://localhost:9002/sse \
+  --transport sse
 ```
 
 Translate Bridge handles the bridging; Inspector thinks it is speaking native SSE.

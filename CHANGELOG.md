@@ -9,6 +9,10 @@
 
 ## [Unreleased]
 
+### Breaking Changes
+
+- **stdio wrapper removed in favour of FastMCP** - `mcpgateway/wrapper.py` (`python -m mcpgateway.wrapper`) and the Rust `crates/wrapper/` binary are removed. Clients that already speak Streamable HTTP need no bridge — point them at `/servers/<server_id>/mcp/` directly. For stdio clients such as Claude Desktop, use FastMCP's bridge (`uvx fastmcp-remote`); see [`docs/docs/using/clients/`](docs/docs/using/clients/) for per-client configuration.
+
 ## [1.0.10] - 2026-09-07 - OAuth Security, Observability, Plugin Context, and Reliability
 
 ### Overview

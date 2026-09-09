@@ -7,7 +7,6 @@ This section focuses on how to use ContextForge effectively as a developer, inte
 ## 👨💻 Typical Use Cases
 
 - You want to expose tools, prompts, or resources via MCP.
-- You want to use `mcpgateway-wrapper` to connect to any ContextForge service using `stdio`, while still supporting authentication to the gateway.
 - You're building a client or agent framework that speaks the MCP protocol.
 - You want to consume Gateway APIs from an LLM agent, browser app, or CLI tool.
 
@@ -18,7 +17,6 @@ This section focuses on how to use ContextForge effectively as a developer, inte
 | Page | Description |
 |------|-------------|
 | [Tool Annotations](tool-annotations.md) | Configure behavior hints for tools (safety, idempotency, etc.) |
-| [mcpgateway-wrapper](mcpgateway-wrapper.md) | Wrap CLI tools or subprocesses to expose them via SSE/stdio |
 | [Clients](clients/index.md) | Compatible UIs and developer tools |
 | [Agents](agents/index.md) | LangChain, LangGraph, CrewAI, and other frameworks |
 

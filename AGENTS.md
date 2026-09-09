@@ -38,7 +38,7 @@ charts/                     # Helm charts (see charts/AGENTS.md)
 docs/                       # Architecture and usage documentation (see docs/AGENTS.md)
 a2a-agents/                 # A2A agent implementations (used for testing/examples)
 mcp-servers/                # MCP server templates (see mcp-servers/AGENTS.md)
-crates/                     # Direct Rust crate folders (runtime and wrapper)
+crates/                     # Direct Rust crate folders (runtime)
 llms/                       # End-user LLM guidance (not for code agents)
 ```
 
@@ -68,9 +68,9 @@ make pre-commit
 # Before committing, use ty, mypy and pyrefly to check just the new files, then run:
 make ruff bandit interrogate pylint verify
 
-# Before committing Rust changes (tools_rust/):
+# Before committing Rust changes (crates/mcp_runtime/):
 # Run fmt-check, clippy -D warnings, and cargo test for Rust crates
-cd tools_rust/mcp_runtime && cargo fmt --check && cargo clippy -- -D warnings && cargo test
+cd crates/mcp_runtime && cargo fmt --check && cargo clippy -- -D warnings && cargo test
 ```
 
 ## PR Review Workflow
