@@ -26,7 +26,7 @@ name: Alembic Upgrade Validation
 on:
   pull_request:
     types: [opened, synchronize, ready_for_review]
-    branches: ["main"]
+    branches: ["main", "chore/mcp-sdk-v2"]
     paths:
       - "mcpgateway/alembic/**"
       - "scripts/ci/run_upgrade_validation.sh"
