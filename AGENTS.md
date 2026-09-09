@@ -340,17 +340,17 @@ python -m mcpgateway.translate --stdio "uvx mcp-server-git" --port 9000
 3. Create virtual server: `POST /servers`
 4. Access via SSE/WebSocket endpoints
 
-## ContextForge Web UI (Experimental)
+## ContextForge Web UI
 
 A BFF-style frontend for the gateway API, separate from the built-in Admin UI (`MCPGATEWAY_UI_ENABLED`). Source and docs: https://github.com/contextforge-org/contextforge-web-ui
 
 - Runs as `web_ui` + a dedicated `web_ui_redis` session store in `docker-compose.yml`.
-- Enabled via `--profile experimental` (or `--profile testing`, which pulls it in too).
+- Enabled via `--profile ui` (or `--profile testing`, which pulls it in too).
 - `web_ui` depends on `gateway` and `web_ui_redis` being healthy before it starts.
 
 ```bash
 # Start the gateway plus the web UI
-docker compose --profile experimental up -d
+docker compose --profile ui up -d
 
 # Access
 open http://localhost:${WEB_UI_PORT:-3001}

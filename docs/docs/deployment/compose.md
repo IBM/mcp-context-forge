@@ -151,6 +151,18 @@ Keycloak admin console:
 - URL: `http://localhost:8180`
 - Credentials: `admin` / `changeme`
 
+### Web UI Profile
+
+ContextForge provides a standalone BFF-style Web UI frontend (`web_ui` + `web_ui_redis` session store) via `--profile ui`:
+
+```bash
+docker compose --profile ui up -d
+```
+
+- **Web UI URL:** [http://localhost:3001](http://localhost:3001)
+- **Session Redis:** Dedicated Redis instance (`web_ui_redis`) on internal network
+- Configuration options: `WEB_UI_PORT`, `WEB_UI_IMAGE`, `WEB_UI_CONTEXTFORGE_URL`, `WEB_UI_COOKIE_SECURE`, `WEB_UI_REDIS_URL`
+
 ### Without Make
 
 | Make target       | Docker CLI                                    | Podman built-in                              | podman-compose                               |

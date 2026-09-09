@@ -471,7 +471,27 @@ Tear down when done:
 make embedded-down
 ```
 
-### 6.4 Python package build
+### 6.4 Web UI verification
+
+Verify the standalone ContextForge Web UI (`web_ui` + `web_ui_redis`) starts and communicates with the gateway under the `ui` profile:
+
+```bash
+docker compose --profile ui up -d
+```
+
+Verify:
+
+- `web_ui` and `web_ui_redis` services start cleanly
+- The web UI responds at `http://localhost:3001`
+- Gateway health endpoint responds at `http://localhost:8080/health`
+
+Tear down when done:
+
+```bash
+docker compose --profile ui down
+```
+
+### 6.5 Python package build
 
 ```bash
 make dist

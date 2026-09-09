@@ -132,6 +132,28 @@ For iterative development you can use watch mode:
 npx vite build --watch
 ```
 
+### Standalone ContextForge Web UI
+
+In addition to the built-in Admin UI, ContextForge provides a standalone BFF-style Web UI (source: [contextforge-web-ui](https://github.com/contextforge-org/contextforge-web-ui)).
+
+To run it locally with Docker Compose:
+
+```bash
+docker compose --profile ui up -d
+```
+
+Access the Web UI at [http://localhost:3001](http://localhost:3001).
+
+To test against a locally built image instead of the published `ghcr.io/contextforge-org/contextforge-web-ui` tag (for example, while iterating in a sibling `contextforge-web-ui` checkout), build it there and point compose at the resulting tag:
+
+```bash
+# In the contextforge-web-ui checkout
+docker build -t contextforge-web-ui:local .
+
+# Back in mcp-context-forge
+WEB_UI_IMAGE=contextforge-web-ui:local docker compose --profile ui up -d
+```
+
 ### Linting & Formatting
 
 ```bash
