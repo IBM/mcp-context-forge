@@ -44,6 +44,7 @@ from uuid import uuid4
 
 # Third-Party
 import anyio
+from cpex.framework import PluginViolationError
 from fastapi import HTTPException
 from fastapi.security.utils import get_authorization_scheme_param
 import httpx
@@ -2135,6 +2136,9 @@ async def call_tool(
     except ToolInvocationError as e:
         # covers tool timeouts
         logger.warning("Tool invocation failed for '%s': %s", name, e)
+        return types.CallToolResult(content=[types.TextContent(type="text", text=str(e))], is_error=True)
+    except PluginViolationError as e:
+        logger.info("Tool invocation blocked by plugin for '%s': %s", name, e)
         return types.CallToolResult(content=[types.TextContent(type="text", text=str(e))], is_error=True)
     except Exception as e:
         logger.exception("Error calling tool '%s': %s", name, e)
