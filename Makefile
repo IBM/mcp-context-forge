@@ -8733,6 +8733,10 @@ CONFORMANCE_BASELINE_DIR := $(CURDIR)/tests/conformance/baselines
 # help: conformance-bless    - Update baselines only after both era pairs complete successfully
 .PHONY: conformance conformance-bless
 
+# Fresh conformance stacks need strong bootstrap passwords; preserve explicit settings.
+conformance conformance-bless: export DEFAULT_USER_PASSWORD ?= $(shell python3 -c 'import secrets; print(secrets.token_urlsafe(32))')
+conformance conformance-bless: export PLATFORM_ADMIN_PASSWORD ?= $(shell python3 -c 'import secrets; print(secrets.token_urlsafe(32))')
+
 conformance: ## Run legacy→legacy and modern→modern MCP conformance through the built-in dataplane
 	@if ! command -v "$(CF_INTEGRATION)" >/dev/null 2>&1; then \
 		echo "cf-integration not found: install its published binary with cargo binstall or set CF_INTEGRATION to its path."; \
