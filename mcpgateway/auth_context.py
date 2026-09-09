@@ -150,6 +150,12 @@ _INTERNAL_MCP_RUNTIME_AUTH_CONTEXT = "contextforge-internal-mcp-runtime-v1"
 def get_user_email(user: Any) -> str:
     """Extract email from user object, handling both string and dict formats.
 
+    This function is the e-mail-attribute accessor: it answers "what is the
+    e-mail of this user". ``get_user_id`` is the identity accessor: it
+    answers "who is this user". The e-mail-over-sub order stays for the
+    ATTRIBUTE in phase 1; later stories separate the attribute from the
+    identity.
+
     Args:
         user: User object, can be either a dict (new RBAC format) or string (legacy format)
 
