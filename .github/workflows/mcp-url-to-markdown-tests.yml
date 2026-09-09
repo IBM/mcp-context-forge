@@ -15,7 +15,7 @@ name: URL-to-Markdown MCP Server Tests
 on:
   pull_request:
     types: [opened, synchronize, ready_for_review]
-    branches: ["main"]
+    branches: ["main", "chore/mcp-sdk-v2"]
     paths:
       - "mcp-servers/python/url_to_markdown_server/**"
       - ".github/workflows/mcp-url-to-markdown-tests.yml"
