@@ -47,6 +47,9 @@ logger = logging.getLogger(__name__)
 CATALOG_REGISTER_NOT_FOUND_MSG = "Server not found in catalog"
 CATALOG_REGISTER_ALREADY_REGISTERED_MSG = "Server already registered"
 
+# Catalog auth_type values that carry an OAuth flow (pure OAuth, or OAuth mixed with an API key).
+OAUTH_AUTH_TYPES = ["OAuth2.1", "OAuth", "OAuth2.1 & API Key"]
+
 
 class CatalogRegistrationPermissionError(PermissionError):
     """Raised when a catalog registration is rejected due to scope/team policy."""
@@ -419,7 +422,7 @@ class CatalogService:
         Args:
             oauth_credentials: Caller-supplied OAuth credential overrides (issuer, scopes, and
                 optionally client_id/client_secret/token_url/authorization_url/redirect_uri/
-                username/password/audience/resource), or None.
+                audience/resource), or None.
 
         Returns:
             A raw oauth_config dict with authorization_code/store_tokens/auto_refresh defaults
@@ -432,15 +435,23 @@ class CatalogService:
             "auto_refresh": True,
         }
         # Mirrors the field set admin._assemble_oauth_config_from_fields() accepts, so a
-        # catalog-registered gateway can carry the same RFC 8707 resource/audience and
-        # password-grant fields a manually-created gateway can (#5967 follow-up).
-        for key in ("issuer", "client_id", "client_secret", "token_url", "authorization_url", "redirect_uri", "username", "password", "audience"):
+        # catalog-registered gateway can carry the same RFC 8707 resource/audience fields a
+        # manually-created gateway can (#5967 follow-up). username/password are omitted:
+        # grant_type is hardcoded to authorization_code above, so those password-grant-only
+        # fields would never be read.
+        for key in ("issuer", "client_id", "client_secret", "token_url", "authorization_url", "redirect_uri", "audience"):
             value = oauth_credentials.get(key)
             if value:
                 raw_oauth_config[key] = value
         scopes = oauth_credentials.get("scopes")
         if scopes:
-            raw_oauth_config["scopes"] = scopes if isinstance(scopes, list) else [str(scopes)]
+            # Comma-separated input (the shape admin.py's own OAuth form accepts, see
+            # admin._assemble_oauth_config_from_fields()) must be split the same way here,
+            # otherwise "repo,read:user" is stored as one malformed scope instead of two.
+            scope_source = " ".join(str(s) for s in scopes) if isinstance(scopes, list) else str(scopes)
+            normalized_scopes = [s for s in scope_source.replace(",", " ").split() if s]
+            if normalized_scopes:
+                raw_oauth_config["scopes"] = normalized_scopes
         resource = oauth_credentials.get("resource")
         if resource:
             raw_oauth_config["resource"] = resource if isinstance(resource, list) else str(resource)
@@ -559,7 +570,7 @@ class CatalogService:
                     # Use bearer token for API key authentication
                     gateway_data["auth_type"] = "bearer"
                     gateway_data["auth_token"] = request.api_key
-                elif auth_type in ["OAuth2.1", "OAuth", "OAuth2.1 & API Key"]:
+                elif auth_type in OAUTH_AUTH_TYPES:
                     # OAuth servers and mixed auth may need API key as a bearer token
                     gateway_data["auth_type"] = "bearer"
                     gateway_data["auth_token"] = request.api_key
@@ -576,7 +587,7 @@ class CatalogService:
                     # For any other auth types, use custom headers (as list of dicts)
                     gateway_data["auth_type"] = "authheaders"
                     gateway_data["auth_headers"] = [{"key": "X-API-Key", "value": request.api_key}]
-            elif auth_type in ["OAuth2.1", "OAuth", "OAuth2.1 & API Key"]:
+            elif auth_type in OAUTH_AUTH_TYPES:
                 # OAuth server without credentials (or a mixed-auth entry given no API key) -
                 # register but skip initialization. User will need to complete OAuth flow later.
                 skip_initialization = True

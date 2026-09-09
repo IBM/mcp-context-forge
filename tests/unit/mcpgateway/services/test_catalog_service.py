@@ -627,10 +627,12 @@ async def test_register_oauth_invalid_config_does_not_leak_client_secret(service
     db.commit.assert_not_called()
 
 
-def test_build_oauth_config_from_credentials_carries_resource_and_password_grant_fields(service):
-    """The catalog registration path must not drop RFC 8707 resource/audience or
-    password-grant fields that the equivalent admin.py OAuth form assembly accepts,
-    otherwise a catalog-registered gateway can never get them set at registration time."""
+def test_build_oauth_config_from_credentials_carries_resource_and_audience_fields(service):
+    """The catalog registration path must not drop RFC 8707 resource/audience fields that
+    the equivalent admin.py OAuth form assembly accepts, otherwise a catalog-registered
+    gateway can never get them set at registration time. username/password are omitted:
+    grant_type is hardcoded to authorization_code, so those password-grant-only fields
+    would never be read."""
     raw = service._build_oauth_config_from_credentials(
         {
             "issuer": "https://issuer.example.com",
@@ -642,8 +644,8 @@ def test_build_oauth_config_from_credentials_carries_resource_and_password_grant
         }
     )
     assert raw["redirect_uri"] == "https://gateway.example.com/oauth/callback"
-    assert raw["username"] == "svc-account"
-    assert raw["password"] == "svc-secret"  # pragma: allowlist secret
+    assert "username" not in raw
+    assert "password" not in raw
     assert raw["audience"] == "https://api.example.com"
     assert raw["resource"] == "https://api.example.com/mcp"
 
@@ -653,6 +655,26 @@ def test_build_oauth_config_from_credentials_resource_list_preserved(service):
     list rather than being coerced to str or dropped for not being a plain string."""
     raw = service._build_oauth_config_from_credentials({"resource": ["https://a.example.com", "https://b.example.com"]})
     assert raw["resource"] == ["https://a.example.com", "https://b.example.com"]
+
+
+def test_build_oauth_config_from_credentials_splits_comma_separated_scopes(service):
+    """A comma-separated ``scopes`` string (the shape admin.py's own OAuth form accepts) must
+    be split into individual scope tokens, matching admin._assemble_oauth_config_from_fields().
+    Without this, "repo,read:user" is stored as one malformed scope instead of two, and every
+    downstream consumer (oauth_manager.py, dcr_service.py) joins the list with a space before
+    sending it to the IdP, so the comma would ride along onto the wire unsplit."""
+    raw = service._build_oauth_config_from_credentials({"scopes": "repo,read:user"})
+    assert raw["scopes"] == ["repo", "read:user"]
+
+
+def test_build_oauth_config_from_credentials_scopes_list_normalized(service):
+    """A list of scopes still normalizes embedded commas/whitespace per element, and plain
+    space-separated input round-trips unchanged."""
+    raw = service._build_oauth_config_from_credentials({"scopes": ["repo,read:user", "write"]})
+    assert raw["scopes"] == ["repo", "read:user", "write"]
+
+    raw = service._build_oauth_config_from_credentials({"scopes": "repo read:user"})
+    assert raw["scopes"] == ["repo", "read:user"]
 
 
 @pytest.mark.asyncio

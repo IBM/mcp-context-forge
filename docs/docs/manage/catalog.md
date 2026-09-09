@@ -289,6 +289,18 @@ The body is optional; `name` and `api_key` override the catalog defaults. Respon
 `200` with `success: false` and a descriptive `message` for connectivity or auth failures,
 `200` with `success: true` on registration (OAuth servers register disabled until configured).
 
+For catalog entries with an OAuth `auth_type`, submit `oauth_credentials` instead of (or
+alongside, for `"OAuth2.1 & API Key"` entries) `api_key`. Whatever isn't supplied - client
+ID/secret, token/authorization URLs - is filled in later, automatically where the provider
+supports discovery/DCR, via the OAuth authorization flow:
+
+```bash
+curl -X POST -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"oauth_credentials": {"issuer": "https://github.com", "scopes": ["repo", "read:user"]}}' \
+  http://localhost:4444/v1/catalog/github/register
+```
+
 #### Visibility and ownership
 
 Catalog registrations default to `private` when `visibility` is omitted. To

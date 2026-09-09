@@ -884,9 +884,12 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             oauth_config: Raw gateway oauth_config dict being applied (create or update).
             requester_email: Email of the user performing the create/update. ``None``/empty
                 means the call originates from a trusted internal flow (config import, which
-                is already gated behind the platform-admin-only ``admin.import`` permission;
-                catalog registration, which applies a bundled/static definition) rather than
-                a request-scoped HTTP caller, so the gate is skipped.
+                is already gated behind the platform-admin-only ``admin.import`` permission)
+                rather than a request-scoped HTTP caller, so the gate is skipped. Catalog
+                registration now passes the real caller's ``owner_email`` here rather than an
+                empty string, so it goes through this gate like any other caller - harmless
+                today since catalog-built oauth_config always hardcodes grant_type to
+                authorization_code, never token-exchange.
 
         Raises:
             PermissionError: If grant_type is token-exchange, a requester_email is present,

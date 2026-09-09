@@ -8514,6 +8514,27 @@ class CatalogServerRegisterBody(BaseModel):
             return v
         return SecurityValidator.validate_name(v, "Server name")
 
+    @field_validator("oauth_credentials")
+    @classmethod
+    def validate_oauth_credentials_field(cls, v: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Bound each string value the same way the sibling ``api_key`` field is bounded.
+
+        Args:
+            v: OAuth credential overrides to validate.
+
+        Returns:
+            The validated oauth_credentials dict or None.
+
+        Raises:
+            ValueError: If any string value exceeds 4096 characters.
+        """
+        if v is None:
+            return v
+        for key, value in v.items():
+            if isinstance(value, str) and len(value) > 4096:
+                raise ValueError(f"oauth_credentials.{key} exceeds maximum length of 4096 characters")
+        return v
+
 
 class CatalogServerRegisterResponse(BaseModel):
     """Response after registering a catalog server."""

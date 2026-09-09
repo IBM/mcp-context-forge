@@ -398,6 +398,20 @@ def test_register_body_rejects_oversized_api_key():
         CatalogServerRegisterBody(api_key="x" * 5000)  # pragma: allowlist secret
 
 
+def test_register_body_rejects_oversized_oauth_credentials():
+    """oauth_credentials string values are capped the same way api_key is, so a caller can't
+    smuggle a multi-megabyte client_secret past validation."""
+    with pytest.raises(pydantic.ValidationError):
+        CatalogServerRegisterBody(oauth_credentials={"client_secret": "x" * 5000})  # pragma: allowlist secret
+
+
+def test_register_body_allows_reasonably_sized_oauth_credentials():
+    """Normal-sized oauth_credentials values pass through unchanged."""
+    body = CatalogServerRegisterBody(oauth_credentials={"issuer": "https://issuer.example.com", "scopes": ["repo"]})
+
+    assert body.oauth_credentials == {"issuer": "https://issuer.example.com", "scopes": ["repo"]}
+
+
 def test_register_body_allows_empty_payload():
     """Both overrides are optional."""
     body = CatalogServerRegisterBody()
