@@ -134,7 +134,7 @@ npx vite build --watch
 
 ### Standalone ContextForge Web UI
 
-In addition to the built-in Admin UI, ContextForge provides a standalone BFF-style Web UI (source: [contextforge-web-ui](https://github.com/contextforge-org/contextforge-web-ui)).
+In addition to the built-in Admin UI, ContextForge provides a standalone BFF-style Web UI hosted in the [contextforge-web-ui](https://github.com/contextforge-org/contextforge-web-ui) repository.
 
 To run it locally with Docker Compose:
 
