@@ -51,6 +51,8 @@ Users authenticated via:
 - SSO providers (OAuth 2.0/OIDC)
 - Basic authentication (development only)
 
+Permissions and role assignments key on the canonical `user_id`, returned by `get_user_id()` in `mcpgateway/auth_context.py`. The e-mail address is a mutable attribute of the user account, not the identity; `get_user_email()` remains the e-mail accessor. Phase 1 populates the canonical `user_id` with the e-mail value. The token-type-to-identity mapping contract is in [Identifier Domains](../architecture/identity-domains.md).
+
 ### Teams
 Logical groups that:
 
