@@ -4123,8 +4123,8 @@ async def handle_completion(request: Request, db: Session = Depends(get_db), use
         # CompletionInvalidParamsError / CompletionNotSupportedError both read
         # naturally as "bad request"; anything else (CompletionInternalError,
         # or an unclassified CompletionError) is an upstream/internal failure.
-        status = 400 if isinstance(exc, (CompletionInvalidParamsError, CompletionNotSupportedError)) else 500
-        raise HTTPException(status_code=status, detail=str(exc)) from exc
+        status_code = 400 if isinstance(exc, (CompletionInvalidParamsError, CompletionNotSupportedError)) else 500
+        raise HTTPException(status_code=status_code, detail=str(exc)) from exc
 
 
 @protocol_router.post("/sampling/createMessage")

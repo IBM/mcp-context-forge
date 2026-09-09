@@ -5,6 +5,7 @@ SPDX-License-Identifier: Apache-2.0
 """
 
 # Standard
+import asyncio
 from types import SimpleNamespace
 
 # Third-Party
@@ -738,3 +739,173 @@ async def test_handle_completion_preserves_specific_error_subclass():
     db = _MagicMockTask6()
     with pytest.raises(CompletionInvalidParamsError):
         await service.handle_completion(db, {"ref": {}, "argument": {"name": "a"}})
+
+
+# ---------------------------------------------------------------------------
+# Task 10: coverage closeout for branches the happy/sad-path tests above
+# don't individually exercise.
+# ---------------------------------------------------------------------------
+
+
+class _QueryParamAuthGateway:
+    id = "gw-qp"
+    url = "https://upstream.example.com/mcp"
+    transport = "streamable_http"
+    auth_type = "query_param"
+    auth_query_params = {"api_key": "encrypted-blob"}
+
+
+def test_gateway_connection_applies_decoded_query_param_auth(monkeypatch):
+    monkeypatch.setattr("mcpgateway.services.completion_service.build_gateway_auth_headers", lambda gw: {})
+    monkeypatch.setattr("mcpgateway.services.completion_service.decode_auth", lambda blob: {"api_key": "secret-value"})
+    monkeypatch.setattr(
+        "mcpgateway.services.completion_service.apply_query_param_auth",
+        lambda url, params: f"{url}?api_key={params['api_key']}",
+    )
+
+    url, headers, auth_query_params = CompletionService._gateway_connection(_QueryParamAuthGateway())
+    assert url == "https://upstream.example.com/mcp?api_key=secret-value"
+    assert auth_query_params == {"api_key": "secret-value"}
+    assert headers == {}
+
+
+def test_gateway_connection_query_param_auth_decode_failure_raises_internal_error(monkeypatch):
+    monkeypatch.setattr("mcpgateway.services.completion_service.build_gateway_auth_headers", lambda gw: {})
+
+    def _boom(_blob):
+        raise ValueError("cannot decrypt")
+
+    monkeypatch.setattr("mcpgateway.services.completion_service.decode_auth", _boom)
+
+    with pytest.raises(CompletionInternalError):
+        CompletionService._gateway_connection(_QueryParamAuthGateway())
+
+
+@pytest.mark.asyncio
+async def test_acquire_upstream_session_falls_back_when_registry_not_initialized(monkeypatch):
+    """RegistryNotInitializedError from get_upstream_session_registry() falls back to mcp_proxy_client."""
+    from mcpgateway.services.upstream_session_registry import RegistryNotInitializedError
+
+    fake_client = _FakeClient()
+
+    @asynccontextmanager
+    async def fake_mcp_proxy_client(**kwargs):
+        yield fake_client
+
+    def _raise_not_initialized():
+        raise RegistryNotInitializedError("not yet")
+
+    monkeypatch.setattr(
+        "mcpgateway.services.completion_service._downstream_session_id_from_request",
+        lambda: "downstream-1",
+    )
+    monkeypatch.setattr(
+        "mcpgateway.services.completion_service.get_upstream_session_registry",
+        _raise_not_initialized,
+    )
+    monkeypatch.setattr(
+        "mcpgateway.services.completion_service.mcp_proxy_client",
+        fake_mcp_proxy_client,
+    )
+
+    service = CompletionService()
+    async with service._acquire_upstream_session(_FakeGateway()) as session:
+        assert session is fake_client.session
+
+
+@pytest.mark.asyncio
+async def test_forward_completion_upstream_raises_internal_error_without_gateway():
+    service = CompletionService()
+    with pytest.raises(CompletionInternalError):
+        await service._forward_completion_upstream(None, PromptReference(type="ref/prompt", name="p"), {"name": "a", "value": ""})
+
+
+@pytest.mark.asyncio
+async def test_forward_completion_upstream_raises_invalid_params_for_non_dict_context(monkeypatch):
+    session = SimpleNamespace(server_capabilities=SimpleNamespace(completions=object()))
+    _patch_upstream(monkeypatch, session)
+
+    service = CompletionService()
+    with pytest.raises(CompletionInvalidParamsError):
+        await service._forward_completion_upstream(_FakeGateway(), PromptReference(type="ref/prompt", name="p"), {"name": "a", "value": ""}, context="not-a-dict")
+
+
+@pytest.mark.asyncio
+async def test_forward_completion_upstream_raises_invalid_params_for_non_dict_context_arguments(monkeypatch):
+    session = SimpleNamespace(server_capabilities=SimpleNamespace(completions=object()))
+    _patch_upstream(monkeypatch, session)
+
+    service = CompletionService()
+    with pytest.raises(CompletionInvalidParamsError):
+        await service._forward_completion_upstream(
+            _FakeGateway(), PromptReference(type="ref/prompt", name="p"), {"name": "a", "value": ""}, context={"arguments": "not-a-dict"}
+        )
+
+
+@pytest.mark.asyncio
+async def test_forward_completion_upstream_mcp_error_maps_via_error_from_upstream(monkeypatch):
+    async def fake_complete(ref, argument, context_arguments=None):
+        raise McpError(code=-32602, message="unknown prompt")
+
+    session = SimpleNamespace(server_capabilities=SimpleNamespace(completions=object()), complete=fake_complete)
+    _patch_upstream(monkeypatch, session)
+
+    service = CompletionService()
+    with pytest.raises(CompletionInvalidParamsError):
+        await service._forward_completion_upstream(_FakeGateway(), PromptReference(type="ref/prompt", name="p"), {"name": "a", "value": ""})
+
+
+@pytest.mark.asyncio
+async def test_forward_completion_upstream_generic_transport_failure_uses_categorize_upstream_error(monkeypatch):
+    async def fake_complete(ref, argument, context_arguments=None):
+        raise ConnectionRefusedError("connection refused")
+
+    session = SimpleNamespace(server_capabilities=SimpleNamespace(completions=object()), complete=fake_complete)
+    _patch_upstream(monkeypatch, session)
+
+    service = CompletionService()
+    with pytest.raises(CompletionInternalError, match="connection refused"):
+        await service._forward_completion_upstream(_FakeGateway(), PromptReference(type="ref/prompt", name="p"), {"name": "a", "value": ""})
+
+
+@pytest.mark.asyncio
+async def test_forward_completion_upstream_raises_internal_error_without_completion_payload(monkeypatch):
+    async def fake_complete(ref, argument, context_arguments=None):
+        return SimpleNamespace(completion=None)
+
+    session = SimpleNamespace(server_capabilities=SimpleNamespace(completions=object()), complete=fake_complete)
+    _patch_upstream(monkeypatch, session)
+
+    service = CompletionService()
+    with pytest.raises(CompletionInternalError):
+        await service._forward_completion_upstream(_FakeGateway(), PromptReference(type="ref/prompt", name="p"), {"name": "a", "value": ""})
+
+
+@pytest.mark.asyncio
+async def test_handle_completion_wraps_unexpected_non_completion_exception_as_internal_error(monkeypatch):
+    service = CompletionService()
+    db = MagicMock()
+    db.execute.side_effect = RuntimeError("db exploded")
+
+    with pytest.raises(CompletionInternalError, match="db exploded"):
+        await service.handle_completion(db, {"ref": {"type": "ref/prompt", "name": "p"}, "argument": {"name": "a", "value": ""}})
+
+
+def test_unwrap_exception_descends_through_nested_exception_groups():
+    leaf = ValueError("root cause")
+    inner_group = BaseExceptionGroup("inner", [leaf])
+    outer_group = BaseExceptionGroup("outer", [inner_group])
+    assert CompletionService._unwrap_exception(outer_group) is leaf
+
+
+@pytest.mark.asyncio
+async def test_forward_completion_upstream_reraises_cancelled_error_unwrapped(monkeypatch):
+    async def fake_complete(ref, argument, context_arguments=None):
+        raise asyncio.CancelledError()
+
+    session = SimpleNamespace(server_capabilities=SimpleNamespace(completions=object()), complete=fake_complete)
+    _patch_upstream(monkeypatch, session)
+
+    service = CompletionService()
+    with pytest.raises(asyncio.CancelledError):
+        await service._forward_completion_upstream(_FakeGateway(), PromptReference(type="ref/prompt", name="p"), {"name": "a", "value": ""})
