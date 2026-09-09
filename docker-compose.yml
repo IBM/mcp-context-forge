@@ -1844,6 +1844,44 @@ services:
         echo "✅ Setup complete!"
 
   ###############################################################################
+  # Completion Test Server - minimal MCP server advertising the `completions`
+  # capability, for #6629 completion/complete federation testing
+  # (tests/live_gateway/mcp/test_completion_federation.py). Built fresh from
+  # mcp-servers/python/completion_test_server, pinned mcp>=2.0.0 -- not reused
+  # from the sibling `mcp<2` fixture branch (spec §8.1). Registration and
+  # prompt federation happen inside the test itself, not here.
+  ###############################################################################
+  completion_test_server:
+    build:
+      context: ./mcp-servers/python/completion_test_server
+      dockerfile: Containerfile
+    restart: unless-stopped
+    networks: [mcpnet]
+    ports:
+      - "9102:9102"
+    environment:
+      - COMPLETION_TEST_SERVER_PORT=9102
+    profiles: ["testing"]
+
+  ###############################################################################
+  # Completion Test Server (no completions capability) - same image, same
+  # `greet` prompt, but no `completion` handler registered -- simulates an
+  # upstream that does not support completion/complete (#6629 R3).
+  ###############################################################################
+  completion_test_server_no_completions:
+    build:
+      context: ./mcp-servers/python/completion_test_server
+      dockerfile: Containerfile
+    restart: unless-stopped
+    networks: [mcpnet]
+    ports:
+      - "9103:9103"
+    environment:
+      - COMPLETION_TEST_SERVER_PORT=9103
+      - COMPLETIONS_ENABLED=false
+    profiles: ["testing"]
+
+  ###############################################################################
   # Slow Time Server - Configurable-latency MCP server for timeout/resilience testing
   # Introduces artificial latency on every tool call. Use for testing gateway
   # timeout enforcement, circuit breaker behaviour, and session pool resilience.
