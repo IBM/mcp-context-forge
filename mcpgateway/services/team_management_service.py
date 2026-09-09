@@ -30,6 +30,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload, Session
 
 # First-Party
+from mcpgateway.auth_context import resolve_canonical_user_id
 from mcpgateway.cache.admin_stats_cache import admin_stats_cache
 from mcpgateway.cache.auth_cache import auth_cache, get_auth_cache
 from mcpgateway.common.validators import SecurityValidator
@@ -1194,8 +1195,13 @@ class TeamManagementService:
             Tuple[EmailTeamMember, str]: The membership row, and the history action
             describing it ('added' for a new row, 'reactivated' for a revived one).
         """
+        # Resolve the canonical user ID once: the lookup and the stored row
+        # both key on it, so diverged users (user_id != email) never lose or
+        # duplicate membership rows.
+        canonical = resolve_canonical_user_id(user_email, self.db)
+
         if isinstance(existing, _Unset):
-            existing = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team_id, EmailTeamMember.user_email == user_email).first()
+            existing = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team_id, EmailTeamMember.user_email == canonical).first()
 
         if existing:
             existing.is_active = True  # pylint: disable=attribute-defined-outside-init
@@ -1207,7 +1213,7 @@ class TeamManagementService:
             self.db.flush()
             return existing, "reactivated"
 
-        membership = EmailTeamMember(team_id=team_id, user_email=user_email, role=role, joined_at=utc_now(), invited_by=invited_by, grant_source=grant_source, is_active=True)
+        membership = EmailTeamMember(team_id=team_id, user_email=canonical, role=role, joined_at=utc_now(), invited_by=invited_by, grant_source=grant_source, is_active=True)
         self.db.add(membership)
         self.db.flush()
         return membership, "added"
@@ -1269,8 +1275,10 @@ class TeamManagementService:
 
         self._check_user_team_limit(user_email)
 
-        # Check if user is already a member
-        existing_membership = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team_id, EmailTeamMember.user_email == user_email).first()
+        # Check if user is already a member. The lookup keys on the canonical
+        # user ID, the same value _upsert_membership stores.
+        canonical = resolve_canonical_user_id(user_email, self.db)
+        existing_membership = self.db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team_id, EmailTeamMember.user_email == canonical).first()
 
         if existing_membership and existing_membership.is_active:
             logger.warning("User %s is already a member of team %s", SecurityValidator.sanitize_log_message(user_email), SecurityValidator.sanitize_log_message(team_id))
@@ -2224,8 +2232,10 @@ class TeamManagementService:
                 raise ValueError(f"Team {team_id} not found or inactive")
             check_team_member_capacity(self.db, team)
 
-            # Add user to team
-            member = EmailTeamMember(team_id=team_id, user_email=join_request.user_email, role="member", invited_by=approved_by, joined_at=utc_now())  # New joiners are always members
+            # Add user to team. Resolve the canonical user ID once; the stored
+            # membership keys on it.
+            canonical = resolve_canonical_user_id(join_request.user_email, self.db)
+            member = EmailTeamMember(team_id=team_id, user_email=canonical, role="member", invited_by=approved_by, joined_at=utc_now())  # New joiners are always members
 
             self.db.add(member)
             # Update join request status
