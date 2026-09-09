@@ -5163,6 +5163,42 @@ class ServerTaskMapping(Base):
         return f"<ServerTaskMapping(id='{self.id}', server_task_id='{self.server_task_id}', agent_task_id='{self.agent_task_id}')>"
 
 
+class ExternalGroupMapping(Base):
+    """Maps an external IdP group to one ContextForge team and, optionally, one role.
+
+    External IdP tokens carry group memberships (for example Entra group object
+    IDs) that never match ContextForge team IDs. This table is the translation
+    layer: the trust-mode resolver reads it to compute token_teams (Layer 1)
+    and role names (Layer 2) from the groups claim. One group maps to exactly
+    one CF team and one role; the unique constraint on
+    (issuer, tenant, external_group_id) enforces this. Unmapped groups
+    contribute nothing (fail-closed).
+
+    cf_role is a plain String with no foreign key: roles.name has only a
+    partial unique index, so name alone cannot be an FK target. Existence is
+    validated at the application level against the roles table.
+    """
+
+    __tablename__ = "external_group_mappings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    issuer: Mapped[str] = mapped_column(String(512), nullable=False)
+    tenant: Mapped[Optional[str]] = mapped_column(String(512), nullable=True)
+    external_group_id: Mapped[str] = mapped_column(String(512), nullable=False)
+    cf_team_id: Mapped[str] = mapped_column(String(255), ForeignKey("email_teams.id"), nullable=False)
+    cf_role: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    validation_status: Mapped[str] = mapped_column(String(50), nullable=False, default="valid", server_default="valid")
+    last_validated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now, server_default=func.now(), nullable=False)
+
+    __table_args__ = (UniqueConstraint("issuer", "tenant", "external_group_id", name="uq_external_group_mappings_identity"),)
+
+    def __repr__(self) -> str:
+        """Return a string representation of the ExternalGroupMapping instance."""
+        return f"<ExternalGroupMapping(id={self.id}, issuer='{self.issuer}', external_group_id='{self.external_group_id}', cf_team_id='{self.cf_team_id}')>"
+
+
 class ServerInterface(Base):
     """Protocol-specific interface configuration per virtual server."""
 
