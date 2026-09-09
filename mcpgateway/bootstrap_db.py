@@ -290,14 +290,20 @@ async def bootstrap_admin_user(conn: Connection) -> None:
                 full_name=settings.platform_admin_full_name,
             )
 
-            # Mark admin user as email verified and require password change on first login
+            # Mark admin user as email verified
             # First-Party
             from mcpgateway.db import utc_now  # pylint: disable=import-outside-toplevel
 
             admin_user.email_verified_at = utc_now()
-            # Respect configuration: only require password change on bootstrap when enabled
-            if getattr(settings, "password_change_enforcement_enabled", True) and getattr(settings, "admin_require_password_change_on_bootstrap", True):
-                admin_user.password_change_required = True  # Force admin to change default password
+            _enforcement_on = getattr(settings, "password_change_enforcement_enabled", True)
+            _bootstrap_flag = getattr(settings, "admin_require_password_change_on_bootstrap", True)
+            if _enforcement_on and _bootstrap_flag:
+                _using_default_pwd = settings.platform_admin_password.get_secret_value() == settings.default_user_password.get_secret_value()
+                if _using_default_pwd:
+                    admin_user.password_change_required = True
+                    logger.warning("Admin bootstrapped with the default password; password change required on first login.")
+                else:
+                    logger.info("Custom PLATFORM_ADMIN_PASSWORD detected; skipping forced password-change flag.")
             try:
                 admin_user.password_changed_at = utc_now()
             except Exception as exc:

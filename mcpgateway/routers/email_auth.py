@@ -286,7 +286,10 @@ async def login(login_request: EmailLoginRequest, request: Request, db: Session 
             logger.info(f"Login blocked for {SecurityValidator.sanitize_log_message(login_request.email)}: password change required")
             return ORJSONResponse(
                 status_code=status.HTTP_403_FORBIDDEN,
-                content={"detail": "Password change required. Please change your password before continuing."},
+                content={
+                    "detail": "Password change required. Please change your password before continuing.",
+                    "hint": "Use POST /auth/email/change-password with a Bearer token, or set ADMIN_REQUIRE_PASSWORD_CHANGE_ON_BOOTSTRAP=false for headless deployments.",
+                },
                 headers={"X-Password-Change-Required": "true"},
             )
 

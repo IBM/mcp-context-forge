@@ -224,6 +224,49 @@ class TestBootstrapAdminUser:
                             mock_email_auth_service.create_platform_admin.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_bootstrap_admin_user_custom_password_skips_password_change_flag(self, mock_settings, mock_db_session, mock_email_auth_service, mock_admin_user, mock_conn):
+        """Custom PLATFORM_ADMIN_PASSWORD must not set password_change_required (issue #6493)."""
+        mock_settings.password_change_enforcement_enabled = True
+        mock_settings.admin_require_password_change_on_bootstrap = True
+        mock_settings.platform_admin_password = SecretStr("MyStr0ng$ecret!")
+        mock_settings.default_user_password = SecretStr("changeme")
+
+        mock_email_auth_service.get_user_by_email.return_value = None
+        mock_email_auth_service.create_platform_admin = AsyncMock(return_value=mock_admin_user)
+
+        with (
+            patch("mcpgateway.bootstrap_db.settings", mock_settings),
+            patch("mcpgateway.bootstrap_db.Session", return_value=mock_db_session),
+            patch("mcpgateway.services.email_auth_service.EmailAuthService", return_value=mock_email_auth_service),
+            patch("mcpgateway.db.utc_now", return_value="2024-01-01T00:00:00Z"),
+            patch("mcpgateway.bootstrap_db.logger"),
+        ):
+            await bootstrap_admin_user(mock_conn)
+            # password_change_required must NOT have been set to True on the user object
+            assert mock_admin_user.password_change_required is not True
+
+    @pytest.mark.asyncio
+    async def test_bootstrap_admin_user_default_password_sets_password_change_flag(self, mock_settings, mock_db_session, mock_email_auth_service, mock_admin_user, mock_conn):
+        """Default password bootstrap must set password_change_required to True."""
+        mock_settings.password_change_enforcement_enabled = True
+        mock_settings.admin_require_password_change_on_bootstrap = True
+        mock_settings.platform_admin_password = SecretStr("changeme")
+        mock_settings.default_user_password = SecretStr("changeme")
+
+        mock_email_auth_service.get_user_by_email.return_value = None
+        mock_email_auth_service.create_platform_admin = AsyncMock(return_value=mock_admin_user)
+
+        with (
+            patch("mcpgateway.bootstrap_db.settings", mock_settings),
+            patch("mcpgateway.bootstrap_db.Session", return_value=mock_db_session),
+            patch("mcpgateway.services.email_auth_service.EmailAuthService", return_value=mock_email_auth_service),
+            patch("mcpgateway.db.utc_now", return_value="2024-01-01T00:00:00Z"),
+            patch("mcpgateway.bootstrap_db.logger"),
+        ):
+            await bootstrap_admin_user(mock_conn)
+            assert mock_admin_user.password_change_required is True
+
+    @pytest.mark.asyncio
     async def test_bootstrap_admin_user_exception(self, mock_settings, mock_db_session, mock_email_auth_service, mock_conn):
         """Test exception handling during admin user creation."""
         mock_email_auth_service.get_user_by_email.side_effect = Exception("Database error")
