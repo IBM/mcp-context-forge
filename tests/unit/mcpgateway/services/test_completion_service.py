@@ -483,7 +483,7 @@ async def test_acquire_upstream_session_uses_registry_when_downstream_session_in
     )
     monkeypatch.setattr(
         "mcpgateway.services.completion_service.get_upstream_session_registry",
-        lambda: _FakeRegistry(),
+        _FakeRegistry,
     )
 
     service = CompletionService()
