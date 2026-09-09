@@ -629,6 +629,7 @@ class EmailAuthService:
         skip_password_validation: bool = False,
         granted_by: Optional[str] = None,
         skip_onboarding: bool = False,
+        user_id: Optional[str] = None,
     ) -> EmailUser:
         """Create a new user with email authentication.
 
@@ -648,6 +649,8 @@ class EmailAuthService:
                 ``except Exception`` path) are always recorded regardless of
                 this flag.  Duplicate-user rejections (``UserExistsError``,
                 ``IntegrityError``) are not audited by design.
+            user_id: Canonical user ID to store (e.g. the IdP subject for
+                SSO-provisioned users). Defaults to the normalized e-mail.
 
         Returns:
             EmailUser: The created user object
@@ -702,6 +705,7 @@ class EmailAuthService:
             full_name=full_name,
             is_admin=is_admin,
             is_active=is_active,
+            user_id=user_id or email,
             password_change_required=password_change_required,
             auth_provider=auth_provider,
             password_changed_at=utc_now(),

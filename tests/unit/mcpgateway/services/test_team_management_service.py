@@ -281,7 +281,11 @@ class TestTeamManagementService:
         mock_queries = [mock_existing_team, mock_existing_membership]
         mock_db.query.return_value.filter.return_value.first.side_effect = mock_queries
 
-        with patch("mcpgateway.services.team_management_service.slugify") as mock_slugify, patch("mcpgateway.services.team_management_service.utc_now") as mock_utc_now:
+        with (
+            patch("mcpgateway.services.team_management_service.slugify") as mock_slugify,
+            patch("mcpgateway.services.team_management_service.utc_now") as mock_utc_now,
+            patch("mcpgateway.services.team_management_service.resolve_canonical_user_id", side_effect=lambda email, _db: email),
+        ):
             mock_slugify.return_value = "test-team"
             mock_utc_now.return_value = "2023-01-01T00:00:00Z"
 
@@ -1613,6 +1617,7 @@ class TestTeamManagementService:
         mock_team.max_members = 100
 
         with (
+            patch("mcpgateway.services.team_management_service.resolve_canonical_user_id", side_effect=lambda email, _db: email),
             patch("mcpgateway.services.team_management_service.EmailTeamMember", return_value=member),
             patch.object(service, "get_team_by_id", new=AsyncMock(return_value=mock_team)),
             patch.object(service, "_log_team_member_action") as mock_log_action,
@@ -1670,6 +1675,7 @@ class TestTeamManagementService:
             mock_settings.max_members_per_team = 100
 
             with (
+                patch("mcpgateway.services.team_management_service.resolve_canonical_user_id", side_effect=lambda email, _db: email),
                 patch("mcpgateway.services.team_management_service.EmailTeamMember", return_value=member),
                 patch.object(service, "get_team_by_id", new=AsyncMock(return_value=mock_team)),
                 patch.object(service, "_log_team_member_action"),
@@ -1723,6 +1729,7 @@ class TestTeamManagementService:
             mock_settings.max_members_per_team = 100
 
             with (
+                patch("mcpgateway.services.team_management_service.resolve_canonical_user_id", side_effect=lambda email, _db: email),
                 patch("mcpgateway.services.team_management_service.EmailTeamMember", return_value=member),
                 patch.object(service, "get_team_by_id", new=AsyncMock(return_value=mock_team)),
                 patch.object(service, "_log_team_member_action"),
@@ -2989,3 +2996,72 @@ class TestTransientTeamFromDict:
         assert rebuilt.is_active is True
         assert rebuilt.created_at is not None
         assert rebuilt.updated_at is not None
+
+
+class TestMembershipCanonicalKeying:
+    """Writer re-keying: membership writers store the canonical user_id (#5893)."""
+
+    @staticmethod
+    async def _create_diverged_user(db, email: str, user_id: str):
+        """Create a diverged user (user_id != email) through the writer path."""
+        # First-Party
+        from mcpgateway.services.email_auth_service import EmailAuthService
+
+        auth_service = EmailAuthService(db)
+        return await auth_service.create_user(email=email, password="", user_id=user_id, skip_password_validation=True, skip_onboarding=True)
+
+    @staticmethod
+    def _create_team(db, suffix: str, created_by: str, visibility: str = "public"):
+        """Create a plain (non-personal) team row."""
+        team = EmailTeam(
+            name=f"Team {suffix}",
+            slug=f"team-{suffix}",
+            created_by=created_by,
+            is_personal=False,
+            visibility=visibility,
+            is_active=True,
+        )
+        db.add(team)
+        db.commit()
+        db.refresh(team)
+        return team
+
+    @pytest.mark.asyncio
+    async def test_add_member_stores_canonical_user_id(self, test_db):
+        """add_member_to_team keys the membership by user_id; re-adding reactivates the same row."""
+        suffix = uuid4().hex[:8]
+        email = f"dev-{suffix}@example.com"
+        await self._create_diverged_user(test_db, email, "idp-123")
+        team = self._create_team(test_db, suffix, created_by=email)
+
+        service = TeamManagementService(test_db)
+        member = await service.add_member_to_team(team_id=team.id, user_email=email, role="member", invited_by=email)
+
+        assert member.user_email == "idp-123"
+
+        # Deactivate the row, then re-add: the same canonical-keyed row is
+        # reactivated, no duplicate. (remove_member_from_team is a reader
+        # outside this story's five writer sites, so flip the flag directly.)
+        member.is_active = False
+        test_db.commit()
+
+        readded = await service.add_member_to_team(team_id=team.id, user_email=email, role="member", invited_by=email)
+        assert readded.id == member.id
+        assert readded.user_email == "idp-123"
+        assert test_db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team.id).count() == 1
+
+    @pytest.mark.asyncio
+    async def test_approve_join_request_stores_canonical_user_id(self, test_db):
+        """approve_join_request keys the new membership by user_id."""
+        suffix = uuid4().hex[:8]
+        email = f"joiner-{suffix}@example.com"
+        await self._create_diverged_user(test_db, email, "idp-123")
+        team = self._create_team(test_db, suffix, created_by=email, visibility="public")
+
+        service = TeamManagementService(test_db)
+        join_request = await service.create_join_request(team_id=team.id, user_email=email)
+        member = await service.approve_join_request(team_id=team.id, request_id=join_request.id, approved_by=email)
+
+        assert member.user_email == "idp-123"
+        stored = test_db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team.id).one()
+        assert stored.user_email == "idp-123"

@@ -735,6 +735,23 @@ class SSOService:
                     exc_info=True,
                 )
 
+    @staticmethod
+    def _validate_user_id_claim(provider_metadata: Optional[Dict[str, Any]], provider_name: str) -> None:
+        """Reject invalid user_id_claim settings at provider save time.
+
+        Args:
+            provider_metadata: Provider metadata dict that may carry user_id_claim.
+            provider_name: Provider identifier used in the error message.
+
+        Raises:
+            ValueError: If user_id_claim is present but not a non-empty string.
+        """
+        if not isinstance(provider_metadata, dict) or "user_id_claim" not in provider_metadata:
+            return
+        user_id_claim = provider_metadata["user_id_claim"]
+        if not isinstance(user_id_claim, str) or not user_id_claim.strip():
+            raise ValueError(f"Invalid user_id_claim for SSO provider '{provider_name}': the setting must be a non-empty string naming the IdP claim that becomes user_id")
+
     async def create_provider(self, provider_data: Dict[str, Any]) -> SSOProvider:
         """Create new SSO provider configuration.
 
@@ -776,6 +793,8 @@ class SSOService:
 
         if filtered_data.get("trusted_for_api_auth") and not (filtered_data.get("api_audience") or "").strip():
             raise ValueError("api_audience is required when trusted_for_api_auth is enabled (prevents confused-deputy token acceptance)")
+
+        self._validate_user_id_claim(filtered_data.get("provider_metadata"), str(filtered_data.get("id") or "unknown"))
 
         provider = SSOProvider(**filtered_data)
         self.db.add(provider)
@@ -821,6 +840,9 @@ class SSOService:
         if "client_secret" in provider_data:
             client_secret = provider_data.pop("client_secret")
             provider_data["client_secret_encrypted"] = await self._encrypt_secret(client_secret)
+
+        if "provider_metadata" in provider_data:
+            self._validate_user_id_claim(provider_data.get("provider_metadata"), provider_id)
 
         for key, value in provider_data.items():
             if hasattr(provider, key):
@@ -1784,6 +1806,9 @@ class SSOService:
         Returns:
             Normalized user info dict
         """
+        metadata = provider.provider_metadata or {}
+        groups_claim = metadata.get("groups_claim", "groups")
+
         # Handle GitHub provider
         if provider.id == "github":
             normalized: Dict[str, Any] = {
@@ -1803,36 +1828,32 @@ class SSOService:
                 github_email_verified = user_data.get("verified")
             if github_email_verified is not None:
                 normalized["email_verified"] = github_email_verified
-            return normalized
 
         # Handle Google provider
-        if provider.id == "google":
-            return self._build_normalized_user_info(
+        elif provider.id == "google":
+            normalized = self._build_normalized_user_info(
                 user_data,
                 "google",
                 [],
                 username=user_data.get("email", "").split("@")[0],
             )
 
-        metadata = provider.provider_metadata or {}
-        groups_claim = metadata.get("groups_claim", "groups")
-
         # Handle IBM Verify provider
-        if provider.id == "ibm_verify":
+        elif provider.id == "ibm_verify":
             groups = self._extract_groups_and_roles(user_data, groups_claim)
-            return self._build_normalized_user_info(user_data, "ibm_verify", groups)
+            normalized = self._build_normalized_user_info(user_data, "ibm_verify", groups)
 
         # Handle Okta provider
-        if provider.id == "okta":
+        elif provider.id == "okta":
             groups = self._extract_groups_and_roles(user_data, groups_claim)
-            return self._build_normalized_user_info(user_data, "okta", groups)
+            normalized = self._build_normalized_user_info(user_data, "okta", groups)
 
         # Handle Keycloak provider with role mapping
-        if provider.id == "keycloak":
+        elif provider.id == "keycloak":
             username_claim = metadata.get("username_claim", "preferred_username")
             email_claim = metadata.get("email_claim", "email")
 
-            groups: list[str] = []
+            groups = []
 
             # Extract realm roles
             if metadata.get("map_realm_roles"):
@@ -1851,7 +1872,7 @@ class SSOService:
                 if isinstance(custom_groups, list):
                     groups.extend(custom_groups)
 
-            return self._build_normalized_user_info(
+            normalized = self._build_normalized_user_info(
                 user_data,
                 "keycloak",
                 groups,
@@ -1860,14 +1881,14 @@ class SSOService:
             )
 
         # Handle Microsoft Entra ID provider with role mapping
-        if provider.id == "entra":
+        elif provider.id == "entra":
             # Microsoft's userinfo endpoint often omits the email claim
             # Fallback: preferred_username (UPN) or upn claim
             email = user_data.get("email") or user_data.get("preferred_username") or user_data.get("upn")
             username = user_data.get("preferred_username") or (email.split("@")[0] if email else None)
 
             groups = self._extract_groups_and_roles(user_data, groups_claim)
-            return self._build_normalized_user_info(
+            normalized = self._build_normalized_user_info(
                 user_data,
                 "entra",
                 groups,
@@ -1878,7 +1899,7 @@ class SSOService:
             )
 
         # Handle ADFS provider
-        if provider.id == ADFS_PROVIDER_ID:
+        elif provider.id == ADFS_PROVIDER_ID:
             # ADFS uses UPN (User Principal Name) as the primary identifier.
             # Claim priority: email > preferred_username > upn > unique_name
             raw_email = user_data.get("email") or user_data.get("preferred_username") or user_data.get("upn") or user_data.get("unique_name")
@@ -1906,7 +1927,7 @@ class SSOService:
 
             adfs_groups = self._extract_groups_and_roles(user_data, groups_claim)
 
-            return self._build_normalized_user_info(
+            normalized = self._build_normalized_user_info(
                 user_data,
                 ADFS_PROVIDER_ID,
                 adfs_groups,
@@ -1918,8 +1939,27 @@ class SSOService:
             )
 
         # Generic OIDC format for all other providers.
-        groups = self._extract_groups_and_roles(user_data, groups_claim)
-        return self._build_normalized_user_info(user_data, provider.id, groups)
+        else:
+            groups = self._extract_groups_and_roles(user_data, groups_claim)
+            normalized = self._build_normalized_user_info(user_data, provider.id, groups)
+
+        # Per-provider user_id claim setting: the default "sub" keeps the
+        # standard mapping above. A configured claim re-points provider_id at
+        # that claim. A missing claim flags the payload so the login fails
+        # closed in authenticate_or_create_user.
+        user_id_claim = str(metadata.get("user_id_claim") or "sub")
+        if user_id_claim != "sub":
+            if user_id_claim not in user_data:
+                logger.error(
+                    "SSO provider '%s' configures user_id_claim '%s' but that claim is absent from the user data. The login will fail closed.",
+                    provider.id,
+                    user_id_claim,
+                )
+                normalized["user_id_claim_missing"] = user_id_claim
+            else:
+                normalized["provider_id"] = user_data.get(user_id_claim)
+
+        return normalized
 
     def _reset_pending_approval(self, pending: PendingUserApproval, incoming_provider: str, user_info: Dict[str, Any]) -> None:
         """Reset a pending approval request to pending state with fresh metadata.
@@ -2028,6 +2068,16 @@ class SSOService:
         Returns:
             JWT token for authenticated user or None if failed
         """
+        # Fail closed when the provider's configured user_id claim was absent
+        # from the token: never fall back to the e-mail as the canonical ID.
+        if user_info.get("user_id_claim_missing"):
+            logger.error(
+                "SSO authenticate_or_create_user: provider '%s' requires claim '%s' as the user_id source but the claim was absent from the user data. Failing the login closed.",
+                user_info.get("provider", "unknown"),
+                user_info.get("user_id_claim_missing"),
+            )
+            return None
+
         raw_email = user_info.get("email")
         if not raw_email:
             logger.warning("SSO authenticate_or_create_user: no email in user_info from provider '%s'. User cannot be authenticated without an email address.", user_info.get("provider", "unknown"))
@@ -2181,6 +2231,7 @@ class SSOService:
                 full_name=user_info.get("full_name", email),
                 is_admin=is_admin,
                 auth_provider=incoming_provider,
+                user_id=str(user_info.get("provider_id") or email),
             )
             if not user:
                 return None
