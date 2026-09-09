@@ -2124,8 +2124,7 @@ class SSOService:
                     # between callback and this call, or an id-casing mismatch) — refusing here
                     # keeps the relink admin-carryover guard (below) from being silently skipped.
                     logger.warning(
-                        "SSO authenticate_or_create_user: refusing login for email '%s' — incoming provider '%s' could not be resolved, "
-                        "so admin status cannot be re-vetted for a relink from '%s'.",
+                        "SSO authenticate_or_create_user: refusing login for email '%s' — incoming provider '%s' could not be resolved, so admin status cannot be re-vetted for a relink from '%s'.",
                         email,
                         incoming_provider,
                         current_auth_provider,
