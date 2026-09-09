@@ -2051,6 +2051,7 @@ class TestToolServiceIdentityPropagationCoverage:
         client_mock.__aenter__ = AsyncMock(return_value=client_mock)
         client_mock.__aexit__ = AsyncMock(return_value=None)
         client_mock.call_tool = AsyncMock(return_value=mock_result)
+        client_mock.session = client_mock
 
         with (
             patch("mcpgateway.services.tool_service._get_tool_lookup_cache", return_value=cache),

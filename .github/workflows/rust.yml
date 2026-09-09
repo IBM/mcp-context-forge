@@ -5,7 +5,7 @@ name: Rust CI
 on:
   pull_request:
     types: [opened, synchronize, ready_for_review]
-    branches: [main, develop]
+    branches: [main, "chore/mcp-sdk-v2", develop]
     paths:
       - "crates/**"
       - "Cargo.toml"

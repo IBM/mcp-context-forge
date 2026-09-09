@@ -7005,6 +7005,7 @@ class TestInvokeToolRestSuccess:
         mock_session = AsyncMock()
         mock_session.initialize = AsyncMock()
         mock_session.call_tool = AsyncMock(return_value=sdk_error_result)
+        mock_session.session = mock_session
 
         class _ClientCM:
             """Stand-in for mcp_proxy_client — yields mock_session as the MCP Client."""
@@ -9180,6 +9181,7 @@ class TestInvokeToolMcpSse:
         mock_session = AsyncMock()
         mock_session.initialize = AsyncMock()
         mock_session.call_tool = AsyncMock(return_value=ToolResult(content=[TextContent(type="text", text="ok")], is_error=False))
+        mock_session.session = mock_session
 
         def fake_proxy_client(*, url=None, headers=None, httpx_client_factory=None, **_kw):
             if httpx_client_factory is not None:
@@ -9237,6 +9239,7 @@ class TestInvokeToolMcpSse:
         mock_session = AsyncMock()
         mock_session.initialize = AsyncMock()
         mock_session.call_tool = AsyncMock(return_value=ToolResult(content=[TextContent(type="text", text="ok")], is_error=False))
+        mock_session.session = mock_session
 
         def fake_proxy_client(*, url=None, headers=None, httpx_client_factory=None, **_kw):
             if httpx_client_factory is not None:
@@ -9335,6 +9338,7 @@ class TestInvokeToolMcpSse:
         mock_session = AsyncMock()
         mock_session.initialize = AsyncMock()
         mock_session.call_tool = AsyncMock(return_value=ToolResult(content=[TextContent(type="text", text="ok")], is_error=False))
+        mock_session.session = mock_session
 
         def fake_proxy_client(*, url=None, headers=None, httpx_client_factory=None, **_kw):
             captured_headers.update(headers or {})
@@ -9420,6 +9424,7 @@ class TestInvokeToolMcpSse:
         mock_session = AsyncMock()
         mock_session.initialize = AsyncMock()
         mock_session.call_tool = AsyncMock(return_value=ToolResult(content=[TextContent(type="text", text="ok")], is_error=False))
+        mock_session.session = mock_session
 
         with (
             _setup_cache_for_invoke(tp, gp),
@@ -9506,6 +9511,7 @@ class TestInvokeToolMcpSse:
         mock_session = AsyncMock()
         mock_session.initialize = AsyncMock()
         mock_session.call_tool = AsyncMock(return_value=ToolResult(content=[TextContent(type="text", text="ok")], is_error=False))
+        mock_session.session = mock_session
 
         with (
             _setup_cache_for_invoke(tp, gp),
@@ -9560,6 +9566,7 @@ class TestInvokeToolMcpSse:
         mock_session = AsyncMock()
         mock_session.initialize = AsyncMock()
         mock_session.call_tool = AsyncMock(return_value=ToolResult(content=[TextContent(type="text", text="ok")], is_error=False))
+        mock_session.session = mock_session
 
         with (
             _setup_cache_for_invoke(tp, gp),
@@ -9627,6 +9634,7 @@ class TestInvokeToolMcpSse:
         mock_session = AsyncMock()
         mock_session.initialize = AsyncMock()
         mock_session.call_tool = AsyncMock(return_value=ToolResult(content=[TextContent(type="text", text="ok")], is_error=False))
+        mock_session.session = mock_session
 
         with (
             _setup_cache_for_invoke(tp, gp),
@@ -9685,6 +9693,7 @@ class TestInvokeToolMcpSse:
         mock_session = AsyncMock()
         mock_session.initialize = AsyncMock()
         mock_session.call_tool = AsyncMock(return_value=ToolResult(content=[TextContent(type="text", text="ok")], is_error=False))
+        mock_session.session = mock_session
 
         with (
             _setup_cache_for_invoke(tp, gp),
@@ -9745,6 +9754,7 @@ class TestInvokeToolMcpSse:
         mock_session = AsyncMock()
         mock_session.initialize = AsyncMock()
         mock_session.call_tool = AsyncMock(return_value=ToolResult(content=[TextContent(type="text", text="ok")], is_error=False))
+        mock_session.session = mock_session
 
         with (
             _setup_cache_for_invoke(tp, gp),
@@ -9805,6 +9815,7 @@ class TestInvokeToolMcpSse:
         mock_session = AsyncMock()
         mock_session.initialize = AsyncMock()
         mock_session.call_tool = AsyncMock(return_value=ToolResult(content=[TextContent(type="text", text="ok")], is_error=False))
+        mock_session.session = mock_session
 
         with (
             _setup_cache_for_invoke(tp, gp),
@@ -9955,6 +9966,7 @@ class TestInvokeToolMcpSseTimeoutAndErrors:
         mock_session = AsyncMock()
         mock_session.initialize = AsyncMock()
         mock_session.call_tool = AsyncMock(side_effect=asyncio.TimeoutError())
+        mock_session.session = mock_session
 
         with (
             _setup_cache_for_invoke(tp, gp),
@@ -10003,6 +10015,7 @@ class TestInvokeToolMcpSseTimeoutAndErrors:
         mock_session = AsyncMock()
         mock_session.initialize = AsyncMock()
         mock_session.call_tool = AsyncMock(side_effect=ExceptionGroup("eg", [ValueError("root")]))
+        mock_session.session = mock_session
 
         with (
             _setup_cache_for_invoke(tp, gp),
@@ -10055,6 +10068,7 @@ class TestInvokeToolMcpStreamableHttpCoverage:
         mock_session = AsyncMock()
         mock_session.initialize = AsyncMock()
         mock_session.call_tool = AsyncMock(return_value=ToolResult(content=[TextContent(type="text", text="ok")], is_error=False))
+        mock_session.session = mock_session
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=None)
 
@@ -10171,6 +10185,7 @@ class TestInvokeToolMcpStreamableHttpCoverage:
         mock_session = AsyncMock()
         mock_session.initialize = AsyncMock()
         mock_session.call_tool = AsyncMock(side_effect=asyncio.TimeoutError())
+        mock_session.session = mock_session
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=None)
 
@@ -10210,6 +10225,7 @@ class TestInvokeToolMcpStreamableHttpCoverage:
         mock_session = AsyncMock()
         mock_session.initialize = AsyncMock()
         mock_session.call_tool = AsyncMock(side_effect=ExceptionGroup("eg", [ValueError("root")]))
+        mock_session.session = mock_session
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=None)
 

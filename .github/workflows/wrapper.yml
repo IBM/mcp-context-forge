@@ -2,7 +2,7 @@ name: Wrapper E2E
 
 on:
     pull_request:
-        branches: [main]
+        branches: [main, "chore/mcp-sdk-v2"]
         types: [opened, synchronize, reopened]
         paths:
             - "crates/wrapper/**"

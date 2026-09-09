@@ -41,7 +41,7 @@ on:
       - '.github/workflows/docker-multiplatform.yml'
   pull_request:
     types: [opened, synchronize, ready_for_review]
-    branches: ["main"]
+    branches: ["main", "chore/mcp-sdk-v2"]
     paths:
       - '.dockerignore'
       - 'Containerfile'

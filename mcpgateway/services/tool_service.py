@@ -4978,6 +4978,10 @@ class ToolService(BaseService):
             require_app_visible: Whether the retried invocation must resolve an app-visible tool.
             require_model_visible: Whether the retried invocation must resolve a model-visible tool.
             path_label: Label for log messages (success/timeout/exception).
+            progress_callback: Optional callback forwarded to the retried invocation for progress notifications.
+            allow_input_required: Whether the retried invocation may return an InputRequiredResult (MRTR).
+            input_responses: Client responses to a prior InputRequiredResult, forwarded on retry.
+            request_state: Opaque server state echoed back with input_responses on retry.
 
         Returns:
             ToolResult from the retried invocation.
@@ -7162,10 +7166,10 @@ class ToolService(BaseService):
                         require_app_visible=require_app_visible,
                         require_model_visible=require_model_visible,
                         path_label="exception",
-                            progress_callback=progress_callback,
-                            allow_input_required=allow_input_required,
-                            input_responses=input_responses,
-                            request_state=request_state,
+                        progress_callback=progress_callback,
+                        allow_input_required=allow_input_required,
+                        input_responses=input_responses,
+                        request_state=request_state,
                     )
 
                 raise ToolInvocationError(f"Tool invocation failed: {error_message}")
