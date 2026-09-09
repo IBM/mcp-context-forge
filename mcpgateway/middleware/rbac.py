@@ -779,6 +779,7 @@ async def check_permission_inline(
     """
     if not user_context or not isinstance(user_context, dict) or "email" not in user_context:
         return False
+    identity = get_user_id(user_context)
 
     # SECURITY: Check API token scopes BEFORE plugin hooks and RBAC (Layer 1).
     # A scoped API token must carry the required permission; this is independent of
@@ -822,7 +823,7 @@ async def check_permission_inline(
         result, _ = await plugin_manager.invoke_hook(
             HttpHookType.HTTP_AUTH_CHECK_PERMISSION,
             payload=HttpAuthCheckPermissionPayload(
-                user_email=user_context["email"],
+                user_email=identity,
                 permission=permission,
                 resource_type=resource_type,
                 team_id=team_id,
@@ -891,7 +892,7 @@ async def check_permission_inline(
     if db:
         permission_service = PermissionService(db)
         granted = await permission_service.check_permission(
-            user_email=user_context["email"],
+            user_email=identity,
             permission=permission,
             resource_type=resource_type,
             team_id=team_id,
@@ -906,7 +907,7 @@ async def check_permission_inline(
         with fresh_db_session() as fresh_db:
             permission_service = PermissionService(fresh_db)
             granted = await permission_service.check_permission(
-                user_email=user_context["email"],
+                user_email=identity,
                 permission=permission,
                 resource_type=resource_type,
                 team_id=team_id,
@@ -1078,6 +1079,7 @@ def require_admin_permission():
             user_context = kwargs.get("user") or kwargs.get("_user") or kwargs.get("current_user") or kwargs.get("current_user_ctx")
             if not user_context or not isinstance(user_context, dict) or "email" not in user_context:
                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User authentication required")
+            identity = get_user_id(user_context)
 
             # Get db session: prefer endpoint's db param, then user_context["db"], then create fresh
             db_session = kwargs.get("db") or user_context.get("db")
@@ -1085,12 +1087,12 @@ def require_admin_permission():
             if db_session:
                 # Use existing session from endpoint or user_context
                 permission_service = PermissionService(db_session)
-                has_admin_permission = await permission_service.check_admin_permission(user_context["email"], token_teams=token_teams)
+                has_admin_permission = await permission_service.check_admin_permission(identity, token_teams=token_teams)
             else:
                 # Create fresh db session for permission check
                 with fresh_db_session() as db:
                     permission_service = PermissionService(db)
-                    has_admin_permission = await permission_service.check_admin_permission(user_context["email"], token_teams=token_teams)
+                    has_admin_permission = await permission_service.check_admin_permission(identity, token_teams=token_teams)
 
             if not has_admin_permission:
                 logger.warning(f"Admin permission denied: user={user_context['email']}")
@@ -1165,6 +1167,7 @@ def require_any_permission(permissions: List[str], resource_type: Optional[str] 
             user_context = kwargs.get("user") or kwargs.get("_user") or kwargs.get("current_user") or kwargs.get("current_user_ctx")
             if not user_context or not isinstance(user_context, dict) or "email" not in user_context:
                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User authentication required")
+            identity = get_user_id(user_context)
 
             # SECURITY: Check API token scopes BEFORE RBAC (Layer 1)
             # A scoped API token must carry at least ONE of the required permissions; this is
@@ -1187,7 +1190,7 @@ def require_any_permission(permissions: List[str], resource_type: Optional[str] 
                 granted = False
                 for permission in permissions:
                     if await permission_service.check_permission(
-                        user_email=user_context["email"],
+                        user_email=identity,
                         permission=permission,
                         resource_type=resource_type,
                         team_id=team_id,
@@ -1207,7 +1210,7 @@ def require_any_permission(permissions: List[str], resource_type: Optional[str] 
                     granted = False
                     for permission in permissions:
                         if await permission_service.check_permission(
-                            user_email=user_context["email"],
+                            user_email=identity,
                             permission=permission,
                             resource_type=resource_type,
                             team_id=team_id,
@@ -1252,6 +1255,7 @@ class PermissionChecker:
         """
         self.user_context = user_context
         self.db_session = user_context.get("db")
+        self.identity = get_user_id(user_context)
 
     async def has_permission(self, permission: str, resource_type: Optional[str] = None, resource_id: Optional[str] = None, team_id: Optional[str] = None, check_any_team: bool = False) -> bool:
         """Check if user has specific permission.
@@ -1270,7 +1274,7 @@ class PermissionChecker:
             # Use existing session
             permission_service = PermissionService(self.db_session)
             return await permission_service.check_permission(
-                user_email=self.user_context["email"],
+                user_email=self.identity,
                 permission=permission,
                 resource_type=resource_type,
                 resource_id=resource_id,
@@ -1284,7 +1288,7 @@ class PermissionChecker:
         with fresh_db_session() as db:
             permission_service = PermissionService(db)
             return await permission_service.check_permission(
-                user_email=self.user_context["email"],
+                user_email=self.identity,
                 permission=permission,
                 resource_type=resource_type,
                 resource_id=resource_id,
@@ -1305,11 +1309,11 @@ class PermissionChecker:
         if self.db_session:
             # Use existing session
             permission_service = PermissionService(self.db_session)
-            return await permission_service.check_admin_permission(self.user_context["email"], token_teams=token_teams)
+            return await permission_service.check_admin_permission(self.identity, token_teams=token_teams)
         # Create fresh db session
         with fresh_db_session() as db:
             permission_service = PermissionService(db)
-            return await permission_service.check_admin_permission(self.user_context["email"], token_teams=token_teams)
+            return await permission_service.check_admin_permission(self.identity, token_teams=token_teams)
 
     async def has_any_permission(self, permissions: List[str], resource_type: Optional[str] = None, team_id: Optional[str] = None) -> bool:
         """Check if user has any of the specified permissions.
@@ -1327,7 +1331,7 @@ class PermissionChecker:
             permission_service = PermissionService(self.db_session)
             for permission in permissions:
                 if await permission_service.check_permission(
-                    user_email=self.user_context["email"],
+                    user_email=self.identity,
                     permission=permission,
                     resource_type=resource_type,
                     team_id=team_id,
@@ -1342,7 +1346,7 @@ class PermissionChecker:
             permission_service = PermissionService(db)
             for permission in permissions:
                 if await permission_service.check_permission(
-                    user_email=self.user_context["email"],
+                    user_email=self.identity,
                     permission=permission,
                     resource_type=resource_type,
                     team_id=team_id,
