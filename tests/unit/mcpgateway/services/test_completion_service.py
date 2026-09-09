@@ -752,12 +752,12 @@ class _QueryParamAuthGateway:
     url = "https://upstream.example.com/mcp"
     transport = "streamable_http"
     auth_type = "query_param"
-    auth_query_params = {"api_key": "encrypted-blob"}
+    auth_query_params = {"api_key": "encrypted-blob"}  # pragma: allowlist secret
 
 
 def test_gateway_connection_applies_decoded_query_param_auth(monkeypatch):
     monkeypatch.setattr("mcpgateway.services.completion_service.build_gateway_auth_headers", lambda gw: {})
-    monkeypatch.setattr("mcpgateway.services.completion_service.decode_auth", lambda blob: {"api_key": "secret-value"})
+    monkeypatch.setattr("mcpgateway.services.completion_service.decode_auth", lambda blob: {"api_key": "secret-value"})  # pragma: allowlist secret
     monkeypatch.setattr(
         "mcpgateway.services.completion_service.apply_query_param_auth",
         lambda url, params: f"{url}?api_key={params['api_key']}",
@@ -765,7 +765,7 @@ def test_gateway_connection_applies_decoded_query_param_auth(monkeypatch):
 
     url, headers, auth_query_params = CompletionService._gateway_connection(_QueryParamAuthGateway())
     assert url == "https://upstream.example.com/mcp?api_key=secret-value"
-    assert auth_query_params == {"api_key": "secret-value"}
+    assert auth_query_params == {"api_key": "secret-value"}  # pragma: allowlist secret
     assert headers == {}
 
 
