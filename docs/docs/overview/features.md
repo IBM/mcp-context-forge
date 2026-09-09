@@ -18,7 +18,6 @@
     | **HTTP / JSON-RPC** | Low-latency request-response, default for most REST clients | Simple tool invocations |
     | **WebSocket** | Bi-directional, full-duplex | Streaming chat or incremental tool results |
     | **Server-Sent Events (SSE)** | Uni-directional server → client stream | LLM completions or real-time updates |
-    | **STDIO** | Local process pipes via `mcpgateway-wrapper` | Editor plugins, headless CLI clients |
 
 ??? example "Try it: SSE from curl"
 

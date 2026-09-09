@@ -73,7 +73,7 @@ It currently supports:
 * **A2A (Agent-to-Agent) integration** for external AI agents (OpenAI, Anthropic, custom)
 * **gRPC-to-MCP translation** via automatic reflection-based service discovery
 * Virtualization of legacy APIs as MCP-compliant tools and servers
-* Transport over HTTP, JSON-RPC, WebSocket, SSE (with configurable keepalive), stdio and streamable-HTTP
+* Transport over HTTP, JSON-RPC, WebSocket, SSE (with configurable keepalive), and Streamable HTTP; stdio transport available for server-side use
 * An Admin UI for real-time management, configuration, and log monitoring (with airgapped deployment support)
 * Built-in auth, retries, and rate-limiting with user-scoped OAuth tokens and unconditional X-Upstream-Authorization header support
 * **OpenTelemetry observability** with Phoenix, Jaeger, Zipkin, and other OTLP backends
@@ -322,56 +322,6 @@ curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" http://localhost:444
 # 6️⃣  Client HTTP endpoint. Inspect it interactively with the MCP Inspector CLI (or use any MCP client)
 npx -y @modelcontextprotocol/inspector
 # Transport Type: Streamable HTTP, URL: http://localhost:4444/servers/UUID_OF_SERVER_1/mcp,  Header Name: "Authorization", Bearer Token
-```
-
-</details>
-
-<details>
-<summary><strong>🖧 Using the stdio wrapper (mcpgateway-wrapper)</strong></summary>
-
-```bash
-export MCP_AUTH="Bearer ${MCPGATEWAY_BEARER_TOKEN}"
-export MCP_SERVER_URL=http://localhost:4444/servers/UUID_OF_SERVER_1/mcp
-python3 -m mcpgateway.wrapper  # Ctrl-C to exit
-```
-
-You can also run it with `uv` or inside Docker/Podman - see the *Containers* section above.
-
-In MCP Inspector, define `MCP_AUTH` and `MCP_SERVER_URL` env variables, and select `python3` as the Command, and `-m mcpgateway.wrapper` as Arguments.
-
-```bash
-echo $PWD/.venv/bin/python3 # Using the Python3 full path ensures you have a working venv
-export MCP_SERVER_URL='http://localhost:4444/servers/UUID_OF_SERVER_1/mcp'
-export MCP_AUTH="Bearer ${MCPGATEWAY_BEARER_TOKEN}"
-npx -y @modelcontextprotocol/inspector
-```
-
-or
-
-Pass the url and auth as arguments (no need to set environment variables)
-```bash
-npx -y @modelcontextprotocol/inspector
-command as `python`
-Arguments as `-m mcpgateway.wrapper --url "http://localhost:4444/servers/UUID_OF_SERVER_1/mcp" --auth "Bearer <your token>"`
-```
-
-
-When using a MCP Client such as Claude with stdio:
-
-```json
-{
-  "mcpServers": {
-    "mcpgateway-wrapper": {
-      "command": "python",
-      "args": ["-m", "mcpgateway.wrapper"],
-      "env": {
-        "MCP_AUTH": "Bearer your-token-here",
-        "MCP_SERVER_URL": "http://localhost:4444/servers/UUID_OF_SERVER_1",
-        "MCP_TOOL_CALL_TIMEOUT": "120"
-      }
-    }
-  }
-}
 ```
 
 </details>
@@ -647,34 +597,6 @@ curl -s -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" \
 </details>
 
 ---
-
-<details>
-<summary><strong>🖧 Running ContextForge stdio wrapper</strong></summary>
-
-The `mcpgateway.wrapper` lets you connect to the gateway over **stdio** while keeping JWT authentication. You should run this from the MCP Client. The example below is just for testing.
-
-```bash
-# JWT_SECRET_KEY must be set — see "Docker (Single Container)" for how to generate it
-export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token \
-  --username admin@example.com --exp 10080 --secret "${JWT_SECRET_KEY}")
-export MCP_AUTH="Bearer ${MCPGATEWAY_BEARER_TOKEN}"
-export MCP_SERVER_URL='http://localhost:4444/servers/UUID_OF_SERVER_1/mcp'
-export MCP_TOOL_CALL_TIMEOUT=120
-export MCP_WRAPPER_LOG_LEVEL=DEBUG  # or OFF to disable logging
-
-docker run --rm -i \
-  -e MCP_AUTH="${MCP_AUTH}" \
-  -e MCP_SERVER_URL=http://host.docker.internal:4444/servers/UUID_OF_SERVER_1/mcp \
-  -e MCP_TOOL_CALL_TIMEOUT=120 \
-  -e MCP_WRAPPER_LOG_LEVEL=DEBUG \
-  ghcr.io/ibm/mcp-context-forge:latest \
-  python3 -m mcpgateway.wrapper
-```
-
-</details>
-
----
-
 
 ## Quick Start: VS Code Dev Container
 

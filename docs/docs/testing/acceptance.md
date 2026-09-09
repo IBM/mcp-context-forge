@@ -7,14 +7,12 @@ graph TB
     subgraph "TESTER WORKSTATION"
         PIP[pip install mcp-contextforge-gateway]
         JWT[mcpgateway.utils.create_jwt_token<br/>Generates Bearer Token]
-        WRAPPER[mcpgateway.wrapper<br/>stdio to HTTP bridge]
         VSC_SSE[VS Code with SSE/HTTP<br/>Direct connection]
         INSPECTOR[MCP Inspector]
         AGENTS[AI Agents<br/>LangChain / CrewAI]
         HEY[hey<br/>Performance Testing]
 
         PIP --> JWT
-        JWT --> WRAPPER
         JWT --> VSC_SSE
         JWT --> AGENTS
     end
@@ -56,7 +54,6 @@ graph TB
     GATEWAY_ENTRY -->|↕ Full Runtime ↔ Gateway| RUNTIME_ENTRY
 
     %% Connections from Workstation to Gateway
-    WRAPPER -.->|HTTP/JSON-RPC| GW
     VSC_SSE -.->|SSE/HTTP| GW_VIRTUAL
     INSPECTOR -.->|HTTP| GW
     AGENTS -.->|HTTP API| GW
@@ -68,7 +65,7 @@ graph TB
     classDef servers fill:#9C27B0,stroke:#BA68C8,stroke-width:3px,color:#fff
     classDef auth fill:#F44336,stroke:#EF5350,stroke-width:3px,color:#fff
 
-    class PIP,JWT,WRAPPER,VSC_SSE,INSPECTOR,AGENTS,HEY workstation
+    class PIP,JWT,VSC_SSE,INSPECTOR,AGENTS,HEY workstation
     class GW,GW_FEDERATION,GW_VIRTUAL,GW_RESOURCES,GW_PROMPTS,GW_TOOLS,GATEWAY_ENTRY gateway
     class TIME,TIME_AUTH,FAST_TIME,GIT,GITHUB,JIRA,SERVICENOW,PLAYWRIGHT,FIGMA,MONDAY,BOX,RUNTIME_ENTRY servers
     class GW_AUTH,TIME_AUTH auth
@@ -80,7 +77,7 @@ graph TB
 | Feature | URL/Command | Actions | Expected Result | Status | Notes |
 |---------|-------------|---------|-----------------|--------|-------|
 | Set Gateway URL | `export GW_URL=http://localhost:4444` | Set base URL (can be remote) | Variable exported | ☐ | Use 8080 for docker-compose, 4444 for make serve, 8000 for make dev |
-| Install Gateway Package | `pip install mcp-contextforge-gateway` | Install the gateway package for utilities | Successfully installed | ☐ | Needed for JWT token creation and wrapper testing |
+| Install Gateway Package | `pip install mcp-contextforge-gateway` | Install the gateway package for utilities | Successfully installed | ☐ | Needed for JWT token creation |
 | Generate JWT Token | `export MCPGATEWAY_BEARER_TOKEN=$(python3 -m mcpgateway.utils.create_jwt_token -u admin@example.com --secret my-test-key-but-now-longer-than-32-bytes)` | Generate auth token using installed package | Token generated and exported | ☐ | Default expiry 10080 (7 days) |
 | Verify Health | `curl -s $GW_URL/health` | GET request (no auth required) | `{"status":"healthy"}` | ☐ | Basic connectivity check |
 | Verify Ready | `curl -s $GW_URL/ready` | GET request (no auth required) | `{"status":"ready"}` | ☐ | Returns 503 with `{"status":"not ready","error":"..."}` when not ready |
@@ -160,31 +157,21 @@ graph TB
 |---------|-----|----------|-----------------|--------|-------|
 | Create REST Tool | `curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" -H "Content-Type: application/json" -d '{"name": "weather_api", "url": "https://api.openweathermap.org/data/2.5/weather", "description": "Get current weather data", "integrationType": "REST", "requestType": "GET", "headers": {"X-API-Key": "demo-key"}, "input_schema": {"type": "object", "properties": {"q": {"type": "string", "description": "City name"}, "units": {"type": "string", "enum": ["metric", "imperial"]}}, "required": ["q"]}}' $GW_URL/tools \| jq` | Virtualize REST API | Success (201) | ☐ | REST as MCP tool |
 
-## 8. MCP Wrapper Testing
+## 8. VS Code Integration Testing
 
-| Feature | URL | Commands | Expected Result | Status | Notes |
-|---------|-----|----------|-----------------|--------|-------|
-| Install Package | `pip install mcp-contextforge-gateway` | Install for wrapper | Package installed | ☐ | If not already done |
-| Set Environment | `export MCP_SERVER_URL="$GW_URL/servers/$TIME_SERVER_UUID" && export MCP_AUTH=$MCPGATEWAY_BEARER_TOKEN` | Configure wrapper | Environment set | ☐ | Point to virtual server |
-| Test Wrapper Init | `echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"test","version":"1.0"}}}' \| python3 -m mcpgateway.wrapper 2>/dev/null \| jq` | Initialize via stdio | Returns capabilities with tools | ☐ | Stdio to HTTP bridge |
-| List Tools via Wrapper | `echo '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' \| python3 -m mcpgateway.wrapper 2>/dev/null \| jq` | List tools via stdio | Returns tool list | ☐ | Wrapper functionality |
-
-## 9. VS Code Integration Testing
-
-### 9.1. VS Code with MCP Wrapper (stdio)
+### 8.1. VS Code with Streamable HTTP
 
 | Feature | Configuration | Actions | Expected Result | Status | Notes |
 |---------|--------------|---------|-----------------|--------|-------|
 | Install VS Code Extension | Install "MCP Host" extension | Open VS Code, install from marketplace | Extension installed | ☐ | Official MCP extension |
-| Configure MCP Settings | Add to VS Code settings.json | ```json
+| Configure MCP Settings | Add to `.vscode/mcp.json` | ```json
 {
-  "mcp.servers": {
+  "servers": {
     "gateway-virtual": {
-      "command": "python",
-      "args": ["-m", "mcpgateway.wrapper"],
-      "env": {
-        "MCP_SERVER_URL": "$GW_URL/servers/$TIME_SERVER_UUID",
-        "MCP_AUTH": "$MCPGATEWAY_BEARER_TOKEN"
+      "type": "http",
+      "url": "$GW_URL/servers/$TIME_SERVER_UUID/mcp/",
+      "headers": {
+        "Authorization": "Bearer $MCPGATEWAY_BEARER_TOKEN"
       }
     }
   }
@@ -193,15 +180,15 @@ graph TB
 | Verify Connection | Check MCP panel | View → MCP Servers | Gateway tools visible | ☐ | Should show time tools |
 | Execute Tool | Use command palette | Cmd/Ctrl+Shift+P → "MCP: Execute Tool" → Select time tool | Tool executes successfully | ☐ | Returns time data |
 
-### 9.2. VS Code Direct SSE/HTTP Connection
+### 8.2. VS Code Direct SSE/HTTP Connection
 
 | Feature | Configuration | Actions | Expected Result | Status | Notes |
 |---------|--------------|---------|-----------------|--------|-------|
-| Configure Direct SSE | Add to VS Code settings.json | ```json
+| Configure Direct SSE | Add to `.vscode/mcp.json` | ```json
 {
-  "mcp.servers": {
+  "servers": {
     "gateway-direct": {
-      "transport": "sse",
+      "type": "sse",
       "url": "$GW_URL/servers/$TIME_SERVER_UUID/sse",
       "headers": {
         "Authorization": "Bearer $MCPGATEWAY_BEARER_TOKEN"
@@ -211,9 +198,9 @@ graph TB
 }``` | Server configured | ☐ | Direct SSE connection |
 | Test HTTP Transport | Alternative config | ```json
 {
-  "mcp.servers": {
+  "servers": {
     "gateway-http": {
-      "transport": "http",
+      "type": "http",
       "url": "$GW_URL",
       "headers": {
         "Authorization": "Bearer $MCPGATEWAY_BEARER_TOKEN"
@@ -224,9 +211,9 @@ graph TB
 | Verify SSE Stream | Check developer tools | F12 → Network tab → Filter "EventSource" | SSE connection established | ☐ | Real-time updates |
 | Execute via HTTP | Use MCP panel | Click tool → Enter parameters → Execute | Tool runs successfully | ☐ | Check response |
 
-## 10. AI Agent Integration Testing
+## 9. AI Agent Integration Testing
 
-### 10.1. LangChain Integration
+### 9.1. LangChain Integration
 
 | Feature | Command | Actions | Expected Result | Status | Notes |
 |---------|---------|---------|-----------------|--------|-------|
@@ -250,7 +237,7 @@ tools = toolkit.get_tools()
 agent = create_react_agent(tools=tools)
 ```
 
-### 10.2. CrewAI Integration
+### 9.2. CrewAI Integration
 
 | Feature | Command | Actions | Expected Result | Status | Notes |
 |---------|---------|---------|-----------------|--------|-------|
@@ -291,7 +278,7 @@ crew = Crew(agents=[time_agent], tasks=[task])
 result = crew.kickoff()
 ```
 
-## 11. Open Source MCP Server Testing
+## 10. Open Source MCP Server Testing
 
 | Server | Registration Command | Tool Discovery | Sample Execution | Status | Notes |
 |--------|---------------------|----------------|------------------|--------|-------|
@@ -315,7 +302,7 @@ result = crew.kickoff()
 | Monday | `curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" -H "Content-Type: application/json" -d '{"jsonrpc": "2.0", "method": "monday-list-boards", "params": {}, "id": 1}' $GW_URL/rpc \| jq` | Board list | ☐ | Workspace data |
 | Box | `curl -X POST -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" -H "Content-Type: application/json" -d '{"jsonrpc": "2.0", "method": "box-list-folders", "params": {"folder_id": "0"}, "id": 1}' $GW_URL/rpc \| jq` | Root folder contents | ☐ | File listing |
 
-## 12. Health & Monitoring
+## 11. Health & Monitoring
 
 | Feature | URL | Commands | Expected Result | Status | Notes |
 |---------|-----|----------|-----------------|--------|-------|
@@ -325,7 +312,7 @@ result = crew.kickoff()
 | Swagger UI | `curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" $GW_URL/docs \| grep -q "ContextForge" && echo "✓ Swagger UI loads"` | Interactive docs | ✓ Swagger UI loads | ☐ | API explorer |
 | ReDoc | `curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" $GW_URL/redoc \| grep -q "ReDoc" && echo "✓ ReDoc loads"` | Alternative docs | ✓ ReDoc loads | ☐ | Clean API docs |
 
-## 13. Admin Interface Testing
+## 12. Admin Interface Testing
 
 **Note**: Admin API must be enabled in configuration:
 ```bash
@@ -348,7 +335,7 @@ MCPGATEWAY_ADMIN_API_ENABLED=true
 
     For comprehensive testing guidance including SSE session testing and tool invocation, see the [Gateway Testing section in UI Concepts](../overview/ui-concepts.md#testing-gateway-connectivity).
 
-## 14. Input Validation Testing
+## 13. Input Validation Testing
 
 | Feature | URL | Commands | Expected Result | Status | Notes |
 |---------|-----|----------|-----------------|--------|-------|
@@ -360,7 +347,7 @@ MCPGATEWAY_ADMIN_API_ENABLED=true
 | Empty Required Field | `curl -X POST $GW_URL/tools -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" -H "Content-Type: application/json" -d '{"name": "", "url": "https://example.com"}'` | Empty name | 422 - `"Tool name cannot be empty"` | ☐ | Required validation |
 | Whitespace Only | `curl -X POST $GW_URL/tools -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" -H "Content-Type: application/json" -d '{"name": "   ", "url": "https://example.com"}'` | Spaces only | 422 - `"Tool name cannot be empty"` | ☐ | Trimming validation |
 
-## 15. Error Handling Verification
+## 14. Error Handling Verification
 
 | Feature | URL | Commands | Expected Result | Status | Notes |
 |---------|-----|----------|-----------------|--------|-------|
@@ -369,7 +356,7 @@ MCPGATEWAY_ADMIN_API_ENABLED=true
 | Invalid Endpoint | `curl -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" $GW_URL/invalid-endpoint \| jq '.detail'` | Bad URL | `"Not Found"` | ☐ | 404 response |
 | Invalid RPC Method | `curl -X POST $GW_URL/rpc -H "Authorization: Bearer $MCPGATEWAY_BEARER_TOKEN" -H "Content-Type: application/json" -d '{"jsonrpc": "2.0", "method": "invalid/method", "id": 1}' \| jq` | Bad method | Error response | ☐ | RPC error |
 
-## 16. System Summary Verification
+## 15. System Summary Verification
 
 | Feature | URL | Commands | Expected Result | Status | Notes |
 |---------|-----|----------|-----------------|--------|-------|
@@ -397,7 +384,7 @@ MCPGATEWAY_ADMIN_API_ENABLED=true
 - **Pipe Character**: The `\|` in commands represents the pipe character - remove the backslash when copying
 - **jq**: Install with `apt-get install jq` or `brew install jq` for JSON formatting
 - **MCP Servers**: Start each MCP server on its designated port before registering as gateway
-- **VS Code**: Reload window after changing MCP configuration in settings.json
+- **VS Code**: Reload window after changing MCP configuration in `.vscode/mcp.json`
 - **AI Agents**: Ensure you have API keys configured for LLM providers when testing agents
 
 
@@ -433,17 +420,16 @@ Overall test completion: **___%** | Total Tests: **___** | Passed: **___** | Fai
 | **6** | Resource Management | | | | | | |
 | **7** | Prompt Management | | | | | | |
 | **8** | REST Tool Creation | | | | | | |
-| **9** | MCP Wrapper Testing | | | | | | |
-| **10.1** | VS Code Integration (Wrapper) | | | | | | |
-| **10.2** | VS Code Integration (Direct) | | | | | | |
-| **11.1** | LangChain Integration | | | | | | |
-| **11.2** | CrewAI Integration | | | | | | |
-| **12** | Open Source MCP Servers | | | | | | |
-| **13** | Health & Monitoring | | | | | | |
-| **14** | Admin Interface | | | | | | |
-| **15** | Input Validation | | | | | | |
-| **16** | Error Handling | | | | | | |
-| **17** | System Summary | | | | | | |
+| **9.1** | VS Code Integration (Streamable HTTP) | | | | | | |
+| **9.2** | VS Code Integration (Direct) | | | | | | |
+| **10.1** | LangChain Integration | | | | | | |
+| **10.2** | CrewAI Integration | | | | | | |
+| **11** | Open Source MCP Servers | | | | | | |
+| **12** | Health & Monitoring | | | | | | |
+| **13** | Admin Interface | | | | | | |
+| **14** | Input Validation | | | | | | |
+| **15** | Error Handling | | | | | | |
+| **16** | System Summary | | | | | | |
 | **Cleanup** | Test Cleanup | | | | | | |
 
 ### Issue Summary
