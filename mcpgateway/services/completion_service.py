@@ -17,17 +17,33 @@ Examples:
 """
 
 # Standard
-from typing import Any, Dict, List, Optional
+import asyncio
+from contextlib import asynccontextmanager
+from typing import Any, AsyncIterator, Dict, List, Optional
 
 # Third-Party
+from mcp import MCPError as McpError
+from mcp.types import PromptReference, ResourceTemplateReference
 from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
 # First-Party
 from mcpgateway.common.models import CompleteResult
+from mcpgateway.config import settings
 from mcpgateway.db import Prompt as DbPrompt
 from mcpgateway.db import Resource as DbResource
 from mcpgateway.services.logging_service import LoggingService
+from mcpgateway.services.upstream_session_registry import (
+    _categorize_upstream_error,
+    downstream_session_id_from_request_context as _downstream_session_id_from_request,
+    get_upstream_session_registry,
+    RegistryNotInitializedError,
+    TransportType,
+)
+from mcpgateway.utils.gateway_access import build_gateway_auth_headers
+from mcpgateway.utils.mcp_proxy_client import mcp_proxy_client
+from mcpgateway.utils.services_auth import decode_auth
+from mcpgateway.utils.url_auth import apply_query_param_auth
 
 # Initialize logging service first
 logging_service = LoggingService()
@@ -45,6 +61,68 @@ class CompletionError(Exception):
         >>> isinstance(err, Exception)
         True
     """
+
+
+class CompletionNotSupportedError(CompletionError):
+    """Upstream server does not advertise the ``completions`` capability.
+
+    Maps to JSON-RPC ``-32601`` (Method not found) so the caller receives the
+    same answer the upstream itself would have given.
+    """
+
+
+class CompletionInvalidParamsError(CompletionError):
+    """Request names an unknown prompt/resource or omits a required argument.
+
+    Maps to JSON-RPC ``-32602`` (Invalid params).
+    """
+
+
+class CompletionInternalError(CompletionError):
+    """Upstream transport failure or an unexpected error while completing.
+
+    Maps to JSON-RPC ``-32603`` (Internal error).
+    """
+
+
+#: JSON-RPC error code for each completion error class, most specific first.
+COMPLETION_ERROR_CODES = (
+    (CompletionNotSupportedError, -32601),
+    (CompletionInvalidParamsError, -32602),
+    (CompletionInternalError, -32603),
+)
+
+#: Upstream JSON-RPC error code -> the completion error class that reproduces it.
+_UPSTREAM_CODE_TO_ERROR = {
+    -32601: CompletionNotSupportedError,
+    -32602: CompletionInvalidParamsError,
+}
+
+
+def completion_error_code(exc: CompletionError) -> int:
+    """Map a completion error to its MCP JSON-RPC error code.
+
+    Args:
+        exc: The completion error to classify.
+
+    Returns:
+        The matching MCP JSON-RPC error code, defaulting to ``-32603``
+        (Internal error) for an unclassified :class:`CompletionError`.
+
+    Examples:
+        >>> completion_error_code(CompletionNotSupportedError("x"))
+        -32601
+        >>> completion_error_code(CompletionInvalidParamsError("x"))
+        -32602
+        >>> completion_error_code(CompletionInternalError("x"))
+        -32603
+        >>> completion_error_code(CompletionError("x"))
+        -32603
+    """
+    for error_type, code in COMPLETION_ERROR_CODES:
+        if isinstance(exc, error_type):
+            return code
+    return -32603
 
 
 class CompletionService:
