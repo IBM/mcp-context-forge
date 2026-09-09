@@ -3198,7 +3198,7 @@ class TestToolService:
             result = await tool_service.invoke_tool(test_db, "dummy_tool", {"param": "value"}, request_headers=None)
 
         session_mock.initialize.assert_not_awaited()
-        session_mock.call_tool.assert_awaited_once_with("dummy_tool", {"param": "value"}, meta=None)
+        session_mock.call_tool.assert_awaited_once_with("dummy_tool", {"param": "value"}, meta=None, progress_callback=None, allow_input_required=True, input_responses=None, request_state=None)
 
         # Our ToolResult bubbled back out
         assert result.content[0].text == "MCP response"
@@ -3303,7 +3303,7 @@ class TestToolService:
         # The per-call streamablehttp client path still reached call_tool successfully.
         # Note: mcp_proxy_client does NOT call initialize() - the client auto-initializes internally.
         session_mock.initialize.assert_not_awaited()
-        session_mock.call_tool.assert_awaited_once_with("dummy_tool", {"p": "v"}, meta=None)
+        session_mock.call_tool.assert_awaited_once_with("dummy_tool", {"p": "v"}, meta=None, progress_callback=None, allow_input_required=True, input_responses=None, request_state=None)
         assert result.content[0].text == "fallback ok"
 
     @pytest.mark.asyncio
@@ -3396,6 +3396,10 @@ class TestToolService:
             "dummy_tool",
             {"p": "v"},
             meta={"traceparent": "00-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-3333333333333333-01"},
+            progress_callback=None,
+            allow_input_required=True,
+            input_responses=None,
+            request_state=None,
         )
         assert result.content[0].text == "sse fallback ok"
 
@@ -4210,7 +4214,7 @@ class TestToolService:
 
         # mcp_proxy_client auto-initializes internally; no explicit initialize() call.
         session_mock.initialize.assert_not_awaited()
-        session_mock.call_tool.assert_awaited_once_with("test_tool", {"param": "value"}, meta=None)
+        session_mock.call_tool.assert_awaited_once_with("test_tool", {"param": "value"}, meta=None, progress_callback=None, allow_input_required=True, input_responses=None, request_state=None)
 
         client_session_cm.__aenter__.assert_awaited_once()
 
@@ -4291,7 +4295,7 @@ class TestToolService:
         ):
             await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None, meta_data=meta_data)
 
-        session_mock.call_tool.assert_awaited_once_with("test_tool", {}, meta=meta_data)
+        session_mock.call_tool.assert_awaited_once_with("test_tool", {}, meta=meta_data, progress_callback=None, allow_input_required=True, input_responses=None, request_state=None)
 
     @pytest.mark.asyncio
     async def test_invoke_tool_error_exception_group_unwrapping(self, tool_service, mock_tool, mock_global_config_obj, test_db):
