@@ -9,10 +9,6 @@ permissions:
   actions: read
   contents: read
 
-concurrency:
-  group: conformance-pr-${{ github.event.issue.number }}
-  cancel-in-progress: true
-
 jobs:
   conformance:
     name: conformance
@@ -20,6 +16,9 @@ jobs:
       github.event.issue.pull_request &&
       github.event.comment.body == '/conformance' &&
       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
+    concurrency:
+      group: conformance-pr-${{ github.event.issue.number }}
+      cancel-in-progress: true
     runs-on: ubuntu-latest
     timeout-minutes: 90
     steps:
@@ -52,13 +51,8 @@ jobs:
         with:
           tool: cargo-binstall
 
-      - name: Install cf-integration 0.2.0 binary
-        run: cargo binstall cf-integration@0.2.0 --no-confirm
-
-      - name: Install Node.js 22
-        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
-        with:
-          node-version: 22
+      - name: Install cf-integration 0.3.2 binary
+        run: cargo binstall cf-integration@0.3.2 --no-confirm
 
       - name: Run legacy and modern conformance
         env:
