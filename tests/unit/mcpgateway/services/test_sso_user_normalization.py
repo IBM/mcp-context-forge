@@ -8,6 +8,7 @@ Tests edge cases where provider claims might be missing or incomplete.
 """
 
 # Standard
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 # Third-Party
@@ -1335,6 +1336,91 @@ class TestGenericOIDCNormalization:
         normalized = sso_service._normalize_user_info(provider, user_data)
 
         assert sorted(normalized["groups"]) == ["Engineering", "admin", "viewer"]
+
+
+class TestUserIdClaimNormalization:
+    """Per-provider user_id_claim setting selects the IdP claim that becomes user_id (#5893)."""
+
+    @staticmethod
+    def _provider(metadata):
+        """Build a generic OIDC provider carrying the given provider_metadata."""
+        return SSOProvider(
+            id="custom_oidc",
+            name="custom_oidc",
+            display_name="Custom OIDC",
+            provider_type="oidc",
+            provider_metadata=metadata,
+        )
+
+    def test_default_user_id_claim_is_sub(self, sso_service):
+        """Without a user_id_claim setting the sub claim becomes provider_id."""
+        provider = self._provider(None)
+
+        normalized = sso_service._normalize_user_info(provider, {"sub": "idp-sub-1", "email": "a@b.c"})
+
+        assert normalized["provider_id"] == "idp-sub-1"
+        assert "user_id_claim_missing" not in normalized
+
+    def test_configured_user_id_claim_extracts_provider_id(self, sso_service):
+        """A configured user_id_claim overrides sub as the provider_id source."""
+        provider = self._provider({"user_id_claim": "employee_id"})
+
+        normalized = sso_service._normalize_user_info(provider, {"sub": "idp-sub-1", "employee_id": "emp-42", "email": "a@b.c"})
+
+        assert normalized["provider_id"] == "emp-42"
+        assert "user_id_claim_missing" not in normalized
+
+    def test_missing_configured_claim_marks_login_failed(self, sso_service):
+        """A configured claim absent from the token marks the login as failed."""
+        provider = self._provider({"user_id_claim": "employee_id"})
+
+        normalized = sso_service._normalize_user_info(provider, {"sub": "idp-sub-1", "email": "a@b.c"})
+
+        assert normalized["user_id_claim_missing"] == "employee_id"
+
+
+class TestUserIdClaimSaveValidation:
+    """The provider save path rejects invalid user_id_claim settings (#5893)."""
+
+    @staticmethod
+    def _provider_data(user_id_claim):
+        """Build create_provider payload carrying the given user_id_claim setting."""
+        return {
+            "id": "custom_oidc",
+            "name": "custom_oidc",
+            "display_name": "Custom OIDC",
+            "provider_type": "oidc",
+            "client_id": "cid",
+            "client_secret": "sec",  # pragma: allowlist secret
+            "provider_metadata": {"user_id_claim": user_id_claim},
+        }
+
+    @pytest.mark.asyncio
+    async def test_create_provider_rejects_empty_user_id_claim(self, sso_service):
+        """An empty user_id_claim is rejected with a clear error."""
+        with pytest.raises(ValueError, match="user_id_claim"):
+            await sso_service.create_provider(self._provider_data(""))
+
+    @pytest.mark.asyncio
+    async def test_create_provider_rejects_whitespace_user_id_claim(self, sso_service):
+        """A whitespace-only user_id_claim is rejected with a clear error."""
+        with pytest.raises(ValueError, match="user_id_claim"):
+            await sso_service.create_provider(self._provider_data("   "))
+
+    @pytest.mark.asyncio
+    async def test_create_provider_rejects_non_string_user_id_claim(self, sso_service):
+        """A non-string user_id_claim is rejected with a clear error."""
+        with pytest.raises(ValueError, match="user_id_claim"):
+            await sso_service.create_provider(self._provider_data(123))
+
+    @pytest.mark.asyncio
+    async def test_update_provider_rejects_invalid_user_id_claim(self, sso_service):
+        """update_provider applies the same user_id_claim validation."""
+        existing = SimpleNamespace(id="custom_oidc", name="custom_oidc", client_id="cid", is_enabled=True)
+        sso_service.get_provider = lambda _id: existing
+
+        with pytest.raises(ValueError, match="user_id_claim"):
+            await sso_service.update_provider("custom_oidc", {"provider_metadata": {"user_id_claim": ""}})
 
 
 if __name__ == "__main__":

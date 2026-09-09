@@ -8,7 +8,7 @@ Comprehensive tests for Team Invitation Service functionality.
 
 # Standard
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 # Third-Party
@@ -1278,3 +1278,53 @@ class TestTeamInvitationService:
         assert len(results) == len(invitations)
         assert results[2].status == EmailDeliveryStatus.FAILED
         assert results[2].warning == "Invitation created, but the email could not be delivered."
+
+
+class TestAcceptInvitationCanonicalKeying:
+    """Writer re-keying: accept_invitation stores the canonical user_id (#5893)."""
+
+    @pytest.mark.asyncio
+    async def test_accept_invitation_stores_canonical_user_id(self, test_db):
+        """The membership row created on invitation acceptance is keyed by user_id."""
+        # Standard
+        import uuid
+
+        # First-Party
+        from mcpgateway.services.email_auth_service import EmailAuthService
+
+        suffix = uuid.uuid4().hex[:8]
+        email = f"invitee-{suffix}@example.com"
+        auth_service = EmailAuthService(test_db)
+        await auth_service.create_user(email=email, password="", user_id="idp-123", skip_password_validation=True, skip_onboarding=True)
+
+        team = EmailTeam(
+            name=f"Team {suffix}",
+            slug=f"team-{suffix}",
+            created_by=email,
+            is_personal=False,
+            visibility="private",
+            is_active=True,
+        )
+        test_db.add(team)
+        test_db.commit()
+        test_db.refresh(team)
+
+        service = TeamInvitationService(test_db)
+        invitation = EmailTeamInvitation(
+            team_id=team.id,
+            email=email,
+            role="member",
+            invited_by=email,
+            invited_at=datetime.now(timezone.utc),
+            expires_at=datetime.now(timezone.utc) + timedelta(days=7),
+            token=service._generate_invitation_token(),
+            is_active=True,
+        )
+        test_db.add(invitation)
+        test_db.commit()
+
+        member = await service.accept_invitation(invitation.token)
+
+        assert member.user_email == "idp-123"
+        stored = test_db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team.id).one()
+        assert stored.user_email == "idp-123"

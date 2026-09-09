@@ -4686,6 +4686,99 @@ class TestAuthenticateOrCreateUser:
         sso_service._map_groups_to_roles.assert_called_once()
         sso_service._sync_user_roles.assert_called_once()
 
+    @pytest.mark.asyncio
+    async def test_new_user_stores_sso_subject_as_user_id(self, sso_service, mock_db):
+        """Provisioning with sub != email stores the IdP subject as user_id (#5893)."""
+        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=None)
+        new_user = SimpleNamespace(
+            email="a@b.c",
+            full_name="New User",
+            auth_provider="github",
+            is_admin=False,
+            admin_origin=None,
+        )
+        sso_service.auth_service.create_user = AsyncMock(return_value=new_user)
+        sso_service.get_provider = lambda _id: _make_provider()
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings, patch("mcpgateway.services.sso_service.create_jwt_token", new_callable=AsyncMock) as mock_jwt:
+            mock_settings.sso_auto_admin_domains = []
+            mock_settings.sso_github_admin_orgs = []
+            mock_settings.sso_google_admin_domains = []
+            mock_settings.sso_entra_admin_groups = []
+            mock_settings.sso_require_admin_approval = False
+            mock_jwt.return_value = "new-jwt"
+            result = await sso_service.authenticate_or_create_user(
+                {
+                    "email": "a@b.c",
+                    "full_name": "New User",
+                    "provider": "github",
+                    "provider_id": "idp-123",
+                    "email_verified": True,
+                }
+            )
+
+        assert result == "new-jwt"
+        create_kwargs = sso_service.auth_service.create_user.call_args[1]
+        assert create_kwargs["user_id"] == "idp-123"
+
+    @pytest.mark.asyncio
+    async def test_existing_user_user_id_not_rewritten(self, sso_service, mock_db):
+        """The existing-user branch never rewrites user.user_id (#5893)."""
+        existing_user = SimpleNamespace(
+            email="user@test.com",
+            full_name="Name",
+            auth_provider="github",
+            email_verified=True,
+            last_login=None,
+            is_admin=False,
+            admin_origin=None,
+            user_id="orig-id",
+        )
+        sso_service.auth_service.get_user_by_email = AsyncMock(return_value=existing_user)
+        sso_service.get_provider = lambda _id: _make_provider()
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings, patch("mcpgateway.services.sso_service.create_jwt_token", new_callable=AsyncMock) as mock_jwt:
+            mock_settings.sso_auto_admin_domains = []
+            mock_settings.sso_github_admin_orgs = []
+            mock_settings.sso_google_admin_domains = []
+            mock_settings.sso_entra_admin_groups = []
+            mock_settings.sso_entra_sync_roles_on_login = False
+            mock_jwt.return_value = "jwt"
+            result = await sso_service.authenticate_or_create_user(
+                {
+                    "email": "user@test.com",
+                    "full_name": "Name",
+                    "provider": "github",
+                    "provider_id": "idp-999",
+                    "email_verified": True,
+                }
+            )
+
+        assert result == "jwt"
+        assert existing_user.user_id == "orig-id"
+
+    @pytest.mark.asyncio
+    async def test_missing_user_id_claim_fails_closed(self, sso_service):
+        """A payload flagged user_id_claim_missing never authenticates (#5893)."""
+        sso_service.auth_service.get_user_by_email = AsyncMock()
+        sso_service.auth_service.create_user = AsyncMock()
+        sso_service.get_provider = lambda _id: _make_provider(id="custom_oidc")
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings, patch("mcpgateway.services.sso_service.create_jwt_token", new_callable=AsyncMock) as mock_jwt:
+            mock_jwt.return_value = "jwt"
+            result = await sso_service.authenticate_or_create_user(
+                {
+                    "email": "a@b.c",
+                    "provider": "custom_oidc",
+                    "email_verified": True,
+                    "user_id_claim_missing": "employee_id",
+                }
+            )
+
+        assert result is None
+        mock_jwt.assert_not_called()
+        sso_service.auth_service.get_user_by_email.assert_not_called()
+        sso_service.auth_service.create_user.assert_not_called()
 
 # ---------------------------------------------------------------------------
 # _apply_team_mapping tests
@@ -5279,3 +5372,99 @@ class TestADFSProvider:
 
         assert result is not None
         assert result["email"] == "user@adfs.com"
+
+
+# ---------------------------------------------------------------------------
+# SSO provisioning end-to-end canonical keying (#5893)
+# ---------------------------------------------------------------------------
+
+
+class TestSsoProvisioningCanonicalKeying:
+    """SSO provisioning with role sync and team mapping writes rows under the SSO subject."""
+
+    @pytest.mark.asyncio
+    async def test_provisioning_writes_roles_and_memberships_under_subject(self, test_db):
+        """sub != email: UserRole and EmailTeamMember rows are keyed by the SSO subject."""
+        # Standard
+        import uuid
+
+        # First-Party
+        from mcpgateway.db import EmailTeam, EmailTeamMember, EmailUser, Role, UserRole
+
+        suffix = uuid.uuid4().hex[:8]
+        email = f"sso-div-{suffix}@example.com"
+        role_name = f"developer-{suffix}"
+
+        service = SSOService(test_db)
+
+        # Admin principal for FK targets, created through the writer path.
+        admin = await service.auth_service.create_user(
+            email=f"admin-{suffix}@example.com",
+            password="",
+            is_admin=True,
+            skip_password_validation=True,
+            skip_onboarding=True,
+        )
+
+        role = Role(
+            id=str(uuid.uuid4()),
+            name=role_name,
+            scope="global",
+            permissions=["tools.read"],
+            created_by=admin.email,
+            is_system_role=False,
+            is_active=True,
+        )
+        team = EmailTeam(
+            name=f"Team {suffix}",
+            slug=f"team-{suffix}",
+            created_by=admin.email,
+            is_personal=False,
+            visibility="private",
+            is_active=True,
+        )
+        test_db.add_all([role, team])
+        test_db.commit()
+        test_db.refresh(role)
+        test_db.refresh(team)
+
+        provider = _make_provider(
+            id="custom_oidc",
+            provider_metadata={"sync_roles": True, "role_mappings": {"idp-devs": role_name}},
+            team_mapping={"idp-devs": {"team_id": team.id, "role": "member"}},
+        )
+        service.get_provider = lambda _id: provider
+
+        with (
+            patch("mcpgateway.services.sso_service.settings") as mock_settings,
+            patch("mcpgateway.services.sso_service.create_jwt_token", new_callable=AsyncMock) as mock_jwt,
+            patch("mcpgateway.services.email_auth_service.EmailAuthService.validate_password", return_value=True),
+        ):
+            mock_settings.sso_auto_admin_domains = []
+            mock_settings.sso_github_admin_orgs = []
+            mock_settings.sso_google_admin_domains = []
+            mock_settings.sso_entra_admin_groups = []
+            mock_settings.sso_require_admin_approval = False
+            mock_jwt.return_value = "jwt"
+
+            token = await service.authenticate_or_create_user(
+                {
+                    "email": email,
+                    "full_name": "SSO Diverged",
+                    "provider": "custom_oidc",
+                    "provider_id": "idp-123",
+                    "email_verified": True,
+                    "groups": ["idp-devs"],
+                }
+            )
+
+        assert token == "jwt"
+
+        user = test_db.query(EmailUser).filter(EmailUser.email == email).one()
+        assert user.user_id == "idp-123"
+
+        role_row = test_db.query(UserRole).filter(UserRole.role_id == role.id).one()
+        assert role_row.user_email == "idp-123"
+
+        member_row = test_db.query(EmailTeamMember).filter(EmailTeamMember.team_id == team.id).one()
+        assert member_row.user_email == "idp-123"
