@@ -40,8 +40,11 @@ Release 1.0.10 consolidates **10 PRs** focused on **OAuth security and reliabili
 
 ### Fixed
 
+- **Catalog registration ownership and visibility** - Catalog registrations now default to private, attribute ownership to the authenticated caller, enforce token/team scope, and preserve ownership during gateway transfer and user deletion ([#6036](https://github.com/IBM/mcp-context-forge/issues/6036)).
+
 #### **OAuth & Gateway Access**
 
+- **OAuth token scope resolution fails closed for indeterminate state** - Admin users with missing or malformed `token_teams` state and no cached JWT payload now fail closed to public-only scope (`[]`/403) instead of receiving unrestricted admin bypass (`None`). This prevents indeterminate scope from being silently promoted to unrestricted access ([#5980](https://github.com/IBM/mcp-context-forge/issues/5980)).
 - **Team gateway OAuth access with cached users** ([#6589](https://github.com/IBM/mcp-context-forge/pull/6589)) - Gateway OAuth authorization now checks team membership through `TeamManagementService`, avoiding false `403` responses caused by detached cached user records.
 - **Vault OAuth callback origin behind reverse proxies** ([#6556](https://github.com/IBM/mcp-context-forge/pull/6556)) - Vault authorization now builds its callback URI from `APP_DOMAIN` instead of the internal request origin, preventing identity providers from rejecting redirects behind ingress proxies.
 
@@ -152,6 +155,7 @@ Release 1.0.9 consolidates **41 PRs** focused on **inbound mTLS client certifica
 | [#6306](https://github.com/IBM/mcp-context-forge/pull/6306) | add MCP Apps live stack tests to TestRawJsonRpc |
 | [#6398](https://github.com/IBM/mcp-context-forge/pull/6398) | fix Playwright gateway OAuth and team flakiness |
 | [#6375](https://github.com/IBM/mcp-context-forge/pull/6375) | routine python/node dependency updates |
+
 
 ## [1.0.8] - 2026-08-17 - Plugin Discovery, MCP Apps Bridge, Catalog Registration, and Security Hardening
 
