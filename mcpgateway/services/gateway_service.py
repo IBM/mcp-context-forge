@@ -3691,7 +3691,9 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
         return GatewayImpactPreview(gateway_id=canonical_gateway_id, servers=visible_servers)
 
-    async def set_gateway_state(self, db: Session, gateway_id: str, activate: bool, reachable: bool = True, only_update_reachable: bool = False, user_email: Optional[str] = None) -> GatewayRead:
+    async def set_gateway_state(
+        self, db: Session, gateway_id: str, activate: bool, reachable: bool = True, only_update_reachable: bool = False, user_email: Optional[str] = None, last_error: Optional[str] = None
+    ) -> GatewayRead:
         """
         Set the activation status of a gateway.
 
@@ -3702,6 +3704,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             reachable: Whether the gateway is reachable
             only_update_reachable: Only update reachable status
             user_email: Optional[str] The email of the user to check if the user has permission to modify.
+            last_error: Optional sanitized failure reason persisted atomically with the state change.
 
         Returns:
             The updated GatewayRead object
@@ -3741,6 +3744,8 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 gateway.enabled = activate
                 gateway.reachable = reachable
                 gateway.updated_at = datetime.now(timezone.utc)
+                if last_error is not None:
+                    gateway.last_error = last_error
                 # Update tracking
                 if activate and reachable:
                     self._active_gateways.add(gateway.url)
@@ -3923,6 +3928,12 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                         "reachable": gateway.reachable,
                     },
                 )
+
+            elif last_error is not None and gateway.last_error != last_error:
+                gateway.last_error = last_error
+                gateway.updated_at = datetime.now(timezone.utc)
+                db.commit()
+                db.refresh(gateway)
 
             return self.convert_gateway_to_read(gateway)
 
@@ -4577,9 +4588,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             raw_error = (str(error) or type(error).__name__) if error is not None else "Unknown health-check failure"
             sanitized_error = sanitize_exception_message(raw_error, getattr(gateway, "auth_query_params", None))
             with cast(Any, SessionLocal)() as db:
-                await self.set_gateway_state(db, gateway.id, activate=True, reachable=False, only_update_reachable=True)
-                db.execute(update(DbGateway).where(DbGateway.id == gateway.id).values(last_error=sanitized_error))
-                db.commit()
+                await self.set_gateway_state(db, gateway.id, activate=True, reachable=False, only_update_reachable=True, last_error=sanitized_error)
                 self._gateway_failure_counts[gateway.id] = 0  # Reset after deactivation
 
     async def check_health_of_gateways(self, gateways: List[DbGateway], user_email: Optional[str] = None) -> bool:
@@ -4726,7 +4735,10 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     # gateways are still probed (include_inactive=True), and a
                     # successful probe must not silently wipe why the operator
                     # sees the gateway as down (its recorded outage reason).
-                    if gateway_enabled:
+                    # NOTE: read enabled from the freshly-loaded row, not the
+                    # gateway_enabled snapshot captured before the probe, which
+                    # can be stale if the gateway was disabled mid-probe.
+                    if db_gateway.enabled:
                         db_gateway.last_error = None
                     update_db.commit()
         except Exception as update_error:
