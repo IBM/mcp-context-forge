@@ -1744,13 +1744,27 @@ async def get_current_user(
         # Extract JTI for revocation check
         jti = payload.get("jti")
 
+        # Canonical identity for auth cache keys (phase-1 value = e-mail).
+        # The JWT "user" metadata may carry no identity keys, and a UUID
+        # session subject is an opaque reference, not an identity: both
+        # cases fall back to the resolved e-mail so phase-1 keys keep
+        # today's value.
+        user_id = get_user_id(payload.get("user") or {"email": email})
+        try:
+            uuid.UUID(user_id)
+            user_id = "unknown"  # UUID subject — take the identity from the resolved e-mail
+        except ValueError:
+            pass  # Non-UUID identity
+        if user_id == "unknown":
+            user_id = email
+
         # === AUTH CACHING: Check cache before DB queries ===
         if settings.auth_cache_enabled:
             try:
                 # First-Party
                 from mcpgateway.cache.auth_cache import auth_cache, CachedAuthContext  # pylint: disable=import-outside-toplevel
 
-                cached_ctx = await auth_cache.get_auth_context(email, jti)
+                cached_ctx = await auth_cache.get_auth_context(user_id, jti)
                 if cached_ctx:
                     logger.debug(f"Auth cache hit for {email}")
 
@@ -1877,7 +1891,7 @@ async def get_current_user(
                         from mcpgateway.cache.auth_cache import auth_cache, CachedAuthContext  # noqa: F811 pylint: disable=import-outside-toplevel
 
                         await auth_cache.set_auth_context(
-                            email,
+                            user_id,
                             jti,
                             CachedAuthContext(
                                 user=auth_ctx.get("user"),
@@ -1891,7 +1905,7 @@ async def get_current_user(
                         # intersection (teams), so that other sessions for the same
                         # user see the full membership and can narrow independently.
                         if token_use == "session" and batch_teams is not None:  # nosec B105
-                            await auth_cache.set_user_teams(f"{email}:True", batch_teams)
+                            await auth_cache.set_user_teams(f"{user_id}:True", batch_teams)
                     except Exception as cache_set_error:
                         logger.debug(f"Failed to cache auth context: {cache_set_error}")
 
