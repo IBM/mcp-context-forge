@@ -1485,6 +1485,7 @@ class EmailUser(Base):
     Attributes:
         id (str): Primary key, UUID string
         email (str): Unique email identifier
+        user_id (str): Canonical user identifier, backfilled with email
         password_hash (str): Argon2id hashed password
         full_name (str): Optional display name for professional appearance
         is_admin (bool): Admin privileges flag
@@ -1518,6 +1519,7 @@ class EmailUser(Base):
     # Core identity fields
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()), index=True)
     email: Mapped[str] = mapped_column(String(255), unique=True, nullable=False, index=True)
+    user_id: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     full_name: Mapped[Optional[str]] = mapped_column(String(255), nullable=True, index=True)
     is_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
