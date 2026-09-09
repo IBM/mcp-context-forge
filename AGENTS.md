@@ -239,6 +239,8 @@ The derived triple is memoized on `request.state` per principal, so calling the 
 
 **Rationale**: The `email` field is the human-readable identifier used throughout AGENTS.md and user-facing documentation. Consistent precedence prevents forensic confusion where an incident review pivots on a logged email that differs from the principal actually evaluated by RBAC.
 
+**Two accessors**: `get_user_email()` in `mcpgateway/auth_context.py` is the e-mail-attribute accessor. `get_user_id()` in the same module is the identity accessor. Phase 1 populates both with the same value. Audit (`AuditTrail.user_id`) and observability (`ObservabilityTrace.user_email`) identity fields hold the canonical user_id from `get_user_id()`; the column names stay unchanged for compatibility.
+
 
 ## Observability Transaction Behavior
 

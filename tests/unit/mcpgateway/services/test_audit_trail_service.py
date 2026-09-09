@@ -400,3 +400,65 @@ def test_log_action_user_identity_extraction_exception_logs_debug(monkeypatch, c
         assert record.error == "Identity extraction failed"
         assert hasattr(record, "correlation_id")
         assert record.correlation_id is not None  # correlation_id is auto-generated
+
+
+class TestAuditIdentity:
+    """Audit entries record the canonical user_id resolved through get_user_id (issue #5888)."""
+
+    @staticmethod
+    def _capture(monkeypatch):
+        """Enable the audit trail and capture the AuditTrail constructor kwargs."""
+        monkeypatch.setattr(svc.settings, "audit_trail_enabled", True)
+        dummy_session = DummySession()
+        monkeypatch.setattr(svc, "SessionLocal", lambda: dummy_session)
+        captured = {}
+
+        def _fake_audit(**kwargs):
+            captured.update(kwargs)
+            return MagicMock()
+
+        monkeypatch.setattr(svc, "AuditTrail", _fake_audit)
+        return captured
+
+    def test_principal_user_id_wins_over_email(self, monkeypatch):
+        """A principal with diverging user_id and e-mail records the user_id value."""
+        # First-Party
+        from mcpgateway.auth_context import get_user_id  # pylint: disable=import-outside-toplevel
+
+        captured = self._capture(monkeypatch)
+        principal = {"user_id": "u-1", "email": "e@x.test"}
+        assert get_user_id(principal) == "u-1"
+
+        service = svc.AuditTrailService()
+        service.log_action(
+            action="CREATE",
+            resource_type="tool",
+            resource_id="tool-1",
+            user_id=get_user_id(principal),
+            user_email=principal.get("email"),
+        )
+        assert captured["user_id"] == "u-1"
+
+    def test_fallbacks_when_email_absent(self, monkeypatch):
+        """A principal without e-mail still records user_id; an empty principal records 'unknown'."""
+        # First-Party
+        from mcpgateway.auth_context import get_user_id  # pylint: disable=import-outside-toplevel
+
+        captured = self._capture(monkeypatch)
+        service = svc.AuditTrailService()
+
+        service.log_action(
+            action="CREATE",
+            resource_type="tool",
+            resource_id="tool-1",
+            user_id=get_user_id({"user_id": "u-1"}),
+        )
+        assert captured["user_id"] == "u-1"
+
+        service.log_action(
+            action="CREATE",
+            resource_type="tool",
+            resource_id="tool-2",
+            user_id=get_user_id({}),
+        )
+        assert captured["user_id"] == "unknown"

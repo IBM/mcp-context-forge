@@ -140,6 +140,40 @@ class TestGetCurrentUser:
                     assert user.full_name == mock_user.full_name
 
     @pytest.mark.asyncio
+    async def test_user_context_identity_uses_get_user_id(self, monkeypatch):
+        """UserContext identity comes from get_user_id(user): an explicit user_id wins over the e-mail (issue #5888)."""
+        credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid_jwt_token")  # pragma: allowlist secret
+        jwt_payload = {"sub": "e@x.test", "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()}
+
+        mock_user = EmailUser(
+            email="e@x.test",
+            password_hash="hash",
+            full_name="Test User",
+            is_admin=False,
+            is_active=True,
+            email_verified_at=datetime.now(timezone.utc),
+            created_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc),
+        )
+        mock_user.user_id = "u-1"  # diverges from the e-mail on purpose
+
+        monkeypatch.setattr(settings, "auth_cache_enabled", False)
+        monkeypatch.setattr(settings, "auth_cache_batch_queries", False)
+
+        request = SimpleNamespace(state=SimpleNamespace())
+        with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
+            with patch("mcpgateway.auth._check_token_revoked_sync", return_value=False):
+                with patch("mcpgateway.auth._is_api_token_jti_sync", return_value=True):
+                    with patch("mcpgateway.auth._update_api_token_last_used_sync", return_value=None):
+                        with patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user):
+                            with patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
+                                await get_current_user(credentials=credentials, request=request)
+
+        global_context = request.state.plugin_global_context
+        assert global_context.user_context.user_id == "u-1"
+        assert global_context.user_context.email == "e@x.test"
+
+    @pytest.mark.asyncio
     async def test_auth_method_set_on_cache_hit(self, monkeypatch):
         """Ensure auth_method is set when auth cache returns early."""
         credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid_jwt_token")  # pragma: allowlist secret
