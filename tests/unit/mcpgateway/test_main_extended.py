@@ -8588,6 +8588,50 @@ class TestRpcHandling:
         mock_db.commit.assert_called_once()
         mock_db.close.assert_called()
 
+    async def test_handle_internal_mcp_completion_complete_maps_completion_error_to_dash32602(self):
+        """Internal Rust route surfaces CompletionError via completion_error_code (#6629).
+
+        Before #6629 this path had no CompletionError-specific handling at
+        all and fell through to the generic 500 branch (spec §8.5) — this is
+        a new mapping, not an edit to an existing one.
+        """
+        # First-Party
+        from mcpgateway.services.completion_service import CompletionInvalidParamsError
+
+        request = self._make_request({"jsonrpc": "2.0", "id": "7", "method": "completion/complete", "params": {"ref": {"type": "ref/prompt", "name": "p"}, "argument": {"name": "a", "value": ""}}})
+        request.headers = {
+            "x-contextforge-mcp-runtime": "rust",
+            "x-contextforge-auth-context": base64.urlsafe_b64encode(
+                json.dumps(
+                    {
+                        "email": "user@example.com",
+                        "teams": ["team-a"],
+                        "is_authenticated": True,
+                        "is_admin": False,
+                        "permission_is_admin": True,
+                        "scoped_permissions": ["tools.read"],
+                    }
+                ).encode()
+            )
+            .decode()
+            .rstrip("="),
+        }
+        request.client = SimpleNamespace(host="127.0.0.1")
+        mock_db = MagicMock()
+        mock_db.is_active = True
+        mock_db.in_transaction.return_value = object()
+
+        with (
+            patch("mcpgateway.main.SessionLocal", return_value=mock_db),
+            patch("mcpgateway.main._ensure_rpc_permission", new=AsyncMock()),
+            patch("mcpgateway.main.completion_service.handle_completion", new=AsyncMock(side_effect=CompletionInvalidParamsError("bad arg"))),
+        ):
+            response = await handle_internal_mcp_completion_complete(request)
+
+        body = json.loads(response.body.decode())
+        assert body["error"]["code"] == -32602
+        assert "bad arg" in body["error"]["message"]
+
     async def test_handle_internal_mcp_tools_call_returns_jsonrpc_not_found(self):
         request = self._make_request({"jsonrpc": "2.0", "id": "4", "method": "tools/call", "params": {"name": "missing-tool", "arguments": {}}})
         request.headers = {

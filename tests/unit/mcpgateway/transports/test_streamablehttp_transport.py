@@ -5122,6 +5122,46 @@ async def test_complete_exception(monkeypatch):
     assert result.completion.total == 0
 
 
+@pytest.mark.asyncio
+async def test_complete_raises_mcperror_instead_of_swallowing_completion_error(monkeypatch):
+    """complete() surfaces a CompletionError as an MCPError instead of a fail-open empty result (#6629).
+
+    Before #6629 this path swallowed every exception, including a
+    CompletionError, into a *successful* empty CompleteResult (spec §8.5) —
+    a federated-forwarding failure was invisible to the client. This is a
+    deliberate, visible behavior change: a completion failure now surfaces
+    as a proper JSON-RPC error carrying the upstream-derived code.
+    """
+    # Third-Party
+    import mcp_types as mcp_types
+
+    # First-Party
+    from mcp.shared.exceptions import MCPError
+    from mcpgateway.services.completion_service import CompletionInternalError
+    from mcpgateway.transports.streamablehttp_transport import complete
+
+    mock_db = MagicMock()
+
+    @asynccontextmanager
+    async def fake_get_db():
+        yield mock_db
+
+    monkeypatch.setattr("mcpgateway.transports.streamablehttp_transport.get_db", fake_get_db)
+
+    with patch("mcpgateway.transports.streamablehttp_transport.completion_service") as mock_cs:
+        mock_cs.handle_completion = AsyncMock(side_effect=CompletionInternalError("boom"))
+
+        ref = mcp_types.PromptReference(type="ref/prompt", name="test")
+        argument = MagicMock()
+        argument.model_dump.return_value = {"name": "arg", "value": "v"}
+
+        with pytest.raises(MCPError) as exc_info:
+            await complete(ref, argument)
+
+    assert exc_info.value.error.code == -32603
+    assert "boom" in exc_info.value.error.message
+
+
 # ---------------------------------------------------------------------------
 # _get_oauth_experimental_config (Lines 1740-1750)
 # ---------------------------------------------------------------------------

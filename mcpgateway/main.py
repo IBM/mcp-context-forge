@@ -9171,6 +9171,16 @@ async def handle_internal_mcp_completion_complete(request: Request):
         if db.is_active and db.in_transaction() is not None:
             db.commit()
         return ORJSONResponse(content=payload)
+    except CompletionError as exc:
+        # New mapping, not an edit: this route previously had no
+        # CompletionError-specific handling and fell through to the generic
+        # 500 branch below (spec §8.5) — a completion failure is now
+        # reported via its own upstream-derived JSON-RPC code instead of
+        # being indistinguishable from a transport crash.
+        return ORJSONResponse(
+            status_code=200,
+            content={"jsonrpc": "2.0", "error": {"code": completion_error_code(exc), "message": str(exc)}, "id": req_id},
+        )
     except JSONRPCError as exc:
         return ORJSONResponse(status_code=403, content=exc.to_dict()["error"])
     except Exception as exc:

@@ -73,7 +73,7 @@ from mcpgateway.db import Server as DbServer
 from mcpgateway.db import SessionLocal
 from mcpgateway.middleware.rbac import _ACCESS_DENIED_MSG
 from mcpgateway.observability import create_span
-from mcpgateway.services.completion_service import CompletionService
+from mcpgateway.services.completion_service import CompletionError, CompletionService, completion_error_code
 from mcpgateway.services.http_client_service import get_http_client, get_http_limits
 from mcpgateway.services.logging_service import LoggingService
 from mcpgateway.services.mcp_apps import (
@@ -3060,6 +3060,13 @@ async def complete(
             # Fallback: return empty completion
             return types.CompleteResult(completion=types.Completion(values=[], total=0, hasMore=False))
 
+    except CompletionError as e:
+        # Surface as an MCPError instead of a silently-empty CompleteResult,
+        # matching the JSON-RPC code #6629 requires (spec §8.5). This is a
+        # deliberate behavior change: today this path fails open (the caller
+        # gets a *successful* empty completion) — a federated-forwarding
+        # failure is now visible as a proper JSON-RPC error instead.
+        raise MCPError(code=completion_error_code(e), message=str(e)) from e
     except Exception as e:
         logger.exception("Error handling completion: %s", e)
         return types.CompleteResult(completion=types.Completion(values=[], total=0, hasMore=False))
