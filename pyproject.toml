@@ -99,7 +99,6 @@ dependencies = [
     "python-multipart>=0.0.32", # Transitive pin (mcp, fastapi); dependabot/81
     "PyYAML>=6.0.3",
     "redis>=8.0.1",
-    "referencing>=0.36.2", # Transitive pin (jsonschema); imported directly for the no-retrieve schema registry
     "requests>=2.34.2", # Transivite pin (requests-oauthlib)
     "requests-oauthlib>=2.0.0",
     "sqlalchemy>=2.0.52",
