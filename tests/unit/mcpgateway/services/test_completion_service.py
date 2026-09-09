@@ -564,3 +564,98 @@ async def test_forward_completion_upstream_raises_not_supported_without_capabili
     service = CompletionService()
     with pytest.raises(CompletionNotSupportedError):
         await service._forward_completion_upstream(_FakeGateway(), PromptReference(type="ref/prompt", name="p"), {"name": "arg", "value": ""})
+
+
+# ---------------------------------------------------------------------------
+# Task 4: _complete_prompt_argument() — federated dispatch + local fallback
+# ---------------------------------------------------------------------------
+
+from unittest.mock import MagicMock  # noqa: E402
+
+
+class _DummyPromptForForwarding:
+    def __init__(self, name, schema, gateway_id=None, gateway=None, original_name=None):
+        self.name = name
+        self.argument_schema = schema
+        self.gateway_id = gateway_id
+        self.gateway = gateway
+        self.original_name = original_name
+
+
+class _DummyGatewayForForwarding:
+    id = "gw-1"
+    url = "https://upstream.example.com/mcp"
+    transport = "streamable_http"
+    auth_type = None
+    auth_query_params = None
+
+
+def _db_returning(value):
+    db = MagicMock()
+    db.execute.return_value.scalar_one_or_none.return_value = value
+    return db
+
+
+@pytest.mark.asyncio
+async def test_federated_prompt_completion_is_answered_by_upstream(monkeypatch):
+    gateway = _DummyGatewayForForwarding()
+    prompt = _DummyPromptForForwarding("upstream-prompt", {"properties": {}}, gateway_id="gw-1", gateway=gateway, original_name="prompt")
+    db = _db_returning(prompt)
+
+    async def fake_forward(self, gw, ref, argument, context=None):
+        assert gw is gateway
+        return SimpleNamespace(completion={"values": ["from-upstream"], "total": 1, "hasMore": False})
+
+    monkeypatch.setattr(CompletionService, "_forward_completion_upstream", fake_forward)
+    service = CompletionService()
+    result = await service._complete_prompt_argument(db, {"name": "upstream-prompt"}, "arg", "")
+    assert result.completion["values"] == ["from-upstream"]
+
+
+@pytest.mark.asyncio
+async def test_federated_prompt_falls_back_to_local_enum_when_unsupported(monkeypatch):
+    gateway = _DummyGatewayForForwarding()
+    # "blue" (not "green") as the non-matching enum value: "r" is a substring
+    # of "green" too ("g-R-een"), which would make this assertion pass
+    # vacuously regardless of whether the fallback filter actually ran.
+    schema = {"properties": {"color": {"name": "color", "enum": ["red", "blue"]}}}
+    prompt = _DummyPromptForForwarding("upstream-prompt", schema, gateway_id="gw-1", gateway=gateway, original_name="prompt")
+    db = _db_returning(prompt)
+
+    async def fake_forward(self, gw, ref, argument, context=None):
+        raise CompletionNotSupportedError("nope")
+
+    monkeypatch.setattr(CompletionService, "_forward_completion_upstream", fake_forward)
+    service = CompletionService()
+    result = await service._complete_prompt_argument(db, {"name": "upstream-prompt"}, "color", "r")
+    assert result.completion["values"] == ["red"]
+
+
+@pytest.mark.asyncio
+async def test_federated_prompt_internal_error_does_not_fall_back(monkeypatch):
+    gateway = _DummyGatewayForForwarding()
+    schema = {"properties": {"color": {"name": "color", "enum": ["red"]}}}
+    prompt = _DummyPromptForForwarding("upstream-prompt", schema, gateway_id="gw-1", gateway=gateway, original_name="prompt")
+    db = _db_returning(prompt)
+
+    async def fake_forward(self, gw, ref, argument, context=None):
+        raise CompletionInternalError("boom")
+
+    monkeypatch.setattr(CompletionService, "_forward_completion_upstream", fake_forward)
+    service = CompletionService()
+    with pytest.raises(CompletionInternalError):
+        await service._complete_prompt_argument(db, {"name": "upstream-prompt"}, "color", "r")
+
+
+@pytest.mark.asyncio
+async def test_local_prompt_completion_still_answered_locally(monkeypatch):
+    prompt = _DummyPromptForForwarding("local-prompt", {"properties": {"color": {"name": "color", "enum": ["blue"]}}}, gateway_id=None)
+    db = _db_returning(prompt)
+
+    def fail_forward(*a, **kw):
+        raise AssertionError("must not forward a non-federated prompt")
+
+    monkeypatch.setattr(CompletionService, "_forward_completion_upstream", fail_forward)
+    service = CompletionService()
+    result = await service._complete_prompt_argument(db, {"name": "local-prompt"}, "color", "b")
+    assert result.completion["values"] == ["blue"]
