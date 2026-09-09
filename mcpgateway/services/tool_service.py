@@ -265,6 +265,8 @@ structured_logger = get_structured_logger("tool_service")
 audit_trail = get_audit_trail_service()
 metrics_buffer = get_metrics_buffer_service()
 
+SYSTEM_ACTOR = "system"
+
 _ENCRYPTED_TOOL_HEADER_VALUE_KEY = "_mcpgateway_encrypted_header_value_v1"
 _TOOL_HEADER_DATA_KEY = "data"
 _TOOL_HEADER_LEGACY_VALUE_KEY = "value"
@@ -2356,6 +2358,7 @@ class ToolService(BaseService):
         team_id: Optional[str] = None,
         owner_email: Optional[str] = None,
         visibility: str = None,
+        user_id: Optional[str] = None,
     ) -> ToolRead:
         """Register a new tool with team support.
 
@@ -2371,6 +2374,7 @@ class ToolService(BaseService):
             team_id: Optional team ID to assign tool to.
             owner_email: Optional owner email for tool ownership.
             visibility: Tool visibility (private, team, public).
+            user_id: Canonical user ID recorded as the audit actor. Falls back to the e-mail values when omitted.
 
         Returns:
             Created tool information.
@@ -2539,7 +2543,7 @@ class ToolService(BaseService):
 
             # Structured logging: Audit trail for tool creation
             audit_trail.log_action(
-                user_id=created_by or "system",
+                user_id=user_id or created_by or SYSTEM_ACTOR,
                 action="create_tool",
                 resource_type="tool",
                 resource_id=db_tool.id,
@@ -2666,6 +2670,7 @@ class ToolService(BaseService):
         visibility: Optional[str] = "public",
         conflict_strategy: str = "skip",
         user_email: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Register multiple tools in bulk with a single commit.
 
@@ -2692,6 +2697,7 @@ class ToolService(BaseService):
             user_email: Email of the authenticated caller. The "update" strategy modifies
                 an existing tool only when this caller owns it. Without it, no existing
                 tool is modified.
+            user_id: Canonical user ID recorded as the audit actor. Falls back to the e-mail values when omitted.
 
         Returns:
             Dict with statistics:
@@ -2751,6 +2757,7 @@ class ToolService(BaseService):
                 unowned_names=unowned_names,
                 existing_tools_map=existing_tools_map,
                 may_set_policy=may_set_policy,
+                user_id=user_id,
             )
 
             # Aggregate stats
@@ -2864,6 +2871,7 @@ class ToolService(BaseService):
         unowned_names: frozenset = frozenset(),
         existing_tools_map: Optional[dict] = None,
         may_set_policy: bool = False,
+        user_id: Optional[str] = None,
     ) -> dict:
         """Process a chunk of tools for bulk import.
 
@@ -2884,6 +2892,7 @@ class ToolService(BaseService):
             existing_tools_map: Conflicting tools already loaded and authorized by the caller. When
                 given, no second conflict query runs, so only checked rows can be modified.
             may_set_policy: Whether the caller holds the permission to set a tool validation policy.
+            user_id: Canonical user ID recorded as the audit actor. Falls back to the e-mail values when omitted.
 
         Returns:
             dict: Statistics dictionary with keys "created", "updated", "skipped", "failed", and "errors".
@@ -2965,7 +2974,7 @@ class ToolService(BaseService):
 
             for audit_team_id, counts in audit_counts.items():
                 audit_trail.log_action(
-                    user_id=created_by or "system",
+                    user_id=user_id or created_by or SYSTEM_ACTOR,
                     action="bulk_create_tools" if counts["created"] else "bulk_update_tools",
                     resource_type="tool",
                     resource_id=None,
@@ -3913,7 +3922,7 @@ class ToolService(BaseService):
 
         return tool_read
 
-    async def delete_tool(self, db: Session, tool_id: str, user_email: Optional[str] = None, purge_metrics: bool = False) -> None:
+    async def delete_tool(self, db: Session, tool_id: str, user_email: Optional[str] = None, purge_metrics: bool = False, user_id: Optional[str] = None) -> None:
         """
         Delete a tool by its ID.
 
@@ -3922,6 +3931,7 @@ class ToolService(BaseService):
             tool_id (str): The unique identifier of the tool.
             user_email (Optional[str]): Email of user performing delete (for ownership check).
             purge_metrics (bool): If True, delete raw + rollup metrics for this tool.
+            user_id (Optional[str]): Canonical user ID recorded as the audit actor. Falls back to the e-mail values when omitted.
 
         Raises:
             ToolNotFoundError: If the tool is not found.
@@ -3985,7 +3995,7 @@ class ToolService(BaseService):
 
             # Structured logging: Audit trail for tool deletion
             audit_trail.log_action(
-                user_id=user_email or "system",
+                user_id=user_id or user_email or SYSTEM_ACTOR,
                 action="delete_tool",
                 resource_type="tool",
                 resource_id=tool_info["id"],
@@ -4060,7 +4070,9 @@ class ToolService(BaseService):
             )
             raise ToolError(f"Failed to delete tool: {unexpected_error_detail(e)}")
 
-    async def set_tool_state(self, db: Session, tool_id: str, activate: bool, reachable: bool, user_email: Optional[str] = None, skip_cache_invalidation: bool = False) -> ToolRead:
+    async def set_tool_state(
+        self, db: Session, tool_id: str, activate: bool, reachable: bool, user_email: Optional[str] = None, skip_cache_invalidation: bool = False, user_id: Optional[str] = None
+    ) -> ToolRead:
         """
         Set the activation status of a tool.
 
@@ -4071,6 +4083,7 @@ class ToolService(BaseService):
             reachable (bool): True if the tool is reachable.
             user_email: Optional[str] The email of the user to check if the user has permission to modify.
             skip_cache_invalidation: If True, skip cache invalidation (used for batch operations).
+            user_id: Canonical user ID recorded as the audit actor. Falls back to the e-mail values when omitted.
 
         Returns:
             ToolRead: The updated tool object.
@@ -4165,7 +4178,7 @@ class ToolService(BaseService):
 
                 # Structured logging: Audit trail for tool state change
                 audit_trail.log_action(
-                    user_id=user_email or "system",
+                    user_id=user_id or user_email or SYSTEM_ACTOR,
                     action="set_tool_state",
                     resource_type="tool",
                     resource_id=tool.id,
@@ -7819,6 +7832,7 @@ class ToolService(BaseService):
         modified_via: Optional[str] = None,
         modified_user_agent: Optional[str] = None,
         user_email: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> ToolRead:
         """
         Update an existing tool.
@@ -7832,6 +7846,7 @@ class ToolService(BaseService):
             modified_via (Optional[str]): Modification method (ui, api).
             modified_user_agent (Optional[str]): User agent of modification request.
             user_email (Optional[str]): Email of user performing update (for ownership check).
+            user_id (Optional[str]): Canonical user ID recorded as the audit actor. Falls back to the e-mail values when omitted.
 
         Returns:
             The updated ToolRead object.
@@ -8041,7 +8056,7 @@ class ToolService(BaseService):
                 changes.append("description updated")
 
             audit_trail.log_action(
-                user_id=user_email or modified_by or "system",
+                user_id=user_id or user_email or modified_by or SYSTEM_ACTOR,
                 action="update_tool",
                 resource_type="tool",
                 resource_id=tool.id,

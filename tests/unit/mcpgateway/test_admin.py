@@ -2183,21 +2183,21 @@ class TestAdminToolRoutes:
         mock_request.form = AsyncMock(return_value=form_data)
 
         await admin_set_tool_state(tool_id, mock_request, mock_db, user={"email": "test-user", "db": mock_db})
-        mock_toggle_status.assert_called_with(mock_db, tool_id, False, reachable=False, user_email="test-user")
+        mock_toggle_status.assert_called_with(mock_db, tool_id, False, reachable=False, user_email="test-user", user_id="test-user")
 
         # Test with "FALSE"
         form_data = FakeForm({"activate": "FALSE"})
         mock_request.form = AsyncMock(return_value=form_data)
 
         await admin_set_tool_state(tool_id, mock_request, mock_db, user={"email": "test-user", "db": mock_db})
-        mock_toggle_status.assert_called_with(mock_db, tool_id, False, reachable=False, user_email="test-user")
+        mock_toggle_status.assert_called_with(mock_db, tool_id, False, reachable=False, user_email="test-user", user_id="test-user")
 
         # Test with missing activate field (defaults to true)
         form_data = FakeForm({})
         mock_request.form = AsyncMock(return_value=form_data)
 
         await admin_set_tool_state(tool_id, mock_request, mock_db, user={"email": "test-user", "db": mock_db})
-        mock_toggle_status.assert_called_with(mock_db, tool_id, True, reachable=True, user_email="test-user")
+        mock_toggle_status.assert_called_with(mock_db, tool_id, True, reachable=True, user_email="test-user", user_id="test-user")
 
     @patch.object(ToolService, "set_tool_state")
     async def test_admin_set_tool_state_error_handlers(self, mock_toggle_status, mock_request, mock_db):
@@ -19043,10 +19043,10 @@ async def test_admin_delete_tool_success(mock_delete, mock_db):
     request.form = AsyncMock(return_value=FakeForm({"is_inactive_checked": "false", "purge_metrics": "true"}))
     request.scope = {"root_path": "/root"}
 
-    response = await admin_delete_tool("550e8400e29b41d4a7164466554400b1", request, mock_db, user={"email": "user@example.com"})  # pragma: allowlist secret
+    response = await admin_delete_tool("550e8400e29b41d4a7164466554400b1", request, mock_db, user={"email": "user@example.com", "user_id": "u-1"})  # pragma: allowlist secret
     assert response.status_code == 303
     assert response.headers["location"] == "/root/admin#tools"
-    mock_delete.assert_called_once_with(mock_db, "550e8400e29b41d4a7164466554400b1", user_email="user@example.com", purge_metrics=True)  # pragma: allowlist secret
+    mock_delete.assert_called_once_with(mock_db, "550e8400e29b41d4a7164466554400b1", user_email="user@example.com", purge_metrics=True, user_id="u-1")  # pragma: allowlist secret
 
 
 @pytest.mark.asyncio
@@ -19099,10 +19099,10 @@ async def test_admin_delete_gateway_success(mock_delete, mock_db):
     request.form = AsyncMock(return_value=FakeForm({"is_inactive_checked": "false"}))
     request.scope = {"root_path": "/root"}
 
-    response = await admin_delete_gateway("gateway-1", request, mock_db, user={"email": "user@example.com"})
+    response = await admin_delete_gateway("gateway-1", request, mock_db, user={"email": "user@example.com", "user_id": "u-1"})
     assert response.status_code == 303
     assert response.headers["location"] == "/root/admin#gateways"
-    mock_delete.assert_called_once_with(mock_db, "gateway-1", user_email="user@example.com")
+    mock_delete.assert_called_once_with(mock_db, "gateway-1", user_email="user@example.com", user_id="u-1")
 
 
 @pytest.mark.asyncio

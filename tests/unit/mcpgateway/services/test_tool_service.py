@@ -1691,6 +1691,30 @@ class TestToolService:
         tool_service._notify_tool_deleted.assert_called_once()
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("user_id", "expected_actor"),
+        [("u-1", "u-1"), (None, "caller@example.com")],
+        ids=["canonical-id-recorded", "falls-back-to-email"],
+    )
+    async def test_delete_tool_audit_actor(self, tool_service, mock_tool, test_db, mock_logging_services, user_id, expected_actor):
+        """The audit actor is the canonical user_id when given, otherwise the caller e-mail."""
+        test_db.get = Mock(return_value=mock_tool)
+        mock_fetch_result = Mock()
+        mock_fetch_result.fetchone.return_value = (mock_tool.id,)
+        mock_fetch_result.rowcount = 1
+        test_db.execute = Mock(return_value=mock_fetch_result)
+        test_db.commit = Mock()
+        test_db.rollback = Mock()
+        tool_service._notify_tool_deleted = AsyncMock()
+
+        with patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)):
+            await tool_service.delete_tool(test_db, 1, user_email="caller@example.com", user_id=user_id)
+
+        audit_kwargs = mock_logging_services["audit_trail"].log_action.call_args.kwargs
+        assert audit_kwargs["action"] == "delete_tool"
+        assert audit_kwargs["user_id"] == expected_actor
+
+    @pytest.mark.asyncio
     async def test_delete_tool_purge_metrics(self, tool_service, mock_tool, test_db):
         """Test deleting a tool with metric purge."""
         test_db.get = Mock(return_value=mock_tool)

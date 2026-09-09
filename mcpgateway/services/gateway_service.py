@@ -2561,6 +2561,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         owner_email: Optional[str] = None,
         visibility: Optional[str] = None,
         initialize_timeout: Optional[float] = None,
+        user_id: Optional[str] = None,
     ) -> GatewayRead:
         """Register a new gateway.
 
@@ -2575,6 +2576,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             owner_email (Optional[str]): Email of the user who owns this gateway.
             visibility (Optional[str]): Gateway visibility level (private, team, public).
             initialize_timeout (Optional[float]): Timeout in seconds for gateway initialization.
+            user_id (Optional[str]): Canonical user ID recorded as the audit actor. Falls back to the e-mail values when omitted.
 
         Returns:
             Created gateway information
@@ -3010,7 +3012,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
             # Structured logging: Audit trail for gateway creation
             audit_trail.log_action(
-                user_id=created_by or "system",
+                user_id=user_id or created_by or "system",
                 action="create_gateway",
                 resource_type="gateway",
                 resource_id=str(db_gateway.id),
@@ -3701,6 +3703,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         modified_user_agent: Optional[str] = None,
         include_inactive: bool = True,
         user_email: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> Optional[GatewayRead]:
         """Update a gateway.
 
@@ -3714,6 +3717,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             modified_user_agent: User agent string from the modification request
             include_inactive: Whether to include inactive gateways
             user_email: Email of user performing update (for ownership check)
+            user_id: Canonical user ID recorded as the audit actor. Falls back to the e-mail values when omitted.
 
         Returns:
             Updated gateway information
@@ -4199,7 +4203,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     logger.info(f"Accepted gateway update for async initialization: {SecurityValidator.sanitize_log_message(gateway.name)}")
 
                     audit_trail.log_action(
-                        user_id=user_email or modified_by or "system",
+                        user_id=user_id or user_email or modified_by or "system",
                         action="update_gateway",
                         resource_type="gateway",
                         resource_id=str(gateway.id),
@@ -4419,7 +4423,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
                 # Structured logging: Audit trail for gateway update
                 audit_trail.log_action(
-                    user_id=user_email or modified_by or "system",
+                    user_id=user_id or user_email or modified_by or "system",
                     action="update_gateway",
                     resource_type="gateway",
                     resource_id=str(gateway.id),
@@ -4772,7 +4776,15 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         return GatewayImpactPreview(gateway_id=canonical_gateway_id, servers=visible_servers)
 
     async def set_gateway_state(
-        self, db: Session, gateway_id: str, activate: bool, reachable: bool = True, only_update_reachable: bool = False, user_email: Optional[str] = None, last_error: Optional[str] = None
+        self,
+        db: Session,
+        gateway_id: str,
+        activate: bool,
+        reachable: bool = True,
+        only_update_reachable: bool = False,
+        user_email: Optional[str] = None,
+        last_error: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> GatewayRead:
         """
         Set the activation status of a gateway.
@@ -4788,6 +4800,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             atomically with the state change when reachability changes; written
             in a standalone commit when only the error text differs (no state
             transition occurred).
+            user_id: Canonical user ID recorded as the audit actor. Falls back to the e-mail values when omitted.
 
         Returns:
             The updated GatewayRead object
@@ -4986,7 +4999,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
                 # Structured logging: Audit trail for gateway state change
                 audit_trail.log_action(
-                    user_id=user_email or "system",
+                    user_id=user_id or user_email or "system",
                     action="set_gateway_state",
                     resource_type="gateway",
                     resource_id=str(gateway.id),
@@ -5098,7 +5111,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         }
         await self._publish_event(event)
 
-    async def delete_gateway(self, db: Session, gateway_id: str, user_email: Optional[str] = None) -> None:
+    async def delete_gateway(self, db: Session, gateway_id: str, user_email: Optional[str] = None, user_id: Optional[str] = None) -> None:
         """
         Delete a gateway by its ID.
 
@@ -5106,6 +5119,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
             db: Database session
             gateway_id: Gateway ID
             user_email: Email of user performing deletion (for ownership check)
+            user_id: Canonical user ID recorded as the audit actor. Falls back to the e-mail values when omitted.
 
         Raises:
             GatewayNotFoundError: If the gateway is not found
@@ -5194,7 +5208,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 logger.info(f"Accepted gateway deletion for async cleanup: {gateway_name}")
 
                 audit_trail.log_action(
-                    user_id=user_email or "system",
+                    user_id=user_id or user_email or "system",
                     action="delete_gateway",
                     resource_type="gateway",
                     resource_id=str(gateway_info["id"]),
@@ -5239,6 +5253,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 gateway_team_id=gateway_team_id,
                 gateway_url=gateway_url,
                 user_email=user_email,
+                user_id=user_id,
             )
 
         except PermissionError as pe:
@@ -5314,6 +5329,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         gateway_team_id: Optional[str],
         gateway_url: str,
         user_email: Optional[str],
+        user_id: Optional[str] = None,
     ) -> None:
         """Run post-commit side effects for permanent gateway deletion."""
         await _evict_upstream_sessions_for_gateway(gateway_id)
@@ -5343,7 +5359,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         logger.info("Permanently deleted gateway: %s", gateway_name)
 
         audit_trail.log_action(
-            user_id=user_email or "system",
+            user_id=user_id or user_email or "system",
             action="delete_gateway",
             resource_type="gateway",
             resource_id=str(gateway_info["id"]),

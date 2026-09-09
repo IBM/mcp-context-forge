@@ -36,6 +36,7 @@ from starlette.requests import Request
 from starlette.responses import Response
 
 # First-Party
+from mcpgateway.auth_context import get_user_id
 from mcpgateway.config import settings
 from mcpgateway.instrumentation.sqlalchemy import attach_trace_to_session
 from mcpgateway.middleware.path_filter import should_skip_observability
@@ -149,7 +150,7 @@ class ObservabilityMiddleware(BaseHTTPMiddleware):
 
         # Try to extract user from request state (set by auth middleware)
         if hasattr(request.state, "user") and hasattr(request.state.user, "email"):
-            user_email = request.state.user.email
+            user_email = get_user_id(request.state.user)
 
         # Extract W3C Trace Context from headers (for distributed tracing)
         external_trace_id = None

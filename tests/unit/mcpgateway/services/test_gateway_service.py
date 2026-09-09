@@ -3068,6 +3068,38 @@ class TestGatewayService:
         assert result == mock_gateway_read
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("user_id", "expected_actor"),
+        [("u-1", "u-1"), (None, "caller@example.com")],
+        ids=["canonical-id-recorded", "falls-back-to-email"],
+    )
+    async def test_set_gateway_state_audit_actor(self, gateway_service, mock_gateway, test_db, mock_logging_services, user_id, expected_actor):
+        """The audit actor is the canonical user_id when given, otherwise the caller e-mail."""
+        test_db.execute = Mock(
+            side_effect=[
+                _make_execute_result(scalar=mock_gateway),
+                _make_execute_result(rowcount=1),
+                _make_execute_result(rowcount=1),
+                _make_execute_result(rowcount=1),
+            ]
+        )
+        test_db.commit = Mock()
+        test_db.refresh = Mock()
+        gateway_service._notify_gateway_deactivated = AsyncMock()
+        mock_gateway_read = MagicMock()
+        mock_gateway_read.masked.return_value = mock_gateway_read
+
+        with (
+            patch("mcpgateway.services.gateway_service.GatewayRead.model_validate", return_value=mock_gateway_read),
+            patch("mcpgateway.services.permission_service.PermissionService.check_resource_ownership", new=AsyncMock(return_value=True)),
+        ):
+            await gateway_service.set_gateway_state(test_db, 1, activate=False, user_email="caller@example.com", user_id=user_id)
+
+        audit_kwargs = mock_logging_services["audit_trail"].log_action.call_args.kwargs
+        assert audit_kwargs["action"] == "set_gateway_state"
+        assert audit_kwargs["user_id"] == expected_actor
+
+    @pytest.mark.asyncio
     async def test_set_gateway_state_invalidates_changed_kinds(self, gateway_service, mock_gateway, test_db, monkeypatch):
         """Disabling a gateway whose tools changed invalidates the tools cache."""
         test_db.execute = Mock(
