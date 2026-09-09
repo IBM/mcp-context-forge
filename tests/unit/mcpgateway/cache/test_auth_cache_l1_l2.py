@@ -44,6 +44,50 @@ def mock_redis():
     return redis
 
 
+class TestCacheKeyNamespace:
+    """Auth cache Redis keys carry a version segment for namespace isolation (issue #5891)."""
+
+    def test_redis_key_contains_version_segment(self):
+        """_get_redis_key inserts the configured key version after the auth prefix."""
+        assert AuthCache()._get_redis_key("user", "test@example.com").startswith("mcpgw:auth:v1:user:")
+
+    @pytest.mark.asyncio
+    async def test_version_bump_makes_old_keys_unreachable(self):
+        """A version bump cold-starts the cache: keys written under v1 are invisible to v2."""
+        store = {}
+
+        async def fake_get(key):
+            return store.get(key)
+
+        async def fake_setex(key, _ttl, value):
+            store[key] = value
+
+        shared_redis = AsyncMock()
+        shared_redis.get = AsyncMock(side_effect=fake_get)
+        shared_redis.setex = AsyncMock(side_effect=fake_setex)
+        shared_redis.exists = AsyncMock(return_value=False)
+
+        cache_a = AuthCache(enabled=True)
+        cache_b = AuthCache(enabled=True)
+        cache_b._key_version = "v2"  # synthetic namespace bump
+
+        identity = "test@example.com"
+        jti = "jti-ns-1"
+        ctx = CachedAuthContext(
+            user={"email": identity, "is_admin": False},
+            personal_team_id="team-1",
+            is_token_revoked=False,
+        )
+
+        with patch.object(cache_a, "_get_redis_client", return_value=shared_redis):
+            await cache_a.set_auth_context(identity, jti, ctx)
+
+        with patch.object(cache_b, "_get_redis_client", return_value=shared_redis):
+            result = await cache_b.get_auth_context(identity, jti)
+
+        assert result is None  # cold start: the v1 key is unreachable under v2
+
+
 class TestGetAuthContextL1L2:
     """Test get_auth_context L1/L2 behavior."""
 
