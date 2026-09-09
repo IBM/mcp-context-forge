@@ -466,6 +466,18 @@ class CompletionService:
 
         return BaseService._apply_visibility_scope(stmt, model, user_email, token_teams, team_ids, db)  # pylint: disable=protected-access
 
+    @staticmethod
+    def _is_federated(record: Any) -> bool:
+        """Return whether a catalog record is owned by an upstream gateway.
+
+        Args:
+            record: A DB-backed prompt or resource row.
+
+        Returns:
+            ``True`` if the record has a non-empty ``gateway_id``.
+        """
+        return bool(getattr(record, "gateway_id", None))
+
     async def _complete_prompt_argument(
         self,
         db: Session,
@@ -474,8 +486,14 @@ class CompletionService:
         arg_value: str,
         user_email: Optional[str] = None,
         token_teams: Optional[List[str]] = None,
+        context: Optional[Dict[str, Any]] = None,
     ) -> CompleteResult:
         """Complete prompt argument value.
+
+        For a federated prompt, forwards the request to the owning upstream
+        server. If the upstream does not advertise the (optional)
+        ``completions`` capability, falls back to the locally-synced
+        ``argument_schema`` (enum / custom completions) instead of raising.
 
         Args:
             db: Database session
@@ -484,15 +502,18 @@ class CompletionService:
             arg_value: Current argument value
             user_email: Caller email used for owner/team visibility checks
             token_teams: Normalized token teams (`None` admin bypass, `[]` public-only, list for team scope)
+            context: Optional completion context (``{"arguments": {...}}``)
+                forwarded to a federated prompt's upstream.
 
         Returns:
             Completion suggestions
 
         Raises:
-            CompletionError: If prompt is missing or not found
+            CompletionInvalidParamsError: If the prompt name is missing, the
+                prompt is not found, or the argument is not found.
 
         Examples:
-            >>> from mcpgateway.services.completion_service import CompletionService, CompletionError
+            >>> from mcpgateway.services.completion_service import CompletionService, CompletionInvalidParamsError
             >>> from unittest.mock import MagicMock
             >>> import asyncio
             >>> service = CompletionService()
@@ -502,14 +523,14 @@ class CompletionService:
             >>> ref = {}
             >>> try:
             ...     asyncio.run(service._complete_prompt_argument(db, ref, 'arg1', 'val'))
-            ... except CompletionError as e:
+            ... except CompletionInvalidParamsError as e:
             ...     str(e)
             'Missing prompt name'
 
             >>> # Test custom completions
             >>> service.register_completions('color', ['red', 'green', 'blue'])
             >>> db.execute.return_value.scalar_one_or_none.return_value = MagicMock(
-            ...     argument_schema={'properties': {'color': {'name': 'color'}}}
+            ...     argument_schema={'properties': {'color': {'name': 'color'}}}, gateway_id=None
             ... )
             >>> result = asyncio.run(service._complete_prompt_argument(
             ...     db, {'name': 'test'}, 'color', 'r'
@@ -520,7 +541,7 @@ class CompletionService:
         # Get prompt
         prompt_name = ref.get("name")
         if not prompt_name:
-            raise CompletionError("Missing prompt name")
+            raise CompletionInvalidParamsError("Missing prompt name")
 
         # Only consider prompts that are enabled and visible to caller
         team_ids = await self._resolve_team_ids(db, user_email, token_teams)
@@ -530,7 +551,22 @@ class CompletionService:
         prompt = db.execute(stmt).scalar_one_or_none()
 
         if not prompt:
-            raise CompletionError(f"Prompt not found: {prompt_name}")
+            raise CompletionInvalidParamsError(f"Prompt not found: {prompt_name}")
+
+        if self._is_federated(prompt):
+            remote_name = getattr(prompt, "original_name", None) or prompt.name
+            try:
+                return await self._forward_completion_upstream(
+                    getattr(prompt, "gateway", None),
+                    PromptReference(type="ref/prompt", name=remote_name),
+                    {"name": arg_name, "value": arg_value},
+                    context,
+                )
+            except CompletionNotSupportedError:
+                logger.info(
+                    "Upstream gateway for federated prompt '%s' does not support completions; falling back to the locally-synced argument schema",
+                    prompt_name,
+                )
 
         # Find argument in schema
         arg_schema = None
@@ -540,7 +576,7 @@ class CompletionService:
                 break
 
         if not arg_schema:
-            raise CompletionError(f"Argument not found: {arg_name}")
+            raise CompletionInvalidParamsError(f"Argument not found: {arg_name}")
 
         # Get enum values if defined
         if "enum" in arg_schema:
