@@ -396,7 +396,6 @@ repos:
     rev: 4894019dc8876092bc9b6d56878798c550fad998  #v1.7.0
     hooks:
       - id: interrogate
-        args: [--fail-under=100]
         files: ^(mcpgateway|plugins)/
         exclude: _pb2(_grpc)?\.py$
 

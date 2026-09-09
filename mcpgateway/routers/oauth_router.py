@@ -39,12 +39,14 @@ from mcpgateway.schemas import EmailUserResponse
 from mcpgateway.services.dcr_service import DcrError, DcrService
 from mcpgateway.services.encryption_service import protect_oauth_config_for_storage
 from mcpgateway.services.oauth_manager import OAuthError, OAuthManager
+from mcpgateway.services.team_management_service import TeamManagementService
 from mcpgateway.services.token_storage_service import TokenStorageService
 
 # First-Party - CSP nonce support
 from mcpgateway.utils.csp_nonce import get_csp_nonce_from_request
 from mcpgateway.utils.log_sanitizer import sanitize_for_log
 from mcpgateway.utils.oauth_resource import derive_resource_origin
+from mcpgateway.utils.origin import is_allowed_redirect, origin_from_url
 from mcpgateway.utils.paths import resolve_root_path
 from mcpgateway.utils.verify_credentials import get_auth_header_value
 
@@ -566,6 +568,12 @@ async def _enforce_gateway_access(
 ) -> None:
     """Enforce gateway visibility and ownership checks for OAuth endpoints.
 
+    .. note::
+        ``TeamManagementService.get_user_role_in_team()`` may commit the
+        database session (``db.commit()``) on a cache miss to release the idle
+        transaction.  Callers must not rely on uncommitted ORM state being
+        preserved across this call.
+
     Args:
         gateway_id: Gateway identifier used for scoped ownership checks.
         gateway: Gateway record being accessed.
@@ -612,15 +620,15 @@ async def _enforce_gateway_access(
     if visibility == "public":
         return
 
+    # Use TeamManagementService.get_user_role_in_team() which checks the role cache
+    # (auth_cache.get_user_role) before hitting the DB. This avoids the broken
+    # user.is_team_member() path where EmailAuthService.get_user_by_email() returns a
+    # cache-reconstructed detached EmailUser with empty team_memberships.
     if visibility == "team":
         if not gateway_team_id:
             raise HTTPException(status_code=403, detail="You don't have access to this gateway")
-        # First-Party
-        from mcpgateway.services.email_auth_service import EmailAuthService
-
-        auth_service = EmailAuthService(db)
-        user = await auth_service.get_user_by_email(requester_email)
-        if not user or not user.is_team_member(gateway_team_id):
+        role = await TeamManagementService(db).get_user_role_in_team(requester_email, gateway_team_id)
+        if not role:
             raise HTTPException(status_code=403, detail="You don't have access to this gateway")
         return
 
@@ -632,12 +640,8 @@ async def _enforce_gateway_access(
     if gateway_owner and gateway_owner.strip().lower() == requester_email:
         return
     if gateway_team_id:
-        # First-Party
-        from mcpgateway.services.email_auth_service import EmailAuthService
-
-        auth_service = EmailAuthService(db)
-        user = await auth_service.get_user_by_email(requester_email)
-        if user and user.is_team_member(gateway_team_id):
+        role = await TeamManagementService(db).get_user_role_in_team(requester_email, gateway_team_id)
+        if role:
             return
 
     raise HTTPException(status_code=403, detail="You don't have access to this gateway")
@@ -995,6 +999,9 @@ async def oauth_callback(
         no_storage_oauth_manager = OAuthManager(token_storage=None)
 
         oauth_config_with_resource = gateway.oauth_config.copy()
+        post_oauth_redirect_response = None
+        if not is_popup and "redirect_uri_after_oauth" in oauth_config_with_resource:
+            post_oauth_redirect_response = custom_redirect_after_callback(oauth_config_with_resource["redirect_uri_after_oauth"], 302)
 
         # RFC 8707: Set resource parameter for the token exchange request.
         # If resource was previously learned from the IdP's token aud claim, use it as-is.
@@ -1270,6 +1277,9 @@ async def oauth_callback(
             samesite="strict",
         )
 
+        if post_oauth_redirect_response is not None:
+            response = post_oauth_redirect_response
+
         return response
 
     except OAuthError as e:
@@ -1357,6 +1367,36 @@ async def oauth_callback(
         """,
             status_code=500,
         )
+
+
+def _validate_post_oauth_redirect(url: str) -> None:
+    """Reject an untrusted post-OAuth redirect target.
+
+    Args:
+        url: Target URL.
+
+    Raises:
+        OAuthError: When the URL matches neither the app origin nor configured external origin.
+    """
+    if not is_allowed_redirect(url, str(settings.app_domain), settings.oauth_redirect_allowed_origin):
+        raise OAuthError(f"redirect_uri_after_oauth must use this gateway origin ({origin_from_url(str(settings.app_domain))}) or the origin in OAUTH_REDIRECT_ALLOWED_ORIGIN")
+
+
+def custom_redirect_after_callback(url: str, status_code: int) -> RedirectResponse:
+    """Validate *url* against trusted redirect origins then return a redirect.
+
+    Args:
+        url: Target URL
+        status_code: HTTP status code for the redirect response.
+
+    Returns:
+        RedirectResponse to url.
+
+    Raises:
+        OAuthError: When an absolute URL matches neither the app origin nor the external allowlist.
+    """
+    _validate_post_oauth_redirect(url)
+    return RedirectResponse(url=url, status_code=status_code, headers={"Referrer-Policy": "no-referrer"})
 
 
 @oauth_router.get("/status/{gateway_id}")

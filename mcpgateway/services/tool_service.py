@@ -6700,6 +6700,7 @@ class ToolService(BaseService):
                         )
                         if not settings.enable_sensitive_header_passthrough:
                             headers = filter_sensitive_headers(headers)
+                    # Plugins always see filtered headers for security reasons
                     plugin_headers = filter_sensitive_headers(headers)
 
                     # Plugin hook: tool pre-invoke for A2A
@@ -6731,12 +6732,42 @@ class ToolService(BaseService):
                             arguments = payload.args
                             if payload.headers is not None:
                                 plugin_returned_headers = payload.headers.model_dump()
+
+                                # Defense in depth: a plugin (e.g. Vault) that determined the
+                                # destination requires managed credentials it couldn't supply
+                                # signals this by returning "authorization": "" -- read here, off
+                                # the plugin's raw returned headers, since checking only the
+                                # post-allowlist-filtered `safe_headers` below would silently
+                                # drop the sentinel (and thus never strip the real header)
+                                # whenever Authorization isn't in this agent's passthrough_headers
+                                # or sensitive passthrough is disabled. A real bearer token is
+                                # never empty, so this is unambiguous.
+                                auth_mismatch = plugin_returned_headers.get("authorization") == ""
+
                                 if a2a_allowlist:
                                     allowlist_lower = {h.lower() for h in a2a_allowlist}
                                     safe_headers = {k: v for k, v in plugin_returned_headers.items() if k.lower() in allowlist_lower}
                                     if not settings.enable_sensitive_header_passthrough:
                                         safe_headers = filter_sensitive_headers(safe_headers)
                                     headers.update(safe_headers)
+
+                                # Apply the strip last, after the allowlist merge above, so it
+                                # can't be undone by that merge re-adding the sentinel itself (as
+                                # opposed to the stale value, which this also guards against) --
+                                # and so the header is actually removed rather than left present
+                                # with an empty value, which some downstream servers treat
+                                # differently from an absent header. Unconditional: applies
+                                # regardless of allowlist/flag state, so the caller's stale
+                                # credential can never reach a destination the plugin explicitly
+                                # flagged as mismatched.
+                                if auth_mismatch:
+                                    headers = {hk: hv for hk, hv in headers.items() if hk.lower() != "authorization"}
+
+                    # Defense in depth: strip X-Vault-Tokens (case-insensitive) from outbound
+                    # headers. The Vault plugin removes this header when it processes the token,
+                    # but stripping unconditionally prevents leakage when the plugin is disabled,
+                    # errors in permissive mode, or the header is mistakenly in passthrough_allowed.
+                    headers = {hk: hv for hk, hv in headers.items() if hk.lower() != "x-vault-tokens"}
 
                     prepared = prepare_a2a_invocation(
                         agent_type=a2a_agent_type,
@@ -6750,6 +6781,13 @@ class ToolService(BaseService):
                         base_headers=headers,
                         correlation_id=get_correlation_id(),
                     )
+
+                    # Final safety strip: X-Vault-Tokens must never reach the downstream A2A agent,
+                    # even if prepare_a2a_invocation added auth headers from agent config or passthrough
+                    # preserved it. PreparedA2AInvocation is frozen, so mutate the headers dict in
+                    # place (matches the pattern in a2a_service.py) rather than rebinding the field.
+                    for existing_key in [hk for hk in prepared.headers if hk.lower() == "x-vault-tokens"]:
+                        del prepared.headers[existing_key]
 
                     with create_child_span("tool.gateway_call", {"tool.name": name, "tool.id": tool_id, "tool.integration_type": "A2A"}):
                         # Make HTTP request with timeout enforcement

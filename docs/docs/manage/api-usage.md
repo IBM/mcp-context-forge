@@ -1830,7 +1830,9 @@ curl -s -X POST \
 | `400` | Seed count + 1 exceeds capacity | `Team would start with 6 members, exceeding the maximum of 5` |
 | `400` | Invalid role value | `Input should be 'owner' or 'member'` |
 | `400` | Invitations disabled and unknown address seeded | `members[1] (external@partner.com): invitations are currently disabled` |
+| `400` | Requested name's generated slug already belongs to an active team (platform admin caller) | `A team named 'Marketing' already exists` |
 | `403` | `ALLOW_TEAM_CREATION=false` and caller is not admin | `Team creation is currently disabled` |
+| `409` | Requested name's generated slug already belongs to an active team (non-admin caller; purposefully generic so a team's existence cannot be probed) | `A team with the same name could not be created` |
 | `422` | `members` array exceeds 500 entries | Pydantic validation error |
 
 ### List Teams
@@ -1880,6 +1882,7 @@ curl -s -H "Authorization: Bearer $TOKEN" $BASE_URL/teams | jq '.'
 | `limit` | int | `50` | Maximum number of teams to return (capped by `PAGINATION_MAX_PAGE_SIZE`). |
 | `cursor` | string | – | Opaque cursor for cursor-based pagination. |
 | `include_pagination` | bool | `false` | When `true`, return cursor metadata instead of a total count. |
+| `search_query` | string | – | Case-insensitive substring filter on team name, slug, or description (max 500 chars). Admins filter server-side; non-admins filter their own team list locally. |
 
 ```bash
 # Offset-based pagination
@@ -1889,6 +1892,10 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 # Cursor-based pagination (returns CursorPaginatedTeamsResponse)
 curl -s -H "Authorization: Bearer $TOKEN" \
   "$BASE_URL/teams?include_pagination=true" | jq '.'
+
+# Search teams by name, slug, or description
+curl -s -H "Authorization: Bearer $TOKEN" \
+  "$BASE_URL/teams?search_query=engineering" | jq '.'
 ```
 
 **Response with `include_pagination=true` (`CursorPaginatedTeamsResponse`):**

@@ -323,6 +323,92 @@ sequenceDiagram
 
 ---
 
+## Post-OAuth Redirect to an External Application
+
+By default, after a successful Authorization Code flow the browser lands on the gateway's
+built-in success page. If you embed ContextForge's OAuth flow inside your own application
+and need the user brought back to your UI automatically, set `redirect_uri_after_oauth` on
+the gateway's `oauth_config`.
+
+### Prerequisites
+
+Set the allowed HTTPS origin in your environment **before** configuring any gateway with
+this field. The value is validated at startup:
+
+```bash
+# .env
+OAUTH_REDIRECT_ALLOWED_ORIGIN=https://app.example.com
+```
+
+Rules enforced at startup (startup fails if violated):
+
+- Must be an exact HTTPS origin — `https://hostname` or `https://hostname:port`
+- No path, query string, fragment, or credentials (`user:pass@host`)
+- Wildcards (`*`) are rejected
+- HTTP origins are rejected
+
+### Configure a Gateway (API)
+
+Add `redirect_uri_after_oauth` to the gateway's `oauth_config`. The URL must share the
+same origin as `OAUTH_REDIRECT_ALLOWED_ORIGIN`:
+
+```json
+{
+  "name": "GitHub MCP",
+  "url": "https://github-mcp.example.com/sse",
+  "auth_type": "oauth",
+  "oauth_config": {
+    "grant_type": "authorization_code",
+    "client_id": "your_github_app_id",
+    "client_secret": "your_github_app_secret",
+    "authorization_url": "https://github.com/login/oauth/authorize",
+    "token_url": "https://github.com/login/oauth/access_token",
+    "redirect_uri": "https://gateway.example.com/oauth/callback",
+    "scopes": ["repo", "read:user"],
+    "redirect_uri_after_oauth": "https://app.example.com/oauth-complete"
+  }
+}
+```
+
+When the user completes authorization, the gateway issues a `302` to
+`https://app.example.com/oauth-complete`. No tokens or codes appear in the redirect URL.
+
+The Admin UI exposes this setting as the optional **Post-OAuth Redirect URL** field when
+`OAUTH_REDIRECT_ALLOWED_ORIGIN` is configured. Leave it blank to use the built-in success page.
+
+### Security model and why there is no per-request `post_login_redirect_uri`
+
+A common pattern is to pass the destination URL as a query parameter when starting the
+OAuth flow (`GET /oauth/authorize?post_login_redirect_uri=...`), encode it into `state`,
+and read it back on callback.
+
+ContextForge does **not** implement this pattern because it creates an open-redirect
+surface. An attacker who sends a victim a crafted login link with a malicious
+`post_login_redirect_uri` value can redirect the browser to an attacker-controlled page
+immediately after authentication — leaking the session context via the `Referer` header or
+URL bar. This is documented in [RFC 6819 §4.2.4](https://datatracker.ietf.org/doc/html/rfc6819#section-4.2.4).
+
+The static allowlist approach eliminates this surface: the destination is set by an admin
+at configuration time and cannot be influenced by request parameters.
+
+**Current limitation:** one external origin per gateway deployment
+(`OAUTH_REDIRECT_ALLOWED_ORIGIN` is a single value). Multi-app deployments that need
+different post-login destinations per app are not yet supported.
+
+### Validation behaviour
+
+| Location | When checked | Effect on failure |
+|---|---|---|
+| `OAUTH_REDIRECT_ALLOWED_ORIGIN` at startup | App boot | Startup error — gateway will not start |
+| Pydantic schema (`GatewayCreate` / `GatewayUpdate`) | Every API write | `422 Unprocessable Entity` |
+| Admin form assembler (`_assemble_oauth_config_from_fields`) | Admin UI save | `400` form error |
+| Callback (`custom_redirect_after_callback`) | Runtime redirect | `400` — state is **not** consumed, user can retry |
+
+The runtime re-check at callback time covers gateway rows written before validation was
+introduced (e.g., direct database imports).
+
+---
+
 ## Token Storage and Refresh
 
 OAuth tokens are stored per gateway and user for the Authorization Code flow to ensure proper security isolation:

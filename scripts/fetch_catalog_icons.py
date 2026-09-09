@@ -6,25 +6,29 @@ This maintainer-side tool runs before release. Gateway requests never fetch
 remote icons. Remote content becomes inert, normalized PNG assets.
 """
 
+# Future
 from __future__ import annotations
 
+# Standard
 import argparse
 from dataclasses import dataclass
-from io import BytesIO
 from html.parser import HTMLParser
+from io import BytesIO
 import ipaddress
 import json
 from pathlib import Path
 import re
 import socket
 from typing import Any, Iterable
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import urljoin, urlsplit, urlunsplit
 
+# Third-Party
 import httpx
-from PIL import Image, ImageOps
+from PIL import Image, ImageOps, PngImagePlugin
 import yaml
 
 try:
+    # Third-Party
     import tldextract
 except ImportError:  # pragma: no cover - installed by the maintainer dev group.
     tldextract = None  # type: ignore[assignment]
@@ -37,6 +41,9 @@ LOCAL_PREFIX = "/static/catalog-icons/"
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 MAX_REDIRECTS = 3
 ICON_SIZE = 128
+MAX_UPSCALE_FACTOR = 2.0
+NORMALIZED_ICON_MIN_EXTENT = 120
+NORMALIZED_ICON_MARKER = "contextforge_normalized"
 TIMEOUT_SECONDS = 10.0
 USER_AGENT = "ContextForge catalog icon curator/1.0"
 
@@ -66,6 +73,25 @@ class FetchResult:
     url: str
     content_type: str
     body: bytes
+
+
+@dataclass(frozen=True)
+class ValidatedDestination:
+    """An HTTPS destination whose resolved address passed network checks."""
+
+    url: str
+    hostname: str
+    host_header: str
+    address: str
+
+    @property
+    def pinned_url(self) -> str:
+        """Return URL that connects to validated address while retaining request path."""
+        parsed = urlsplit(self.url)
+        address = f"[{self.address}]" if ":" in self.address else self.address
+        port = parsed.port
+        netloc = address if port is None else f"{address}:{port}"
+        return urlunsplit((parsed.scheme, netloc, parsed.path, parsed.query, ""))
 
 
 class IconLinkParser(HTMLParser):
@@ -108,8 +134,8 @@ def _safe_asset_id(catalog_id: str) -> str:
     return safe
 
 
-def _validate_public_https_url(url: str) -> None:
-    """Reject non-HTTPS and private-network destinations before fetching."""
+def _validate_public_https_url(url: str) -> ValidatedDestination:
+    """Validate an HTTPS URL and retain an address for the subsequent connection."""
     parsed = urlsplit(url)
     if parsed.scheme.lower() != "https" or not parsed.hostname:
         raise IconFetchError(f"Only HTTPS URLs with host are allowed: {url}")
@@ -117,14 +143,18 @@ def _validate_public_https_url(url: str) -> None:
         raise IconFetchError(f"Credentials in icon URL are not allowed: {url}")
 
     try:
-        addresses = {item[4][0] for item in socket.getaddrinfo(parsed.hostname, parsed.port or 443, type=socket.SOCK_STREAM)}
-    except OSError as exc:
+        port = parsed.port or 443
+        addresses = list(dict.fromkeys(item[4][0] for item in socket.getaddrinfo(parsed.hostname, port, type=socket.SOCK_STREAM)))
+    except (OSError, ValueError) as exc:
         raise IconFetchError(f"Could not resolve icon host {parsed.hostname}: {exc}") from exc
 
     for address in addresses:
         ip = ipaddress.ip_address(address)
-        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_multicast or ip.is_reserved or ip.is_unspecified:
+        if not ip.is_global:
             raise IconFetchError(f"Private or special-purpose icon host rejected: {parsed.hostname}")
+    if not addresses:
+        raise IconFetchError(f"Could not resolve icon host {parsed.hostname}")
+    return ValidatedDestination(url=url, hostname=parsed.hostname, host_header=parsed.netloc, address=addresses[0])
 
 
 def _read_response(response: httpx.Response) -> bytes:
@@ -141,9 +171,12 @@ def _fetch(client: httpx.Client, url: str, *, expected_image: bool = False) -> F
     """Fetch URL with bounded redirects, body size, and content checks."""
     current = url
     for _ in range(MAX_REDIRECTS + 1):
-        _validate_public_https_url(current)
+        destination = _validate_public_https_url(current)
+        request = client.build_request("GET", destination.pinned_url, headers={"host": destination.host_header})
+        request.extensions["sni_hostname"] = destination.hostname
         try:
-            with client.stream("GET", current, follow_redirects=False) as response:
+            response = client.send(request, stream=True, follow_redirects=False)
+            try:
                 if response.is_redirect:
                     location = response.headers.get("location")
                     if not location:
@@ -156,23 +189,58 @@ def _fetch(client: httpx.Client, url: str, *, expected_image: bool = False) -> F
                 if expected_image and content_type not in _IMAGE_TYPES:
                     raise IconFetchError(f"Unsupported icon content type {content_type!r}: {current}")
                 return FetchResult(url=current, content_type=content_type, body=_read_response(response))
+            finally:
+                response.close()
         except httpx.HTTPError as exc:
             raise IconFetchError(f"HTTP request failed for {current}: {exc}") from exc
     raise IconFetchError(f"Too many redirects: {url}")
 
 
 def _image_to_png(body: bytes) -> bytes:
-    """Decode image and emit deterministic transparent 128x128 PNG."""
+    """Decode image, trim transparent padding, and emit a deterministic capped PNG."""
     try:
         with Image.open(BytesIO(body)) as source:
             image = ImageOps.exif_transpose(source).convert("RGBA")
-            image.thumbnail((ICON_SIZE, ICON_SIZE), Image.Resampling.LANCZOS)
+            alpha_bounds = image.getchannel("A").getbbox()
+            if alpha_bounds is None:
+                raise IconFetchError("Image has no visible pixels")
+            image = image.crop(alpha_bounds)
+            scale = min(ICON_SIZE / max(image.size), MAX_UPSCALE_FACTOR)
+            target_size = (max(1, round(image.width * scale)), max(1, round(image.height * scale)))
+            if image.size != target_size:
+                image = image.resize(target_size, Image.Resampling.LANCZOS)
             canvas = Image.new("RGBA", (ICON_SIZE, ICON_SIZE), (0, 0, 0, 0))
             offset = ((ICON_SIZE - image.width) // 2, (ICON_SIZE - image.height) // 2)
             canvas.alpha_composite(image, offset)
             output = BytesIO()
-            canvas.save(output, format="PNG", optimize=True)
+            png_info = PngImagePlugin.PngInfo()
+            png_info.add_text(NORMALIZED_ICON_MARKER, "1")
+            canvas.save(output, format="PNG", optimize=True, pnginfo=png_info)
             return output.getvalue()
+    except IconFetchError:
+        raise
+    except Exception as exc:  # Pillow raises several format-specific exceptions.
+        raise IconFetchError(f"Image decode failed: {exc}") from exc
+
+
+def _has_normalized_icon_bounds(body: bytes) -> bool:
+    """Return whether existing asset was normalized or already fills its canvas."""
+    try:
+        with Image.open(BytesIO(body)) as source:
+            image = ImageOps.exif_transpose(source).convert("RGBA")
+            if image.size != (ICON_SIZE, ICON_SIZE):
+                return False
+            # PNG text must survive external processing to retain this fast path.
+            # Without it, the geometry fallback can apply one additional capped resize.
+            if image.info.get(NORMALIZED_ICON_MARKER) == "1":
+                return True
+            alpha_bounds = image.getchannel("A").getbbox()
+            if alpha_bounds is None:
+                raise IconFetchError("Image has no visible pixels")
+            left, top, right, bottom = alpha_bounds
+            return max(right - left, bottom - top) >= NORMALIZED_ICON_MIN_EXTENT
+    except IconFetchError:
+        raise
     except Exception as exc:  # Pillow raises several format-specific exceptions.
         raise IconFetchError(f"Image decode failed: {exc}") from exc
 
@@ -259,22 +327,14 @@ def _set_logo_urls(text: str, logo_urls: dict[str, str]) -> str:
             continue
         replacement = f'{match.group("indent")}  logo_url: "{logo_urls[catalog_id]}"\n'
         field_index = next(
-            (
-                index
-                for index in range(start + 1, end)
-                if _FIELD_RE.match(lines[index]) and _FIELD_RE.match(lines[index]).group("field") == "logo_url"
-            ),
+            (index for index in range(start + 1, end) if _FIELD_RE.match(lines[index]) and _FIELD_RE.match(lines[index]).group("field") == "logo_url"),
             None,
         )
         if field_index is not None:
             updates.append((field_index, field_index + 1, replacement))
             continue
         url_index = next(
-            (
-                index
-                for index in range(start + 1, end)
-                if _FIELD_RE.match(lines[index]) and _FIELD_RE.match(lines[index]).group("field") == "url"
-            ),
+            (index for index in range(start + 1, end) if _FIELD_RE.match(lines[index]) and _FIELD_RE.match(lines[index]).group("field") == "url"),
             None,
         )
         if url_index is None:
@@ -298,7 +358,7 @@ def generate_icons(args: argparse.Namespace) -> int:
     logo_urls: dict[str, str] = {}
     misses: list[str] = []
 
-    with httpx.Client(headers={"user-agent": USER_AGENT}, timeout=args.timeout) as client:
+    with httpx.Client(headers={"user-agent": USER_AGENT}, timeout=args.timeout, trust_env=False) as client:
         for server in entries:
             catalog_id = str(server["id"])
             asset_name = f"{_safe_asset_id(catalog_id)}.png"
@@ -306,6 +366,26 @@ def generate_icons(args: argparse.Namespace) -> int:
             local_url = f"{LOCAL_PREFIX}{asset_name}"
             if catalog_id in skip_ids:
                 print(f"SKIP {catalog_id}: override list")
+                continue
+            if args.normalize_existing:
+                if not asset_path.exists():
+                    print(f"SKIP {catalog_id}: no local asset to normalize")
+                    continue
+                try:
+                    existing = asset_path.read_bytes()
+                    if _has_normalized_icon_bounds(existing):
+                        print(f"KEEP {catalog_id}: normalized bounds")
+                    else:
+                        if not args.dry_run:
+                            normalized = _image_to_png(existing)
+                            temporary = asset_path.with_suffix(".tmp")
+                            temporary.write_bytes(normalized)
+                            temporary.replace(asset_path)
+                        print(f"NORMALIZE {catalog_id}: {asset_path}")
+                    logo_urls[catalog_id] = local_url
+                except (IconFetchError, OSError, ValueError) as exc:
+                    misses.append(catalog_id)
+                    print(f"MISS {catalog_id}: {exc}")
                 continue
             if asset_path.exists() and not args.force:
                 logo_urls[catalog_id] = local_url
@@ -331,16 +411,24 @@ def generate_icons(args: argparse.Namespace) -> int:
     return 1 if args.strict and misses else 0
 
 
-def _parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__)
+def _parse_args(args: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Fetch and bundle MCP catalog icons. Normalization trims transparent padding and upscales source artwork by at most 2x.",
+    )
     parser.add_argument("--catalog", type=Path, default=DEFAULT_CATALOG)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR)
     parser.add_argument("--overrides", type=Path, default=DEFAULT_OVERRIDES)
     parser.add_argument("--timeout", type=float, default=TIMEOUT_SECONDS)
-    parser.add_argument("--force", action="store_true", help="Refresh existing assets")
+    refresh_mode = parser.add_mutually_exclusive_group()
+    refresh_mode.add_argument("--force", action="store_true", help="Refresh existing assets")
+    refresh_mode.add_argument(
+        "--normalize-existing",
+        action="store_true",
+        help="Trim and resize existing local assets up to 2x without refetching remote icons",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Fetch and report without writing")
     parser.add_argument("--strict", action="store_true", help="Return failure when any icon is unresolved")
-    return parser.parse_args()
+    return parser.parse_args(args)
 
 
 if __name__ == "__main__":

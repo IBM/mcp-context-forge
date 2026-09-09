@@ -64,6 +64,7 @@ from mcpgateway.services.team_management_service import (
     TeamManagementService,
     TeamMemberAddError,
     TeamMemberLimitExceededError,
+    TeamNameConflictError,
     TeamNotFoundError,
     UserNotFoundError,
 )
@@ -104,13 +105,19 @@ async def create_team(
         TeamCreateResponse: Created team data, plus how each seeded member was resolved
 
     Raises:
-        HTTPException: If team creation fails
+        HTTPException 400: Active team with same name exists (platform admin callers).
+        HTTPException 403: Team creation disabled; caller is not platform admin.
+        HTTPException 409: Active team with same name exists (non-admin; generic message prevents name enumeration).
+        HTTPException 500: Unexpected service error.
 
     Examples:
         >>> import asyncio
         >>> asyncio.iscoroutinefunction(create_team)
         True
     """
+    # Default-deny: if the permission lookup fails before is_admin is assigned, treat the caller as
+    # a non-admin so the name-conflict path (which references is_admin) stays safe.
+    is_admin = False
     try:
         # Check admin permissions using PermissionService (handles both is_admin flag and RBAC)
         permission_service = PermissionService(db)
@@ -165,6 +172,17 @@ async def create_team(
         return response
     except HTTPException:
         raise
+    except TeamNameConflictError as e:
+        # Active-slug collision. Disclose the specific conflict (which reveals a team with this
+        # name exists) only to callers authorized to list all teams (platform admin). Everyone else
+        # gets a generic conflict that does not leak team-name existence.
+        logger.info("Team creation blocked by name conflict: %s", e)
+        if is_admin:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="A team with the same name could not be created",
+        )
     except (ValueError, TeamManagementError) as e:
         # TeamManagementError covers the member-seeding failures (capacity, team limits)
         logger.error(f"Team creation failed: {e}")
@@ -181,6 +199,7 @@ async def list_teams(
     limit: int = Query(50, ge=1, le=settings.pagination_max_page_size, description="Number of teams to return"),
     cursor: QueryPaginationCursorGeneric = None,
     include_pagination: bool = Query(False, description="Include pagination metadata (cursor)"),
+    search_query: Optional[str] = Query(None, max_length=500, description="Filter teams by a substring of name, slug, or description"),
     current_user_ctx: dict = Depends(get_current_user_with_permissions),
     db: Session = Depends(get_db),
 ) -> Union[TeamListResponse, CursorPaginatedTeamsResponse]:
@@ -188,12 +207,15 @@ async def list_teams(
 
     - Administrators see all non-personal teams plus their own personal team (paginated)
     - Regular users see only teams they are a member of (paginated client-side)
+    - search_query, when set, narrows either population to teams whose name, slug, or
+      description contains it (case-insensitive)
 
     Args:
         skip: Number of teams to skip for pagination
         limit: Maximum number of teams to return
         cursor: Pagination cursor
         include_pagination: Include pagination metadata
+        search_query: Substring filter on name/slug/description
         current_user_ctx: Current user context with permissions and database session
         db: Database session
 
@@ -210,6 +232,11 @@ async def list_teams(
         next_cursor = None
         total = 0
         scoped_team_ids = extract_token_team_ids(current_user_ctx)
+
+        # Normalise empty string to None so the value passed downstream is always either a
+        # non-empty string or None — never an empty string that could be misread as an
+        # explicit filter by future callers.
+        search_query = search_query or None
 
         # Check admin permissions using PermissionService (handles both is_admin flag and RBAC)
         permission_service = PermissionService(db)
@@ -232,18 +259,28 @@ async def list_teams(
                 cursor=cursor,
                 personal_owner_email=current_user_ctx["email"],
                 team_ids=scoped_team_ids,
+                search_query=search_query,
             )
             # Result is tuple (list, next_cursor)
             teams_data, next_cursor = result
 
-            # Get accurate total count for API consumers
-            total = await service.get_teams_count(personal_owner_email=current_user_ctx["email"], team_ids=scoped_team_ids)
+            # Get accurate total count for API consumers (not needed for cursor pagination
+            # because CursorPaginatedTeamsResponse has no total field — skip the DB round-trip).
+            if not include_pagination:
+                total = await service.get_teams_count(personal_owner_email=current_user_ctx["email"], team_ids=scoped_team_ids, search_query=search_query)
         else:
-            # Fallback to user teams and apply pagination locally
+            # Fallback to user teams and apply pagination locally.
+            # Scope narrowing (scoped_team_ids) is applied BEFORE search so out-of-scope
+            # teams can never be surfaced by a search_query match.
             user_teams = await service.get_user_teams(current_user_ctx["email"], include_personal=True)
             if scoped_team_ids is not None:
                 allowed_team_ids = set(scoped_team_ids)
                 user_teams = [team for team in user_teams if str(team.id) in allowed_team_ids]
+            if search_query:
+                needle = search_query.lower()
+                # Keep fields in sync with _apply_team_list_filters(search_description=True)
+                # in team_management_service.py — name, slug, description.
+                user_teams = [team for team in user_teams if needle in team.name.lower() or needle in team.slug.lower() or needle in (team.description or "").lower()]
             total = len(user_teams)
             teams_data = user_teams[skip : skip + limit]
 
@@ -278,7 +315,7 @@ async def list_teams(
 
         return TeamListResponse(teams=team_responses, total=total)
     except Exception as e:
-        logger.error(f"Error listing teams: {e}")
+        logger.error(f"Error listing teams: {SecurityValidator.sanitize_log_message(str(e))}")
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to list teams")
 
 

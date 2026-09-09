@@ -234,6 +234,26 @@ class TestEnsureEnvFileSecrets:
         assert "AUTH_ENCRYPTION_SECRET" in generated
         assert len(generated["JWT_SECRET_KEY"]) == 43  # 32-byte token_urlsafe
 
+    def test_ensure_patches_platform_admin_password(self, tmp_path, monkeypatch):
+        """Patch mode replaces platform-admin and default password placeholders."""
+        env = tmp_path / ".env"
+        env.write_text(
+            "PLATFORM_ADMIN_PASSWORD=ReplaceMe_RunMakeSetup!\n"
+            "DEFAULT_USER_PASSWORD=changeme\n",
+            encoding="utf-8",
+        )
+        for field in ("PLATFORM_ADMIN_PASSWORD", "DEFAULT_USER_PASSWORD"):
+            monkeypatch.delenv(field, raising=False)
+        monkeypatch.setenv("MCPGATEWAY_AUTO_INIT_SECRETS", "true")
+
+        generated = ensure_env_file_secrets(env_file=str(env))
+        content = env.read_text(encoding="utf-8")
+
+        assert "PLATFORM_ADMIN_PASSWORD" in generated
+        assert "DEFAULT_USER_PASSWORD" in generated
+        assert f"PLATFORM_ADMIN_PASSWORD={generated['PLATFORM_ADMIN_PASSWORD']}" in content
+        assert f"DEFAULT_USER_PASSWORD={generated['DEFAULT_USER_PASSWORD']}" in content
+
     def test_ensure_patches_os_environ(self, tmp_path, monkeypatch):
         import os as _os
 

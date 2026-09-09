@@ -63,12 +63,13 @@ wrapper or whether the helper genuinely deserves promotion to the public API.
 
 # Standard
 import asyncio
+from contextlib import nullcontext
 from datetime import datetime, timedelta, timezone
 import hashlib
 import logging
 import threading
 import time
-from typing import Any, Dict, Generator, List, Never, Optional
+from typing import Any, Callable, Dict, Generator, List, Never, Optional
 from urllib.parse import urlparse
 import uuid
 
@@ -114,6 +115,7 @@ __all__ = [
     "validate_token_user",
     "get_user_team_roles",
     "normalize_token_teams",
+    "validate_token_team_membership",
     "resolve_session_teams",
     "derive_token_team_id",
 ]
@@ -269,6 +271,65 @@ def _get_user_team_ids_sync(email: str) -> List[str]:
             .order_by(EmailTeamMember.id)  # Stable ordering: teams[0] used as Vault path key
         )
         return [row[0] for row in result.all()]
+
+
+def validate_token_team_membership(
+    user_email: str,
+    team_ids: List[str],
+    db: Optional[Session] = None,
+    *,
+    on_cache_event: Optional[Callable[[str], None]] = None,
+) -> bool:
+    """Return whether a token's claimed teams are active memberships.
+
+    The cache is checked before querying the database. A caller-provided
+    session remains caller-owned; otherwise this helper opens and closes one.
+
+    Args:
+        user_email: Email encoded in the verified token.
+        team_ids: Team IDs claimed by the token.
+        db: Optional caller-owned SQLAlchemy session.
+        on_cache_event: Optional callback receiving ``hit``, ``miss``, or
+            ``reject`` for cache instrumentation.
+
+    Returns:
+        ``True`` when the user belongs to every claimed team.
+    """
+    if not team_ids:
+        return True
+
+    # First-Party
+    from mcpgateway.cache.auth_cache import get_auth_cache  # pylint: disable=import-outside-toplevel
+    from mcpgateway.db import EmailTeamMember  # pylint: disable=import-outside-toplevel
+
+    auth_cache = get_auth_cache()
+    cached_result = auth_cache.get_team_membership_valid_sync(user_email, team_ids)
+    if cached_result is not None:
+        if on_cache_event:
+            on_cache_event("reject" if not cached_result else "hit")
+        return cached_result
+
+    if on_cache_event:
+        on_cache_event("miss")
+
+    owns_session = db is None
+    with SessionLocal() if owns_session else nullcontext(db) as session:
+        memberships = (
+            session.execute(
+                select(EmailTeamMember.team_id).where(
+                    EmailTeamMember.team_id.in_(team_ids),
+                    EmailTeamMember.user_email == user_email,
+                    EmailTeamMember.is_active.is_(True),
+                )
+            )
+            .scalars()
+            .all()
+        )
+        valid = not set(team_ids).difference(memberships)
+        auth_cache.set_team_membership_valid_sync(user_email, team_ids, valid)
+        if owns_session:
+            session.commit()
+        return valid
 
 
 def _get_team_name_by_id_sync(team_id: Optional[str]) -> Optional[str]:
@@ -1029,6 +1090,7 @@ def _get_user_by_email_sync(email: str) -> Optional[EmailUser]:
                 is_admin=user.is_admin,
                 is_active=user.is_active,
                 auth_provider=user.auth_provider,
+                password_hash_type=user.password_hash_type,
                 password_change_required=user.password_change_required,
                 email_verified_at=user.email_verified_at,
                 created_at=user.created_at,
@@ -1089,6 +1151,7 @@ def _resolve_plugin_authenticated_user_sync(user_dict: Dict[str, Any]) -> Option
         is_admin=False,
         is_active=user_dict.get("is_active", True),
         auth_provider=user_dict.get("auth_provider", "local"),
+        password_hash_type=user_dict.get("password_hash_type", "argon2id"),
         password_change_required=user_dict.get("password_change_required", False),
         email_verified_at=user_dict.get("email_verified_at"),
         created_at=user_dict.get("created_at", datetime.now(timezone.utc)),
@@ -1145,6 +1208,7 @@ def _get_auth_context_batched_sync(email: str, jti: Optional[str] = None) -> Dic
                 "is_admin": user.is_admin,
                 "is_active": user.is_active,
                 "auth_provider": user.auth_provider,
+                "password_hash_type": user.password_hash_type,
                 "password_change_required": user.password_change_required,
                 "email_verified_at": user.email_verified_at,
                 "created_at": user.created_at,
@@ -1232,6 +1296,7 @@ def _user_from_cached_dict(user_dict: Dict[str, Any]) -> EmailUser:
         is_admin=user_dict.get("is_admin", False),
         is_active=user_dict.get("is_active", True),
         auth_provider=user_dict.get("auth_provider", "local"),
+        password_hash_type=user_dict.get("password_hash_type", "argon2id"),
         password_change_required=user_dict.get("password_change_required", False),
         email_verified_at=user_dict.get("email_verified_at"),
         created_at=user_dict.get("created_at", datetime.now(timezone.utc)),
@@ -1314,6 +1379,7 @@ def _bootstrap_platform_admin_user(email: str) -> "EmailUser":
         is_admin=bool(email == getattr(settings, "platform_admin_email", None)),
         is_active=True,
         auth_provider="local",
+        password_hash_type="argon2id",
         password_change_required=False,
         email_verified_at=datetime.now(timezone.utc),
         created_at=datetime.now(timezone.utc),

@@ -31,7 +31,7 @@ Pick an install method below, generate an auth token, then walk through a real t
     MCPGATEWAY_UI_ENABLED=true \
     MCPGATEWAY_ADMIN_API_ENABLED=true \
     PLATFORM_ADMIN_EMAIL=admin@example.com \
-    PLATFORM_ADMIN_PASSWORD=changeme \
+    PLATFORM_ADMIN_PASSWORD=quickstart-admin-change-me \
     PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
     uvx --from mcp-contextforge-gateway mcpgateway --host 0.0.0.0 --port 4444
 
@@ -78,7 +78,7 @@ Pick an install method below, generate an auth token, then walk through a real t
         export MCPGATEWAY_UI_ENABLED=true
         export MCPGATEWAY_ADMIN_API_ENABLED=true
         export PLATFORM_ADMIN_EMAIL=admin@example.com
-        export PLATFORM_ADMIN_PASSWORD=changeme
+        export PLATFORM_ADMIN_PASSWORD=quickstart-admin-change-me
         export PLATFORM_ADMIN_FULL_NAME="Platform Administrator"
         mcpgateway --host 0.0.0.0 --port 4444
         ```
@@ -120,7 +120,7 @@ Pick an install method below, generate an auth token, then walk through a real t
           -e HOST=0.0.0.0 \
           -e JWT_SECRET_KEY=my-test-key-but-now-longer-than-32-bytes \
           -e PLATFORM_ADMIN_EMAIL=admin@example.com \
-          -e PLATFORM_ADMIN_PASSWORD=changeme \
+          -e PLATFORM_ADMIN_PASSWORD=quickstart-admin-change-me \
           -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
           ghcr.io/ibm/mcp-context-forge:1.0.0-RC-3
         ```
@@ -136,7 +136,7 @@ Pick an install method below, generate an auth token, then walk through a real t
               -e DATABASE_URL=sqlite:////data/mcp.db \
               -e JWT_SECRET_KEY=my-test-key-but-now-longer-than-32-bytes \
               -e PLATFORM_ADMIN_EMAIL=admin@example.com \
-              -e PLATFORM_ADMIN_PASSWORD=changeme \
+              -e PLATFORM_ADMIN_PASSWORD=quickstart-admin-change-me \
               -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
               ghcr.io/ibm/mcp-context-forge:1.0.0-RC-3
             ```
@@ -158,7 +158,7 @@ Pick an install method below, generate an auth token, then walk through a real t
               -e DATABASE_URL=postgresql+psycopg://postgres:mysecretpassword@postgres:5432/mcp \
               -e JWT_SECRET_KEY=my-test-key-but-now-longer-than-32-bytes \
               -e PLATFORM_ADMIN_EMAIL=admin@example.com \
-              -e PLATFORM_ADMIN_PASSWORD=changeme \
+              -e PLATFORM_ADMIN_PASSWORD=quickstart-admin-change-me \
               -e PLATFORM_ADMIN_FULL_NAME="Platform Administrator" \
               ghcr.io/ibm/mcp-context-forge:1.0.0-RC-3
             ```

@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 # First-Party
+from mcpgateway.auth_user_helpers import is_passwordless_user
 from mcpgateway.db import EmailUser
 from mcpgateway.services.email_auth_service import EmailAuthService, _user_dict_to_obj, _user_obj_to_dict
 
@@ -101,6 +102,42 @@ def test_user_dict_to_obj_accepts_datetime_objects():
     obj = _user_dict_to_obj(d)
     assert obj.created_at == _NOW
     assert obj.updated_at == _NOW
+
+
+def test_user_dict_to_obj_omitted_password_hash_is_unavailable_not_passwordless():
+    """A missing cache hash is a read-only placeholder, not explicit passwordless state."""
+    d = dict(_USER_DICT)
+    d.pop("password_hash", None)
+    d["password_hash_type"] = "argon2id"
+
+    obj = _user_dict_to_obj(d)
+
+    assert obj.password_hash == ""
+    assert is_passwordless_user(obj) is False
+
+
+def test_user_dict_to_obj_preserves_explicit_passwordless_hash():
+    """Explicit None survives cache reconstruction as passwordless state."""
+    d = dict(_USER_DICT)
+    d["password_hash"] = None
+    d["password_hash_type"] = "argon2id"
+
+    obj = _user_dict_to_obj(d)
+
+    assert obj.password_hash is None
+    assert is_passwordless_user(obj) is True
+
+
+def test_user_dict_to_obj_preserves_passwordless_hash_type_marker():
+    """The passwordless marker fails closed even if a hash is present."""
+    d = dict(_USER_DICT)
+    d["password_hash"] = "$argon2id$v=19$m=65536,t=3,p=1$valid$hash"
+    d["password_hash_type"] = "none"
+
+    obj = _user_dict_to_obj(d)
+
+    assert obj.password_hash is not None
+    assert is_passwordless_user(obj) is True
 
 
 # ---------- get_user_by_email cache hit ----------

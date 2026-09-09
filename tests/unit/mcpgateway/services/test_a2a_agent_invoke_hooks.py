@@ -433,6 +433,91 @@ class TestA2AInvokePreHook:
     @patch("mcpgateway.services.a2a_service.fresh_db_session")
     @patch("mcpgateway.services.http_client_service.get_http_client")
     @patch("mcpgateway.services.a2a_service.get_for_update")
+    async def test_pre_invoke_plugin_authorization_mismatch_sentinel_strips_stale_credential(
+        self,
+        mock_get_for_update,
+        mock_get_client,
+        mock_fresh_db,
+        mock_metrics_buffer_fn,
+        service,
+        mock_db,
+        mock_agent,
+    ):
+        """A plugin's empty-string Authorization sentinel strips the real, stale credential (lines 2368-2369).
+
+        Mirrors the direct-A2A-tool-wrapped-as-MCP-tool coverage in
+        test_tool_service_coverage.py::test_a2a_plugin_authorization_mismatch_sentinel_strips_stale_credential,
+        but exercises invoke_agent()'s own (agent_pre_invoke / direct A2A) merge point.
+
+        The plugin (e.g. Vault, on a vault-token mismatch) never receives the real
+        Authorization value on this path -- _prepare_header_flows() filters it out of what
+        plugins see -- so it can only signal "strip this" via the empty-string sentinel in
+        its returned headers. Reproduces the scenario under which the sentinel matters most:
+        "authorization" is in the agent's passthrough_headers allowlist and
+        ENABLE_SENSITIVE_HEADER_PASSTHROUGH is on, so the client's own stale Authorization
+        would otherwise reach the outbound request unmodified.
+        """
+        # Standard
+        from unittest.mock import patch as _patch
+
+        # Third-Party
+        from cpex.framework import HttpHeaderPayload
+
+        # First-Party
+        from mcpgateway.config import settings
+
+        mock_agent.passthrough_headers = ["authorization", "x-tenant-id"]
+
+        pm = _make_plugin_manager()
+        # Plugin signals a vault-token mismatch: it never saw the real Authorization value,
+        # so it returns the empty-string sentinel instead of a real header.
+        modified = SimpleNamespace(
+            modified_payload=SimpleNamespace(
+                parameters=None,
+                headers=HttpHeaderPayload(root={"authorization": "", "x-tenant-id": "tenant-123"}),
+            ),
+            retry_delay_ms=0,
+            metadata={},
+        )
+        pm.invoke_hook = AsyncMock(return_value=(modified, {}))
+
+        mock_get_for_update.return_value = mock_agent
+        mock_client = AsyncMock()
+        mock_response = MagicMock(status_code=200)
+        mock_response.json.return_value = {"result": "ok"}
+        mock_client.post.return_value = mock_response
+        mock_get_client.return_value = mock_client
+        mock_ts_db = MagicMock()
+        mock_fresh_db.return_value.__enter__.return_value = mock_ts_db
+        mock_fresh_db.return_value.__exit__.return_value = None
+        mock_metrics_buffer = MagicMock()
+        mock_metrics_buffer_fn.return_value = mock_metrics_buffer
+
+        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_agent.id
+
+        with (
+            patch.object(service, "_get_plugin_manager", AsyncMock(return_value=pm)),
+            patch("mcpgateway.services.a2a_service.get_correlation_id", return_value="test-req-id"),
+            _patch.object(settings, "enable_sensitive_header_passthrough", True),
+        ):
+            await service.invoke_agent(
+                mock_db,
+                mock_agent.name,
+                {"query": "hello"},
+                request_headers={"authorization": "Bearer stale-client-cred", "x-tenant-id": "tenant-123"},
+            )
+
+        # SECURITY: the real, stale client Authorization must never reach the outbound call,
+        # regardless of the allowlist/passthrough settings that would otherwise let it through.
+        call_args = mock_client.post.call_args
+        headers = call_args.kwargs.get("headers", {})
+        assert "authorization" not in {k.lower() for k in headers}
+        assert headers.get("x-tenant-id") == "tenant-123"
+
+    @patch("mcpgateway.services.metrics_buffer_service.get_metrics_buffer_service")
+    @patch("mcpgateway.services.a2a_service.fresh_db_session")
+    @patch("mcpgateway.services.http_client_service.get_http_client")
+    @patch("mcpgateway.services.a2a_service.get_for_update")
     async def test_pre_invoke_plugin_violation_error_propagated(
         self,
         mock_get_for_update,

@@ -69,6 +69,7 @@ from mcpgateway._security_constants import MIN_ENTROPY as _MIN_ENTROPY
 from mcpgateway._security_constants import MIN_SECRET_LENGTH as _MIN_SECRET_LENGTH
 from mcpgateway._security_constants import WEAK_VALUES as _CANONICAL_WEAK_VALUES
 from mcpgateway._security_constants import calculate_entropy
+from mcpgateway.utils.origin import is_exact_https_origin
 
 # Only configure basic logging if no handlers exist yet
 # This prevents conflicts with LoggingService while ensuring config logging works
@@ -485,6 +486,7 @@ class Settings(BaseSettings):
     sso_ibm_verify_client_id: Optional[str] = Field(default=None, description="IBM Security Verify client ID")
     sso_ibm_verify_client_secret: Optional[SecretStr] = Field(default=None, description="IBM Security Verify client secret")
     sso_ibm_verify_issuer: Optional[str] = Field(default=None, description="IBM Security Verify OIDC issuer URL")
+    ibm_verify_group_mapping: Optional[str] = Field(default=None, description="JSON mapping of IBM Security Verify group names to team UUIDs")
 
     sso_okta_enabled: bool = Field(default=False, description="Enable Okta OIDC authentication")
     sso_okta_client_id: Optional[str] = Field(default=None, description="Okta client ID")
@@ -999,6 +1001,28 @@ class Settings(BaseSettings):
             "the upstream MCP server to validate ``aud``."
         ),
     )
+    oauth_redirect_allowed_origin: Optional[str] = Field(
+        default=None,
+        description="Exact HTTPS origin allowed for post-OAuth redirects outside APP_DOMAIN.",
+    )
+
+    @field_validator("oauth_redirect_allowed_origin")
+    @classmethod
+    def validate_oauth_redirect_allowed_origin(cls, origin: Optional[str]) -> Optional[str]:
+        """Require the external post-OAuth redirect entry to be an exact HTTPS origin.
+
+        Args:
+            origin: Configured external redirect origin.
+
+        Returns:
+            Validated origin.
+
+        Raises:
+            ValueError: If the entry is not an exact HTTPS origin.
+        """
+        if origin is not None and not is_exact_https_origin(origin):
+            raise ValueError(f"OAuth redirect allowlist entry must be an exact HTTPS origin: {origin}")
+        return origin
 
     # ===================================
     # Dynamic Client Registration (DCR) - Client Mode
@@ -1611,18 +1635,63 @@ class Settings(BaseSettings):
 
         return v
 
+    @staticmethod
+    def _enforce_secret_strength(
+        field_name: str,
+        value: str,
+        weak_secrets: set[str],
+        *,
+        min_length: int = 0,
+        min_entropy: float = 0.0,
+        check_placeholder: bool = False,
+        hint: str = "",
+    ) -> None:
+        """Raise ``SecurityConfigurationError`` if *value* fails any enabled check.
+
+        Used by ``validate_security_combinations`` for both unconditional secret
+        enforcement (JWT, encryption) and feature-gated password enforcement.
+
+        Args:
+            field_name: Config field name for the error message.
+            value: The secret or password value to check.
+            weak_secrets: Lower-cased set of known-weak values.
+            min_length: Minimum length (0 = skip check).
+            min_entropy: Minimum Shannon entropy (0.0 = skip check).
+            check_placeholder: Also reject empty and ``__REPLACE_ME__`` values.
+            hint: Extra text appended to the error message (e.g. rotation guide URL).
+        """
+        remediation = "Run 'python -m mcpgateway.scripts.init_secrets' to generate strong values, or use 'make init-secrets-patch-env' to write them directly into .env."
+
+        if check_placeholder and not value.strip():
+            raise SecurityConfigurationError(f"{field_name}: secret is empty. {remediation}{hint}")
+
+        if min_length and len(value) < min_length:
+            raise SecurityConfigurationError(f"{field_name}: too short ({len(value)} chars, minimum {min_length}). {remediation}{hint}")
+
+        if check_placeholder and value.lower().startswith(("__replace_me__", "replaceme")):
+            raise SecurityConfigurationError(f"{field_name}: unset placeholder (__REPLACE_ME__) rejected. {remediation}{hint}")
+
+        if value.lower() in weak_secrets:
+            raise SecurityConfigurationError(f"{field_name}: known-weak/default value rejected. {remediation}{hint}")
+
+        if min_entropy:
+            entropy = calculate_entropy(value)
+            if entropy < min_entropy:
+                raise SecurityConfigurationError(f"{field_name}: low entropy (score {entropy:.2f} < {min_entropy}). {remediation}{hint}")
+
     @model_validator(mode="after")
     def validate_security_combinations(self) -> Self:
         """Validate security setting combinations and raise on unsafe secrets.
 
-        Placeholder and weak/known secrets are rejected unconditionally in every
-        environment (development, staging, and production alike).  Some compose
-        sibling containers (e.g. ``register_fast_time``, ``prometheus_token``)
-        sign tokens with the raw ``JWT_SECRET_KEY`` environment variable outside
-        this validator, so per-process random generation cannot be used as a
-        fallback — gateway and sibling containers must share the same secret.
-        The only safe option is an unconditional hard-fail that forces operators
-        to provide a real secret before the process will start.
+        Secrets (``jwt_secret_key``, ``auth_encryption_secret``) are checked
+        unconditionally for empty, placeholder, weak, short, and low-entropy
+        values.  Password credentials (``basic_auth_password``,
+        empty, placeholder, known-weak, and too-short (below
+        ``password_min_length_user``, the OWASP baseline) values when their
+        consuming authentication feature is enabled (feature-gated fail-closed).
+        No entropy floor is applied to passwords: the Shannon-entropy check used
+        for random secrets is a poor signal for human-chosen passwords and the
+        length + known-weak-value checks already cover the realistic risk.
 
         Run ``python -m mcpgateway.scripts.init_secrets`` (or ``make init-secrets``
         for interactive use, ``make init-secrets-patch-env`` to write directly into
@@ -1632,59 +1701,55 @@ class Settings(BaseSettings):
             Itself.
 
         Raises:
-            SecurityConfigurationError: If jwt_secret_key or auth_encryption_secret
-                is unset (placeholder), matches a known-weak value, is shorter than
-                ``min_secret_length`` characters, or has low per-character entropy.
+            SecurityConfigurationError: If a secret or feature-gated password
+                fails its strength checks.
         """
-        # client_mode is intentionally NOT exempted — secret-strength enforcement
-        # is always active regardless of deployment profile.
         weak_secrets = {v.lower() for v in self.WEAK_VALUES}
-        env = str(self.environment).lower()
+        effective_min = max(self.min_secret_length, _MIN_SECRET_LENGTH)
+
+        # Unconditional: JWT + encryption secrets (full strength checks)
         for field_name, secret_field in (
             ("jwt_secret_key", self.jwt_secret_key),
             ("auth_encryption_secret", self.auth_encryption_secret),
         ):
-            val = secret_field.get_secret_value()
-
-            # For auth_encryption_secret failures, append the secrets rotation guide URL
-            # so operators upgrading from 1.0.7 know how to re-encrypt stored credentials.
-            rotation_hint = (
+            hint = (
                 "\nIf you have stored credentials encrypted under the old key, "
                 "you must rotate them before starting the gateway.\n"
                 "Rotation guide: docs/docs/operations/auth-encryption-secret-rotation.md"
                 if field_name == "auth_encryption_secret"
                 else ""
             )
+            self._enforce_secret_strength(
+                field_name,
+                secret_field.get_secret_value(),
+                weak_secrets,
+                min_length=effective_min,
+                min_entropy=_MIN_ENTROPY,
+                check_placeholder=True,
+                hint=hint,
+            )
 
-            if not val.strip():
-                raise SecurityConfigurationError(f"{field_name}: secret is empty. Set a real value (run 'python -m mcpgateway.scripts.init_secrets').")
+        # Feature-gated: password credentials (empty, placeholder, weak, or too short)
+        if self.api_allow_basic_auth or self.docs_allow_basic_auth:
+            self._enforce_secret_strength(
+                "basic_auth_password",
+                self.basic_auth_password.get_secret_value(),
+                weak_secrets,
+                min_length=self.password_min_length_user,
+                check_placeholder=True,
+            )
 
-            effective_min = max(self.min_secret_length, _MIN_SECRET_LENGTH)
-            if len(val) < effective_min:
-                raise SecurityConfigurationError(
-                    f"{field_name}: too short ({len(val)} chars, minimum {effective_min}). "
-                    "Run 'python -m mcpgateway.scripts.init_secrets' to generate strong values, "
-                    "or use 'make init-secrets-patch-env' to write them directly into .env." + rotation_hint
-                )
-
-            is_placeholder = val.lower().startswith("__replace_me__")
-            is_weak = val.lower() in weak_secrets
-            entropy = calculate_entropy(val)
-            is_low_entropy = entropy < _MIN_ENTROPY
-
-            if is_placeholder or is_weak or is_low_entropy:
-                if is_placeholder:
-                    reason = "unset placeholder (__REPLACE_ME__)"
-                elif is_weak:
-                    reason = "known-weak/default value"
-                else:
-                    reason = f"low entropy (score {entropy:.2f} < {_MIN_ENTROPY})"
-                raise SecurityConfigurationError(
-                    f"{field_name}: {reason} rejected in every environment (including '{env}'). "
-                    "Cross-process token consistency requires operators to supply a real secret before startup — "
-                    "no per-process random fallback is generated. "
-                    "Run 'python -m mcpgateway.scripts.init_secrets' to generate strong values, "
-                    "or use 'make init-secrets-patch-env' to write them directly into .env." + rotation_hint
+        if self.email_auth_enabled:
+            for pw_field, pw_secret in (
+                ("platform_admin_password", self.platform_admin_password),
+                ("default_user_password", self.default_user_password),
+            ):
+                self._enforce_secret_strength(
+                    pw_field,
+                    pw_secret.get_secret_value(),
+                    weak_secrets,
+                    min_length=self.password_min_length_user,
+                    check_placeholder=True,
                 )
 
         if not self.client_mode:
@@ -1881,7 +1946,7 @@ class Settings(BaseSettings):
         for name, value in critical_secrets.items():
             if name == "BASIC_AUTH_PASSWORD" and not (self.mcpgateway_ui_enabled or self.api_allow_basic_auth or self.docs_allow_basic_auth):
                 continue
-            is_sentinel = value in self.SENTINEL_VALUES or value.lower().startswith("__replace_me__")
+            is_sentinel = value in self.SENTINEL_VALUES or value.lower().startswith(("__replace_me__", "replaceme"))
 
             if is_sentinel:
                 error_msg = f"{name} is not configured. Running with default or empty values in production is prohibited as it leaves the gateway unprotected."
@@ -2805,6 +2870,8 @@ class Settings(BaseSettings):
     mcpgateway_session_affinity_enabled: bool = False  # Global session affinity toggle
     mcpgateway_session_affinity_ttl: int = 300  # Session affinity binding TTL
     mcpgateway_pool_rpc_forward_timeout: int = 30  # Timeout for forwarding RPC requests to owner worker
+    mcpgateway_affinity_forward_concurrency: int = Field(default=32, ge=1, description="Max concurrent forwarded-request dispatches per worker listener (0 would wedge all forwarding)")
+    mcpgateway_affinity_session_lock_timeout: int = 30  # Max seconds to wait for a same-session forward lock before executing without ordering
 
     # Prompts
     prompt_cache_size: int = 100
@@ -3107,6 +3174,9 @@ class Settings(BaseSettings):
     otel_bsp_max_queue_size: int = Field(default=2048, description="Max queue size for batch span processor")
     otel_bsp_max_export_batch_size: int = Field(default=512, description="Max export batch size")
     otel_bsp_schedule_delay: int = Field(default=5000, description="Schedule delay in milliseconds")
+    otel_httpx_instrumentation_enabled: bool = Field(default=False, description="Auto-instrument outbound httpx clients (HTTP client spans + W3C trace header injection)")
+    otel_sqlalchemy_instrumentation_enabled: bool = Field(default=False, description="Emit OTel spans for SQLAlchemy queries (high span volume; enable for debugging)")
+    otel_redis_instrumentation_enabled: bool = Field(default=False, description="Auto-instrument redis/redis.asyncio clients (per-command CLIENT spans)")
 
     # ===================================
     # OpenTelemetry Baggage Configuration

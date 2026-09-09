@@ -279,8 +279,12 @@ class TestVaultPluginFunctionality:
         # SECURITY: Vault header must be removed even when no token match is found
         assert result.modified_payload is not None
         assert "x-vault-tokens" not in result.modified_payload.headers.root
-        # No Authorization header should be added since there's no match
-        assert "authorization" not in result.modified_payload.headers.root
+        # No new Authorization header should be injected since there's no match. The plugin
+        # never receives a real Authorization value on this path (tool_service.py filters it
+        # out before this hook runs), so it can't `del` one -- instead it signals "strip the
+        # real Authorization header" to the caller via the empty-string sentinel. See the
+        # tool_service.py-level test for the actual end-to-end deletion.
+        assert result.modified_payload.headers.root["authorization"] == ""
         assert result.continue_processing
 
     @pytest.mark.asyncio
@@ -611,7 +615,13 @@ class TestVaultPluginA2AAgent:
 
     @pytest.mark.asyncio
     async def test_no_token_match_strips_vault_header(self, plugin_config, agent_context):
-        """A vault header with no matching system still gets stripped, no auth injected."""
+        """A vault header with no matching system still gets stripped, no auth injected.
+
+        The system tag IS resolved here (agent_context tags include "system:github.com"), so
+        this hits the mismatch branch and returns the "authorization": "" strip sentinel -- see
+        module docstring / vault_plugin.py::_apply_vault_token for why the plugin can't `del` a
+        header it never received.
+        """
         plugin = Vault(plugin_config)
         vault_tokens = {"gitlab.com": "glpat_other_system"}
         payload = AgentPreInvokePayload(agent_id="agent-1", messages=[], headers=HttpHeaderPayload(root={"content-type": "application/json", "x-vault-tokens": json.dumps(vault_tokens)}))
@@ -620,7 +630,7 @@ class TestVaultPluginA2AAgent:
 
         assert result.modified_payload is not None
         assert "x-vault-tokens" not in result.modified_payload.headers.root
-        assert "authorization" not in result.modified_payload.headers.root
+        assert result.modified_payload.headers.root["authorization"] == ""
 
     @pytest.mark.asyncio
     async def test_oauth2_config_mode_unsupported_strips_header(self, agent_context):
@@ -769,10 +779,11 @@ class TestVaultPluginMcpServerBinding:
 
         result = await plugin.tool_pre_invoke(payload, context)
 
-        # SECURITY: header stripped, but no auth injected since the binding doesn't match
+        # SECURITY: header stripped, no auth injected since the binding doesn't match, and the
+        # strip sentinel is returned since system_key ("github.com") did resolve
         assert result.modified_payload is not None
         assert "x-vault-tokens" not in result.modified_payload.headers.root
-        assert "authorization" not in result.modified_payload.headers.root
+        assert result.modified_payload.headers.root["authorization"] == ""
 
     @pytest.mark.asyncio
     async def test_null_mcp_server_falls_back_to_unbound_trust(self, plugin_config):
@@ -798,7 +809,7 @@ class TestVaultPluginMcpServerBinding:
         result = await plugin.tool_pre_invoke(payload, context)
 
         assert result.modified_payload is not None
-        assert "authorization" not in result.modified_payload.headers.root
+        assert result.modified_payload.headers.root["authorization"] == ""
 
     @pytest.mark.asyncio
     async def test_matching_mcp_server_ignores_trailing_slash_and_case(self, plugin_config):
@@ -824,7 +835,7 @@ class TestVaultPluginMcpServerBinding:
         result = await plugin.tool_pre_invoke(payload, context)
 
         assert result.modified_payload is not None
-        assert "authorization" not in result.modified_payload.headers.root
+        assert result.modified_payload.headers.root["authorization"] == ""
 
     @pytest.mark.asyncio
     async def test_a2a_agent_matching_endpoint_url_injects_token(self):
@@ -888,7 +899,7 @@ class TestVaultPluginMcpServerBinding:
         result = await plugin.agent_pre_invoke(payload, context)
 
         assert result.modified_payload is not None
-        assert "authorization" not in result.modified_payload.headers.root
+        assert result.modified_payload.headers.root["authorization"] == ""
 
 
 if __name__ == "__main__":

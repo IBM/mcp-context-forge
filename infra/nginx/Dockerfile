@@ -1,7 +1,7 @@
 # High-Performance Nginx Caching Proxy for ContextForge
 # Based on Red Hat UBI 10.1 Minimal for consistency with gateway container
 
-FROM registry.access.redhat.com/ubi10/ubi-minimal:10.2-1784581369
+FROM registry.access.redhat.com/ubi10/ubi-minimal:10.2-1788137716
 
 # Install nginx and curl (for healthchecks)
 RUN microdnf install -y \

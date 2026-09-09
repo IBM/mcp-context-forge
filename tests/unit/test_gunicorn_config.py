@@ -259,3 +259,79 @@ def test_post_fork_logs_warning_when_rebind_fails(fake_worker, monkeypatch):
     fmt = call_args.args[0] if call_args.args else ""
     assert "WORKER_ID" in fmt
     assert "broadcast" in fmt, "warning should describe the consequence (per-container broadcast) so operators can act on it"
+
+
+class TestOnStartingHook:
+    """Test the on_starting() hook in gunicorn.config.py."""
+
+    def test_on_starting_normalizes_digit_ssl_version(self, monkeypatch):
+        """Test that string digit ssl_version (e.g. '5') is converted to int."""
+        monkeypatch.setenv("SSL", "true")
+        cfg_module = _load_gunicorn_config()
+
+        mock_server = _make_fake_server()
+        mock_cfg = MagicMock()
+        mock_cfg.ssl_version = "5"
+        mock_server.cfg = mock_cfg
+
+        cfg_module.on_starting(mock_server)
+        mock_cfg.set.assert_called_once_with("ssl_version", 5)
+
+    def test_on_starting_normalizes_protocol_constant_name(self, monkeypatch):
+        """Test that PROTOCOL_* name is resolved to ssl constant."""
+        import ssl
+        monkeypatch.setenv("SSL", "true")
+        cfg_module = _load_gunicorn_config()
+
+        mock_server = _make_fake_server()
+        mock_cfg = MagicMock()
+        mock_cfg.ssl_version = "PROTOCOL_TLSv1_2"
+        mock_server.cfg = mock_cfg
+
+        cfg_module.on_starting(mock_server)
+        mock_cfg.set.assert_called_once_with("ssl_version", ssl.PROTOCOL_TLSv1_2)
+
+    def test_on_starting_unrecognized_ssl_version_logs_warning_and_does_not_crash(self, monkeypatch):
+        """Test that unrecognized string ssl_version logs a warning, does not set, and does not crash."""
+        monkeypatch.setenv("SSL", "true")
+        cfg_module = _load_gunicorn_config()
+
+        mock_server = _make_fake_server()
+        mock_cfg = MagicMock()
+        mock_cfg.ssl_version = "NOT_A_VALID_SSL_VERSION"
+        mock_server.cfg = mock_cfg
+
+        cfg_module.on_starting(mock_server)
+        mock_cfg.set.assert_not_called()
+        assert mock_server.log.warning.called
+        warning_call_args = mock_server.log.warning.call_args
+        assert "Unrecognized SSL_VERSION value" in str(warning_call_args)
+
+    def test_on_starting_exception_in_normalization_logs_warning(self, monkeypatch):
+        """Test that exceptions during normalization log a warning and don't crash."""
+        monkeypatch.setenv("SSL", "true")
+        cfg_module = _load_gunicorn_config()
+
+        mock_server = _make_fake_server()
+        mock_cfg = MagicMock()
+        mock_cfg.ssl_version = "5"
+        mock_cfg.set.side_effect = RuntimeError("failed to set")
+        mock_server.cfg = mock_cfg
+
+        cfg_module.on_starting(mock_server)
+        assert mock_server.log.warning.called
+        warning_msg = str(mock_server.log.warning.call_args)
+        assert "Failed to normalize Gunicorn ssl_version setting" in warning_msg
+
+    def test_on_starting_ssl_disabled_skips_normalization(self, monkeypatch):
+        """Test that when SSL is false/unset, normalization is skipped."""
+        monkeypatch.setenv("SSL", "false")
+        cfg_module = _load_gunicorn_config()
+
+        mock_server = _make_fake_server()
+        mock_cfg = MagicMock()
+        mock_cfg.ssl_version = "5"
+        mock_server.cfg = mock_cfg
+
+        cfg_module.on_starting(mock_server)
+        mock_cfg.set.assert_not_called()
