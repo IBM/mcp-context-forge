@@ -723,3 +723,18 @@ async def test_federated_plain_resource_is_not_forwarded(monkeypatch):
     result = await service._complete_resource_uri(db, {"uri": "template://"}, "doc")
     assert len(result.completion["values"]) == 2
     assert result.completion["values"] == ["file://doc1.txt", "file://doc2.txt"]
+
+
+# ---------------------------------------------------------------------------
+# Task 6: handle_completion() — preserve error subclass through dispatch
+# ---------------------------------------------------------------------------
+
+from unittest.mock import MagicMock as _MagicMockTask6  # noqa: E402
+
+
+@pytest.mark.asyncio
+async def test_handle_completion_preserves_specific_error_subclass():
+    service = CompletionService()
+    db = _MagicMockTask6()
+    with pytest.raises(CompletionInvalidParamsError):
+        await service.handle_completion(db, {"ref": {}, "argument": {"name": "a"}})
