@@ -901,7 +901,7 @@ clean:
 # help: query-log-clear      - Clear database query log files
 
 .PHONY: smoketest test-mcp-cli test-mcp-rbac test-mcp-plugin-parity test-mcp-access-matrix \
-	test-mcp-session-isolation test-mcp-session-isolation-load test-e2e-sso \
+	test-mcp-session-isolation test-mcp-session-isolation-load test-e2e-sso test-oauth-status-live \
 	test-live-gateway test test-verbose test-profile coverage test-docs pytest-examples \
 	test-curl htmlcov doctest doctest-verbose doctest-coverage doctest-check test-db-perf \
 	test-db-perf-verbose 2025-11-25 2025-11-25-core 2025-11-25-tasks 2025-11-25-auth \
@@ -997,6 +997,13 @@ test-mcp-session-isolation: uv  ## MCP session/auth isolation tests for the Rust
 	@$(UV_BIN) run pytest tests/live_gateway/e2e_rust/test_mcp_session_isolation.py -v -s --tb=short \
 		|| { echo "❌ MCP session/auth isolation tests failed!"; exit 1; }
 	@echo "✅ MCP session/auth isolation tests passed!"
+
+test-oauth-status-live: uv  ## Black-box test for GET /oauth/status[/{id}] against a running gateway + its Postgres
+	@echo "🧪 Running OAuth status endpoint live tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."
+	@echo "   Requires: docker-compose stack (postgres exposed on localhost:5433, the default)"
+	@$(UV_BIN) run pytest tests/live_gateway/mcp/test_oauth_status_live.py -v -s --tb=short \
+		|| { echo "❌ OAuth status live tests failed!"; exit 1; }
+	@echo "✅ OAuth status live tests passed!"
 
 test-e2e-sso: uv  ## E2E tests requiring a live Keycloak SSO identity provider
 	@echo "🔐 Running SSO-dependent E2E tests against $${MCP_CLI_BASE_URL:-http://localhost:8080}..."

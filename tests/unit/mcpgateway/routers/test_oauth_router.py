@@ -1486,7 +1486,7 @@ class TestOAuthRouter:
                 result = await get_oauth_status_batch(mock_request, ["gateway123"], mock_current_user, mock_db)
 
         assert result == {}
-        mock_logger.error.assert_called_once()
+        mock_logger.exception.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_get_oauth_status_batch_logs_and_omits_on_payload_build_error(self, mock_db, mock_gateway, mock_current_user, mock_request):
@@ -1501,7 +1501,7 @@ class TestOAuthRouter:
                 result = await get_oauth_status_batch(mock_request, ["gateway123"], mock_current_user, mock_db)
 
         assert result == {}
-        mock_logger.error.assert_called_once()
+        mock_logger.exception.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_get_oauth_status_batch_requires_gateway_ids(self, mock_db, mock_current_user, mock_request):

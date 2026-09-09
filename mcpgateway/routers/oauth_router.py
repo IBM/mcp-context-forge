@@ -1528,8 +1528,8 @@ async def get_oauth_status_batch(
                 logger.error("OAuth status batch: access check failed for gateway=%s: %s", gateway_id, exc.detail)
             # Not accessible to this caller (or a lookup failure, logged above) - omit rather than failing the batch.
             continue
-        except Exception as exc:
-            logger.error("OAuth status batch: access check raised for gateway=%s: %s", gateway_id, str(exc))
+        except Exception:
+            logger.exception("OAuth status batch: access check raised for gateway=%s", gateway_id)
             continue
 
         try:
@@ -1537,8 +1537,8 @@ async def get_oauth_status_batch(
             if payload.get("grant_type") == "authorization_code":
                 payload["user_token_status"] = await _get_caller_token_status(db, current_user, gateway_id, token_storage=token_storage)
             results[gateway_id] = payload
-        except Exception as exc:
-            logger.error("OAuth status batch: failed to build status for gateway=%s: %s", gateway_id, str(exc))
+        except Exception:
+            logger.exception("OAuth status batch: failed to build status for gateway=%s", gateway_id)
             continue
 
     return results
