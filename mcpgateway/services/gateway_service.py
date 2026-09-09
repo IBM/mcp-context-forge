@@ -82,6 +82,7 @@ except ImportError:
 
 # First-Party
 from mcpgateway import __version__
+from mcpgateway.auth_context import get_user_id
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam as DbEmailTeam
@@ -2149,7 +2150,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
             # Structured logging: Audit trail for gateway creation
             audit_trail.log_action(
-                user_id=created_by or "system",
+                user_id=get_user_id(created_by) if created_by else "system",
                 action="create_gateway",
                 resource_type="gateway",
                 resource_id=str(db_gateway.id),
@@ -3206,7 +3207,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                     logger.info(f"Accepted gateway update for async initialization: {SecurityValidator.sanitize_log_message(gateway.name)}")
 
                     audit_trail.log_action(
-                        user_id=user_email or modified_by or "system",
+                        user_id=get_user_id(user_email or modified_by) if user_email or modified_by else "system",
                         action="update_gateway",
                         resource_type="gateway",
                         resource_id=str(gateway.id),
@@ -3407,7 +3408,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
                 # Structured logging: Audit trail for gateway update
                 audit_trail.log_action(
-                    user_id=user_email or modified_by or "system",
+                    user_id=get_user_id(user_email or modified_by) if user_email or modified_by else "system",
                     action="update_gateway",
                     resource_type="gateway",
                     resource_id=str(gateway.id),
@@ -3963,7 +3964,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
 
                 # Structured logging: Audit trail for gateway state change
                 audit_trail.log_action(
-                    user_id=user_email or "system",
+                    user_id=get_user_id(user_email) if user_email else "system",
                     action="set_gateway_state",
                     resource_type="gateway",
                     resource_id=str(gateway.id),
@@ -4164,7 +4165,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
                 logger.info(f"Accepted gateway deletion for async cleanup: {gateway_name}")
 
                 audit_trail.log_action(
-                    user_id=user_email or "system",
+                    user_id=get_user_id(user_email) if user_email else "system",
                     action="delete_gateway",
                     resource_type="gateway",
                     resource_id=str(gateway_info["id"]),
@@ -4309,7 +4310,7 @@ class GatewayService(BaseService):  # pylint: disable=too-many-instance-attribut
         logger.info("Permanently deleted gateway: %s", gateway_name)
 
         audit_trail.log_action(
-            user_id=user_email or "system",
+            user_id=get_user_id(user_email) if user_email else "system",
             action="delete_gateway",
             resource_type="gateway",
             resource_id=str(gateway_info["id"]),
