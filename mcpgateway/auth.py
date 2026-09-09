@@ -83,7 +83,7 @@ from sqlalchemy.orm import Session
 from starlette.requests import Request
 
 # First-Party
-from mcpgateway.auth_context import get_user_id, normalize_token_teams
+from mcpgateway.auth_context import get_user_id, normalize_token_teams, resolve_canonical_user_id
 from mcpgateway.common.validators import SecurityValidator
 from mcpgateway.config import settings
 from mcpgateway.db import EmailTeam, EmailUser, fresh_db_session, SessionLocal
@@ -597,9 +597,12 @@ async def _resolve_teams_from_db(email: str, user_info) -> Optional[List[str]]:
     For non-admin users, returns the full list of team IDs from DB/cache.
 
     Args:
-        email: Canonical user_id for the DB/cache lookup. Membership rows
-            match on either ``user_email`` or the dual-written ``user_id``
-            (see :func:`_get_user_team_ids_sync`).
+        email: Identity for the lookup (e-mail or canonical user_id),
+            canonicalized through ``_resolve_canonical_user_id_sync`` so
+            e-mail identities from legacy or UUID-sub tokens reach
+            user_id-keyed rows. Membership rows match on either
+            ``user_email`` or the dual-written ``user_id`` (see
+            :func:`_get_user_team_ids_sync`).
         user_info: User dict or EmailUser instance
 
     Returns:
@@ -617,26 +620,31 @@ async def _resolve_teams_from_db(email: str, user_info) -> Optional[List[str]]:
     if is_admin:
         return None  # Admin bypass
 
-    # Try auth cache first
+    # Try auth cache first. Membership rows and team caches key on the
+    # canonical user_id, so resolve it here — the single DB-touching point —
+    # and every caller (e-mail subjects, UUID session subjects falling back
+    # to the e-mail argument, explicit user_id claims) converges on the same
+    # key. Unknown identities pass through unchanged (phase-1 behavior).
+    canonical = await asyncio.to_thread(_resolve_canonical_user_id_sync, email)
     try:
         # First-Party
         from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
 
-        cached_teams = await auth_cache.get_user_teams(f"{email}:True")
+        cached_teams = await auth_cache.get_user_teams(f"{canonical}:True")
         if cached_teams is not None:
             return cached_teams
     except Exception:  # nosec B110 - Cache unavailable is non-fatal, fall through to DB
         pass
 
     # Cache miss: query DB
-    team_ids = await asyncio.to_thread(_get_user_team_ids_sync, email)
+    team_ids = await asyncio.to_thread(_get_user_team_ids_sync, canonical)
 
     # Cache the result
     try:
         # First-Party
         from mcpgateway.cache.auth_cache import auth_cache  # pylint: disable=import-outside-toplevel
 
-        await auth_cache.set_user_teams(f"{email}:True", team_ids)
+        await auth_cache.set_user_teams(f"{canonical}:True", team_ids)
     except Exception:  # nosec B110 - Cache write failure is non-fatal
         pass
 
@@ -1136,6 +1144,30 @@ def _get_email_by_id_sync(user_id: str) -> Optional[str]:
     with fresh_db_session() as db:
         result = db.execute(select(EmailUser.email).where(EmailUser.id == user_id))
         return result.scalar_one_or_none()
+
+
+def _resolve_canonical_user_id_sync(identity: str) -> str:
+    """Synchronous helper to map an identity to the canonical user_id.
+
+    Membership rows key on the canonical user_id, while callers of the team
+    resolution path may still hold an e-mail identity (legacy e-mail subjects,
+    or the e-mail fallback for a UUID session subject). An e-mail input
+    resolves through the user record; any other input (an already-canonical
+    id, an unknown identity) passes through unchanged.
+
+    Args:
+        identity: Identity string to resolve (e-mail or canonical user_id).
+
+    Returns:
+        The canonical user_id, or the input unchanged when no user record
+        matches or the lookup is unavailable.
+    """
+    try:
+        with fresh_db_session() as db:
+            return resolve_canonical_user_id(identity, db)
+    except Exception:  # nosec B110 - lookup unavailable: keep the input identity (phase-1 behavior)
+        logger.debug("Canonical user_id resolution unavailable for team lookup; using identity unchanged")
+        return identity
 
 
 def _resolve_plugin_authenticated_user_sync(user_dict: Dict[str, Any]) -> Optional[EmailUser]:
