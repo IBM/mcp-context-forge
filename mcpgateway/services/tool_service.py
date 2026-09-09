@@ -62,6 +62,7 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import joinedload, selectinload, Session
 
 # First-Party
+from mcpgateway.auth_context import get_user_id
 from mcpgateway.cache.global_config_cache import global_config_cache
 from mcpgateway.common.models import Gateway as PydanticGateway
 from mcpgateway.common.models import TextContent
@@ -2465,7 +2466,7 @@ class ToolService(BaseService):
 
             # Structured logging: Audit trail for tool creation
             audit_trail.log_action(
-                user_id=created_by or "system",
+                user_id=get_user_id(created_by) if created_by else "system",
                 action="create_tool",
                 resource_type="tool",
                 resource_id=db_tool.id,
@@ -2786,7 +2787,7 @@ class ToolService(BaseService):
             # Log bulk audit trail entry
             if tools_to_add or tools_to_update:
                 audit_trail.log_action(
-                    user_id=created_by or "system",
+                    user_id=get_user_id(created_by) if created_by else "system",
                     action="bulk_create_tools" if tools_to_add else "bulk_update_tools",
                     resource_type="tool",
                     resource_id=None,
@@ -3787,7 +3788,7 @@ class ToolService(BaseService):
 
             # Structured logging: Audit trail for tool deletion
             audit_trail.log_action(
-                user_id=user_email or "system",
+                user_id=get_user_id(user_email) if user_email else "system",
                 action="delete_tool",
                 resource_type="tool",
                 resource_id=tool_info["id"],
@@ -3961,7 +3962,7 @@ class ToolService(BaseService):
 
                 # Structured logging: Audit trail for tool state change
                 audit_trail.log_action(
-                    user_id=user_email or "system",
+                    user_id=get_user_id(user_email) if user_email else "system",
                     action="set_tool_state",
                     resource_type="tool",
                     resource_id=tool.id,
@@ -7811,7 +7812,7 @@ class ToolService(BaseService):
                 changes.append("description updated")
 
             audit_trail.log_action(
-                user_id=user_email or modified_by or "system",
+                user_id=get_user_id(user_email or modified_by) if user_email or modified_by else "system",
                 action="update_tool",
                 resource_type="tool",
                 resource_id=tool.id,
