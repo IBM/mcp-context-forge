@@ -3983,6 +3983,39 @@ class TestAuthenticateOrCreateUser:
         sso_service.auth_service._invalidate_user_auth_cache.assert_not_awaited()
 
     @pytest.mark.asyncio
+    async def test_cross_provider_login_refused_when_provider_unresolved(self, sso_service, mock_db):
+        """Relink is refused when the incoming provider can't be resolved, even with linking enabled.
+
+        Regression test: previously an unresolved provider (deleted, or an id-casing
+        mismatch) let the relink proceed while silently skipping the admin re-vetting
+        block, since that block only runs `if provider_ctx`, which requires a resolved
+        provider. Refusing here closes that gap.
+        """
+        existing_user = SimpleNamespace(
+            email="user@test.com",
+            full_name="User",
+            auth_provider="provider-a",
+            email_verified=True,
+            last_login=None,
+            is_admin=True,
+            admin_origin="api",
+        )
+        sso_service.auth_service._fetch_user_from_db = MagicMock(return_value=existing_user)
+        sso_service.auth_service._invalidate_user_auth_cache = AsyncMock()
+        sso_service.get_provider = lambda _id: None
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings:
+            mock_settings.sso_allow_provider_linking = True
+            result = await sso_service.authenticate_or_create_user(
+                {"email": "user@test.com", "full_name": "User", "provider": "provider-b", "email_verified": True}
+            )
+
+        assert result is None
+        assert existing_user.auth_provider == "provider-a"
+        assert existing_user.is_admin is True
+        sso_service.auth_service._invalidate_user_auth_cache.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_cross_provider_login_relinks_when_enabled(self, sso_service, mock_db):
         """With SSO_ALLOW_PROVIDER_LINKING, a verified email rebinds to the new provider."""
         existing_user = SimpleNamespace(
@@ -4051,6 +4084,43 @@ class TestAuthenticateOrCreateUser:
         assert existing_user.auth_provider == "provider-b"
         assert existing_user.is_admin is False
         assert existing_user.admin_origin is None
+
+    @pytest.mark.asyncio
+    async def test_relink_promotes_when_new_provider_grants_admin(self, sso_service, mock_db):
+        """Relinking a non-admin to a provider that vets them for admin must grant it.
+
+        Mirror of test_relink_demotes_api_origin_admin_when_new_provider_grants_no_admin:
+        the admin-sync block on relink must also grant, not just revoke.
+        """
+        existing_user = SimpleNamespace(
+            email="user@test.com",
+            full_name="User",
+            auth_provider="provider-a",
+            email_verified=True,
+            last_login=None,
+            is_admin=False,
+            admin_origin=None,
+        )
+        sso_service.auth_service._fetch_user_from_db = MagicMock(return_value=existing_user)
+        sso_service.auth_service._invalidate_user_auth_cache = AsyncMock()
+        sso_service.get_provider = lambda _id: _make_provider(id="provider-b")
+
+        with patch("mcpgateway.services.sso_service.settings") as mock_settings, patch("mcpgateway.services.sso_service.create_jwt_token", new_callable=AsyncMock) as mock_jwt:
+            mock_settings.sso_allow_provider_linking = True
+            mock_settings.sso_auto_admin_domains = ["test.com"]
+            mock_settings.sso_github_admin_orgs = []
+            mock_settings.sso_google_admin_domains = []
+            mock_settings.sso_entra_admin_groups = []
+            mock_settings.sso_entra_sync_roles_on_login = False
+            mock_jwt.return_value = "jwt-token"
+            result = await sso_service.authenticate_or_create_user(
+                {"email": "user@test.com", "full_name": "User", "provider": "provider-b", "email_verified": True}
+            )
+
+        assert result == "jwt-token"
+        assert existing_user.auth_provider == "provider-b"
+        assert existing_user.is_admin is True
+        assert existing_user.admin_origin == "sso"
 
     @pytest.mark.asyncio
     async def test_new_user_auto_create(self, sso_service, mock_db):

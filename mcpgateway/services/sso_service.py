@@ -2119,6 +2119,18 @@ class SSOService:
             if user.auth_provider and current_auth_provider != incoming_provider:
                 # Email is already verified (gated above) and within trusted-domain policy,
                 # so linking here only ever rebinds a trusted, verified identity.
+                if provider is None:
+                    # Can't re-vet admin status against a provider we can't resolve (deleted
+                    # between callback and this call, or an id-casing mismatch) — refusing here
+                    # keeps the relink admin-carryover guard (below) from being silently skipped.
+                    logger.warning(
+                        "SSO authenticate_or_create_user: refusing login for email '%s' — incoming provider '%s' could not be resolved, "
+                        "so admin status cannot be re-vetted for a relink from '%s'.",
+                        email,
+                        incoming_provider,
+                        current_auth_provider,
+                    )
+                    return None
                 if not settings.sso_allow_provider_linking:
                     logger.warning(
                         "SSO authenticate_or_create_user: login refused for email '%s' — it is bound to provider '%s' and sign-in came from '%s'. "
@@ -2185,18 +2197,24 @@ class SSOService:
 
             self.db.commit()
 
-            if provider_ctx and self._should_sync_roles(provider_id, provider_metadata):
-                role_assignments = await self._map_groups_to_roles(email, user_info.get("groups", []), provider_ctx)
-                await self._sync_user_roles(email, role_assignments, provider_ctx)
-                # Belt-and-suspenders: if role sync assigned platform_admin but is_admin is still False
-                # (e.g. user existed before the generic OIDC fix was deployed), promote now.
-                if not current_is_admin and any(ra.get("role_name") == "platform_admin" for ra in role_assignments):
-                    logger.info("Promoting is_admin for %s — platform_admin role assigned via role_mappings", SecurityValidator.sanitize_log_message(email))
-                    user.is_admin = True
-                    user.admin_origin = "sso"
-                    current_is_admin = True
-                    self.db.commit()
-            await self._apply_team_mapping(email, user_info, provider)
+            try:
+                if provider_ctx and self._should_sync_roles(provider_id, provider_metadata):
+                    role_assignments = await self._map_groups_to_roles(email, user_info.get("groups", []), provider_ctx)
+                    await self._sync_user_roles(email, role_assignments, provider_ctx)
+                    # Belt-and-suspenders: if role sync assigned platform_admin but is_admin is still False
+                    # (e.g. user existed before the generic OIDC fix was deployed), promote now.
+                    if not current_is_admin and any(ra.get("role_name") == "platform_admin" for ra in role_assignments):
+                        logger.info("Promoting is_admin for %s — platform_admin role assigned via role_mappings", SecurityValidator.sanitize_log_message(email))
+                        user.is_admin = True
+                        user.admin_origin = "sso"
+                        current_is_admin = True
+                        self.db.commit()
+                await self._apply_team_mapping(email, user_info, provider)
+            finally:
+                # Row was mutated above (auth_provider relink, last_login, is_admin sync);
+                # drop the stale cached copy so the next read reflects the committed state,
+                # even if role sync or team mapping above raised.
+                await self.auth_service._invalidate_user_auth_cache(email)  # pylint: disable=protected-access
 
             user_email = getattr(user, "email", None)
             if isinstance(user_email, str) and user_email.strip():
@@ -2204,10 +2222,6 @@ class SSOService:
             resolved_full_name = current_full_name
             resolved_auth_provider = current_auth_provider
             resolved_is_admin = current_is_admin
-
-            # Row was mutated above (auth_provider relink, last_login, is_admin sync);
-            # drop the stale cached copy so the next read reflects the committed state.
-            await self.auth_service._invalidate_user_auth_cache(email)  # pylint: disable=protected-access
         else:
             # Auto-create user if enabled
             if not provider or not provider.auto_create_users:
