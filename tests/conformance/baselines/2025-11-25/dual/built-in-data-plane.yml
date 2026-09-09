@@ -39,3 +39,11 @@ findings:
   check: tools-call-sampling
   name: ToolsCallSampling
   status: FAILURE
+- scenario: tools-call-with-logging
+  check: tools-call-with-logging
+  name: ToolsCallWithLogging
+  status: FAILURE
+- scenario: tools-call-with-progress
+  check: tools-call-with-progress
+  name: ToolsCallWithProgress
+  status: FAILURE
