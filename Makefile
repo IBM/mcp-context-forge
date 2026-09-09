@@ -8737,8 +8737,7 @@ CONFORMANCE_BASELINE_DIR := $(CURDIR)/tests/conformance/baselines
 conformance conformance-bless: export DEFAULT_USER_PASSWORD ?= $(shell python3 -c 'import secrets; print(secrets.token_urlsafe(32))')
 conformance conformance-bless: export PLATFORM_ADMIN_PASSWORD ?= $(shell python3 -c 'import secrets; print(secrets.token_urlsafe(32))')
 
-# The fixture accepts both eras so registration does not require a modern gateway.
-# Client checks still exercise each protocol version independently.
+# Cover the SDK v2 branch's legacy and modern revisions against a dual-era fixture.
 conformance conformance-bless:
 	@if ! command -v "$(CF_INTEGRATION)" >/dev/null 2>&1; then \
 		echo "cf-integration not found: install its published binary with cargo binstall or set CF_INTEGRATION to its path."; \
@@ -8755,7 +8754,8 @@ conformance conformance-bless:
 	CF_CONTROLPLANE_PULL_POLICY="$(CF_CONTROLPLANE_PULL_POLICY)" \
 	CF_COMPOSE_BUILD="$(CF_COMPOSE_BUILD)" \
 	"$(CF_INTEGRATION)" conformance run \
-		--client-era dual \
+		--client-version 2025-11-25 \
+		--client-version 2026-07-28 \
 		--server-era dual \
 		--lane builtin \
 		--baseline-dir "$(CONFORMANCE_BASELINE_DIR)" \

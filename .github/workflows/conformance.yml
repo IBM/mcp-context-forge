@@ -55,8 +55,8 @@ jobs:
       - name: Install cargo-binstall
         run: cargo install cargo-binstall --locked
 
-      - name: Install cf-integration 0.3.2 binary
-        run: cargo binstall cf-integration@0.3.2 --no-confirm
+      - name: Install cf-integration 0.3.3 binary
+        run: cargo binstall cf-integration@0.3.3 --no-confirm
 
       - name: Run legacy and modern conformance
         env:
