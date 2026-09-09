@@ -1200,6 +1200,7 @@ def _get_auth_context_batched_sync(email: str, jti: Optional[str] = None) -> Dic
         if user:
             # Detach user data as dict (session will close)
             result["user"] = {
+                "user_id": user.email,  # canonical user_id, phase-1 value = e-mail
                 "email": user.email,
                 "password_hash": user.password_hash,
                 "full_name": user.full_name,
@@ -1286,7 +1287,7 @@ def _user_from_cached_dict(user_dict: Dict[str, Any]) -> EmailUser:
     Returns:
         EmailUser instance (detached from any session)
     """
-    return EmailUser(
+    user = EmailUser(
         email=user_dict["email"],
         password_hash=user_dict.get("password_hash", ""),
         full_name=user_dict.get("full_name"),
@@ -1298,6 +1299,9 @@ def _user_from_cached_dict(user_dict: Dict[str, Any]) -> EmailUser:
         created_at=user_dict.get("created_at", datetime.now(timezone.utc)),
         updated_at=user_dict.get("updated_at", datetime.now(timezone.utc)),
     )
+    # Transient instance attribute (NOT a column): canonical user_id, phase-1 value = e-mail.
+    user.user_id = user_dict.get("user_id") or user_dict["email"]
+    return user
 
 
 class TokenValidationError(Exception):
@@ -1368,7 +1372,7 @@ def _bootstrap_platform_admin_user(email: str) -> "EmailUser":
     address, since session tokens no longer embed the is_admin claim.
     """
 
-    return EmailUser(
+    user = EmailUser(
         email=email,
         password_hash="",  # nosec B106 - not used for JWT authentication
         full_name=getattr(settings, "platform_admin_full_name", "Platform Administrator"),
@@ -1380,6 +1384,10 @@ def _bootstrap_platform_admin_user(email: str) -> "EmailUser":
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc),
     )
+    # Transient instance attribute (NOT a column): canonical user_id, phase-1 value = e-mail.
+    # Not persisted and not surviving ORM serialization; the bootstrap user is synthetic and never cached.
+    user.user_id = email
+    return user
 
 
 async def get_current_user(
@@ -2222,7 +2230,7 @@ def _inject_userinfo_instate(request: Optional[object] = None, user: Optional[Em
         team_id = getattr(request.state, "team_id", None) if request and hasattr(request, "state") else None
 
         global_context.user_context = UserContext(
-            user_id=user.email,
+            user_id=user.email,  # canonical user_id, phase-1 value = e-mail
             email=user.email,
             full_name=user.full_name,
             is_admin=user.is_admin,

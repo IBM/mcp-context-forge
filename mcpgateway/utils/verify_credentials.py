@@ -869,6 +869,7 @@ async def _authenticate_proxy_user(request: Request, proxy_user: str) -> dict:
                 "is_admin": user_info.is_admin,
                 "teams": token_teams,  # None for admin bypass, [] for public-only, or list of team IDs
                 "email": proxy_user,
+                "user_id": proxy_user,  # canonical user_id, phase-1 value = e-mail
                 # token_use: "session" signals DB-backed team resolution to downstream dispatchers
                 # (main.py:2870, streamablehttp_transport.py:1998) so they route via resolve_session_teams
                 # rather than treating the proxy payload as an API-token payload with embedded teams.
@@ -886,6 +887,7 @@ async def _authenticate_proxy_user(request: Request, proxy_user: str) -> dict:
                     "is_admin": True,
                     "teams": None,  # Admin bypass
                     "email": proxy_user,
+                    "user_id": proxy_user,  # canonical user_id, phase-1 value = e-mail
                     "token_use": "session",  # nosec B105 - Not a password; JWT claim type
                 }
             else:
@@ -2282,6 +2284,7 @@ async def build_external_identity(provider: SSOProvider, verified_claims: dict, 
     payload: dict = {
         "sub": email,
         "email": email,
+        "user_id": email,  # canonical user_id, phase-1 value = e-mail
         "token": token,
         "token_use": "session",  # nosec B105 - JWT claim type, not a password
         "source": "external_idp",  # audit/telemetry only -- never drives authz
