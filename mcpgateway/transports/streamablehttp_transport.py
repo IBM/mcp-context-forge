@@ -2287,8 +2287,9 @@ async def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
     """Normalize a raw JWT payload to the canonical user context shape.
 
     Converts raw JWT fields (sub, token_use, nested user.is_admin) into the
-    canonical ``{email, teams, is_admin, is_authenticated, token_use}`` dict that MCP
-    handlers expect.  This mirrors the normalization performed by
+    canonical ``{email, user_id, teams, is_admin, is_authenticated, token_use}`` dict that MCP
+    handlers expect.  ``user_id`` is the canonical identity; its phase-1 value equals the e-mail.
+    This mirrors the normalization performed by
     ``streamable_http_auth`` so that the stateful-session fallback path in
     ``_get_request_context_or_default`` returns an identical shape.
 
@@ -2296,7 +2297,7 @@ async def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
         payload: Raw JWT payload dict from ``require_auth_header_first``.
 
     Returns:
-        Canonical user context dict with keys email, teams, is_admin, is_authenticated, token_use.
+        Canonical user context dict with keys email, user_id, teams, is_admin, is_authenticated, token_use.
     """
     email = await _resolve_jwt_user_email_for_streamable(payload)
     jwt_is_admin = payload.get("is_admin", False)
@@ -2411,6 +2412,7 @@ async def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
                                 user=(
                                     {
                                         "email": getattr(user_record, "email", email),
+                                        "user_id": getattr(user_record, "email", email),  # canonical user_id, phase-1 value = e-mail
                                         "password_hash": getattr(user_record, "password_hash", ""),
                                         "full_name": getattr(user_record, "full_name", None),
                                         "is_admin": bool(getattr(user_record, "is_admin", False)),
@@ -2459,6 +2461,7 @@ async def _normalize_jwt_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
     user_ctx: dict[str, Any] = {
         "email": email,
+        "user_id": email,  # canonical user_id, phase-1 value = e-mail
         "teams": final_teams,
         "is_admin": effective_is_admin,
         "is_authenticated": True,
@@ -5461,6 +5464,7 @@ class _StreamableHttpAuthHandler:
                                     user=(
                                         {
                                             "email": user_record.email,
+                                            "user_id": user_record.email,  # canonical user_id, phase-1 value = e-mail
                                             "password_hash": user_record.password_hash,
                                             "full_name": user_record.full_name,
                                             "is_admin": bool(user_record.is_admin),
