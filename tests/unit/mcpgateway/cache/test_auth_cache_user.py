@@ -165,3 +165,55 @@ class TestGetUser:
         stats = cache.stats()
         assert "user_cache_size" in stats
         assert stats["user_cache_size"] == 1
+
+
+@pytest.mark.asyncio
+async def test_auth_context_key_uses_user_id_identity(monkeypatch):
+    """get_current_user keys the auth-context cache by canonical user_id, not raw e-mail (issue #5891)."""
+    # Standard
+    from datetime import datetime, timedelta, timezone
+    from types import SimpleNamespace
+
+    # Third-Party
+    from fastapi.security import HTTPAuthorizationCredentials
+
+    # First-Party
+    from mcpgateway.auth import get_current_user
+    from mcpgateway.config import settings
+    from mcpgateway.db import EmailUser
+
+    credentials = HTTPAuthorizationCredentials(scheme="Bearer", credentials="valid_jwt_token")  # pragma: allowlist secret
+    jwt_payload = {
+        "sub": "e@x.test",
+        "exp": (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp(),
+        "user": {"user_id": "u-1", "email": "e@x.test", "is_admin": False, "auth_provider": "local"},
+    }
+
+    mock_user = EmailUser(
+        email="e@x.test",
+        password_hash="hash",  # pragma: allowlist secret
+        full_name="Test User",
+        is_admin=False,
+        is_active=True,
+        email_verified_at=datetime.now(timezone.utc),
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc),
+    )
+
+    get_auth_context_spy = AsyncMock(return_value=None)  # cache miss: fall through to the DB path
+
+    monkeypatch.setattr(settings, "auth_cache_enabled", True)
+    monkeypatch.setattr(settings, "auth_cache_batch_queries", False)
+
+    request = SimpleNamespace(state=SimpleNamespace())
+    with patch("mcpgateway.auth.verify_jwt_token_cached", AsyncMock(return_value=jwt_payload)):
+        with patch("mcpgateway.cache.auth_cache.auth_cache.get_auth_context", get_auth_context_spy):
+            with patch("mcpgateway.auth._check_token_revoked_sync", return_value=False):
+                with patch("mcpgateway.auth._is_api_token_jti_sync", return_value=True):
+                    with patch("mcpgateway.auth._update_api_token_last_used_sync", return_value=None):
+                        with patch("mcpgateway.auth._get_user_by_email_sync", return_value=mock_user):
+                            with patch("mcpgateway.auth._get_personal_team_sync", return_value=None):
+                                await get_current_user(credentials=credentials, request=request)
+
+    get_auth_context_spy.assert_awaited_once()
+    assert get_auth_context_spy.await_args.args[0] == "u-1"
