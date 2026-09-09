@@ -58,7 +58,8 @@ def is_user_admin(db: Optional[Session], user_email: Optional[str]) -> bool:
         db: Active SQLAlchemy session.  ``None`` returns ``False`` after
             the platform-admin fast-path — the DB check cannot run without
             a session (fail-closed).
-        user_email: Email to test.  ``None`` or empty returns ``False``
+        user_email: Canonical user_id to test. The phase-1 value is the
+            e-mail. ``None`` or empty returns ``False``
             immediately (no identity → no admin).
 
     Returns:
