@@ -501,3 +501,66 @@ async def test_acquire_upstream_session_falls_back_to_mcp_proxy_client_without_d
     service = CompletionService()
     async with service._acquire_upstream_session(_FakeGateway()) as session:
         assert session is fake_client.session
+
+
+# ---------------------------------------------------------------------------
+# Task 3: _error_from_upstream() and _forward_completion_upstream()
+# ---------------------------------------------------------------------------
+
+from mcp import MCPError as McpError  # noqa: E402
+from mcp.types import PromptReference  # noqa: E402
+
+
+def test_error_from_upstream_maps_known_codes():
+    err = McpError(code=-32602, message="unknown prompt")
+    result = CompletionService._error_from_upstream(err, "gw-1")
+    assert isinstance(result, CompletionInvalidParamsError)
+    assert "gw-1" in str(result)
+
+
+def test_error_from_upstream_defaults_unknown_code_to_internal():
+    err = McpError(code=-32000, message="weird")
+    assert isinstance(CompletionService._error_from_upstream(err, "gw-1"), CompletionInternalError)
+
+
+def _patch_upstream(monkeypatch, session):
+    @asynccontextmanager
+    async def _fake_acquire(self, gateway):
+        yield session
+
+    monkeypatch.setattr(CompletionService, "_acquire_upstream_session", _fake_acquire)
+
+
+@pytest.mark.asyncio
+async def test_forward_completion_upstream_uses_has_more_snake_case_attribute(monkeypatch):
+    from mcp_types._types import Completion, CompleteResult as SdkCompleteResult
+
+    real_completion = Completion(values=["a", "b"], total=5, has_more=True)
+
+    async def fake_complete(ref, argument, context_arguments=None):
+        return SdkCompleteResult(completion=real_completion)
+
+    session = SimpleNamespace(
+        server_capabilities=SimpleNamespace(completions=object()),
+        complete=fake_complete,
+    )
+    _patch_upstream(monkeypatch, session)
+
+    service = CompletionService()
+    result = await service._forward_completion_upstream(_FakeGateway(), PromptReference(type="ref/prompt", name="p"), {"name": "arg", "value": ""})
+    # Regression guard for spec §2 row 11: a fake that returns a real SDK
+    # Completion (has_more=True) must round-trip hasMore=True, not silently
+    # become False/None because the service read the wrong attribute name.
+    assert result.completion["hasMore"] is True
+    assert result.completion["total"] == 5
+    assert result.completion["values"] == ["a", "b"]
+
+
+@pytest.mark.asyncio
+async def test_forward_completion_upstream_raises_not_supported_without_capability(monkeypatch):
+    session = SimpleNamespace(server_capabilities=SimpleNamespace(completions=None))
+    _patch_upstream(monkeypatch, session)
+
+    service = CompletionService()
+    with pytest.raises(CompletionNotSupportedError):
+        await service._forward_completion_upstream(_FakeGateway(), PromptReference(type="ref/prompt", name="p"), {"name": "arg", "value": ""})
