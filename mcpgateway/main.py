@@ -178,7 +178,13 @@ from mcpgateway.schemas import (
 from mcpgateway.services.a2a_server_service import A2AServerService
 from mcpgateway.services.a2a_service import A2AAgentError, A2AAgentNameConflictError, A2AAgentNotFoundError, A2AAgentService
 from mcpgateway.services.cancellation_service import cancellation_service
-from mcpgateway.services.completion_service import CompletionError, CompletionService
+from mcpgateway.services.completion_service import (
+    CompletionError,
+    CompletionInvalidParamsError,
+    CompletionNotSupportedError,
+    CompletionService,
+    completion_error_code,
+)
 from mcpgateway.services.content_security import ContentPatternError, ContentSizeError, ContentTypeError, TemplateValidationError
 from mcpgateway.services.dataplane_publisher import DataplanePublisherService
 from mcpgateway.services.email_auth_service import EmailAuthService
@@ -4114,7 +4120,11 @@ async def handle_completion(request: Request, db: Session = Depends(get_db), use
     try:
         return await completion_service.handle_completion(db, body, user_email=user_email, token_teams=token_teams)
     except CompletionError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+        # CompletionInvalidParamsError / CompletionNotSupportedError both read
+        # naturally as "bad request"; anything else (CompletionInternalError,
+        # or an unclassified CompletionError) is an upstream/internal failure.
+        status = 400 if isinstance(exc, (CompletionInvalidParamsError, CompletionNotSupportedError)) else 500
+        raise HTTPException(status_code=status, detail=str(exc)) from exc
 
 
 @protocol_router.post("/sampling/createMessage")
@@ -11847,7 +11857,7 @@ async def _handle_rpc_authenticated(request: Request, db: Session, user):
             try:
                 result = await completion_service.handle_completion(db, params, user_email=user_email, token_teams=token_teams)
             except CompletionError as e:
-                raise JSONRPCError(-32602, str(e)) from e
+                raise JSONRPCError(completion_error_code(e), str(e)) from e
         elif method.startswith("completion/"):
             # Catch-all for other completion/* methods (currently unsupported)
             result = {}
