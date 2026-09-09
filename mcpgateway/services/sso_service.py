@@ -2178,9 +2178,7 @@ class SSOService:
                     # Do NOT change admin_origin if already admin - preserve manual/API grants
                 elif current_is_admin and (current_admin_origin == "sso" or provider_relinked):
                     # No longer in admin groups, or relinked to a provider that doesn't grant admin.
-                    logger.warning(
-                        "Revoking is_admin for %s (admin_origin=%s, relinked=%s)", SecurityValidator.sanitize_log_message(email), current_admin_origin, provider_relinked
-                    )
+                    logger.warning("Revoking is_admin for %s (admin_origin=%s, relinked=%s)", SecurityValidator.sanitize_log_message(email), current_admin_origin, provider_relinked)
                     user.is_admin = False
                     user.admin_origin = None
                     current_is_admin = False
