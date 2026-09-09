@@ -610,8 +610,14 @@ class CompletionService:
         arg_value: str,
         user_email: Optional[str] = None,
         token_teams: Optional[List[str]] = None,
+        arg_name: Optional[str] = None,
+        context: Optional[Dict[str, Any]] = None,
     ) -> CompleteResult:
         """Complete resource URI.
+
+        Federated resource *templates* are completed by their owning
+        upstream; plain (non-template) resources are never forwarded — only
+        rows with a non-null ``uri_template`` are forwarding candidates.
 
         Args:
             db: Database session
@@ -619,15 +625,20 @@ class CompletionService:
             arg_value: Current URI value
             user_email: Caller email used for owner/team visibility checks
             token_teams: Normalized token teams (`None` admin bypass, `[]` public-only, list for team scope)
+            arg_name: Argument name being completed (forwarded to the
+                upstream for a federated resource template; defaults to
+                ``"uri"`` when not supplied).
+            context: Optional completion context (``{"arguments": {...}}``)
+                forwarded to a federated resource template's upstream.
 
         Returns:
             URI completion suggestions
 
         Raises:
-            CompletionError: If URI template is missing
+            CompletionInvalidParamsError: If URI template is missing
 
         Examples:
-            >>> from mcpgateway.services.completion_service import CompletionService, CompletionError
+            >>> from mcpgateway.services.completion_service import CompletionService, CompletionInvalidParamsError
             >>> from unittest.mock import MagicMock
             >>> import asyncio
             >>> service = CompletionService()
@@ -637,17 +648,18 @@ class CompletionService:
             >>> ref = {}
             >>> try:
             ...     asyncio.run(service._complete_resource_uri(db, ref, 'test'))
-            ... except CompletionError as e:
+            ... except CompletionInvalidParamsError as e:
             ...     str(e)
             'Missing URI template'
 
-            >>> # Test resource filtering
+            >>> # Test resource filtering (no federated owner -> local listing)
             >>> ref = {'uri': 'template://'}
             >>> mock_resources = [
             ...     MagicMock(uri='file://doc1.txt'),
             ...     MagicMock(uri='file://doc2.txt'),
             ...     MagicMock(uri='http://example.com')
             ... ]
+            >>> db.execute.return_value.scalar_one_or_none.return_value = None
             >>> db.execute.return_value.scalars.return_value.all.return_value = mock_resources
             >>> result = asyncio.run(service._complete_resource_uri(db, ref, 'doc'))
             >>> len(result.completion['values'])
@@ -658,10 +670,24 @@ class CompletionService:
         # Get base URI template
         uri_template = ref.get("uri")
         if not uri_template:
-            raise CompletionError("Missing URI template")
+            raise CompletionInvalidParamsError("Missing URI template")
+
+        team_ids = await self._resolve_team_ids(db, user_email, token_teams)
+
+        owner_stmt = select(DbResource).where(DbResource.enabled).where(DbResource.uri_template.is_not(None)).where(DbResource.uri_template == uri_template)  # pylint: disable=comparison-with-callable
+        owner_stmt = self._apply_visibility_scope(owner_stmt, DbResource, user_email=user_email, token_teams=token_teams, team_ids=team_ids, db=db)
+        owner_stmt = owner_stmt.order_by(desc(DbResource.created_at), desc(DbResource.id)).limit(1)
+        owning_resource = db.execute(owner_stmt).scalar_one_or_none()
+
+        if owning_resource is not None and self._is_federated(owning_resource):
+            return await self._forward_completion_upstream(
+                getattr(owning_resource, "gateway", None),
+                ResourceTemplateReference(type="ref/resource", uri=uri_template),
+                {"name": arg_name or "uri", "value": arg_value},
+                context,
+            )
 
         # List matching resources visible to caller
-        team_ids = await self._resolve_team_ids(db, user_email, token_teams)
         stmt = select(DbResource).where(DbResource.enabled)
         stmt = self._apply_visibility_scope(stmt, DbResource, user_email=user_email, token_teams=token_teams, team_ids=team_ids, db=db)
         resources = db.execute(stmt).scalars().all()

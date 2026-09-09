@@ -68,6 +68,15 @@ class FakeScalarsAllResult:
     def all(self):
         return self._values
 
+    def scalar_one_or_none(self):
+        # Task 5 adds a template-owner lookup (`.scalar_one_or_none()`)
+        # ahead of the plain-listing query these pre-#6629 fixtures exercise.
+        # None here means "no federated resource-template owner row found",
+        # which is the correct default for fixtures that never set
+        # gateway_id/uri_template — the code then falls through to the
+        # existing plain-listing behavior these tests assert on.
+        return None
+
 
 class DummyPrompt:
     def __init__(self, name, argument_schema):
@@ -659,3 +668,58 @@ async def test_local_prompt_completion_still_answered_locally(monkeypatch):
     service = CompletionService()
     result = await service._complete_prompt_argument(db, {"name": "local-prompt"}, "color", "b")
     assert result.completion["values"] == ["blue"]
+
+
+# ---------------------------------------------------------------------------
+# Task 5: _complete_resource_uri() — federated dispatch (template-only match)
+# ---------------------------------------------------------------------------
+
+
+class _DummyResourceForForwarding:
+    def __init__(self, uri, uri_template=None, gateway_id=None, gateway=None):
+        self.uri = uri
+        self.uri_template = uri_template
+        self.gateway_id = gateway_id
+        self.gateway = gateway
+
+
+class _DummyGatewayForResourceForwarding:
+    id = "gw-1"
+
+
+def _db_resource(owner=None, scalars_all=None):
+    db = MagicMock()
+    db.execute.return_value.scalar_one_or_none.return_value = owner
+    db.execute.return_value.scalars.return_value.all.return_value = scalars_all or []
+    return db
+
+
+@pytest.mark.asyncio
+async def test_federated_resource_template_is_forwarded(monkeypatch):
+    gateway = _DummyGatewayForResourceForwarding()
+    owner = _DummyResourceForForwarding("file://tmpl", uri_template="template://", gateway_id="gw-1", gateway=gateway)
+    db = _db_resource(owner=owner)
+
+    async def fake_forward(self, gw, ref, argument, context=None):
+        assert gw is gateway
+        return SimpleNamespace(completion={"values": ["x"], "total": 1, "hasMore": False})
+
+    monkeypatch.setattr(CompletionService, "_forward_completion_upstream", fake_forward)
+    service = CompletionService()
+    result = await service._complete_resource_uri(db, {"uri": "template://"}, "x")
+    assert result.completion["values"] == ["x"]
+
+
+@pytest.mark.asyncio
+async def test_federated_plain_resource_is_not_forwarded(monkeypatch):
+    # No owning DbResource row with a matching uri_template -> local listing answers.
+    db = _db_resource(owner=None, scalars_all=[_DummyResourceForForwarding("file://doc1.txt"), _DummyResourceForForwarding("file://doc2.txt")])
+
+    def fail_forward(*a, **kw):
+        raise AssertionError("must not forward when no uri_template owner matches")
+
+    monkeypatch.setattr(CompletionService, "_forward_completion_upstream", fail_forward)
+    service = CompletionService()
+    result = await service._complete_resource_uri(db, {"uri": "template://"}, "doc")
+    assert len(result.completion["values"]) == 2
+    assert result.completion["values"] == ["file://doc1.txt", "file://doc2.txt"]
