@@ -879,7 +879,7 @@ mcpContextForge:
     PASSWORD_REQUIRE_NUMBERS: "false"      # require numbers in passwords
     PASSWORD_REQUIRE_SPECIAL: "true"       # require special characters in passwords
     PASSWORD_CHANGE_ENFORCEMENT_ENABLED: "true" # enable password change enforcement checks
-    ADMIN_REQUIRE_PASSWORD_CHANGE_ON_BOOTSTRAP: "true" # force admin to change password after bootstrap
+    ADMIN_REQUIRE_PASSWORD_CHANGE_ON_BOOTSTRAP: "true" # force admin to change password after bootstrap (only applies when PLATFORM_ADMIN_PASSWORD equals DEFAULT_USER_PASSWORD)
     DETECT_DEFAULT_PASSWORD_ON_LOGIN: "true" # detect default passwords on login
     REQUIRE_PASSWORD_CHANGE_FOR_DEFAULT_PASSWORD: "true" # require change for default password
     PASSWORD_POLICY_ENABLED: "true"         # enable password policy enforcement

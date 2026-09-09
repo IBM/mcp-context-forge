@@ -28,6 +28,7 @@ Examples:
 # Standard
 import asyncio
 from contextlib import contextmanager
+import hmac
 from importlib.resources import files
 import json
 import os
@@ -276,42 +277,52 @@ async def bootstrap_admin_user(conn: Connection) -> None:
         with Session(bind=conn) as db:
             auth_service = EmailAuthService(db)
 
-            # Check if admin user already exists
-            existing_user = await auth_service.get_user_by_email(settings.platform_admin_email)
-            if existing_user:
-                logger.info(f"Admin user {SecurityValidator.sanitize_log_message(settings.platform_admin_email)} already exists - skipping creation")
-                return
+            is_new_user = not await auth_service.get_user_by_email(settings.platform_admin_email)
+            if is_new_user:
+                logger.info(f"Creating platform admin user: {SecurityValidator.sanitize_log_message(settings.platform_admin_email)}")
+            else:
+                logger.info(f"Admin user {SecurityValidator.sanitize_log_message(settings.platform_admin_email)} exists; re-evaluating bootstrap flags")
 
-            # Create admin user
-            logger.info(f"Creating platform admin user: {SecurityValidator.sanitize_log_message(settings.platform_admin_email)}")
             admin_user = await auth_service.create_platform_admin(
                 email=settings.platform_admin_email,
                 password=settings.platform_admin_password.get_secret_value(),
                 full_name=settings.platform_admin_full_name,
             )
 
-            # Mark admin user as email verified
             # First-Party
             from mcpgateway.db import utc_now  # pylint: disable=import-outside-toplevel
 
-            admin_user.email_verified_at = utc_now()
+            if is_new_user:
+                admin_user.email_verified_at = utc_now()
+
+            # Evaluate forced-change flag for both new and existing admins so that:
+            # - operators who set PLATFORM_ADMIN_PASSWORD after being locked out are unblocked on restart
+            # - the Helm "Method 1" recovery (update values.yaml + helm upgrade) works as documented
             _enforcement_on = getattr(settings, "password_change_enforcement_enabled", True)
             _bootstrap_flag = getattr(settings, "admin_require_password_change_on_bootstrap", True)
-            if _enforcement_on and _bootstrap_flag:
-                _using_default_pwd = settings.platform_admin_password.get_secret_value() == settings.default_user_password.get_secret_value()
-                if _using_default_pwd:
-                    admin_user.password_change_required = True
-                    logger.warning("Admin bootstrapped with the default password; password change required on first login.")
-                else:
-                    logger.info("Custom PLATFORM_ADMIN_PASSWORD detected; skipping forced password-change flag.")
-            try:
-                admin_user.password_changed_at = utc_now()
-            except Exception as exc:
-                logger.debug("Failed to set admin password_changed_at: %s", exc)
+            _admin_pwd = settings.platform_admin_password.get_secret_value()
+            _default_pwd = settings.default_user_password.get_secret_value()
+            _using_default_pwd = hmac.compare_digest(_admin_pwd, _default_pwd)
+
+            if _enforcement_on and _bootstrap_flag and _using_default_pwd:
+                admin_user.password_change_required = True
+                logger.warning("Admin bootstrapped with the default password; password change required on first login.")
+            elif admin_user.password_change_required:
+                # Custom password supplied — clear any stale flag from a previous default-password boot
+                admin_user.password_change_required = False
+                logger.info("Custom PLATFORM_ADMIN_PASSWORD detected; cleared stale password-change flag.")
+            else:
+                logger.info("Custom PLATFORM_ADMIN_PASSWORD detected; skipping forced password-change flag.")
+
+            if is_new_user:
+                try:
+                    admin_user.password_changed_at = utc_now()
+                except Exception as exc:
+                    logger.debug("Failed to set admin password_changed_at: %s", exc)
+
             db.commit()
 
-            # Personal team is automatically created during user creation if enabled
-            if settings.auto_create_personal_teams:
+            if is_new_user and settings.auto_create_personal_teams:
                 logger.info("Personal team automatically created for admin user")
 
             db.commit()
