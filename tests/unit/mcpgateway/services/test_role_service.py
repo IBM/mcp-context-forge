@@ -1039,3 +1039,46 @@ class TestComplexScenarios:
 
                     assert result == new_assignment
                     mock_db.add.assert_called_once()
+
+
+class TestAssignRoleCanonicalKeying:
+    """Writer re-keying: assign_role_to_user stores the canonical user_id (#5893)."""
+
+    @staticmethod
+    async def _create_diverged_user(db, email: str, user_id: str):
+        """Create a diverged user (user_id != email) through the writer path."""
+        # First-Party
+        from mcpgateway.services.email_auth_service import EmailAuthService
+
+        auth_service = EmailAuthService(db)
+        return await auth_service.create_user(email=email, password="", user_id=user_id, skip_password_validation=True, skip_onboarding=True)
+
+    @pytest.mark.asyncio
+    async def test_assign_role_stores_canonical_user_id(self, test_db):
+        """A diverged user's role assignment is keyed by user_id, and a second call dedupes against that row."""
+        suffix = uuid.uuid4().hex[:8]
+        email = f"dev-{suffix}@example.com"
+        await self._create_diverged_user(test_db, email, "idp-123")
+
+        role = Role(
+            id=str(uuid.uuid4()),
+            name=f"canonical-role-{suffix}",
+            scope="global",
+            permissions=["tools.read"],
+            created_by=email,
+            is_system_role=False,
+            is_active=True,
+        )
+        test_db.add(role)
+        test_db.commit()
+
+        service = RoleService(test_db)
+        assignment = await service.assign_role_to_user(user_email=email, role_id=role.id, scope="global", scope_id=None, granted_by=email)
+
+        assert assignment.user_email == "idp-123"
+
+        # Second call dedupes against the canonical-keyed row: no duplicate insert.
+        with pytest.raises(ValueError, match="already has this role"):
+            await service.assign_role_to_user(user_email=email, role_id=role.id, scope="global", scope_id=None, granted_by=email)
+
+        assert test_db.query(UserRole).filter(UserRole.role_id == role.id).count() == 1
