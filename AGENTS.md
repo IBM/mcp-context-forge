@@ -230,14 +230,16 @@ The derived triple is memoized on `request.state` per principal, so calling the 
 - **OAuth token delegation**: `docs/docs/architecture/oauth-design.md`
 ### User Identity Extraction
 
-**Canonical Email Precedence**: All user-email extraction helpers use a consistent **email-over-sub** precedence order to ensure forensic accuracy across visibility checks and audit logs:
+**Canonical User Identity**: `get_user_id()` in `mcpgateway/auth_context.py` returns the canonical user identity. The e-mail address is a mutable attribute of the user account, not the identity. `get_user_email()` remains the e-mail-attribute accessor:
 
-- When a user dict contains both `email` and `sub` keys, `email` takes precedence
-- The canonical implementation is `get_user_email()` in `mcpgateway/auth_context.py`
-- All other helpers (including `admin.get_user_email`) re-export or delegate to this canonical implementation
+- `get_user_id()` resolves `user_id` first, then `email`, then `sub`, then `"unknown"`
+- `get_user_email()` resolves the e-mail attribute; when a user dict contains both `email` and `sub` keys, `email` takes precedence
+- All other helpers (including `admin.get_user_email`) re-export or delegate to these canonical implementations
 - This ensures that the identity used for RBAC evaluation matches the identity logged in audit trails
+- Phase 1 populates the canonical user_id with the e-mail value; later stories separate them
+- The token-type-to-identity mapping contract is `docs/docs/architecture/identity-domains.md`
 
-**Rationale**: The `email` field is the human-readable identifier used throughout AGENTS.md and user-facing documentation. Consistent precedence prevents forensic confusion where an incident review pivots on a logged email that differs from the principal actually evaluated by RBAC.
+**Rationale**: The e-mail field is the human-readable identifier used throughout AGENTS.md and user-facing documentation, but it is an attribute that can change. A single canonical identity accessor prevents forensic confusion where an incident review pivots on a logged e-mail that differs from the principal actually evaluated by RBAC.
 
 **Two accessors**: `get_user_email()` in `mcpgateway/auth_context.py` is the e-mail-attribute accessor. `get_user_id()` in the same module is the identity accessor. Phase 1 populates both with the same value. Audit (`AuditTrail.user_id`) and observability (`ObservabilityTrace.user_email`) identity fields hold the canonical user_id from `get_user_id()`; the column names stay unchanged for compatibility.
 
