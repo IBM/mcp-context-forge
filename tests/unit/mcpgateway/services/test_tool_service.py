@@ -2198,6 +2198,35 @@ class TestToolService:
         assert "Tool 'test_tool' exists but is inactive" in str(exc_info.value)
 
     @pytest.mark.asyncio
+    async def test_invoke_tool_rejects_arguments_failing_input_schema(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """Arguments missing a required input_schema property must raise ToolInvocationError
+        before dispatch (#5629) -- shared with preview_tool_invocation via
+        _resolve_tool_for_invocation / _validate_tool_input_arguments so the two paths can
+        never disagree about whether given arguments are acceptable."""
+        mock_tool.input_schema = {"type": "object", "properties": {"param": {"type": "string"}}, "required": ["param"]}
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+
+        with pytest.raises(ToolInvocationError, match="'param' is a required property"):
+            await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
+
+    @pytest.mark.asyncio
+    async def test_invoke_tool_and_preview_agree_on_schema_validation(self, tool_service, mock_tool, mock_global_config_obj, test_db):
+        """Same-input parity (#5629 acceptance criteria): given the same tool and the same
+        invalid arguments, invoke_tool and preview_tool_invocation must agree that the
+        arguments are rejected -- one raising, the other reporting -- rather than one
+        silently accepting what the other rejects."""
+        mock_tool.input_schema = {"type": "object", "properties": {"param": {"type": "string"}}, "required": ["param"]}
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+        preview_result = await tool_service.preview_tool_invocation(test_db, "test_tool", {})
+        assert preview_result.validated is False
+        assert any(w.code == "invalid_arguments" for w in preview_result.warnings)
+
+        setup_db_execute_mock(test_db, mock_tool, mock_global_config_obj)
+        with pytest.raises(ToolInvocationError):
+            await tool_service.invoke_tool(test_db, "test_tool", {}, request_headers=None)
+
+    @pytest.mark.asyncio
     async def test_invoke_tool_rest_get(self, tool_service, mock_tool, mock_global_config_obj, test_db):
         # ----------------  DB  -----------------
         mock_tool.integration_type = "REST"
@@ -6604,6 +6633,105 @@ class TestSchemaValidatorCaching:
         # Invalid instance
         with pytest.raises(jsonschema.ValidationError):
             _validate_with_cached_schema({"foo": 123}, schema)
+
+
+class TestValidateToolInputArguments:
+    """Tests for _validate_tool_input_arguments, shared by invoke_tool and
+    preview_tool_invocation via _resolve_tool_for_invocation (#5629)."""
+
+    def test_no_schema_returns_none(self):
+        # First-Party
+        from mcpgateway.services.tool_service import _validate_tool_input_arguments
+
+        assert _validate_tool_input_arguments({"anything": "goes"}, None) is None
+        assert _validate_tool_input_arguments({"anything": "goes"}, {}) is None
+
+    def test_valid_arguments_return_none(self):
+        # First-Party
+        from mcpgateway.services.tool_service import _validate_tool_input_arguments
+
+        schema = {"type": "object", "properties": {"foo": {"type": "string"}}, "required": ["foo"]}
+        assert _validate_tool_input_arguments({"foo": "bar"}, schema) is None
+
+    def test_invalid_arguments_return_error_message(self):
+        # First-Party
+        from mcpgateway.services.tool_service import _validate_tool_input_arguments
+
+        schema = {"type": "object", "properties": {"foo": {"type": "string"}}, "required": ["foo"]}
+        error = _validate_tool_input_arguments({}, schema)
+
+        assert error is not None
+        assert "required property" in error
+
+
+class TestSchemaReferenceIsolation:
+    """Tool input/output schemas are tool-controlled (a federated tool ships its own), and
+    jsonschema's default registry fetches remote ``$ref`` URIs over the network. Validation
+    must never make that request -- it would be an SSRF primitive reachable from the preview
+    route and every live invocation."""
+
+    @pytest.mark.parametrize(
+        "schema",
+        [
+            {"type": "object", "properties": {"foo": {"$ref": "http://169.254.169.254/latest/meta-data/"}}},
+            {"type": "object", "properties": {"foo": {"$ref": "https://attacker.example.com/schema.json"}}},
+            {"type": "object", "properties": {"foo": {"$ref": "file:///etc/passwd"}}},
+            # Nested well below the root, where a shallow check would miss it.
+            {"type": "object", "properties": {"foo": {"allOf": [{"items": {"$ref": "http://internal.example/s.json"}}]}}},
+            # Relative ref resolved against an absolute $id base is still a network fetch.
+            {"$id": "https://attacker.example.com/base.json", "type": "object", "properties": {"foo": {"$ref": "sibling.json"}}},
+            {"type": "object", "properties": {"foo": {"$dynamicRef": "https://attacker.example.com/d.json"}}},
+            {"type": "object", "properties": {"foo": {"$recursiveRef": "https://attacker.example.com/r.json"}}},
+        ],
+    )
+    def test_non_local_refs_are_refused(self, schema):
+        """Every non-local reference keyword is rejected, wherever it sits in the schema."""
+        # First-Party
+        from mcpgateway.services.tool_service import _validate_tool_input_arguments
+
+        error = _validate_tool_input_arguments({"foo": "bar"}, schema)
+
+        assert error is not None
+        assert "non-local" in error
+
+    def test_no_network_call_is_attempted_for_remote_ref(self, monkeypatch):
+        """Belt and braces: nothing reaches urlopen, which is how jsonschema's default
+        registry retrieves a remote reference."""
+        # Standard
+        import urllib.request
+
+        def _fail(*_args, **_kwargs):
+            raise AssertionError("schema validation attempted a network fetch")
+
+        monkeypatch.setattr(urllib.request, "urlopen", _fail)
+
+        # First-Party
+        from mcpgateway.services.tool_service import _validate_tool_input_arguments
+
+        schema = {"type": "object", "properties": {"foo": {"$ref": "http://169.254.169.254/latest/meta-data/"}}}
+        assert _validate_tool_input_arguments({"foo": "bar"}, schema) is not None
+
+    def test_unresolvable_local_ref_fails_closed(self):
+        """A dangling same-document pointer is reported as a validation failure, not raised
+        past the caller and not resolved by reaching outside the document."""
+        # First-Party
+        from mcpgateway.services.tool_service import _validate_tool_input_arguments
+
+        schema = {"type": "object", "properties": {"foo": {"$ref": "#/$defs/missing"}}}
+        error = _validate_tool_input_arguments({"foo": "bar"}, schema)
+
+        assert error is not None
+        assert "does not exist" in error
+
+    def test_local_refs_still_validate_normally(self):
+        """The guard must not break the legitimate case: same-document $refs still resolve."""
+        # First-Party
+        from mcpgateway.services.tool_service import _validate_tool_input_arguments
+
+        schema = {"type": "object", "properties": {"foo": {"$ref": "#/$defs/name"}}, "required": ["foo"], "$defs": {"name": {"type": "string"}}}
+
+        assert _validate_tool_input_arguments({"foo": "bar"}, schema) is None
+        assert "is not of type 'string'" in (_validate_tool_input_arguments({"foo": 123}, schema) or "")
 
 
 class TestCorrelationIdPoolExclusion:
