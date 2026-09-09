@@ -473,7 +473,17 @@ make embedded-down
 
 ### 6.4 Web UI verification
 
-Verify the standalone ContextForge Web UI (`web_ui` + `web_ui_redis`) starts and communicates with the gateway under the `ui` profile:
+The `web_ui` service is pinned to a specific released tag of
+[contextforge-web-ui](https://github.com/contextforge-org/contextforge-web-ui) via
+the `WEB_UI_IMAGE` default in `docker-compose.yml` (and the commented example in
+`.env.example`) — never `latest`. As part of each release:
+
+1. Check the latest published release tag of `contextforge-web-ui` (GitHub releases
+   or `ghcr.io/contextforge-org/contextforge-web-ui` tags).
+2. Update the `WEB_UI_IMAGE` default in `docker-compose.yml` and the example in
+   `.env.example` to that version.
+3. Verify the new pinned version starts and communicates with the gateway under the
+   `ui` profile:
 
 ```bash
 docker compose --profile ui up -d

@@ -1194,7 +1194,7 @@ services:
   # Web UI - BFF-style frontend for the gateway API
   # ──────────────────────────────────────────────────────────────────────
   web_ui:
-    image: ${WEB_UI_IMAGE:-ghcr.io/contextforge-org/contextforge-web-ui:latest}
+    image: ${WEB_UI_IMAGE:-ghcr.io/contextforge-org/contextforge-web-ui:0.2.1}
     restart: unless-stopped
     ports:
       # Host and container port tied together on purpose - the image reads
