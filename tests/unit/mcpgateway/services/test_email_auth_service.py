@@ -601,3 +601,58 @@ async def test_ensure_user_exists_normalizes_email(email_auth_service):
         assert user == mock_user
         # Should be called with the normalized email
         mock_get.assert_called_once_with("user@example.com")
+
+
+# ---------- user_id Provisioning Tests (#5893) ----------
+
+
+@pytest.mark.asyncio
+async def test_create_user_defaults_user_id_to_email(email_auth_service, mock_db):
+    """create_user stores user_id equal to the normalized e-mail by default."""
+    with patch.object(email_auth_service, "get_user_by_email", return_value=None):
+        with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
+            mock_settings.password_min_length = 8
+
+            user = await email_auth_service.create_user(
+                email="dev@example.com",
+                password="",
+                skip_password_validation=True,
+                skip_onboarding=True,
+            )
+
+            assert user.user_id == "dev@example.com"
+
+
+@pytest.mark.asyncio
+async def test_create_user_stores_explicit_user_id_verbatim(email_auth_service, mock_db):
+    """create_user stores an explicit user_id unchanged (diverged case)."""
+    with patch.object(email_auth_service, "get_user_by_email", return_value=None):
+        with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
+            mock_settings.password_min_length = 8
+
+            user = await email_auth_service.create_user(
+                email="dev@example.com",
+                password="",
+                user_id="idp-123",
+                skip_password_validation=True,
+                skip_onboarding=True,
+            )
+
+            assert user.user_id == "idp-123"
+
+
+@pytest.mark.asyncio
+async def test_create_platform_admin_user_id_equals_platform_admin_email(email_auth_service, mock_db):
+    """create_platform_admin yields user_id equal to settings.platform_admin_email."""
+    with patch.object(email_auth_service, "get_user_by_email", return_value=None):
+        with patch("mcpgateway.services.email_auth_service.settings") as mock_settings:
+            mock_settings.password_min_length = 8
+            mock_settings.auto_create_personal_teams = False
+            mock_settings.platform_admin_email = "admin@example.com"
+
+            user = await email_auth_service.create_platform_admin(
+                email=mock_settings.platform_admin_email,
+                password="bootstrap-pass",  # pragma: allowlist secret
+            )
+
+            assert user.user_id == mock_settings.platform_admin_email
