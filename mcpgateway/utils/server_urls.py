@@ -26,6 +26,11 @@ logger = logging.getLogger(__name__)
 def build_server_mcp_url(server_id: str) -> str:
     """Construct the canonical, fully-qualified MCP endpoint URL for a virtual server.
 
+    This URL is also the RFC 8707 OAuth resource/audience identifier used for
+    token validation and persisted learned audiences. Keep its path format
+    stable; a future display-only path change must use a separate function so
+    existing OAuth tokens and persisted audiences remain valid.
+
     .. important::
         The base URL is derived from :data:`settings.app_domain`, **not** any
         inbound ``Host`` / ``X-Forwarded-Host`` header. Both are
