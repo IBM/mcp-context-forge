@@ -429,3 +429,75 @@ async def test_resource_completion_admin_bypass_excludes_private(completion_db):
     result = await service.handle_completion(completion_db, request, user_email=None, token_teams=None)
     assert set(result.completion["values"]) == {"file://public.txt", "file://team.txt"}
     assert "file://private.txt" not in result.completion["values"]
+
+
+# ---------------------------------------------------------------------------
+# Task 2: _acquire_upstream_session() — registry + mcp_proxy_client fallback
+# ---------------------------------------------------------------------------
+
+from contextlib import asynccontextmanager  # noqa: E402  # Standard, grouped near first use per existing file layout
+from unittest.mock import AsyncMock  # noqa: E402
+
+
+class _FakeClient:
+    def __init__(self, *, protocol_version="2025-11-25", supports_completions=True):
+        self.session = SimpleNamespace(
+            protocol_version=protocol_version,
+            server_capabilities=SimpleNamespace(completions=object() if supports_completions else None),
+            complete=AsyncMock(),
+        )
+
+
+class _FakeGateway:
+    id = "gw-1"
+    url = "https://upstream.example.com/mcp"
+    transport = "streamable_http"
+    auth_type = None
+    auth_query_params = None
+
+
+@pytest.mark.asyncio
+async def test_acquire_upstream_session_uses_registry_when_downstream_session_in_scope(monkeypatch):
+    fake_upstream = SimpleNamespace(session=SimpleNamespace(protocol_version="2026-07-28"))
+
+    @asynccontextmanager
+    async def fake_acquire(self, **kwargs):
+        yield fake_upstream
+
+    class _FakeRegistry:
+        acquire = fake_acquire
+
+    monkeypatch.setattr(
+        "mcpgateway.services.completion_service._downstream_session_id_from_request",
+        lambda: "downstream-1",
+    )
+    monkeypatch.setattr(
+        "mcpgateway.services.completion_service.get_upstream_session_registry",
+        lambda: _FakeRegistry(),
+    )
+
+    service = CompletionService()
+    async with service._acquire_upstream_session(_FakeGateway()) as session:
+        assert session is fake_upstream.session
+
+
+@pytest.mark.asyncio
+async def test_acquire_upstream_session_falls_back_to_mcp_proxy_client_without_downstream_session(monkeypatch):
+    fake_client = _FakeClient(protocol_version="2025-11-25")
+
+    @asynccontextmanager
+    async def fake_mcp_proxy_client(**kwargs):
+        yield fake_client
+
+    monkeypatch.setattr(
+        "mcpgateway.services.completion_service._downstream_session_id_from_request",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        "mcpgateway.services.completion_service.mcp_proxy_client",
+        fake_mcp_proxy_client,
+    )
+
+    service = CompletionService()
+    async with service._acquire_upstream_session(_FakeGateway()) as session:
+        assert session is fake_client.session
