@@ -8409,6 +8409,26 @@ class PluginStatsResponse(BaseModel):
 # MCP Server Catalog Schemas
 
 
+class CatalogOAuthMetadata(BaseModel):
+    """Public OAuth discovery metadata seeded for a catalog server entry.
+
+    Non-secret only: ``client_id``/``client_secret`` are per-deployment values
+    and never belong here. Seeding these fields lets a catalog entry skip the
+    outbound discovery probe at registration time, which matters for
+    restricted-egress deployments and for providers that publish no discovery
+    document at all (see issue #6461).
+    """
+
+    model_config = ConfigDict(extra="forbid")  # secrets must never round-trip through this model, even silently
+
+    issuer: Optional[str] = Field(None, description="OAuth issuer / authorization server base URL")
+    authorization_url: Optional[str] = Field(None, description="OAuth authorization endpoint")
+    token_url: Optional[str] = Field(None, description="OAuth token endpoint")
+    scopes: List[str] = Field(default_factory=list, description="Scopes recognized by this provider's OAuth server")
+    supports_dcr: bool = Field(default=False, description="Whether the provider supports Dynamic Client Registration (RFC 7591)")
+    resource: Optional[str] = Field(None, description="RFC 8707 resource indicator for this server")
+
+
 class CatalogServer(BaseModel):
     """Schema for a catalog server entry."""
 
@@ -8429,6 +8449,7 @@ class CatalogServer(BaseModel):
     gateway_id: Optional[str] = Field(None, description="ID of the caller-visible gateway matched to this catalog server")
     is_available: bool = Field(default=True, description="Whether server is currently available")
     requires_oauth_config: bool = Field(default=False, description="Whether server is registered but needs OAuth configuration")
+    oauth: Optional[CatalogOAuthMetadata] = Field(None, description="Seeded public OAuth discovery metadata for OAuth entries, when known (no secrets)")
 
 
 class CatalogServerRegisterRequest(BaseModel):
