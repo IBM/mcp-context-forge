@@ -63,9 +63,9 @@ Logical groups that:
 | Role | Scope | Permissions |
 |------|-------|-------------|
 | `platform_admin` | global | `["*"]` (all permissions) |
-| `team_admin` | team | admin.dashboard, admin.overview, gateways.read, gateways.create, gateways.update, gateways.delete, servers.read, servers.use, servers.create, servers.update, servers.delete, teams.read, teams.update, teams.join, teams.delete, teams.manage_members, tools.read, tools.create, tools.update, tools.delete, tools.execute, plugins.read, resources.read, resources.create, resources.update, resources.delete, prompts.read, prompts.create, prompts.update, prompts.delete, a2a.read, a2a.create, a2a.update, a2a.delete, a2a.invoke, llm.read, llm.invoke, tokens.create, tokens.read, tokens.update, tokens.revoke |
-| `developer` | team | admin.dashboard, admin.overview, gateways.read, gateways.create, gateways.update, gateways.delete, servers.read, servers.use, servers.create, servers.update, servers.delete, teams.read, teams.join, tools.read, tools.create, tools.update, tools.delete, tools.execute, plugins.read, resources.read, resources.create, resources.update, resources.delete, prompts.read, prompts.create, prompts.update, prompts.delete, a2a.read, a2a.create, a2a.update, a2a.delete, a2a.invoke, llm.read, llm.invoke, tokens.create, tokens.read, tokens.update, tokens.revoke |
-| `viewer` | team | admin.dashboard, admin.overview, gateways.read, servers.read, servers.use, teams.read, teams.join, tools.read, tools.execute, resources.read, prompts.read, a2a.read, llm.read, tokens.create, tokens.read, tokens.update, tokens.revoke |
+| `team_admin` | team | admin.dashboard, admin.overview, gateways.read, gateways.create, gateways.update, gateways.delete, servers.read, servers.use, servers.create, servers.update, servers.delete, teams.read, teams.update, teams.join, teams.delete, teams.manage_members, tools.read, tools.create, tools.update, tools.delete, tools.execute, tools.preview, plugins.read, resources.read, resources.create, resources.update, resources.delete, prompts.read, prompts.create, prompts.update, prompts.delete, a2a.read, a2a.create, a2a.update, a2a.delete, a2a.invoke, llm.read, llm.invoke, tokens.create, tokens.read, tokens.update, tokens.revoke |
+| `developer` | team | admin.dashboard, admin.overview, gateways.read, gateways.create, gateways.update, gateways.delete, servers.read, servers.use, servers.create, servers.update, servers.delete, teams.read, teams.join, tools.read, tools.create, tools.update, tools.delete, tools.execute, tools.preview, plugins.read, resources.read, resources.create, resources.update, resources.delete, prompts.read, prompts.create, prompts.update, prompts.delete, a2a.read, a2a.create, a2a.update, a2a.delete, a2a.invoke, llm.read, llm.invoke, tokens.create, tokens.read, tokens.update, tokens.revoke |
+| `viewer` | team | admin.dashboard, admin.overview, gateways.read, servers.read, servers.use, teams.read, teams.join, tools.read, tools.execute, tools.preview, resources.read, prompts.read, a2a.read, llm.read, tokens.create, tokens.read, tokens.update, tokens.revoke |
 | `platform_viewer` | global | admin.dashboard, admin.overview, gateways.read, servers.read, servers.use, teams.read, teams.join, tools.read, resources.read, prompts.read, a2a.read, llm.read, metrics:read, tokens.create, tokens.read, tokens.update, tokens.revoke |
 
 !!! info "Default Role Assignment"
@@ -483,7 +483,7 @@ Permissions are defined in the `Permissions` class and control what actions user
 |----------|-------------|
 | **Users** | users.create, users.read, users.update, users.delete, users.invite |
 | **Teams** | teams.create, teams.read, teams.update, teams.delete, teams.join, teams.manage_members |
-| **Tools** | tools.create, tools.read, tools.update, tools.delete, tools.execute |
+| **Tools** | tools.create, tools.read, tools.update, tools.delete, tools.execute, tools.preview |
 | **Plugins** | plugins.read |
 | **Resources** | resources.create, resources.read, resources.update, resources.delete, resources.share |
 | **Gateways** | gateways.create, gateways.read, gateways.update, gateways.delete |
@@ -494,6 +494,11 @@ Permissions are defined in the `Permissions` class and control what actions user
 | **A2A** | a2a.create, a2a.read, a2a.update, a2a.delete, a2a.invoke |
 | **Tags** | tags.read, tags.create, tags.update, tags.delete |
 | **Wildcard** | `*` (all permissions) |
+
+`tools.preview` sits strictly below `tools.execute`: it authorizes `POST /tools/preview/{name}`,
+which validates and resolves a tool call without dispatching it (no REST/MCP/A2A/gRPC call, no
+`TOOL_POST_INVOKE` hook). A role granted `tools.preview` but not `tools.execute` can validate a
+tool call but never actually invoke it.
 
 !!! note "Registered OAuth clients require un-narrowed admin scope"
     `admin.oauth_clients:read` and `admin.oauth_clients:delete` gate the DCR management routes
@@ -879,7 +884,7 @@ Create a JSON file containing an array of role definitions:
 
 | Resource | Permissions |
 |----------|-------------|
-| Tools | `tools.create`, `tools.read`, `tools.update`, `tools.delete`, `tools.execute` |
+| Tools | `tools.create`, `tools.read`, `tools.update`, `tools.delete`, `tools.execute`, `tools.preview` |
 | Resources | `resources.create`, `resources.read`, `resources.update`, `resources.delete` |
 | Prompts | `prompts.create`, `prompts.read`, `prompts.update`, `prompts.delete` |
 | Servers | `servers.create`, `servers.read`, `servers.use`, `servers.update`, `servers.delete`, `servers.manage` |
