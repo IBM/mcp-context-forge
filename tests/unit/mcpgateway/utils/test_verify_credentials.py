@@ -1922,3 +1922,72 @@ async def test_require_admin_auth_non_admin_jwt_gets_403_not_basic_fallback(monk
     # Must be 403 Forbidden, NOT 200/success from basic auth fallback
     assert exc.value.status_code == status.HTTP_403_FORBIDDEN
     assert "Admin privileges required" in exc.value.detail
+
+
+# ---------------------------------------------------------------------------
+# Principal user_id contract tests (issue #5887)
+# ---------------------------------------------------------------------------
+class TestPrincipalPayloadCarriesUserId:
+    """Contract: proxy and external-IdP payloads carry user_id equal to the e-mail."""
+
+    @pytest.mark.asyncio
+    async def test_proxy_payload_carries_user_id(self, monkeypatch):
+        """The proxy-authenticated payload carries user_id equal to its e-mail."""
+        mock_request = Mock(spec=Request)
+        mock_request.state = Mock()
+
+        mock_user = Mock()
+        mock_user.is_admin = False
+        mock_user.is_active = True
+        mock_user.email = "proxy-user@example.com"
+
+        with (
+            patch("mcpgateway.db.get_db") as mock_get_db,
+            patch("mcpgateway.services.email_auth_service.EmailAuthService") as mock_auth_service,
+            patch("mcpgateway.auth._resolve_teams_from_db", new_callable=AsyncMock) as mock_resolve_teams,
+        ):
+            mock_get_db.return_value = iter([Mock()])
+            mock_auth_service.return_value.get_user_by_email = AsyncMock(return_value=mock_user)
+            mock_resolve_teams.return_value = ["team1"]
+
+            payload = await vc._authenticate_proxy_user(mock_request, "proxy-user@example.com")
+
+        assert payload["email"] == "proxy-user@example.com"
+        assert payload["user_id"] == payload["email"]
+
+    @pytest.mark.asyncio
+    async def test_external_identity_payload_carries_user_id(self, monkeypatch):
+        """The external-IdP identity payload carries user_id equal to its e-mail."""
+        prov = MagicMock()
+        prov.issuer = "https://kc/realms/m"
+        prov.is_enabled = True
+        prov.trusted_for_api_auth = True
+        prov.id = "keycloak"
+        claims = {"iss": "https://kc/realms/m", "sub": "agent", "email": "agent@corp.com"}
+
+        svc = MagicMock()
+        svc._normalize_user_info.return_value = {"email": "agent@corp.com", "is_admin": True}
+
+        async def fake_auth(user_info):
+            return "an-internal-jwt-token-string"
+
+        svc.authenticate_or_create_user = fake_auth
+
+        db_user = MagicMock()
+        db_user.is_admin = False
+
+        async def fake_get_user(email):
+            return db_user
+
+        svc.auth_service.get_user_by_email = fake_get_user
+        monkeypatch.setattr(vc, "_get_sso_service", lambda db: svc)
+
+        async def fake_resolve(payload, email, user_info, **kw):
+            return ["team-a"]
+
+        monkeypatch.setattr("mcpgateway.auth.resolve_session_teams", fake_resolve)
+
+        payload = await vc.build_external_identity(prov, claims, "rawtoken", MagicMock())
+
+        assert payload["email"] == "agent@corp.com"
+        assert payload["user_id"] == payload["email"]
