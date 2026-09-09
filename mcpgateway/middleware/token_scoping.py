@@ -86,6 +86,10 @@ _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     ("GET", re.compile(r"^/tools(?:$|/)"), Permissions.TOOLS_READ),
     ("POST", re.compile(r"^/tools/?$"), Permissions.TOOLS_CREATE),  # Only exact /tools or /tools/
     ("POST", re.compile(r"^/tools/preview(?:$|/)"), Permissions.TOOLS_PREVIEW),  # Must precede the /tools/[^/]+/ catch-all below (#5629)
+    # Tool plugin bindings use tools.manage_plugins (see tool_plugin_bindings router),
+    # not tools.update / tools.delete from the catch-alls below (#6701).
+    ("POST", re.compile(r"^/tools/plugin_bindings(?:$|/)"), Permissions.TOOLS_MANAGE_PLUGINS),
+    ("DELETE", re.compile(r"^/tools/plugin_bindings(?:$|/)"), Permissions.TOOLS_MANAGE_PLUGINS),
     ("POST", re.compile(r"^/tools/[^/]+/"), Permissions.TOOLS_UPDATE),  # POST to sub-resources (state, toggle)
     ("PUT", re.compile(r"^/tools/[^/]+(?:$|/)"), Permissions.TOOLS_UPDATE),
     ("DELETE", re.compile(r"^/tools/[^/]+(?:$|/)"), Permissions.TOOLS_DELETE),
@@ -184,6 +188,12 @@ _PERMISSION_PATTERNS: List[Tuple[str, Pattern[str], str]] = [
     ("POST", re.compile(r"^/a2a/[^/]+/(?:state|toggle)(?:$|/)"), Permissions.A2A_UPDATE),
     ("PUT", re.compile(r"^/a2a/[^/]+(?:$|/)"), Permissions.A2A_UPDATE),
     ("DELETE", re.compile(r"^/a2a/[^/]+(?:$|/)"), Permissions.A2A_DELETE),
+    # A2A agent plugin bindings live under /a2a-agents/... (hyphen), which does not
+    # match ^/a2a(?:$|/) above. Decorators on a2a_agent_plugin_bindings require
+    # tools.read / tools.manage_plugins — same contract as tool plugin bindings (#6701).
+    ("GET", re.compile(r"^/a2a-agents/plugin-bindings(?:$|/)"), Permissions.TOOLS_READ),
+    ("POST", re.compile(r"^/a2a-agents/plugin-bindings(?:$|/)"), Permissions.TOOLS_MANAGE_PLUGINS),
+    ("DELETE", re.compile(r"^/a2a-agents/plugin-bindings(?:$|/)"), Permissions.TOOLS_MANAGE_PLUGINS),
 ]
 
 # Admin route permission map (granular by route group).

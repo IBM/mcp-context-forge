@@ -610,6 +610,44 @@ class TestTokenScopingMiddleware:
         assert middleware._check_permission_restrictions(path, method, [permission]) is False
 
     @pytest.mark.parametrize(
+        "method,path,permission",
+        [
+            ("GET", "/a2a-agents/plugin-bindings", Permissions.TOOLS_READ),
+            ("GET", "/a2a-agents/plugin-bindings/", Permissions.TOOLS_READ),
+            ("GET", "/a2a-agents/plugin-bindings/team-1", Permissions.TOOLS_READ),
+            ("GET", "/v1/a2a-agents/plugin-bindings", Permissions.TOOLS_READ),
+            ("POST", "/a2a-agents/plugin-bindings", Permissions.TOOLS_MANAGE_PLUGINS),
+            ("POST", "/a2a-agents/plugin-bindings/", Permissions.TOOLS_MANAGE_PLUGINS),
+            ("DELETE", "/a2a-agents/plugin-bindings", Permissions.TOOLS_MANAGE_PLUGINS),
+            ("DELETE", "/a2a-agents/plugin-bindings/abc", Permissions.TOOLS_MANAGE_PLUGINS),
+            ("GET", "/tools/plugin_bindings", Permissions.TOOLS_READ),
+            ("GET", "/v1/tools/plugin_bindings/team-1", Permissions.TOOLS_READ),
+            ("POST", "/tools/plugin_bindings", Permissions.TOOLS_MANAGE_PLUGINS),
+            ("POST", "/tools/plugin_bindings/", Permissions.TOOLS_MANAGE_PLUGINS),
+            ("DELETE", "/tools/plugin_bindings", Permissions.TOOLS_MANAGE_PLUGINS),
+            ("DELETE", "/tools/plugin_bindings/abc", Permissions.TOOLS_MANAGE_PLUGINS),
+        ],
+    )
+    def test_plugin_binding_routes_map_to_decorator_permissions(self, middleware, method, path, permission):
+        """Plugin-binding routers require tools.read / tools.manage_plugins (#6701)."""
+        assert middleware._check_permission_restrictions(path, method, [permission]) is True
+
+    @pytest.mark.parametrize(
+        "method,path,permission",
+        [
+            ("GET", "/a2a-agents/plugin-bindings", Permissions.A2A_READ),
+            ("POST", "/a2a-agents/plugin-bindings", Permissions.A2A_UPDATE),
+            ("DELETE", "/a2a-agents/plugin-bindings", Permissions.TOOLS_UPDATE),
+            ("POST", "/tools/plugin_bindings", Permissions.TOOLS_UPDATE),
+            ("DELETE", "/tools/plugin_bindings", Permissions.TOOLS_DELETE),
+            ("GET", "/a2a-agents/plugin-bindings", Permissions.TOOLS_MANAGE_PLUGINS),
+        ],
+    )
+    def test_plugin_binding_routes_reject_wrong_permission(self, middleware, method, path, permission):
+        """Wrong scopes are denied, including a2a.* guesses and tools update/delete catch-alls."""
+        assert middleware._check_permission_restrictions(path, method, [permission]) is False
+
+    @pytest.mark.parametrize(
         "token_scopes",
         [
             ["tools.execute"],
