@@ -7005,7 +7005,7 @@ class TestInvokeToolRestSuccess:
         mock_session = AsyncMock()
         mock_session.initialize = AsyncMock()
         mock_session.call_tool = AsyncMock(return_value=sdk_error_result)
-        mock_session.session = mock_session  # v2 code calls client.session.call_tool
+        mock_session.session = mock_session
 
         class _ClientCM:
             """Stand-in for mcp_proxy_client — yields mock_session as the MCP Client."""
@@ -9181,7 +9181,7 @@ class TestInvokeToolMcpSse:
         mock_session = AsyncMock()
         mock_session.initialize = AsyncMock()
         mock_session.call_tool = AsyncMock(return_value=ToolResult(content=[TextContent(type="text", text="ok")], is_error=False))
-        mock_session.session = mock_session  # v2 code calls client.session.call_tool
+        mock_session.session = mock_session
 
         def fake_proxy_client(*, url=None, headers=None, httpx_client_factory=None, **_kw):
             if httpx_client_factory is not None:
@@ -9239,7 +9239,7 @@ class TestInvokeToolMcpSse:
         mock_session = AsyncMock()
         mock_session.initialize = AsyncMock()
         mock_session.call_tool = AsyncMock(return_value=ToolResult(content=[TextContent(type="text", text="ok")], is_error=False))
-        mock_session.session = mock_session  # v2 code calls client.session.call_tool
+        mock_session.session = mock_session
 
         def fake_proxy_client(*, url=None, headers=None, httpx_client_factory=None, **_kw):
             if httpx_client_factory is not None:
