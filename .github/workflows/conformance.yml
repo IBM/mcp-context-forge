@@ -1,7 +1,11 @@
 name: Conformance
-run-name: Conformance for PR #${{ github.event.issue.number }}
+run-name: Conformance for PR #${{ github.event.pull_request.number || github.event.issue.number }}
 
 on:
+  pull_request:
+    branches: [chore/mcp-sdk-v2]
+    types: [opened, reopened, synchronize, ready_for_review]
+  # Comment commands become available once this workflow is on the default branch.
   issue_comment:
     types: [created]
 
@@ -13,11 +17,13 @@ jobs:
   conformance:
     name: conformance
     if: >-
-      github.event.issue.pull_request &&
-      github.event.comment.body == '/conformance' &&
-      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
+      (github.event_name == 'pull_request' && !github.event.pull_request.draft) ||
+      (github.event_name == 'issue_comment' &&
+       github.event.issue.pull_request &&
+       github.event.comment.body == '/conformance' &&
+       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
     concurrency:
-      group: conformance-pr-${{ github.event.issue.number }}
+      group: conformance-pr-${{ github.event.pull_request.number || github.event.issue.number }}
       cancel-in-progress: true
     runs-on: ubuntu-latest
     timeout-minutes: 90
@@ -27,7 +33,7 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: false
-          ref: refs/pull/${{ github.event.issue.number }}/merge
+          ref: ${{ github.event_name == 'pull_request' && github.sha || format('refs/pull/{0}/merge', github.event.issue.number) }}
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
