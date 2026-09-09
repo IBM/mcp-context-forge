@@ -235,6 +235,131 @@ class CompletionService:
         ) as client:
             yield client.session
 
+    @staticmethod
+    def _unwrap_exception(exc: BaseException) -> BaseException:
+        """Unwrap nested BaseExceptionGroup layers down to the first real error.
+
+        ``mcp_proxy_client``/registry acquisition and ``ClientSession`` are
+        each anyio task groups, so a body exception surfaces as an
+        ExceptionGroup.
+
+        Args:
+            exc: The caught exception, possibly a ``BaseExceptionGroup``.
+
+        Returns:
+            The first non-group exception found, or ``exc`` itself if it is
+            not a ``BaseExceptionGroup``.
+        """
+        root: BaseException = exc
+        while isinstance(root, BaseExceptionGroup) and root.exceptions:
+            root = root.exceptions[0]
+        return root
+
+    @staticmethod
+    def _error_from_upstream(exc: "McpError", gateway_id: str) -> "CompletionError":
+        """Translate an upstream MCPError into the matching completion error.
+
+        Issue #6629 requires the caller to receive "the same answer the
+        upstream itself would give", so the upstream's own JSON-RPC code
+        decides the class rather than every upstream failure collapsing to
+        an internal error.
+
+        Args:
+            exc: The upstream ``MCPError``.
+            gateway_id: Owning gateway id, included in the message for
+                troubleshooting.
+
+        Returns:
+            The :class:`CompletionError` subclass matching the upstream's
+            JSON-RPC error code.
+        """
+        code = getattr(getattr(exc, "error", None), "code", None)
+        message = getattr(getattr(exc, "error", None), "message", None) or str(exc)
+        error_type = _UPSTREAM_CODE_TO_ERROR.get(code, CompletionInternalError)
+        return error_type(f"Upstream gateway '{gateway_id}' returned an error: {message}")
+
+    async def _forward_completion_upstream(
+        self,
+        gateway: Any,
+        ref: Any,
+        argument: Dict[str, str],
+        context: Optional[Dict[str, Any]] = None,
+    ) -> CompleteResult:
+        """Forward a completion/complete request to the owning upstream server.
+
+        Args:
+            gateway: The owning gateway ORM/model instance.
+            ref: The MCP ``ref/prompt`` or ``ref/resource`` reference.
+            argument: ``{"name": ..., "value": ...}`` argument being completed.
+            context: Optional completion context (``{"arguments": {...}}``).
+
+        Returns:
+            The upstream's completion result, translated to this gateway's
+            :class:`CompleteResult`.
+
+        Raises:
+            CompletionInternalError: Gateway metadata is missing, the context
+                is malformed, or the upstream call failed for a non-MCP
+                reason.
+            CompletionInvalidParamsError: The completion context is malformed.
+            CompletionNotSupportedError: The upstream does not advertise the
+                ``completions`` capability.
+        """
+        if gateway is None:
+            raise CompletionInternalError("Federated record is missing gateway metadata")
+
+        gateway_id = str(getattr(gateway, "id", ""))
+        raw_context = context or {}
+        if not isinstance(raw_context, dict):
+            raise CompletionInvalidParamsError("Completion context must be an object")
+        context_arguments = raw_context.get("arguments") or None
+        if context_arguments is not None and not isinstance(context_arguments, dict):
+            raise CompletionInvalidParamsError("Completion context arguments must be an object")
+
+        auth_query_params: Optional[Dict[str, str]] = None
+
+        try:
+            _, _, auth_query_params = self._gateway_connection(gateway)
+            async with self._acquire_upstream_session(gateway) as session:
+                capabilities = session.server_capabilities
+                if capabilities is None or getattr(capabilities, "completions", None) is None:
+                    raise CompletionNotSupportedError(f"Upstream gateway '{gateway_id}' does not support completions")
+
+                remote_result = await session.complete(ref, argument, context_arguments)
+        except BaseException as exc:  # noqa: BLE001 - anyio wraps handler errors in ExceptionGroup
+            root = self._unwrap_exception(exc)
+            if isinstance(root, CompletionError):
+                raise root from exc
+            if isinstance(root, McpError):
+                raise self._error_from_upstream(root, gateway_id) from exc
+            if isinstance(root, (asyncio.CancelledError, KeyboardInterrupt, SystemExit)):
+                raise
+            # Reuse the registry's shared categorizer for the generic path
+            # instead of a bespoke unwrap + sanitize_exception_message call
+            # (spec §3): its 3rd tuple element is already the sanitized
+            # message.
+            _category, _exc_type, sanitized_error, _count = _categorize_upstream_error(root, auth_query_params)
+            raise CompletionInternalError(f"Failed to forward completion to gateway '{gateway_id}': {sanitized_error}") from exc
+
+        completion = getattr(remote_result, "completion", None)
+        if completion is None:
+            raise CompletionInternalError("Upstream returned a completion result without a completion payload")
+
+        values = list(getattr(completion, "values", None) or [])
+        total = getattr(completion, "total", None)
+        # SDK 2.0's Completion model attribute is `has_more` (snake_case);
+        # the camelCase `hasMore` only exists as a wire/serialization alias
+        # (see spec §2 row 11) — reading `hasMore` here silently returns
+        # None always.
+        has_more = getattr(completion, "has_more", None)
+        return CompleteResult(
+            completion={
+                "values": values,
+                "total": total,
+                "hasMore": has_more if has_more is not None else (total is not None and total > len(values)),
+            }
+        )
+
     async def handle_completion(
         self,
         db: Session,
