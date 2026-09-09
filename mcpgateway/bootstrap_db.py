@@ -255,11 +255,13 @@ def advisory_lock(conn: Connection):
 
 
 async def bootstrap_admin_user(conn: Connection) -> None:
-    """
-    Bootstrap the platform admin user from environment variables.
+    """Bootstrap the platform admin user from environment variables.
 
-    Creates the admin user if email authentication is enabled and the user doesn't exist.
-    Also creates a personal team for the admin user if auto-creation is enabled.
+    Creates the admin user on first boot.  On subsequent boots the user is
+    fetched (not re-created) so that any password the admin rotated via the UI
+    is never overwritten.  The ``password_change_required`` flag is re-evaluated
+    on every boot so an operator can recover a locked-out account by setting
+    ``PLATFORM_ADMIN_PASSWORD`` to a custom value and restarting.
 
     Args:
         conn: Active SQLAlchemy connection
@@ -272,32 +274,45 @@ async def bootstrap_admin_user(conn: Connection) -> None:
         # Import services here to avoid circular imports
         # First-Party
         from mcpgateway.services.email_auth_service import EmailAuthService  # pylint: disable=import-outside-toplevel
+        from mcpgateway.db import utc_now  # pylint: disable=import-outside-toplevel
 
         # Use session bound to the locked connection
         with Session(bind=conn) as db:
             auth_service = EmailAuthService(db)
 
-            is_new_user = not await auth_service.get_user_by_email(settings.platform_admin_email)
-            if is_new_user:
+            existing_user = await auth_service.get_user_by_email(settings.platform_admin_email)
+
+            if existing_user is None:
+                # First boot — create the admin and mark email as verified.
                 logger.info(f"Creating platform admin user: {SecurityValidator.sanitize_log_message(settings.platform_admin_email)}")
-            else:
-                logger.info(f"Admin user {SecurityValidator.sanitize_log_message(settings.platform_admin_email)} exists; re-evaluating bootstrap flags")
-
-            admin_user = await auth_service.create_platform_admin(
-                email=settings.platform_admin_email,
-                password=settings.platform_admin_password.get_secret_value(),
-                full_name=settings.platform_admin_full_name,
-            )
-
-            # First-Party
-            from mcpgateway.db import utc_now  # pylint: disable=import-outside-toplevel
-
-            if is_new_user:
+                admin_user = await auth_service.create_platform_admin(
+                    email=settings.platform_admin_email,
+                    password=settings.platform_admin_password.get_secret_value(),
+                    full_name=settings.platform_admin_full_name,
+                )
                 admin_user.email_verified_at = utc_now()
+                try:
+                    admin_user.password_changed_at = utc_now()
+                except Exception as exc:
+                    logger.debug("Failed to set admin password_changed_at: %s", exc)
 
-            # Evaluate forced-change flag for both new and existing admins so that:
-            # - operators who set PLATFORM_ADMIN_PASSWORD after being locked out are unblocked on restart
-            # - the Helm "Method 1" recovery (update values.yaml + helm upgrade) works as documented
+                if settings.auto_create_personal_teams:
+                    logger.info("Personal team automatically created for admin user")
+            else:
+                # Subsequent boot — use the existing record as-is; do NOT call
+                # create_platform_admin() here because it overwrites the password hash
+                # whenever PLATFORM_ADMIN_PASSWORD != the stored hash, silently
+                # reverting any password the admin rotated via the UI.
+                logger.info(f"Admin user {SecurityValidator.sanitize_log_message(settings.platform_admin_email)} exists; re-evaluating bootstrap flag only")
+                admin_user = existing_user
+
+            # Re-evaluate the forced-change flag on every boot.
+            # This is the only mutation applied to existing admins, intentionally:
+            # - default password in env  → set flag (force change on login)
+            # - custom password in env + flag currently set by a previous default-password
+            #   boot (admin_require_password_change_on_bootstrap was True then) → clear it
+            # - flag set by login-time default-password detector (require_password_change_for_default_password)
+            #   is intentionally left untouched when _bootstrap_flag is False
             _enforcement_on = getattr(settings, "password_change_enforcement_enabled", True)
             _bootstrap_flag = getattr(settings, "admin_require_password_change_on_bootstrap", True)
             _admin_pwd = settings.platform_admin_password.get_secret_value()
@@ -307,26 +322,17 @@ async def bootstrap_admin_user(conn: Connection) -> None:
             if _enforcement_on and _bootstrap_flag and _using_default_pwd:
                 admin_user.password_change_required = True
                 logger.warning("Admin bootstrapped with the default password; password change required on first login.")
-            elif admin_user.password_change_required:
-                # Custom password supplied — clear any stale flag from a previous default-password boot
+            elif _enforcement_on and _bootstrap_flag and not _using_default_pwd and admin_user.password_change_required:
+                # Custom password is now in env and the bootstrap flag is on — clear the stale
+                # flag that was set by a previous default-password boot.  This is the intended
+                # "Helm recovery" path: operator sets PLATFORM_ADMIN_PASSWORD and restarts.
                 admin_user.password_change_required = False
-                logger.info("Custom PLATFORM_ADMIN_PASSWORD detected; cleared stale password-change flag.")
+                logger.info("Custom PLATFORM_ADMIN_PASSWORD detected; cleared bootstrap-set password-change flag.")
             else:
                 logger.info("Custom PLATFORM_ADMIN_PASSWORD detected; skipping forced password-change flag.")
 
-            if is_new_user:
-                try:
-                    admin_user.password_changed_at = utc_now()
-                except Exception as exc:
-                    logger.debug("Failed to set admin password_changed_at: %s", exc)
-
             db.commit()
-
-            if is_new_user and settings.auto_create_personal_teams:
-                logger.info("Personal team automatically created for admin user")
-
-            db.commit()
-            logger.info(f"Platform admin user created successfully: {SecurityValidator.sanitize_log_message(settings.platform_admin_email)}")
+            logger.info(f"Platform admin user bootstrapped successfully: {SecurityValidator.sanitize_log_message(settings.platform_admin_email)}")
 
     except Exception as e:
         logger.error(f"Failed to bootstrap admin user: {e}")

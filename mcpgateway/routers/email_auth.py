@@ -288,7 +288,7 @@ async def login(login_request: EmailLoginRequest, request: Request, db: Session 
                 status_code=status.HTTP_403_FORBIDDEN,
                 content={
                     "detail": "Password change required. Please change your password before continuing.",
-                    "hint": "Use the Admin UI at /admin/change-password-required, or set PASSWORD_CHANGE_ENFORCEMENT_ENABLED=false and restart to unblock headless deployments.",
+                    "hint": "Use the Admin UI at /admin/change-password-required. For headless deployments locked out at bootstrap, set ADMIN_REQUIRE_PASSWORD_CHANGE_ON_BOOTSTRAP=false and restart.",
                 },
                 headers={"X-Password-Change-Required": "true"},
             )
